@@ -2,6 +2,7 @@ import { EventEmitter } from "events";
 import { findOfficerInRoster, addOfficerToRoster, addDepartmentToRoster } from "./officerRoster";
 import { findDepartmentUrlsByCity, findDepartmentUrlsByState, getAllDepartmentUrls } from "./policeUrls";
 import { rateLimitTracker } from "./rateLimitTracker";
+import { generateGeminiStructuredResponse } from './gemini';
 import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 import { generateText, createTaskMetadata, UsageContext, TaskPriority, TaskComplexity } from "./aiProvider";
 
