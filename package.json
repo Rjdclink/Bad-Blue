@@ -4,9 +4,6 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "engines": {
-  "node": ">=20"
-    }
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "vite build && esbuild server/index.ts --platform=node --bundle --format=esm --outdir=dist --packages=external --external:pg-native --external:lightningcss --external:@babel/preset-typescript --external:@babel/core --external:bufferutil --external:utf-8-validate",
     "start": "NODE_ENV=production node dist/index.js",
