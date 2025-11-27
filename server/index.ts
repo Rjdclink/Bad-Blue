@@ -182,9 +182,19 @@ app.use((req, res, next) => {
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
+  // Serve production build
+if (app.get("env") === "development") {
+  await setupVite(app, server);
 } else {
+  const staticDir = path.join(__dirname, "..", "dist");
+
+  app.use(express.static(staticDir));
+
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    res.sendFile(path.join(staticDir, "index.html"));
+  });
+}
     // Production: serve client SPA directly from built dist folder
    const clientDir = path.join(__dirname, "..", "client", "dist");
 
