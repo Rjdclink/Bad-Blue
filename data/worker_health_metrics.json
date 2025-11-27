@@ -3547,5 +3547,50 @@
     "status": "success",
     "consecutiveFailures": 0,
     "environment": "standard"
+  },
+  {
+    "timestamp": "2025-11-27T16:40:19.794Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Connection terminated unexpectedly",
+    "consecutiveFailures": 1,
+    "environment": "standard"
+  },
+  {
+    "timestamp": "2025-11-27T19:55:48.875Z",
+    "check": "database_heartbeat",
+    "status": "success",
+    "consecutiveFailures": 0,
+    "environment": "standard"
+  },
+  {
+    "timestamp": "2025-11-27T20:10:38.864Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Connection terminated unexpectedly",
+    "consecutiveFailures": 1,
+    "environment": "standard"
+  },
+  {
+    "timestamp": "2025-11-27T20:25:39.097Z",
+    "check": "database_heartbeat",
+    "status": "restored",
+    "consecutiveFailures": 0,
+    "repairAttempts": 0,
+    "environment": "standard"
+  },
+  {
+    "timestamp": "2025-11-27T20:25:39.101Z",
+    "check": "database_heartbeat",
+    "status": "success",
+    "consecutiveFailures": 0,
+    "environment": "standard"
+  },
+  {
+    "timestamp": "2025-11-27T20:34:58.737Z",
+    "check": "database_heartbeat",
+    "status": "success",
+    "consecutiveFailures": 0,
+    "environment": "standard"
   }
 ]
