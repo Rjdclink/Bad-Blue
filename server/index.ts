@@ -21,7 +21,8 @@ if (!process.env.VITE_STRIPE_PUBLIC_KEY) {
 }
 
 import { createClient } from "@supabase/supabase-js";
-import express, { type Request, Response, NextFunction } from "express";
+import express from "express";
+import type { Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { setupVite, log } from "./vite";
@@ -180,44 +181,49 @@ app.use((req, res, next) => {
   });
 
   // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  // Serve production build
+// setting up all the other routes so the catch-all route
+// doesn't interfere with the other routes
 if (app.get("env") === "development") {
   await setupVite(app, server);
 } else {
-  const staticDir = path.join(__dirname, "..", "dist");
+  // Production: serve client SPA directly from built dist/public folder
+  const staticDir = path.join(__dirname, "..", "dist", "public");
 
+  // Serve static assets from compiled build
   app.use(express.static(staticDir));
 
-  app.get("*", (req, res, next) => {
-    if (req.path.startsWith("/api")) return next();
+  // For any non-API, non-SEO route, send back index.html
+  app.get("*", (req: Request, res: Response, next: NextFunction) => {
+    const p = req.path;
+
+    // Let API and SEO endpoints through
+    if (
+      p.startsWith("/api") ||
+      p === "/robots.txt" ||
+      p === "/sitemap.xml" ||
+      p.startsWith("/health")
+    ) {
+      return next();
+    }
+
     res.sendFile(path.join(staticDir, "index.html"));
   });
 }
-    // Production: serve client SPA directly from built dist folder
-   const clientDir = path.join(__dirname, "..", "client", "dist");
 
-    // Serve static assets from compiled build
-   app.use(express.static(clientDir));
+// ALWAYS serve the app on the port specified in the environment variable PORT
+// Default to 5000 if not specified. This serves both the API and the client.
+const port = parseInt(process.env.PORT || "5000", 10);
 
-    // For any non-API, non-SEO route, send back index.html
-    app.get("*", (req: Request, res: Response, next: NextFunction) => {
-      const p = req.path;
-
-      // Let API and SEO endpoints through
-      if (
-        p.startsWith("/api") ||
-        p === "/robots.txt" ||
-        p === "/sitemap.xml" ||
-        p.startsWith("/health")
-      ) {
-        return next();
-      }
-
-      res.sendFile(path.join(clientDir, "index.html"));
-    });
+server.listen(
+  {
+    port,
+    host: "0.0.0.0",
+    reusePort: true,
+  },
+  () => {
+    log(`serving on port ${port}`);
   }
+);
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Railway and other platforms will provide PORT, default to 5000 for local development
