@@ -13,7 +13,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
     "@google-cloud/storage": "^7.17.2",
-    "@google/generative-ai": "^0.7.x",
+    "@google/generative-ai": "^0.7.1",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@mistralai/mistralai": "^1.10.0",
@@ -92,6 +92,7 @@
     "framer-motion": "^11.13.1",
     "globally": "^0.0.0",
     "google-auth-library": "^10.4.2",
+    "groq-sdk": "^0.37.0",
     "input-otp": "^1.4.2",
     "listed": "^0.3.1",
     "lru-cache": "^11.2.2",
