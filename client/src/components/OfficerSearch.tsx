@@ -142,7 +142,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   }, [searchId]);
 
   const searchMutation = useMutation({
-    mutationFn: async (data: { officerName: string; officerType: OfficerType; state?: string; city?: string; county?: string; searchId: string }) => {
+    mutationFn: async (data: { officerName: string; statenewSearchIDsearchId: string }) => {
       const response = await apiRequest("/api/officer-search", "POST", data);
 
       if (!response.ok) {
@@ -223,7 +223,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       officerName, 
       officerType: "custom",
       state: state || undefined,
-      searchId: newSearchID,
+      searchId: newSearchId,
   });
 };
   
@@ -273,30 +273,20 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="select-state">
-                    State {officerType === "federal" || officerType === "custom" ? "(Optional)" : ""}
-                  </Label>
-                  <Select 
-                    value={state} 
-                    onValueChange={setState}
-                    disabled={officerType === "federal"}
-                  >
-                    <SelectTrigger id="select-state" data-testid="select-state">
-                      <SelectValue placeholder={
-                        officerType === "federal" 
-                          ? "Not applicable for federal officers" 
-                          : "Select state"
-                      } />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {US_STATES.map((s) => (
-                        <SelectItem key={s.code} value={s.code}>
-                          {s.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+  <Label htmlFor="select-state">State</Label>
+  <Select value={state} onValueChange={setState}>
+    <SelectTrigger id="select-state" data-testid="select-state">
+      <SelectValue placeholder="Select state" />
+    </SelectTrigger>
+    <SelectContent>
+      {US_STATES.map((s) => (
+        <SelectItem key={s.code} value={s.code}>
+          {s.name}
+        </SelectItem>
+      ))}
+    </SelectContent>
+  </Select>
+</div>
 
                 <div className="flex gap-4">
                   <Button
