@@ -224,7 +224,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       officerType: "custom",
       state: state || undefined,
       searchId: newSearchID,
-  };
+  });
 
   return (
     <div className="min-h-screen bg-background">
