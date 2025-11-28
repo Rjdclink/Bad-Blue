@@ -221,10 +221,9 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
 
     searchMutation.mutate({ 
       officerName, 
-      officerType: "custom"
-      state: state || undefined
-      searchId: newSearchId
-    });
+      officerType: "custom",
+      state: state || undefined,
+      searchId: newSearchID,
   };
 
   return (
