@@ -274,8 +274,8 @@ function extractRelevantData(narrative: string, category: string): string {
       /\d{4}/.test(trimmed) || // Contains year
       /\$[\d,]+/.test(trimmed) || // Contains dollar amount
       /\d+\s+(years|months)/.test(trimmed) || // Contains duration
-      /(appointed|promoted|assigned|received|awarded|completed|graduated|certified|investigated|involved)/i.test(trimmed) || // Action verbs
-      /(chief|captain|lieutenant|sergeant|officer)/i.test(trimmed) || // Ranks
+      /(appointed|promoted|assigned|received|awarded|completed|graduated|certified|investigated|involved|demoted|assaulted|interviewed|suspended|reprimanded|disciplined|discharged|terminated|indicted|arrested|prosecuted|sued|admonished|censured|ostracized|scrutinized|exposed|discredited|relieved|relieved-of-duty|stripped-of-badge|decertified|vilified|implicated|sanctioned|flagged|reported|accused|condemned|challenged|audited|monitored|surveilled|ousted|dismissed|incriminated|questioned|charged|litigated|fined|countersued|incarcerated|detained|restrained|embarrassed|disgraced|shamed|publicly-criticized)/i.test(trimmed) || // Action verbs
+      /(chief|captain|lieutenant|sergeant|officer|deputy|detective|inspector|commander|sheriff|chief-deputy|deputy-chief|commissioner|trooper|ranger|marshal|deputy-marshal|corrections-officer|special-agent|senior-special-agent|field-operations-supervisor|watch-commander|unit-commander|division-commander|task-force-commander|operations-commander|public-information-officer|training-officer|field-training-officer|school-resource-officer|traffic-officer|state-investigator|federal-investigator|probation-officer|parole-officer|task-force-officer|operations-officer)/i.test(trimmed) || // Ranks
       /(department|division|unit|bureau)/i.test(trimmed) || // Organizational terms
       /(training|certification|degree|course)/i.test(trimmed); // Education/training
       
@@ -470,7 +470,7 @@ ${officerType === 'special_agent' ? '- Federal Special Agent directories and cre
 - Training academy records
 - Professional law enforcement associations
 
-Cite at least 6 distinct sources with URLs. Write a comprehensive narrative (450-500 words) with specific dates, positions, and credentials. Start with: "${officerName} serves as..."`;
+Cite at least 6 distinct sources with URLs. Write a brief narrative (250-350 words) with specific dates, positions, and credentials. Start with: "${officerName} serves as..."`;
 
     const careerTrainingResult = await runCategorySearch(officerName, city, state, county, careerTrainingPrompt);
     categoryResults.push(careerTrainingResult);
