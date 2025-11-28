@@ -447,4 +447,4 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       </main>
     </div>
   );
-}
+
