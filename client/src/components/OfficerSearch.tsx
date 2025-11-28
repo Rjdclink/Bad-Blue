@@ -91,15 +91,13 @@ interface OfficerSearchProps {
   onBack?: () => void;
 }
 
-type OfficerType = "city" | "county" | "state" | "federal" | "special_agent" | "custom";
+type OfficerType = "custom";
 
 export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   const { toast } = useToast();
   const [officerType, setOfficerType] = useState<OfficerType>("custom");
   const [officerName, setOfficerName] = useState("");
   const [state, setState] = useState("");
-  const [city, setCity] = useState("");
-  const [county, setCounty] = useState("");
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searchId, setSearchId] = useState<string | null>(null);
   const [progress, setProgress] = useState<{
@@ -175,7 +173,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       console.error("Officer search error:", error);
       toast({
         title: "Search Failed",
-        description: error.message || "Unable to search for officer. Please try again or contact support if the issue persists.",
+        description: error.message || "Either the name is misspelled, the state is wrong, or the officer is no longer on the force.",
         variant: "destructive",
       });
       setProgress(null);
@@ -198,42 +196,24 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
     }
 
     // Validate based on officer type
-    if (officerType === "city" && (!state || !city.trim())) {
-      toast({
-        title: "City Officer Search",
-        description: "Please provide both state and city for city officers",
-        variant: "destructive",
-      });
-      return;
+    if (!officerName.trim()) {
+  toast({
+    title: "Name required",
+    description: "Enter an officer name to search.",
+    variant: "destructive",
+  });
+  return;
     }
 
-    if (officerType === "county" && (!state || !county.trim())) {
-      toast({
-        title: "County Officer Search",
-        description: "Please provide both state and county for county officers/sheriffs",
-        variant: "destructive",
-      });
-      return;
+    if (!state) {
+  toast({
+    title: "State required",
+    description: "Select a state for search.",
+    variant: "destructive",
+  });
+  return;
     }
-
-    if (officerType === "state" && !state) {
-      toast({
-        title: "State Officer Search",
-        description: "Please select a state for state officers/agents",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (officerType === "custom" && !state && !city.trim() && !county.trim()) {
-      toast({
-        title: "Location Required",
-        description: "Please provide at least state, city, or county",
-        variant: "destructive",
-      });
-      return;
-    }
-
+    
     // Generate unique search ID
     const newSearchId = `search-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     setSearchId(newSearchId);
@@ -241,10 +221,8 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
 
     searchMutation.mutate({ 
       officerName, 
-      officerType,
-      state: state || undefined,
-      city: city.trim() || undefined,
-      county: county.trim() || undefined,
+      officerType: "custom"
+      state: state || undefined
       searchId: newSearchId
     });
   };
@@ -295,48 +273,6 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="select-officer-type">Officer Type</Label>
-                  <Select value={officerType} onValueChange={(value: OfficerType) => setOfficerType(value)}>
-                    <SelectTrigger id="select-officer-type" data-testid="select-officer-type">
-                      <SelectValue placeholder="Select officer type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="city">City Police Officer</SelectItem>
-                      <SelectItem value="county">County Sheriff/Deputy</SelectItem>
-                      <SelectItem value="state">State Trooper/Agent</SelectItem>
-                      <SelectItem value="federal">Federal Agent (FBI, DEA, ATF, Marshal)</SelectItem>
-                      <SelectItem value="special_agent">Special Agent</SelectItem>
-                      <SelectItem value="custom">Custom Search</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {officerType === "city" && (
-                    <p className="text-sm text-muted-foreground">
-                      Requires: State + City
-                    </p>
-                  )}
-                  {officerType === "county" && (
-                    <p className="text-sm text-muted-foreground">
-                      Requires: State + County
-                    </p>
-                  )}
-                  {officerType === "state" && (
-                    <p className="text-sm text-muted-foreground">
-                      Requires: State only
-                    </p>
-                  )}
-                  {officerType === "federal" && (
-                    <p className="text-sm text-muted-foreground">
-                      Optional: City (leave state/county blank for federal agencies)
-                    </p>
-                  )}
-                  {officerType === "custom" && (
-                    <p className="text-sm text-muted-foreground">
-                      Requires: At least one location field (state, city, or county)
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-2">
                   <Label htmlFor="select-state">
                     State {officerType === "federal" || officerType === "custom" ? "(Optional)" : ""}
                   </Label>
@@ -361,36 +297,6 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                     </SelectContent>
                   </Select>
                 </div>
-
-                {(officerType === "city" || officerType === "federal" || officerType === "custom") && (
-                  <div className="space-y-2">
-                    <Label htmlFor="input-city">
-                      City {officerType === "custom" ? "(Optional)" : ""}
-                    </Label>
-                    <Input
-                      id="input-city"
-                      data-testid="input-city"
-                      placeholder="Enter city (e.g., Los Angeles)"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                    />
-                  </div>
-                )}
-
-                {(officerType === "county" || officerType === "custom") && (
-                  <div className="space-y-2">
-                    <Label htmlFor="input-county">
-                      County {officerType === "custom" ? "(Optional)" : ""}
-                    </Label>
-                    <Input
-                      id="input-county"
-                      data-testid="input-county"
-                      placeholder="Enter county (e.g., Los Angeles County)"
-                      value={county}
-                      onChange={(e) => setCounty(e.target.value)}
-                    />
-                  </div>
-                )}
 
                 <div className="flex gap-4">
                   <Button
@@ -444,11 +350,10 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                         <div className="flex items-center gap-2 text-muted-foreground">
                           <MapPin className="w-4 h-4" />
                           <span>
-                            {[
-                              county,
-                              city,
-                              state ? US_STATES.find(s => s.code === state)?.name : null
-                            ].filter(Boolean).join(', ') || 'Federal/Unknown Location'}
+                            {state
+                              ? US_STATES.find(s => s.code === 
+                          state)?.name || state
+                              : 'State not specified'}
                           </span>
                         </div>
                       </div>
@@ -512,10 +417,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                       onClick={() => {
                         setSearchResults(null);
                         setOfficerName("");
-                        setOfficerType("custom");
                         setState("");
-                        setCity("");
-                        setCounty("");
                         setProgress(null);
                         setSearchId(null);
                         if (eventSourceRef.current) {
