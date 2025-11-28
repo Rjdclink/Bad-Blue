@@ -436,7 +436,8 @@ RANK AND CAREER HISTORY:
 - Previous positions and assignments
 - Educational background and degrees
 - Department organizational context
-
+- Demotions, sanctions, indictments, disciplinary
+  
 TRAINING AND CERTIFICATIONS:
 - POST (Peace Officer Standards and Training) certifications
 - Specialized training (K9, SWAT, narcotics, tactical, crisis negotiation, etc.)
