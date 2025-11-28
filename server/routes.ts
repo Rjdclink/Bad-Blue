@@ -8,8 +8,7 @@ import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail } from "./emailService";
 import {
-  analyzeBadgeImage,
-  lookupOfficerInfo,
+ chatWithFormAssistant,
 } from "./gemini";
 import {
   generateLegalDocument,
