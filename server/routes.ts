@@ -8,9 +8,6 @@ import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail } from "./emailService";
 import {
- chatWithFormAssistant,
-} from "./gemini";
-import {
   generateLegalDocument,
   searchPublicRecords,
   analyzePatternsAndLearn,
