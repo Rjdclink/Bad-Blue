@@ -1635,7 +1635,6 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
   });
 
   app.post("/api/admin/subagent/command",
-    (req: any, res, next) => { next(); },
     isAuthenticated,
     subAgentRateLimit,
     async (req: any, res) => {
