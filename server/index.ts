@@ -191,6 +191,15 @@ async function initializeServices(): Promise<void> {
   } catch (error: any) {
     console.warn('[STARTUP] ⚠ BadBlue Worker failed:', error?.message ?? error);
   }
+
+  // Initialize Sub-Agent Web Harvester for daily officer data collection
+  try {
+    const { subAgentHarvester } = await import('./subAgentWebHarvester');
+    await subAgentHarvester.initialize();
+    console.log('[STARTUP] ✓ Sub-Agent Web Harvester initialized (daily 2:30 UTC)');
+  } catch (error: any) {
+    console.warn('[STARTUP] ⚠ Sub-Agent Web Harvester failed:', error?.message ?? error);
+  }
 }
 
 app.use(express.json({
