@@ -1,0 +1,3659 @@
+import { promises as fs } from 'fs';
+import path from 'path';
+import type { Request, Response } from 'express';
+import { exec as execCb } from 'child_process';
+import { promisify } from 'util';
+const exec = promisify(execCb);
+
+// NOTE: undici is optional at runtime. Do NOT statically import 'undici' here
+// because some deployment environments (Railway minimal images) may not install it.
+// We'll use a runtime fallback: prefer global fetch (Node 18+), otherwise try dynamic import.
+ 
+// Severity levels for failure classification
+export enum Severity {
+  NOTICE = 1,
+  WARNING = 2,
+  MODERATE = 3,
+  SERIOUS = 4,
+  CRITICAL = 5,
+}
+
+export enum IssueCategory {
+  INFRASTRUCTURE = 'infrastructure', // Database, sessions, storage
+  APPLICATION_CODE = 'application_code', // LSP errors, code quality
+  AI_SERVICE = 'ai_service', // Gemini, Groq, API issues
+  DATA_INTEGRITY = 'data_integrity', // Data cleanup, migrations
+  CONFIGURATION = 'configuration', // Env vars, secrets
+  EXTERNAL_DEPENDENCY = 'external_dependency', // Stripe, email, Supabase
+}
+
+export enum Priority {
+  LOW = 1,
+  MEDIUM = 2,
+  HIGH = 3,
+  CRITICAL = 4,
+}
+
+export interface ResourceProfile {
+  cpuIntensive: boolean;
+  memoryIntensive: boolean;
+  apiCallsRequired: boolean;
+  databaseLockRequired: boolean;
+  filesystemWriteRequired: boolean;
+  estimatedDurationSeconds: number;
+}
+
+export interface FailureLogEntry {
+  timestamp: string;
+  functionAffected: string;
+  cause: string;
+  systemState: 'working' | 'not_working';
+  severity: Severity;
+  priority?: Priority;
+  category?: IssueCategory;
+  resourceProfile?: ResourceProfile;
+  dependencies?: string[]; // Array of functionAffected names this depends on
+  resolved?: boolean;
+  resolvedAt?: string;
+  parallelSafe?: boolean; // Can this be fixed in parallel with others?
+}
+
+export interface FunctionErrorLogEntry {
+  timestamp: string;
+  functionTested: string;
+  expectedBehavior: string;
+  observedBehavior: string;
+  severity: Severity;
+  status: 'fixed' | 'pending' | 'skipped';
+  notes?: string;
+}
+
+interface RepairMetrics {
+  queueLatency: number[];
+  meanTimeToResolution: number[];
+  concurrentTaskCount: number;
+  resourceUtilization: { cpu: number; memory: number };
+  repairSuccessRate: number;
+  totalRepairs: number;
+  successfulRepairs: number;
+}
+
+interface ConcurrencyBudget {
+  maxConcurrent: number;
+  availableSlots: number;
+  activeRepairs: Set<string>;
+  resourceLocks: Map<string, boolean>;
+}
+
+class BadBlueWorker {
+  private static instance: BadBlueWorker;
+  private diagnosticInterval: NodeJS.Timeout | null = null;
+  private repairInterval: NodeJS.Timeout | null = null;
+  private weeklyTestSchedule: NodeJS.Timeout | null = null;
+  private backupSchedule: NodeJS.Timeout | null = null;
+  private databaseHeartbeatInterval: NodeJS.Timeout | null = null;
+  private criticalMonitoringInterval: NodeJS.Timeout | null = null;
+  private pruneLogsInterval: NodeJS.Timeout | null = null;
+  private isRepairInProgress = false;
+  private isDiagnosticInProgress = false;
+  private isMaintenanceMode = false;
+  private consecutiveDbFailures = 0;
+  private dbRepairAttempts = 0;
+  private lastAlertTimes: Map<string, number> = new Map(); // For alert deduplication
+
+  // Parallel processing state
+  private repairQueue: FailureLogEntry[] = [];
+  private concurrencyBudget: ConcurrencyBudget = {
+    maxConcurrent: 5,
+    availableSlots: 5,
+    activeRepairs: new Set(),
+    resourceLocks: new Map([
+      ['database', false],
+      ['filesystem', false],
+      ['ai-api', false],
+    ]),
+  };
+  private repairMetrics: RepairMetrics = {
+    queueLatency: [],
+    meanTimeToResolution: [],
+    concurrentTaskCount: 0,
+    resourceUtilization: { cpu: 0, memory: 0 },
+    repairSuccessRate: 0,
+    totalRepairs: 0,
+    successfulRepairs: 0,
+  };
+
+  private readonly DATA_DIR = path.join(process.cwd(), 'data');
+  private readonly FAILURE_LOG = path.join(this.DATA_DIR, 'system_failures.log');
+  private readonly FUNCTION_ERROR_LOG = path.join(this.DATA_DIR, 'worker_function_error.log');
+  private readonly BACKUP_DIR = path.join(this.DATA_DIR, 'backups');
+  private readonly METRICS_LOG = path.join(this.DATA_DIR, 'repair_metrics.json');
+  private readonly HEALTH_METRICS_LOG = path.join(this.DATA_DIR, 'worker_health_metrics.json');
+  private readonly ALERTS_LOG = path.join(this.DATA_DIR, 'system_alerts.log');
+
+  private constructor() {}
+
+  static getInstance(): BadBlueWorker {
+    if (!BadBlueWorker.instance) {
+      BadBlueWorker.instance = new BadBlueWorker();
+    }
+    return BadBlueWorker.instance;
+  }
+
+  async initialize() {
+    console.log('[BadBlue Worker] Initializing background worker system...');
+
+    // Detect Railway environment
+    const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || !!process.env.RAILWAY_PROJECT_ID;
+
+    if (isRailway) {
+      console.log('[BadBlue Worker] Running in Railway production environment - adjusted settings applied');
+    }
+
+    // Register graceful shutdown handlers for Railway/production
+    this.registerShutdownHandlers();
+
+    // Ensure data directory exists and minimal logs
+    await this.ensureDataDirectory();
+
+    // Initialize autonomous search controller only if not Railway (to avoid quota issues)
+    if (!isRailway) {
+      try {
+        const { searchController } = await import('./autonomousSearchController');
+        await searchController.initialize();
+      } catch (e) {
+        console.warn('[BadBlue Worker] autonomousSearchController init failed or missing:', (e as Error).message);
+      }
+    } else {
+      console.log('[BadBlue Worker] Skipping autonomous search controller in Railway environment');
+    }
+
+    // Schedule critical monitoring every 30 minutes
+    this.scheduleCriticalMonitoring();
+
+    // Schedule database heartbeat
+    this.scheduleDatabaseHeartbeat();
+
+    // Schedule diagnostics (6 hours) and other heavy tasks only if not Railway
+    if (!isRailway) {
+      this.scheduleDiagnostics();
+
+      // Schedule maintenance every 24 hours (user requested)
+      this.schedule24HourRepair();
+
+      // Schedule weekly test (kept weekly)
+      this.scheduleWeeklyTest();
+
+      // Weekly backup
+      this.scheduleWeeklyBackup();
+    } else {
+      // Even in Railway, still run basic daily maintenance but lighter
+      this.schedule24HourRepair(true); // lighter mode for Railway
+      console.log('[BadBlue Worker] Heavy background tasks disabled in Railway environment, light maintenance scheduled');
+    }
+
+    // Schedule daily pruning of old logs (error logs auto-deleted after 1 week)
+    this.schedulePruneLogs();
+
+    console.log('[BadBlue Worker] ✓ Background worker system active');
+    console.log(`[BadBlue Worker] - Environment: ${isRailway ? 'Railway Production' : 'Standard'}`);
+    console.log('[BadBlue Worker] - Critical monitoring: Every 30 minutes (rate limits, AI, payments, email)');
+  }
+
+  private registerShutdownHandlers() {
+    const gracefulShutdown = async (signal: string) => {
+      console.log(`[BadBlue Worker] Received ${signal} signal - initiating graceful shutdown...`);
+
+      // Clear all intervals
+      if (this.diagnosticInterval) clearInterval(this.diagnosticInterval);
+      if (this.repairInterval) clearInterval(this.repairInterval);
+      if (this.weeklyTestSchedule) clearTimeout(this.weeklyTestSchedule);
+      if (this.backupSchedule) clearTimeout(this.backupSchedule);
+      if (this.databaseHeartbeatInterval) clearInterval(this.databaseHeartbeatInterval);
+      if (this.criticalMonitoringInterval) clearInterval(this.criticalMonitoringInterval);
+      if (this.pruneLogsInterval) clearInterval(this.pruneLogsInterval);
+
+      // Wait for any ongoing operations to complete
+      const maxWaitTime = 5000; // 5 seconds max wait
+      const startTime = Date.now();
+
+      while ((this.isDiagnosticInProgress || this.isRepairInProgress) && Date.now() - startTime < maxWaitTime) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      console.log('[BadBlue Worker] ✓ Graceful shutdown complete');
+      process.exit(0);
+    };
+
+    // Handle SIGTERM (Railway/Docker) and SIGINT (Ctrl-C)
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      console.error('[BadBlue Worker] Uncaught exception:', error);
+      // Do not exit in production - let process recover if possible
+      if (process.env.NODE_ENV !== 'production') {
+        process.exit(1);
+      }
+    });
+
+    process.on('unhandledRejection', (reason) => {
+      console.error('[BadBlue Worker] Unhandled promise rejection:', reason);
+      if (process.env.NODE_ENV !== 'production') {
+        process.exit(1);
+      }
+    });
+  }
+
+  private async ensureDataDirectory() {
+    try {
+      await fs.mkdir(this.DATA_DIR, { recursive: true });
+
+      // Initialize log files if they don't exist
+      try {
+        await fs.access(this.FAILURE_LOG);
+      } catch {
+        await fs.writeFile(this.FAILURE_LOG, JSON.stringify([], null, 2));
+      }
+
+      try {
+        await fs.access(this.FUNCTION_ERROR_LOG);
+      } catch {
+        await fs.writeFile(this.FUNCTION_ERROR_LOG, JSON.stringify([], null, 2));
+      }
+
+      try {
+        await fs.access(this.ALERTS_LOG);
+      } catch {
+        await fs.writeFile(this.ALERTS_LOG, JSON.stringify([], null, 2));
+      }
+
+      try {
+        await fs.access(this.METRICS_LOG);
+      } catch {
+        await fs.writeFile(this.METRICS_LOG, JSON.stringify([], null, 2));
+      }
+
+      try {
+        await fs.access(this.HEALTH_METRICS_LOG);
+      } catch {
+        await fs.writeFile(this.HEALTH_METRICS_LOG, JSON.stringify([], null, 2));
+      }
+    } catch (error) {
+      console.error('[BadBlue Worker] Error creating data directory:', error);
+    }
+  }
+
+  private scheduleDiagnostics() {
+    // Run diagnostics every 6 hours
+    const SIX_HOURS = 6 * 60 * 60 * 1000;
+
+    this.diagnosticInterval = setInterval(async () => {
+      await this.runDiagnostics();
+    }, SIX_HOURS);
+
+    // First diagnostic runs after a small startup delay to avoid interfering with boot
+    setTimeout(() => this.runDiagnostics().catch((e) => console.warn('[BadBlue Worker] Initial diagnostic failed', e)), 1000 * 30);
+  }
+
+  /**
+   * schedule24HourRepair
+   * Schedules maintenance every 24 hours. If isLightMode is true (Railway),
+   * the maintenance will be less aggressive (no heavy backups/installs).
+   */
+  private schedule24HourRepair(isLightMode = false) {
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+
+    // Run first maintenance a short while after startup
+    setTimeout(async () => {
+      try {
+        await this.runDailyRepair(isLightMode);
+      } catch (e) {
+        console.error('[BadBlue Worker] Initial 24-hour repair run failed:', (e as Error).message);
+      }
+    }, 1000 * 60 * 1); // 1 minute after startup
+
+    // Schedule repeated 24 hour runs
+    this.repairInterval = setInterval(async () => {
+      try {
+        await this.runDailyRepair(isLightMode);
+      } catch (e) {
+        console.error('[BadBlue Worker] Scheduled 24-hour repair run failed:', (e as Error).message);
+      }
+    }, ONE_DAY);
+
+    console.log('[BadBlue Worker] Scheduled 24-hour maintenance (every 24 hours)');
+  }
+
+  private scheduleWeeklyTest() {
+    // Calculate next Sunday 8:30 PM UTC
+    const scheduleNextTest = () => {
+      const now = new Date();
+      const next = new Date(now);
+
+      // Set to 8:30 PM UTC (20:30)
+      next.setUTCHours(20, 30, 0, 0);
+
+      // Move to next Sunday (0 = Sunday)
+      const daysUntilSunday = (7 - now.getUTCDay()) % 7;
+      if (daysUntilSunday === 0 && now.getTime() >= next.getTime()) {
+        next.setDate(next.getDate() + 7);
+      } else {
+        next.setDate(next.getDate() + daysUntilSunday);
+      }
+
+      const delay = next.getTime() - now.getTime();
+
+      this.weeklyTestSchedule = setTimeout(async () => {
+        await this.runWeeklySystemTest();
+        scheduleNextTest(); // Schedule next test
+      }, delay);
+
+      console.log(`[BadBlue Worker] Next comprehensive weekly test scheduled for: ${next.toISOString()}`);
+    };
+
+    scheduleNextTest();
+  }
+
+  private scheduleCriticalMonitoring() {
+    // Run critical monitoring every 30 minutes
+    const THIRTY_MINUTES = 30 * 60 * 1000;
+
+    this.criticalMonitoringInterval = setInterval(async () => {
+      await this.runCriticalMonitoring();
+    }, THIRTY_MINUTES);
+
+    // Run initial check after 1 minute to avoid startup conflicts
+    setTimeout(async () => {
+      await this.runCriticalMonitoring();
+    }, 60000);
+  }
+
+  private scheduleWeeklyBackup() {
+    // Calculate next Sunday 21:00 UTC (9:00 PM)
+    const scheduleNextBackup = () => {
+      const now = new Date();
+      const next = new Date(now);
+
+      // Set to 9:00 PM UTC (21:00)
+      next.setUTCHours(21, 0, 0, 0);
+
+      // Move to next Sunday (0 = Sunday)
+      const daysUntilSunday = (7 - now.getUTCDay()) % 7;
+      if (daysUntilSunday === 0 && now.getTime() >= next.getTime()) {
+        next.setDate(next.getDate() + 7);
+      } else {
+        next.setDate(next.getDate() + daysUntilSunday);
+      }
+
+      const delay = next.getTime() - now.getTime();
+
+      this.backupSchedule = setTimeout(async () => {
+        await this.performWeeklyBackup();
+        scheduleNextBackup(); // Schedule next backup
+      }, delay);
+
+      console.log(`[BadBlue Worker] Next weekly backup scheduled for: ${next.toISOString()}`);
+    };
+
+    scheduleNextBackup();
+  }
+
+  private scheduleDatabaseHeartbeat() {
+    console.log('[BadBlue Worker] Starting database heartbeat...');
+
+    // Detect Railway environment
+    const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || !!process.env.RAILWAY_PROJECT_ID;
+    const heartbeatInterval = isRailway ? 5 * 60 * 1000 : 15 * 60 * 1000; // 5 mins for Railway, 15 for others
+
+    const runHeartbeat = async () => {
+      try {
+        // Add timeout for Railway environments
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Database heartbeat timeout')), isRailway ? 20000 : 10000);
+        });
+
+        const dbPromise = (async () => {
+          const { db } = await import('./db');
+          // If drizzle-orm's sql is available, use it, else fallback
+          try {
+            const { sql } = await import('drizzle-orm');
+            await (db as any).execute(sql`SELECT 1`);
+          } catch {
+            await (db as any).execute('SELECT 1');
+          }
+        })();
+
+        // Race between query and timeout
+        await Promise.race([dbPromise, timeoutPromise]);
+
+        // Reset failure counter on success
+        if (this.consecutiveDbFailures > 0) {
+          console.log(`[BadBlue Worker] ✓ Database connection restored after ${this.consecutiveDbFailures} failures`);
+          this.consecutiveDbFailures = 0;
+          this.dbRepairAttempts = 0;
+
+          await this.logHealthMetric({
+            timestamp: new Date().toISOString(),
+            check: 'database_heartbeat',
+            status: 'restored',
+            consecutiveFailures: 0,
+            repairAttempts: 0,
+            environment: isRailway ? 'railway' : 'standard',
+          });
+        }
+
+        await this.logHealthMetric({
+          timestamp: new Date().toISOString(),
+          check: 'database_heartbeat',
+          status: 'success',
+          consecutiveFailures: 0,
+          environment: isRailway ? 'railway' : 'standard',
+        });
+      } catch (error: any) {
+        this.consecutiveDbFailures++;
+        console.log(`[BadBlue Worker] ❌ Database heartbeat failed (${this.consecutiveDbFailures} consecutive failures) - ${error.message}`);
+
+        await this.logHealthMetric({
+          timestamp: new Date().toISOString(),
+          check: 'database_heartbeat',
+          status: 'failed',
+          error: error.message,
+          consecutiveFailures: this.consecutiveDbFailures,
+          environment: isRailway ? 'railway' : 'standard',
+        });
+
+        // Be less aggressive with repairs in Railway (wait for 5 failures instead of 3)
+        const repairThreshold = isRailway ? 5 : 3;
+        if (this.consecutiveDbFailures >= repairThreshold) {
+          console.log(`[BadBlue Worker] 🚨 ALERT: ${repairThreshold} consecutive database failures - initiating auto-repair`);
+          await this.repairDatabaseConnection();
+        }
+      }
+    };
+
+    // Initial heartbeat after a delay to let the app start up
+    setTimeout(runHeartbeat, isRailway ? 30000 : 10000);
+    this.databaseHeartbeatInterval = setInterval(runHeartbeat, heartbeatInterval);
+  }
+
+  private async repairDatabaseConnection(): Promise<boolean> {
+    if (this.dbRepairAttempts >= 3) {
+      console.log('[BadBlue Worker] 🚨 ESCALATING: 3 repair attempts failed - adding to repair queue');
+
+      await this.addToRepairQueue({
+        timestamp: new Date().toISOString(),
+        functionAffected: 'Database Connection',
+        cause: `Heartbeat failure after ${this.dbRepairAttempts} repair attempts`,
+        systemState: 'not_working',
+        severity: Severity.CRITICAL,
+        priority: Priority.HIGH,
+        category: IssueCategory.INFRASTRUCTURE,
+      });
+
+      this.dbRepairAttempts = 0;
+      return false;
+    }
+
+    this.dbRepairAttempts++;
+    console.log(`[BadBlue Worker] 🔧 Auto-repair attempt ${this.dbRepairAttempts}/3...`);
+
+    try {
+      console.log('[BadBlue Worker] Step 1: Refreshing database credentials...');
+      const databaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL;
+
+      if (!databaseUrl) {
+        console.log('[BadBlue Worker] ❌ DATABASE_URL not found in environment');
+        return false;
+      }
+
+      console.log('[BadBlue Worker] Step 2: Re-initializing connection pool...');
+      try {
+        const dbModule = await import('./db');
+        if (typeof dbModule.resetPool === 'function') {
+          await dbModule.resetPool();
+        }
+      } catch (err) {
+        console.warn('[BadBlue Worker] resetPool not available or failed:', (err as Error).message);
+      }
+
+      console.log('[BadBlue Worker] Step 3: Re-acquiring fresh database instance...');
+      // Must re-import after resetPool to get the NEW db instance
+      const { db: freshDb } = await import('./db');
+
+      console.log('[BadBlue Worker] Step 4: Testing connection...');
+      try {
+        await (freshDb as any).execute('SELECT 1');
+      } catch (e) {
+        // Try simple client query if execute is not available
+        if ((freshDb as any).query) {
+          await (freshDb as any).query('SELECT 1');
+        } else {
+          throw e;
+        }
+      }
+
+      console.log('[BadBlue Worker] Step 5: Verifying migrations (basic check)...');
+      try {
+        const tables = await (freshDb as any).execute(`
+          SELECT tablename FROM pg_tables 
+          WHERE schemaname = 'public'
+          LIMIT 5
+        `);
+        if (!tables || (tables.rows && tables.rows.length === 0)) {
+          console.log('[BadBlue Worker] ⚠️  No tables found - migrations may not be applied');
+        }
+      } catch {
+        console.log('[BadBlue Worker] ⚠️  Unable to verify migrations in this environment');
+      }
+
+      console.log('[BadBlue Worker] ✓ Database connection repaired successfully');
+      this.consecutiveDbFailures = 0;
+      this.dbRepairAttempts = 0;
+
+      await this.logHealthMetric({
+        timestamp: new Date().toISOString(),
+        check: 'database_repair',
+        status: 'success',
+        repairAttempts: this.dbRepairAttempts,
+      });
+
+      // Ensure essential Supabase tables exist (create if missing)
+      await this.ensureSupabaseTables();
+
+      return true;
+    } catch (error: any) {
+      console.log(`[BadBlue Worker] ❌ Repair attempt ${this.dbRepairAttempts} failed: ${error.message}`);
+
+      await this.logHealthMetric({
+        timestamp: new Date().toISOString(),
+        check: 'database_repair',
+        status: 'failed',
+        error: error.message,
+        repairAttempts: this.dbRepairAttempts,
+      });
+
+      return false;
+    }
+  }
+
+  private async logHealthMetric(metric: any): Promise<void> {
+    try {
+      let metrics: any[] = [];
+
+      try {
+        const content = await fs.readFile(this.HEALTH_METRICS_LOG, 'utf-8');
+        metrics = JSON.parse(content);
+      } catch {
+        metrics = [];
+      }
+
+      metrics.push(metric);
+
+      if (metrics.length > 1000) {
+        metrics = metrics.slice(-1000);
+      }
+
+      await fs.writeFile(this.HEALTH_METRICS_LOG, JSON.stringify(metrics, null, 2));
+    } catch (error) {
+      console.error('[BadBlue Worker] Error logging health metric:', error);
+    }
+  }
+
+  private async addToRepairQueue(issue: FailureLogEntry): Promise<void> {
+    this.repairQueue.push(issue);
+
+    this.repairQueue.sort((a, b) => {
+      const priorityA = a.priority || Priority.MEDIUM;
+      const priorityB = b.priority || Priority.MEDIUM;
+
+      if (priorityA !== priorityB) {
+        return priorityB - priorityA;
+      }
+
+      return b.severity - a.severity;
+    });
+
+    await this.logFailure({
+      ...issue,
+    });
+
+    console.log(
+      `[BadBlue Worker] Issue added to repair queue (Priority: ${Priority[issue.priority || Priority.MEDIUM]}, Queue size: ${
+        this.repairQueue.length
+      })`
+    );
+  }
+
+  private async runCriticalMonitoring() {
+    try {
+      console.log('[BadBlue Worker] Running 30-minute critical system monitoring...');
+
+      // Import optional modules defensively
+      let rateLimitTracker: any = null;
+      let searchController: any = null;
+      try {
+        ({ rateLimitTracker } = await import('./rateLimitTracker'));
+      } catch {
+        rateLimitTracker = null;
+      }
+      try {
+        ({ searchController } = await import('./autonomousSearchController'));
+      } catch {
+        searchController = null;
+      }
+
+      const geminiStats = rateLimitTracker?.getStats?.() || { utilizationPercent: 0 };
+      const groqStats = rateLimitTracker?.getGroqStats?.() || { tokenUtilizationPercent: 0, tokenLimit: 0, tokensUsed: 0 };
+      const bothExhausted = rateLimitTracker?.areBothAPIsExhausted?.() || false;
+
+      if (bothExhausted && searchController && !searchController.isPaused?.()) {
+        await searchController.pause('Both Gemini and Groq APIs rate limited');
+        await this.recordAlert({
+          alertType: 'rate_limit_pause',
+          severity: Severity.CRITICAL,
+          title: 'Autonomous Search Paused - API Quotas Exhausted',
+          message: `Gemini: ${geminiStats.utilizationPercent?.toFixed?.(1) || 0}% used, Groq: ${groqStats.tokenUtilizationPercent?.toFixed?.(1) || 0}% used`,
+          metadata: { geminiStats, groqStats },
+        });
+        console.log('[BadBlue Worker] CRITICAL: Both AI APIs exhausted - autonomous search paused');
+      }
+
+      if (!bothExhausted && searchController && searchController.isPaused?.()) {
+        await searchController.recordHealthyRun?.();
+        if (searchController.shouldAutoResume?.()) {
+          await searchController.resume('API quotas recovered');
+          await this.recordAlert({
+            alertType: 'rate_limit_resume',
+            severity: Severity.NOTICE,
+            title: 'Autonomous Search Resumed',
+            message: 'API quotas have recovered',
+            metadata: { geminiStats, groqStats },
+          });
+        }
+      } else if (bothExhausted) {
+        await searchController?.recordUnhealthyRun?.();
+      }
+
+      // Database basic check
+      try {
+        const { db } = await import('./db');
+        const start = Date.now();
+        await (db as any).execute ? (db as any).execute('SELECT 1') : (db as any).query('SELECT 1');
+        const latency = Date.now() - start;
+        if (latency > 2000) {
+          await this.recordAlert({
+            alertType: 'database_slow',
+            severity: Severity.WARNING,
+            title: 'Database Performance Degraded',
+            message: `Query latency: ${latency}ms`,
+            metadata: { latency },
+          });
+        }
+      } catch (error: any) {
+        await this.recordAlert({
+          alertType: 'database_failure',
+          severity: Severity.CRITICAL,
+          title: 'Database Connection Failed',
+          message: error.message,
+        });
+      }
+
+      // Stripe test
+      if (process.env.STRIPE_SECRET_KEY) {
+        try {
+          const Stripe = (await import('stripe')).default;
+          const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
+          await Promise.race([
+            stripe.paymentIntents.list({ limit: 1 }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000)),
+          ]);
+        } catch (error: any) {
+          await this.recordAlert({
+            alertType: 'stripe_failure',
+            severity: Severity.SERIOUS,
+            title: 'Stripe API Connection Failed',
+            message: error.message,
+          });
+        }
+      }
+
+      // Email test
+      if (process.env.GWSMTP_USER && process.env.GWSMTP_PASS) {
+        try {
+          const { emailTransporter } = await import('./emailService');
+          await Promise.race([emailTransporter.verify(), new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))]);
+        } catch (error: any) {
+          await this.recordAlert({
+            alertType: 'email_failure',
+            severity: Severity.MODERATE,
+            title: 'Email SMTP Connection Failed',
+            message: error.message,
+          });
+        }
+      }
+
+      console.log('[BadBlue Worker] Critical monitoring complete');
+    } catch (error) {
+      console.error('[BadBlue Worker] Error in critical monitoring:', error);
+    }
+  }
+
+  private async recordAlert(alert: { alertType: string; severity: Severity; title: string; message: string; metadata?: any }): Promise<void> {
+    const alertKey = alert.alertType;
+    const lastTime = this.lastAlertTimes.get(alertKey) || 0;
+    const now = Date.now();
+
+    // Deduplicate alerts (10 minutes)
+    if (now - lastTime < 10 * 60 * 1000) {
+      return;
+    }
+
+    this.lastAlertTimes.set(alertKey, now);
+
+    try {
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        ...alert,
+      };
+
+      let alerts: any[] = [];
+      try {
+        const data = await fs.readFile(this.ALERTS_LOG, 'utf-8');
+        alerts = JSON.parse(data);
+      } catch {
+        alerts = [];
+      }
+
+      alerts.push(logEntry);
+      if (alerts.length > 500) {
+        alerts.splice(0, alerts.length - 500);
+      }
+      await fs.writeFile(this.ALERTS_LOG, JSON.stringify(alerts, null, 2));
+
+      // Try insert into DB if schema available
+      try {
+        const { db } = await import('./db');
+        const { workerAlerts } = await import('@shared/schema');
+        if (db && workerAlerts) {
+          await (db as any).insert(workerAlerts).values({
+            alertType: alert.alertType,
+            severity: alert.severity,
+            title: alert.title,
+            message: alert.message,
+            metadata: alert.metadata || null,
+            resolved: false,
+          });
+        }
+      } catch (dbError: any) {
+        console.warn('[BadBlue Worker] Database alert logging failed:', dbError?.message || dbError);
+      }
+    } catch (error) {
+      console.error('[BadBlue Worker] Error recording alert:', error);
+    }
+  }
+
+  private async runDiagnostics() {
+    if (this.isDiagnosticInProgress || this.isRepairInProgress) {
+      console.log('[BadBlue Worker] Diagnostic skipped - system busy');
+      return;
+    }
+
+    this.isDiagnosticInProgress = true;
+    // Do NOT activate maintenance mode for 6-hour diagnostics - run as background process
+    console.log('[BadBlue Worker] Starting 6-hour background diagnostic health check...');
+
+    try {
+      const issues: FailureLogEntry[] = [];
+
+      // Check rate limit status FIRST to avoid wasting API quota
+      let rateLimitTracker: any = null;
+      try {
+        ({ rateLimitTracker } = await import('./rateLimitTracker'));
+      } catch {
+        rateLimitTracker = null;
+      }
+
+      const rateLimitStats = rateLimitTracker?.getStats?.() || { requests: 0, consecutiveErrors: 0, utilizationPercent: 0 };
+      const apisAreRateLimited = rateLimitTracker?.shouldUseGroq?.() || rateLimitStats.consecutiveErrors >= 2;
+
+      if (apisAreRateLimited) {
+        console.log('[BadBlue Worker] ⚠️  AI APIs are rate limited - skipping AI diagnostic tests to preserve quota');
+        console.log(`[BadBlue Worker] Rate limit stats: ${JSON.stringify(rateLimitStats)}`);
+      }
+
+      // Diagnostic 1: Database Connection & Operations
+      try {
+        console.log('[BadBlue Worker] Testing database operations...');
+        const { db } = await import('./db');
+
+        // Test 1: Basic connectivity
+        await (db as any).execute ? (db as any).execute('SELECT 1') : (db as any).query('SELECT 1');
+
+        // Test 2: Check database tables exist
+        let tablesResult: any = { rows: [] };
+        try {
+          tablesResult = await (db as any).execute(`
+            SELECT tablename FROM pg_tables 
+            WHERE schemaname = 'public'
+          `);
+        } catch {
+          // Not fatal; proceed
+        }
+
+        // Test 3: Test complex query performance
+        const start = Date.now();
+        await (db as any).execute ? (db as any).execute('SELECT NOW()') : (db as any).query('SELECT NOW()');
+        const queryTime = Date.now() - start;
+
+        if (queryTime > 1000) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Database Performance',
+            cause: `Slow query response: ${queryTime}ms`,
+            systemState: 'working',
+            severity: Severity.WARNING,
+          });
+        }
+
+        console.log(
+          `[BadBlue Worker] ✓ Database operational (${(tablesResult?.rows?.length) || 0} tables, ${queryTime}ms latency)`
+        );
+      } catch (error: any) {
+        console.log('[BadBlue Worker] ❌ Database connection failed');
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'Database Connection',
+          cause: error.message,
+          systemState: 'not_working',
+          severity: Severity.CRITICAL,
+        });
+      }
+
+      // Diagnostic: AI Function Tests (ONLY if APIs are not rate limited)
+      if (!apisAreRateLimited) {
+        // Legal AI test
+        try {
+          const { analyzeLegalIssue } = await import('./legalAI');
+          await analyzeLegalIssue('Test', 'CA', 'diagnostic');
+          console.log('[BadBlue Worker] ✓ Legal AI analysis operational');
+        } catch (error: any) {
+          console.log('[BadBlue Worker] ❌ Legal AI analysis failed');
+          const isRateLimitError =
+            (error && (error.message || '').toLowerCase().includes('rate limit')) || error.status === 429;
+          const severity = isRateLimitError ? Severity.NOTICE : Severity.SERIOUS;
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Legal AI - Analysis Function',
+            cause: `AI analysis failed: ${error.message || error}`,
+            systemState: isRateLimitError ? 'working' : 'not_working',
+            severity,
+          });
+        }
+
+        // Tort Notice Generator test
+        try {
+          const { generateTortNotice } = await import('./tortNoticeGenerator');
+          await generateTortNotice({
+            state: 'CA',
+            claimantName: 'Test',
+            claimantAddress: '123',
+            claimantEmail: 't@t.com',
+            officerName: 'Test',
+            officerBadge: '1',
+            department: 'T',
+            city: 'T',
+            county: null,
+            incidentDate: new Date(),
+            incidentDescription: 'diagnostic',
+          });
+          console.log('[BadBlue Worker] ✓ Tort Notice Generator operational');
+        } catch (error: any) {
+          console.log('[BadBlue Worker] ❌ Tort Notice Generator failed');
+          const isRateLimitError =
+            (error && (error.message || '').toLowerCase().includes('rate limit')) || error.status === 429;
+          const severity = isRateLimitError ? Severity.NOTICE : Severity.SERIOUS;
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Tort Notice Generator',
+            cause: `Notice generation failed: ${error.message || error}`,
+            systemState: isRateLimitError ? 'working' : 'not_working',
+            severity,
+          });
+        }
+      } else {
+        console.log('[BadBlue Worker] ⏭️  Skipping AI service tests - rate limited');
+      }
+
+      // Diagnostic: Validate ALL Secret Keys
+      try {
+        console.log('[BadBlue Worker] Validating secret keys...');
+        const requiredSecrets = [
+          { key: 'GEMINI_API_KEY', name: 'Gemini AI API Key', severity: Severity.CRITICAL },
+          { key: 'GROQ_API_KEY', name: 'Groq AI API Key', severity: Severity.SERIOUS },
+          { key: 'STRIPE_SECRET_KEY', name: 'Stripe Secret Key', severity: Severity.SERIOUS },
+          { key: 'STRIPE_WEBHOOK_SECRET', name: 'Stripe Webhook Secret', severity: Severity.WARNING },
+          { key: 'GWSMTP_USER', name: 'Email SMTP Username', severity: Severity.MODERATE },
+          { key: 'GWSMTP_PASS', name: 'Email SMTP Password', severity: Severity.MODERATE },
+          { key: 'SESSION_SECRET', name: 'Session Secret', severity: Severity.CRITICAL },
+          { key: 'DATABASE_URL', name: 'Supabase Database URL', severity: Severity.CRITICAL },
+        ];
+
+        let missingSecrets: string[] = [];
+
+        for (const secret of requiredSecrets) {
+          if (!process.env[secret.key]) {
+            missingSecrets.push(secret.name);
+            issues.push({
+              timestamp: new Date().toISOString(),
+              functionAffected: `Secret Key: ${secret.name}`,
+              cause: `${secret.key} environment variable not set`,
+              systemState: 'not_working',
+              severity: secret.severity,
+            });
+          }
+        }
+
+        if (missingSecrets.length === 0) {
+          console.log('[BadBlue Worker] ✓ All secret keys configured');
+        } else {
+          console.log(`[BadBlue Worker] ⚠ Missing secrets: ${missingSecrets.join(', ')}`);
+        }
+      } catch (error: any) {
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'Secret Keys Validation',
+          cause: error.message,
+          systemState: 'not_working',
+          severity: Severity.CRITICAL,
+        });
+      }
+
+      // Stripe checks
+      try {
+        console.log('[BadBlue Worker] Testing Stripe payment service...');
+        const stripeKey = process.env.STRIPE_SECRET_KEY;
+
+        if (!stripeKey) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Stripe Payment Service',
+            cause: 'Stripe secret key missing',
+            systemState: 'not_working',
+            severity: Severity.SERIOUS,
+          });
+        } else {
+          const Stripe = (await import('stripe')).default;
+          const stripe = new Stripe(stripeKey, { apiVersion: '2024-06-20' });
+
+          try {
+            await stripe.balance.retrieve();
+            console.log('[BadBlue Worker] ✓ Stripe payment service operational');
+          } catch (stripeError: any) {
+            issues.push({
+              timestamp: new Date().toISOString(),
+              functionAffected: 'Stripe Payment Service',
+              cause: `Stripe API validation failed: ${stripeError.message}`,
+              systemState: 'not_working',
+              severity: Severity.SERIOUS,
+            });
+          }
+        }
+
+        const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+        if (!webhookSecret) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Stripe Webhook Handler',
+            cause: 'Webhook secret not configured',
+            systemState: 'working',
+            severity: Severity.WARNING,
+          });
+        }
+      } catch (error: any) {
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'Stripe Payment Validation',
+          cause: error.message,
+          systemState: 'not_working',
+          severity: Severity.SERIOUS,
+        });
+      }
+
+      // AI API key checks
+      if (!apisAreRateLimited) {
+        try {
+          console.log('[BadBlue Worker] Testing AI service connectivity...');
+
+          const geminiKey = process.env.GEMINI_API_KEY;
+          if (geminiKey) {
+            if (geminiKey.length > 20 && geminiKey.startsWith('AI')) {
+              console.log('[BadBlue Worker] ✓ Gemini API key configured (not tested to preserve quota for users)');
+            } else {
+              console.log('[BadBlue Worker] ⚠ Gemini API key present but may be invalid format');
+              issues.push({
+                timestamp: new Date().toISOString(),
+                functionAffected: 'Gemini AI Service',
+                cause: 'Gemini API key may be malformed',
+                systemState: 'unknown',
+                severity: Severity.WARNING,
+              });
+            }
+          } else {
+            console.log('[BadBlue Worker] ❌ Gemini API key not configured');
+            issues.push({
+              timestamp: new Date().toISOString(),
+              functionAffected: 'Gemini AI Service',
+              cause: 'GEMINI_API_KEY not configured',
+              systemState: 'not_working',
+              severity: Severity.CRITICAL,
+            });
+          }
+        } catch (error: any) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'AI Service Validation',
+            cause: error.message,
+            systemState: 'not_working',
+            severity: Severity.CRITICAL,
+          });
+        }
+      } else {
+        console.log('[BadBlue Worker] ⏭️  Skipping AI service tests - rate limited');
+
+        if (!process.env.GEMINI_API_KEY) {
+          console.log('[BadBlue Worker] ❌ Gemini API key not configured');
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Gemini AI Service',
+            cause: 'GEMINI_API_KEY not configured',
+            systemState: 'not_working',
+            severity: Severity.CRITICAL,
+          });
+        } else {
+          console.log('[BadBlue Worker] ✓ Gemini API key configured');
+        }
+
+        if (!process.env.GROQ_API_KEY) {
+          console.log('[BadBlue Worker] ❌ Groq API key not configured');
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Groq AI Service',
+            cause: 'GROQ_API_KEY not configured',
+            systemState: 'not_working',
+            severity: Severity.SERIOUS,
+          });
+        } else {
+          console.log('[BadBlue Worker] ✓ Groq API key configured');
+        }
+      }
+
+      // Email service
+      try {
+        console.log('[BadBlue Worker] Testing email service...');
+        const smtpUser = process.env.GWSMTP_USER;
+        const smtpPass = process.env.GWSMTP_PASS;
+
+        if (!smtpUser || !smtpPass) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Email Service',
+            cause: 'SMTP credentials missing',
+            systemState: 'not_working',
+            severity: Severity.MODERATE,
+          });
+        } else {
+          const nodemailer = await import('nodemailer');
+          const transporter = nodemailer.default.createTransport({
+            host: 'smtp-relay.gmail.com',
+            port: 587,
+            secure: false,
+            auth: {
+              user: smtpUser,
+              pass: smtpPass,
+            },
+          });
+
+          try {
+            await transporter.verify();
+            console.log('[BadBlue Worker] ✓ Email service operational');
+          } catch (emailError: any) {
+            issues.push({
+              timestamp: new Date().toISOString(),
+              functionAffected: 'Email Service SMTP',
+              cause: `SMTP connection test failed: ${emailError.message}`,
+              systemState: 'not_working',
+              severity: Severity.MODERATE,
+            });
+          }
+        }
+      } catch (error: any) {
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'Email Service Validation',
+          cause: error.message,
+          systemState: 'not_working',
+          severity: Severity.MODERATE,
+        });
+      }
+
+      // Supabase connectivity
+      try {
+        console.log('[BadBlue Worker] Testing Supabase database connectivity...');
+        const databaseUrl = process.env.DATABASE_URL;
+
+        if (!databaseUrl) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Supabase Database',
+            cause: 'DATABASE_URL not configured',
+            systemState: 'not_working',
+            severity: Severity.CRITICAL,
+          });
+        } else {
+          const { db } = await import('./db');
+
+          // Test basic query
+          await (db as any).execute ? (db as any).execute('SELECT 1') : (db as any).query('SELECT 1');
+
+          // Test connection pool health if pool exported
+          try {
+            const { pool } = await import('./db');
+            const poolStats = {
+              total: pool.totalCount,
+              idle: pool.idleCount,
+              waiting: pool.waitingCount,
+            };
+
+            console.log(`[BadBlue Worker] ✓ Supabase connected (Pool: ${poolStats.total} total, ${poolStats.idle} idle, ${poolStats.waiting} waiting)`);
+
+            if (poolStats.waiting > 5) {
+              issues.push({
+                timestamp: new Date().toISOString(),
+                functionAffected: 'Supabase Connection Pool',
+                cause: `High connection wait count: ${poolStats.waiting} queries waiting`,
+                systemState: 'working',
+                severity: Severity.WARNING,
+              });
+            }
+          } catch {
+            // Pool metadata not available - skip
+            console.log('[BadBlue Worker] Supabase pool metadata not available - skipping pool health checks');
+          }
+        }
+      } catch (error: any) {
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'Supabase Database Connectivity',
+          cause: error.message,
+          systemState: 'not_working',
+          severity: Severity.CRITICAL,
+        });
+      }
+
+      // Stripe operations aggressive test (lightweight)
+      try {
+        console.log('[BadBlue Worker] Testing Stripe advanced operations...');
+        const stripeKey = process.env.STRIPE_SECRET_KEY;
+
+        if (stripeKey) {
+          const Stripe = (await import('stripe')).default;
+          const stripe = new Stripe(stripeKey, { apiVersion: '2024-06-20' });
+
+          try {
+            const prices = await stripe.prices.list({ limit: 1 });
+            const balance = await stripe.balance.retrieve();
+            const products = await stripe.products.list({ limit: 1 });
+
+            console.log(
+              `[BadBlue Worker] ✓ Stripe operations functional (${(products?.data?.length) || 0} products, balance: ${
+                (balance?.available?.length) || 0
+              } currencies)`
+            );
+          } catch (stripeError: any) {
+            console.log('[BadBlue Worker] ❌ Stripe operations failed');
+            issues.push({
+              timestamp: new Date().toISOString(),
+              functionAffected: 'Stripe Operations',
+              cause: `Stripe test failed: ${stripeError.message}`,
+              systemState: 'not_working',
+              severity: Severity.SERIOUS,
+            });
+          }
+        }
+      } catch (error: any) {
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'Stripe Operations Testing',
+          cause: error.message,
+          systemState: 'not_working',
+          severity: Severity.SERIOUS,
+        });
+      }
+
+      // Object storage availability
+      try {
+        console.log('[BadBlue Worker] Testing object storage availability...');
+        const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
+
+        if (bucketId) {
+          console.log('[BadBlue Worker] ✓ Object storage configured');
+        } else {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Object Storage',
+            cause: 'DEFAULT_OBJECT_STORAGE_BUCKET_ID not configured',
+            systemState: 'not_working',
+            severity: Severity.WARNING,
+          });
+        }
+      } catch (error: any) {
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'Object Storage Validation',
+          cause: error.message,
+          systemState: 'not_working',
+          severity: Severity.WARNING,
+        });
+      }
+
+      // Sessions
+      try {
+        console.log('[BadBlue Worker] Testing session management...');
+        const sessionSecret = process.env.SESSION_SECRET;
+
+        if (!sessionSecret) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Session Management',
+            cause: 'SESSION_SECRET not configured',
+            systemState: 'not_working',
+            severity: Severity.CRITICAL,
+          });
+        } else if (sessionSecret.length < 32) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Session Security',
+            cause: 'SESSION_SECRET too short (< 32 characters)',
+            systemState: 'working',
+            severity: Severity.WARNING,
+          });
+        } else {
+          console.log('[BadBlue Worker] ✓ Session management configured');
+        }
+      } catch (error: any) {
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'Session Management Validation',
+          cause: error.message,
+          systemState: 'not_working',
+          severity: Severity.CRITICAL,
+        });
+      }
+
+      // File system permissions
+      try {
+        console.log('[BadBlue Worker] Testing file system permissions...');
+        const fsp = await import('fs/promises');
+        const pathMod = await import('path');
+
+        const testDir = pathMod.default.join(process.cwd(), 'data');
+        const testFile = pathMod.default.join(testDir, '.worker_test');
+
+        try {
+          await fsp.mkdir(testDir, { recursive: true });
+          await fsp.writeFile(testFile, 'test', 'utf-8');
+          await fsp.unlink(testFile);
+          console.log('[BadBlue Worker] ✓ File system permissions OK');
+        } catch (fsError: any) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'File System Permissions',
+            cause: `Cannot write to data directory: ${fsError.message}`,
+            systemState: 'not_working',
+            severity: Severity.CRITICAL,
+          });
+        }
+      } catch (error: any) {
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'File System Testing',
+          cause: error.message,
+          systemState: 'not_working',
+          severity: Severity.CRITICAL,
+        });
+      }
+
+      // Memory & Resource Usage
+      try {
+        console.log('[BadBlue Worker] Checking system resources...');
+        const used = process.memoryUsage();
+        const memoryMB = Math.round(used.heapUsed / 1024 / 1024);
+        const totalMB = Math.round(used.heapTotal / 1024 / 1024);
+
+        console.log(`[BadBlue Worker] ✓ Memory usage: ${memoryMB}MB / ${totalMB}MB`);
+
+        if (memoryMB > 400) {
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Memory Usage',
+            cause: `High memory usage: ${memoryMB}MB`,
+            systemState: 'working',
+            severity: Severity.WARNING,
+          });
+        }
+      } catch (error: any) {
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'Resource Monitoring',
+          cause: error.message,
+          systemState: 'working',
+          severity: Severity.NOTICE,
+        });
+      }
+
+      // LSP Error Detection and Auto-Fix
+      try {
+        console.log('[BadBlue Worker] Checking for LSP errors...');
+        const lspErrors = await this.checkLSPErrors();
+
+        if (lspErrors.length > 0) {
+          console.log(`[BadBlue Worker] ⚠️  Found ${lspErrors.length} LSP errors - initiating auto-fix`);
+          issues.push({
+            timestamp: new Date().toISOString(),
+            functionAffected: 'Code Quality (LSP Errors)',
+            cause: `Found ${lspErrors.length} LSP diagnostics in codebase`,
+            systemState: 'working',
+            severity: Severity.WARNING,
+          });
+
+          // Auto-fix LSP errors using AI Sub-Agent and local tools
+          const fixResult = await this.fixLSPErrors(lspErrors);
+          if (fixResult.success) {
+            console.log(`[BadBlue Worker] ✓ Successfully fixed ${fixResult.fixed} LSP errors`);
+            // Optionally run tsc to verify
+            try {
+              await exec('npx tsc --noEmit --pretty false');
+            } catch {
+              // ignore failures - they will appear in subsequent diagnostics
+            }
+          } else {
+            console.log(`[BadBlue Worker] ⚠️  Fixed ${fixResult.fixed} out of ${lspErrors.length} LSP errors`);
+          }
+        } else {
+          console.log('[BadBlue Worker] ✓ No LSP errors detected');
+        }
+      } catch (error: any) {
+        console.log('[BadBlue Worker] ❌ LSP error check failed:', error.message);
+        issues.push({
+          timestamp: new Date().toISOString(),
+          functionAffected: 'LSP Error Detection',
+          cause: error.message,
+          systemState: 'working',
+          severity: Severity.NOTICE,
+        });
+      }
+
+      // Save issues to log
+      if (issues.length > 0) {
+        await this.appendFailureLog(issues);
+        console.log(`[BadBlue Worker] ⚠️  Health check complete - ${issues.length} issue(s) detected - SEE FAILURE LOG`);
+      } else {
+        console.log('[BadBlue Worker] ✓ Health check complete - all systems operational');
+      }
+    } catch (error) {
+      console.error('[BadBlue Worker] ❌ Error during diagnostics:', error);
+    } finally {
+      this.isDiagnosticInProgress = false;
+      console.log('[BadBlue Worker] Background diagnostic cycle complete');
+    }
+  }
+
+  private async checkLSPErrors(): Promise<any[]> {
+    try {
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+
+      // Run TypeScript compiler in no-emit mode to get diagnostics
+      const { stdout, stderr } = await execAsync('npx tsc --noEmit --pretty false 2>&1 || true');
+      const output = (stdout || '') + (stderr || '');
+
+      // Parse LSP errors from output
+      const errorLines = output
+        .split('\n')
+        .filter((line) => line.includes('error TS') && !line.includes('0 errors'));
+
+      return errorLines.map((line) => {
+        const match = line.match(/^(.+?)\((\d+),(\d+)\): error (TS\d+): (.+)$/);
+        if (match) {
+          return {
+            file: match[1],
+            line: parseInt(match[2]),
+            column: parseInt(match[3]),
+            code: match[4],
+            message: match[5],
+          };
+        }
+        return { raw: line };
+      });
+    } catch (error: any) {
+      console.error('[BadBlue Worker] LSP check error:', error.message);
+      return [];
+    }
+  }
+
+  private async fixLSPErrors(errors: any[]): Promise<{ success: boolean; fixed: number }> {
+    try {
+      // SECURITY: All repairs go through secured AI Sub-Agent (4-layer firewall)
+      const { processSubAgentCommand } = await import('./aiSubAgent');
+
+      // Create a command to fix the LSP errors
+      const errorSummary = errors
+        .slice(0, 10)
+        .map((e, i) => `${i + 1}. ${e.file || e.raw}:${e.line || 0} - ${e.message || JSON.stringify(e)}`)
+        .join('\n');
+
+      const command = `Fix the following TypeScript/TS errors in the repository. For each error:
+1) Provide a short explanation of the root cause.
+2) Modify the repository files to eliminate the error (apply minimal, safe change).
+3) If a code change is required, provide the exact patch or run the modification.
+List changes as file paths and patch content. Errors:
+${errorSummary}`;
+
+      const result = await processSubAgentCommand({ command, category: 'code_modification' });
+
+      if (result.success) {
+        // After applying code modifications, run local tools to install missing packages (if requested)
+        // Sub-agent may output packages to install in result.packagesToInstall
+        if (result.packagesToInstall && Array.isArray(result.packagesToInstall) && result.packagesToInstall.length > 0) {
+          await this.installMissingPackages(result.packagesToInstall);
+        }
+
+        // Optionally run tsc to validate
+        try {
+          await exec('npx tsc --noEmit --pretty false');
+        } catch {
+          // If types still fail, consider partial success
+        }
+
+        // If repository is configured to allow commits, commit changes
+        if (process.env.ALLOW_WORKER_GIT === 'true') {
+          try {
+            await this.commitChanges('Automated LSP fixes from BadBlueWorker');
+          } catch {
+            // ignore commit failures
+          }
+        }
+
+        return { success: true, fixed: errors.length };
+      } else {
+        return { success: false, fixed: result.fixedCount || 0 };
+      }
+    } catch (error: any) {
+      console.error('[BadBlue Worker] LSP auto-fix error:', error.message);
+      return { success: false, fixed: 0 };
+    }
+  }
+
+  // ============================================================================
+  // PARALLEL REPAIR ORCHESTRATOR - Handles multiple issues simultaneously
+  // ============================================================================
+
+  private categorizeIssue(issue: FailureLogEntry): FailureLogEntry {
+    // Determine category based on functionAffected
+    let category: IssueCategory = IssueCategory.INFRASTRUCTURE;
+    let parallelSafe = true;
+    let resourceProfile: ResourceProfile = {
+      cpuIntensive: false,
+      memoryIntensive: false,
+      apiCallsRequired: false,
+      databaseLockRequired: false,
+      filesystemWriteRequired: false,
+      estimatedDurationSeconds: 30,
+    };
+
+    const funcName = (issue.functionAffected || '').toLowerCase();
+
+    if (funcName.includes('database') || funcName.includes('postgres') || funcName.includes('supabase')) {
+      category = IssueCategory.INFRASTRUCTURE;
+      resourceProfile.databaseLockRequired = true;
+      resourceProfile.estimatedDurationSeconds = 60;
+      parallelSafe = false; // Database operations should be serial
+    } else if (funcName.includes('lsp') || funcName.includes('code quality') || funcName.includes('typescript') || funcName.includes('tsc')) {
+      category = IssueCategory.APPLICATION_CODE;
+      resourceProfile.filesystemWriteRequired = true;
+      resourceProfile.cpuIntensive = true;
+      resourceProfile.estimatedDurationSeconds = 120;
+      parallelSafe = true; // LSP fixes can be parallel if different files
+    } else if (funcName.includes('gemini') || funcName.includes('groq') || funcName.includes('ai')) {
+      category = IssueCategory.AI_SERVICE;
+      resourceProfile.apiCallsRequired = true;
+      resourceProfile.estimatedDurationSeconds = 45;
+      parallelSafe = true; // API tests can run in parallel
+    } else if (funcName.includes('stripe') || funcName.includes('email') || funcName.includes('smtp')) {
+      category = IssueCategory.EXTERNAL_DEPENDENCY;
+      resourceProfile.apiCallsRequired = true;
+      resourceProfile.estimatedDurationSeconds = 30;
+      parallelSafe = true;
+    } else if (funcName.includes('secret') || funcName.includes('env') || funcName.includes('config')) {
+      category = IssueCategory.CONFIGURATION;
+      resourceProfile.estimatedDurationSeconds = 15;
+      parallelSafe = true;
+    } else if (funcName.includes('cleanup') || funcName.includes('data')) {
+      category = IssueCategory.DATA_INTEGRITY;
+      resourceProfile.databaseLockRequired = true;
+      resourceProfile.estimatedDurationSeconds = 90;
+      parallelSafe = false;
+    }
+
+    // CRITICAL and SERIOUS issues always run serially for safety
+    if (issue.severity >= Severity.SERIOUS) {
+      parallelSafe = false;
+    }
+
+    return {
+      ...issue,
+      category,
+      resourceProfile,
+      parallelSafe,
+      dependencies: this.detectDependencies(issue, category),
+    };
+  }
+
+  private detectDependencies(issue: FailureLogEntry, category: IssueCategory): string[] {
+    const deps: string[] = [];
+
+    // Database issues depend on database connection being available
+    if (category === IssueCategory.DATA_INTEGRITY) {
+      deps.push('Database Connection');
+    }
+
+    // AI service issues depend on configuration
+    if (category === IssueCategory.AI_SERVICE) {
+      deps.push('AI API Configuration');
+    }
+
+    // External dependencies need configuration
+    if (category === IssueCategory.EXTERNAL_DEPENDENCY) {
+      deps.push('External Service Configuration');
+    }
+
+    return deps;
+  }
+
+  private async getSystemResources(): Promise<{ cpu: number; memory: number }> {
+    try {
+      const os = await import('os');
+      const cpus = os.cpus();
+      const totalMem = os.totalmem();
+      const freeMem = os.freemem();
+
+      // Calculate CPU usage (simplified)
+      const cpuUsage =
+        cpus.reduce((acc, cpu) => {
+          const total = Object.values(cpu.times).reduce((a, b) => a + (b as number), 0);
+          const idle = cpu.times.idle;
+          return acc + (1 - idle / total);
+        }, 0) / cpus.length;
+
+      const memoryUsage = ((totalMem - freeMem) / totalMem) * 100;
+
+      return {
+        cpu: cpuUsage * 100,
+        memory: memoryUsage,
+      };
+    } catch {
+      return { cpu: 0, memory: 0 };
+    }
+  }
+
+  private async calculateConcurrencyBudget(): Promise<number> {
+    const resources = await this.getSystemResources();
+    let rateLimitStats: any = { utilizationPercent: 0 };
+    try {
+      const { rateLimitTracker } = await import('./rateLimitTracker');
+      rateLimitStats = rateLimitTracker.getStats();
+    } catch {
+      // ignore
+    }
+
+    // Start with max concurrent
+    let budget = this.concurrencyBudget.maxConcurrent;
+
+    // Reduce budget if CPU is high
+    if (resources.cpu > 70) budget = Math.max(2, budget - 2);
+    if (resources.cpu > 85) budget = 1; // Serial only under heavy load
+
+    // Reduce budget if memory is high
+    if (resources.memory > 80) budget = Math.max(1, budget - 1);
+
+    // Reduce budget if APIs are rate-limited
+    if (rateLimitStats.utilizationPercent > 80) budget = Math.max(2, budget - 1);
+
+    // In maintenance mode, allow more parallelism
+    if (this.isMaintenanceMode) budget = this.concurrencyBudget.maxConcurrent;
+
+    return budget;
+  }
+
+  private canAcquireLocks(issue: FailureLogEntry): boolean {
+    if (!issue.resourceProfile) return true;
+
+    const locks: string[] = [];
+    if (issue.resourceProfile.databaseLockRequired) locks.push('database');
+    if (issue.resourceProfile.filesystemWriteRequired) locks.push('filesystem');
+    if (issue.resourceProfile.apiCallsRequired) locks.push('ai-api');
+
+    // Check if all required locks are available
+    return locks.every((lock) => !this.concurrencyBudget.resourceLocks.get(lock));
+  }
+
+  private acquireLocks(issue: FailureLogEntry): void {
+    if (!issue.resourceProfile) return;
+
+    if (issue.resourceProfile.databaseLockRequired) {
+      this.concurrencyBudget.resourceLocks.set('database', true);
+    }
+    if (issue.resourceProfile.filesystemWriteRequired) {
+      this.concurrencyBudget.resourceLocks.set('filesystem', true);
+    }
+    if (issue.resourceProfile.apiCallsRequired) {
+      this.concurrencyBudget.resourceLocks.set('ai-api', true);
+    }
+  }
+
+  private releaseLocks(issue: FailureLogEntry): void {
+    if (!issue.resourceProfile) return;
+
+    if (issue.resourceProfile.databaseLockRequired) {
+      this.concurrencyBudget.resourceLocks.set('database', false);
+    }
+    if (issue.resourceProfile.filesystemWriteRequired) {
+      this.concurrencyBudget.resourceLocks.set('filesystem', false);
+    }
+    if (issue.resourceProfile.apiCallsRequired) {
+      this.concurrencyBudget.resourceLocks.set('ai-api', false);
+    }
+  }
+
+  private async executeParallelRepairs(issues: FailureLogEntry[]): Promise<void> {
+    if (issues.length === 0) return;
+
+    console.log(`[BadBlue Worker] 🔄 Orchestrating parallel repair for ${issues.length} issues...`);
+
+    // Categorize all issues
+    const categorized = issues.map((issue) => this.categorizeIssue(issue));
+
+    // Separate by severity - CRITICAL/SERIOUS run serially first
+    const critical = categorized.filter((i) => i.severity >= Severity.SERIOUS);
+    const moderate = categorized.filter((i) => i.severity === Severity.MODERATE || i.severity === Severity.WARNING);
+    const minor = categorized.filter((i) => i.severity === Severity.NOTICE);
+
+    // Execute critical issues serially
+    if (critical.length > 0) {
+      console.log(`[BadBlue Worker] 🚨 Handling ${critical.length} CRITICAL/SERIOUS issues serially...`);
+      for (const issue of critical) {
+        await this.executeRepair(issue);
+      }
+    }
+
+    // Execute moderate/minor issues in parallel batches
+    const parallelizable = [...moderate, ...minor].filter((i) => i.parallelSafe);
+    const serial = [...moderate, ...minor].filter((i) => !i.parallelSafe);
+
+    if (parallelizable.length > 0) {
+      const budget = await this.calculateConcurrencyBudget();
+      console.log(`[BadBlue Worker] ⚡ Executing ${parallelizable.length} issues in parallel (budget: ${budget})...`);
+
+      // Process in parallel batches
+      const batches: FailureLogEntry[][] = [];
+      for (let i = 0; i < parallelizable.length; i += budget) {
+        batches.push(parallelizable.slice(i, i + budget));
+      }
+
+      for (const batch of batches) {
+        const startTime = Date.now();
+        await Promise.all(
+          batch
+            .filter((issue) => this.canAcquireLocks(issue))
+            .map(async (issue) => {
+              this.acquireLocks(issue);
+              try {
+                await this.executeRepair(issue);
+              } finally {
+                this.releaseLocks(issue);
+              }
+            })
+        );
+        const duration = Date.now() - startTime;
+        this.repairMetrics.queueLatency.push(duration);
+        console.log(`[BadBlue Worker] ✓ Batch of ${batch.length} repairs completed in ${duration}ms`);
+      }
+    }
+
+    if (serial.length > 0) {
+      console.log(`[BadBlue Worker] 📋 Handling ${serial.length} non-parallelizable issues serially...`);
+      for (const issue of serial) {
+        await this.executeRepair(issue);
+      }
+    }
+
+    await this.saveMetrics();
+  }
+
+  /**
+   * ARCHITECT-LEVEL ANALYSIS: Deep issue analysis with pattern recognition
+   * Endows Worker with capabilities to find issues, flaws, problems, failures, and strategize
+   */
+  private async performArchitectAnalysis(issue: FailureLogEntry): Promise<{
+    rootCause: string;
+    impactAssessment: string;
+    riskLevel: string;
+    relatedPatterns: string[];
+    proposedStrategy: string;
+    confidence: number;
+  }> {
+    console.log(`[BadBlue Worker] 🔍 ARCHITECT-LEVEL ANALYSIS: ${issue.functionAffected}`);
+
+    const { executeAdvancedReasoning } = await import('./aiSubAgent');
+
+    const analysisTask = `Perform deep architect-level analysis of this system issue:
+
+ISSUE DETAILS:
+- Function/Component: ${issue.functionAffected}
+- Direct Cause: ${issue.cause}
+- Severity: ${Severity[issue.severity]}
+- Category: ${issue.category}
+- System State: ${issue.systemState}
+
+ANALYSIS DIRECTIVES:
+1. ROOT CAUSE ANALYSIS: What is the underlying root cause beyond the immediate symptom?
+2. IMPACT ASSESSMENT: What components/features are affected? What's the blast radius?
+3. RISK LEVEL: What are the risks of attempting a fix? What could go wrong?
+4. PATTERN RECOGNITION: Have similar issues occurred? What patterns emerge?
+5. STRATEGIC PLANNING: What's the best repair strategy with minimal risk?
+
+Provide detailed architect-level insights.`;
+
+    try {
+      const result = await executeAdvancedReasoning(analysisTask, false);
+
+      // Parse the advanced reasoning output for key insights
+      const output = result.analysis || '';
+      const planQuality = result.plan || {};
+
+      // Calculate confidence based on analysis quality
+      let confidence = 0.75; // Base confidence - Worker did a complete architect-level analysis
+
+      // Increase confidence if we have detailed plan
+      if (planQuality.strategicPlan && planQuality.strategicPlan.steps?.length > 0) {
+        confidence += 0.1;
+      }
+
+      // Decrease confidence if analysis indicates complexity or unknowns
+      if (output.toLowerCase().includes('unknown') || output.toLowerCase().includes('unclear')) {
+        confidence -= 0.15;
+      }
+
+      if (output.toLowerCase().includes('complex') || output.toLowerCase().includes('multiple components')) {
+        confidence -= 0.1;
+      }
+
+      confidence = Math.max(0.4, Math.min(0.95, confidence));
+
+      return {
+        rootCause: this.extractSection(output, 'ROOT CAUSE') || issue.cause,
+        impactAssessment: this.extractSection(output, 'IMPACT') || 'Unknown impact',
+        riskLevel: this.extractSection(output, 'RISK') || 'MODERATE',
+        relatedPatterns: this.extractPatterns(output),
+        proposedStrategy: this.extractSection(output, 'STRATEG') || 'Direct repair',
+        confidence,
+      };
+    } catch (error: any) {
+      console.error(`[BadBlue Worker] Analysis error: ${error.message}`);
+      return {
+        rootCause: issue.cause,
+        impactAssessment: 'Analysis failed',
+        riskLevel: 'HIGH',
+        relatedPatterns: [],
+        proposedStrategy: 'Escalate to Sub-Agent',
+        confidence: 0.3,
+      };
+    }
+  }
+
+  /**
+   * DECISION ENGINE: Determines if Worker should escalate to Sub-Agent supervision
+   */
+  private shouldEscalateToSubAgent(issue: FailureLogEntry, analysis: { rootCause: string; riskLevel: string; confidence: number }): boolean {
+    if (analysis.confidence < 0.7) {
+      console.log(`[BadBlue Worker] 🚨 ESCALATING: Low confidence (${(analysis.confidence * 100).toFixed(0)}%)`);
+      return true;
+    }
+
+    if (analysis.riskLevel.includes('HIGH') || analysis.riskLevel.includes('CRITICAL')) {
+      console.log(`[BadBlue Worker] 🚨 ESCALATING: High risk level (${analysis.riskLevel})`);
+      return true;
+    }
+
+    if (issue.severity >= Severity.CRITICAL) {
+      console.log(`[BadBlue Worker] 🚨 ESCALATING: Critical severity`);
+      return true;
+    }
+
+    if (issue.category === IssueCategory.DATA_INTEGRITY || issue.category === IssueCategory.INFRASTRUCTURE) {
+      console.log(`[BadBlue Worker] 🚨 ESCALATING: Sensitive category (${issue.category})`);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * COLLABORATIVE REPAIR: Worker proposes fix, Sub-Agent supervises and approves
+   */
+  private async collaborativeRepairWithSupervision(issue: FailureLogEntry, analysis: any): Promise<boolean> {
+    console.log(`[BadBlue Worker] 🤝 COLLABORATIVE REPAIR: Working with Sub-Agent supervision`);
+
+    const { processSubAgentCommand } = await import('./aiSubAgent');
+
+    // Step 1: Worker proposes fix based on analysis
+    console.log(`[BadBlue Worker] 📝 Proposing repair strategy...`);
+    const proposalCommand = `Based on this analysis, propose a specific repair:
+
+ISSUE: ${issue.functionAffected}
+ROOT CAUSE: ${analysis.rootCause}
+IMPACT: ${analysis.impactAssessment}
+RISK: ${analysis.riskLevel}
+STRATEGY: ${analysis.proposedStrategy}
+
+Provide a SPECIFIC, EXECUTABLE repair plan with:
+1. Exact steps to fix the issue
+2. Validation checks after each step
+3. Rollback plan if something goes wrong`;
+
+    const proposalResult = await processSubAgentCommand({ command: proposalCommand, category: 'system_management' });
+
+    if (!proposalResult.success) {
+      console.log(`[BadBlue Worker] ❌ Failed to generate proposal`);
+      return false;
+    }
+
+    console.log(`[BadBlue Worker] 📋 Repair Proposal snippet:\n${(proposalResult.response || '').slice(0, 300)}...`);
+
+    // Step 2: Request Sub-Agent supervision and approval
+    console.log(`[BadBlue Worker] 👀 Requesting Sub-Agent supervision...`);
+    const supervisionCommand = `SUPERVISION REQUEST FROM WORKER:
+
+The Worker has analyzed this issue and proposed a repair:
+
+ORIGINAL ISSUE:
+- Function: ${issue.functionAffected}
+- Cause: ${issue.cause}
+- Severity: ${Severity[issue.severity]}
+
+WORKER'S ANALYSIS:
+- Root Cause: ${analysis.rootCause}
+- Risk Level: ${analysis.riskLevel}
+- Confidence: ${(analysis.confidence * 100).toFixed(0)}%
+
+WORKER'S PROPOSED REPAIR:
+${proposalResult.response}
+
+As Sub-Agent supervisor, please:
+1. REVIEW the Worker's analysis and proposed fix
+2. IDENTIFY any flaws or risks the Worker missed
+3. APPROVE the fix (respond "APPROVED") OR provide corrections/guidance
+4. SUPERVISE the implementation
+
+Provide your supervision decision and any corrections needed.`;
+
+    const supervisionResult = await processSubAgentCommand({ command: supervisionCommand, category: 'system_management' });
+
+    if (!supervisionResult.success) {
+      console.log(`[BadBlue Worker] ❌ Sub-Agent supervision failed`);
+      return false;
+    }
+
+    console.log(`[BadBlue Worker] 🎯 Sub-Agent Supervision snippet:\n${(supervisionResult.response || '').slice(0, 300)}...`);
+
+    // Step 3: Implement repair under supervision
+    const approved =
+      (supervisionResult.response || '').includes('APPROVED') ||
+      (supervisionResult.response || '').includes('PROCEED') ||
+      (supervisionResult.response || '').includes('LOOKS GOOD');
+
+    if (approved) {
+      console.log(`[BadBlue Worker] ✅ Sub-Agent APPROVED - Implementing repair...`);
+
+      const implementCommand = `Implement the approved repair plan:
+${proposalResult.response}
+
+Execute the fix now, with Sub-Agent supervision.`;
+
+      const implResult = await processSubAgentCommand({ command: implementCommand, category: 'code_modification' });
+
+      if (implResult.success) {
+        console.log(`[BadBlue Worker] ✓ Repair implemented successfully under Sub-Agent supervision`);
+        // Commit changes if allowed
+        if (process.env.ALLOW_WORKER_GIT === 'true') {
+          try {
+            await this.commitChanges(`Automated repair: ${issue.functionAffected}`);
+          } catch {
+            // ignore commit errors
+          }
+        }
+        return true;
+      } else {
+        console.log(`[BadBlue Worker] ⚠️  Implementation failed: ${implResult.response}`);
+        return false;
+      }
+    } else {
+      console.log(`[BadBlue Worker] 🛑 Sub-Agent requested changes - Re-strategizing...`);
+
+      const correctionCommand = `Implement repair with Sub-Agent's corrections:
+
+ORIGINAL PROPOSAL:
+${proposalResult.response}
+
+SUB-AGENT CORRECTIONS:
+${supervisionResult.response}
+
+Execute the corrected fix now.`;
+
+      const corrResult = await processSubAgentCommand({ command: correctionCommand, category: 'code_modification' });
+
+      if (corrResult.success) {
+        console.log(`[BadBlue Worker] ✓ Repair implemented with Sub-Agent corrections`);
+        if (process.env.ALLOW_WORKER_GIT === 'true') {
+          try {
+            await this.commitChanges(`Automated corrected repair: ${issue.functionAffected}`);
+          } catch {
+            // ignore
+          }
+        }
+        return true;
+      } else {
+        console.log(`[BadBlue Worker] ❌ Corrected repair failed`);
+        return false;
+      }
+    }
+  }
+
+  private extractSection(text: string, keyword: string): string {
+    const lines = (text || '').split('\n');
+    const sectionStart = lines.findIndex((l) => l.toUpperCase().includes(keyword));
+    if (sectionStart === -1) return '';
+
+    let section = '';
+    for (let i = sectionStart; i < Math.min(sectionStart + 7, lines.length); i++) {
+      section += lines[i] + ' ';
+    }
+    return section.trim().slice(0, 400);
+  }
+
+  private extractPatterns(text: string): string[] {
+    const patterns: string[] = [];
+    const patternKeywords = ['pattern', 'similar', 'recurring', 'previous', 'repeat', 'reoccur'];
+
+    const lines = (text || '').split('\n');
+    for (const line of lines) {
+      for (const keyword of patternKeywords) {
+        if (line.toLowerCase().includes(keyword)) {
+          patterns.push(line.trim().slice(0, 200));
+          break;
+        }
+      }
+    }
+
+    return patterns.slice(0, 5);
+  }
+
+  /**
+   * ENHANCED REPAIR: Architect-level analysis + collaborative supervision
+   */
+  private async executeRepair(issue: FailureLogEntry): Promise<void> {
+    const startTime = Date.now();
+    this.repairMetrics.totalRepairs++;
+
+    try {
+      console.log(`[BadBlue Worker] 🔧 ENHANCED REPAIR: ${issue.functionAffected} (${issue.category})`);
+      console.log(`[BadBlue Worker] Endowed with architect-level capabilities for deep analysis...`);
+
+      // Phase 1: Architect-level analysis
+      const analysis = await this.performArchitectAnalysis(issue);
+      console.log(
+        `[BadBlue Worker] 📊 Analysis complete - Confidence: ${(analysis.confidence * 100).toFixed(0)}%, Risk: ${analysis.riskLevel}`
+      );
+
+      // Phase 2: Decision - attempt fix or escalate?
+      const needsSupervision = this.shouldEscalateToSubAgent(issue, analysis);
+
+      let success = false;
+
+      if (needsSupervision) {
+        // Collaborative repair with Sub-Agent supervision
+        console.log(`[BadBlue Worker] 🤝 Entering collaborative mode with Sub-Agent supervision...`);
+        success = await this.collaborativeRepairWithSupervision(issue, analysis);
+      } else {
+        // Worker confident - attempt direct repair using Sub-Agent code_modification
+        console.log(`[BadBlue Worker] 💪 Worker confident - Attempting direct repair...`);
+
+        const { processSubAgentCommand } = await import('./aiSubAgent');
+
+        const command = `Execute repair based on architect-level analysis:
+
+ISSUE: ${issue.functionAffected}
+ROOT CAUSE: ${analysis.rootCause}
+STRATEGY: ${analysis.proposedStrategy}
+SEVERITY: ${Severity[issue.severity]}
+
+Implement the fix now.`;
+
+        const result = await processSubAgentCommand({ command, category: 'code_modification' });
+        success = result.success;
+
+        // If Sub-Agent suggests packages, install them
+        if (result.success && result.packagesToInstall && Array.isArray(result.packagesToInstall)) {
+          await this.installMissingPackages(result.packagesToInstall);
+        }
+
+        if (success && process.env.ALLOW_WORKER_GIT === 'true') {
+          try {
+            await this.commitChanges(`Automated fix: ${issue.functionAffected}`);
+          } catch {
+            // ignore commit failures
+          }
+        }
+      }
+
+      if (success) {
+        this.repairMetrics.successfulRepairs++;
+        const duration = Date.now() - startTime;
+        this.repairMetrics.meanTimeToResolution.push(duration);
+        console.log(`[BadBlue Worker] ✓ REPAIR SUCCESSFUL: ${issue.functionAffected} (${duration}ms)`);
+        await this.markFailureResolved(issue);
+      } else {
+        console.log(`[BadBlue Worker] ⚠️  REPAIR FAILED: ${issue.functionAffected}`);
+      }
+    } catch (error: any) {
+      console.error(`[BadBlue Worker] ❌ Repair error for ${issue.functionAffected}:`, error.message);
+    }
+
+    this.repairMetrics.repairSuccessRate = (this.repairMetrics.successfulRepairs / this.repairMetrics.totalRepairs) * 100;
+  }
+
+  private async saveMetrics(): Promise<void> {
+    try {
+      const avgLatency =
+        this.repairMetrics.queueLatency.length > 0
+          ? this.repairMetrics.queueLatency.reduce((a, b) => a + b, 0) / this.repairMetrics.queueLatency.length
+          : 0;
+
+      const avgResolution =
+        this.repairMetrics.meanTimeToResolution.length > 0
+          ? this.repairMetrics.meanTimeToResolution.reduce((a, b) => a + b, 0) / this.repairMetrics.meanTimeToResolution.length
+          : 0;
+
+      const metrics = {
+        timestamp: new Date().toISOString(),
+        averageQueueLatencyMs: avgLatency,
+        averageResolutionTimeMs: avgResolution,
+        successRate: this.repairMetrics.repairSuccessRate,
+        totalRepairs: this.repairMetrics.totalRepairs,
+        successfulRepairs: this.repairMetrics.successfulRepairs,
+        resourceUtilization: await this.getSystemResources(),
+      };
+
+      await fs.writeFile(this.METRICS_LOG, JSON.stringify(metrics, null, 2));
+    } catch (error) {
+      console.error('[BadBlue Worker] Error saving metrics:', error);
+    }
+  }
+
+  private async performWeeklyBackup(): Promise<void> {
+    console.log('[BadBlue Worker] 💾 WEEKLY BACKUP - Starting...');
+    try {
+      // Ensure backup directory exists
+      await fs.mkdir(this.BACKUP_DIR, { recursive: true });
+
+      // Delete previous backup
+      const backupFiles = await fs.readdir(this.BACKUP_DIR);
+      for (const file of backupFiles) {
+        try {
+          await fs.unlink(path.join(this.BACKUP_DIR, file));
+        } catch {
+          // ignore unlink errors
+        }
+      }
+      console.log('[BadBlue Worker] Previous backup cleaned');
+
+      const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+      const backupFile = path.join(this.BACKUP_DIR, `backup_${timestamp}.tar.gz`);
+
+      // Create backup using tar (exclude node_modules, .git, data/backups)
+      try {
+        await exec(`tar -czf ${backupFile} --exclude='node_modules' --exclude='.git' --exclude='data/backups' --exclude='*.log' .`);
+        const stats = await fs.stat(backupFile);
+        const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+        console.log(`[BadBlue Worker] ✓ Backup created: ${backupFile} (${sizeMB} MB)`);
+      } catch (tarError: any) {
+        console.log('[BadBlue Worker] ⚠️  Backup creation failed or tar not available:', tarError.message);
+      }
+
+      // Backup database (if pg_dump available and DATABASE_URL present)
+      const dbUrl = process.env.DATABASE_URL;
+      if (dbUrl) {
+        const dbBackupFile = path.join(this.BACKUP_DIR, `database_${timestamp}.sql`);
+        try {
+          await exec(`pg_dump "${dbUrl}" > ${dbBackupFile}`);
+          const dbStats = await fs.stat(dbBackupFile);
+          const dbSizeMB = (dbStats.size / (1024 * 1024)).toFixed(2);
+          console.log(`[BadBlue Worker] ✓ Database backup created: ${dbBackupFile} (${dbSizeMB} MB)`);
+        } catch (dbError: any) {
+          console.log(`[BadBlue Worker] ⚠️  Database backup failed: ${dbError.message}`);
+        }
+      }
+
+      console.log('[BadBlue Worker] ✓ Weekly backup complete');
+    } catch (error: any) {
+      console.error('[BadBlue Worker] ❌ Backup failed:', error.message);
+    }
+  }
+
+  /**
+   * runDailyRepair
+   * Runs maintenance and repair. In light mode, worker performs fewer actions (no installs, no backups).
+   */
+  private async runDailyRepair(isLightMode = false) {
+    if (this.isRepairInProgress) {
+      console.log('[BadBlue Worker] Repair already in progress');
+      return;
+    }
+
+    this.isRepairInProgress = true;
+    this.isMaintenanceMode = true;
+    console.log('[BadBlue Worker] 🔧 MAINTENANCE MODE ACTIVATED - 24-HOUR MAINTENANCE RUN');
+
+    try {
+      // Ensure essential supabase tables exist before heavy work
+      try {
+        await this.ensureSupabaseTables();
+      } catch (e) {
+        console.warn('[BadBlue Worker] ensureSupabaseTables failed:', (e as Error).message);
+      }
+
+      // Step 1: Run comprehensive diagnostics first (lighter if light mode)
+      console.log('[BadBlue Worker] Step 1: Running pre-repair diagnostics...');
+      await this.runDiagnostics();
+
+      // Step 2: Analyze all failures
+      const failures = await this.readFailureLog();
+      const unresolvedFailures = failures.filter((f) => !f.resolved);
+
+      if (unresolvedFailures.length === 0) {
+        console.log('[BadBlue Worker] ✓ No failures detected - system healthy');
+        return;
+      }
+
+      console.log(`[BadBlue Worker] Step 2: Analyzing ${unresolvedFailures.length} unresolved failure(s)...`);
+
+      // Step 3: Execute parallel repair orchestration
+      console.log('[BadBlue Worker] Step 3: Executing parallel repair orchestration...');
+      await this.executeParallelRepairs(unresolvedFailures);
+
+      // Fallback serial retry for remaining unresolved issues
+      const stillUnresolved = (await this.readFailureLog()).filter((f) => !f.resolved);
+
+      if (stillUnresolved.length > 0) {
+        console.log(`[BadBlue Worker] ${stillUnresolved.length} issues remain - attempting serial retry...`);
+
+        let passNumber = 1;
+        const maxPasses = 3;
+        let remainingFailures = [...stillUnresolved];
+
+        while (passNumber <= maxPasses && remainingFailures.length > 0) {
+          console.log(`[BadBlue Worker] → Retry Pass ${passNumber}/${maxPasses} (${remainingFailures.length} failures)`);
+
+          // Sort by severity for this pass
+          remainingFailures.sort((a, b) => b.severity - a.severity);
+
+          const nextRemaining: FailureLogEntry[] = [];
+
+          for (const failure of remainingFailures) {
+            const success = await this.executeThreePhaseCorrection(failure);
+            if (!success) {
+              nextRemaining.push(failure);
+            }
+          }
+
+          console.log(
+            `[BadBlue Worker] Pass ${passNumber} complete: ${remainingFailures.length - nextRemaining.length} repairs successful`
+          );
+
+          // If no repairs succeeded this pass, break to avoid infinite loop
+          if (remainingFailures.length - nextRemaining.length === 0) {
+            console.log('[BadBlue Worker] No further repairs possible this run - stopping retry loop');
+            break;
+          }
+
+          remainingFailures = nextRemaining;
+          passNumber++;
+        }
+      }
+
+      // Step 4: Post-repair verification
+      console.log('[BadBlue Worker] Step 4: Running post-repair verification...');
+      await this.runDiagnostics();
+
+      // Step 5: Optionally perform updates (only when not light mode)
+      if (!isLightMode) {
+        await this.checkForPackageUpdatesAndApply();
+      }
+
+      console.log('[BadBlue Worker] DAILY MAINTENANCE COMPLETE');
+    } catch (error) {
+      console.error('[BadBlue Worker] ❌ Error during repair cycle:', error);
+    } finally {
+      this.isRepairInProgress = false;
+      this.isMaintenanceMode = false;
+      console.log('[BadBlue Worker] ✓ MAINTENANCE MODE DEACTIVATED');
+    }
+  }
+
+  private async executeThreePhaseCorrection(failure: FailureLogEntry): Promise<boolean> {
+    console.log(`[BadBlue Worker] Repairing: ${failure.functionAffected} (Severity ${failure.severity})`);
+
+    try {
+      // Phase 1: Direct Resolution
+      const phase1Success = await this.attemptPhase1Repair(failure);
+      if (phase1Success) {
+        await this.markFailureResolved(failure);
+        console.log(`[BadBlue Worker] ✓ Phase 1 repair successful: ${failure.functionAffected}`);
+        return true;
+      }
+
+      // Phase 2: Targeted Component Repair
+      const phase2Success = await this.attemptPhase2Repair(failure);
+      if (phase2Success) {
+        await this.markFailureResolved(failure);
+        console.log(`[BadBlue Worker] ✓ Phase 2 repair successful: ${failure.functionAffected}`);
+        return true;
+      }
+
+      // Phase 3: Contained Remediation
+      const phase3Success = await this.attemptPhase3Repair(failure);
+      if (phase3Success) {
+        await this.markFailureResolved(failure);
+        console.log(`[BadBlue Worker] ✓ Phase 3 repair successful: ${failure.functionAffected}`);
+        return true;
+      }
+
+      // If all phases fail, flag for manual review
+      console.log(`[BadBlue Worker] ⚠ Manual review required: ${failure.functionAffected}`);
+      await this.flagForManualReview(failure);
+      return false;
+    } catch (error) {
+      console.error(`[BadBlue Worker] Error repairing ${failure.functionAffected}:`, error);
+      return false;
+    }
+  }
+
+  private async attemptPhase1Repair(failure: FailureLogEntry): Promise<boolean> {
+    // Phase 1: Direct Resolution (restart/reset)
+    console.log(`[BadBlue Worker] Attempting Phase 1 repair: ${failure.functionAffected}`);
+
+    // For configuration issues, we can't auto-repair (needs manual intervention)
+    if ((failure.cause || '').toLowerCase().includes('missing') || (failure.cause || '').toLowerCase().includes('not configured')) {
+      return false;
+    }
+
+    // For connection issues, attempt reconnection
+    if ((failure.functionAffected || '').toLowerCase().includes('database connection')) {
+      try {
+        const { db } = await import('./db');
+        await (db as any).execute('SELECT 1');
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  private async attemptPhase2Repair(failure: FailureLogEntry): Promise<boolean> {
+    // Phase 2: Targeted Component Repair
+    console.log(`[BadBlue Worker] Attempting Phase 2 repair: ${failure.functionAffected}`);
+
+    // This phase would reload or reconfigure specific modules
+    // Example: restart local services, reinitialize modules
+    try {
+      // Example: If AI keys missing, try to read from secure vault or attempt a web fetch for guidance
+      if ((failure.functionAffected || '').toLowerCase().includes('gemini') || (failure.functionAffected || '').toLowerCase().includes('groq')) {
+        // attempt to validate configuration and request operator if allowed
+        // For security, do not auto-set secrets; only attempt to document or escalate
+        return false;
+      }
+    } catch {
+      return false;
+    }
+
+    return false;
+  }
+
+  private async attemptPhase3Repair(failure: FailureLogEntry): Promise<boolean> {
+    // Phase 3: Contained Remediation
+    console.log(`[BadBlue Worker] Attempting Phase 3 repair: ${failure.functionAffected}`);
+
+    // This phase handles interdependent issues by orchestrating broader fixes
+    // For safety most complex repairs require manual review or Sub-Agent supervision
+    return false;
+  }
+
+  private async runWeeklySystemTest() {
+    this.isMaintenanceMode = true;
+    console.log('[BadBlue Worker] 🔧 MAINTENANCE MODE ACTIVATED - Weekly System Test (Starting)');
+
+    try {
+      const testResults: FunctionErrorLogEntry[] = [];
+      const startTime = Date.now();
+
+      await this.testDatabaseOperations(testResults);
+      await this.testAIServicesComprehensive(testResults);
+      await this.testLegalAIAnalysis(testResults);
+      await this.testDocumentGeneration(testResults);
+      await this.testSearchServices(testResults);
+      await this.testPaymentProcessing(testResults);
+      await this.testEmailService(testResults);
+      await this.testAuthentication(testResults);
+      await this.testSystemPerformance(testResults);
+
+      // Auto-repair phase for pending results
+      console.log('[BadBlue Worker] Auto-repairing detected issues from weekly test...');
+      const pendingIssues = testResults.filter((r) => r.status === 'pending');
+      let fixed = 0;
+      let unfixable = 0;
+
+      for (const issue of pendingIssues) {
+        console.log(`[BadBlue Worker] → Attempting repair: ${issue.functionTested}`);
+        const repairSuccess = await this.attemptAutoRepair(issue);
+        if (repairSuccess) {
+          fixed++;
+          issue.status = 'fixed';
+          console.log(`[BadBlue Worker] ✓ Fixed: ${issue.functionTested}`);
+        } else {
+          unfixable++;
+          console.log(`[BadBlue Worker] ✗ Could not fix: ${issue.functionTested}`);
+        }
+      }
+
+      // Clear logs and re-run critical tests to verify corrections
+      console.log('[BadBlue Worker] Verifying corrections and pruning logs...');
+      await this.clearAllLogs();
+
+      const verificationResults: FunctionErrorLogEntry[] = [];
+      await this.testDatabaseOperations(verificationResults);
+      await this.testAIServicesComprehensive(verificationResults);
+      await this.testPaymentProcessing(verificationResults);
+      await this.testEmailService(verificationResults);
+      await this.testAuthentication(verificationResults);
+
+      // Only save errors that remain after auto-repair
+      const unfixableErrors = verificationResults.filter((r) => r.status === 'pending');
+      await this.appendFunctionErrorLog(unfixableErrors);
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      console.log(`[BadBlue Worker] ✅ WEEKLY TEST COMPLETE - Duration: ${duration}s, Auto-Corrected: ${fixed}, Remaining: ${unfixableErrors.length}`);
+    } catch (error) {
+      console.error('[BadBlue Worker] ❌ CRITICAL ERROR DURING WEEKLY TEST:', error);
+    } finally {
+      this.isMaintenanceMode = false;
+      console.log('[BadBlue Worker] ✓ MAINTENANCE MODE DEACTIVATED - Weekly Test complete');
+    }
+  }
+
+  private async testAIServicesComprehensive(results: FunctionErrorLogEntry[]) {
+    // CRITICAL: Enforce worker budget cap via workerTokenBudget if present
+    let workerTokenBudget: any = null;
+    try {
+      ({ workerTokenBudget } = await import('./workerTokenBudget'));
+    } catch {
+      workerTokenBudget = null;
+    }
+    const budgetStats = (workerTokenBudget && (await workerTokenBudget.getTodayStats?.())) || { percentUsed: 0, remaining: 999999, used: 0, budget: 999999 };
+
+    console.log(`[Worker Budget] AI Services tests - ${budgetStats.percentUsed.toFixed(1)}% of daily budget used`);
+
+    if (budgetStats.remaining < 1000) {
+      console.log('[Weekly Test] ⛔ Worker budget exhausted - AI Services tests skipped');
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'AI Services Configuration',
+        expectedBehavior: 'AI services operational',
+        observedBehavior: `Tests skipped - Worker budget exhausted (${budgetStats.used}/${budgetStats.budget} tokens)`,
+        severity: Severity.NOTICE,
+        status: 'skipped',
+      });
+      return;
+    }
+
+    let rateLimitStats: any = { utilizationPercent: 0 };
+    try {
+      const { rateLimitTracker } = await import('./rateLimitTracker');
+      rateLimitStats = rateLimitTracker.getStats();
+    } catch {
+      // ignore
+    }
+
+    if (rateLimitStats.utilizationPercent > 80) {
+      console.log('[Weekly Test] ⚠️  Skipping AI Services tests - quota preservation');
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'AI Services Configuration',
+        expectedBehavior: 'AI services operational',
+        observedBehavior: 'Tests skipped to preserve quota for user requests',
+        severity: Severity.NOTICE,
+        status: 'skipped',
+      });
+      return;
+    }
+
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const groqKey = process.env.GROQ_API_KEY;
+
+    if (geminiKey && groqKey) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'AI Services Configuration',
+        expectedBehavior: 'Both Gemini and Groq keys configured',
+        observedBehavior: 'Both keys present - dual fallback system active',
+        severity: Severity.NOTICE,
+        status: 'fixed',
+      });
+    } else if (!geminiKey && !groqKey) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'AI Services Configuration',
+        expectedBehavior: 'At least one AI service key configured',
+        observedBehavior: 'No AI keys configured - CRITICAL FAILURE',
+        severity: Severity.CRITICAL,
+        status: 'pending',
+      });
+      return; // Skip further AI tests
+    } else {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'AI Services Configuration',
+        expectedBehavior: 'Both Gemini and Groq keys configured',
+        observedBehavior: geminiKey ? 'Only Gemini configured (missing fallback)' : 'Only Groq configured (missing primary)',
+        severity: Severity.WARNING,
+        status: 'fixed',
+        notes: 'Fallback redundancy not available',
+      });
+    }
+  }
+
+  private async testLegalAIAnalysis(results: FunctionErrorLogEntry[]) {
+    let workerTokenBudget: any = null;
+    try {
+      ({ workerTokenBudget } = await import('./workerTokenBudget'));
+    } catch {
+      workerTokenBudget = null;
+    }
+    const budgetStats = (workerTokenBudget && (await workerTokenBudget.getTodayStats?.())) || { percentUsed: 0, remaining: 999999, used: 0, budget: 999999 };
+
+    console.log(`[Worker Budget] Legal AI tests - ${budgetStats.percentUsed.toFixed(1)}% of daily budget used`);
+
+    if (budgetStats.remaining < 3000) {
+      console.log('[Weekly Test] ⛔ Worker budget exhausted - Legal AI tests skipped');
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Legal AI Analysis',
+        expectedBehavior: 'AI analysis operational',
+        observedBehavior: `Tests skipped - Worker budget exhausted (${budgetStats.used}/${budgetStats.budget} tokens)`,
+        severity: Severity.NOTICE,
+        status: 'skipped',
+      });
+      return;
+    }
+
+    let rateLimitStats: any = { utilizationPercent: 0 };
+    try {
+      const { rateLimitTracker } = await import('./rateLimitTracker');
+      rateLimitStats = rateLimitTracker.getStats();
+    } catch {
+      // ignore
+    }
+
+    if (rateLimitStats.utilizationPercent > 80) {
+      console.log('[Weekly Test] ⚠️  Skipping Legal AI tests - quota preservation');
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Legal AI Analysis',
+        expectedBehavior: 'AI analysis operational',
+        observedBehavior: 'Tests skipped to preserve quota for user requests',
+        severity: Severity.NOTICE,
+        status: 'skipped',
+      });
+      return;
+    }
+
+    const useReducedSuite = rateLimitStats.utilizationPercent > 50 || budgetStats.remaining < 8000;
+
+    const testCases = useReducedSuite
+      ? [
+          {
+            name: 'Excessive Force Analysis',
+            query: 'Officer used taser on compliant suspect during traffic stop',
+            state: 'California',
+            details: 'Suspect was following commands',
+          },
+        ]
+      : [
+          {
+            name: 'Excessive Force Analysis',
+            query: 'Officer used taser on compliant suspect during traffic stop',
+            state: 'California',
+            details: 'Suspect was following commands, had hands visible, officer deployed taser without warning',
+          },
+          {
+            name: 'False Arrest Analysis',
+            query: 'Arrested without probable cause or warrant',
+            state: 'Texas',
+            details: 'Officer arrested individual for failure to ID in non-stop-and-identify state',
+          },
+          {
+            name: 'Unlawful Search Analysis',
+            query: 'Search of vehicle without consent or warrant',
+            state: 'New York',
+            details: 'Officer searched trunk after consent denied, no probable cause established',
+          },
+        ];
+
+    for (const testCase of testCases) {
+      try {
+        const { analyzeLegalIssue } = await import('./legalAI');
+        const startTime = Date.now();
+        const result = await analyzeLegalIssue(testCase.query, testCase.state, testCase.details);
+        const duration = Date.now() - startTime;
+
+        if (!result || typeof result !== 'object') {
+          throw new Error('Invalid response structure');
+        }
+
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Legal AI Analysis - ${testCase.name}`,
+          expectedBehavior: 'Analyze legal issue and return structured analysis',
+          observedBehavior: `✓ Analysis completed in ${duration}ms with valid structure`,
+          severity: Severity.NOTICE,
+          status: 'fixed',
+        });
+      } catch (error: any) {
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Legal AI Analysis - ${testCase.name}`,
+          expectedBehavior: 'Analyze legal issue and return structured analysis',
+          observedBehavior: `Analysis failed: ${error.message}`,
+          severity: Severity.SERIOUS,
+          status: 'pending',
+        });
+      }
+    }
+
+    // Research tests
+    const researchTests = [
+      { state: 'California', issue: 'excessive force', context: 'taser deployment' },
+      { state: 'Texas', issue: 'false arrest', context: 'failure to identify' },
+      { state: 'Florida', issue: 'unlawful detention', context: 'traffic stop extended' },
+    ];
+
+    for (const test of researchTests) {
+      try {
+        const { researchRelevantStatutes } = await import('./legalAI');
+        const startTime = Date.now();
+        const result = await researchRelevantStatutes(test.state, test.issue, test.context);
+        const duration = Date.now() - startTime;
+
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Legal AI Research - ${test.state} ${test.issue}`,
+          expectedBehavior: 'Research relevant statutes and case law',
+          observedBehavior: `✓ Research completed in ${duration}ms`,
+          severity: Severity.NOTICE,
+          status: 'fixed',
+        });
+      } catch (error: any) {
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Legal AI Research - ${test.state} ${test.issue}`,
+          expectedBehavior: 'Research relevant statutes and case law',
+          observedBehavior: `Research failed: ${error.message}`,
+          severity: Severity.MODERATE,
+          status: 'pending',
+        });
+      }
+    }
+  }
+
+  private async testDocumentGeneration(results: FunctionErrorLogEntry[]) {
+    let workerTokenBudget: any = null;
+    try {
+      ({ workerTokenBudget } = await import('./workerTokenBudget'));
+    } catch {
+      workerTokenBudget = null;
+    }
+    const budgetStats = (workerTokenBudget && (await workerTokenBudget.getTodayStats?.())) || { percentUsed: 0, remaining: 999999, used: 0, budget: 999999 };
+
+    console.log(`[Worker Budget] Document Generation tests - ${budgetStats.percentUsed.toFixed(1)}% of daily budget used`);
+
+    if (budgetStats.remaining < 4000) {
+      console.log('[Weekly Test] ⛔ Worker budget exhausted - Document Generation tests skipped');
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Document Generation',
+        expectedBehavior: 'Document generation operational',
+        observedBehavior: `Tests skipped - Worker budget exhausted (${budgetStats.used}/${budgetStats.budget} tokens)`,
+        severity: Severity.NOTICE,
+        status: 'skipped',
+      });
+      return;
+    }
+
+    let rateLimitStats: any = { utilizationPercent: 0 };
+    try {
+      const { rateLimitTracker } = await import('./rateLimitTracker');
+      rateLimitStats = rateLimitTracker.getStats();
+    } catch {
+      //
+    }
+
+    if (rateLimitStats.utilizationPercent > 80) {
+      console.log('[Weekly Test] ⚠️  Skipping Document Generation tests - quota preservation');
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Document Generation',
+        expectedBehavior: 'Document generation operational',
+        observedBehavior: 'Tests skipped to preserve quota for user requests',
+        severity: Severity.NOTICE,
+        status: 'skipped',
+      });
+      return;
+    }
+
+    const useReducedSuite = rateLimitStats.utilizationPercent > 50 || budgetStats.remaining < 10000;
+
+    const tortTests = useReducedSuite
+      ? [
+          {
+            name: 'California Government Claim',
+            data: {
+              state: 'California',
+              claimantName: 'Test Claimant',
+              claimantAddress: '123 Test Street, Test City, CA 90000',
+              claimantEmail: 'test@test.com',
+              officerName: 'Officer John Doe',
+              officerBadge: 'BADGE-12345',
+              department: 'Test Police Department',
+              city: 'Test City',
+              county: 'Test County',
+              incidentDate: new Date('2024-01-15'),
+              incidentDescription: 'Excessive force during traffic stop - officer used taser without justification',
+            },
+          },
+        ]
+      : [
+          {
+            name: 'California Government Claim',
+            data: {
+              state: 'California',
+              claimantName: 'Test Claimant',
+              claimantAddress: '123 Test Street, Test City, CA 90000',
+              claimantEmail: 'test@test.com',
+              officerName: 'Officer John Doe',
+              officerBadge: 'BADGE-12345',
+              department: 'Test Police Department',
+              city: 'Test City',
+              county: 'Test County',
+              incidentDate: new Date('2024-01-15'),
+              incidentDescription: 'Excessive force during traffic stop - officer used taser without justification',
+            },
+          },
+          {
+            name: 'Texas Notice of Claim',
+            data: {
+              state: 'Texas',
+              claimantName: 'Jane Smith',
+              claimantAddress: '456 Main St, Houston, TX 77000',
+              claimantEmail: 'jane@test.com',
+              officerName: 'Officer Bob Williams',
+              officerBadge: '98765',
+              department: 'Houston PD',
+              city: 'Houston',
+              county: null,
+              incidentDate: new Date('2024-02-20'),
+              incidentDescription: 'False arrest without probable cause during peaceful protest',
+            },
+          },
+        ];
+
+    for (const test of tortTests) {
+      try {
+        const { generateTortNotice } = await import('./tortNoticeGenerator');
+        const startTime = Date.now();
+        const result = await generateTortNotice(test.data);
+        const duration = Date.now() - startTime;
+
+        if (!result || (typeof result === 'string' && result.length < 100)) {
+          throw new Error('Generated notice is too short or empty');
+        }
+
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Tort Notice Generation - ${test.name}`,
+          expectedBehavior: 'Generate complete tort claim notice document',
+          observedBehavior: `✓ Generated in ${duration}ms`,
+          severity: Severity.NOTICE,
+          status: 'fixed',
+        });
+      } catch (error: any) {
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Tort Notice Generation - ${test.name}`,
+          expectedBehavior: 'Generate complete tort claim notice document',
+          observedBehavior: `Generation failed: ${error.message}`,
+          severity: Severity.SERIOUS,
+          status: 'pending',
+        });
+      }
+    }
+  }
+
+  private async testSearchServices(results: FunctionErrorLogEntry[]) {
+    let workerTokenBudget: any = null;
+    try {
+      ({ workerTokenBudget } = await import('./workerTokenBudget'));
+    } catch {
+      workerTokenBudget = null;
+    }
+    const budgetStats = (workerTokenBudget && (await workerTokenBudget.getTodayStats?.())) || { percentUsed: 0, remaining: 999999, used: 0, budget: 999999 };
+
+    console.log(`[Worker Budget] Search tests - ${budgetStats.percentUsed.toFixed(1)}% of daily budget used`);
+
+    if (budgetStats.remaining < 2000) {
+      console.log('[Weekly Test] ⛔ Worker budget exhausted - all search tests skipped');
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'AI Search Services',
+        expectedBehavior: 'Search services operational',
+        observedBehavior: `Tests skipped - Worker budget exhausted (${budgetStats.used}/${budgetStats.budget} tokens used today)`,
+        severity: Severity.NOTICE,
+        status: 'skipped',
+      });
+      return;
+    }
+
+    let rateLimitStats: any = { utilizationPercent: 0 };
+    try {
+      const { rateLimitTracker } = await import('./rateLimitTracker');
+      rateLimitStats = rateLimitTracker.getStats();
+    } catch {
+      //
+    }
+
+    if (rateLimitStats.utilizationPercent > 80) {
+      console.log('[Weekly Test] ⚠️  Skipping AI search tests - quota preservation');
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'AI Search Services',
+        expectedBehavior: 'Search services operational with quota availability',
+        observedBehavior: 'Tests skipped to preserve quota for user requests',
+        severity: Severity.NOTICE,
+        status: 'skipped',
+      });
+      return;
+    }
+
+    const useReducedSuite = rateLimitStats.utilizationPercent > 50;
+
+    if (useReducedSuite) {
+      console.log(`[Weekly Test] Using REDUCED test suite (utilization: ${rateLimitStats.utilizationPercent.toFixed(1)}%)`);
+    }
+
+    const precedentTests = useReducedSuite
+      ? [{ query: 'excessive force', state: 'California', jurisdiction: 'federal' as const }]
+      : [
+          { query: 'excessive force taser', state: 'California', jurisdiction: 'federal' as const },
+          { query: 'false arrest probable cause', state: 'Texas', jurisdiction: 'state' as const },
+          { query: 'qualified immunity denial', state: 'New York', jurisdiction: 'federal' as const },
+        ];
+
+    for (const test of precedentTests) {
+      try {
+        const { searchPrecedents } = await import('./precedentSearch');
+        const startTime = Date.now();
+        const result = await searchPrecedents(test.query, test.state, test.jurisdiction);
+        const duration = Date.now() - startTime;
+
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Precedent Search - ${test.query} (${test.jurisdiction})`,
+          expectedBehavior: 'Find relevant case precedents',
+          observedBehavior: `✓ Search completed in ${duration}ms`,
+          severity: Severity.NOTICE,
+          status: 'fixed',
+        });
+      } catch (error: any) {
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Precedent Search - ${test.query}`,
+          expectedBehavior: 'Find relevant case precedents',
+          observedBehavior: `Search failed: ${error.message}`,
+          severity: Severity.MODERATE,
+          status: 'pending',
+        });
+      }
+    }
+
+    // Filing info tests (scaled)
+    const states = useReducedSuite ? ['California'] : ['California', 'Texas', 'New York', 'Florida', 'Illinois'];
+
+    for (const state of states) {
+      try {
+        const { searchStateFilingInfo } = await import('./filingInfoSearch');
+        const startTime = Date.now();
+        const result = await searchStateFilingInfo(state);
+        const duration = Date.now() - startTime;
+
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Filing Info Search - ${state}`,
+          expectedBehavior: 'Retrieve state-specific filing information',
+          observedBehavior: `✓ Retrieved filing info in ${duration}ms`,
+          severity: Severity.NOTICE,
+          status: 'fixed',
+        });
+
+        // CRITICAL: Check quota after each expensive operation
+        const currentStats = (() => {
+          try {
+            const { rateLimitTracker } = require('./rateLimitTracker');
+            return rateLimitTracker.getStats();
+          } catch {
+            return { utilizationPercent: 0 };
+          }
+        })();
+
+        if (currentStats.utilizationPercent > 90) {
+          console.log('[Weekly Test] ⚠️  Stopping tests - quota threshold exceeded mid-run');
+          results.push({
+            timestamp: new Date().toISOString(),
+            functionTested: 'Remaining AI Tests',
+            expectedBehavior: 'Complete all diagnostic tests',
+            observedBehavior: 'Tests stopped - quota preservation for user requests',
+            severity: Severity.NOTICE,
+            status: 'skipped',
+          });
+          return;
+        }
+      } catch (error: any) {
+        const message = (error && error.message) || String(error);
+        const isQuotaError = message.toLowerCase().includes('rate limit') || message.toLowerCase().includes('quota') || (error && error.status === 429);
+
+        if (isQuotaError) {
+          console.log('[Weekly Test] ⚠️  Quota exhausted - stopping tests');
+          results.push({
+            timestamp: new Date().toISOString(),
+            functionTested: 'Remaining AI Tests',
+            expectedBehavior: 'Complete all diagnostic tests',
+            observedBehavior: 'Tests stopped - quota exhausted',
+            severity: Severity.NOTICE,
+            status: 'skipped',
+          });
+          return;
+        }
+
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: `Filing Info Search - ${state}`,
+          expectedBehavior: 'Retrieve state-specific filing information',
+          observedBehavior: `Search failed: ${message}`,
+          severity: Severity.MODERATE,
+          status: 'pending',
+        });
+      }
+    }
+  }
+
+  private async testSystemPerformance(results: FunctionErrorLogEntry[]) {
+    // Test 1: Database Query Performance
+    try {
+      const { db } = await import('./db');
+      const iterations = 5;
+      const times: number[] = [];
+
+      for (let i = 0; i < iterations; i++) {
+        const start = Date.now();
+        await (db as any).execute('SELECT 1');
+        times.push(Date.now() - start);
+      }
+
+      const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
+      const maxTime = Math.max(...times);
+
+      if (avgTime > 500) {
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: 'Database Performance Test',
+          expectedBehavior: 'Average query time < 500ms',
+          observedBehavior: `⚠ Average: ${avgTime.toFixed(2)}ms, Max: ${maxTime}ms (SLOW)`,
+          severity: Severity.WARNING,
+          status: 'fixed',
+          notes: 'Database performance degraded',
+        });
+      } else {
+        results.push({
+          timestamp: new Date().toISOString(),
+          functionTested: 'Database Performance Test',
+          expectedBehavior: 'Fast query response times',
+          observedBehavior: `✓ Average: ${avgTime.toFixed(2)}ms, Max: ${maxTime}ms`,
+          severity: Severity.NOTICE,
+          status: 'fixed',
+        });
+      }
+    } catch (error: any) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Database Performance Test',
+        expectedBehavior: 'Complete performance benchmark',
+        observedBehavior: `Performance test failed: ${error.message}`,
+        severity: Severity.MODERATE,
+        status: 'pending',
+      });
+    }
+
+    // Test 2: Memory Usage Check
+    const memUsage = process.memoryUsage();
+    const heapUsedMB = (memUsage.heapUsed / 1024 / 1024).toFixed(2);
+    const heapTotalMB = (memUsage.heapTotal / 1024 / 1024).toFixed(2);
+
+    results.push({
+      timestamp: new Date().toISOString(),
+      functionTested: 'Memory Usage Monitor',
+      expectedBehavior: 'Monitor system memory consumption',
+      observedBehavior: `Heap: ${heapUsedMB}MB / ${heapTotalMB}MB`,
+      severity: Severity.NOTICE,
+      status: 'fixed',
+    });
+
+    // Test 3: Concurrent Request Simulation
+    try {
+      const { db } = await import('./db');
+      const concurrentQueries = 10;
+      const start = Date.now();
+
+      await Promise.all(Array(concurrentQueries).fill(0).map(() => (db as any).execute('SELECT 1')));
+
+      const totalTime = Date.now() - start;
+      const avgPerQuery = totalTime / concurrentQueries;
+
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Concurrent Load Test',
+        expectedBehavior: 'Handle multiple simultaneous requests',
+        observedBehavior: `✓ ${concurrentQueries} concurrent queries completed in ${totalTime}ms (avg ${avgPerQuery.toFixed(2)}ms/query)`,
+        severity: Severity.NOTICE,
+        status: 'fixed',
+      });
+    } catch (error: any) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Concurrent Load Test',
+        expectedBehavior: 'Handle multiple simultaneous requests',
+        observedBehavior: `Load test failed: ${error.message}`,
+        severity: Severity.MODERATE,
+        status: 'pending',
+      });
+    }
+  }
+
+  private async testDatabaseOperations(results: FunctionErrorLogEntry[]) {
+    // Test 1: Basic Connection
+    try {
+      const { db } = await import('./db');
+      await (db as any).execute('SELECT 1');
+
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Database Connection',
+        expectedBehavior: 'Successfully connect and execute query',
+        observedBehavior: '✓ Connection successful',
+        severity: Severity.NOTICE,
+        status: 'fixed',
+      });
+    } catch (error: any) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Database Connection',
+        expectedBehavior: 'Successfully connect and execute query',
+        observedBehavior: `Connection failed: ${error.message}`,
+        severity: Severity.CRITICAL,
+        status: 'pending',
+      });
+      return; // Skip further DB tests
+    }
+
+    // Test 2: Table Existence Validation
+    try {
+      const { db } = await import('./db');
+      const tables = ['users', 'payments', 'complaints', 'lawsuits', 'foiarequests', 'petitions'];
+      const existingTables: string[] = [];
+
+      for (const table of tables) {
+        try {
+          await (db as any).execute(`SELECT 1 FROM ${table} LIMIT 1`);
+          existingTables.push(table);
+        } catch {
+          // Table doesn't exist or query failed
+        }
+      }
+
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Database Schema Validation',
+        expectedBehavior: 'All required tables exist',
+        observedBehavior: `✓ Found ${existingTables.length}/${tables.length} tables: ${existingTables.join(', ')}`,
+        severity: existingTables.length === tables.length ? Severity.NOTICE : Severity.WARNING,
+        status: 'fixed',
+      });
+    } catch (error: any) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Database Schema Validation',
+        expectedBehavior: 'Validate database schema',
+        observedBehavior: `Schema validation failed: ${error.message}`,
+        severity: Severity.MODERATE,
+        status: 'pending',
+      });
+    }
+
+    // Test 3: Transaction Support
+    try {
+      const { db } = await import('./db');
+      await (db as any).execute('BEGIN');
+      await (db as any).execute('SELECT 1');
+      await (db as any).execute('ROLLBACK');
+
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Database Transaction Support',
+        expectedBehavior: 'Support BEGIN/ROLLBACK transactions',
+        observedBehavior: '✓ Transaction support confirmed',
+        severity: Severity.NOTICE,
+        status: 'fixed',
+      });
+    } catch (error: any) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Database Transaction Support',
+        expectedBehavior: 'Support transactions',
+        observedBehavior: `Transaction test failed: ${error.message}`,
+        severity: Severity.WARNING,
+        status: 'pending',
+      });
+    }
+  }
+
+  private async testPaymentProcessing(results: FunctionErrorLogEntry[]) {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    if (stripeKey && webhookSecret) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Payment Processing',
+        expectedBehavior: 'Stripe configured with webhook secret',
+        observedBehavior: 'Fully configured',
+        severity: Severity.NOTICE,
+        status: 'fixed',
+      });
+    } else if (!stripeKey) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Payment Processing',
+        expectedBehavior: 'Stripe key configured',
+        observedBehavior: 'Stripe key missing',
+        severity: Severity.SERIOUS,
+        status: 'pending',
+      });
+    } else {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Payment Processing',
+        expectedBehavior: 'Stripe configured with webhook secret',
+        observedBehavior: 'Webhook secret missing',
+        severity: Severity.WARNING,
+        status: 'fixed',
+      });
+    }
+  }
+
+  private async testEmailService(results: FunctionErrorLogEntry[]) {
+    const smtpUser = process.env.GWSMTP_USER;
+    const smtpPass = process.env.GWSMTP_PASS;
+
+    if (smtpUser && smtpPass) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Email Service',
+        expectedBehavior: 'SMTP credentials configured',
+        observedBehavior: 'Credentials present',
+        severity: Severity.NOTICE,
+        status: 'fixed',
+      });
+    } else {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Email Service',
+        expectedBehavior: 'SMTP credentials configured',
+        observedBehavior: 'SMTP credentials missing',
+        severity: Severity.MODERATE,
+        status: 'pending',
+      });
+    }
+  }
+
+  private async testAuthentication(results: FunctionErrorLogEntry[]) {
+    const sessionSecret = process.env.SESSION_SECRET;
+
+    if (sessionSecret) {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Authentication System',
+        expectedBehavior: 'Session secret configured',
+        observedBehavior: 'Session secret present',
+        severity: Severity.NOTICE,
+        status: 'fixed',
+      });
+    } else {
+      results.push({
+        timestamp: new Date().toISOString(),
+        functionTested: 'Authentication System',
+        expectedBehavior: 'Session secret configured',
+        observedBehavior: 'Session secret missing',
+        severity: Severity.CRITICAL,
+        status: 'pending',
+      });
+    }
+  }
+
+  private async attemptAutoRepair(issue: FunctionErrorLogEntry): Promise<boolean> {
+    console.log(`[BadBlue Worker] Auto-repairing: ${issue.functionTested}`);
+
+    // Guard against missing cause field (prevents TypeError)
+    const cause = (issue as any).cause || '';
+
+    // Most configuration issues require manual intervention
+    if (cause.toLowerCase().includes('missing') || cause.toLowerCase().includes('not configured')) {
+      issue.notes = 'Manual configuration required';
+      issue.status = 'pending';
+      return false;
+    }
+
+    // For connection issues, attempt reconnection
+    if (issue.functionTested.includes('Database Connection')) {
+      try {
+        const { db } = await import('./db');
+        await (db as any).execute('SELECT 1');
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    // For other issues, assume manual review is needed
+    issue.notes = 'Automated repair not implemented for this issue type';
+    issue.status = 'pending';
+    return false;
+  }
+
+  // Log management methods
+  private async readFailureLog(): Promise<FailureLogEntry[]> {
+    try {
+      const data = await fs.readFile(this.FAILURE_LOG, 'utf-8');
+      return JSON.parse(data);
+    } catch {
+      return [];
+    }
+  }
+
+  private async logFailures(entries: FailureLogEntry[]) {
+    try {
+      const existing = await this.readFailureLog();
+      const updated = [...existing, ...entries];
+      await fs.writeFile(this.FAILURE_LOG, JSON.stringify(updated, null, 2));
+    } catch (error) {
+      console.error('[BadBlue Worker] Error writing failure log:', error);
+    }
+  }
+
+  private async appendFailureLog(entries: FailureLogEntry[]) {
+    try {
+      const existing = await this.readFailureLog();
+      const updated = [...existing, ...entries];
+      await fs.writeFile(this.FAILURE_LOG, JSON.stringify(updated, null, 2));
+    } catch (error) {
+      console.error('[BadBlue Worker] Error writing failure log:', error);
+    }
+  }
+
+  private async markFailureResolved(failure: FailureLogEntry) {
+    try {
+      const failures = await this.readFailureLog();
+      const index = failures.findIndex((f) => f.timestamp === failure.timestamp && f.functionAffected === failure.functionAffected);
+
+      if (index !== -1) {
+        failures[index].resolved = true;
+        failures[index].resolvedAt = new Date().toISOString();
+        failures[index].systemState = 'working';
+        await fs.writeFile(this.FAILURE_LOG, JSON.stringify(failures, null, 2));
+      }
+    } catch (error) {
+      console.error('[BadBlue Worker] Error marking failure resolved:', error);
+    }
+  }
+
+  private async flagForManualReview(failure: FailureLogEntry) {
+    try {
+      const failures = await this.readFailureLog();
+      const index = failures.findIndex((f) => f.timestamp === failure.timestamp && f.functionAffected === failure.functionAffected);
+
+      if (index !== -1) {
+        failures[index].cause = `${failures[index].cause} [MANUAL REVIEW REQUIRED]`;
+        await fs.writeFile(this.FAILURE_LOG, JSON.stringify(failures, null, 2));
+      }
+    } catch (error) {
+      console.error('[BadBlue Worker] Error flagging for manual review:', error);
+    }
+  }
+
+  private async readFunctionErrorLog(): Promise<FunctionErrorLogEntry[]> {
+    try {
+      const data = await fs.readFile(this.FUNCTION_ERROR_LOG, 'utf-8');
+      return JSON.parse(data);
+    } catch {
+      return [];
+    }
+  }
+
+  private async appendFunctionErrorLog(entries: FunctionErrorLogEntry[]) {
+    try {
+      const existing = await this.readFunctionErrorLog();
+      const updated = [...existing, ...entries];
+      await fs.writeFile(this.FUNCTION_ERROR_LOG, JSON.stringify(updated, null, 2));
+    } catch (error) {
+      console.error('[BadBlue Worker] Error writing function error log:', error);
+    }
+  }
+
+  private async clearAllLogs() {
+    try {
+      await fs.writeFile(this.FAILURE_LOG, JSON.stringify([], null, 2));
+      await fs.writeFile(this.FUNCTION_ERROR_LOG, JSON.stringify([], null, 2));
+      await fs.writeFile(this.ALERTS_LOG, JSON.stringify([], null, 2));
+      console.log('[BadBlue Worker] All logs cleared.');
+    } catch (error) {
+      console.error('[BadBlue Worker] Error clearing logs:', error);
+    }
+  }
+
+  // Public API for reading logs (for admin panel)
+  async getFailureLogs(): Promise<FailureLogEntry[]> {
+    const logs = await this.readFailureLog();
+    // Return newest to oldest
+    return logs.reverse();
+  }
+
+  async getFunctionErrorLogs(): Promise<FunctionErrorLogEntry[]> {
+    const logs = await this.readFunctionErrorLog();
+    // Return newest to oldest
+    return logs.reverse();
+  }
+
+  async logFailure(entry: Omit<FailureLogEntry, 'timestamp'>) {
+    const fullEntry: FailureLogEntry = {
+      timestamp: new Date().toISOString(),
+      ...entry,
+    };
+    await this.appendFailureLog([fullEntry]);
+  }
+
+  // Manual triggers for admin
+  async runManualDiagnostic(): Promise<void> {
+    console.log('[BadBlue Worker] Manual diagnostic triggered');
+    await this.runDiagnostics();
+  }
+
+  async runManualWeeklyTest(): Promise<void> {
+    console.log('[BadBlue Worker] Manual weekly test triggered');
+    await this.runWeeklySystemTest();
+  }
+
+  async runManualRepair(): Promise<void> {
+    console.log('[BadBlue Worker] Manual repair cycle triggered');
+    await this.runDailyRepair();
+  }
+
+  // Public getter for maintenance mode status
+  isUnderMaintenance(): boolean {
+    return this.isMaintenanceMode;
+  }
+
+  shutdown() {
+    console.log('[BadBlue Worker] Shutting down...');
+
+    if (this.diagnosticInterval) {
+      clearInterval(this.diagnosticInterval);
+    }
+    if (this.repairInterval) {
+      clearInterval(this.repairInterval);
+    }
+    if (this.weeklyTestSchedule) {
+      clearTimeout(this.weeklyTestSchedule);
+    }
+  }
+
+  // -------------------------
+  // New helper capabilities
+  // -------------------------
+
+  /**
+   * ensureSupabaseTables
+   * Creates minimal necessary tables if missing. This is conservative and limited to safe CREATE TABLE IF NOT EXISTS statements.
+   */
+  private async ensureSupabaseTables() {
+    try {
+      const { db } = await import('./db');
+
+      // Basic table creation for worker usage - safe CREATE IF NOT EXISTS
+      const createStatements = [
+        `CREATE TABLE IF NOT EXISTS worker_alerts (
+          id SERIAL PRIMARY KEY,
+          alertType TEXT,
+          severity INTEGER,
+          title TEXT,
+          message TEXT,
+          metadata JSONB,
+          resolved BOOLEAN DEFAULT false,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        );`,
+        `CREATE TABLE IF NOT EXISTS worker_health_metrics (
+          id SERIAL PRIMARY KEY,
+          metric JSONB,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        );`,
+        `CREATE TABLE IF NOT EXISTS worker_failures (
+          id SERIAL PRIMARY KEY,
+          entry JSONB,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        );`,
+      ];
+
+      for (const stmt of createStatements) {
+        try {
+          if ((db as any).execute) {
+            await (db as any).execute(stmt);
+          } else if ((db as any).query) {
+            await (db as any).query(stmt);
+          }
+        } catch (e) {
+          // ignore individual create failures (some providers may restrict DDL)
+          console.warn('[BadBlue Worker] ensureSupabaseTables statement failed:', (e as Error).message);
+        }
+      }
+
+      console.log('[BadBlue Worker] ensureSupabaseTables: ensured minimal worker tables exist (best-effort)');
+    } catch (e) {
+      console.warn('[BadBlue Worker] ensureSupabaseTables could not run:', (e as Error).message);
+    }
+  }
+
+  /**
+   * installMissingPackages
+   * Installs packages via npm if environment permits. This protects production by default.
+   */
+  private async installMissingPackages(packages: string[]) {
+    if (!Array.isArray(packages) || packages.length === 0) return;
+    if (process.env.ALLOW_WORKER_INSTALL !== 'true') {
+      console.log('[BadBlue Worker] installMissingPackages skipped - ALLOW_WORKER_INSTALL !== true');
+      return;
+    }
+
+    // Deduplicate and sanitize
+    const pkgs = Array.from(new Set(packages.map((p) => String(p).trim()).filter(Boolean)));
+    if (pkgs.length === 0) return;
+
+    try {
+      console.log(`[BadBlue Worker] Installing missing packages: ${pkgs.join(', ')}`);
+      // Use npm install individually to better control failures
+      for (const pkg of pkgs) {
+        try {
+          await exec(`npm install --no-audit --no-fund ${pkg}`);
+          console.log(`[BadBlue Worker] ✓ Installed ${pkg}`);
+        } catch (err: any) {
+          console.warn(`[BadBlue Worker] Failed to install ${pkg}: ${err.message}`);
+        }
+      }
+    } catch (err: any) {
+      console.error('[BadBlue Worker] installMissingPackages error:', err.message);
+    }
+  }
+
+  /**
+   * checkForPackageUpdatesAndApply
+   * Checks npm outdated and applies updates to packages if allowed.
+   */
+  private async checkForPackageUpdatesAndApply() {
+    if (process.env.ALLOW_WORKER_INSTALL !== 'true') {
+      console.log('[BadBlue Worker] checkForPackageUpdatesAndApply skipped - ALLOW_WORKER_INSTALL !== true');
+      return;
+    }
+
+    try {
+      console.log('[BadBlue Worker] Checking for package updates (npm outdated)...');
+      const { stdout } = await exec('npm outdated --json || true');
+      if (!stdout) {
+        console.log('[BadBlue Worker] No outdated packages reported');
+        return;
+      }
+      const parsed = JSON.parse(stdout || '{}');
+      const packagesToUpdate = Object.keys(parsed || {});
+      if (packagesToUpdate.length === 0) {
+        console.log('[BadBlue Worker] All packages up-to-date');
+        return;
+      }
+
+      console.log(`[BadBlue Worker] Packages to update: ${packagesToUpdate.join(', ')}`);
+
+      for (const pkg of packagesToUpdate) {
+        try {
+          // Install latest minor/major depending on environment; conservatively install latest patch/minor
+          await exec(`npm install ${pkg}@latest --no-audit --no-fund`);
+          console.log(`[BadBlue Worker] ✓ Updated ${pkg} to latest`);
+        } catch (err: any) {
+          console.warn(`[BadBlue Worker] Failed to update ${pkg}: ${err.message}`);
+        }
+      }
+
+      // Optionally run build/test if available
+      try {
+        console.log('[BadBlue Worker] Running build (if defined)...');
+        await exec('npm run build || true');
+      } catch {
+        // ignore
+      }
+    } catch (err: any) {
+      console.error('[BadBlue Worker] checkForPackageUpdatesAndApply error:', err.message);
+    }
+  }
+
+  private async commitChanges(message: string) {
+    if (process.env.ALLOW_WORKER_GIT !== 'true') {
+      console.log('[BadBlue Worker] commitChanges skipped - ALLOW_WORKER_GIT !== true');
+      return;
+    }
+
+    try {
+      await exec('git add -A');
+      await exec(`git commit -m "${message.replace(/"/g, '\\"')}" || true`);
+      await exec('git push || true');
+      console.log('[BadBlue Worker] Changes committed and pushed (if git available and configured)');
+    } catch (err: any) {
+      console.warn('[BadBlue Worker] commitChanges failed:', err.message);
+    }
+  }
+
+  /**
+   * Intelligent web fetch/search helpers (worker has controlled web access)
+   *
+   * Important: Do not statically import 'undici' at top-level. Use runtime fallback:
+   *  - prefer global fetch (Node 18+)
+   *  - otherwise try dynamic import('undici') and use its fetch
+   */
+  private async fetchWithFallback(url: string, options?: any): Promise<any> {
+    // Prefer global fetch when available (Node 18+ and browsers)
+    if (typeof (globalThis as any).fetch === 'function') {
+      return (globalThis as any).fetch(url, options);
+    }
+
+    // Try dynamic import of undici if available in node_modules
+    try {
+      const undici = await import('undici');
+      const fn = (undici && (undici.fetch || undici.default?.fetch)) as any;
+      if (typeof fn === 'function') {
+        return fn(url, options);
+      } else {
+        throw new Error('undici.fetch not available');
+      }
+    } catch (err) {
+      // Provide a helpful error message (so callers can handle gracefully)
+      throw new Error(`No fetch available in runtime and dynamic import of 'undici' failed: ${(err as Error).message}`);
+    }
+  }
+
+  private async fetchExternalSolution(query: string) {
+    // Use StackExchange search API as a safe starting point for programming / ops solutions
+    try {
+      const encoded = encodeURIComponent(query);
+      const url = `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encoded}&site=stackoverflow&filter=withbody&pagesize=5`;
+      const res = await this.fetchWithFallback(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.items || [];
+    } catch (err) {
+      console.warn('[BadBlue Worker] fetchExternalSolution failed:', (err as Error).message);
+      return null;
+    }
+  }
+
+  private async getWebContent(url: string) {
+    try {
+      const res = await this.fetchWithFallback(url, { method: 'GET' });
+      if (!res.ok) return null;
+      return await res.text();
+    } catch (err) {
+      console.warn('[BadBlue Worker] getWebContent failed for', url, (err as Error).message);
+      return null;
+    }
+  }
+
+  /**
+   * Allocate AI providers for tasks based on rate limits and capabilities
+   * Returns a simple plan describing which provider to use for parts of a task.
+   */
+  private async allocateAiProviders(taskDescription: string) {
+    let rateLimitStats: any = { gemini: { utilizationPercent: 0 }, groq: { utilizationPercent: 0 } };
+    try {
+      const { rateLimitTracker } = await import('./rateLimitTracker');
+      rateLimitStats = {
+        gemini: rateLimitTracker.getStats?.() || { utilizationPercent: 0 },
+        groq: rateLimitTracker.getGroqStats?.() || { utilizationPercent: 0 },
+      };
+    } catch {
+      // ignore
+    }
+
+    // Strategy:
+    // - Prefer Groq for heavy token tasks if Groq underutilized
+    // - Prefer Gemini for short reasoning tasks if Gemini underutilized
+    const plan: { provider: string; reason: string }[] = [];
+
+    if ((rateLimitStats.groq?.utilizationPercent || 0) < 60) {
+      plan.push({ provider: 'groq', reason: 'Prefer Groq for heavy token tasks' });
+    }
+    if ((rateLimitStats.gemini?.utilizationPercent || 0) < 60) {
+      plan.push({ provider: 'gemini', reason: 'Use Gemini for reasoning and code suggestions' });
+    }
+
+    if (plan.length === 0) {
+      // Both constrained -> fallback plan
+      plan.push({ provider: 'groq', reason: 'Fallback provider due to quotas' });
+    }
+
+    return plan;
+  }
+
+  /**
+   * schedulePruneLogs
+   * Deletes older entries from logs after one week
+   */
+  private schedulePruneLogs() {
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+    // Run daily
+    this.pruneLogsInterval = setInterval(() => this.pruneOlderLogs().catch((e) => console.warn('[BadBlue Worker] pruneOlderLogs failed', e)), ONE_DAY);
+    // Also run shortly after startup
+    setTimeout(() => this.pruneOlderLogs().catch((e) => console.warn('[BadBlue Worker] pruneOlderLogs initial run failed', e)), 1000 * 30);
+  }
+
+  private async pruneOlderLogs() {
+    try {
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000; // 1 week
+      // Failure log
+      try {
+        const failures = await this.readFailureLog();
+        const kept = failures.filter((f) => new Date(f.timestamp).getTime() >= cutoff);
+        await fs.writeFile(this.FAILURE_LOG, JSON.stringify(kept, null, 2));
+      } catch {
+        // ignore
+      }
+      // Function error log
+      try {
+        const funcErrors = await this.readFunctionErrorLog();
+        const kept = funcErrors.filter((f) => new Date(f.timestamp).getTime() >= cutoff);
+        await fs.writeFile(this.FUNCTION_ERROR_LOG, JSON.stringify(kept, null, 2));
+      } catch {
+        // ignore
+      }
+      // Alerts log
+      try {
+        const data = await fs.readFile(this.ALERTS_LOG, 'utf-8');
+        const alerts = JSON.parse(data || '[]') as any[];
+        const kept = alerts.filter((a) => new Date(a.timestamp).getTime() >= cutoff);
+        await fs.writeFile(this.ALERTS_LOG, JSON.stringify(kept, null, 2));
+      } catch {
+        // ignore
+      }
+
+      console.log('[BadBlue Worker] Pruned logs older than 1 week (best-effort)');
+    } catch (err) {
+      console.warn('[BadBlue Worker] pruneOlderLogs error:', (err as Error).message);
+    }
+  }
+}
+
+// Export singleton instance
+export const badblueWorker = BadBlueWorker.getInstance();

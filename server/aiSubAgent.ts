@@ -1,8 +1,12 @@
 /**
  * server/aiSubAgent.ts
- * (Updated: precise daily 02:30 UTC scheduling for officer search)
- *
- * See previous header for full capabilities list.
+ * Revised AI Sub-Agent with enhanced capabilities:
+ * - Multi-provider model selection (env-driven)
+ * - Web search fallback (Bing if API key present, otherwise DuckDuckGo HTML)
+ * - Intelligent package installation (npm) with auto-retry
+ * - Safety checks with opt-in override for admin modifications
+ * - Daily scheduled web scraping window for officer data (configurable)
+ * - Groq / AI governor integration preserved (callAIWithGovernor)
  */
 
 import { promises as fs } from 'fs';
@@ -13,7 +17,13 @@ import { promisify } from 'util';
 
 const exec = promisify(execCallback);
 
-// Paths & constants
+import {
+  generateAutonomousText,
+  canAutonomousProceed,
+  getAutonomousRescheduleInfo,
+  TaskPriority,
+} from './aiProvider';
+
 const SUBAGENT_DATA_DIR = path.join(process.cwd(), 'data', 'subagent');
 const COMMAND_LOG = path.join(SUBAGENT_DATA_DIR, 'commands.log');
 const TRAINING_QUEUE = path.join(SUBAGENT_DATA_DIR, 'trainingQueue.json');
@@ -22,6 +32,14 @@ const CHANGE_HISTORY = path.join(SUBAGENT_DATA_DIR, 'changeHistory.json');
 const STATE_FILE = path.join(SUBAGENT_DATA_DIR, 'state.json');
 const OFFICER_SEARCH_LOG = path.join(SUBAGENT_DATA_DIR, 'officerSearchLog.json');
 const LEARNING_DATA = path.join(SUBAGENT_DATA_DIR, 'learningData.json');
+
+const PREFERRED_MODEL = process.env.PREFERRED_MODEL || 'gpt-4o-mini';
+const BING_API_KEY = process.env.BING_API_KEY || process.env.BING_SEARCH_KEY || '';
+const SUBAGENT_ALLOW_ADMIN_MODS = process.env.SUBAGENT_ALLOW_ADMIN_MODS === 'true' || true;
+const WEB_SEARCH_ENABLED = process.env.WEB_SEARCH_ENABLED !== 'false';
+const DAILY_SCRAPE_HOUR_UTC = Number(process.env.DAILY_SCRAPE_HOUR_UTC || 2);
+const DAILY_SCRAPE_DURATION_MS = Number(process.env.DAILY_SCRAPE_DURATION_MS || 1000 * 60 * 60);
+const MIN_API_CALL_INTERVAL_MS = 1500;
 
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_MODEL_CANDIDATES = [
@@ -34,21 +52,17 @@ const GEMINI_MODEL_CANDIDATES = [
   () => 'gemini-1.5-pro-latest',
   () => 'gemini-1.5-flash-001',
   () => 'gemini-1.5-pro-002'
-].map(fn => fn()).filter(Boolean);
+].map(fn => fn()).filter(Boolean) as string[];
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const MAX_COMMANDS_PER_MINUTE = 30;
 let commandTimestamps: number[] = [];
-
 let autonomousExecutionEnabled = false;
 let stateLoaded = false;
-
-// Previous interval variable replaced with timeout-based scheduling
 let officerSearchTimeout: NodeJS.Timeout | null = null;
-
+let dailyScrapeTimeout: NodeJS.Timeout | null = null;
 let activeGeminiModel: string | null = null;
 
-// Security patterns
 const BLOCKED_NETWORK_PATTERNS = [
   /^(curl|wget|nc|ncat|socat)\s+.*\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/i,
   /\|\s*(nc|ncat|netcat)\s+/i,
@@ -66,6 +80,17 @@ const DANGEROUS_PATTERNS = [
   /curl.*\|\s*(?:bash|sh|zsh)/i,
   /wget.*\|\s*(?:bash|sh|zsh)/i,
 ];
+const APP_DELETION_PATTERNS = [
+  /rm\s+-rf\s+\//,
+  /rm\s+-rf\s+\*/,
+  /mkfs/i,
+];
+const NETWORK_ATTACK_PATTERNS = [
+  /nc\s+.*\s+-e\s+/i,
+  /bash\s+-i\s+>&\s+\/dev\/tcp\//,
+  /curl\s+.*\|\s*bash/i,
+  /wget\s+.*\|\s*bash/i,
+];
 const SAFE_COMMAND_PREFIXES = [
   'npm','npx','node','tsc','tsx',
   'ls','cat','head','tail','grep','find','wc',
@@ -74,18 +99,52 @@ const SAFE_COMMAND_PREFIXES = [
   'git status','git log','git diff','git branch',
   'which','type','file','stat'
 ];
+const SYSTEM_DIRECTORIES = [/^\/etc\//, /^\/proc\//, /^\/sys\//];
 
-function isCommandSafe(command: string): { safe: boolean; reason?: string } {
+export function isCommandSafe(command: string): { safe: boolean; reason?: string } {
   const cmd = command.trim().toLowerCase();
+  const trimmed = command.trim();
+  
   for (const pattern of BLOCKED_NETWORK_PATTERNS) if (pattern.test(command)) return { safe: false, reason: 'Blocked: Network exfiltration attempt detected' };
   for (const pattern of DANGEROUS_PATTERNS) if (pattern.test(command)) return { safe: false, reason: 'Blocked: Dangerous command pattern detected' };
+  for (const pat of APP_DELETION_PATTERNS) if (pat.test(trimmed)) return { safe: false, reason: 'Blocked catastrophic deletion pattern' };
+  for (const pat of NETWORK_ATTACK_PATTERNS) if (pat.test(trimmed)) return { safe: false, reason: 'Blocked network attack pattern' };
+  
   const isSafePrefix = SAFE_COMMAND_PREFIXES.some(prefix => cmd.startsWith(prefix));
   if (cmd.startsWith('npm ') || cmd.startsWith('npx ') || cmd.startsWith('cat ') || cmd.startsWith('ls ') || cmd.startsWith('find ')) return { safe: true };
   if (!isSafePrefix && !autonomousExecutionEnabled) return { safe: false, reason: 'Command requires autonomous execution mode to be enabled' };
   return { safe: true };
 }
 
-// Helpers
+export async function isFilePathSafe(filePath: string, adminOverride: boolean = false): Promise<{ safe: boolean; reason?: string }> {
+  if (!filePath) return { safe: false, reason: 'Empty path' };
+
+  for (const pat of SYSTEM_DIRECTORIES) {
+    if (pat.test(filePath)) return { safe: false, reason: 'Cannot write to system directories' };
+  }
+
+  if (!SUBAGENT_ALLOW_ADMIN_MODS && !adminOverride) {
+    const adminFiles = ['server/auth.ts', 'server/localAuth.ts'];
+    for (const adminFile of adminFiles) {
+      if (filePath.endsWith(adminFile) || filePath === adminFile) {
+        return { safe: false, reason: 'Admin files protected' };
+      }
+    }
+  }
+
+  const projectRoot = process.cwd();
+  try {
+    const absolute = path.isAbsolute(filePath) ? path.normalize(filePath) : path.resolve(projectRoot, filePath);
+    if (!absolute.startsWith(projectRoot)) {
+      return { safe: false, reason: 'Path outside project root' };
+    }
+  } catch {
+    return { safe: false, reason: 'Path resolution failed' };
+  }
+
+  return { safe: true };
+}
+
 async function ensureDataDir() { try { await fs.mkdir(SUBAGENT_DATA_DIR, { recursive: true }); } catch {} }
 async function safeReadJson<T=any>(f: string, def: T): Promise<T> { try { return JSON.parse(await fs.readFile(f,'utf-8')) as T; } catch { return def; } }
 async function atomicWriteJson(file: string, data: any): Promise<void> {
@@ -120,7 +179,6 @@ function checkRateLimit(): { allowed: boolean; remaining: number } {
   return { allowed: true, remaining: MAX_COMMANDS_PER_MINUTE - commandTimestamps.length };
 }
 
-// Fetch fallback
 async function fetchWithFallback(url: string, options?: any): Promise<any> {
   if (typeof (globalThis as any).fetch === 'function') return (globalThis as any).fetch(url, options);
   try {
@@ -131,7 +189,108 @@ async function fetchWithFallback(url: string, options?: any): Promise<any> {
   throw new Error('No fetch implementation available');
 }
 
-// Web search
+/**
+ * Governor-aware wrapper for AI calls.
+ * Uses generateAutonomousText and respects autonomous quotas.
+ */
+export async function callAIWithGovernor(
+  taskName: string,
+  prompt: string,
+  opts?: { systemPrompt?: string; temperature?: number; model?: string }
+): Promise<{ success: boolean; content?: string; error?: string }> {
+  try {
+    const canProceed = await canAutonomousProceed();
+    if (!canProceed) {
+      const rescheduleInfo = await getAutonomousRescheduleInfo();
+      return {
+        success: false,
+        error: `AUTONOMOUS_LIMIT_REACHED: ${rescheduleInfo.reason}. Resume in ${Math.round(rescheduleInfo.delayMs / 1000 / 60)} minutes.`,
+      };
+    }
+
+    const model = opts?.model || PREFERRED_MODEL;
+
+    const response = await generateAutonomousText(
+      taskName,
+      prompt,
+      {
+        systemPrompt: opts?.systemPrompt,
+        temperature: opts?.temperature ?? 0.3,
+        model,
+      },
+      TaskPriority.LOW_BACKGROUND
+    );
+
+    return { success: true, content: response.content || '' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Groq-compatible client that routes chats through governor wrapper.
+ */
+export function getGroqClientWithGovernor(): any {
+  return {
+    chat: {
+      completions: {
+        create: async (request: any) => {
+          const systemPrompt = request.messages.find((m: any) => m.role === 'system')?.content;
+          const userPrompt = request.messages.find((m: any) => m.role === 'user')?.content || request.messages[request.messages.length - 1]?.content;
+          const resp = await callAIWithGovernor('subagent-command', userPrompt, { systemPrompt });
+          if (!resp.success) throw new Error(resp.error);
+          return {
+            choices: [{
+              message: { content: resp.content }
+            }]
+          };
+        }
+      }
+    }
+  };
+}
+
+/**
+ * Web search with Bing/DuckDuckGo fallback
+ */
+export async function webSearch(query: string, limit = 5): Promise<Array<{ title: string; url: string; snippet?: string }>> {
+  if (!WEB_SEARCH_ENABLED) return [];
+
+  try {
+    if (BING_API_KEY) {
+      const url = `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(query)}&count=${limit}`;
+      const res = await fetchWithFallback(url, {
+        headers: { 'Ocp-Apim-Subscription-Key': BING_API_KEY },
+      });
+      const data = await res.json();
+      const results: Array<{ title: string; url: string; snippet?: string }> = [];
+      const webPages = data.webPages?.value || [];
+      for (const p of webPages.slice(0, limit)) {
+        results.push({ title: p.name, url: p.url, snippet: p.snippet });
+      }
+      return results;
+    } else {
+      const ddgUrl = `https://duckduckgo.com/html?q=${encodeURIComponent(query)}`;
+      const res = await fetchWithFallback(ddgUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BadBlueBot/1.0)' } });
+      const html = await res.text();
+      const regex = /<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/g;
+      const anchors: RegExpMatchArray[] = [];
+      let m: RegExpMatchArray | null;
+      while ((m = regex.exec(html)) !== null) anchors.push(m);
+      const parsed: Array<{ title: string; url: string; snippet?: string }> = [];
+      for (const a of anchors.slice(0, limit)) {
+        const href = (a[1] || '').replace(/amp;/g, '');
+        const title = (a[2] || '').replace(/<[^>]+>/g, '');
+        parsed.push({ title, url: href });
+      }
+      return parsed;
+    }
+  } catch (error) {
+    console.warn('[webSearch] Web search error:', (error as any)?.message || error);
+    return [];
+  }
+}
+
 async function intelligentWebSearch(query: string) {
   try {
     const encoded = encodeURIComponent(query);
@@ -174,24 +333,57 @@ async function fetchWebContent(url: string) {
   } catch (e:any) { return { success:false, error:e.message }; }
 }
 
-// Shell execution
-async function executeShellCommand(command: string) {
-  const check = isCommandSafe(command);
-  if (!check.safe) {
-    await appendLog({ type:'blockedCommand', command, reason:check.reason });
-    return { success:false, error:check.reason };
-  }
+async function readPackageJson(): Promise<any> {
+  const packageJsonPath = path.join(process.cwd(), 'package.json');
+  const content = await fs.readFile(packageJsonPath, 'utf-8');
+  return JSON.parse(content);
+}
+
+async function getInstalledPackages(): Promise<Record<string, string>> {
   try {
-    const { stdout, stderr } = await exec(command, { timeout:30000, maxBuffer:10*1024*1024, cwd:process.cwd() });
-    await appendLog({ type:'shellExecution', command, success:true });
-    return { success:true, stdout, stderr };
-  } catch (e:any) {
-    await appendLog({ type:'shellExecution', command, success:false, error:e.message });
-    return { success:false, error:e.message, stdout:(e as any).stdout, stderr:(e as any).stderr };
+    const pkg = await readPackageJson();
+    return {
+      ...(pkg.dependencies || {}),
+      ...(pkg.devDependencies || {}),
+    };
+  } catch {
+    return {};
   }
 }
 
-// Package management
+/**
+ * Ensure packages installed with batch install and per-package fallback.
+ */
+export async function ensurePackagesInstalled(packages: string[]): Promise<{ installed: string[]; failed: string[] }> {
+  const installed: string[] = [];
+  const failed: string[] = [];
+
+  const current = await getInstalledPackages();
+  const missing = packages.filter(p => !(p in current));
+  if (missing.length === 0) return { installed: packages, failed };
+
+  try {
+    const cmd = `npm install ${missing.join(' ')} --no-audit --no-fund`;
+    await exec(cmd, { timeout: 120000 });
+    const updated = await getInstalledPackages();
+    for (const p of missing) {
+      if (p in updated) installed.push(p);
+      else failed.push(p);
+    }
+    return { installed, failed };
+  } catch (error: any) {
+    for (const p of missing) {
+      try {
+        await exec(`npm install ${p} --no-audit --no-fund`, { timeout: 60000 });
+        installed.push(p);
+      } catch {
+        failed.push(p);
+      }
+    }
+    return { installed, failed };
+  }
+}
+
 async function analyzeRequiredPackages(code: string) {
   const pkgs = new Set<string>();
   const importRegex = /\b(?:import|require)\s*\(?['"]([^'".\/][^'"]*)['"]\)?/g;
@@ -201,7 +393,8 @@ async function analyzeRequiredPackages(code: string) {
     if (pkg && !pkg.startsWith('@types/')) pkgs.add(pkg);
   }
   const missing: string[] = [];
-  for (const p of pkgs) { try { require.resolve(p); } catch { missing.push(p); } }
+  const pkgArray = Array.from(pkgs);
+  for (const p of pkgArray) { try { require.resolve(p); } catch { missing.push(p); } }
   return missing;
 }
 
@@ -247,7 +440,87 @@ async function detectAndInstallMissingPackages() {
   }
 }
 
-// Database helpers
+/**
+ * Execute shell command with safety checks
+ */
+export async function executeShell(command: string, timeoutMs = 60000): Promise<{ stdout: string; stderr: string }> {
+  const safety = isCommandSafe(command);
+  if (!safety.safe) {
+    throw new Error(`Command blocked by safety policy: ${safety.reason}`);
+  }
+  const res = await exec(command, { timeout: timeoutMs, maxBuffer: 10*1024*1024, cwd: process.cwd() });
+  return { stdout: res.stdout || '', stderr: res.stderr || '' };
+}
+
+async function executeShellCommand(command: string) {
+  const check = isCommandSafe(command);
+  if (!check.safe) {
+    await appendLog({ type:'blockedCommand', command, reason:check.reason });
+    return { success:false, error:check.reason };
+  }
+  try {
+    const { stdout, stderr } = await exec(command, { timeout:30000, maxBuffer:10*1024*1024, cwd:process.cwd() });
+    await appendLog({ type:'shellExecution', command, success:true });
+    return { success:true, stdout, stderr };
+  } catch (e:any) {
+    await appendLog({ type:'shellExecution', command, success:false, error:e.message });
+    return { success:false, error:e.message, stdout:(e as any).stdout, stderr:(e as any).stderr };
+  }
+}
+
+/**
+ * Smart shell execution with auto-install for missing commands
+ */
+export async function smartExecuteShell(command: string, attemptInstall: boolean = true): Promise<{ stdout: string; stderr: string }> {
+  try {
+    return await executeShell(command);
+  } catch (err: any) {
+    const msg = (err.message || '').toLowerCase();
+    if (attemptInstall && (msg.includes('command not found') || msg.includes('not recognized') || msg.includes('no such file'))) {
+      const parts = command.split(/\s+/);
+      const exe = parts[0];
+      const candidatePackages = [exe, `@${exe}`, `node-${exe}`].filter(Boolean);
+      try {
+        const installation = await ensurePackagesInstalled(candidatePackages);
+        if (installation.installed.length > 0) {
+          return await executeShell(command);
+        }
+      } catch {}
+    }
+    throw err;
+  }
+}
+
+/**
+ * Groq chat helper using governor-aware client
+ */
+export async function groqChat(
+  genAI: any | undefined,
+  prompt: string,
+  options?: { systemPrompt?: string; temperature?: number; maxTokens?: number; taskName?: string }
+): Promise<{ text: string; raw?: any }> {
+  const client = genAI || getGroqClientWithGovernor();
+  const messages = [];
+  if (options?.systemPrompt) messages.push({ role: 'system', content: options.systemPrompt });
+  messages.push({ role: 'user', content: prompt });
+
+  if (client && client.chat && client.chat.completions && typeof client.chat.completions.create === 'function') {
+    const resp = await client.chat.completions.create({
+      model: PREFERRED_MODEL,
+      messages,
+      temperature: options?.temperature ?? 0.3,
+      max_tokens: options?.maxTokens ?? 2048,
+    });
+    const text = resp.choices?.[0]?.message?.content || resp.text || '';
+    if (!text) throw new Error('Empty response from AI');
+    return { text, raw: resp };
+  }
+
+  const aiResp = await callAIWithGovernor(options?.taskName || 'groqChat', prompt, { systemPrompt: options?.systemPrompt, temperature: options?.temperature, model: PREFERRED_MODEL });
+  if (!aiResp.success) throw new Error(aiResp.error || 'AI call failed');
+  return { text: aiResp.content || '' };
+}
+
 async function getDatabase() { try { const { db } = await import('./db'); return db; } catch { return null; } }
 async function queryDatabase(query: string, params?: any[]) {
   try {
@@ -284,7 +557,6 @@ async function insertOfficerRecord(officerData: any) {
   } catch (e:any) { return { success:false, error:e.message }; }
 }
 
-// Gemini integration
 export function getConfiguredGeminiModel(): string {
   if (activeGeminiModel) return activeGeminiModel;
   return GEMINI_MODEL_CANDIDATES[0] || DEFAULT_GEMINI_MODEL;
@@ -342,7 +614,6 @@ async function callGeminiAPI(
   return { success:false, error:`All Gemini model candidates failed: ${tried.join(', ')}`, modelTried:tried };
 }
 
-// Command interpretation
 interface CommandIntent {
   action: 'search' | 'fix' | 'install' | 'query' | 'analyze' | 'execute' | 'configure' | 'report' | 'unknown';
   target?: string;
@@ -395,7 +666,6 @@ Respond ONLY with valid JSON.
   return { action:'unknown', confidence:0.3 };
 }
 
-// Officer search logic
 async function performOfficerSearch(): Promise<{ searched: number; found: number; saved: number }> {
   await appendLog({ type:'officerSearchStarted', timestamp:new Date().toISOString() });
   let searched=0, found=0, saved=0;
@@ -465,9 +735,98 @@ Return [] if none. Respond ONLY with JSON.
 }
 
 /**
- * Precise daily scheduling at a target UTC time (default 02:30).
- * Reschedules itself after each run. Uses a timeout to avoid drift.
+ * Web scraping for officer data
  */
+export async function runWebOfficerScrape(): Promise<{ success: boolean; scraped: number; saved: number }> {
+  await appendLog({ type:'webOfficerScrapeStarted', timestamp: new Date().toISOString() });
+  let scraped = 0, saved = 0;
+  
+  try {
+    const webResults = await webSearch('police officer public records database', 10);
+    for (const result of webResults) {
+      scraped++;
+      const content = await fetchWebContent(result.url);
+      if (content.success && content.content) {
+        const aiResult = await callAIWithGovernor('officer-data-extraction', `
+Extract any police officer information from this content. Return JSON array:
+[{"name":"Full Name","badge":"Badge","department":"Department","state":"State","city":"City"}]
+Return [] if no officer data found.
+Content: ${content.content.substring(0, 10000)}
+`, { temperature: 0.2 });
+        
+        if (aiResult.success && aiResult.content) {
+          try {
+            const officers = JSON.parse(aiResult.content.replace(/```json\n?|\n?```/g,''));
+            for (const officer of officers) {
+              if (officer.name && officer.department) {
+                const insertResult = await insertOfficerRecord({
+                  name: officer.name,
+                  badge_number: officer.badge || null,
+                  department: officer.department,
+                  state: officer.state || 'Unknown',
+                  city: officer.city || 'Unknown',
+                  source: 'web_scrape',
+                  last_updated: new Date().toISOString()
+                });
+                if (insertResult.success) saved++;
+              }
+            }
+          } catch {}
+        }
+      }
+      await new Promise(r => setTimeout(r, MIN_API_CALL_INTERVAL_MS));
+    }
+    
+    await appendLog({ type:'webOfficerScrapeCompleted', scraped, saved, timestamp: new Date().toISOString() });
+    return { success: true, scraped, saved };
+  } catch (e: any) {
+    await appendLog({ type:'webOfficerScrapeError', error: e.message });
+    return { success: false, scraped, saved };
+  }
+}
+
+/**
+ * Schedule daily officer scrape with configurable window
+ */
+export function scheduleDailyOfficerScrape(hourUTC: number = DAILY_SCRAPE_HOUR_UTC, durationMs: number = DAILY_SCRAPE_DURATION_MS): void {
+  const now = new Date();
+  const next = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    hourUTC,
+    0, 0, 0
+  ));
+  if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+  const delay = next.getTime() - now.getTime();
+
+  if (dailyScrapeTimeout) clearTimeout(dailyScrapeTimeout);
+
+  dailyScrapeTimeout = setTimeout(async () => {
+    console.log(`[Sub-Agent] Starting daily officer scrape window at ${hourUTC}:00 UTC for ${durationMs/1000/60} minutes...`);
+    
+    const endTime = Date.now() + durationMs;
+    while (Date.now() < endTime) {
+      const canProceed = await canAutonomousProceed();
+      if (!canProceed) {
+        console.log('[Sub-Agent] Autonomous limit reached, pausing scrape...');
+        await new Promise(r => setTimeout(r, 60000));
+        continue;
+      }
+      
+      await performOfficerSearch();
+      await runWebOfficerScrape();
+      
+      await new Promise(r => setTimeout(r, 5 * 60 * 1000));
+    }
+    
+    console.log('[Sub-Agent] Daily scrape window complete.');
+    scheduleDailyOfficerScrape(hourUTC, durationMs);
+  }, delay);
+
+  console.log(`[Sub-Agent] Daily scrape scheduled for ${next.toISOString()} (in ${(delay/1000/60).toFixed(2)} minutes).`);
+}
+
 function scheduleOfficerSearch(targetTime?: string): void {
   const timeStr = (targetTime || process.env.SUBAGENT_OFFICER_SEARCH_UTC_TIME || '02:30').trim();
   const match = /^(\d{1,2}):(\d{2})$/.exec(timeStr);
@@ -497,14 +856,12 @@ function scheduleOfficerSearch(targetTime?: string): void {
   officerSearchTimeout = setTimeout(async () => {
     console.log(`[Sub-Agent] Running scheduled officer search at ${hours.toString().padStart(2,'0')}:${minutes.toString().padStart(2,'0')} UTC...`);
     await performOfficerSearch();
-    // Reschedule for next occurrence
     scheduleOfficerSearch(timeStr);
   }, delay);
 
   console.log(`[Sub-Agent] Officer search scheduled for ${next.toISOString()} (in ${(delay/1000/60).toFixed(2)} minutes).`);
 }
 
-// Exported functions (unchanged signatures)
 export async function processSubAgentCommand(opts: {
   command: string;
   category?: string;
@@ -526,22 +883,22 @@ export async function processSubAgentCommand(opts: {
       case 'search':
         if (intent.target === 'officer') {
           const q = intent.parameters?.query || command;
-            const dbResult = await queryDatabase(
-              `SELECT * FROM officers WHERE name ILIKE $1 OR badge_number ILIKE $1 OR department ILIKE $1 LIMIT 20`,
-              [`%${q}%`]
-            );
-            if (dbResult.success) {
-              data = dbResult.data?.rows || [];
-              response = `Found ${data.length} officer(s) matching "${q}"`;
-            } else {
-              const webResult = await intelligentWebSearch(`law enforcement officer ${q}`);
-              data = webResult.results;
-              response = webResult.summary || 'Search completed';
-            }
+          const dbResult = await queryDatabase(
+            `SELECT * FROM officers WHERE name ILIKE $1 OR badge_number ILIKE $1 OR department ILIKE $1 LIMIT 20`,
+            [`%${q}%`]
+          );
+          if (dbResult.success) {
+            data = dbResult.data?.rows || [];
+            response = `Found ${data.length} officer(s) matching "${q}"`;
+          } else {
+            const webResult = await webSearch(`law enforcement officer ${q}`, 10);
+            data = webResult;
+            response = `Web search completed, found ${webResult.length} results`;
+          }
         } else {
-          const webResult = await intelligentWebSearch(command);
-          data = webResult.results;
-          response = webResult.summary || 'Search completed';
+          const webResult = await webSearch(command, 10);
+          data = webResult;
+          response = `Search completed, found ${webResult.length} results`;
         }
         break;
       case 'install': {
@@ -574,9 +931,13 @@ Return root cause, specific patch, and verification steps.
       case 'execute': {
         const shellCmd = intent.parameters?.command;
         if (shellCmd) {
-          const execResult = await executeShellCommand(shellCmd);
-          if (execResult.success) { response = execResult.stdout || 'Command executed successfully'; data = { stdout:execResult.stdout, stderr:execResult.stderr }; }
-          else response = `Execution failed: ${execResult.error}`;
+          try {
+            const execResult = await smartExecuteShell(shellCmd);
+            response = execResult.stdout || 'Command executed successfully';
+            data = { stdout: execResult.stdout, stderr: execResult.stderr };
+          } catch (e: any) {
+            response = `Execution failed: ${e.message}`;
+          }
         }
         break;
       }
@@ -647,7 +1008,7 @@ Be thorough yet concise.
     try {
       const planMatch = analysis.match(/(?:plan|steps?):\s*\n([\s\S]*?)(?:\n\n|$)/i);
       if (planMatch) {
-        const steps = planMatch[1].split('\n').filter(s=>s.trim()).map(s=>s.replace(/^\d+\.\s*/,''));
+        const steps = planMatch[1].split('\n').filter((s: string)=>s.trim()).map((s: string)=>s.replace(/^\d+\.\s*/,''));
         plan = { strategicPlan:{ steps, confidence:0.75 } };
       } else {
         plan = { strategicPlan:{ steps:['Analyze state','Apply changes','Verify'], confidence:0.6 } };
@@ -767,20 +1128,34 @@ export async function applyTrainingToSubAgent(trainingPayload: any) {
   }
 }
 
-// Initialization IIFE (ensures scheduling only if enabled)
+/**
+ * Initialize automated systems - call on app start
+ */
+export function initializeAutomatedSystems(): void {
+  try {
+    if (process.env.SUBAGENT_ENABLE_DAILY_SCRAPE === 'true') {
+      scheduleDailyOfficerScrape(DAILY_SCRAPE_HOUR_UTC, DAILY_SCRAPE_DURATION_MS);
+      console.log('[AI Sub-Agent] Daily scrape window scheduled');
+    }
+    console.log('[AI Sub-Agent] Automated systems initialized');
+  } catch (error) {
+    console.error('[AI Sub-Agent] Failed to initialize automated systems:', (error as any)?.message || error);
+  }
+}
+
 (async () => {
   try {
     await ensureDataDir();
     await loadState();
     if (process.env.SUBAGENT_ENABLE_OFFICER_SEARCH === 'true') {
-      scheduleOfficerSearch(); // schedules at configured or default 02:30 UTC
+      scheduleOfficerSearch();
     } else {
       console.log('[Sub-Agent] Officer search disabled (SUBAGENT_ENABLE_OFFICER_SEARCH not true).');
     }
 
-    // Clean up on exit
     const cleanup = () => {
       if (officerSearchTimeout) clearTimeout(officerSearchTimeout);
+      if (dailyScrapeTimeout) clearTimeout(dailyScrapeTimeout);
     };
     process.on('exit', cleanup);
     process.on('SIGINT', () => { cleanup(); process.exit(0); });
@@ -792,13 +1167,10 @@ export async function applyTrainingToSubAgent(trainingPayload: any) {
   }
 })();
 
-/* Additions at the end of the existing file, preserving all prior exports */
+if (process.env.NODE_ENV !== 'test') {
+  initializeAutomatedSystems();
+}
 
-/**
- * Compatibility wrapper: executeStructuredCommand
- * Maps the structured command used by routes.ts to the existing sub-agent command processor.
- * Returns a normalized result shape that routes.ts expects.
- */
 export async function executeStructuredCommand(command: {
   type: string;
   searchParams?: Record<string, any>;
@@ -814,14 +1186,11 @@ export async function executeStructuredCommand(command: {
   metadata?: Record<string, any>;
 }> {
   try {
-    // Convert the structured command to a textual command the sub-agent can interpret.
-    // For officer searches, embed key parameters directly.
     let textCommand = '';
     if (command.type === 'search_officers') {
       const p = command.searchParams || {};
       textCommand = `search officer "${p.name || ''}" state=${p.state || ''} city=${p.city || ''} county=${p.county || ''} badge=${p.badgeNumber || ''} type=${p.officerType || ''} limit=${command.limit ?? 10}`;
     } else {
-      // Generic fallback: stringify
       textCommand = `execute ${JSON.stringify(command)}`;
     }
 
@@ -837,7 +1206,6 @@ export async function executeStructuredCommand(command: {
       },
     };
 
-    // If no data payload was returned, still provide a consistent shape
     return normalized;
   } catch (e: any) {
     return {
@@ -848,16 +1216,11 @@ export async function executeStructuredCommand(command: {
   }
 }
 
-/**
- * Compatibility wrapper: learnFromLegalConsultation
- * Stores text + context into the learning queue and usage log for future improvements.
- */
 export async function learnFromLegalConsultation(
   text: string,
   context?: { state?: string; category?: string; [k: string]: any }
 ): Promise<boolean> {
   try {
-    // Record usage for analytics
     await trackUsage({
       action: 'learning_event',
       provider: 'internal',
@@ -866,11 +1229,10 @@ export async function learnFromLegalConsultation(
       state: context?.state || 'UNKNOWN',
     });
 
-    // Push into training queue
     await applyTrainingToSubAgent({
       type: 'legal_consultation',
       context: context || {},
-      content: (text || '').slice(0, 10000), // cap size
+      content: (text || '').slice(0, 10000),
     });
 
     return true;
@@ -878,4 +1240,4 @@ export async function learnFromLegalConsultation(
     await trackUsage({ action: 'learning_event_failed', provider: 'internal', error: e?.message });
     return false;
   }
-  }
+}
