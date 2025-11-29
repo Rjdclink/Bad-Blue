@@ -1,8 +1,16 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { checkRuntimeVersion } from "./utils/runtimeCheck";
+import healthRouter from "./routes/health";
+
+// Run runtime version check before any other initialization
+checkRuntimeVersion();
 
 const app = express();
+
+// Mount health check route early (before JSON parsing for minimal overhead)
+app.use('/api/health', healthRouter);
 
 declare module 'http' {
   interface IncomingMessage {
@@ -53,8 +61,10 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    // Log the error for debugging/monitoring
+    console.error(`[Error Handler] ${status} - ${message}`, err.stack || '');
+
     res.status(status).json({ message });
-    throw err;
   });
 
   // Serve static SEO and public files before Vite middleware

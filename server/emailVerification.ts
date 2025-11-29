@@ -1,5 +1,6 @@
 // Email Verification Service for Police Department Contact Information
-// Uses web search and web fetch to verify official contact emails
+// Uses unified Gemini module for AI-powered verification
+import { callGeminiJSON, GEMINI_MODELS } from './gemini';
 
 interface VerificationResult {
   verified: boolean;
@@ -107,25 +108,11 @@ async function findOfficialWebsite(
   state: string,
   agencyType: 'police' | 'sheriff' | 'trooper'
 ): Promise<string | null> {
-  const { GoogleGenAI } = await import("@google/genai");
-  
-  if (!process.env.GEMINI_API_KEY) {
-    console.log('GEMINI_API_KEY not configured for email verification');
-    return null;
-  }
-  
-  const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const searchQuery = `${formatSearchQuery(city, state, agencyType)} official website contact email`;
   console.log(`Searching for: ${searchQuery}`);
   
   try {
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
-      config: {
-        temperature: 0.1,
-        responseMimeType: "application/json",
-      },
-      contents: `Find the official website for ${formatSearchQuery(city, state, agencyType)}. 
+    const result = await callGeminiJSON<{ websiteUrl: string | null; confidence: string }>(`Find the official website for ${formatSearchQuery(city, state, agencyType)}. 
       
       Look for:
       - Official .gov website URL
@@ -136,10 +123,11 @@ async function findOfficialWebsite(
       {
         "websiteUrl": "full URL or null",
         "confidence": "high|medium|low"
-      }`,
+      }`, {
+      model: GEMINI_MODELS.FLASH,
+      temperature: 0.1,
     });
     
-    const result = JSON.parse(response.text);
     return result.websiteUrl;
   } catch (error) {
     console.error('Error finding official website:', error);
@@ -155,24 +143,10 @@ async function extractContactEmail(
   url: string,
   departmentName: string
 ): Promise<string | null> {
-  const { GoogleGenAI } = await import("@google/genai");
-  
-  if (!process.env.GEMINI_API_KEY) {
-    console.log('GEMINI_API_KEY not configured for email extraction');
-    return null;
-  }
-  
-  const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   console.log(`Extracting contact email from: ${url}`);
   
   try {
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
-      config: {
-        temperature: 0.1,
-        responseMimeType: "application/json",
-      },
-      contents: `Extract the official contact email for ${departmentName} from their website at ${url}.
+    const result = await callGeminiJSON<{ email: string | null; emailType: string | null; confidence: string }>(`Extract the official contact email for ${departmentName} from their website at ${url}.
       
       Look for:
       - Internal Affairs email (highest priority)
@@ -185,10 +159,11 @@ async function extractContactEmail(
         "email": "email@domain.gov or null",
         "emailType": "internal_affairs|admin|general|null",
         "confidence": "high|medium|low"
-      }`,
+      }`, {
+      model: GEMINI_MODELS.FLASH,
+      temperature: 0.1,
     });
     
-    const result = JSON.parse(response.text);
     return result.email && isValidEmail(result.email) ? result.email : null;
   } catch (error) {
     console.error('Error extracting email:', error);

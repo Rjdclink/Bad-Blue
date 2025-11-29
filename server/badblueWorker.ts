@@ -859,16 +859,12 @@ class BadBlueWorker {
         try {
           console.log('[BadBlue Worker] Testing AI service connectivity...');
 
-          // Test Gemini
-          const geminiKey = process.env.GEMINI_API_KEY;
+          // Test Gemini using unified module
+          const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
           if (geminiKey) {
             try {
-              const { GoogleGenAI } = await import('@google/genai');
-              const gemini = new GoogleGenAI({ apiKey: geminiKey });
-              await gemini.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: 'OK',
-              });
+              const { callGemini, GEMINI_MODELS } = await import('./gemini');
+              await callGemini('OK', { model: GEMINI_MODELS.FLASH });
               console.log('[BadBlue Worker] ✓ Gemini AI service operational');
             } catch (geminiError: any) {
               console.log('[BadBlue Worker] ❌ Gemini AI service failed');
@@ -886,7 +882,7 @@ class BadBlueWorker {
             issues.push({
               timestamp: new Date().toISOString(),
               functionAffected: 'Gemini AI Service',
-              cause: 'GEMINI_API_KEY not configured',
+              cause: 'GEMINI_API_KEY or GOOGLE_API_KEY not configured',
               systemState: 'not_working',
               severity: Severity.CRITICAL,
             });
@@ -904,12 +900,12 @@ class BadBlueWorker {
         console.log('[BadBlue Worker] ⏭️  Skipping AI service tests - rate limited');
 
         // Just validate API keys are present without making calls
-        if (!process.env.GEMINI_API_KEY) {
+        if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
           console.log('[BadBlue Worker] ❌ Gemini API key not configured');
           issues.push({
             timestamp: new Date().toISOString(),
             functionAffected: 'Gemini AI Service',
-            cause: 'GEMINI_API_KEY not configured',
+            cause: 'GEMINI_API_KEY or GOOGLE_API_KEY not configured',
             systemState: 'not_working',
             severity: Severity.CRITICAL,
           });
@@ -2356,7 +2352,7 @@ Implement the fix now.`;
       return;
     }
     
-    const geminiKey = process.env.GEMINI_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     const groqKey = process.env.GROQ_API_KEY;
 
     // Test 1: Configuration check

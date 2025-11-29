@@ -2,18 +2,172 @@
 // Using free Gemini API instead of OpenAI
 import { GoogleGenAI } from "@google/genai";
 
+// Stable model identifiers - use these for consistent behavior
+export const GEMINI_MODELS = {
+  FLASH: 'gemini-2.5-flash',           // Fast, cost-effective
+  FLASH_LATEST: 'gemini-2.5-flash-latest', // Latest flash version
+  PRO: 'gemini-1.5-pro-latest',        // Most capable for complex tasks
+} as const;
+
+export type GeminiModel = typeof GEMINI_MODELS[keyof typeof GEMINI_MODELS];
+
 // Lazy initialization to avoid startup errors when API key is not configured
 let gemini: GoogleGenAI | null = null;
 
 function getGeminiClient(): GoogleGenAI {
   if (!gemini) {
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY environment variable is not set');
+    // Support both GEMINI_API_KEY and GOOGLE_API_KEY for flexibility
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY or GOOGLE_API_KEY environment variable is not set');
     }
-    // Note: Using Google Gemini - the newest model is gemini-2.5-flash (released 2025)
-    gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    gemini = new GoogleGenAI({ apiKey });
   }
   return gemini;
+}
+
+// Re-export for backward compatibility
+export { getGeminiClient };
+
+/**
+ * Unified Gemini text generation interface
+ * @param prompt - The user prompt
+ * @param options - Optional configuration
+ * @returns Generated text response
+ */
+export interface CallGeminiOptions {
+  model?: GeminiModel;
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export async function callGemini(
+  prompt: string,
+  options: CallGeminiOptions = {}
+): Promise<string> {
+  const {
+    model = GEMINI_MODELS.FLASH,
+    systemPrompt,
+    temperature = 0.7,
+    maxTokens,
+  } = options;
+
+  const client = getGeminiClient();
+
+  try {
+    const response = await client.models.generateContent({
+      model,
+      config: {
+        systemInstruction: systemPrompt,
+        temperature,
+        ...(maxTokens && { maxOutputTokens: maxTokens }),
+      },
+      contents: prompt,
+    });
+
+    const text = response.text;
+    if (!text) {
+      throw new Error('Empty response from Gemini');
+    }
+    return text;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Gemini] Text generation error:', message);
+    throw error;
+  }
+}
+
+/**
+ * Unified Gemini JSON generation interface
+ * Automatically handles JSON parsing with recovery for common issues
+ * @param prompt - The user prompt
+ * @param options - Optional configuration
+ * @returns Parsed JSON response
+ */
+export async function callGeminiJSON<T = unknown>(
+  prompt: string,
+  options: CallGeminiOptions = {}
+): Promise<T> {
+  const {
+    model = GEMINI_MODELS.FLASH,
+    systemPrompt,
+    temperature = 0.3, // Lower temperature for more consistent JSON
+    maxTokens,
+  } = options;
+
+  const client = getGeminiClient();
+
+  // Enhance system prompt for JSON output
+  const jsonSystemPrompt = systemPrompt
+    ? `${systemPrompt}\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations, just raw JSON.`
+    : 'Respond ONLY with valid JSON. No markdown, no explanations, just raw JSON.';
+
+  try {
+    const response = await client.models.generateContent({
+      model,
+      config: {
+        systemInstruction: jsonSystemPrompt,
+        responseMimeType: 'application/json',
+        temperature,
+        ...(maxTokens && { maxOutputTokens: maxTokens }),
+      },
+      contents: prompt,
+    });
+
+    const text = response.text;
+    if (!text) {
+      throw new Error('Empty response from Gemini');
+    }
+
+    return parseGeminiJSON<T>(text);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Gemini] JSON generation error:', message);
+    throw error;
+  }
+}
+
+/**
+ * Safely parse JSON from Gemini response with auto-correction
+ */
+function parseGeminiJSON<T>(rawText: string): T {
+  if (!rawText || !rawText.trim()) {
+    throw new Error('Empty JSON response from Gemini');
+  }
+
+  // Try direct parse first
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    console.log('[Gemini] Direct JSON parse failed, attempting recovery...');
+
+    // Try to extract JSON from markdown code blocks
+    let cleanedJson = rawText.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+
+    // Try to find JSON object boundaries
+    const firstBrace = cleanedJson.indexOf('{');
+    const lastBrace = cleanedJson.lastIndexOf('}');
+
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      cleanedJson = cleanedJson.substring(firstBrace, lastBrace + 1);
+
+      try {
+        return JSON.parse(cleanedJson);
+      } catch {
+        // Last attempt: try to fix unterminated strings
+        const fixedJson = cleanedJson.replace(/"([^"]*?)$/gm, '"$1"');
+        try {
+          return JSON.parse(fixedJson);
+        } catch {
+          console.error('[Gemini] All JSON parsing attempts failed');
+          throw new Error('Failed to parse JSON from Gemini response');
+        }
+      }
+    }
+
+    throw new Error('Failed to extract valid JSON from Gemini response');
+  }
 }
 
 export interface EnhancedBadgeAnalysisResult {

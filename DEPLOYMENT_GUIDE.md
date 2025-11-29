@@ -16,6 +16,26 @@ BadBlue is **100% platform-agnostic** and ready for deployment to:
 
 ---
 
+## 🖥️ **Runtime Requirements**
+
+### **Node.js Version**
+BadBlue requires **Node.js 20 or later** (up to Node 24 for local development):
+
+| Environment | Supported Versions |
+|-------------|-------------------|
+| Production  | Node.js 20.x, 22.x |
+| Development | Node.js 20.x - 24.x |
+
+**Version Enforcement:**
+- `package.json` specifies `"engines": { "node": ">=20.0.0 <25" }`
+- `.nvmrc` file contains `20` for nvm users
+- Runtime check logs a warning on startup if version is outside supported range
+
+**Railway Deployment Note:**
+Railway automatically detects Node.js version from `.nvmrc` or `package.json` engines. No Dockerfile changes are needed.
+
+---
+
 ## 🔧 **Required Environment Variables**
 
 ### **Core Application**
@@ -46,10 +66,11 @@ TESTING_VITE_STRIPE_PUBLIC_KEY=pk_test_xxx
 
 ### **AI Services**
 ```bash
-# Gemini API (Google)
+# Gemini API (Google) - supports either key name
 GEMINI_API_KEY=xxx
+# Alternative: GOOGLE_API_KEY=xxx
 
-# Groq API
+# Groq API (fallback provider)
 GROQ_API_KEY=xxx
 ```
 
