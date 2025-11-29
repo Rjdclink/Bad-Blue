@@ -1,0 +1,191 @@
+// Copyright (c) 2025 Robert “RJDC” Clinkenbeard. All rights reserved.
+// Unauthorized copying, modification, distribution, or use of this file,
+// via any medium, is strictly prohibited without express written permission.
+
+// Load environment variables from .env file
+import * as dotenv from 'dotenv';
+dotenv.config();
+
+// Verify Stripe keys are configured
+if (!process.env.STRIPE_SECRET_KEY) {
+  console.error('[ENV] ⚠️ STRIPE_SECRET_KEY not set in environment variables');
+}
+if (!process.env.VITE_STRIPE_PUBLIC_KEY) {
+  console.error('[ENV] ⚠️ VITE_STRIPE_PUBLIC_KEY not set in environment variables');
+}
+
+import express, { type Request, type Response, type NextFunction } from "express";
+import cookieParser from "cookie-parser";
+import { registerRoutes } from "./routes";
+import { setupVite, serveStatic, log } from "./vite";
+
+const app = express();
+
+declare module 'http' {
+  interface IncomingMessage {
+    rawBody: unknown
+  }
+}
+
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    // Capture raw request body for things like Stripe signature verification
+    // Ensure type safety by narrowing only where needed
+    (req as any).rawBody = buf;
+  }
+}));
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
+
+// API request/response logger with JSON response capture
+app.use((req, res, next) => {
+  const start = Date.now();
+  const path = req.path;
+  let capturedJsonResponse: Record<string, any> | undefined;
+
+  const originalResJson = res.json.bind(res);
+  res.json = function (bodyJson: any, ...args: any[]) {
+    capturedJsonResponse = bodyJson;
+    return originalResJson(bodyJson, ...args);
+  };
+
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    if (path.startsWith("/api")) {
+      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      if (capturedJsonResponse) {
+        try {
+          logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        } catch {
+          // Fallback in case of circular structures
+          logLine += ' :: [unserializable JSON]';
+        }
+      }
+
+      if (logLine.length > 80) {
+        logLine = logLine.slice(0, 79) + "…";
+      }
+
+      log(logLine);
+    }
+  });
+
+  next();
+});
+
+(async () => {
+  // CRITICAL: Verify database connection FIRST before anything else
+  console.log('[STARTUP] Verifying database connection...');
+  try {
+    const { db } = await import('./db');
+    await db.execute('SELECT 1');
+    console.log('[STARTUP] ✓ Database connection verified');
+  } catch (error: any) {
+    console.error('[STARTUP] ❌ Database connection failed:', error?.message ?? error);
+    console.log('[STARTUP] Attempting to reset database pool...');
+    try {
+      const { resetPool } = await import('./db');
+      await resetPool();
+      console.log('[STARTUP] ✓ Database pool reset successful');
+    } catch (resetError) {
+      console.error('[STARTUP] ❌ Database pool reset failed:', resetError);
+      console.error('[STARTUP] Server starting anyway - Worker will attempt repair');
+    }
+  }
+
+  const server = await registerRoutes(app);
+
+  // Centralized error handler
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    const status = err?.status ?? err?.statusCode ?? 500;
+    const message = err?.message ?? "Internal Server Error";
+    res.status(status).json({ message });
+    // Re-throw to surface in logs/process managers
+    throw err;
+  });
+
+  // Serve static SEO and public files before Vite middleware
+  app.use(express.static("public"));
+  
+  app.get("/robots.txt", (_req, res) => {
+    res.type("text/plain");
+    res.sendFile("robots.txt", { root: "public" });
+  });
+
+  app.get("/sitemap.xml", (_req, res) => {
+    res.type("application/xml");
+    res.sendFile("sitemap.xml", { root: "public" });
+  });
+
+  // Only setup Vite in development after routes are registered
+  if (app.get("env") === "development") {
+    await setupVite(app, server);
+  } else {
+    serveStatic(app);
+  }
+
+  // ALWAYS serve the app on the port specified in the environment variable PORT
+  // Railway will provide PORT, default to 5000 for local development
+  const port = Number.parseInt(process.env.PORT || '5000', 10);
+  
+  // Handle port already in use error gracefully
+  server.on('error', (error: any) => {
+    if (error?.code === 'EADDRINUSE') {
+      console.error(`[STARTUP] ❌ Port ${port} is already in use. Attempting to use a different port...`);
+      const fallbackPort = port + 1;
+      server.listen({
+        port: fallbackPort,
+        host: "0.0.0.0",
+      }, () => {
+        log(`serving on fallback port ${fallbackPort}`);
+      });
+    } else {
+      throw error;
+    }
+  });
+  
+  server.listen({
+    port,
+    host: "0.0.0.0",
+  }, () => {
+    log(`serving on port ${port}`);
+  });
+
+  // Initialize persistence manager on startup
+  const { persistenceManager } = await import('./persistenceManager');
+  await persistenceManager.start();
+
+  // Run Sub-Agent table migrations
+  try {
+    const { createSubAgentTables } = await import('./migrations/createSubAgentTables');
+    await createSubAgentTables();
+  } catch (error) {
+    console.error('Failed to create Sub-Agent tables:', error);
+  }
+
+  // Run Token Metrics table migrations
+  try {
+    const { createTokenMetricsTables } = await import('./migrations/createTokenMetrics');
+    await createTokenMetricsTables();
+  } catch (error) {
+    console.error('Failed to create Token Metrics tables:', error);
+  }
+
+  // Run Device Rate Limit table migrations
+  try {
+    const { createDeviceRateLimitTables } = await import('./migrations/createDeviceRateLimitTables');
+    await createDeviceRateLimitTables();
+  } catch (error) {
+    console.error('Failed to create Device Rate Limit tables:', error);
+  }
+
+  // Start BadBlue Worker
+  const { badblueWorker } = await import('./badblueWorker');
+  badblueWorker.initialize().catch((error) => {
+    console.error('Failed to start BadBlue Worker:', error);
+  });
+
+  // Removed: Initialize AI Sub-Agent autonomous improvements (disabled unless implementation is verified)
+  // const { initializeAutonomousImprovements } = await import('./aiSubAgent');
+  // await initializeAutonomousImprovements();
+})();
