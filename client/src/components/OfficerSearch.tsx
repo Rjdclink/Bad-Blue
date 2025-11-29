@@ -91,11 +91,8 @@ interface OfficerSearchProps {
   onBack?: () => void;
 }
 
-type OfficerType = "custom";
-
 export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   const { toast } = useToast();
-  const [officerType, setOfficerType] = useState<OfficerType>("custom");
   const [officerName, setOfficerName] = useState("");
   const [state, setState] = useState("");
   const [searchResults, setSearchResults] = useState<any>(null);
@@ -142,7 +139,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   }, [searchId]);
 
   const searchMutation = useMutation({
-    mutationFn: async (data: { officerName: string; statenewSearchIDsearchId: string }) => {
+    mutationFn: async (data: { officerName: string; state?: string; searchId: string }) => {
       const response = await apiRequest("/api/officer-search", "POST", data);
 
       if (!response.ok) {
@@ -221,11 +218,10 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
 
     searchMutation.mutate({ 
       officerName, 
-      officerType: "custom",
       state: state || undefined,
       searchId: newSearchId,
-  });
-};
+    });
+  };
   
   return (
     <div className="min-h-screen bg-background">
@@ -321,80 +317,154 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
               </>
             ) : (
               <>
-                {/* Search Results */}
-                <div className="space-y-6">
+                {/* Search Results - Briefer Format */}
+                <div className="space-y-4">
                   {/* Officer Info Header */}
-                  <div className="border-2 rounded-lg p-6 bg-card">
-                    <div className="flex items-center justify-between flex-wrap gap-4 mb-4">
+                  <div className="border-2 rounded-lg p-4 bg-card">
+                    <div className="flex items-center justify-between flex-wrap gap-3">
                       <div>
-                        <h3 className="text-2xl font-bold" data-testid="text-officer-name">
+                        <h3 className="text-xl font-bold" data-testid="text-officer-name">
                           {searchResults.name || officerName}
                         </h3>
-                        {searchResults.rank && (
-                          <Badge className="mt-2" data-testid="badge-rank">
-                            {searchResults.rank}
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <MapPin className="w-4 h-4" />
-                          <span>
-                            {state
-                              ? US_STATES.find(s => s.code === 
-                          state)?.name || state
-                              : 'State not specified'}
-                          </span>
+                        <div className="flex items-center gap-2 mt-1">
+                          {searchResults.rank && searchResults.rank !== 'Unknown' && (
+                            <Badge variant="secondary" data-testid="badge-rank">
+                              {searchResults.rank}
+                            </Badge>
+                          )}
+                          {(searchResults.agency || searchResults.department) && (
+                            <span className="text-sm text-muted-foreground" data-testid="text-agency">
+                              {searchResults.agency || searchResults.department}
+                            </span>
+                          )}
                         </div>
+                      </div>
+                      <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                        <MapPin className="w-4 h-4" />
+                        <span>{state ? US_STATES.find(s => s.code === state)?.name || state : 'Unknown'}</span>
                       </div>
                     </div>
                   </div>
 
                   {/* Summary */}
-                  {searchResults.summary && (
+                  {searchResults.summary && searchResults.summary !== 'None found' && (
                     <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <Shield className="w-5 h-5" />
-                          Comprehensive Officer Report
+                      <CardHeader className="pb-2">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Shield className="w-4 h-4" />
+                          Summary
                         </CardTitle>
-                        <CardDescription>
-                          Based on publicly available information from official sources
-                        </CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <div className="prose dark:prose-invert max-w-none">
-                          <div className="whitespace-pre-wrap text-sm" data-testid="text-summary">
-                            {searchResults.summary}
-                          </div>
-                        </div>
+                        <p className="text-sm" data-testid="text-summary">{searchResults.summary}</p>
                       </CardContent>
                     </Card>
                   )}
 
+                  {/* Report Sections - Grid Layout */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* Disciplinary Reports */}
+                    {searchResults.disciplinaryReports && searchResults.disciplinaryReports !== 'None found' && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="flex items-center gap-2 text-sm">
+                            <AlertTriangle className="w-4 h-4 text-destructive" />
+                            Disciplinary Reports
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-sm whitespace-pre-wrap" data-testid="text-disciplinary">{searchResults.disciplinaryReports}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* Lawsuits */}
+                    {searchResults.lawsuits && searchResults.lawsuits !== 'None found' && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="flex items-center gap-2 text-sm">
+                            <DollarSign className="w-4 h-4 text-destructive" />
+                            Lawsuits
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-sm whitespace-pre-wrap" data-testid="text-lawsuits">{searchResults.lawsuits}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* Sanctions */}
+                    {searchResults.sanctions && searchResults.sanctions !== 'None found' && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="flex items-center gap-2 text-sm">
+                            <AlertTriangle className="w-4 h-4 text-orange-500" />
+                            Sanctions
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-sm whitespace-pre-wrap" data-testid="text-sanctions">{searchResults.sanctions}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* News Articles */}
+                    {searchResults.newsArticles && searchResults.newsArticles !== 'None found' && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="flex items-center gap-2 text-sm">
+                            <Briefcase className="w-4 h-4" />
+                            News Coverage
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-sm whitespace-pre-wrap" data-testid="text-news">{searchResults.newsArticles}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* Training */}
+                    {searchResults.training && searchResults.training !== 'None found' && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="flex items-center gap-2 text-sm">
+                            <Award className="w-4 h-4 text-green-500" />
+                            Training
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-sm whitespace-pre-wrap" data-testid="text-training">{searchResults.training}</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+
                   {/* Sources */}
                   {searchResults.sources && searchResults.sources.length > 0 && (
                     <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <ExternalLink className="w-5 h-5" />
+                      <CardHeader className="pb-2">
+                        <CardTitle className="flex items-center gap-2 text-sm">
+                          <ExternalLink className="w-4 h-4" />
                           Sources ({searchResults.sources.length})
                         </CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="space-y-2">
-                          {searchResults.sources.map((source: string, index: number) => (
+                        <div className="space-y-1">
+                          {searchResults.sources.slice(0, 5).map((source: string, index: number) => (
                             <a
                               key={index}
                               href={source}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="block text-sm text-primary hover:underline break-all"
+                              className="block text-xs text-primary hover:underline truncate"
                               data-testid={`link-source-${index}`}
                             >
                               {source}
                             </a>
                           ))}
+                          {searchResults.sources.length > 5 && (
+                            <p className="text-xs text-muted-foreground">+{searchResults.sources.length - 5} more sources</p>
+                          )}
                         </div>
                       </CardContent>
                     </Card>

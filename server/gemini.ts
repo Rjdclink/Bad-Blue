@@ -19,6 +19,13 @@ export interface GeminiOptions {
 
 /* -------------------- API KEY LOAD -------------------- */
 
+/**
+ * Check if Gemini is available
+ */
+export function isGeminiAvailable(): boolean {
+  return !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+}
+
 function getGeminiApiKey(): string {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new Error("❌ GEMINI_API_KEY (or GOOGLE_API_KEY) is not set");

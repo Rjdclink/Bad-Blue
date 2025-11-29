@@ -2,9 +2,8 @@ import { EventEmitter } from "events";
 import { findOfficerInRoster, addOfficerToRoster, addDepartmentToRoster } from "./officerRoster";
 import { findDepartmentUrlsByState, getAllDepartmentUrls } from "./policeUrls";
 import { rateLimitTracker } from "./rateLimitTracker";
-import { generateGeminiStructuredResponse } from './gemini';
-import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
-import { generateText, createTaskMetadata, UsageContext, TaskPriority, TaskComplexity } from "./aiProvider";
+import { generateGeminiStructuredResponse, isGeminiAvailable } from './gemini';
+import { isClaudeAvailable, generateClaudeJSON, callClaude } from "./claude";
 
 // In-memory cache for officer search results
 const searchCache = new Map<string, { result: OfficerSearchResult; timestamp: number }>();
@@ -21,6 +20,7 @@ export interface SearchProgress {
   stageName: string;
   message: string;
   percentage: number;
+  timestamp: number;
 }
 
 // Periodic cache cleanup
@@ -63,7 +63,6 @@ function getCachedResult(cacheKey: string): OfficerSearchResult | null {
 
 function setCachedResult(cacheKey: string, result: OfficerSearchResult): void {
   if (searchCache.size >= MAX_CACHE_SIZE) {
-    // Evict oldest entry (Map iteration order)
     const firstKey = searchCache.keys().next().value;
     if (firstKey) {
       searchCache.delete(firstKey);
@@ -77,33 +76,27 @@ function setCachedResult(cacheKey: string, result: OfficerSearchResult): void {
 }
 
 export interface OfficerSearchParams {
-  officerName: string; // full name (first + last)
+  officerName: string;
   state?: string;
   badgeData?: any;
   bypassCache?: boolean;
 }
 
+// Briefer report structure with only required fields
 export interface OfficerSearchResult {
   name: string;
+  rank?: string;
+  agency?: string; // city/county/government agency department
+  disciplinaryReports?: string;
+  newsArticles?: string;
+  sanctions?: string;
+  lawsuits?: string;
+  training?: string;
+  sources: string[];
+  summary: string;
+  // Legacy fields for compatibility
   badgeNumber?: string;
   department?: string;
-  rank?: string;
-  summary: string;
-  sources: string[];
-  // Structured categories
-  careerHistory?: string;
-  training?: string;
-  incidents?: string;
-  salary?: string;
-  community?: string;
-  disciplinaryActions?: string;
-  demotions?: string;
-  achievements?: string;
-  newsCoverage?: string;
-  socialMedia?: string;
-  departmentContact?: string;
-  certifications?: string;
-  complaints?: string;
 }
 
 // Legacy interface for compatibility
@@ -115,159 +108,149 @@ export interface OfficerInfo {
   summary: string;
 }
 
-interface CategorySearchResult {
-  narrative: string;
-  sources: string[];
-  rankEvidence?: string;
+// Gemini raw data schema for structured extraction
+interface GeminiRawData {
+  rank?: string;
+  agency?: string;
+  badgeNumber?: string;
+  disciplinary?: string[];
+  news?: string[];
+  sanctions?: string[];
+  lawsuits?: string[];
+  training?: string[];
+  sources?: string[];
+}
+
+// Claude verified report schema
+interface ClaudeVerifiedReport {
+  rank: string;
+  agency: string;
+  disciplinaryReports: string;
+  newsArticles: string;
+  sanctions: string;
+  lawsuits: string;
+  training: string;
+  summary: string;
 }
 
 /**
- * runCategorySearch
- * - Generic two-pass search using the narrative AI provider (Gemini-style) for comprehensive narrative + verification.
- * - Accepts a prompt and returns combined narrative and extracted source URLs.
+ * Gemini data harvesting - fast multimodal search
+ * Leverages Gemini's strength in real-time data retrieval and web grounding
  */
-async function runCategorySearch(
+async function geminiDataHarvest(
   officerName: string,
   state: string | undefined,
-  categoryPrompt: string
-): Promise<CategorySearchResult> {
-  const task = createTaskMetadata(
-    'officer-category-search',
-    UsageContext.USER,
-    TaskPriority.CRITICAL_USER,
-    TaskComplexity.COMPREHENSIVE
-  );
+  priorityUrls: string[]
+): Promise<GeminiRawData> {
+  const urlContext = priorityUrls.length > 0 
+    ? `Priority URLs to check:\n${priorityUrls.slice(0, 10).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
+    : '';
 
-  // First pass - generative
-  const response1 = await generateText(task, categoryPrompt);
-  const text1 = response1?.content || '';
+  const prompt = `Search for police officer information:
+Name: ${officerName}
+State: ${state || 'Unknown'}
+${urlContext}
 
-  // Verification & expansion pass
-  const verificationPrompt = `You previously found this information about ${officerName} in ${state || 'unknown state'}:
+Extract ONLY factual, verifiable information. Return JSON with:
+{
+  "rank": "officer's current rank (e.g., Officer, Sergeant, Lieutenant, Captain, Chief)",
+  "agency": "department name with city/county (e.g., 'Los Angeles Police Department', 'Cook County Sheriff')",
+  "badgeNumber": "badge number if found",
+  "disciplinary": ["list of disciplinary actions with dates"],
+  "news": ["relevant news article headlines with sources"],
+  "sanctions": ["any sanctions or administrative actions"],
+  "lawsuits": ["civil rights lawsuits or legal actions involving this officer"],
+  "training": ["training certifications and academy information"],
+  "sources": ["URLs for all claims"]
+}
 
-${text1}
+Return ONLY facts with sources. Omit empty fields. No speculation.`;
 
-Now perform a focused VERIFICATION AND EXPANSION:
-- Cross-check claims with multiple sources
-- Provide corrections where needed
-- Add only verifiable facts and URLs
-- Omit filler statements and generic disclaimers
-
-Return a concise verified narrative and include URLs for all claims.`;
-  const response2 = await generateText(task, verificationPrompt);
-  const text2 = response2?.content || '';
-
-  const combined = `${text1}\n\n[VERIFICATION AND EXPANSION]:\n${text2}`.trim();
-
-  // Extract URLs
-  const sources: string[] = [];
   try {
-    const urlPattern = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
-    const matches = combined.match(urlPattern) || [];
-    sources.push(...matches);
-  } catch (e) {
-    console.log('[Officer Search] URL extraction issue:', e);
+    const result = await generateGeminiStructuredResponse<GeminiRawData>(prompt, { useJSON: true });
+    return result || {};
+  } catch (error) {
+    console.error('[Officer Search] Gemini harvest failed:', error);
+    return {};
   }
-
-  return { narrative: combined, sources: Array.from(new Set(sources)), rankEvidence: combined.toLowerCase().includes('chief') ? 'chief' : undefined };
 }
 
 /**
- * resolveRank
- * - Simple heuristic rank resolution based on narrative evidence
+ * Claude verification and synthesis - superior analytical reasoning
+ * Leverages Claude's strength in fact verification and structured report generation
  */
-function resolveRank(evidence: CategorySearchResult[], summaryText: string): string {
-  const fullText = [summaryText, ...evidence.map(e => e.narrative)].join(' ').toLowerCase();
-  const chiefPatterns = ["chief of police", "police chief", "appointed chief", "serves as chief"];
-  const captainPatterns = [" captain "];
-  const lieutenantPatterns = [" lieutenant "];
-  const sergeantPatterns = [" sergeant "];
-  
-  for (const p of chiefPatterns) if (fullText.includes(p)) return "Chief of Police";
-  for (const p of captainPatterns) if (fullText.includes(p)) return "Captain";
-  for (const p of lieutenantPatterns) if (fullText.includes(p)) return "Lieutenant";
-  for (const p of sergeantPatterns) if (fullText.includes(p)) return "Sergeant";
-  return "Officer";
+async function claudeVerifyAndSynthesize(
+  officerName: string,
+  state: string | undefined,
+  rawData: GeminiRawData,
+  rosterData: any
+): Promise<ClaudeVerifiedReport> {
+  const existingData = JSON.stringify({
+    geminiFindings: rawData,
+    rosterData: rosterData ? { 
+      name: rosterData.name, 
+      department: rosterData.department, 
+      summary: rosterData.summary 
+    } : null
+  }, null, 2);
+
+  const prompt = `Verify and synthesize officer information into a BRIEF report.
+
+Officer: ${officerName}
+State: ${state || 'Unknown'}
+
+Raw data collected:
+${existingData}
+
+Create a CONCISE verified report with ONLY these fields (use "None found" if no data):
+{
+  "rank": "verified rank",
+  "agency": "full department name with city/county/agency type",
+  "disciplinaryReports": "brief bullet points of disciplinary actions with dates",
+  "newsArticles": "brief bullet points of news coverage with dates and sources",
+  "sanctions": "brief bullet points of any sanctions or administrative actions",
+  "lawsuits": "brief bullet points of lawsuits/legal actions with outcomes if known",
+  "training": "brief list of training/certifications",
+  "summary": "2-3 sentence summary of key findings only"
 }
 
-/**
- * stripForbiddenPhrases
- * - Remove filler/uncertain phrases to keep outputs focused on facts
- */
-function stripForbiddenPhrases(text: string): string {
-  const forbidden = [
-    "not readily accessible",
-    "definitive information",
-    "cannot confirm",
-    "unable to verify",
-    "no publicly available",
-    "limited information",
-    "insufficient data",
-    "being compiled",
-    "additional information",
-    "I don't have access",
-    "I cannot provide",
-    "I'm unable to",
-    "no information available",
-    "could not be found",
-    "is not available in my"
-  ];
-  
-  let result = text;
-  for (const phrase of forbidden) {
-    const re = new RegExp(phrase, 'gi');
-    result = result.replace(re, '');
+Rules:
+- Be BRIEF - bullet points, not paragraphs
+- Include dates when available
+- Cite sources inline when possible
+- If no verifiable info for a field, use "None found"
+- Do NOT include filler phrases like "no information available" - just "None found"
+- Focus on actionable facts relevant to accountability`;
+
+  try {
+    const result = await generateClaudeJSON<ClaudeVerifiedReport>(prompt, {
+      systemPrompt: 'You are a police accountability researcher. Verify claims and produce brief, factual reports. Be concise - bullet points only.',
+      maxTokens: 1500,
+      temperature: 0.3,
+    });
+    return result;
+  } catch (error) {
+    console.error('[Officer Search] Claude synthesis failed:', error);
+    // Return minimal report with available data
+    return {
+      rank: rawData.rank || 'Unknown',
+      agency: rawData.agency || 'Unknown',
+      disciplinaryReports: rawData.disciplinary?.join('; ') || 'None found',
+      newsArticles: rawData.news?.join('; ') || 'None found',
+      sanctions: rawData.sanctions?.join('; ') || 'None found',
+      lawsuits: rawData.lawsuits?.join('; ') || 'None found',
+      training: rawData.training?.join('; ') || 'None found',
+      summary: 'Verification incomplete - showing raw data only.'
+    };
   }
-  
-  // Keep line breaks for readability
-  return result.replace(/[ \t]+/g, ' ').trim();
 }
 
 /**
- * extractRelevantData
- * - Lightweight extraction of the most relevant structured fields from a narrative
- */
-function extractRelevantData(narrative: string) {
-  if (!narrative) return {};
-  const lines = narrative.split('\n').map(l => l.trim()).filter(Boolean);
-
-  const pick = (keywords: string[]) => {
-    const out: string[] = [];
-    for (const l of lines) {
-      const low = l.toLowerCase();
-      for (const k of keywords) if (low.includes(k)) { out.push(l); break; }
-    }
-    return out.length ? out.join('\n') : undefined;
-  };
-
-  return {
-    disciplinaryActions: pick(['disciplinary', 'internal affairs', 'sustained', 'reprimand', 'suspended', 'terminated', 'indicted']),
-    demotions: pick(['demoted', 'demotion']),
-    newsCoverage: pick(['news', 'article', 'press release', 'reported', 'headline']),
-    socialMedia: pick(['twitter.com', 'x.com', 'facebook.com', 'instagram.com', 'linkedin.com', 'social media', 'tweet']),
-    departmentContact: pick(['contact', 'phone', 'email', 'address', 'dispatch', 'non-emergency']),
-    training: pick(['training', 'academy', 'post', 'fbi academy', 'fletc', 'certified']),
-    certifications: pick(['certification', 'certified', 'post']),
-    complaints: pick(['complaint', 'allegation', 'lawsuit', 'civil rights', 'settlement']),
-    department: (() => {
-      for (const l of lines) {
-        if (/(police department|sheriff|sheriff's office|police bureau|sheriff office)/i.test(l)) return l;
-      }
-      const m = narrative.match(/([A-Z][A-Za-z0-9'-. ]+(Police Department|Sheriff's Office|Sheriffs Office|Police Bureau))/);
-      return m ? m[0] : undefined;
-    })()
-  };
-}
-
-/**
- * Main search function
- * - Implements the 3-stage search priority:
- *   1) Department URLs stored in database (structured queries first when available)
- *   2) Previously searched officers in local roster
- *   3) Web scrape / broad web search using "first last" + state
- *
- * - Groq-style (structured) AI is used for structured extraction when available.
- * - Gemini-style (narrative) AI is used for deep synthesis and verification; it consumes structured outputs for verification.
+ * Main search function - Gemini→Claude pipeline
+ * Stage 1: Initialization & cache check
+ * Stage 2: Gemini data harvesting (fast)
+ * Stage 3: Claude verification & synthesis
+ * Stage 4: Complete
  */
 export async function searchOfficerInformation(
   params: OfficerSearchParams,
@@ -279,205 +262,145 @@ export async function searchOfficerInformation(
     throw new Error('Officer name is required');
   }
 
-  // Normalize name: use first + last for searches
+  // Normalize name
   const parts = officerName.trim().split(/\s+/).filter(Boolean);
   const normalizedName = parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : officerName.trim();
 
   const effectiveSearchId = searchId || `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const totalStages = 4;
 
   const emitProgress = (stage: number, stageName: string, message: string) => {
-    const totalStages = 3;
     const percentage = Math.round((stage / totalStages) * 100);
-    const progress: SearchProgress = { searchId: effectiveSearchId, stage, totalStages, stageName, message, percentage };
-    console.log(`[SSE EMIT] ${effectiveSearchId} - ${stageName}: ${message}`);
+    const progress: SearchProgress = { 
+      searchId: effectiveSearchId, 
+      stage, 
+      totalStages, 
+      stageName, 
+      message, 
+      percentage,
+      timestamp: Date.now()
+    };
+    console.log(`[SSE EMIT] ${effectiveSearchId} - Stage ${stage}/${totalStages}: ${stageName} - ${message}`);
     searchProgressEmitter.emit('progress', progress);
   };
+
+  // Stage 1: Initialization & Cache Check
+  emitProgress(1, 'Initializing', `Searching for ${normalizedName}${state ? ` in ${state}` : ''}`);
 
   const cacheKey = getCacheKey(normalizedName, state);
   if (!bypassCache) {
     const cached = getCachedResult(cacheKey);
     if (cached) {
-      emitProgress(3, 'Complete', 'Retrieved from cache');
+      emitProgress(4, 'Complete', 'Retrieved from cache');
       return cached;
     }
   }
 
   try {
-    emitProgress(0, 'Starting', `Searching for ${normalizedName}${state ? ` in ${state}` : ''}`);
-
-    const allSources = new Set<string>();
-    const categoryResults: CategorySearchResult[] = [];
-
-    // Stage 1: Department URLs in DB (priority)
-    emitProgress(1, 'Department URLs', 'Querying stored department URLs (priority list)...');
-
-    let prioritizedUrls: string[] = [];
+    // Gather priority URLs for state
+    let priorityUrls: string[] = [];
     try {
       if (state) {
         const stateUrls = findDepartmentUrlsByState(state) || [];
-        for (const u of stateUrls) if (u?.url) prioritizedUrls.push(u.url);
+        priorityUrls = stateUrls.map(u => u?.url).filter(Boolean) as string[];
       }
-      if (prioritizedUrls.length === 0) {
-        const all = getAllDepartmentUrls() || [];
-        for (const u of all) if (u?.url) prioritizedUrls.push(u.url);
+      if (priorityUrls.length === 0) {
+        const allUrls = getAllDepartmentUrls() || [];
+        priorityUrls = allUrls.slice(0, 20).map(u => u?.url).filter(Boolean) as string[];
       }
     } catch (err) {
-      console.log('[Officer Search] Could not load department URLs from DB:', err);
+      console.log('[Officer Search] Could not load department URLs:', err);
     }
 
-    const topUrlList = prioritizedUrls.slice(0, 20);
-    const urlContext = topUrlList.length ? `PRIORITY URLS:\n${topUrlList.map((u, i) => `${i+1}. ${u}`).join('\n')}\n\n` : '';
-
-    // Use structured AI (Groq-style) for fast structured extraction if available
-    let structuredFindings: any = {};
-    if (await isGroqAvailable()) {
-      try {
-        const groqPromptText = `Search for officer information:
-Name: ${normalizedName}
-State: ${state || 'Unknown'}
-Priority URLs to check:
-${topUrlList.slice(0, 10).map((u, i) => `${i + 1}. ${u}`).join('\n')}
-
-Return structured JSON with: badgeNumber, department, contact, certifications, complaints, sources (array of URLs)`;
-        const groqSystemPrompt = 'You are a police officer database search assistant. Extract structured information and return as JSON.';
-        const groqResponseText = await generateGroqStructuredResponse(groqPromptText, groqSystemPrompt);
-        let groqResponse: any = {};
-        try { groqResponse = JSON.parse(groqResponseText); } catch { groqResponse = {}; }
-        // Expected: groqResponse = { badgeNumber, department, contact, certifications, complaints, sources: [] }
-        structuredFindings = groqResponse || {};
-        (structuredFindings.sources || []).forEach((s: string) => allSources.add(s));
-        if (structuredFindings && Object.keys(structuredFindings).length > 0) {
-          // Convert structured findings into a brief narrative for verification pass
-          const structuredNarrativeParts: string[] = [];
-          if (structuredFindings.department) structuredNarrativeParts.push(`Department: ${structuredFindings.department}`);
-          if (structuredFindings.badgeNumber) structuredNarrativeParts.push(`Badge: ${structuredFindings.badgeNumber}`);
-          if (structuredFindings.contact) structuredNarrativeParts.push(`Contact: ${structuredFindings.contact}`);
-          if (structuredFindings.certifications) structuredNarrativeParts.push(`Certifications: ${structuredFindings.certifications}`);
-          if (structuredFindings.complaints) structuredNarrativeParts.push(`Complaints: ${structuredFindings.complaints}`);
-          categoryResults.push({ narrative: structuredNarrativeParts.join('\n'), sources: structuredFindings.sources || [] });
-        }
-      } catch (err) {
-        console.log('[Officer Search] Groq structured extraction failed or produced no results:', err);
-      }
-    }
-
-    // Optional: run Gemini structured if available (legacy support or where aiProvider routes Gemini)
-    if ((!structuredFindings || Object.keys(structuredFindings).length === 0) && typeof generateGeminiStructuredResponse === 'function') {
-      try {
-        const geminiPromptText = `Search for officer information about ${normalizedName}${state ? ` in ${state}` : ''}.
-Priority URLs to check: ${topUrlList.slice(0, 5).join(', ')}
-
-Return JSON with: badgeNumber, department, contact, certifications, complaints, sources (array of URLs)`;
-        const geminiStructured = await generateGeminiStructuredResponse<any>(geminiPromptText, { useJSON: true });
-        if (geminiStructured) {
-          structuredFindings = { ...structuredFindings, ...geminiStructured };
-          (geminiStructured.sources || []).forEach((s: string) => allSources.add(s));
-          const parts = [];
-          if (geminiStructured.department) parts.push(`Department: ${geminiStructured.department}`);
-          if (geminiStructured.badgeNumber) parts.push(`Badge: ${geminiStructured.badgeNumber}`);
-          if (parts.length) categoryResults.push({ narrative: parts.join('\n'), sources: geminiStructured.sources || [] });
-        }
-      } catch (err) {
-        console.log('[Officer Search] Gemini structured extraction attempt failed:', err);
-      }
-    }
-
-    // Stage 2: Previously searched officers in local roster (database)
-    emitProgress(2, 'Local Roster', 'Checking local officer roster for prior indexed results...');
-    let rosterOfficer: any = null;
+    // Check local roster for existing data
+    let rosterData: any = null;
     try {
-      rosterOfficer = await findOfficerInRoster(normalizedName, undefined, state);
-      if (rosterOfficer) {
-        const rosterNarrative = rosterOfficer.summary || `${rosterOfficer.name} — ${rosterOfficer.department || ''}`;
-        categoryResults.push({ narrative: rosterNarrative, sources: rosterOfficer.sources || ['Local Officer Roster Database'] });
-        (rosterOfficer.sources || []).forEach((s: string) => allSources.add(s));
-      }
+      rosterData = await findOfficerInRoster(normalizedName, undefined, state);
     } catch (err) {
       console.log('[Officer Search] Roster lookup failed:', err);
     }
 
-    // Decide whether web scraping is necessary: do web scrape if structuredFindings + roster don't satisfy minimum evidence
-    const minStructuredEvidence = (structuredFindings && (structuredFindings.badgeNumber || structuredFindings.complaints || structuredFindings.department));
-    let webResult: CategorySearchResult | undefined;
-    if (!minStructuredEvidence || !rosterOfficer) {
-      emitProgress(3, 'Web Scrape & Narrative', 'Performing broader web search and narrative verification...');
-      const webPrompt = `${urlContext}Search for verifiable facts about ${normalizedName}${state ? ` in ${state}` : ''}.
-Return only relevant facts (department, city/county if present, badge number, disciplinary actions, demotions, criminal charges, lawsuits, news articles, social media, contact details).
-Cite URLs for every factual claim. Omit filler. Present concise bullets or short paragraphs with dates when possible.`;
-
-      webResult = await runCategorySearch(normalizedName, state, webPrompt);
-      categoryResults.push(webResult);
-      webResult.sources.forEach(s => allSources.add(s));
+    // Stage 2: Gemini Data Harvesting
+    emitProgress(2, 'Gemini Retrieval', 'Searching databases and public records...');
+    
+    let geminiData: GeminiRawData = {};
+    if (isGeminiAvailable()) {
+      geminiData = await geminiDataHarvest(normalizedName, state, priorityUrls);
+    } else {
+      console.log('[Officer Search] Gemini not available, skipping harvest');
     }
 
-    // Combine narratives (priority: structured -> roster -> web)
-    const combinedNarrative = [
-      ...(categoryResults.length ? categoryResults.map(c => c.narrative) : []),
-    ].filter(Boolean).join('\n\n');
-
-    // Clean up narrative
-    let summary = stripForbiddenPhrases(combinedNarrative);
-
-    // If no meaningful data and no sources, return minimal content (no filler)
-    const hasSources = Array.from(allSources).some(s => /^https?:\/\//i.test(s));
-    if (!hasSources && (!summary || summary.length < 80)) {
-      summary = ''; // explicit: no verifiable results
+    // Stage 3: Claude Verification & Synthesis
+    emitProgress(3, 'Claude Synthesis', 'Verifying facts and generating report...');
+    
+    let verifiedReport: ClaudeVerifiedReport;
+    if (isClaudeAvailable()) {
+      verifiedReport = await claudeVerifyAndSynthesize(normalizedName, state, geminiData, rosterData);
+    } else {
+      // Fallback if Claude unavailable
+      console.log('[Officer Search] Claude not available, using raw Gemini data');
+      verifiedReport = {
+        rank: geminiData.rank || rosterData?.rank || 'Unknown',
+        agency: geminiData.agency || rosterData?.department || 'Unknown',
+        disciplinaryReports: geminiData.disciplinary?.join('; ') || 'None found',
+        newsArticles: geminiData.news?.join('; ') || 'None found',
+        sanctions: geminiData.sanctions?.join('; ') || 'None found',
+        lawsuits: geminiData.lawsuits?.join('; ') || 'None found',
+        training: geminiData.training?.join('; ') || 'None found',
+        summary: 'Report generated from raw data (verification unavailable).'
+      };
     }
 
-    // Extract structured fields from the combined narrative
-    const extracted = extractRelevantData(summary);
+    // Collect all sources
+    const allSources = new Set<string>(geminiData.sources || []);
+    if (rosterData?.sources) {
+      rosterData.sources.forEach((s: string) => allSources.add(s));
+    }
 
-    const departmentName = extracted.department || structuredFindings?.department || rosterOfficer?.department;
-    const badgeNumber = badgeData?.badgeNumber || structuredFindings?.badgeNumber || rosterOfficer?.badgeNumber;
-    const resolvedRank = resolveRank(categoryResults, summary || '');
-
-    const sourcesArray = Array.from(allSources).filter(s => s && s.startsWith('http'));
-
+    // Build final result
     const result: OfficerSearchResult = {
       name: normalizedName,
-      badgeNumber: badgeNumber || "Not found in public databases",
-      department: departmentName,
-      rank: resolvedRank,
-      summary: summary || 'No verifiable negative or notable public information was found.',
-      sources: sourcesArray,
-      careerHistory: undefined,
-      training: extracted.training || extracted.certifications,
-      incidents: extracted.disciplinaryActions || extracted.complaints,
-      disciplinaryActions: extracted.disciplinaryActions,
-      demotions: extracted.demotions,
-      newsCoverage: extracted.newsCoverage,
-      socialMedia: extracted.socialMedia,
-      departmentContact: extracted.departmentContact,
-      certifications: extracted.certifications,
-      complaints: extracted.complaints,
+      rank: verifiedReport.rank,
+      agency: verifiedReport.agency,
+      disciplinaryReports: verifiedReport.disciplinaryReports,
+      newsArticles: verifiedReport.newsArticles,
+      sanctions: verifiedReport.sanctions,
+      lawsuits: verifiedReport.lawsuits,
+      training: verifiedReport.training,
+      summary: verifiedReport.summary,
+      sources: Array.from(allSources).filter(s => s && s.startsWith('http')),
+      // Legacy compatibility
+      badgeNumber: badgeData?.badgeNumber || geminiData.badgeNumber || 'Not found',
+      department: verifiedReport.agency,
     };
 
-    // Best-effort: add to roster and department roster for future searches (no city stored)
+    // Update roster for future searches
     try {
       await addOfficerToRoster({
         name: normalizedName,
         city: undefined,
         state,
-        badgeNumber: badgeNumber !== "Not found in public databases" ? badgeNumber : undefined,
-        department: result.department,
+        badgeNumber: result.badgeNumber !== 'Not found' ? result.badgeNumber : undefined,
+        department: result.agency,
         summary: result.summary,
         sources: result.sources
       } as any);
-      if (departmentName) {
+      
+      if (result.agency && result.agency !== 'Unknown') {
         await addDepartmentToRoster({
           state,
           city: undefined,
-          department: departmentName,
-          url: topUrlList[0] || undefined,
+          department: result.agency,
+          url: priorityUrls[0] || undefined,
         } as any);
       }
     } catch (err) {
-      console.log('[Officer Search] Could not update roster/department roster:', err);
+      console.log('[Officer Search] Could not update roster:', err);
     }
 
-    // Cache and emit completion
+    // Stage 4: Complete
     setCachedResult(cacheKey, result);
-    emitProgress(3, 'Complete', 'Search completed successfully!');
+    emitProgress(4, 'Complete', 'Search completed successfully!');
     rateLimitTracker.recordSuccess();
 
     return result;
@@ -485,21 +408,19 @@ Cite URLs for every factual claim. Omit filler. Present concise bullets or short
     console.error('[Officer Search] Fatal error:', error);
     rateLimitTracker.recordError(error);
 
-    if (error?.message?.includes('API key') || error?.message?.includes('GEMINI_API_KEY')) {
+    if (error?.message?.includes('API key')) {
       throw new Error('Search service configuration error. Please contact support.');
     } else if (error?.message?.includes('quota') || error?.message?.includes('rate limit')) {
       throw new Error('Search service is experiencing high demand. Please try again in a few moments.');
     } else if (error?.message?.includes('timeout')) {
-      throw new Error('Search request timed out. Please try again with more specific information.');
-    } else if (error?.message?.includes('network') || error?.code === 'ENOTFOUND' || error?.code === 'ETIMEDOUT') {
-      throw new Error('Unable to connect to search services. Please check your connection and try again.');
+      throw new Error('Search request timed out. Please try again.');
     } else {
       throw new Error(`Officer search failed: ${error?.message || 'An unexpected error occurred'}`);
     }
   }
 }
 
-// Legacy compatibility function (updated signature: no city/county)
+// Legacy compatibility function
 export async function searchOfficer(
   officerName: string,
   state: string,
@@ -515,9 +436,9 @@ export async function searchOfficer(
   
   return {
     name: result.name,
-    badgeNumber: result.badgeNumber || 'Not found in public databases',
-    department: (result.department || '') as any,
-    rank: result.rank || 'Officer',
+    badgeNumber: result.badgeNumber || 'Not found',
+    department: result.agency || result.department || '',
+    rank: result.rank || 'Unknown',
     summary: result.summary
   };
 }
