@@ -1622,8 +1622,10 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to send email',
-     }
-    }); 
+    });  
+    }
+   
+}); 
   
   
   // ============================================
