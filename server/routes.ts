@@ -1690,7 +1690,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
       } catch (error: any) {
         console.error("Error initiating AI Sub-Agent command:", error);
-        res.status(500).json({ message: "Error processing command" 
+        res.status(500).json({ message: "Error processing command", 
         }); 
       }
 
