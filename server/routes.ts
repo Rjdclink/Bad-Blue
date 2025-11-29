@@ -1570,6 +1570,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ============================================
   // ============================================
+// ============================================
 // ADMIN EMAIL ROUTE (fixed access control)
 // ============================================
 app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) => {
@@ -1597,30 +1598,33 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
     });
 
     if (success) {
-      res.json({
+      return res.json({
         success: true,
         message: `Email sent successfully to ${data.to}`
       });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to send email. Please check Resend configuration.'
-      });
     }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send email. Please check Resend configuration.'
+    });
+
   } catch (error: any) {
     console.error('[API] Error sending custom email:', error);
+
     if (error.name === 'ZodError') {
-      res.status(400).json({
+      return res.status(400).json({
         success: false,
         message: 'Invalid request data. Please check all fields.'
       });
-    } else {
-      res.status(500).json({
-        success: false,
-       message: error.message || 'Failed to send email'
-     });
     }
-  });
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to send email'
+    });
+  }
+}); 
 
   // ============================================
   // AI SUB-AGENT ROUTES (admin only)
