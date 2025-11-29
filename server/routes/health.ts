@@ -32,6 +32,11 @@ interface HealthStatus {
 /**
  * GET /api/health
  * Returns system health status with DB probe
+ * 
+ * Note: This endpoint is intentionally not rate-limited as it is designed
+ * for infrastructure monitoring (load balancers, k8s health probes) which
+ * require fast, reliable responses. The database query is lightweight (SELECT 1)
+ * and the endpoint returns minimal data.
  */
 router.get('/', async (_req: Request, res: Response) => {
   const startTime = Date.now();
@@ -40,7 +45,7 @@ router.get('/', async (_req: Request, res: Response) => {
   const health: HealthStatus = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    version: process.env.npm_package_version || '1.0.0',
+    version: '1.0.0', // Hardcoded version for reliability across environments
     checks: {
       database: {
         status: 'up',
