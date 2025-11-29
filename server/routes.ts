@@ -1569,48 +1569,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // (Omitted here for brevity; original logic unchanged — keep existing lines 1649-2033 from original file)
 
   // ============================================
-  // ADMIN EMAIL ROUTE (unchanged)
   // ============================================
-  app.post('/api/admin/send-custom-email', adminAuthMiddleware, async (req, res) => {
-    try {
-      const schemaZ = z.object({
-        to: z.string().email(),
-        subject: z.string().min(1),
-        message: z.string().min(1),
+// ADMIN EMAIL ROUTE (fixed access control)
+// ============================================
+app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) => {
+  try {
+    // Allow the special bypass id used elsewhere OR a user object that marks admin.
+    const userId = req.user?.claims?.sub;
+    const isAdminUserFlag = req.user?.isAdmin === true || req.user?.claims?.isAdmin === true;
+
+    if (userId !== 'admin-bypass' && !isAdminUserFlag) {
+      return res.status(403).json({ success: false, message: 'Forbidden - Admin access required' });
+    }
+
+    const schemaZ = z.object({
+      to: z.string().email(),
+      subject: z.string().min(1),
+      message: z.string().min(1),
+    });
+
+    const data = schemaZ.parse(req.body);
+
+    const success = await sendAdminEmail({
+      to: data.to,
+      subject: data.subject,
+      message: data.message,
+    });
+
+    if (success) {
+      res.json({
+        success: true,
+        message: `Email sent successfully to ${data.to}`
       });
-
-      const data = schemaZ.parse(req.body);
-
-      const success = await sendAdminEmail({
-        to: data.to,
-        subject: data.subject,
-        message: data.message,
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send email. Please check Resend configuration.'
       });
-
-      if (success) {
-        res.json({ 
-          success: true, 
-          message: `Email sent successfully to ${data.to}` 
-        });
-      } else {
-        res.status(500).json({ 
-          success: false, 
-          message: 'Failed to send email. Please check Resend configuration.' 
-        });
-      }
-    } catch (error: any) {
-      console.error('[API] Error sending custom email:', error);
-      if (error.name === 'ZodError') {
-        res.status(400).json({ 
-          success: false, 
-          message: 'Invalid request data. Please check all fields.' 
-        });
-      } else {
-        res.status(500).json({ 
-          success: false, 
-          message: error.message || 'Failed to send email' 
-        });
-      }
+    }
+  } catch (error: any) {
+    console.error('[API] Error sending custom email:', error);
+    if (error.name === 'ZodError') {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid request data. Please check all fields.'
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to send email'
+      });
+    }
+  }
+});
     }
   });
 
