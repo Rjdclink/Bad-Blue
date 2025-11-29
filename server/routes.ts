@@ -1716,7 +1716,8 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
     } catch (error: any) {
       console.error("Error fetching AI Sub-Agent status:", error);
-      res.status(500).json({ message: "Error fetching status" });
+      res.status(500).json({ message: "Error fetching status", 
+     });
     }
   });
 
@@ -2138,7 +2139,8 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
   // Apply notFoundHandler ONLY to API routes
   app.use('/api', notFoundHandler);
   
-  // Apply the general error handler globally
+
+      // Apply the general error handler globally
   app.use(errorHandler);
 
   const httpServer = createServer(app);
