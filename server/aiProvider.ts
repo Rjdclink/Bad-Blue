@@ -58,6 +58,9 @@ interface GenerateOptions {
 /**
  * Generate text using governed AI providers
  * Executes providers in parallel and aggregates results
+ * 
+ * Leverages providersAllocation from token governor when available
+ * for smarter provider selection and per-provider token budgets.
  */
 export async function generateText(
   task: AITaskMetadata,
@@ -66,15 +69,10 @@ export async function generateText(
 ): Promise<AIResponse> {
   const startTime = Date.now();
 
-  // Get routing and budget from governor
+  // Get routing and budget from governor (now includes orchestrated allocations)
   const budget = await aiTokenGovernor.getBudgetForTask(task);
-  const maxTokens = options.maxTokens || budget.maxTokens;
+  const defaultMaxTokens = options.maxTokens || budget.maxTokens;
   const actualPrompt = buildPromptWithVerbosity(prompt, budget.verbosityLevel);
-
-  // Determine provider set based on context
-  const providersToRun: AIProvider[] = task.context === UsageContext.AUTONOMOUS
-    ? [AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE] // Autonomous: exclude Gemini
-    : [AIProvider.GEMINI, AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE];
 
   // Respect deferral for first decision point
   if (!budget.shouldProceed) {
@@ -85,10 +83,45 @@ export async function generateText(
     throw new Error(`Task deferred: ${budget.deferralReason}`);
   }
 
-  // Launch providers in parallel
-  const executions = providersToRun.map((provider) =>
-    runProvider(provider, actualPrompt, options, maxTokens, task)
-  );
+  // Determine provider set: use providersAllocation if available, else fallback to context-based logic
+  let providersToRun: AIProvider[];
+  let providerBudgets: Map<AIProvider, number> = new Map();
+
+  if (budget.providersAllocation && budget.providersAllocation.length > 0) {
+    // Use orchestrated allocations from governor - this enables proportional load distribution
+    providersToRun = budget.providersAllocation
+      .filter(a => a.maxTokens > 0) // Only run providers with allocated budget
+      .map(a => a.provider);
+    
+    // Build per-provider budget map for fine-grained control
+    budget.providersAllocation.forEach(a => {
+      if (a.maxTokens > 0) {
+        providerBudgets.set(a.provider, a.maxTokens);
+      }
+    });
+
+    // Still apply autonomous Gemini block even if governor suggested it
+    if (task.context === UsageContext.AUTONOMOUS) {
+      providersToRun = providersToRun.filter(p => p !== AIProvider.GEMINI);
+      providerBudgets.delete(AIProvider.GEMINI);
+    }
+  } else {
+    // Fallback: use context-based provider selection (original behavior)
+    providersToRun = task.context === UsageContext.AUTONOMOUS
+      ? [AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE] // Autonomous: exclude Gemini
+      : [AIProvider.GEMINI, AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE];
+  }
+
+  // Ensure at least one provider to run
+  if (providersToRun.length === 0) {
+    throw new Error('No AI providers available after orchestration');
+  }
+
+  // Launch providers in parallel with per-provider token limits
+  const executions = providersToRun.map((provider) => {
+    const providerMaxTokens = providerBudgets.get(provider) || defaultMaxTokens;
+    return runProvider(provider, actualPrompt, options, providerMaxTokens, task);
+  });
 
   const results = await Promise.allSettled(executions);
 
