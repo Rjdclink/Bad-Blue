@@ -427,7 +427,7 @@ class BadBlueWorker {
       if (process.env.STRIPE_SECRET_KEY && process.env.DISABLE_STRIPE_CHECK !== 'true') {
         try {
           const Stripe = (await import('stripe')).default;
-          const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
+          const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-10-29.clover' as const });
           await Promise.race([
             stripe.balance.retrieve(),
             new Promise((_, reject) => setTimeout(() => reject(new Error('Stripe timeout')), 5000)),
@@ -1116,7 +1116,8 @@ class BadBlueWorker {
       return (globalThis as any).fetch(url, options);
     }
     try {
-      const undici = await import('undici');
+      // Dynamic import with type assertion - undici provides fetch polyfill for older Node versions
+      const undici = await import('undici' as any);
       const f = (undici as any).fetch || (undici as any).default?.fetch;
       if (typeof f === 'function') return f(url, options);
       throw new Error('No fetch in undici');

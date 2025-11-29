@@ -52,7 +52,7 @@ function getGeminiModel(
       temperature,
       maxOutputTokens: maxTokens,
       responseMimeType: useJSON ? "application/json" : "text/plain",
-    }
+    } as any
   });
 
   modelCache.set(key, model);
@@ -182,25 +182,16 @@ Respond with a JSON object containing:
       : `User: ${userMessage}`;
 
     // Using Gemini 2.5 Flash for fast conversational responses
-    const response = await client.models.generateContent({
+    const model = client.getGenerativeModel({
       model: "gemini-2.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `${systemPrompt}\n\n${fullPrompt}`
-            }
-          ]
-        }
-      ],
-      config: {
+      generationConfig: {
         responseMimeType: "application/json",
         temperature: 0.7,
-      }
+      } as any
     });
-
-    const content = response.text;
+    
+    const response = await model.generateContent(`${systemPrompt}\n\n${fullPrompt}`);
+    const content = response.response?.text() ?? '';
     if (!content) {
       throw new Error('No response from Gemini');
     }

@@ -22,12 +22,10 @@
  * - Autonomous tasks still avoid Gemini (hard block), but run Groq+Mistral+Claude in parallel.
  */
 
-// NOTE: Removed conflicting import of callGemini; this file now manages Gemini directly
-// and retains Groq client import for chat completions.
-
 import { getGroqClient } from './groq';
 import { callMistral } from './mistral';
 import { callClaude } from './claude';
+import { callGemini as callGeminiService } from './gemini';
 import { 
   aiTokenGovernor, 
   AIProvider, 
@@ -185,50 +183,12 @@ export async function getAutonomousRescheduleInfo(): Promise<{ shouldReschedule:
 
 // Private helper functions
 
-// Lazy initialization of Gemini client
-let geminiClient: GoogleGenerativeAI | null = null;
-
-function getGeminiClient(): GoogleGenerativeAI {
-  if (!geminiClient) {
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY environment variable is not set');
-    }
-    geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  }
-  return geminiClient;
-}
-
 async function callGemini(
   prompt: string,
   options: GenerateOptions,
   maxTokens: number
 ): Promise<string> {
-  try {
-    const gemini = getGeminiClient();
-
-    const fullPrompt = options.systemPrompt
-      ? `${options.systemPrompt}\n\n${prompt}`
-      : prompt;
-
-    const model = gemini.getGenerativeModel({
-      model: options.model || 'gemini-2.5-flash',
-      generationConfig: {
-        temperature: options.temperature ?? 0.7,
-        maxOutputTokens: maxTokens,
-        responseMimeType: options.useJSON ? 'application/json' : 'text/plain',
-      },
-    });
-
-    const result = await model.generateContent(fullPrompt);
-    const text = result.response?.text() ?? '';
-    if (!text) {
-      throw new Error('Empty response from Gemini');
-    }
-    return text;
-  } catch (error: any) {
-    console.error('[AI Provider] Gemini error:', error);
-    throw error;
-  }
+  return callGeminiService(prompt, options, maxTokens);
 }
 
 async function callGroq(
