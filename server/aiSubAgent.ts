@@ -35,7 +35,7 @@ const LEARNING_DATA = path.join(SUBAGENT_DATA_DIR, 'learningData.json');
 
 const PREFERRED_MODEL = process.env.PREFERRED_MODEL || 'gpt-4o-mini';
 const BING_API_KEY = process.env.BING_API_KEY || process.env.BING_SEARCH_KEY || '';
-const SUBAGENT_ALLOW_ADMIN_MODS = process.env.SUBAGENT_ALLOW_ADMIN_MODS === 'true' || true;
+const SUBAGENT_ALLOW_ADMIN_MODS = process.env.SUBAGENT_ALLOW_ADMIN_MODS === 'true';
 const WEB_SEARCH_ENABLED = process.env.WEB_SEARCH_ENABLED !== 'false';
 const DAILY_SCRAPE_HOUR_UTC = Number(process.env.DAILY_SCRAPE_HOUR_UTC || 2);
 const DAILY_SCRAPE_DURATION_MS = Number(process.env.DAILY_SCRAPE_DURATION_MS || 1000 * 60 * 60);

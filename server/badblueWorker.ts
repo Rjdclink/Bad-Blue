@@ -1178,4 +1178,5 @@ class BadBlueWorker {
   }
 }
 
+export const badblueWorker = BadBlueWorker.getInstance();
 export default BadBlueWorker;
