@@ -1621,9 +1621,11 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
     return res.status(500).json({
       success: false,
-      message: error.message || 'Failed to send email'
+      message: error.message || 'Failed to send email',
+     }
     }); 
-  }
+  
+  
   // ============================================
   // AI SUB-AGENT ROUTES (admin only)
   // ============================================
@@ -1716,13 +1718,11 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
     } catch (error: any) {
       console.error("Error fetching AI Sub-Agent status:", error);
-      res.status(500).json({ message: "Error fetching status", 
-      });
+      res.status(500).json({ message: "Error fetching status",
     }
   });
 
   // (Other AI Sub-Agent endpoints remain unchanged; preserve original logic)
-
   // ============================================
   // SECURITY FIREWALL CONTROLS
   // ============================================
