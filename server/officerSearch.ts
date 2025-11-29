@@ -332,12 +332,17 @@ export async function searchOfficerInformation(
     let structuredFindings: any = {};
     if (await isGroqAvailable()) {
       try {
-        const groqPrompt = {
-          name: normalizedName,
-          state,
-          urls: topUrlList
-        };
-        const groqResponse = await generateGroqStructuredResponse(groqPrompt);
+        const groqPromptText = `Search for officer information:
+Name: ${normalizedName}
+State: ${state || 'Unknown'}
+Priority URLs to check:
+${topUrlList.slice(0, 10).map((u, i) => `${i + 1}. ${u}`).join('\n')}
+
+Return structured JSON with: badgeNumber, department, contact, certifications, complaints, sources (array of URLs)`;
+        const groqSystemPrompt = 'You are a police officer database search assistant. Extract structured information and return as JSON.';
+        const groqResponseText = await generateGroqStructuredResponse(groqPromptText, groqSystemPrompt);
+        let groqResponse: any = {};
+        try { groqResponse = JSON.parse(groqResponseText); } catch { groqResponse = {}; }
         // Expected: groqResponse = { badgeNumber, department, contact, certifications, complaints, sources: [] }
         structuredFindings = groqResponse || {};
         (structuredFindings.sources || []).forEach((s: string) => allSources.add(s));
@@ -359,7 +364,11 @@ export async function searchOfficerInformation(
     // Optional: run Gemini structured if available (legacy support or where aiProvider routes Gemini)
     if ((!structuredFindings || Object.keys(structuredFindings).length === 0) && typeof generateGeminiStructuredResponse === 'function') {
       try {
-        const geminiStructured = await generateGeminiStructuredResponse({ name: normalizedName, state, urls: topUrlList });
+        const geminiPromptText = `Search for officer information about ${normalizedName}${state ? ` in ${state}` : ''}.
+Priority URLs to check: ${topUrlList.slice(0, 5).join(', ')}
+
+Return JSON with: badgeNumber, department, contact, certifications, complaints, sources (array of URLs)`;
+        const geminiStructured = await generateGeminiStructuredResponse<any>(geminiPromptText, { useJSON: true });
         if (geminiStructured) {
           structuredFindings = { ...structuredFindings, ...geminiStructured };
           (geminiStructured.sources || []).forEach((s: string) => allSources.add(s));
