@@ -443,12 +443,19 @@ class AITokenGovernorEnhanced {
    *
    * This is the central piece that makes the governor pick the most efficient provider
    * for the task and enables coordinated parallel allocations when appropriate.
+   * 
+   * IMPORTANT: Returns 0 for providers that are completely blocked (e.g., Gemini for autonomous).
    */
   private computeProviderEfficiency(
     provider: AIProvider,
     task: AITaskMetadata,
     quotaStatus: QuotaStatus
   ): number {
+    // CRITICAL: Zero out Gemini for autonomous tasks - hard block before any scoring
+    if (provider === AIProvider.GEMINI && task.context === UsageContext.AUTONOMOUS) {
+      return 0; // Completely ineligible - prevents any allocation
+    }
+
     // Base capability multipliers by provider and complexity
     const capability: Record<AIProvider, Record<TaskComplexity, number>> = {
       [AIProvider.MISTRAL]: {
@@ -484,12 +491,14 @@ class AITokenGovernorEnhanced {
           percentUsed = quotaStatus.mistral.percentUsed ?? 0;
           break;
         case AIProvider.GROQ:
-          // For autonomous tasks, consider autonomous percent used
+          // For autonomous tasks, consider autonomous percent used (stricter limit)
           percentUsed = task.context === UsageContext.AUTONOMOUS
             ? quotaStatus.groq.autonomousPercentUsed ?? 0
             : quotaStatus.groq.percentUsed ?? 0;
           break;
         case AIProvider.GEMINI:
+          // Gemini uses request-based quota - convert to percentage
+          // percentUsed is already calculated correctly in quotaStatus
           percentUsed = quotaStatus.gemini.percentUsed ?? 0;
           break;
         case AIProvider.CLAUDE:
@@ -502,13 +511,19 @@ class AITokenGovernorEnhanced {
       percentUsed = 100;
     }
 
+    // If fully used, return 0 efficiency
+    if (percentUsed >= 100) {
+      return 0;
+    }
+
     // Remaining factor (prefer lower percentUsed)
     const remainingFactor = Math.max(0, 1 - (percentUsed / 100));
 
     const baseCapability = capability[provider]?.[task.complexity] ?? 1.0;
 
     // Efficiency = capability * remainingFactor * priority boost
-    const efficiency = baseCapability * (0.5 + remainingFactor) * priorityBoost; // add 0.5 baseline so near-full providers aren't zero
+    // Add 0.5 baseline so near-full providers aren't completely zero (but still de-prioritized)
+    const efficiency = baseCapability * (0.5 + remainingFactor) * priorityBoost;
 
     // Slightly prefer user-facing providers for user tasks (Gemini + Mistral for lightweight user tasks)
     const userFaceBoost = (task.context === UsageContext.USER && task.isUserFacing) ? (provider === AIProvider.GEMINI ? 1.05 : 1.0) : 1.0;
@@ -543,10 +558,13 @@ class AITokenGovernorEnhanced {
    * Returns an ordered array of provider allocations (provider + maxTokens) with the most efficient first.
    *
    * Strategy:
-   * - Compute efficiency scores for all available providers.
+   * - Compute efficiency scores for all available providers (0 for ineligible).
+   * - Filter out providers with 0 efficiency (e.g., Gemini for autonomous).
    * - If a single provider is clearly superior (efficiency > 1.1 * next best), allocate whole task to it.
    * - Otherwise, split across top N providers proportionally to efficiency while respecting quotas and
    *   Groq autonomous cap (35%).
+   * 
+   * FIXED: Properly tracks remaining capacity during redistribution to prevent exceeding limits.
    */
   private async orchestrateProviders(
     task: AITaskMetadata,
@@ -554,25 +572,25 @@ class AITokenGovernorEnhanced {
     quotaStatus: QuotaStatus
   ): Promise<Array<{ provider: AIProvider; maxTokens: number; proportion?: number }>> {
     // Build list of available providers (both API key and quota checks)
-    const availability = {
+    const availability: Record<AIProvider, boolean> = {
       [AIProvider.MISTRAL]: this.isProviderAvailable(AIProvider.MISTRAL) && quotaStatus.mistral.percentUsed < 99,
       [AIProvider.GROQ]: this.isProviderAvailable(AIProvider.GROQ) && quotaStatus.groq.percentUsed < 99,
       [AIProvider.GEMINI]: this.isProviderAvailable(AIProvider.GEMINI) && quotaStatus.gemini.percentUsed < 99,
       [AIProvider.CLAUDE]: this.isProviderAvailable(AIProvider.CLAUDE) && quotaStatus.claude.percentUsed < 99
     };
 
-    // If autonomous, ensure Groq autonomous cap
+    // For autonomous tasks, explicitly block Gemini and check Groq cap
     if (task.context === UsageContext.AUTONOMOUS) {
+      availability[AIProvider.GEMINI] = false; // Hard block Gemini for autonomous
       const canUseGroq = await this.canAutonomousUseGroq();
       if (!canUseGroq) {
         availability[AIProvider.GROQ] = false;
       }
     }
 
-    // Build candidate list
-    const candidates = Object.keys(availability)
-      .filter(k => availability[k as AIProvider])
-      .map((p) => p as AIProvider);
+    // Build candidate list from available providers
+    const candidates = (Object.keys(availability) as AIProvider[])
+      .filter(k => availability[k]);
 
     if (candidates.length === 0) {
       // No providers available
@@ -580,92 +598,98 @@ class AITokenGovernorEnhanced {
     }
 
     // Compute efficiencies and available capacities
+    // Track remaining capacity in a mutable map to update during allocation
+    const capacityRemaining = new Map<AIProvider, number>();
     const scored = candidates.map(p => {
-      return {
-        provider: p,
-        efficiency: this.computeProviderEfficiency(p, task, quotaStatus),
-        capacity: this.getAvailableTokenLikeCapacity(p, quotaStatus)
-      };
+      const efficiency = this.computeProviderEfficiency(p, task, quotaStatus);
+      let capacity = this.getAvailableTokenLikeCapacity(p, quotaStatus);
+      
+      // For autonomous Groq, cap capacity at remaining autonomous limit
+      if (task.context === UsageContext.AUTONOMOUS && p === AIProvider.GROQ) {
+        const autonomousRemaining = Math.max(0, quotaStatus.groq.autonomousLimit - quotaStatus.groq.autonomousUsed);
+        capacity = Math.min(capacity, autonomousRemaining);
+      }
+      
+      capacityRemaining.set(p, capacity);
+      return { provider: p, efficiency, capacity };
     });
 
+    // Filter out providers with 0 efficiency (ineligible)
+    const eligible = scored.filter(s => s.efficiency > 0);
+    
+    if (eligible.length === 0) {
+      // All providers ineligible
+      return [];
+    }
+
     // Sort descending by efficiency
-    scored.sort((a, b) => b.efficiency - a.efficiency);
+    eligible.sort((a, b) => b.efficiency - a.efficiency);
 
     // If top provider is clearly better (e.g. 1.1x second), pick just it
-    if (scored.length === 1 || (scored.length >= 2 && scored[0].efficiency > (scored[1].efficiency * 1.1))) {
-      // allocate to top provider, capping at its capacity
-      const top = scored[0];
-      const alloc = Math.min(requiredBudgetEstimate, top.capacity);
-      // If capacity is 0 allocate small conservative amount if available (depending on provider type)
-      const finalAlloc = alloc > 0 ? alloc : 0;
-      return [{ provider: top.provider, maxTokens: finalAlloc }];
+    if (eligible.length === 1 || (eligible.length >= 2 && eligible[0].efficiency > (eligible[1].efficiency * 1.1))) {
+      const top = eligible[0];
+      const alloc = Math.min(requiredBudgetEstimate, capacityRemaining.get(top.provider) || 0);
+      return [{ provider: top.provider, maxTokens: alloc }];
     }
 
     // Otherwise, split proportionally across top 2-3 providers
-    const topN = scored.slice(0, Math.min(3, scored.length));
+    const topN = eligible.slice(0, Math.min(3, eligible.length));
     const totalEfficiency = topN.reduce((s, v) => s + v.efficiency, 0) || 1;
 
-    // Build proportional allocations but ensure we do not exceed capacities or autonomous Groq cap
+    // Build proportional allocations while tracking remaining capacity
     const allocations: Array<{ provider: AIProvider; maxTokens: number; proportion?: number }> = [];
-    let remainingBudget = requiredBudgetEstimate;
+    let unallocatedBudget = requiredBudgetEstimate;
 
     for (const s of topN) {
       const proportion = s.efficiency / totalEfficiency;
-      // tentative allocation in token-like units
-      let tentative = Math.floor(requiredBudgetEstimate * proportion);
-
-      // Respect provider capacity
-      const allowed = Math.min(tentative, s.capacity);
-
-      // If autonomous and groq, ensure we never allocate more than the Groq autonomousLimit
-      if (task.context === UsageContext.AUTONOMOUS && s.provider === AIProvider.GROQ) {
-        const remainingGroqAutonomous = Math.max(0, quotaStatus.groq.autonomousLimit - quotaStatus.groq.autonomousUsed);
-        // Cap allowed to remainingGroqAutonomous
-        if (allowed > remainingGroqAutonomous) {
-          tentative = Math.min(tentative, remainingGroqAutonomous);
-        } else {
-          tentative = allowed;
-        }
-      } else {
-        tentative = allowed;
+      const tentative = Math.floor(requiredBudgetEstimate * proportion);
+      const providerRemaining = capacityRemaining.get(s.provider) || 0;
+      
+      // Allocate the minimum of tentative, remaining capacity, and unallocated budget
+      const allocation = Math.min(tentative, providerRemaining, unallocatedBudget);
+      
+      if (allocation > 0) {
+        allocations.push({ provider: s.provider, maxTokens: allocation, proportion });
+        capacityRemaining.set(s.provider, providerRemaining - allocation);
+        unallocatedBudget -= allocation;
       }
-
-      allocations.push({ provider: s.provider, maxTokens: tentative, proportion });
-      remainingBudget -= tentative;
     }
 
-    // If there's still remainingBudget (because capacities were smaller), try to fill from any remaining candidate capacities
-    if (remainingBudget > 0) {
-      for (const s of scored) {
-        const existing = allocations.find(a => a.provider === s.provider);
-        const used = existing ? existing.maxTokens : 0;
-        const extraCapacity = Math.max(0, s.capacity - used);
-        if (extraCapacity <= 0) continue;
+    // If there's still unallocatedBudget and capacity in other providers, try to fill
+    if (unallocatedBudget > 0) {
+      for (const s of eligible) {
+        if (unallocatedBudget <= 0) break;
+        
+        const providerRemaining = capacityRemaining.get(s.provider) || 0;
+        if (providerRemaining <= 0) continue;
 
-        const add = Math.min(extraCapacity, remainingBudget);
+        const add = Math.min(providerRemaining, unallocatedBudget);
+        const existing = allocations.find(a => a.provider === s.provider);
+        
         if (existing) {
           existing.maxTokens += add;
         } else {
           allocations.push({ provider: s.provider, maxTokens: add, proportion: 0 });
         }
-        remainingBudget -= add;
-        if (remainingBudget <= 0) break;
+        
+        capacityRemaining.set(s.provider, providerRemaining - add);
+        unallocatedBudget -= add;
       }
     }
 
-    // Final allocations: filter out zero allocations
+    // Filter out zero allocations and sort by efficiency
     const final = allocations.filter(a => a.maxTokens > 0);
 
-    // If still empty (very low capacity), fall back to top provider with zero tokens and will proceed=false at caller
     if (final.length === 0) {
-      const top = scored[0];
+      // Fall back to top eligible provider with zero tokens - caller will handle shouldProceed=false
+      const top = eligible[0];
       return [{ provider: top.provider, maxTokens: 0 }];
     }
 
-    // Sort final allocations by descending efficiency (so primary is first)
+    // Sort final allocations by descending efficiency (primary first)
     final.sort((a, b) => {
-      const ea = scored.find(s => s.provider === a.provider)?.efficiency ?? 0;
-      const eb = scored.find(s => s.provider === b.provider)?.efficiency ?? 0;
+      const ea = eligible.find(s => s.provider === a.provider)?.efficiency ?? 0;
+      const eb = eligible.find(s => s.provider === b.provider)?.efficiency ?? 0;
       return eb - ea;
     });
 
