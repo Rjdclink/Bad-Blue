@@ -3,7 +3,7 @@ import path from 'path';
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 const exec = promisify(execCb);
-
+export const badblueWorker = BadBlueWorker.getInstance();
 // Severity levels
 export enum Severity {
   NOTICE = 1,
