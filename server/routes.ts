@@ -1693,7 +1693,6 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
         res.status(500).json({ message: "Error processing command" });
     }); 
   }
-});
 
   app.get("/api/admin/subagent/status/:logId", isAuthenticated, async (req: any, res) => {
     try {
