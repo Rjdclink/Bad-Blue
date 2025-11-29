@@ -154,7 +154,7 @@ Search thoroughly and provide detailed analysis of at least 3-5 high-quality exa
 
   try {
     const response = await client.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.5-flash",
       config: {
         temperature: 0.2,
         responseMimeType: "application/json",
@@ -272,7 +272,7 @@ Return JSON array with similarity scores:
 ]`;
 
     const response = await client.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.5-flash",
       config: {
         temperature: 0.1,
         responseMimeType: "application/json",
@@ -336,7 +336,7 @@ RESPONSE FORMAT (JSON):
 
   try {
     const response = await client.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.5-flash",
       config: {
         temperature: 0.2,
         responseMimeType: "application/json",
@@ -428,7 +428,7 @@ RESPONSE FORMAT (JSON):
 
   try {
     const response = await client.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.5-flash",
       config: {
         temperature: 0.2,
         responseMimeType: "application/json",
@@ -564,7 +564,7 @@ Be specific and actionable.`;
   let enhancementGuidance = '';
   try {
     const response = await client.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.5-flash",
       config: {
         temperature: 0.3,
       },

@@ -1,19 +1,145 @@
 // Google Gemini AI service for badge analysis and form assistance
+// Consolidated Gemini service with stable fallback model order
 // Using free Gemini API instead of OpenAI
 import { GoogleGenAI } from "@google/genai";
+
+// Stable fallback model order for production use
+// Avoids experimental model identifiers that may be deprecated
+export const GEMINI_MODELS = {
+  PRIMARY: 'gemini-2.5-flash',
+  FALLBACK_1: 'gemini-2.5-flash-latest',
+  FALLBACK_2: 'gemini-1.5-pro-latest',
+} as const;
 
 // Lazy initialization to avoid startup errors when API key is not configured
 let gemini: GoogleGenAI | null = null;
 
-function getGeminiClient(): GoogleGenAI {
+/**
+ * Get or initialize the Gemini client
+ */
+export function getGeminiClient(): GoogleGenAI {
   if (!gemini) {
     if (!process.env.GEMINI_API_KEY) {
       throw new Error('GEMINI_API_KEY environment variable is not set');
     }
-    // Note: Using Google Gemini - the newest model is gemini-2.5-flash (released 2025)
     gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
   return gemini;
+}
+
+/**
+ * Options for Gemini API calls
+ */
+export interface GeminiOptions {
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+  model?: string;
+}
+
+/**
+ * Call Gemini with automatic model fallback
+ * Uses stable model order: gemini-2.5-flash → gemini-2.5-flash-latest → gemini-1.5-pro-latest
+ * @param prompt The user prompt
+ * @param options Optional configuration
+ * @returns The generated text response
+ */
+export async function callGemini(
+  prompt: string,
+  options: GeminiOptions = {}
+): Promise<string> {
+  const client = getGeminiClient();
+  const models = options.model 
+    ? [options.model] 
+    : [GEMINI_MODELS.PRIMARY, GEMINI_MODELS.FALLBACK_1, GEMINI_MODELS.FALLBACK_2];
+  
+  let lastError: Error | null = null;
+  
+  for (const modelName of models) {
+    try {
+      const fullPrompt = options.systemPrompt
+        ? `${options.systemPrompt}\n\n${prompt}`
+        : prompt;
+      
+      const response = await client.models.generateContent({
+        model: modelName,
+        config: {
+          temperature: options.temperature ?? 0.7,
+          maxOutputTokens: options.maxTokens ?? 4096,
+        },
+        contents: fullPrompt,
+      });
+      
+      const text = response.text;
+      if (!text) {
+        throw new Error(`Empty response from Gemini model ${modelName}`);
+      }
+      
+      return text;
+    } catch (error: any) {
+      console.warn(`[Gemini] Model ${modelName} failed:`, error.message);
+      lastError = error;
+      // Continue to next fallback model
+    }
+  }
+  
+  throw lastError || new Error('All Gemini models failed');
+}
+
+/**
+ * Call Gemini and parse the response as JSON
+ * Uses stable model order: gemini-2.5-flash → gemini-2.5-flash-latest → gemini-1.5-pro-latest
+ * @param prompt The user prompt
+ * @param options Optional configuration
+ * @returns The parsed JSON response
+ */
+export async function callGeminiJSON<T = any>(
+  prompt: string,
+  options: GeminiOptions = {}
+): Promise<T> {
+  const client = getGeminiClient();
+  const models = options.model 
+    ? [options.model] 
+    : [GEMINI_MODELS.PRIMARY, GEMINI_MODELS.FALLBACK_1, GEMINI_MODELS.FALLBACK_2];
+  
+  let lastError: Error | null = null;
+  
+  for (const modelName of models) {
+    try {
+      const fullPrompt = options.systemPrompt
+        ? `${options.systemPrompt}\n\n${prompt}`
+        : prompt;
+      
+      const response = await client.models.generateContent({
+        model: modelName,
+        config: {
+          temperature: options.temperature ?? 0.7,
+          maxOutputTokens: options.maxTokens ?? 4096,
+          responseMimeType: 'application/json',
+        },
+        contents: fullPrompt,
+      });
+      
+      const text = response.text;
+      if (!text) {
+        throw new Error(`Empty response from Gemini model ${modelName}`);
+      }
+      
+      // Clean up markdown code blocks if present
+      let cleanJson = text.trim();
+      if (cleanJson.includes('```json')) {
+        cleanJson = cleanJson.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+      }
+      
+      return JSON.parse(cleanJson) as T;
+    } catch (error: any) {
+      console.warn(`[Gemini] Model ${modelName} failed for JSON:`, error.message);
+      lastError = error;
+      // Continue to next fallback model
+    }
+  }
+  
+  throw lastError || new Error('All Gemini models failed for JSON');
 }
 
 export interface EnhancedBadgeAnalysisResult {
@@ -184,9 +310,9 @@ Results Format:
 
 Apply your expert analysis even if image quality is poor. Extract whatever information IS visible and clearly state what is NOT visible.`;
 
-    // Using Gemini 2.5 Pro for vision capabilities
+    // Using stable Gemini model for vision capabilities
     const response = await client.models.generateContent({
-      model: "gemini-2.5-pro",
+      model: GEMINI_MODELS.PRIMARY,
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
@@ -369,9 +495,9 @@ Respond with a JSON object containing:
       ? `${conversationText}\n\nUser: ${userMessage}`
       : `User: ${userMessage}`;
 
-    // Using Gemini 2.5 Flash for fast conversational responses
+    // Using stable Gemini model for fast conversational responses
     const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: GEMINI_MODELS.PRIMARY,
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",

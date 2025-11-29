@@ -129,7 +129,7 @@ Provide at least 8-12 highly relevant precedents.`;
     
     // First pass: comprehensive precedent search
     const response1 = await client.models.generateContent({
-      model: "gemini-2.0-flash-thinking-exp",
+      model: "gemini-2.5-flash",
       config: {
         temperature: 0.1, // Very low temperature for maximum factual accuracy
         responseMimeType: "application/json",
@@ -184,7 +184,7 @@ Now perform PRECEDENT VERIFICATION AND EXPANSION:
 Provide at least 12-15 highly relevant, verified precedents in the same JSON format.`;
 
     const response2 = await client.models.generateContent({
-      model: "gemini-2.0-flash-thinking-exp",
+      model: "gemini-2.5-flash",
       config: {
         temperature: 0.1,
         responseMimeType: "application/json",

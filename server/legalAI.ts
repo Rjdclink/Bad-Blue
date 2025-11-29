@@ -342,7 +342,7 @@ RESPONSE FORMAT:
 
     // First pass: comprehensive research
     const response1 = await client.models.generateContent({
-      model: "gemini-2.0-flash-thinking-exp",
+      model: "gemini-2.5-flash",
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
@@ -382,7 +382,7 @@ Now perform a VERIFICATION AND EXPANSION pass:
 Return the ENHANCED and VERIFIED research in the same JSON format.`;
 
     const response2 = await client.models.generateContent({
-      model: "gemini-2.0-flash-thinking-exp",
+      model: "gemini-2.5-flash",
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
@@ -814,7 +814,7 @@ RESPONSE FORMAT:
 
     // First pass: comprehensive case law research
     const response1 = await client.models.generateContent({
-      model: "gemini-2.0-flash-thinking-exp",
+      model: "gemini-2.5-flash",
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
@@ -865,7 +865,7 @@ Now perform CASE VERIFICATION AND SHEPARDIZATION:
 Return the ENHANCED and VERIFIED case law analysis in the same JSON format.`;
 
     const response2 = await client.models.generateContent({
-      model: "gemini-2.0-flash-thinking-exp",
+      model: "gemini-2.5-flash",
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
@@ -1884,7 +1884,7 @@ YOU MUST RETURN A RATING OF 1, 2, 3, or null BASED STRICTLY ON THE strengthAsses
 
     // First pass: initial analysis
     const response1 = await client.models.generateContent({
-      model: "gemini-2.0-flash-thinking-exp",
+      model: "gemini-2.5-flash",
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
@@ -1945,7 +1945,7 @@ Now perform a COMPREHENSIVE LEGAL VERIFICATION AND ENHANCEMENT:
 Return the ENHANCED and VERIFIED analysis in the same JSON format.`;
 
     const response2 = await client.models.generateContent({
-      model: "gemini-2.0-flash-thinking-exp",
+      model: "gemini-2.5-flash",
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
@@ -2869,7 +2869,7 @@ Return ONLY the redrafted text, no explanations or meta-commentary.`;
 
   try {
     const response = await client.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.5-flash",
       config: {
         temperature: 0.3,
         systemInstruction: systemPrompt,

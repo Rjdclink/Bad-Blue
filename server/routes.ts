@@ -877,7 +877,7 @@ Return ONLY the full mailing address in this exact format:
 If you cannot find a specific address, provide the best available address based on the department name and state.`;
 
   const addressResult = await genAI.models.generateContent({
-    model: "gemini-2.0-flash-exp",
+    model: "gemini-2.5-flash",
     contents: [{ role: "user", parts: [{ text: addressSearchPrompt }] }],
     config: {
       tools: [{ googleSearch: {} }],
@@ -899,7 +899,7 @@ Provide the following information in JSON format:
 Return ONLY valid JSON, no additional text.`;
 
   const statuteResult = await genAI.models.generateContent({
-    model: "gemini-2.0-flash-exp",
+    model: "gemini-2.5-flash",
     contents: [{ role: "user", parts: [{ text: statutePrompt }] }],
     config: {
       tools: [{ googleSearch: {} }],
@@ -959,7 +959,7 @@ Generate a formal FOIA request letter that:
 Return ONLY the letter text, properly formatted with appropriate spacing and professional business letter structure. Do not include any explanatory text or JSON formatting.`;
 
   const letterResult = await genAI.models.generateContent({
-    model: "gemini-2.0-flash-exp",
+    model: "gemini-2.5-flash",
     contents: [{ role: "user", parts: [{ text: letterPrompt }] }],
   });
 
@@ -1003,6 +1003,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use((req, res, next) => {
     trackUsage();
     next();
+  });
+
+  // ============================================
+  // HEALTH CHECK ENDPOINT (Mounted early for monitoring)
+  // ============================================
+  
+  app.get("/api/health", async (_req, res) => {
+    const startTime = Date.now();
+    
+    // Check database connectivity
+    let dbStatus: 'connected' | 'disconnected' = 'disconnected';
+    let dbLatencyMs: number | null = null;
+    let dbError: string | null = null;
+    
+    try {
+      const dbStart = Date.now();
+      await db.execute(sql`SELECT 1`);
+      dbLatencyMs = Date.now() - dbStart;
+      dbStatus = 'connected';
+    } catch (error: any) {
+      dbError = error.message || 'Unknown database error';
+      console.error('[Health Check] Database connectivity failed:', dbError);
+    }
+    
+    // Get memory usage
+    const memoryUsage = process.memoryUsage();
+    const formatBytes = (bytes: number) => Math.round(bytes / 1024 / 1024);
+    
+    const healthResponse = {
+      status: dbStatus === 'connected' ? 'healthy' : 'degraded',
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
+      runtime: {
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+      },
+      memory: {
+        heapUsedMB: formatBytes(memoryUsage.heapUsed),
+        heapTotalMB: formatBytes(memoryUsage.heapTotal),
+        rssMB: formatBytes(memoryUsage.rss),
+        externalMB: formatBytes(memoryUsage.external),
+      },
+      database: {
+        status: dbStatus,
+        latencyMs: dbLatencyMs,
+        error: dbError,
+      },
+      responseTimeMs: Date.now() - startTime,
+    };
+    
+    // Return 503 if database is not reachable
+    if (dbStatus === 'disconnected') {
+      return res.status(503).json(healthResponse);
+    }
+    
+    res.json(healthResponse);
   });
 
   // ============================================

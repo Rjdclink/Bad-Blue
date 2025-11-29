@@ -1,6 +1,10 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { checkNodeVersion } from "./runtimeCheck";
+
+// Check Node.js version at startup
+checkNodeVersion();
 
 const app = express();
 
@@ -53,8 +57,16 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    // Log 5xx errors for debugging
+    if (status >= 500) {
+      console.error(`[Error Handler] ${status} Error:`, err.message || err);
+      if (err.stack) {
+        console.error('[Error Handler] Stack:', err.stack);
+      }
+    }
+
     res.status(status).json({ message });
-    throw err;
+    // Note: Removed unconditional throw to prevent process crashes
   });
 
   // Serve static SEO and public files before Vite middleware

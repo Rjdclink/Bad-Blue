@@ -178,6 +178,52 @@ Single-server optimization:
 
 ## Monitoring & Health Checks
 
+### Health Check Endpoint
+
+The `/api/health` endpoint is **implemented** and provides real-time system status:
+
+```bash
+# Check application health
+curl http://localhost:5000/api/health
+```
+
+**Response (200 OK - Healthy):**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2025-01-15T12:00:00.000Z",
+  "uptime": 3600,
+  "runtime": {
+    "nodeVersion": "v20.10.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "memory": {
+    "heapUsedMB": 45,
+    "heapTotalMB": 120,
+    "rssMB": 180,
+    "externalMB": 5
+  },
+  "database": {
+    "status": "connected",
+    "latencyMs": 5,
+    "error": null
+  },
+  "responseTimeMs": 10
+}
+```
+
+**Response (503 Service Unavailable - Database unreachable):**
+```json
+{
+  "status": "degraded",
+  "database": {
+    "status": "disconnected",
+    "error": "Connection refused"
+  }
+}
+```
+
 ### Recommended Metrics
 
 Monitor these to ensure scalability:
@@ -203,25 +249,19 @@ Monitor these to ensure scalability:
    - Memory usage
    - Network I/O
 
-### Health Check Endpoint (Recommended)
+### Gemini Service Configuration
 
-```typescript
-app.get('/api/health', async (req, res) => {
-  const health = {
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    database: {
-      connected: pool.totalCount > 0,
-      activeConnections: pool.totalCount,
-      idleConnections: pool.idleCount,
-    },
-    cache: cache.stats(),
-  };
-  
-  res.json(health);
-});
+The application uses a **unified Gemini service** with stable fallback model order:
+
+1. `gemini-2.5-flash` (primary)
+2. `gemini-2.5-flash-latest` (fallback)
+3. `gemini-1.5-pro-latest` (fallback)
+
+Experimental model identifiers (e.g., `gemini-2.0-flash-exp`) are avoided to prevent deprecation issues.
+
+Test Gemini connectivity:
+```bash
+node test-genai.mjs
 ```
 
 ## Performance Benchmarks
