@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
+import { getPreferredGeminiModel as getGeminiModelFromService } from './gemini';
 const exec = promisify(execCb);
 
 // Severity levels
@@ -143,9 +144,9 @@ class BadBlueWorker {
     return !!(key && key.length > 10);
   }
 
-  // MODEL: updated to gemini-2.5-flash
+  // MODEL: Use consolidated Gemini model resolution
   private getPreferredGeminiModel(): string {
-    return process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    return getGeminiModelFromService();
   }
 
   // Optional dynamic import helper

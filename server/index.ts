@@ -99,9 +99,21 @@ app.use((req, res, next) => {
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err?.status ?? err?.statusCode ?? 500;
     const message = err?.message ?? "Internal Server Error";
-    res.status(status).json({ message });
-    // Re-throw to surface in logs/process managers
-    throw err;
+
+    // Log critical errors (5xx) but avoid crashing the process
+    if (status >= 500) {
+      console.error('[ERROR]', {
+        status,
+        message,
+        stack: err?.stack,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Only send response if headers haven't been sent
+    if (!res.headersSent) {
+      res.status(status).json({ message });
+    }
   });
 
   // Serve static SEO and public files before Vite middleware

@@ -1,5 +1,7 @@
 // Email Verification Service for Police Department Contact Information
-// Uses web search and web fetch to verify official contact emails
+// Uses the consolidated Gemini service for AI-powered verification
+
+import { callGeminiJSON, isGeminiConfigured, cleanGeminiJsonResponse } from './gemini';
 
 interface VerificationResult {
   verified: boolean;
@@ -7,6 +9,17 @@ interface VerificationResult {
   source: string | null;
   confidence: 'high' | 'medium' | 'low';
   notes?: string;
+}
+
+interface WebsiteSearchResult {
+  websiteUrl: string | null;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+interface EmailExtractionResult {
+  email: string | null;
+  emailType: 'internal_affairs' | 'admin' | 'general' | null;
+  confidence: 'high' | 'medium' | 'low';
 }
 
 /**
@@ -99,7 +112,7 @@ function formatSearchQuery(
 }
 
 /**
- * Find official website using Gemini AI web search
+ * Find official website using Gemini AI
  * Returns the most likely official .gov or official website URL
  */
 async function findOfficialWebsite(
@@ -107,39 +120,32 @@ async function findOfficialWebsite(
   state: string,
   agencyType: 'police' | 'sheriff' | 'trooper'
 ): Promise<string | null> {
-  const { GoogleGenerativeAI } = await import("@google/generative-ai");
-
-  if (!process.env.GEMINI_API_KEY) {
-    console.log('GEMINI_API_KEY not configured for email verification');
+  if (!isGeminiConfigured()) {
+    console.log('Gemini API key not configured for email verification');
     return null;
   }
 
-  const client = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
-  const searchQuery = `${formatSearchQuery(city, state, agencyType)} official website contact email`;
+  const departmentName = formatSearchQuery(city, state, agencyType);
+  const searchQuery = `${departmentName} official website contact email`;
   console.log(`Searching for: ${searchQuery}`);
 
   try {
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
-      config: {
-        temperature: 0.1,
-        responseMimeType: "application/json",
-      },
-      contents: `Find the official website for ${formatSearchQuery(city, state, agencyType)}. 
+    const result = await callGeminiJSON<WebsiteSearchResult>(
+      `Find the official website for ${departmentName}. 
 
-      Look for:
-      - Official .gov website URL
-      - Official city/county government website
-      - Verified police department website
+Look for:
+- Official .gov website URL
+- Official city/county government website
+- Verified police department website
 
-      Return JSON:
-      {
-        "websiteUrl": "full URL or null",
-        "confidence": "high|medium|low"
-      }`,
-    });
+Return JSON:
+{
+  "websiteUrl": "full URL or null",
+  "confidence": "high|medium|low"
+}`,
+      { temperature: 0.1 }
+    );
 
-    const result = JSON.parse(response.text());
     return result.websiteUrl;
   } catch (error) {
     console.error('Error finding official website:', error);
@@ -155,40 +161,32 @@ async function extractContactEmail(
   url: string,
   departmentName: string
 ): Promise<string | null> {
-  const { GoogleGenerativeAI } = await import("@google/generative-ai");
-
-  if (!process.env.GEMINI_API_KEY) {
-    console.log('GEMINI_API_KEY not configured for email extraction');
+  if (!isGeminiConfigured()) {
+    console.log('Gemini API key not configured for email extraction');
     return null;
   }
 
-  const client = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
   console.log(`Extracting contact email from: ${url}`);
 
   try {
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
-      config: {
-        temperature: 0.1,
-        responseMimeType: "application/json",
-      },
-      contents: `Extract the official contact email for ${departmentName} from their website at ${url}.
+    const result = await callGeminiJSON<EmailExtractionResult>(
+      `Extract the official contact email for ${departmentName} from their website at ${url}.
 
-      Look for:
-      - Internal Affairs email (highest priority)
-      - Chief/Administration email
-      - General contact email
-      - Prefer .gov email addresses
+Look for:
+- Internal Affairs email (highest priority)
+- Chief/Administration email
+- General contact email
+- Prefer .gov email addresses
 
-      Return JSON:
-      {
-        "email": "email@domain.gov or null",
-        "emailType": "internal_affairs|admin|general|null",
-        "confidence": "high|medium|low"
-      }`,
-    });
+Return JSON:
+{
+  "email": "email@domain.gov or null",
+  "emailType": "internal_affairs|admin|general|null",
+  "confidence": "high|medium|low"
+}`,
+      { temperature: 0.1 }
+    );
 
-    const result = JSON.parse(response.text());
     return result.email && isValidEmail(result.email) ? result.email : null;
   } catch (error) {
     console.error('Error extracting email:', error);

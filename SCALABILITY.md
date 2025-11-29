@@ -203,26 +203,96 @@ Monitor these to ensure scalability:
    - Memory usage
    - Network I/O
 
-### Health Check Endpoint (Recommended)
+### Health Check Endpoint
+
+The `/api/health` endpoint is now **implemented and registered**. It provides structured health status for monitoring:
+
+**Request:**
+```bash
+curl http://localhost:5000/api/health
+```
+
+**Response (200 OK when healthy, 503 when degraded):**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "uptime": 3600.123,
+  "nodeVersion": "v20.10.0",
+  "memory": {
+    "heapUsedMB": 85,
+    "heapTotalMB": 128,
+    "rssMB": 156,
+    "externalMB": 12
+  },
+  "database": {
+    "connected": true,
+    "activeConnections": 5,
+    "idleConnections": 15,
+    "waitingRequests": 0,
+    "maxConnections": 100
+  },
+  "environment": {
+    "isRailway": false,
+    "isProduction": true
+  }
+}
+```
+
+**Status Codes:**
+- `200 OK`: All systems operational
+- `503 Service Unavailable`: Database unreachable or critical service down
+
+## Gemini AI Integration
+
+### Unified Gemini Service
+
+All Gemini API calls are consolidated in `server/gemini.ts`. This module provides:
+
+- **Shared client** with connection pooling
+- **Model caching** for performance  
+- **Stable model defaults** with fallback order
+- **JSON helper** with automatic fence stripping
+
+### Environment Variables
+
+| Variable | Purpose | Required |
+|----------|---------|----------|
+| `GEMINI_API_KEY` | Primary API key for Gemini | Yes (or GOOGLE_API_KEY) |
+| `GOOGLE_API_KEY` | Fallback API key | No (fallback for GEMINI_API_KEY) |
+| `GEMINI_MODEL` | Override default model | No (defaults to gemini-2.5-flash) |
+
+### Model Resolution Order
+
+When no explicit model is specified:
+1. `GEMINI_MODEL` environment variable
+2. `gemini-2.5-flash` (stable default)
+3. `gemini-2.5-flash-latest` (fallback)
+4. `gemini-1.5-pro-latest` (fallback)
+
+### Usage Example
 
 ```typescript
-app.get('/api/health', async (req, res) => {
-  const health = {
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    database: {
-      connected: pool.totalCount > 0,
-      activeConnections: pool.totalCount,
-      idleConnections: pool.idleCount,
-    },
-    cache: cache.stats(),
-  };
-  
-  res.json(health);
-});
+import { callGemini, callGeminiJSON, getPreferredGeminiModel } from './gemini';
+
+// Text response
+const text = await callGemini('Analyze this document', { temperature: 0.5 });
+
+// JSON response (auto-strips markdown fences)
+const data = await callGeminiJSON<{ result: string }>('Return JSON with result field');
+
+// Check current model
+const model = getPreferredGeminiModel(); // gemini-2.5-flash
 ```
+
+## Node.js Version Requirement
+
+**Minimum Node.js version: 20** (specified in package.json `engines` field)
+
+This is required for:
+- Full ESM module support
+- `@supabase/supabase-js` compatibility (avoids deprecation warnings)
+- Modern JavaScript features used in the codebase
 
 ## Performance Benchmarks
 

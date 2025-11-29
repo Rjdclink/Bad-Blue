@@ -10,6 +10,7 @@ import path from 'path';
 import os from 'os';
 import { exec as execCallback } from 'child_process';
 import { promisify } from 'util';
+import { getStableModelFallbacks, getPreferredGeminiModel, isGeminiConfigured } from './gemini';
 
 const exec = promisify(execCallback);
 
@@ -23,18 +24,9 @@ const STATE_FILE = path.join(SUBAGENT_DATA_DIR, 'state.json');
 const OFFICER_SEARCH_LOG = path.join(SUBAGENT_DATA_DIR, 'officerSearchLog.json');
 const LEARNING_DATA = path.join(SUBAGENT_DATA_DIR, 'learningData.json');
 
-const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
-const GEMINI_MODEL_CANDIDATES = [
-  () => process.env.GEMINI_MODEL?.trim(),
-  () => DEFAULT_GEMINI_MODEL,
-  () => 'gemini-2.5-flash-latest',
-  () => 'gemini-2.5-flash-exp',
-  () => 'gemini-2.0-flash',
-  () => 'gemini-1.5-flash-latest',
-  () => 'gemini-1.5-pro-latest',
-  () => 'gemini-1.5-flash-001',
-  () => 'gemini-1.5-pro-002'
-].map(fn => fn()).filter(Boolean);
+// Use stable model candidates from consolidated gemini module
+// Fallbacks only include stable, production-ready model names
+const GEMINI_MODEL_CANDIDATES = getStableModelFallbacks();
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const MAX_COMMANDS_PER_MINUTE = 30;
@@ -287,14 +279,14 @@ async function insertOfficerRecord(officerData: any) {
 // Gemini integration
 export function getConfiguredGeminiModel(): string {
   if (activeGeminiModel) return activeGeminiModel;
-  return GEMINI_MODEL_CANDIDATES[0] || DEFAULT_GEMINI_MODEL;
+  return getPreferredGeminiModel();
 }
 
 async function callGeminiAPI(
   prompt: string,
   options: { maxTokens?: number; temperature?: number; allowFallback?: boolean } = {}
 ) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) return { success:false, error:'GEMINI_API_KEY not configured' };
   const { maxTokens=8192, temperature=0.7, allowFallback=true } = options;
   const tried: string[] = [];

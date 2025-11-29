@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "vite build && esbuild server/index.ts --platform=node --bundle --format=esm --outdir=dist --packages=external --external:pg-native --external:lightningcss --external:@babel/preset-typescript --external:@babel/core --external:bufferutil --external:utf-8-validate",

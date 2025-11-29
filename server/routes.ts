@@ -771,6 +771,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware setup
   await setupAuth(app);
 
+  // Health check endpoint - register early for monitoring
+  const { healthRouter } = await import('./routes/health');
+  app.use('/api/health', healthRouter());
+
   // Usage tracking middleware - learns usage patterns for auto-repair timing
   app.use((req, res, next) => {
     trackUsage();
