@@ -19,7 +19,6 @@ import {
   analyzeLocalDistrictRules,
   analyzeCaseLaw,
   redraftOffenseDescription,
-  generateFOIALetter,
   generatePersuasiveContent,
 } from "./legalAI";
 import { searchOfficer, searchOfficerInformation, searchProgressEmitter, type SearchProgress } from "./officerSearch";
@@ -46,18 +45,8 @@ import {
   resetRateLimiter,
   applyTrainingToSubAgent,
   executeStructuredCommand,
-  getFailureDetectionStatus,
   learnFromLegalConsultation,
   executeAdvancedReasoning,
-  performImpactAnalysis,
-  getSelfDiagnostic,
-  getCapabilityLedger,
-  getAnalysisHistory,
-  getDiagnosticHistory,
-  triggerImprovementCycle,
-  getLearningRecords,
-  getAttorneyResearch,
-  getImprovementStatus,
 } from "./aiSubAgent";
 import { runAutomatedCleanup, getCleanupLogs, getCleanupStats, deleteOldErrorLogs, getErrorLogCleanupHistory, getErrorLogCleanupStats } from "./dataCleanup";
 import { runFullDiagnostics } from "./systemDiagnostics";
@@ -122,7 +111,7 @@ function getStripeClient(): Stripe {
       throw new Error("STRIPE_SECRET_KEY environment variable is not set");
     }
     stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-      apiVersion: (process.env.STRIPE_API_VERSION as Stripe.LatestApiVersion) || ("2024-06-20" as any),
+      apiVersion: (process.env.STRIPE_API_VERSION as Stripe.LatestApiVersion) || ("2025-10-29.clover" as const),
     });
   }
   return stripe;
@@ -773,7 +762,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Usage tracking middleware - learns usage patterns for auto-repair timing
   app.use((req, res, next) => {
-    trackUsage();
+    trackUsage({ action: req.method, tokens: 0, path: req.path }).catch(() => {});
     next();
   });
 
@@ -1669,10 +1658,10 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
               .set({
                 status: result.success ? 'completed' : 'failed',
                 response: result.response,
-                category: result.category,
-                executionTimeMs: result.executionTimeMs,
-                errorMessage: result.errorMessage || null,
-                metadata: result.metadata || {},
+                category: (result as any).category || category,
+                executionTimeMs: (result as any).executionTimeMs || null,
+                errorMessage: (result as any).errorMessage || null,
+                metadata: (result as any).metadata || {},
                 completedAt: new Date(),
               })
               .where(eq(aiSubAgentLogs.id, logId));
