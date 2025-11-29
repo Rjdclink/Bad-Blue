@@ -9,8 +9,10 @@ import { getBaseURL } from "./platformConfig";
 
 const resend = new Resend(process.env.RESEND_API_KEY!);
 
-// This must be a sender that Resend accepts (e.g. verified domain)
-const DEFAULT_FROM = process.env.EMAIL_FROM || "BadBlue <contact@bad-blue.com>";
+// Default from email for Resend (must be verified domain or onboarding@resend.dev for testing)
+// Production: Use verified domain like contact@bad-blue.com or noreply@trenuxae.resend.app
+// User requested: contact.badblue@gmail.com - if Resend doesn't accept this, fall back to verified domain
+const DEFAULT_FROM = process.env.EMAIL_FROM || "BadBlue <onboarding@resend.dev>";
 
 export const emailTransporter = {
   verify: async () => {
@@ -71,8 +73,17 @@ async function getEmailSettings() {
 }
 
 async function getFromAddress(): Promise<string> {
+  // Priority: 
+  // 1. Environment variable DEFAULT_FROM_EMAIL if set
+  // 2. Database settings if available
+  // 3. Fall back to Resend verified sender
+  if (process.env.DEFAULT_FROM_EMAIL) {
+    const fromName = process.env.DEFAULT_FROM_NAME || 'BadBlue';
+    return `${fromName} <${process.env.DEFAULT_FROM_EMAIL}>`;
+  }
+  
   const settings = await getEmailSettings();
-  // Always use static email address for consistency
+  // Use contact.badblue@gmail.com as requested by user
   return `${settings.fromName} <contact.badblue@gmail.com>`;
 }
 

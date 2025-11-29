@@ -1,131 +1,44 @@
 [
   {
-    "timestamp": "2025-11-29T21:54:45.408Z"
+    "timestamp": "2025-11-29T22:59:31.925Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-dropdown-menu.js"
   },
   {
-    "timestamp": "2025-11-29T21:54:48.572Z"
+    "timestamp": "2025-11-29T22:59:31.929Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-4RO2SXZU.js"
   },
   {
-    "timestamp": "2025-11-29T21:54:48.968Z"
+    "timestamp": "2025-11-29T22:59:31.946Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-29T21:54:48.977Z"
+    "timestamp": "2025-11-29T22:59:31.965Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-29T21:54:48.982Z"
+    "timestamp": "2025-11-29T22:59:31.975Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-29T21:54:48.984Z"
+    "timestamp": "2025-11-29T22:59:32.529Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
   },
   {
-    "timestamp": "2025-11-29T21:54:49.138Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.150Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.165Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.170Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.188Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.335Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.433Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.644Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.653Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.660Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.677Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.701Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:49.712Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:50.356Z"
-  },
-  {
-    "timestamp": "2025-11-29T21:54:50.713Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:25:58.635Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.038Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.091Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.116Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.178Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.275Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.312Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.360Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.608Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.629Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.671Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:07.884Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:08.092Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:08.182Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:08.727Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:08.742Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:08.776Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:08.859Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:09.035Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:09.091Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:09.257Z"
-  },
-  {
-    "timestamp": "2025-11-29T22:26:10.260Z"
+    "timestamp": "2025-11-29T22:59:33.043Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
   }
 ]
