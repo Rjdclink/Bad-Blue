@@ -198,7 +198,7 @@ async function callGemini(
       maxTokens: maxTokens,
       model: modelName,
       useJSON: options.useJSON,
-    }, maxTokens);
+    });
   } catch (error: any) {
     console.error('[AI Provider] Gemini error:', error);
     throw error;

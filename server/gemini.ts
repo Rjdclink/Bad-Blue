@@ -138,15 +138,14 @@ export function cleanGeminiJsonResponse(raw: string): string {
  * Call Gemini with text prompt and return text response
  * 
  * @param prompt - The prompt text to send
- * @param options - Configuration options
- * @param maxTokens - Maximum tokens in response (default: 2000)
+ * @param options - Configuration options (including maxTokens, default: 2000)
  */
 export async function callGemini(
   prompt: string,
-  options: GeminiOptions = {},
-  maxTokens: number = 2000
+  options: GeminiOptions = {}
 ): Promise<string> {
 
+  const maxTokens = options.maxTokens ?? 2000;
   const modelName = getPreferredGeminiModel(options.model);
   const system = options.systemPrompt ? `${options.systemPrompt}\n\n${prompt}` : prompt;
 
@@ -176,8 +175,7 @@ export async function callGeminiJSON<T = any>(
   prompt: string,
   options: GeminiOptions = {}
 ): Promise<T> {
-  const maxTokens = options.maxTokens ?? 2000;
-  const raw = await callGemini(prompt, { ...options, useJSON: true }, maxTokens);
+  const raw = await callGemini(prompt, { ...options, useJSON: true });
   const clean = cleanGeminiJsonResponse(raw);
 
   try {
@@ -192,6 +190,7 @@ export async function callGeminiJSON<T = any>(
  * Alias for callGeminiJSON for backwards compatibility
  */
 export const generateGeminiStructuredResponse = callGeminiJSON;
+
 
 /* -------------------- FORM ASSISTANT -------------------- */
       

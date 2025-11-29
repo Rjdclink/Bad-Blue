@@ -69,7 +69,8 @@ export function healthRouter(): Router {
       health.database.activeConnections = pool.totalCount - pool.idleCount;
       health.database.idleConnections = pool.idleCount;
       health.database.waitingRequests = pool.waitingCount;
-      health.database.maxConnections = (pool as any).options?.max || 100;
+      // Pool max size from environment or default configuration
+      health.database.maxConnections = parseInt(process.env.DATABASE_POOL_MAX || '100', 10);
     } catch (error: any) {
       console.error('[Health] Database check failed:', error.message);
       health.database.connected = false;
