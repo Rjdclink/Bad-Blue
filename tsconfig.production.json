@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "esnext"],
     "moduleResolution": "node",
     "rootDir": ".",
     "outDir": "./dist",
@@ -10,10 +10,13 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "declaration": false,
     "sourceMap": true,
+    "noEmitOnError": false,
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["./shared/*"]

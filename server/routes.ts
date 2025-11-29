@@ -1694,9 +1694,9 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
       } catch (error: any) {
         console.error("Error initiating AI Sub-Agent command:", error);
-        res.status(500).json({ message: "Error processing command", 
-        }); 
+        res.status(500).json({ message: "Error processing command", error: error.message }); 
       }
+    });
 
   app.get("/api/admin/subagent/status/:logId", isAuthenticated, async (req: any, res) => {
     try {
@@ -1720,7 +1720,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
     } catch (error: any) {
       console.error("Error fetching AI Sub-Agent status:", error);
-      res.status(500).json({ message: "Error fetching status",
+      res.status(500).json({ message: "Error fetching status", error: error.message });
     }
   });
 
