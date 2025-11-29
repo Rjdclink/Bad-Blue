@@ -398,7 +398,7 @@ async function runProvider(
       break;
     }
     case AIProvider.MISTRAL: {
-      const mistralResult = await callMistral(prompt, { ...options, model: options.model || 'mistral-large', maxTokens });
+      const mistralResult = await callMistral(prompt, { ...options, model: options.model || 'mistral-large-latest', maxTokens });
       content = mistralResult.content;
       tokensUsed = mistralResult.tokensUsed ?? Math.floor((prompt.length + content.length) / 4);
       break;
@@ -406,7 +406,7 @@ async function runProvider(
     case AIProvider.CLAUDE: {
       // Choose Haiku for speed unless verbosity is detailed, then Sonnet
       const useSonnet = options.model?.includes('sonnet') || (getVerbosityInstruction('detailed') === getVerbosityInstruction(budgetVerbosity(options)));
-      const model = options.model || (useSonnet ? 'claude-3.5-sonnet' : 'claude-3.5-haiku');
+      const model = options.model || (useSonnet ? 'claude-3-5-sonnet-20241022' : 'claude-3-5-haiku-20241022');
       const claudeResult = await callClaude(prompt, { ...options, model, maxTokens });
       content = claudeResult.content;
       tokensUsed = claudeResult.tokensUsed ?? Math.floor((prompt.length + content.length) / 4);
