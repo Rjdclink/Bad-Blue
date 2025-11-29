@@ -1619,8 +1619,8 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
         success: false,
        message: error.message || 'Failed to send email'
      });
-    }
-  });
+   }
+ });
 
   // ============================================
   // AI SUB-AGENT ROUTES (admin only)
