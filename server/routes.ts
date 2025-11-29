@@ -1608,7 +1608,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
       success: false,
       message: 'Failed to send email. Please check Resend configuration.'
     });
-
+  
   } catch (error: any) {
     console.error('[API] Error sending custom email:', error);
 
@@ -1622,9 +1622,8 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to send email'
-    }
-  }); 
-
+    }); 
+  }
   // ============================================
   // AI SUB-AGENT ROUTES (admin only)
   // ============================================
