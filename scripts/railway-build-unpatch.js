@@ -18,7 +18,7 @@ try {
   let content = fs.readFileSync(viteConfigPath, 'utf8');
   
   // Check if not patched
-  if (!content.includes('// Node 18 compatibility: polyfill for __dirname')) {
+  if (!content.includes('// Node 20 compatibility: polyfill for __dirname')) {
     console.log('[Railway Build Unpatch] File not patched, skipping...');
     process.exit(0);
   }
@@ -27,7 +27,7 @@ try {
   content = content.replace('import { fileURLToPath } from "url";\n', '');
   
   // Remove the __dirname polyfill
-  content = content.replace('\n// Node 18 compatibility: polyfill for __dirname\n', '');
+  content = content.replace('\n// Node 20 compatibility: polyfill for __dirname\n', '');
   content = content.replace('const __dirname = path.dirname(fileURLToPath(import.meta.url));\n', '');
   
   // Replace all instances of __dirname back to import.meta.dirname

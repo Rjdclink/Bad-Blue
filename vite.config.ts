@@ -4,7 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
-// Node 18 compatibility: polyfill for __dirname
+// Node 20 compatibility: polyfill for __dirname
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({

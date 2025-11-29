@@ -42,12 +42,22 @@ A robust background diagnostics and maintenance system runs continuously, perfor
 ## Installation
 
 ### Prerequisites
-- Node.js 18+ 
+- Node.js 20+ 
 - PostgreSQL database
 - Google Cloud Storage account (optional, for file storage)
 - Stripe account for payment processing
 - Google Gemini API key
 - Groq API key
+
+### Runtime / Node Version
+This project targets **Node 20 LTS** for production deployments. The supported runtime range is `>=20 <25`, allowing local development on newer versions such as Node 24 while maintaining production stability on Node 20.
+
+- **Production target**: Node 20 LTS
+- **Supported range**: `>=20.0.0 <25`
+- **Local development**: Node 24+ is compatible and can be used
+- **Version declaration**: See `.nvmrc` for the recommended version
+
+The application includes a runtime version check that logs warnings if running outside the supported range.
 
 ### Environment Variables
 Create a `.env` file with the following configuration:
@@ -121,7 +131,7 @@ npm start
 
 ### Docker Deployment
 ```dockerfile
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 

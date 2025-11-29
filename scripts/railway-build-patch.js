@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Railway Build Patch Script
- * This script patches vite.config.ts for Node 18 compatibility during Railway builds.
- * It replaces import.meta.dirname with a Node 18 compatible __dirname polyfill.
+ * This script patches vite.config.ts for Node 20 compatibility during Railway builds.
+ * It replaces import.meta.dirname with a Node 20 compatible __dirname polyfill.
  */
 
 import fs from 'fs';
@@ -12,14 +12,14 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const viteConfigPath = path.resolve(__dirname, '..', 'vite.config.ts');
 
-console.log('[Railway Build Patch] Starting vite.config.ts patch for Node 18 compatibility...');
+console.log('[Railway Build Patch] Starting vite.config.ts patch for Node 20 compatibility...');
 
 try {
   // Read the current vite.config.ts
   let content = fs.readFileSync(viteConfigPath, 'utf8');
   
   // Check if already patched
-  if (content.includes('// Node 18 compatibility: polyfill for __dirname')) {
+  if (content.includes('// Node 20 compatibility: polyfill for __dirname')) {
     console.log('[Railway Build Patch] File already patched, skipping...');
     process.exit(0);
   }
@@ -36,7 +36,7 @@ try {
   const importEndIndex = content.lastIndexOf('import ');
   const importEndLineIndex = content.indexOf('\n', importEndIndex);
   content = content.slice(0, importEndLineIndex + 1) +
-    '\n// Node 18 compatibility: polyfill for __dirname\n' +
+    '\n// Node 20 compatibility: polyfill for __dirname\n' +
     'const __dirname = path.dirname(fileURLToPath(import.meta.url));\n' +
     content.slice(importEndLineIndex + 1);
   
@@ -46,7 +46,7 @@ try {
   // Write the patched file
   fs.writeFileSync(viteConfigPath, content, 'utf8');
   
-  console.log('[Railway Build Patch] ✓ Successfully patched vite.config.ts for Node 18');
+  console.log('[Railway Build Patch] ✓ Successfully patched vite.config.ts for Node 20');
   console.log('[Railway Build Patch] Replacements made:');
   console.log('  - Added fileURLToPath import');
   console.log('  - Added __dirname polyfill');

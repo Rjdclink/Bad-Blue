@@ -2,6 +2,10 @@
 // Unauthorized copying, modification, distribution, or use of this file,
 // via any medium, is strictly prohibited without express written permission.
 
+// Verify Node.js runtime version is within supported range
+import { verifyNodeRuntime } from './utils/runtimeCheck';
+verifyNodeRuntime();
+
 // Load environment variables from .env file
 import * as dotenv from 'dotenv';
 dotenv.config();
