@@ -110,9 +110,7 @@ function getStripeClient(): Stripe {
     if (!process.env.STRIPE_SECRET_KEY) {
       throw new Error("STRIPE_SECRET_KEY environment variable is not set");
     }
-    stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-      apiVersion: (process.env.STRIPE_API_VERSION as Stripe.LatestApiVersion) || ("2025-10-29.clover" as const),
-    });
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
   }
   return stripe;
 }
