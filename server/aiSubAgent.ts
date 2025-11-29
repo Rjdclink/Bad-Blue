@@ -791,3 +791,91 @@ export async function applyTrainingToSubAgent(trainingPayload: any) {
     await appendLog({ type:'initError', error:e.message });
   }
 })();
+
+/* Additions at the end of the existing file, preserving all prior exports */
+
+/**
+ * Compatibility wrapper: executeStructuredCommand
+ * Maps the structured command used by routes.ts to the existing sub-agent command processor.
+ * Returns a normalized result shape that routes.ts expects.
+ */
+export async function executeStructuredCommand(command: {
+  type: string;
+  searchParams?: Record<string, any>;
+  limit?: number;
+  includeHistory?: boolean;
+  timestamp?: Date;
+  confidence?: number;
+}): Promise<{
+  success: boolean;
+  result?: any;
+  response?: any;
+  errorMessage?: string;
+  metadata?: Record<string, any>;
+}> {
+  try {
+    // Convert the structured command to a textual command the sub-agent can interpret.
+    // For officer searches, embed key parameters directly.
+    let textCommand = '';
+    if (command.type === 'search_officers') {
+      const p = command.searchParams || {};
+      textCommand = `search officer "${p.name || ''}" state=${p.state || ''} city=${p.city || ''} county=${p.county || ''} badge=${p.badgeNumber || ''} type=${p.officerType || ''} limit=${command.limit ?? 10}`;
+    } else {
+      // Generic fallback: stringify
+      textCommand = `execute ${JSON.stringify(command)}`;
+    }
+
+    const result = await processSubAgentCommand({ command: textCommand, category: command.type });
+    const normalized = {
+      success: !!result?.success,
+      result: result?.data || result,
+      response: result?.response,
+      metadata: {
+        action: result?.action,
+        packagesToInstall: result?.packagesToInstall,
+        fixedCount: result?.fixedCount,
+      },
+    };
+
+    // If no data payload was returned, still provide a consistent shape
+    return normalized;
+  } catch (e: any) {
+    return {
+      success: false,
+      errorMessage: e?.message || 'executeStructuredCommand failed',
+      metadata: { exception: true },
+    };
+  }
+}
+
+/**
+ * Compatibility wrapper: learnFromLegalConsultation
+ * Stores text + context into the learning queue and usage log for future improvements.
+ */
+export async function learnFromLegalConsultation(
+  text: string,
+  context?: { state?: string; category?: string; [k: string]: any }
+): Promise<boolean> {
+  try {
+    // Record usage for analytics
+    await trackUsage({
+      action: 'learning_event',
+      provider: 'internal',
+      tokens: Math.round((text?.length || 0) / 4),
+      category: context?.category || 'general',
+      state: context?.state || 'UNKNOWN',
+    });
+
+    // Push into training queue
+    await applyTrainingToSubAgent({
+      type: 'legal_consultation',
+      context: context || {},
+      content: (text || '').slice(0, 10000), // cap size
+    });
+
+    return true;
+  } catch (e: any) {
+    await trackUsage({ action: 'learning_event_failed', provider: 'internal', error: e?.message });
+    return false;
+  }
+  }
