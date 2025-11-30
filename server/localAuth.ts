@@ -86,6 +86,10 @@ export function setupLocalStrategy() {
           // Special case: Admin bypass (requires environment variables - no fallback defaults for security)
           const adminBypassId = process.env.ADMIN_BYPASS_ID;
           const adminBypassPassword = process.env.ADMIN_BYPASS_PASSWORD;
+          // SECURITY: Admin bypass email is configurable via environment variable.
+          // Default to internal-only domain to prevent accidental exposure of real emails in logs/databases.
+          // Never hardcode personal email addresses in source code.
+          const adminBypassEmail = process.env.ADMIN_BYPASS_EMAIL || "admin@badblue.internal";
           
           // Only allow admin bypass if credentials are explicitly configured - ONLY matches env var value, no "admin" fallback
           if (adminBypassId && adminBypassPassword && email === adminBypassId) {
@@ -94,16 +98,17 @@ export function setupLocalStrategy() {
               return done(null, false, { message: "Invalid admin credentials" });
             }
             
-            // Note: Admin access logging is handled in the route handler where
-            // we have access to req.ip, req.get("user-agent"), and req.sessionID
-            console.log(`[SECURITY] Admin bypass authentication successful`);
+            // [SECURITY ALERT] Log admin bypass usage with timestamp for audit trail
+            // Note: Full request context (IP, user-agent) is logged in the route handler
+            const timestamp = new Date().toISOString();
+            console.log(`[SECURITY ALERT] ${timestamp} - Admin bypass authentication used. Email: ${adminBypassEmail}`);
             
             // Create or get admin user with firstName: "Bypass" and lastName: "User" as requested
             let user = await storage.getUser("admin-bypass");
             if (!user) {
               user = await storage.upsertUser({
                 id: "admin-bypass",
-                email: "brclink1985@gmail.com",
+                email: adminBypassEmail,
                 firstName: "Bypass",
                 lastName: "User",
                 profileImageUrl: null,
@@ -123,7 +128,7 @@ export function setupLocalStrategy() {
             }
             
             return done(null, {
-              claims: { sub: user.id, email: user.email || "brclink1985@gmail.com", firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
+              claims: { sub: user.id, email: user.email || adminBypassEmail, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
               isAdminBypass: true,
             } as Express.User);
           }

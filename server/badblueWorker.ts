@@ -127,6 +127,9 @@ class BadBlueWorker {
   private readonly METRICS_LOG = path.join(this.DATA_DIR, 'repair_metrics.json');
   private readonly HEALTH_METRICS_LOG = path.join(this.DATA_DIR, 'worker_health_metrics.json');
   private readonly ALERTS_LOG = path.join(this.DATA_DIR, 'system_alerts.log');
+  private readonly REPAIR_QUEUE_FILE = path.join(this.DATA_DIR, 'repair_queue.json');
+
+  private metricsInterval: NodeJS.Timeout | null = null;
 
   private constructor() {}
 
@@ -170,7 +173,12 @@ class BadBlueWorker {
 
     this.registerShutdownHandlers();
     const dataDirOk = await this.initializeDataDirSafe();
-    if (dataDirOk) await this.ensureDataDirectory();
+    if (dataDirOk) {
+      await this.ensureDataDirectory();
+      await this.restoreRepairQueue();
+      await this.restoreRepairMetrics();
+      this.scheduleMetricsPersistence();
+    }
 
     this.scheduleCriticalMonitoring();
     this.scheduleDatabaseHeartbeat();
@@ -201,11 +209,17 @@ class BadBlueWorker {
       if (this.databaseHeartbeatInterval) clearInterval(this.databaseHeartbeatInterval);
       if (this.criticalMonitoringInterval) clearInterval(this.criticalMonitoringInterval);
       if (this.pruneLogsInterval) clearInterval(this.pruneLogsInterval);
+      if (this.metricsInterval) clearInterval(this.metricsInterval);
 
       const start = Date.now();
       while ((this.isDiagnosticInProgress || this.isRepairInProgress) && Date.now() - start < 5000) {
         await new Promise((r) => setTimeout(r, 100));
       }
+      
+      // Persist repair queue and metrics before shutdown
+      await this.persistRepairQueue().catch(() => {});
+      await this.persistRepairMetrics().catch(() => {});
+      
       console.log('[BadBlue Worker] Shutdown complete');
       process.exit(0);
     };
@@ -368,6 +382,86 @@ class BadBlueWorker {
     } catch {}
   }
 
+  private async persistRepairQueue(): Promise<void> {
+    try {
+      const data = {
+        timestamp: new Date().toISOString(),
+        queue: this.repairQueue,
+        queueLength: this.repairQueue.length,
+      };
+      await fs.writeFile(this.REPAIR_QUEUE_FILE, JSON.stringify(data, null, 2));
+    } catch (e) {
+      console.warn('[BadBlue Worker] Failed to persist repair queue:', (e as any)?.message || e);
+    }
+  }
+
+  private async restoreRepairQueue(): Promise<void> {
+    try {
+      const content = await fs.readFile(this.REPAIR_QUEUE_FILE, 'utf-8');
+      const data = JSON.parse(content);
+      if (Array.isArray(data.queue)) {
+        const unresolvedItems = data.queue.filter((item: FailureLogEntry) => !item.resolved);
+        this.repairQueue = unresolvedItems;
+        if (unresolvedItems.length > 0) {
+          console.log(`[BadBlue Worker] Restored ${unresolvedItems.length} items from repair queue`);
+        }
+      }
+    } catch (e: any) {
+      if (e.code !== 'ENOENT') {
+        console.warn('[BadBlue Worker] Failed to restore repair queue (starting fresh):', e.message);
+      }
+      this.repairQueue = [];
+    }
+  }
+
+  private async persistRepairMetrics(): Promise<void> {
+    try {
+      const avgLatency =
+        this.repairMetrics.queueLatency.reduce((a, b) => a + b, 0) / Math.max(1, this.repairMetrics.queueLatency.length);
+      const avgResolution =
+        this.repairMetrics.meanTimeToResolution.reduce((a, b) => a + b, 0) / Math.max(1, this.repairMetrics.meanTimeToResolution.length);
+      const metrics = {
+        timestamp: new Date().toISOString(),
+        averageQueueLatencyMs: avgLatency || 0,
+        averageResolutionTimeMs: avgResolution || 0,
+        successRate: this.repairMetrics.repairSuccessRate,
+        totalRepairs: this.repairMetrics.totalRepairs,
+        successfulRepairs: this.repairMetrics.successfulRepairs,
+        concurrentTaskCount: this.repairMetrics.concurrentTaskCount,
+        resourceUtilization: await this.getSystemResources(),
+        queueLength: this.repairQueue.length,
+      };
+      await fs.writeFile(this.METRICS_LOG, JSON.stringify(metrics, null, 2));
+    } catch (e) {
+      console.warn('[BadBlue Worker] Failed to persist repair metrics:', (e as any)?.message || e);
+    }
+  }
+
+  private async restoreRepairMetrics(): Promise<void> {
+    try {
+      const content = await fs.readFile(this.METRICS_LOG, 'utf-8');
+      const data = JSON.parse(content);
+      if (typeof data.totalRepairs === 'number') {
+        this.repairMetrics.totalRepairs = data.totalRepairs;
+        this.repairMetrics.successfulRepairs = data.successfulRepairs || 0;
+        this.repairMetrics.repairSuccessRate = data.successRate || 0;
+        console.log(`[BadBlue Worker] Restored metrics: ${data.totalRepairs} total repairs, ${data.successRate?.toFixed(1) || 0}% success rate`);
+      }
+    } catch (e: any) {
+      if (e.code !== 'ENOENT') {
+        console.warn('[BadBlue Worker] Failed to restore repair metrics:', e.message);
+      }
+    }
+  }
+
+  private scheduleMetricsPersistence(): void {
+    const FIFTEEN_MINUTES = 15 * 60 * 1000;
+    this.metricsInterval = setInterval(() => {
+      this.persistRepairMetrics().catch(() => {});
+      this.persistRepairQueue().catch(() => {});
+    }, FIFTEEN_MINUTES);
+  }
+
   private async addToRepairQueue(issue: FailureLogEntry) {
     // prevent duplicate pushes if same timestamp + function
     const exists = this.repairQueue.find((f) => f.timestamp === issue.timestamp && f.functionAffected === issue.functionAffected);
@@ -380,6 +474,8 @@ class BadBlueWorker {
     });
     // append to file log (keep given timestamp)
     await this.appendFailureLog([issue]);
+    // persist repair queue to survive restarts
+    await this.persistRepairQueue();
   }
 
   private async runCriticalMonitoring() {
@@ -801,9 +897,21 @@ class BadBlueWorker {
     if (success) {
       await this.markFailureResolved(issue);
       this.repairMetrics.successfulRepairs++;
+      // Remove resolved item from repair queue and persist
+      await this.removeFromRepairQueue(issue);
     }
     this.repairMetrics.repairSuccessRate =
       (this.repairMetrics.successfulRepairs / Math.max(1, this.repairMetrics.totalRepairs)) * 100;
+  }
+
+  private async removeFromRepairQueue(issue: FailureLogEntry): Promise<void> {
+    const idx = this.repairQueue.findIndex(
+      (f) => f.timestamp === issue.timestamp && f.functionAffected === issue.functionAffected
+    );
+    if (idx !== -1) {
+      this.repairQueue.splice(idx, 1);
+      await this.persistRepairQueue();
+    }
   }
 
   private async saveMetrics() {
@@ -1482,6 +1590,12 @@ class BadBlueWorker {
     if (this.databaseHeartbeatInterval) clearInterval(this.databaseHeartbeatInterval);
     if (this.criticalMonitoringInterval) clearInterval(this.criticalMonitoringInterval);
     if (this.pruneLogsInterval) clearInterval(this.pruneLogsInterval);
+    if (this.metricsInterval) clearInterval(this.metricsInterval);
+    
+    // Persist repair queue and metrics before shutdown
+    await this.persistRepairQueue().catch(() => {});
+    await this.persistRepairMetrics().catch(() => {});
+    
     console.log('[BadBlue Worker] Shutdown complete');
   }
 }
