@@ -94,5 +94,71 @@
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T01:42:35.464Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:42:36.173Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:42:37.858Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/stripe/create-payment-intent"
+  },
+  {
+    "timestamp": "2025-11-30T01:42:37.946Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/nonexistent-endpoint"
+  },
+  {
+    "timestamp": "2025-11-30T01:42:37.964Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2025-11-30T01:42:37.994Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/evidence-hub"
+  },
+  {
+    "timestamp": "2025-11-30T01:43:02.651Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/create-complaint-payment"
+  },
+  {
+    "timestamp": "2025-11-30T01:43:02.682Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/create-lawsuit-payment"
+  },
+  {
+    "timestamp": "2025-11-30T01:43:02.715Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/create-foia-payment"
+  },
+  {
+    "timestamp": "2025-11-30T01:43:05.725Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:43:07.129Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]
