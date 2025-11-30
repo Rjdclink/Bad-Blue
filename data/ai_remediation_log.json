@@ -1438,5 +1438,215 @@
     "aiSuccess": false,
     "overallSuccess": false,
     "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 199 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:36.913Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 199 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:36.940Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 199 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:37.002Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 199 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:37.016Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:45.168Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:45.650Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:45.668Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:55.736Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:55.781Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:55.862Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:41:55.915Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:02.898Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:03.021Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:03.039Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:12.851Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:13.017Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:13.094Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:13.119Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:22.475Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:22.677Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
+  },
+  {
+    "timestamp": "2025-11-30T20:42:22.694Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 198 minutes."
   }
 ]
