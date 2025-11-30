@@ -1,0 +1,794 @@
+
+Deep audit + flawless remediation with architect-level oversight.
+
+Nothing gets skipped. Nothing is assumed. Every subsystem is inspected and, if needed, corrected:
+
+UI + routing
+
+Officer search
+
+AI pipelines (text, JSON, document drafting)
+
+Email/contact flows
+
+Database connectivity + schema/tables
+
+SEO surface
+
+SSE + caching
+
+Error handling + logging
+
+Build/deploy behavior
+
+
+The architect’s role is only to review, verify, and flag issues after you (the agent) complete each step.
+You perform all edits and fixes.
+
+
+---
+
+PHASE A — INTENSIVE ANALYSIS & SYSTEM-WIDE INSPECTION (READ-ONLY)
+
+1. Repository & Layer Map (No changes yet)
+
+Agent tasks (read-only):
+
+1. Map the core folders and what they do:
+
+/server
+
+API routes (officer search, document drafting, complaints, 1983/FOIA, etc.)
+
+SSE streams (officer search progress, anything similar)
+
+Email endpoints (contact form, notifications if present)
+
+DB connection/config and query modules
+
+
+/client
+
+React pages (Home, OfficerSearch, FOIA/complaints, legal tools, Contact, Privacy, Terms, etc.)
+
+Routing/layout components
+
+Forms that feed API routes (officer search, petitions, complaint/1983 drafting, contact)
+
+
+/providers
+
+AI client wrappers (Gemini, Groq, Mistral, Claude) — structure & usage, not keys
+
+
+aiProvider.ts / aiTokenGovernor.ts
+
+Central AI routing & token governance
+
+
+/components, /hooks
+
+Shared UI (cards, footer, nav, OfficerSearchProgress, toasts)
+
+
+/db or equivalent
+
+Prisma/ORM/migration files and schema definitions
+
+
+/public
+
+sitemap.xml, robots.txt, favicon/assets, any static SEO content
+
+
+package.json, runtime config, Railway config
+
+
+
+2. For each key module, determine:
+
+What it exports
+
+What imports it
+
+Whether it’s actually used (no orphaned or dead modules for search, docs, email)
+
+
+
+3. Log any obvious structural issues for Phase B:
+
+Duplicate modules that conflict
+
+Old/unused officer search or AI pipelines still imported
+
+Separate “legacy” and “current” systems both wired into routes
+
+
+
+
+Architect only reviews your mapping and notes. No code edits yet.
+
+
+---
+
+2. Officer Search – End-to-End Functional Audit
+
+Agent (read-only):
+
+1. Frontend officer search component
+
+Confirm it exposes:
+
+Officer name input
+
+State select
+
+No city/county/type dropdowns in the current UI.
+
+
+Confirm it:
+
+Constructs the POST payload with at least officerName, state, searchId (and whatever the backend expects).
+
+Opens an EventSource for /api/officer-search/progress/:searchId.
+
+Closes the EventSource on success, error, and unmount.
+
+
+
+
+2. Backend /api/officer-search route
+
+Check expected body:
+
+officerName, state, searchId, and optional fields (city/county/type) if still supported internally.
+
+
+Verify:
+
+Wrapped in try/catch.
+
+Always responds with structured JSON that matches front-end assumptions (fields like name, summary, sources, etc.).
+
+On failure, sends descriptive error messages, not opaque generic strings.
+
+
+
+
+3. Progress/SSE endpoint
+
+Confirm:
+
+It listens on the same searchId scheme the frontend generates.
+
+Emits incremental progress events with JSON the frontend can parse.
+
+Closes response and cleans up listeners when done or on error.
+
+
+
+
+4. Cache & roster usage
+
+Inspect any caching or roster lookups:
+
+Key must include at least officerName and state.
+
+Old entries expire correctly.
+
+Cache size is bounded.
+
+
+
+
+
+Log any issues for Phase B: leaks, stale connections, mismatched payloads, wrong assumptions.
+
+
+---
+
+3. AI Systems & Document Drafting Analysis (Read-only)
+
+Agent (no key edits, structure only):
+
+1. Locate and inspect the central AI routing module (e.g. aiProvider.ts) and any helpers:
+
+generateText, generateJSON, generateLegalAnalysis, searchOfficerData, etc.
+
+Confirm:
+
+Officer search uses the correct helper (searchOfficerData or equivalent).
+
+Legal complaint / 1983 drafting flows call a legal-specific helper, not raw low-level calls scattered everywhere.
+
+
+
+
+2. Identify all document drafting paths:
+
+Complaint builders, 1983 petitions, resignation petitions, civil suits, demand letters, etc.
+
+Confirm for each:
+
+Which route handles the request.
+
+Which AI helper is used.
+
+What shape of JSON / text it expects back.
+
+How the frontend consumes that response (download button, text editor, etc.).
+
+
+
+
+3. Check JSON/structured output usage:
+
+Verify that when JSON is expected:
+
+The system uses a JSON-mode helper (like generateJSON or generateGeminiStructuredResponse) rather than ad-hoc JSON.parse on arbitrary text.
+
+Errors from invalid JSON are caught and surfaced gracefully to the user.
+
+
+
+
+4. Document generation UX:
+
+Inspect forms used to initiate docs (1983, resignation, complaints).
+
+Confirm:
+
+Required fields are enforced client-side (name, department, incident details, etc.).
+
+A clear loading/progress indicator exists.
+
+Errors are displayed with useful context.
+
+
+
+
+
+Architect reviews the AI/doc pipeline once analysis notes are complete.
+
+
+---
+
+4. Email & Contact Flow Analysis (Read-only)
+
+Agent:
+
+1. Search for modules related to email:
+
+Mailer utility (e.g. mailer.ts, sendEmail.ts, or similar).
+
+Any nodemailer, Resend, SendGrid, etc. wrappers.
+
+Backend routes like /api/contact, /api/support, /api/send-complaint.
+
+
+
+2. For each email flow:
+
+Identify the trigger:
+
+Contact form submissions
+
+“Send complaint copy to my email”
+
+Any notifications or confirmations
+
+
+Confirm:
+
+Request body is validated.
+
+Email sending is wrapped in try/catch.
+
+Errors are logged and result in a user-visible error state (toast or UI message), not silent failure.
+
+
+
+
+3. Contact page:
+
+Confirm /contact:
+
+Has a working form if one exists.
+
+Has or will have the visible address contact.badblue@gmail.com (Phase B).
+
+Is wired to the backend route (if a form is used) and not just a dead UI.
+
+
+
+
+
+Architect only reviews the mapping and notes.
+
+
+---
+
+5. Database Connectivity & Schema Audit (Read-only)
+
+Agent:
+
+1. Find DB connection code:
+
+e.g. prisma.ts, db.ts, knex.ts, createPool calls, etc.
+
+Confirm:
+
+Connection string / config is centralized.
+
+Used consistently across repositories, token metrics, officer cache, etc.
+
+
+
+
+2. Inspect all schema / migration files:
+
+Confirm presence of required tables, e.g.:
+
+Officer search cache / metrics tables
+
+Token/usage metrics tables
+
+Any user/account tables (if used)
+
+Complaint/1983/petition log tables (if applicable)
+
+
+Compare code usage:
+
+For each table accessed in code, confirm the table actually exists in migrations.
+
+
+
+
+3. Check DB usage code:
+
+Queries are parameterized or safely built.
+
+No obviously unbounded queries used in hot paths (e.g. officer search scanning an entire huge table without limits).
+
+Errors from DB calls are caught and surfaced, not uncaught.
+
+
+
+4. Confirm:
+
+Migrations run correctly in the production environment (Railway) and that code expects the same schema as is deployed.
+
+
+
+
+Architect reviews DB notes, not DB itself.
+
+
+---
+
+6. SEO Surface & Routing (Read-only)
+
+Same aims as before, just acknowledged in the full stack context:
+
+1. Inspect sitemap.xml and robots.txt in /public.
+
+
+2. Ensure all major routes are listed and crawlable.
+
+
+3. Confirm React router contains:
+
+/, /officer-search, FOIA/complaints routes, legal/1983 routes, /contact, /privacy, /terms.
+
+
+
+4. Contact page is a real page, not a blank placeholder (content added in Phase B).
+
+
+5. Check for orphan routes that aren’t linked anywhere.
+
+
+
+
+---
+
+7. Node Runtime & Build/Deploy Context (Read-only)
+
+1. Check Node version in package.json vs what Railway uses.
+
+
+2. Review build logs for:
+
+Type errors
+
+Module resolution issues
+
+Network / runtime errors occurring at startup
+
+
+
+3. Note any discrepancies (e.g. features used that require a newer Node than Railway runs).
+
+
+
+Architect reviews the overall build + runtime assessment.
+
+
+---
+
+PHASE B — REMEDIATION & REINFORCEMENT
+
+(You now modify code and configuration. Architect reviews each completed block.)
+
+1. Officer Search UI + Behavior Fix
+
+Goal: Name + State only in UI, but backend still able to return city, county, state, government, and corrections officers when data exists.
+
+Agent steps:
+
+1. In the React officer search component:
+
+Remove:
+
+Any inputs/selects for city, county, officer type from the visible UI.
+
+
+Keep:
+
+Officer name input
+
+State dropdown
+
+
+
+
+2. Ensure handleSubmit:
+
+Validates:
+
+Officer name is non-empty
+
+State is selected
+
+
+Generates a searchId.
+
+Calls the mutation with at least:
+
+{
+  officerName,
+  state,
+  officerType: "custom",
+  searchId
+}
+
+(or whatever minimal shape the backend expects, consistently).
+
+
+
+3. Backend search logic:
+
+Make sure it can still:
+
+Search city/municipal police
+
+County sheriff / jail officers
+
+State patrol / highway patrol
+
+Government/public officers (e.g. capitol police, university police where applicable)
+
+Corrections / DOC officers
+
+
+Even though city/county aren’t required on the UI, backend can infer or scan from URLs/rosters as it already does.
+
+
+
+4. Verify:
+
+Progress bar updates properly via SSE.
+
+Results render rank, department, sources.
+
+Errors are clear when no data is found.
+
+
+
+
+Architect reviews this end-to-end behavior afterward.
+
+
+---
+
+2. AI Systems & Document Drafting – Harden & Simplify
+
+Goal: AI routing is clean, predictable, and all document drafting flows are stable.
+
+Agent steps:
+
+1. Centralize all AI calls:
+
+Ensure frontend and route handlers call only the central AI helpers (generateText, generateJSON, generateLegalAnalysis, searchOfficerData, etc.).
+
+Remove or stop using any scattered, one-off direct calls to individual provider SDKs from route handlers.
+
+
+
+2. Document drafting flows (complaints, 1983 suits, resignation petitions, etc.):
+
+For each tool:
+
+Confirm the route accepts the required structured input (names, incident details, jurisdictions, requested relief).
+
+Confirm it calls a legal helper method (e.g. generateLegalAnalysis or a specialized generateComplaintDocument).
+
+Confirm the response structure is stable (e.g. content, maybe sections, maybe metadata).
+
+
+
+
+3. JSON modes:
+
+For any endpoint that expects JSON back from AI:
+
+Use JSON helpers (generateJSON, generateGeminiStructuredResponse) instead of doing ad-hoc parsing.
+
+Wrap parsing errors and return a clear 500/4xx with user-friendly messaging and logging.
+
+
+
+
+4. UX:
+
+Ensure each doc tool:
+
+Shows an obvious “generating” state.
+
+Shows an error toast/message with enough info to act on (e.g. “Try again” vs vague “Failed”).
+
+Never leaves the user thinking the app froze.
+
+
+
+
+
+Architect reviews all AI + document pipelines only after these changes are in place.
+
+
+---
+
+3. Email & Contact Flow – Fully Functional & Safe
+
+Goal: Contact/email flows are reliable, user-visible, and don’t silently fail.
+
+Agent steps:
+
+1. Contact page content
+
+Add visible copy describing:
+
+What Bad Blue does (officer search, police misconduct lookup, FOIA help, civil rights complaints, 1983 suits, resignation petitions).
+
+That it is affordable and can be done from home.
+
+
+Display the email plainly:
+contact.badblue@gmail.com
+
+
+
+2. Contact form (if present or to be added):
+
+Ensure form validates email, message, and any other required fields.
+
+Connect the form to a backend route (like /api/contact) that:
+
+Validates input.
+
+Sends an email via your chosen mailer utility.
+
+Returns success/failure JSON.
+
+
+
+
+3. Email utility:
+
+Ensure it:
+
+Wraps sending in try/catch.
+
+Logs detailed errors (without exposing secrets).
+
+Returns useful error messages to the route handler.
+
+
+
+
+4. User feedback:
+
+Frontend must:
+
+Show a confirmation on success (“We’ve received your message…”).
+
+Show a clear error on failure and encourage retry.
+
+
+
+
+
+Architect reviews after end-to-end tests.
+
+
+---
+
+4. Database & Background Stability
+
+Goal: DB is correctly wired, tables exist, and no obvious query problems remain.
+
+Agent steps:
+
+1. Run migrations in the target environment (Railway) and confirm:
+
+All expected tables exist:
+
+e.g. token metrics, officer search cache/metrics, complaint/1983 logs, etc.
+
+
+
+
+2. For every DB call in:
+
+Officer search
+
+AI token governance
+
+Complaint/1983 logging
+
+Any user/account features
+Confirm:
+
+Tables and columns referenced exist.
+
+No SELECT * against huge tables in tight loops without limits.
+
+Errors are properly caught and surfaced in a controlled way.
+
+
+
+3. Where appropriate:
+
+Add sane limits/pagination.
+
+Ensure background/worker tasks (if any) don’t hammer the DB unnecessarily.
+
+
+
+
+Architect reviews DB-related diffs and your verification notes.
+
+
+---
+
+5. SEO & Internal Linking – Reinforce
+
+Agent steps:
+
+1. Unique titles + meta descriptions on:
+
+Home
+
+Officer Search
+
+FOIA/complaints
+
+Legal tools (1983, resignation, etc.)
+
+Contact
+
+Privacy
+
+Terms
+
+
+
+2. JSON-LD:
+
+On Home: Organization/LegalService “Bad Blue”, URL, description, email.
+
+On Contact: ContactPage schema referencing “Bad Blue” + contact.badblue@gmail.com.
+
+
+
+3. Hidden FAQ on Contact:
+
+Add FAQ markup directly into the Contact page DOM with headings and paragraphs.
+
+Hide visually using CSS that does not remove from DOM or indexing.
+
+Cover:
+
+Police misconduct complaints
+
+FOIA drafting
+
+Badge/officer search
+
+Public records guidance
+
+Civil rights complaints and 1983 suits
+
+Resignation petitions
+
+
+
+
+4. Ensure:
+
+Header/footer links exist for all key routes.
+
+Sitemap includes all major pages and is reachable at /sitemap.xml.
+
+robots.txt is accessible at /robots.txt and points to the sitemap.
+
+
+
+
+Architect validates after you’ve done all these.
+
+
+---
+
+6. Final Full-Stack “Zero Tolerance” Check
+
+Agent runs a final manual sanity pass:
+
+Every page loads with real content (no placeholders).
+
+Officer search:
+
+Accepts name + state.
+
+Finds matches where public data exists for:
+
+City
+
+County
+
+State
+
+Government/public
+
+Corrections officers
+
+
+Shows meaningful error if nothing is found.
+
+
+Document drafting tools:
+
+Actually generate text/documents.
+
+Handle bad inputs and timeouts gracefully.
+
+
+Contact:
+
+Shows mission and email
+
+Sends or at least attempts email with clear UX.
+
+
+DB:
+
+No runtime errors about missing tables/columns.
+
+
+SEO:
+
+/sitemap.xml and /robots.txt reachable.
+
+Contact page includes hidden FAQ text in page source.
+
