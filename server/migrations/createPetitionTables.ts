@@ -101,6 +101,11 @@ export async function createPetitionTables() {
         
         dedupe_key VARCHAR(64),
         source_type VARCHAR(30),
+        source_url TEXT,
+        confidence_score INTEGER DEFAULT 100,
+        
+        harvested_at TIMESTAMP,
+        verified BOOLEAN DEFAULT FALSE,
         
         created_at TIMESTAMP DEFAULT NOW()
       );

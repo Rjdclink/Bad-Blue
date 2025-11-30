@@ -29,7 +29,12 @@ import {
 } from '@shared/schema';
 import { eq, and, sql, desc } from 'drizzle-orm';
 import { generateUserText, TaskPriority } from './aiProvider';
+import { harvestResidentsForPetition, getHarvestedSigners, verifySigner, verifyAllSigners, type HarvestResult, type HarvestedSigner } from './petitionHarvester';
 import crypto from 'crypto';
+
+// Re-export harvester functions
+export { harvestResidentsForPetition, getHarvestedSigners, verifySigner, verifyAllSigners };
+export type { HarvestResult, HarvestedSigner };
 
 // ============================================
 // SIGNATURE THRESHOLD CALCULATION

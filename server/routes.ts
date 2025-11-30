@@ -1793,6 +1793,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ]
     });
   }));
+  
+  // Harvest residents from free public sources
+  app.post('/api/petition-workflow/:id/harvest', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    const workflow = await petitionService.getPetitionWorkflow(id);
+    
+    if (!workflow) {
+      return res.status(404).json({ message: "Petition workflow not found" });
+    }
+    
+    const { county, targetCount } = req.body;
+    
+    const harvestResult = await petitionService.harvestResidentsForPetition(
+      id,
+      workflow.city,
+      workflow.state,
+      county,
+      targetCount || workflow.requiredSignatures || 100
+    );
+    
+    res.json({
+      success: true,
+      result: harvestResult,
+      message: `Harvested ${harvestResult.residentsAdded} residents from ${harvestResult.sourcesProcessed} sources`
+    });
+  }));
+  
+  // Get harvested signers for a workflow
+  app.get('/api/petition-workflow/:id/harvested-signers', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    
+    const signers = await petitionService.getHarvestedSigners(id);
+    
+    res.json({
+      success: true,
+      signers,
+      count: signers.length
+    });
+  }));
+  
+  // Verify a single signer
+  app.post('/api/petition-workflow/:id/signers/:signerId/verify', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { signerId } = req.params;
+    
+    const success = await petitionService.verifySigner(signerId);
+    
+    res.json({ success, message: success ? 'Signer verified' : 'Failed to verify signer' });
+  }));
+  
+  // Verify all signers for a workflow
+  app.post('/api/petition-workflow/:id/verify-all', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    
+    const count = await petitionService.verifyAllSigners(id);
+    
+    res.json({ success: true, verified: count, message: `Verified ${count} signers` });
+  }));
 
   // ============================================
   // ============================================

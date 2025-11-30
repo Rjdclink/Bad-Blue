@@ -216,6 +216,64 @@ export default function PetitionWorkflow() {
     },
   });
 
+  // Harvest residents from free public sources
+  const { data: harvestedSignersData, refetch: refetchSigners } = useQuery<{
+    success: boolean;
+    signers: any[];
+    count: number;
+  }>({
+    queryKey: ['/api/petition-workflow', workflowId, 'harvested-signers'],
+    enabled: !!workflowId && currentStep === 'sources',
+  });
+
+  const harvestedSigners = harvestedSignersData?.signers || [];
+
+  const harvestMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest(`/api/petition-workflow/${workflowId}/harvest`, 'POST', { 
+        county: formData.county,
+        targetCount: workflow?.requiredSignatures || 100
+      });
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "Residents harvested",
+        description: data.message,
+      });
+      refetchSigners();
+      refetchWorkflow();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error harvesting residents",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const verifyAllMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest(`/api/petition-workflow/${workflowId}/verify-all`, 'POST', {});
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "All signers verified",
+        description: data.message,
+      });
+      refetchSigners();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error verifying signers",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
@@ -475,10 +533,10 @@ export default function PetitionWorkflow() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Database className="h-5 w-5" />
-                Data Source Discovery
+                Pre-Fill Petition Signers
               </CardTitle>
               <CardDescription>
-                Find public records sources for collecting resident signatures
+                Automatically collect resident names from free public records
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -497,20 +555,20 @@ export default function PetitionWorkflow() {
                     </p>
                   </div>
                   <div>
-                    <h4 className="font-medium">Collected</h4>
+                    <h4 className="font-medium">Pre-Filled</h4>
                     <p className="text-2xl font-bold text-green-600">
-                      {workflow.residentsCollected || 0}
+                      {harvestedSigners.length}
                     </p>
                   </div>
                 </div>
                 <Progress 
-                  value={((workflow.residentsCollected || 0) / (workflow.requiredSignatures || 1)) * 100} 
+                  value={(harvestedSigners.length / (workflow.requiredSignatures || 1)) * 100} 
                   className="h-3"
                 />
               </div>
 
               <div>
-                <Label htmlFor="county">County (for better source discovery)</Label>
+                <Label htmlFor="county">County (optional, helps find more sources)</Label>
                 <Input
                   id="county"
                   value={formData.county}
@@ -521,40 +579,84 @@ export default function PetitionWorkflow() {
               </div>
 
               <Button 
-                onClick={() => discoverSourcesMutation.mutate()}
-                disabled={discoverSourcesMutation.isPending}
+                onClick={() => harvestMutation.mutate()}
+                disabled={harvestMutation.isPending}
                 className="w-full"
-                data-testid="button-discover-sources"
+                size="lg"
+                data-testid="button-harvest-residents"
               >
-                {discoverSourcesMutation.isPending ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Discovering Sources...</>
+                {harvestMutation.isPending ? (
+                  <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Harvesting Residents...</>
                 ) : (
-                  <><Search className="h-4 w-4 mr-2" /> Discover Public Data Sources</>
+                  <><Users className="h-5 w-5 mr-2" /> Auto-Fill Signers from Public Records</>
                 )}
               </Button>
 
-              {sources.length > 0 && (
-                <div className="space-y-3">
-                  <h4 className="font-medium">Discovered Sources</h4>
-                  {sources.map((source: any, idx: number) => (
-                    <div key={idx} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                      <div>
-                        <p className="font-medium">{source.sourceName}</p>
-                        <p className="text-sm text-muted-foreground">{source.sourceType}</p>
+              {harvestedSigners.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      Pre-Filled Signers ({harvestedSigners.length})
+                    </h4>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => verifyAllMutation.mutate()}
+                      disabled={verifyAllMutation.isPending}
+                      data-testid="button-verify-all"
+                    >
+                      {verifyAllMutation.isPending ? 'Verifying...' : 'Confirm All'}
+                    </Button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto space-y-2 border rounded-lg p-2">
+                    {harvestedSigners.slice(0, 50).map((signer: any) => (
+                      <div 
+                        key={signer.id} 
+                        className="flex items-center justify-between p-2 bg-muted/30 rounded"
+                        data-testid={`signer-${signer.id}`}
+                      >
+                        <div className="flex-1">
+                          <p className="font-medium text-sm">{signer.fullName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {signer.address && `${signer.address}, `}
+                            {signer.city}, {signer.state} {signer.zipCode}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs">
+                            {signer.sourceType}
+                          </Badge>
+                          {signer.verified ? (
+                            <Badge variant="default" className="bg-green-500 text-xs">
+                              <CheckCircle2 className="h-3 w-3 mr-1" /> Confirmed
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-xs">
+                              Pending
+                            </Badge>
+                          )}
+                        </div>
                       </div>
-                      <Badge variant={source.status === 'completed' ? 'default' : 'secondary'}>
-                        {source.status}
-                      </Badge>
-                    </div>
-                  ))}
+                    ))}
+                    {harvestedSigners.length > 50 && (
+                      <p className="text-center text-sm text-muted-foreground py-2">
+                        + {harvestedSigners.length - 50} more signers
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4">
-                <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                  <AlertTriangle className="h-4 w-4 inline mr-2" />
-                  Note: Resident data collection from public sources is handled by our automated system. 
-                  You can also manually add signers if needed.
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 space-y-2">
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  <Database className="h-4 w-4 inline mr-2" />
+                  <strong>Demo Mode:</strong> Showing representative resident data for {workflow.city}, {workflow.state}. 
+                  In production, names would be collected from real public sources like county property records, 
+                  GIS parcel data, and city council meeting records.
+                </p>
+                <p className="text-xs text-blue-600 dark:text-blue-300">
+                  Data sources: Property assessor records, GIS ownership layers, meeting minutes, business licenses.
                 </p>
               </div>
             </CardContent>
