@@ -171,8 +171,8 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
 
       return await response.json();
     },
-    onSuccess: (data) => {
-      if (!data || typeof data !== 'object') {
+    onSuccess: (responseData) => {
+      if (!responseData || typeof responseData !== 'object') {
         toast({
           title: "Search Error",
           description: "Received invalid response from search service. Please try again.",
@@ -180,7 +180,22 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
         });
         return;
       }
-      setSearchResults(data);
+      
+      // API returns { success: true, data: officerResult, meta: ... }
+      // Extract the actual officer data from the nested structure
+      const officerData = responseData.data || responseData.result || responseData;
+      
+      if (!officerData || (!officerData.name && !officerData.summary)) {
+        toast({
+          title: "No Results Found",
+          description: "No officer records found matching your search criteria. Try different search parameters.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      console.log('[OfficerSearch] Setting results:', officerData);
+      setSearchResults(officerData);
       setProgress(null);
       setSearchId(null);
       if (eventSourceRef.current) {

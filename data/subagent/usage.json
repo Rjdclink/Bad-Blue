@@ -1,118 +1,538 @@
 [
   {
-    "timestamp": "2025-11-30T20:15:07.196Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/external-link-ByCvNBaf.js"
+    "timestamp": "2025-11-30T20:21:54.995Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 1,
+    "successful": 1,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 1767
   },
   {
-    "timestamp": "2025-11-30T20:15:07.201Z",
+    "timestamp": "2025-11-30T20:21:55.013Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/search-k8SGdotS.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:21:55.016Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/map-pin-l9-xidT_.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:21:55.020Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/shield-7faESzar.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:21:55.024Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/triangle-alert-SGGehtzG.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:21:55.064Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/dollar-sign-CvgOWdSx.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:21:55.077Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/scroll-area-BSFrzjFF.js"
   },
   {
-    "timestamp": "2025-11-30T20:15:07.238Z",
+    "timestamp": "2025-11-30T20:21:55.080Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/brain-3CMxcxOD.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:21:55.082Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/send-Dyuf-Q1L.js"
   },
   {
-    "timestamp": "2025-11-30T20:15:07.280Z",
+    "timestamp": "2025-11-30T20:21:55.083Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/circle-check-big-IucwP7W7.js"
   },
   {
-    "timestamp": "2025-11-30T20:15:07.284Z",
+    "timestamp": "2025-11-30T20:21:55.119Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/credit-card-B8MKwAhy.js"
+    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
   },
   {
-    "timestamp": "2025-11-30T20:15:07.293Z",
+    "timestamp": "2025-11-30T20:21:55.139Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/mail-B5XkwkcA.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:21:55.141Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/image-D3s3Sulp.js"
   },
   {
-    "timestamp": "2025-11-30T20:15:07.334Z",
+    "timestamp": "2025-11-30T20:21:55.144Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/users-CFAHCUDf.js"
   },
   {
-    "timestamp": "2025-11-30T20:15:08.847Z",
+    "timestamp": "2025-11-30T20:21:55.206Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:21:55.208Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T20:15:08.980Z",
+    "timestamp": "2025-11-30T20:21:55.506Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T20:15:28.768Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/officer-search/progress/search-1764533727763-dzskhdp4n"
-  },
-  {
-    "timestamp": "2025-11-30T20:15:34.511Z",
+    "timestamp": "2025-11-30T20:22:22.786Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:15:34.770Z",
-    "action": "learning_event",
-    "provider": "internal",
-    "tokens": 43,
-    "category": "officer_search",
-    "state": "IA"
-  },
-  {
-    "timestamp": "2025-11-30T20:15:36.503Z",
+    "timestamp": "2025-11-30T20:22:23.838Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:16:04.754Z",
+    "timestamp": "2025-11-30T20:22:52.997Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:16:06.839Z",
+    "timestamp": "2025-11-30T20:22:55.093Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:16:35.186Z",
+    "timestamp": "2025-11-30T20:23:23.505Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:16:37.826Z",
+    "timestamp": "2025-11-30T20:23:25.814Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:17:05.463Z",
+    "timestamp": "2025-11-30T20:23:57.021Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:57.294Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:57.396Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:57.475Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:57.514Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:57.537Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:57.713Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:57.922Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:57.925Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:58.049Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:58.286Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:17:08.826Z",
+    "timestamp": "2025-11-30T20:23:58.822Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:58.824Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:58.940Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/button-D4bqKO-K.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:58.955Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/LanguageSelector-Dy5-N4Tb.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:58.959Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/dropdown-menu-DuH9md59.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:58.993Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-Qxa7_5PZ.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:58.995Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Combination-BxgkiBe1.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.008Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-C2h2qaJP.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.012Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-BAZECk9-.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.047Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/check-CdrMYR9S.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.053Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/useMutation-Mjqxl1or.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.060Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/textarea-BJLBH-8F.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.066Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/label-CJGrPGCK.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.102Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/checkbox-B6rcMTgW.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.111Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/select-BCZxAyUc.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.118Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-BdQq_4o_.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.123Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/useFaqSchema--GUw8NK0.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.189Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/circle-alert-DXslWFLw.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.234Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/file-text-CBNIfD09.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.242Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/badge-DLo5fkoO.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.245Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/progress-DDYmeNGR.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.249Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/map-pin-l9-xidT_.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.288Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/shield-7faESzar.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.293Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/triangle-alert-SGGehtzG.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.296Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/dollar-sign-CvgOWdSx.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.300Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/external-link-ByCvNBaf.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.306Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/brain-3CMxcxOD.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.375Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/image-D3s3Sulp.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.414Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/users-CFAHCUDf.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.416Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/credit-card-B8MKwAhy.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:23:59.440Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:00.254Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-Qxa7_5PZ.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.697Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 700
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.739Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/search-k8SGdotS.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.759Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/map-pin-l9-xidT_.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.764Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/shield-7faESzar.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.789Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/scroll-area-BSFrzjFF.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.817Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/brain-3CMxcxOD.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.826Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/circle-check-big-IucwP7W7.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.830Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.874Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/image-D3s3Sulp.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.876Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/users-CFAHCUDf.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.882Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/credit-card-B8MKwAhy.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.920Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:01.935Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:02.384Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:29.267Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:30.847Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:36.060Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:36.321Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:36.446Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:36.666Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:37.266Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T20:24:37.492Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
   }
 ]

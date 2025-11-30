@@ -107,6 +107,8 @@
         "category": "officer_search"
       },
       "content": "Insufficient verifiable data collected for Officer Nathan Ewalt from Iowa. Additional research and official records review required to substantiate accountability profile."
-    }
+    },
+    "processed": true,
+    "processedAt": "2025-11-30T20:21:54.886Z"
   }
 ]
