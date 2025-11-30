@@ -1,7 +1,11 @@
 /**
  * AI Token Governor Module - Database-Integrated Version
- * Enforces strict 35% limit for autonomous functions on Groq
- * Implements 4-way AI collaboration with weighted distribution
+ * Implements 4-way AI collaboration with context-aware routing:
+ * 
+ * GROQ POLICY (Nov 30, 2025):
+ * - Groq is EXCLUSIVELY for autonomous functions (no rate limit)
+ * - USER searches: Gemini → Mistral → Claude → Groq (Groq last resort only)
+ * - AUTONOMOUS: Groq → Mistral → Claude → Gemini (Groq first priority)
  * 
  * FULLY INTEGRATED WITH DATABASE - No JSON file storage
  * Thread-safe for concurrent requests
@@ -104,8 +108,7 @@ interface QuotaStatus {
     percentUsed: number;
     userUsed: number;
     autonomousUsed: number;
-    autonomousLimit: number; // 35% of daily limit
-    autonomousPercentUsed: number;
+    // GROQ POLICY: No autonomous limit - Groq reserved exclusively for autonomous functions
   };
   mistral: {
     used: number;
@@ -137,8 +140,8 @@ export interface ProviderRateProfile {
   remainingCapacity: { tokens: number; requests: number };
   percentUsed: number;
   isAvailable: boolean;
-  autonomousLimit: number;
   autonomousUsed: number;
+  // GROQ POLICY: No autonomousLimit - Groq has unlimited capacity for autonomous functions
 }
 
 /**
@@ -174,11 +177,12 @@ class AITokenGovernorEnhanced {
   private readonly GEMINI_TPM = Math.floor(50000 / 1440);   // ~35 TPM (estimated from requests)
   private readonly CLAUDE_TPM = Math.floor(25000 / 1440);   // ~17 TPM
   
-  // Target distribution percentages (for weighted selection)
+  // Target distribution percentages (for weighted USER selection - Groq excluded from USER)
+  // GROQ POLICY: Groq is excluded from user selection - reserved for autonomous only
   private readonly MISTRAL_TARGET_PERCENT = 50;
-  private readonly GROQ_TARGET_PERCENT = 32.5; // midpoint of 30-35%
-  private readonly GEMINI_TARGET_PERCENT = 10;
-  private readonly CLAUDE_TARGET_PERCENT = 7.5; // midpoint of 5-10%
+  private readonly GROQ_TARGET_PERCENT = 0; // Groq excluded from USER selection
+  private readonly GEMINI_TARGET_PERCENT = 35;
+  private readonly CLAUDE_TARGET_PERCENT = 15;
 
   // Provider availability cache
   private providerAvailability: Map<AIProvider, boolean> = new Map();
@@ -233,8 +237,8 @@ class AITokenGovernorEnhanced {
   }
 
   /**
-   * Check if autonomous functions can use Groq (35% limit)
-   * Uses memoized quota data for efficiency (Nov 30, 2025 - Connection pool optimization)
+   * Check if autonomous functions can use Groq
+   * GROQ POLICY: No rate limit - only checks API key availability
    */
   public async canAutonomousUseGroq(): Promise<boolean> {
     // GROQ POLICY: No rate limit for autonomous functions
@@ -287,7 +291,7 @@ class AITokenGovernorEnhanced {
       // Use single aggregated query instead of 11 parallel queries
       const metrics = await tokenMetrics.getAllQuotaMetrics();
       
-      const autonomousLimit = Math.floor((this.GROQ_DAILY_TOKEN_LIMIT * this.AUTONOMOUS_GROQ_LIMIT_PERCENT) / 100);
+      // GROQ POLICY: No autonomous limit - Groq is exclusively for autonomous functions
 
       return {
         gemini: {
@@ -302,9 +306,8 @@ class AITokenGovernorEnhanced {
           limit: this.GROQ_DAILY_TOKEN_LIMIT,
           percentUsed: (metrics.groq.tokens / this.GROQ_DAILY_TOKEN_LIMIT) * 100,
           userUsed: metrics.groq.userTokens,
-          autonomousUsed: metrics.groq.workerTokens,
-          autonomousLimit: autonomousLimit,
-          autonomousPercentUsed: (metrics.groq.workerTokens / autonomousLimit) * 100
+          autonomousUsed: metrics.groq.workerTokens
+          // GROQ POLICY: No autonomousLimit or autonomousPercentUsed - unlimited for autonomous
         },
         mistral: {
           used: metrics.mistral.tokens,
@@ -337,9 +340,8 @@ class AITokenGovernorEnhanced {
           limit: this.GROQ_DAILY_TOKEN_LIMIT,
           percentUsed: 0,
           userUsed: 0,
-          autonomousUsed: 0,
-          autonomousLimit: Math.floor((this.GROQ_DAILY_TOKEN_LIMIT * this.AUTONOMOUS_GROQ_LIMIT_PERCENT) / 100),
-          autonomousPercentUsed: 0
+          autonomousUsed: 0
+          // GROQ POLICY: No autonomousLimit - unlimited for autonomous functions
         },
         mistral: {
           used: 0,
@@ -360,15 +362,15 @@ class AITokenGovernorEnhanced {
   }
 
   /**
-   * Select provider based on 4-way weighted distribution:
-   * - Mistral: 50% target
-   * - Groq: 30-35% target (32.5% midpoint)
-   * - Gemini: 10% target  
-   * - Claude: 5-10% target (7.5% midpoint)
+   * Select provider based on context-aware routing:
+   * 
+   * GROQ POLICY:
+   * - AUTONOMOUS: Groq → Mistral → Claude → Gemini (Groq first, unlimited)
+   * - USER: Gemini → Mistral → Claude → Groq (Groq last resort only)
    * 
    * Algorithm:
-   * 1. For autonomous: Prefer Groq, fallback to Mistral/Claude
-   * 2. For users: Use weighted selection based on how far behind target each provider is
+   * 1. For autonomous: Prefer Groq (no limit), fallback to Mistral/Claude
+   * 2. For users: Use Gemini/Mistral/Claude, Groq only as last resort
    * 3. Always check quota availability before selecting
    */
   private async selectProvider(task: AITaskMetadata, quotaStatus: QuotaStatus): Promise<AIProvider | null> {
@@ -496,10 +498,13 @@ class AITokenGovernorEnhanced {
           percentUsed = quotaStatus.mistral.percentUsed ?? 0;
           break;
         case AIProvider.GROQ:
-          // For autonomous tasks, consider autonomous percent used (stricter limit)
-          percentUsed = task.context === UsageContext.AUTONOMOUS
-            ? quotaStatus.groq.autonomousPercentUsed ?? 0
-            : quotaStatus.groq.percentUsed ?? 0;
+          // GROQ POLICY: Groq reserved for autonomous - no limit for autonomous
+          // For USER tasks, Groq should return 0 efficiency (excluded from selection)
+          if (task.context === UsageContext.USER) {
+            return 0; // Exclude Groq from user task selection
+          }
+          // For autonomous: use overall percent used (no separate limit)
+          percentUsed = quotaStatus.groq.percentUsed ?? 0;
           break;
         case AIProvider.GEMINI:
           // Gemini uses request-based quota - convert to percentage
@@ -564,12 +569,11 @@ class AITokenGovernorEnhanced {
    *
    * Strategy:
    * - Compute efficiency scores for all available providers (0 for ineligible).
-   * - Filter out providers with 0 efficiency (e.g., Gemini for autonomous).
+   * - Filter out providers with 0 efficiency (e.g., Gemini for autonomous, Groq for USER).
    * - If a single provider is clearly superior (efficiency > 1.1 * next best), allocate whole task to it.
-   * - Otherwise, split across top N providers proportionally to efficiency while respecting quotas and
-   *   Groq autonomous cap (35%).
+   * - Otherwise, split across top N providers proportionally to efficiency.
    * 
-   * FIXED: Properly tracks remaining capacity during redistribution to prevent exceeding limits.
+   * GROQ POLICY: Groq excluded from USER selection (returns 0 efficiency for USER tasks).
    */
   private async orchestrateProviders(
     task: AITaskMetadata,
@@ -609,11 +613,8 @@ class AITokenGovernorEnhanced {
       const efficiency = this.computeProviderEfficiency(p, task, quotaStatus);
       let capacity = this.getAvailableTokenLikeCapacity(p, quotaStatus);
       
-      // For autonomous Groq, cap capacity at remaining autonomous limit
-      if (task.context === UsageContext.AUTONOMOUS && p === AIProvider.GROQ) {
-        const autonomousRemaining = Math.max(0, quotaStatus.groq.autonomousLimit - quotaStatus.groq.autonomousUsed);
-        capacity = Math.min(capacity, autonomousRemaining);
-      }
+      // GROQ POLICY: No autonomous limit - Groq has unlimited capacity for autonomous
+      // No special capacity capping needed for autonomous Groq
       
       capacityRemaining.set(p, capacity);
       return { provider: p, efficiency, capacity };
@@ -805,9 +806,8 @@ class AITokenGovernorEnhanced {
         case AIProvider.MISTRAL:
           return quotaStatus.mistral.percentUsed;
         case AIProvider.GROQ:
-          return task.context === UsageContext.AUTONOMOUS 
-            ? quotaStatus.groq.autonomousPercentUsed 
-            : quotaStatus.groq.percentUsed;
+          // GROQ POLICY: No autonomous limit - use overall percent
+          return quotaStatus.groq.percentUsed;
         case AIProvider.GEMINI:
           return quotaStatus.gemini.percentUsed;
         case AIProvider.CLAUDE:
@@ -940,7 +940,6 @@ class AITokenGovernorEnhanced {
           },
           percentUsed: quotaStatus.mistral.percentUsed,
           isAvailable: this.isProviderAvailable(AIProvider.MISTRAL) && quotaStatus.mistral.percentUsed < 95,
-          autonomousLimit: this.MISTRAL_DAILY_TOKEN_LIMIT,
           autonomousUsed: quotaStatus.mistral.autonomousUsed
         },
         {
@@ -959,7 +958,7 @@ class AITokenGovernorEnhanced {
           },
           percentUsed: quotaStatus.groq.percentUsed,
           isAvailable: this.isProviderAvailable(AIProvider.GROQ) && quotaStatus.groq.percentUsed < 95,
-          autonomousLimit: quotaStatus.groq.autonomousLimit,
+          // GROQ POLICY: No autonomousLimit - unlimited for autonomous functions
           autonomousUsed: quotaStatus.groq.autonomousUsed
         },
         {
@@ -978,7 +977,6 @@ class AITokenGovernorEnhanced {
           },
           percentUsed: quotaStatus.gemini.percentUsed,
           isAvailable: this.isProviderAvailable(AIProvider.GEMINI) && quotaStatus.gemini.percentUsed < 95,
-          autonomousLimit: 0,
           autonomousUsed: 0
         },
         {
@@ -997,7 +995,6 @@ class AITokenGovernorEnhanced {
           },
           percentUsed: quotaStatus.claude.percentUsed,
           isAvailable: this.isProviderAvailable(AIProvider.CLAUDE) && quotaStatus.claude.percentUsed < 95,
-          autonomousLimit: this.CLAUDE_DAILY_TOKEN_LIMIT,
           autonomousUsed: quotaStatus.claude.autonomousUsed
         }
       ];
@@ -1013,8 +1010,8 @@ class AITokenGovernorEnhanced {
    * Compute adaptive search delay based on current provider rate profiles
    * Calculates minimum safe delay between searches based on RPM/TPM limits
    * 
-   * For autonomous context: prioritizes Groq (35% limit) with Mistral/Claude fallbacks
-   * For user context: uses weighted distribution across all available providers
+   * GROQ POLICY: For autonomous context, Groq has NO limit - use unlimited capacity
+   * For user context: uses weighted distribution across Gemini, Mistral, Claude (Groq last resort)
    */
   public async computeAdaptiveSearchDelay(context: UsageContext): Promise<AdaptiveSearchDelayResult> {
     try {
@@ -1033,42 +1030,39 @@ class AITokenGovernorEnhanced {
         const mistralProfile = profiles.find(p => p.provider === AIProvider.MISTRAL);
         const claudeProfile = profiles.find(p => p.provider === AIProvider.CLAUDE);
 
-        const autonomousGroqRemaining = groqProfile 
-          ? Math.max(0, groqProfile.autonomousLimit - groqProfile.autonomousUsed)
-          : 0;
-
-        if (groqProfile?.isAvailable && autonomousGroqRemaining > 500) {
+        // GROQ POLICY: No autonomous limit - check overall capacity instead
+        if (groqProfile?.isAvailable && groqProfile.remainingCapacity.tokens > 500) {
           const groqRpmDelay = 60 / this.GROQ_RPM;
-          const autonomousPercentUsed = groqProfile.autonomousLimit > 0 
-            ? (groqProfile.autonomousUsed / groqProfile.autonomousLimit) * 100 
-            : 100;
-          const scaleFactor = autonomousPercentUsed > 70 ? 2.0 : autonomousPercentUsed > 50 ? 1.5 : 1.0;
+          // Scale based on overall usage, not autonomous-specific limit
+          const scaleFactor = groqProfile.percentUsed > 70 ? 2.0 : groqProfile.percentUsed > 50 ? 1.5 : 1.0;
           
           return {
             delaySeconds: Math.ceil(groqRpmDelay * scaleFactor),
-            reason: `Groq autonomous: ${groqProfile.autonomousUsed}/${groqProfile.autonomousLimit} tokens (${autonomousPercentUsed.toFixed(1)}% of 35% limit)`,
+            reason: `Groq autonomous: ${groqProfile.autonomousUsed} tokens used (no limit - exclusive provider)`,
             nextProvider: AIProvider.GROQ
           };
         }
 
+        // Fallback to Mistral if Groq unavailable
         if (mistralProfile?.isAvailable && mistralProfile.remainingCapacity.tokens > 500) {
           const mistralRpmDelay = 60 / this.MISTRAL_RPM;
           const scaleFactor = mistralProfile.percentUsed > 80 ? 2.0 : mistralProfile.percentUsed > 60 ? 1.5 : 1.0;
           
           return {
             delaySeconds: Math.ceil(mistralRpmDelay * scaleFactor),
-            reason: `Fallback to Mistral: Groq autonomous limit exhausted (${mistralProfile.percentUsed.toFixed(1)}% used)`,
+            reason: `Fallback to Mistral: Groq unavailable (${mistralProfile.percentUsed.toFixed(1)}% used)`,
             nextProvider: AIProvider.MISTRAL
           };
         }
 
+        // Fallback to Claude if both Groq and Mistral unavailable
         if (claudeProfile?.isAvailable && claudeProfile.remainingCapacity.tokens > 500) {
           const claudeRpmDelay = 60 / this.CLAUDE_RPM;
           const scaleFactor = claudeProfile.percentUsed > 80 ? 2.0 : claudeProfile.percentUsed > 60 ? 1.5 : 1.0;
           
           return {
             delaySeconds: Math.ceil(claudeRpmDelay * scaleFactor),
-            reason: `Fallback to Claude: Groq and Mistral exhausted (${claudeProfile.percentUsed.toFixed(1)}% used)`,
+            reason: `Fallback to Claude: Groq and Mistral unavailable (${claudeProfile.percentUsed.toFixed(1)}% used)`,
             nextProvider: AIProvider.CLAUDE
           };
         }
@@ -1174,13 +1168,16 @@ class AITokenGovernorEnhanced {
   /**
    * Should defer non-critical tasks?
    * Checks both quota and rate limits
+   * 
+   * GROQ POLICY: No autonomous limit - Groq has unlimited capacity for autonomous
    */
   public async shouldDeferNonCritical(): Promise<boolean> {
     try {
       const quotaStatus = await this.getQuotaStatus();
       
-      // For autonomous: defer if close to 15% limit
-      const autonomousNearLimit = quotaStatus.groq.autonomousPercentUsed > 80;
+      // GROQ POLICY: No autonomous limit - only check overall Groq capacity
+      // Defer if Groq overall usage is very high
+      const groqNearCapacity = quotaStatus.groq.percentUsed > 90;
       
       // For users: defer if both APIs running low
       const geminiLow = quotaStatus.gemini.percentUsed > 70;
@@ -1189,7 +1186,7 @@ class AITokenGovernorEnhanced {
       // Also check if we're rate limited
       const rateLimited = rateLimitTracker.shouldUseGroq();
 
-      return autonomousNearLimit || (geminiLow && groqLow) || rateLimited;
+      return groqNearCapacity || (geminiLow && groqLow) || rateLimited;
     } catch (error) {
       console.error('[AI Governor] Error checking deferral:', error);
       return false;

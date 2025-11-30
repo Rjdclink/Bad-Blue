@@ -110,3 +110,5 @@ integrations = ["javascript_stripe:1.0.0", "javascript_openai:1.0.0", "javascrip
 
 [userenv.shared]
 SUBAGENT_ENABLE_OFFICER_SEARCH = "true"
+TESTING_VITE_STRIPE_PUBLIC_KEY = "pk_live_51SM2d9PSVegpM6eXN91gLiufnR3Ofch6tDqJlDJ2HJKcOx3RadoAb19YrbImZFixOBfVMXO4h6ExUB129rV2WvYu008UU6pd3k"
+TESTING_STRIPE_SECRET_KEY = "whsec_nUrc5JoZLtOmVnejS7qw0zm2biJZBlty"

@@ -1888,5 +1888,715 @@
     "aiSuccess": false,
     "overallSuccess": false,
     "aiError": "Mistral API error: API error occurred: Status 429\nBody: {\"object\":\"error\",\"message\":\"Service tier capacity exceeded for this model.\",\"type\":\"service_tier_capacity_exceeded\",\"param\":null,\"code\":\"3505\"}"
+  },
+  {
+    "timestamp": "2025-11-30T20:49:45.715Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:49:45.732Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:49:56.016Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:49:56.100Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:49:56.156Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:49:56.201Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:04.468Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:04.555Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:04.578Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:15.083Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:15.087Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:15.104Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:15.122Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:22.872Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:22.906Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:22.961Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:32.930Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:33.028Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:33.041Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:33.057Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:42.141Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:42.458Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:42.477Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:56.456Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:56.588Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:56.603Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:50:56.661Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:05.639Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:05.879Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:05.903Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:16.524Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:16.605Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:16.862Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:16.876Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:25.098Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:25.130Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:25.152Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:35.144Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:35.249Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:35.252Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:35.302Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:42.575Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:42.710Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:51:42.731Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:52:18.747Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:52:18.771Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:52:19.211Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:52:19.261Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:53:42.835Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:53:42.975Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:53:53.642Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:53:53.763Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:53:54.046Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:53:54.065Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:03.895Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:04.052Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:04.101Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:16.402Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:16.628Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:16.774Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:16.841Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:24.275Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:24.281Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:24.300Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:34.330Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:34.494Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:34.603Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:34.631Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:42.156Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:42.203Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
+  },
+  {
+    "timestamp": "2025-11-30T20:54:42.226Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Groq available for autonomous functions"
   }
 ]
