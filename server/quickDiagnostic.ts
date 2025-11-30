@@ -9,6 +9,7 @@ import Stripe from 'stripe';
 import { config as dotenvConfig } from 'dotenv';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 
 dotenvConfig();
 
@@ -63,15 +64,15 @@ class SystemDiagnostics {
       await db.execute('SELECT 1 as test');
       this.addResult('Database:Connection', 'PASS', 'Database is connected');
 
-      // Test table access
+      // Test table access - using actual Drizzle schema table names
       const tables = [
         'users',
-        'officers',
+        'officer_profiles',
         'complaints',
-        'lawsuits',
+        'lawsuit_filings',
         'petitions',
-        'payments',
-        'evidence_files'
+        'user_subscriptions',
+        'public_evidence'
       ];
 
       for (const table of tables) {
@@ -116,7 +117,7 @@ class SystemDiagnostics {
         const groq = getGroqClient();
         const response = await groq.chat.completions.create({
           messages: [{ role: 'user', content: 'Respond with OK' }],
-          model: 'llama-3.2-3b-preview',
+          model: 'llama-3.1-8b-instant',
           max_tokens: 10
         });
         if (response.choices[0]?.message?.content) {
@@ -201,12 +202,15 @@ class SystemDiagnostics {
 
   // Test 7: Authentication System
   async testAuthSystem() {
-    // Check if admin bypass is configured via environment variables
-    const adminConfigured = !!process.env.ADMIN_BYPASS_ID || !!process.env.ADMIN_BYPASS_PASSWORD;
-    if (adminConfigured) {
+    // Check if admin bypass is configured via environment variables (both required)
+    const adminIdConfigured = !!process.env.ADMIN_BYPASS_ID;
+    const adminPassConfigured = !!process.env.ADMIN_BYPASS_PASSWORD;
+    if (adminIdConfigured && adminPassConfigured) {
       this.addResult('Auth:AdminBypass', 'PASS', 'Admin bypass credentials configured via environment');
+    } else if (adminIdConfigured || adminPassConfigured) {
+      this.addResult('Auth:AdminBypass', 'WARN', 'Admin bypass partially configured - set BOTH ADMIN_BYPASS_ID and ADMIN_BYPASS_PASSWORD');
     } else {
-      this.addResult('Auth:AdminBypass', 'WARN', 'Admin bypass using default credentials - set ADMIN_BYPASS_ID and ADMIN_BYPASS_PASSWORD in secrets');
+      this.addResult('Auth:AdminBypass', 'PASS', 'Admin bypass disabled (no hardcoded credentials - secure mode)');
     }
 
     // Test session store
@@ -222,14 +226,14 @@ class SystemDiagnostics {
     }
   }
 
-  // Test 8: API Endpoints
+  // Test 8: API Endpoints - using actual registered routes
   async testAPIEndpoints() {
     const baseURL = process.env.BASE_URL || 'http://localhost:5000';
     const criticalEndpoints = [
       { path: '/api/health', method: 'GET', critical: true },
-      { path: '/api/auth/status', method: 'GET', critical: true },
-      { path: '/api/search/officers', method: 'POST', critical: false },
-      { path: '/api/ai/analyze-badge', method: 'POST', critical: false }
+      { path: '/api/auth/user', method: 'GET', critical: true },
+      { path: '/api/maintenance-status', method: 'GET', critical: false },
+      { path: '/api/support-email', method: 'GET', critical: false }
     ];
 
     for (const endpoint of criticalEndpoints) {
@@ -358,8 +362,10 @@ export async function runSystemDiagnostics() {
   return await diagnostics.runFullDiagnostics();
 }
 
-// Run diagnostics if executed directly
-if (require.main === module) {
+// Run diagnostics if executed directly (ESM compatible)
+const isMainModule = import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('quickDiagnostic.ts');
+
+if (isMainModule) {
   runSystemDiagnostics()
     .then(report => {
       process.exit(report.overallStatus === 'OPERATIONAL' ? 0 : 1);

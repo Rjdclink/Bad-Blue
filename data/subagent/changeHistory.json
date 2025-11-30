@@ -43,5 +43,14 @@
       "response": "Web search completed, found 0 results",
       "success": true
     }
+  },
+  {
+    "timestamp": "2025-11-30T16:24:57.857Z",
+    "command": "search officer \"John Smith\" state=CA city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Web search completed, found 0 results",
+      "success": true
+    }
   }
 ]

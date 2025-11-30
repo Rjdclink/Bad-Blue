@@ -113,7 +113,7 @@ class SystemDiagnostics {
         const groq = getGroqClient();
         const response = await groq.chat.completions.create({
           messages: [{ role: 'user', content: 'Respond with OK' }],
-          model: 'llama-3.2-3b-preview',
+          model: 'llama-3.1-8b-instant',
           max_tokens: 10
         });
         if (response.choices[0]?.message?.content) {
