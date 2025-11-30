@@ -1,376 +1,176 @@
 [
   {
-    "timestamp": "2025-11-30T19:40:19.389Z",
+    "timestamp": "2025-11-30T19:41:45.744Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
+    "path": "/assets/scroll-area-BSFrzjFF.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:19.393Z",
+    "timestamp": "2025-11-30T19:41:45.746Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/input-DQfs2i3p.js"
+    "path": "/assets/external-link-ByCvNBaf.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:19.397Z",
+    "timestamp": "2025-11-30T19:41:45.749Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
+    "path": "/assets/brain-3CMxcxOD.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:19.400Z",
+    "timestamp": "2025-11-30T19:41:45.896Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/progress-DDYmeNGR.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:19.411Z",
+    "timestamp": "2025-11-30T19:41:45.901Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/search-k8SGdotS.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:19.415Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/map-pin-l9-xidT_.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.440Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.446Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.451Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/dollar-sign-CvgOWdSx.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.453Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/external-link-ByCvNBaf.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.463Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scroll-area-BSFrzjFF.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.469Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/brain-3CMxcxOD.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.492Z",
+    "timestamp": "2025-11-30T19:41:45.915Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/send-Dyuf-Q1L.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:19.501Z",
+    "timestamp": "2025-11-30T19:41:45.928Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/circle-check-big-IucwP7W7.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:19.507Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.510Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/mail-B5XkwkcA.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.517Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SEOHead-b0nf3qYO.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.522Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/image-D3s3Sulp.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.544Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/users-CFAHCUDf.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.597Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/home-Dcw_-9f9.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.612Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/button-D4bqKO-K.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.665Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-C2h2qaJP.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.670Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/check-CdrMYR9S.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.673Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useMutation-Mjqxl1or.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.721Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/textarea-BJLBH-8F.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.726Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-CksQyhPZ.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.730Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/select-BCZxAyUc.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.781Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/loader-circle-Dhu3ITQp.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.785Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scale-OSfZKrf3.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.825Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-BDFWxcSk.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.839Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.845Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/input-DQfs2i3p.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.888Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.895Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.900Z",
+    "timestamp": "2025-11-30T19:41:46.070Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/shield-7faESzar.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:19.906Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.937Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/external-link-ByCvNBaf.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.950Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scroll-area-BSFrzjFF.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.956Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/brain-3CMxcxOD.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.958Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/send-Dyuf-Q1L.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.963Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-big-IucwP7W7.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:19.991Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/mail-B5XkwkcA.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:20.005Z",
+    "timestamp": "2025-11-30T19:41:46.072Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/SEOHead-b0nf3qYO.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:20.013Z",
+    "timestamp": "2025-11-30T19:41:46.075Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/image-D3s3Sulp.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:20.016Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/users-CFAHCUDf.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:20.020Z",
+    "timestamp": "2025-11-30T19:41:46.257Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/credit-card-B8MKwAhy.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:20.045Z",
+    "timestamp": "2025-11-30T19:41:47.200Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/scroll-area-BSFrzjFF.js"
+  },
+  {
+    "timestamp": "2025-11-30T19:41:48.825Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
+  },
+  {
+    "timestamp": "2025-11-30T19:41:48.940Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/users-CFAHCUDf.js"
+  },
+  {
+    "timestamp": "2025-11-30T19:41:49.039Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/credit-card-B8MKwAhy.js"
+  },
+  {
+    "timestamp": "2025-11-30T19:41:49.345Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T19:42:13.862Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T19:42:35.824Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/bundleAnalyzer-C1yhvntE.js"
   },
   {
-    "timestamp": "2025-11-30T19:40:20.081Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:20.342Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:47.052Z",
+    "timestamp": "2025-11-30T19:42:37.836Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T19:40:48.820Z",
+    "timestamp": "2025-11-30T19:42:45.050Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T19:41:01.023Z",
+    "timestamp": "2025-11-30T19:43:16.023Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T19:43:47.693Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T19:44:12.029Z",
     "action": "training_queue_consumption",
     "provider": "self_improvement",
     "processed": 0,
     "successful": 0,
     "failed": 0,
     "skipped": 0,
-    "durationMs": 3
+    "durationMs": 7
   },
   {
-    "timestamp": "2025-11-30T19:41:17.603Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/"
-  },
-  {
-    "timestamp": "2025-11-30T19:41:17.895Z",
+    "timestamp": "2025-11-30T19:44:19.861Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T19:41:18.958Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DWMKUhML.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:41:19.014Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DQjPlvzS.css"
-  },
-  {
-    "timestamp": "2025-11-30T19:41:19.143Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/"
-  },
-  {
-    "timestamp": "2025-11-30T19:41:27.274Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DWMKUhML.js"
-  },
-  {
-    "timestamp": "2025-11-30T19:41:27.591Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DQjPlvzS.css"
-  },
-  {
-    "timestamp": "2025-11-30T19:41:39.085Z",
+    "timestamp": "2025-11-30T19:44:50.841Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T19:41:39.362Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/auth/user"
+    "timestamp": "2025-11-30T19:44:54.672Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 5
   },
   {
-    "timestamp": "2025-11-30T19:41:42.977Z",
+    "timestamp": "2025-11-30T19:45:21.849Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T19:45:53.030Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"

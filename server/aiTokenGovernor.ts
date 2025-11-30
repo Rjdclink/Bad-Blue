@@ -232,18 +232,19 @@ class AITokenGovernorEnhanced {
 
   /**
    * Check if autonomous functions can use Groq (35% limit)
-   * Uses database for thread-safe concurrent access
+   * Uses memoized quota data for efficiency (Nov 30, 2025 - Connection pool optimization)
    */
   public async canAutonomousUseGroq(): Promise<boolean> {
     try {
-      // Get autonomous usage from database for today
-      const autonomousUsage = await tokenMetrics.getTodayUsageBySource('groq', 'worker');
+      // Use memoized quota status instead of direct DB call
+      const quotaStatus = await this.getQuotaStatus();
       const autonomousLimit = Math.floor((this.GROQ_DAILY_TOKEN_LIMIT * this.AUTONOMOUS_GROQ_LIMIT_PERCENT) / 100);
+      const autonomousUsed = quotaStatus.groq.autonomousUsed || 0;
       
-      const canUse = autonomousUsage.tokens < autonomousLimit;
+      const canUse = autonomousUsed < autonomousLimit;
       
       if (!canUse) {
-        console.log(`[AI Governor] ⛔ Autonomous Groq limit reached: ${autonomousUsage.tokens}/${autonomousLimit} tokens (${this.AUTONOMOUS_GROQ_LIMIT_PERCENT}% of daily limit)`);
+        console.log(`[AI Governor] ⛔ Autonomous Groq limit reached: ${autonomousUsed}/${autonomousLimit} tokens (${this.AUTONOMOUS_GROQ_LIMIT_PERCENT}% of daily limit)`);
         console.log(`[AI Governor] Autonomous functions will resume after daily reset at midnight UTC`);
       }
       
@@ -925,11 +926,12 @@ class AITokenGovernorEnhanced {
         source,
       });
 
-      // Log autonomous usage for monitoring
+      // Log autonomous usage for monitoring (use memoized quota data for efficiency)
       if (provider === AIProvider.GROQ && context === UsageContext.AUTONOMOUS) {
-        const autonomousUsage = await tokenMetrics.getTodayUsageBySource('groq', 'worker');
+        const quotaStatus = await this.getQuotaStatus();
         const autonomousLimit = Math.floor((this.GROQ_DAILY_TOKEN_LIMIT * this.AUTONOMOUS_GROQ_LIMIT_PERCENT) / 100);
-        console.log(`[AI Governor] Autonomous Groq usage: ${autonomousUsage.tokens}/${autonomousLimit} (${Math.round((autonomousUsage.tokens / autonomousLimit) * 100)}%)`);
+        const autonomousUsed = quotaStatus.groq.autonomousUsed || 0;
+        console.log(`[AI Governor] Autonomous Groq usage: ${autonomousUsed}/${autonomousLimit} (${Math.round((autonomousUsed / autonomousLimit) * 100)}%)`);
       }
 
       // Warn if autonomous uses Gemini (violation)
