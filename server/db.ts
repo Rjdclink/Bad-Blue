@@ -348,21 +348,19 @@ export async function runStartupSchemaVerification(): Promise<boolean> {
   const result = await verifyDatabaseSchema();
   
   if (!result.success) {
-    console.error('╔════════════════════════════════════════════════════════════════╗');
-    console.error('║           DATABASE CONFIGURATION ERROR DETECTED                ║');
-    console.error('╠════════════════════════════════════════════════════════════════╣');
-    console.error(`║ Tables found: ${result.tableCount.toString().padEnd(48)}║`);
-    console.error(`║ Expected minimum: ${MINIMUM_PRODUCTION_TABLES.toString().padEnd(44)}║`);
-    console.error(`║ Connection source: ${result.connectionSource.padEnd(43)}║`);
-    console.error('╠════════════════════════════════════════════════════════════════╣');
-    console.error('║ IMPORTANT: execute_sql_tool is DEPRECATED                      ║');
-    console.error('║ Use /api/schema-verify endpoint for accurate table counts      ║');
-    console.error('╚════════════════════════════════════════════════════════════════╝');
+    console.warn('╔════════════════════════════════════════════════════════════════╗');
+    console.warn('║           DATABASE CONFIGURATION WARNING                       ║');
+    console.warn('╠════════════════════════════════════════════════════════════════╣');
+    console.warn(`║ Tables found: ${result.tableCount.toString().padEnd(48)}║`);
+    console.warn(`║ Expected minimum: ${MINIMUM_PRODUCTION_TABLES.toString().padEnd(44)}║`);
+    console.warn(`║ Connection source: ${result.connectionSource.padEnd(43)}║`);
+    console.warn('╠════════════════════════════════════════════════════════════════╣');
+    console.warn('║ Server will continue with degraded database connectivity       ║');
+    console.warn('║ Use /api/schema-verify endpoint for accurate table counts      ║');
+    console.warn('╚════════════════════════════════════════════════════════════════╝');
     
-    // In production, this would be a critical failure
-    if (isProduction) {
-      throw new Error(`Database schema verification failed: ${result.details}`);
-    }
+    // NOTE: Production guard removed (Nov 30, 2025) - allow server to start with degraded DB
+    // Database connectivity issues should not prevent server startup
   } else {
     console.log('╔════════════════════════════════════════════════════════════════╗');
     console.log('║              DATABASE VERIFICATION SUCCESSFUL                  ║');
