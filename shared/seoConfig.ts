@@ -1,6 +1,12 @@
 /**
  * Central SEO Configuration for BadBlue
  * Contains metadata for all routes including titles, descriptions, keywords, and breadcrumbs
+ * 
+ * SEO Strategy:
+ * - Primary keywords: High-intent action phrases ("file police complaint", "sue police officer")
+ * - Secondary keywords: Service-specific terms ("Section 1983", "FOIA request")
+ * - LSI keywords: Related terms that add context ("from home", "no lawyers needed", "Bad Blue does all the work")
+ * - All titles under 60 chars, descriptions under 160 chars
  */
 
 export const BASE_URL = "https://bad-blue.com";
@@ -13,10 +19,17 @@ export interface BreadcrumbItem {
   url: string;
 }
 
+export interface KeywordTaxonomy {
+  primary: string[];
+  secondary: string[];
+  lsi: string[];
+}
+
 export interface PageSEO {
   title: string;
   description: string;
   keywords?: string;
+  keywordTaxonomy?: KeywordTaxonomy;
   ogTitle?: string;
   ogDescription?: string;
   ogType?: "website" | "article" | "service";
@@ -28,11 +41,42 @@ export interface PageSEO {
   includeInSitemap: boolean;
 }
 
+export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
+  primary: [
+    "file police complaint online",
+    "sue police officer",
+    "police accountability",
+    "police misconduct",
+    "civil rights lawsuit"
+  ],
+  secondary: [
+    "Section 1983 lawsuit",
+    "42 USC 1983",
+    "FOIA request",
+    "officer search",
+    "police brutality"
+  ],
+  lsi: [
+    "file from home",
+    "no lawyers needed",
+    "Bad Blue does all the work",
+    "affordable legal help",
+    "online complaint form",
+    "free police complaint",
+    "citizen complaint"
+  ]
+};
+
 export const SEO_CONFIG: Record<string, PageSEO> = {
   "/": {
-    title: "Bad Blue | File Police Complaints & Civil Rights Lawsuits From Home",
-    description: "File police complaints, Section 1983 lawsuits, and FOIA requests from home. AI officer search, petitions, evidence upload. Bad Blue does all the work.",
-    keywords: "police complaint, file police complaint online, police misconduct, police brutality, civil rights lawsuit, Section 1983, sue police officer, police accountability",
+    title: "Bad Blue | File Police Complaints From Home",
+    description: "File police complaints, Section 1983 lawsuits, FOIA requests from home. Bad Blue does all the work. No lawyers needed.",
+    keywords: "file police complaint online, police complaint form, report police misconduct, sue police officer, Section 1983 lawsuit, civil rights lawsuit, FOIA request, police accountability, file from home, no lawyers needed, Bad Blue does all the work",
+    keywordTaxonomy: {
+      primary: ["file police complaint online", "sue police officer", "police misconduct report"],
+      secondary: ["Section 1983 lawsuit", "FOIA request", "civil rights violation"],
+      lsi: ["file from home", "no lawyers needed", "Bad Blue does all the work", "free complaint form"]
+    },
     ogType: "website",
     canonicalPath: "/",
     priority: 1.0,
@@ -41,9 +85,14 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/landing": {
-    title: "Bad Blue | AI-Powered Police Accountability Platform",
-    description: "Hold police accountable from home. File complaints, generate Section 1983 lawsuits, submit FOIA requests. AI-powered officer search and legal document generation.",
-    keywords: "police accountability platform, file police complaint, sue police, civil rights, police misconduct reporting",
+    title: "Bad Blue | Police Accountability Made Easy",
+    description: "Hold police accountable from home. File complaints, lawsuits, FOIA requests. AI officer search. Bad Blue does all the work.",
+    keywords: "police accountability platform, file police complaint, sue police, civil rights, police misconduct reporting, file from home, affordable legal help",
+    keywordTaxonomy: {
+      primary: ["police accountability", "file police complaint", "sue police officer"],
+      secondary: ["AI officer search", "legal document generation", "automated complaint filing"],
+      lsi: ["done from home", "no office visits", "we do all the work", "affordable alternative"]
+    },
     ogType: "website",
     canonicalPath: "/landing",
     priority: 0.95,
@@ -52,9 +101,14 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/officer": {
-    title: "Police Officer Search | Find Officer Records & Misconduct History | Bad Blue",
-    description: "Search for police officer information, badge lookup, background check, and misconduct history. Find officer records without visiting any office. AI-powered search.",
-    keywords: "police officer search, officer lookup, badge number search, police misconduct records, officer background check, find police officer, cop lookup",
+    title: "Police Officer Search | Find Cop Records | Bad Blue",
+    description: "Search police officers by name, badge, department. Find misconduct history from home. AI-powered officer lookup.",
+    keywords: "police officer search, officer lookup, badge number search, police misconduct records, officer background check, find police officer, cop lookup, officer history, search cop by name, police database",
+    keywordTaxonomy: {
+      primary: ["police officer search", "find police officer", "officer lookup"],
+      secondary: ["badge number search", "cop lookup", "police misconduct records"],
+      lsi: ["search from home", "no office visit needed", "AI-powered search", "free officer search"]
+    },
     ogType: "service",
     canonicalPath: "/officer",
     priority: 0.9,
@@ -63,9 +117,14 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/complaint-form": {
-    title: "File Police Complaint Online | Free Complaint Generator | Bad Blue",
-    description: "File police misconduct complaints online from home. Automated routing to proper authorities. Professional complaint documents generated automatically. No lawyers needed.",
-    keywords: "file police complaint, police complaint form, report police misconduct, police brutality complaint, internal affairs complaint, citizen complaint against police",
+    title: "File Police Complaint Online Free | Bad Blue",
+    description: "File police complaints from home. Auto-routes to authorities. No lawyers needed. Bad Blue does all the work.",
+    keywords: "file police complaint, police complaint form, report police misconduct, police brutality complaint, internal affairs complaint, citizen complaint, how to file police complaint, online police complaint, free complaint form",
+    keywordTaxonomy: {
+      primary: ["file police complaint online", "police complaint form", "report police misconduct"],
+      secondary: ["internal affairs complaint", "citizen complaint", "police brutality report"],
+      lsi: ["file from home", "no lawyers needed", "automatic routing", "we do all the work"]
+    },
     ogType: "service",
     canonicalPath: "/complaint-form",
     priority: 0.9,
@@ -74,9 +133,14 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/lawsuit-form": {
-    title: "Section 1983 Civil Rights Lawsuit Generator | Sue Police | Bad Blue",
-    description: "Generate U.S. District Court-compliant Section 1983 civil rights lawsuit documents from home. Affordable alternative to expensive attorneys. No courthouse visit required.",
-    keywords: "Section 1983 lawsuit, sue police officer, civil rights lawsuit, 42 USC 1983, police brutality lawsuit, excessive force lawsuit, false arrest lawsuit, qualified immunity",
+    title: "Section 1983 Lawsuit Generator | Sue Police | Bad Blue",
+    description: "Generate Section 1983 civil rights lawsuits from home. Court-ready documents. Affordable. No lawyers needed.",
+    keywords: "Section 1983 lawsuit, sue police officer, civil rights lawsuit, 42 USC 1983, police brutality lawsuit, excessive force lawsuit, false arrest lawsuit, qualified immunity, how to sue police, file lawsuit from home",
+    keywordTaxonomy: {
+      primary: ["Section 1983 lawsuit", "sue police officer", "civil rights lawsuit"],
+      secondary: ["42 USC 1983", "police brutality lawsuit", "excessive force lawsuit"],
+      lsi: ["file from home", "affordable alternative to lawyers", "court-ready documents", "no attorney needed"]
+    },
     ogType: "service",
     canonicalPath: "/lawsuit-form",
     priority: 0.9,
@@ -86,8 +150,13 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/foia-request-form": {
     title: "FOIA Request Generator | Get Police Records | Bad Blue",
-    description: "Submit Freedom of Information Act requests for police records online. Automated agency discovery and state-specific compliance. Get police records from home.",
-    keywords: "FOIA request, freedom of information, police records request, public records, police body camera footage, incident reports, arrest records",
+    description: "Get police records with FOIA requests. Body cam footage, incident reports. Filed from home. Bad Blue does all the work.",
+    keywords: "FOIA request, freedom of information, police records request, public records, police body camera footage, incident reports, arrest records, how to FOIA police, get police records, request body cam footage",
+    keywordTaxonomy: {
+      primary: ["FOIA request", "police records request", "get police records"],
+      secondary: ["body camera footage", "incident reports", "freedom of information"],
+      lsi: ["file from home", "automatic agency lookup", "state-specific compliance", "we handle everything"]
+    },
     ogType: "service",
     canonicalPath: "/foia-request-form",
     priority: 0.9,
@@ -96,9 +165,14 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/petitions": {
-    title: "Police Accountability Petitions | Community Action | Bad Blue",
-    description: "Create and sign community petitions calling for police accountability. Join others demanding officer discipline, policy changes, and justice.",
-    keywords: "police petition, community petition, police accountability, officer termination petition, police reform petition, citizen petition",
+    title: "Police Petitions | Demand Accountability | Bad Blue",
+    description: "Create and sign petitions for police accountability. Demand officer discipline and policy changes. Join your community.",
+    keywords: "police petition, community petition, police accountability petition, officer termination petition, police reform petition, citizen petition, demand police accountability, sign petition",
+    keywordTaxonomy: {
+      primary: ["police petition", "police accountability petition", "officer termination petition"],
+      secondary: ["police reform petition", "community petition", "citizen petition"],
+      lsi: ["demand accountability", "join community", "sign online", "create petition from home"]
+    },
     ogType: "website",
     canonicalPath: "/petitions",
     priority: 0.8,
@@ -107,9 +181,14 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/evidence-hub": {
-    title: "Evidence Hub | Share Police Misconduct Evidence | Bad Blue",
-    description: "Securely upload and share police misconduct evidence. Community evidence repository for accountability. Protected and private evidence storage.",
-    keywords: "police evidence, misconduct evidence, police video evidence, brutality evidence, share police misconduct, evidence repository",
+    title: "Evidence Hub | Upload Police Misconduct Evidence | Bad Blue",
+    description: "Securely upload police misconduct evidence. Videos, photos, documents. Private and protected. Community evidence repository.",
+    keywords: "police evidence upload, misconduct evidence, police video evidence, brutality evidence, share police misconduct, evidence repository, upload police video, secure evidence storage",
+    keywordTaxonomy: {
+      primary: ["police evidence upload", "upload misconduct evidence", "police video evidence"],
+      secondary: ["evidence repository", "secure evidence storage", "brutality evidence"],
+      lsi: ["private upload", "protected storage", "community evidence", "share safely"]
+    },
     ogType: "website",
     canonicalPath: "/evidence-hub",
     priority: 0.8,
@@ -118,9 +197,9 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/contact": {
-    title: "Contact Us | Bad Blue Support",
-    description: "Contact Bad Blue for support, questions, or feedback. We're here to help you with police accountability tools and legal document generation.",
-    keywords: "contact bad blue, support, help, questions, feedback, police accountability help",
+    title: "Contact Bad Blue | Support & Help",
+    description: "Contact Bad Blue for help with police complaints, lawsuits, FOIA requests. We're here to support you.",
+    keywords: "contact bad blue, bad blue support, help with police complaint, police accountability help, customer support",
     ogType: "website",
     canonicalPath: "/contact",
     priority: 0.7,
@@ -130,8 +209,8 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/privacy": {
     title: "Privacy Policy | Bad Blue",
-    description: "Bad Blue privacy policy. Learn how we protect your personal information and evidence uploads. Your privacy and security are our priority.",
-    keywords: "privacy policy, data protection, personal information, security, evidence privacy",
+    description: "Bad Blue privacy policy. How we protect your data, evidence, and personal information. Your security is our priority.",
+    keywords: "bad blue privacy policy, data protection, evidence privacy, personal information security",
     ogType: "website",
     canonicalPath: "/privacy",
     priority: 0.5,
@@ -141,8 +220,8 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/terms": {
     title: "Terms of Service | Bad Blue",
-    description: "Bad Blue terms of service. Read our terms and conditions for using the police accountability platform and legal document generation tools.",
-    keywords: "terms of service, terms and conditions, legal terms, user agreement",
+    description: "Bad Blue terms of service. Terms for using our police accountability platform and legal tools.",
+    keywords: "bad blue terms of service, terms and conditions, user agreement, legal terms",
     ogType: "website",
     canonicalPath: "/terms",
     priority: 0.5,
