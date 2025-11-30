@@ -22,6 +22,8 @@ import { db } from './db';
 import { officerProfiles } from '@shared/schema';
 import { eq, sql, and, or, like } from 'drizzle-orm';
 import { unifiedSearch, batchOfficerSearch, searchOfficerRecords } from './webSearchService';
+import { searchSessionManager } from './searchSessionManager';
+import { populationPriorityQueue } from './populationPriorityQueue';
 
 const exec = promisify(execCb);
 
@@ -193,6 +195,21 @@ class SubAgentWebHarvester {
     console.log('[Sub-Agent Harvester] Initializing...');
     
     await this.ensureDataDirectory();
+    
+    try {
+      await searchSessionManager.initialize();
+      console.log('[Sub-Agent Harvester] ✓ Session manager initialized (3-hour daily budget)');
+    } catch (e: any) {
+      console.warn('[Sub-Agent Harvester] Session manager init failed:', e.message);
+    }
+    
+    try {
+      await populationPriorityQueue.initialize();
+      console.log('[Sub-Agent Harvester] ✓ Priority queue initialized');
+    } catch (e: any) {
+      console.warn('[Sub-Agent Harvester] Priority queue init failed:', e.message);
+    }
+    
     this.scheduleDailyHarvest();
     
     console.log('[Sub-Agent Harvester] ✓ Active');
@@ -305,6 +322,107 @@ class SubAgentWebHarvester {
     console.log(`[Sub-Agent Harvester] Harvest complete: ${officersFound} found, ${officersAdded} added, ${officersUpdated} updated`);
     
     return result;
+  }
+
+  async runPriorityBasedHarvest(): Promise<HarvestRunResult> {
+    const canSearch = await searchSessionManager.canStartSearch();
+    
+    if (!canSearch.allowed) {
+      console.log(`[Sub-Agent Harvester] Priority harvest blocked: ${canSearch.reason}`);
+      if (canSearch.waitMinutes) {
+        console.log(`[Sub-Agent Harvester] Next search window in ${canSearch.waitMinutes} minutes`);
+      }
+      return {
+        success: false,
+        officersFound: 0,
+        officersAdded: 0,
+        officersUpdated: 0,
+        errors: [canSearch.reason],
+        duration: 0,
+      };
+    }
+
+    const startTime = Date.now();
+    const errors: string[] = [];
+    let officersFound = 0;
+    let officersAdded = 0;
+    let officersUpdated = 0;
+
+    console.log('[Sub-Agent Harvester] Starting priority-based harvest...');
+
+    try {
+      const target = await populationPriorityQueue.getNextPriorityTarget();
+      
+      if (!target) {
+        console.log('[Sub-Agent Harvester] No targets in priority queue');
+        return {
+          success: true,
+          officersFound: 0,
+          officersAdded: 0,
+          officersUpdated: 0,
+          errors: [],
+          duration: Date.now() - startTime,
+        };
+      }
+
+      const { queueItem, jurisdiction } = target;
+      
+      console.log(`[Sub-Agent Harvester] Searching: ${jurisdiction.city}, ${jurisdiction.state} (population: ${jurisdiction.population})`);
+      
+      await populationPriorityQueue.markInProgress(queueItem.id);
+
+      const searchQuery = `police officers ${jurisdiction.city} ${jurisdiction.state} department roster`;
+      const searchResults = await this.performWebSearch(searchQuery);
+      const officers = await this.extractOfficerData(searchResults);
+      
+      officersFound = officers.length;
+      
+      for (const officer of officers) {
+        try {
+          const result = await this.saveOfficerToDatabase(officer);
+          if (result === 'added') officersAdded++;
+          else if (result === 'updated') officersUpdated++;
+        } catch (e: any) {
+          errors.push(`Failed to save ${officer.fullName}: ${e.message}`);
+        }
+      }
+
+      await populationPriorityQueue.markCompleted(queueItem.id, officersFound);
+      
+      const durationMinutes = Math.ceil((Date.now() - startTime) / 60000);
+      await searchSessionManager.recordSearchTime(durationMinutes);
+      await searchSessionManager.recordSearchCompletion(officersFound);
+
+    } catch (e: any) {
+      errors.push(`Priority harvest failed: ${e.message}`);
+    }
+
+    const duration = Date.now() - startTime;
+    const result: HarvestRunResult = {
+      success: errors.length === 0,
+      officersFound,
+      officersAdded,
+      officersUpdated,
+      errors,
+      duration,
+    };
+
+    console.log(`[Sub-Agent Harvester] Priority harvest complete: ${officersFound} found in ${Math.round(duration / 1000)}s`);
+    
+    return result;
+  }
+
+  async getSessionStats(): Promise<{
+    sessionState: Awaited<ReturnType<typeof searchSessionManager.getSessionState>>;
+    queueStats: Awaited<ReturnType<typeof populationPriorityQueue.getQueueStats>>;
+  }> {
+    const sessionState = await searchSessionManager.getSessionState();
+    const queueStats = await populationPriorityQueue.getQueueStats();
+    return { sessionState, queueStats };
+  }
+
+  async seedJurisdictions(): Promise<void> {
+    await populationPriorityQueue.seedInitialJurisdictions();
   }
 
   private generateSearchQueries(): string[] {
