@@ -164,7 +164,7 @@ class SearchSessionManager {
 
     this.sessionCheckInterval = setInterval(async () => {
       await this.checkAndUpdateSession();
-    }, 60000);
+    }, 180000);
   }
 
   private async checkAndUpdateSession(): Promise<void> {

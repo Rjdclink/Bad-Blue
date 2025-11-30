@@ -103,8 +103,8 @@ const getPoolConfig = () => {
     connectionString: databaseUrl,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: (isRailway || isProduction) ? 30000 : 10000,
-    max: isRailway ? 8 : 15,
-    min: isRailway ? 1 : 2,
+    max: 8,
+    min: 1,
     ssl: process.env.PGSSLMODE !== 'disable' ? { 
       rejectUnauthorized: false,
       ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {})
@@ -134,7 +134,45 @@ pool.on('error', (err, client) => {
   }
 });
 
-console.log(`[DATABASE] Connection pool created - ready for queries (${isRailway ? 'Railway' : 'Replit/local'} mode)`);
+/**
+ * Get current connection pool statistics for monitoring
+ * Useful for debugging connection pool exhaustion issues
+ */
+export function getPoolStats(): {
+  total: number;
+  idle: number;
+  waiting: number;
+  max: number;
+} {
+  return {
+    total: pool.totalCount,
+    idle: pool.idleCount,
+    waiting: pool.waitingCount,
+    max: getPoolConfig().max,
+  };
+}
+
+/**
+ * Log pool statistics periodically (every 5 minutes) to detect pool exhaustion patterns
+ */
+let poolMonitorInterval: NodeJS.Timeout | null = null;
+
+function startPoolMonitor(): void {
+  if (poolMonitorInterval) return;
+  
+  poolMonitorInterval = setInterval(() => {
+    const stats = getPoolStats();
+    // Only log if there's connection pressure (waiting > 0 or total approaching max)
+    if (stats.waiting > 0 || stats.total >= stats.max - 2) {
+      console.log(`[DATABASE POOL] ⚠️ Connection pressure: total=${stats.total}/${stats.max}, idle=${stats.idle}, waiting=${stats.waiting}`);
+    }
+  }, 300000); // 5 minutes
+}
+
+// Start pool monitor
+startPoolMonitor();
+
+console.log(`[DATABASE] Connection pool created - ready for queries (${isRailway ? 'Railway' : 'Replit/local'} mode, max=${getPoolConfig().max})`);
 
 export let db = drizzle(pool, { schema });
 

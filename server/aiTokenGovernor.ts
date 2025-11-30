@@ -5,12 +5,29 @@
  * 
  * FULLY INTEGRATED WITH DATABASE - No JSON file storage
  * Thread-safe for concurrent requests
+ * 
+ * CONNECTION POOL OPTIMIZATION (Nov 30, 2025):
+ * - Uses single aggregated SQL query instead of 11 parallel queries
+ * - Memoization with 30-second TTL to prevent excessive DB calls
+ * - Mutex lock prevents concurrent getQuotaStatus() calls from overlapping
+ * - Resolves MaxClientsInSessionMode errors from PgBouncer pool exhaustion
  */
 
 import * as tokenMetrics from './repositories/tokenMetricsRepository';
 import { rateLimitTracker } from './rateLimitTracker';
 import { isMistralAvailable } from './mistral';
 import { isClaudeAvailable } from './claude';
+
+/**
+ * Simple memoization cache for quota status
+ */
+interface QuotaCache {
+  data: QuotaStatus | null;
+  timestamp: number;
+  inFlightPromise: Promise<QuotaStatus> | null;
+}
+
+const QUOTA_CACHE_TTL_MS = 30000; // 30 second cache TTL
 
 /**
  * Task classification for AI operations
@@ -165,6 +182,13 @@ class AITokenGovernorEnhanced {
   private providerAvailability: Map<AIProvider, boolean> = new Map();
   private availabilityChecked = false;
 
+  // Quota status memoization cache with mutex
+  private quotaCache: QuotaCache = {
+    data: null,
+    timestamp: 0,
+    inFlightPromise: null,
+  };
+
   private constructor() {
     // No file loading - database is the source of truth
     this.checkProviderAvailability();
@@ -232,69 +256,80 @@ class AITokenGovernorEnhanced {
 
   /**
    * Get quota status including autonomous tracking for all 4 providers
-   * All data from database - no file reads
+   * All data from database - uses SINGLE aggregated query with memoization.
+   * 
+   * CONNECTION POOL OPTIMIZATION (Nov 30, 2025):
+   * - Replaced 11 parallel Promise.all queries with single aggregated query
+   * - Added 30-second memoization cache to prevent excessive DB calls
+   * - Uses mutex pattern to prevent concurrent in-flight queries
+   * - Resolves MaxClientsInSessionMode errors from PgBouncer pool exhaustion
    */
   public async getQuotaStatus(): Promise<QuotaStatus> {
+    const now = Date.now();
+    
+    // Check if we have valid cached data
+    if (this.quotaCache.data && (now - this.quotaCache.timestamp) < QUOTA_CACHE_TTL_MS) {
+      return this.quotaCache.data;
+    }
+    
+    // If there's already a query in flight, wait for it (mutex pattern)
+    if (this.quotaCache.inFlightPromise) {
+      return this.quotaCache.inFlightPromise;
+    }
+    
+    // Create new query promise
+    this.quotaCache.inFlightPromise = this.fetchQuotaStatusFromDb();
+    
     try {
-      // Get all usage data from database for all 4 providers
-      const [
-        geminiTotal,
-        groqTotal,
-        mistralTotal,
-        claudeTotal,
-        geminiUser,
-        groqUser,
-        mistralUser,
-        claudeUser,
-        groqAutonomous,
-        mistralAutonomous,
-        claudeAutonomous
-      ] = await Promise.all([
-        tokenMetrics.getTodayUsage('gemini'),
-        tokenMetrics.getTodayUsage('groq'),
-        tokenMetrics.getTodayUsage('mistral'),
-        tokenMetrics.getTodayUsage('claude'),
-        tokenMetrics.getTodayUsageBySource('gemini', 'user'),
-        tokenMetrics.getTodayUsageBySource('groq', 'user'),
-        tokenMetrics.getTodayUsageBySource('mistral', 'user'),
-        tokenMetrics.getTodayUsageBySource('claude', 'user'),
-        tokenMetrics.getTodayUsageBySource('groq', 'worker'),
-        tokenMetrics.getTodayUsageBySource('mistral', 'worker'),
-        tokenMetrics.getTodayUsageBySource('claude', 'worker')
-      ]);
+      const result = await this.quotaCache.inFlightPromise;
+      this.quotaCache.data = result;
+      this.quotaCache.timestamp = Date.now();
+      return result;
+    } finally {
+      this.quotaCache.inFlightPromise = null;
+    }
+  }
 
+  /**
+   * Internal method to fetch quota status from database using single aggregated query
+   */
+  private async fetchQuotaStatusFromDb(): Promise<QuotaStatus> {
+    try {
+      // Use single aggregated query instead of 11 parallel queries
+      const metrics = await tokenMetrics.getAllQuotaMetrics();
+      
       const autonomousLimit = Math.floor((this.GROQ_DAILY_TOKEN_LIMIT * this.AUTONOMOUS_GROQ_LIMIT_PERCENT) / 100);
 
       return {
         gemini: {
-          used: geminiTotal.requests,
+          used: metrics.gemini.requests,
           limit: this.GEMINI_DAILY_REQUEST_LIMIT,
-          percentUsed: (geminiTotal.requests / this.GEMINI_DAILY_REQUEST_LIMIT) * 100,
-          userUsed: geminiUser.requests,
+          percentUsed: (metrics.gemini.requests / this.GEMINI_DAILY_REQUEST_LIMIT) * 100,
+          userUsed: metrics.gemini.userRequests,
           autonomousUsed: 0 // Autonomous should never use Gemini
         },
         groq: {
-          used: groqTotal.tokens,
+          used: metrics.groq.tokens,
           limit: this.GROQ_DAILY_TOKEN_LIMIT,
-          percentUsed: (groqTotal.tokens / this.GROQ_DAILY_TOKEN_LIMIT) * 100,
-          userUsed: groqUser.tokens,
-          autonomousUsed: groqAutonomous.tokens,
+          percentUsed: (metrics.groq.tokens / this.GROQ_DAILY_TOKEN_LIMIT) * 100,
+          userUsed: metrics.groq.userTokens,
+          autonomousUsed: metrics.groq.workerTokens,
           autonomousLimit: autonomousLimit,
-          autonomousPercentUsed: (groqAutonomous.tokens / autonomousLimit) * 100
+          autonomousPercentUsed: (metrics.groq.workerTokens / autonomousLimit) * 100
         },
         mistral: {
-          used: mistralTotal.tokens,
+          used: metrics.mistral.tokens,
           limit: this.MISTRAL_DAILY_TOKEN_LIMIT,
-          percentUsed: (mistralTotal.tokens / this.MISTRAL_DAILY_TOKEN_LIMIT) * 100,
-          userUsed: mistralUser.tokens,
-          autonomousUsed: mistralAutonomous.tokens
+          percentUsed: (metrics.mistral.tokens / this.MISTRAL_DAILY_TOKEN_LIMIT) * 100,
+          userUsed: metrics.mistral.userTokens,
+          autonomousUsed: metrics.mistral.workerTokens
         },
         claude: {
-          used: claudeTotal.tokens,
+          used: metrics.claude.tokens,
           limit: this.CLAUDE_DAILY_TOKEN_LIMIT,
-          percentUsed: (claudeTotal.tokens / this.CLAUDE_DAILY_TOKEN_LIMIT) * 100,
-          userUsed: claudeUser.tokens,
-          autonomousUsed: claudeAutonomous.tokens
+          percentUsed: (metrics.claude.tokens / this.CLAUDE_DAILY_TOKEN_LIMIT) * 100,
+          userUsed: metrics.claude.userTokens,
+          autonomousUsed: metrics.claude.workerTokens
         }
       };
     } catch (error) {

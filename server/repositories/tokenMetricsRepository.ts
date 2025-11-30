@@ -214,6 +214,68 @@ export async function getTodayUsageBySource(
 }
 
 /**
+ * Get ALL quota metrics in a single aggregated query to prevent connection pool exhaustion.
+ * This replaces 11 parallel queries with a single efficient query.
+ */
+export async function getAllQuotaMetrics(): Promise<{
+  gemini: { tokens: number; requests: number; userTokens: number; userRequests: number };
+  groq: { tokens: number; requests: number; userTokens: number; userRequests: number; workerTokens: number; workerRequests: number };
+  mistral: { tokens: number; requests: number; userTokens: number; userRequests: number; workerTokens: number; workerRequests: number };
+  claude: { tokens: number; requests: number; userTokens: number; userRequests: number; workerTokens: number; workerRequests: number };
+}> {
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const results = await db
+      .select({
+        provider: aiUsageMetrics.provider,
+        source: aiUsageMetrics.source,
+        tokens: sql<number>`COALESCE(SUM(${aiUsageMetrics.tokensUsed}), 0)::int`,
+        requests: sql<number>`COUNT(*)::int`,
+      })
+      .from(aiUsageMetrics)
+      .where(gte(aiUsageMetrics.timestamp, todayStart))
+      .groupBy(aiUsageMetrics.provider, aiUsageMetrics.source);
+
+    const metrics = {
+      gemini: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0 },
+      groq: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
+      mistral: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
+      claude: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
+    };
+
+    for (const row of results) {
+      const provider = row.provider as keyof typeof metrics;
+      if (!metrics[provider]) continue;
+
+      metrics[provider].tokens += row.tokens || 0;
+      metrics[provider].requests += row.requests || 0;
+
+      if (row.source === 'user') {
+        metrics[provider].userTokens = row.tokens || 0;
+        metrics[provider].userRequests = row.requests || 0;
+      } else if (row.source === 'worker') {
+        if (provider !== 'gemini') {
+          (metrics[provider] as any).workerTokens = row.tokens || 0;
+          (metrics[provider] as any).workerRequests = row.requests || 0;
+        }
+      }
+    }
+
+    return metrics;
+  } catch (error) {
+    console.error('[Token Metrics] Error getting all quota metrics:', error);
+    return {
+      gemini: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0 },
+      groq: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
+      mistral: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
+      claude: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
+    };
+  }
+}
+
+/**
  * Get moving average token usage for an operation
  */
 export async function getMovingAverage(
@@ -253,4 +315,5 @@ export const tokenMetricsRepository = {
   getUsageBySource,
   getMovingAverage,
   cleanupOldMetrics,
+  getAllQuotaMetrics,
 };
