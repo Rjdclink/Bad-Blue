@@ -719,18 +719,18 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {/* Public Evidence Hub */}
+            {/* Corrupt Law Enforcement & Informant Hub */}
             <Card className="hover-elevate cursor-pointer transition-all" onClick={() => setLocation('/evidence-hub')} data-testid="card-evidence-hub">
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="p-3 rounded-lg bg-primary/10">
-                      <ImageIcon className="w-6 h-6 text-primary" />
+                    <div className="p-3 rounded-lg bg-destructive/10">
+                      <ImageIcon className="w-6 h-6 text-destructive" />
                     </div>
                     <div>
-                      <CardTitle className="text-2xl">Public Evidence Hub</CardTitle>
+                      <CardTitle className="text-2xl">Corrupt Law Enforcement & Informant Hub</CardTitle>
                       <CardDescription className="mt-1">
-                        Community-shared evidence - <span className="text-green-600 dark:text-green-400 font-semibold">Included with access</span>
+                        Community corruption & informant evidence - <span className="text-green-600 dark:text-green-400 font-semibold">Included with access</span>
                       </CardDescription>
                     </div>
                   </div>
@@ -739,7 +739,7 @@ export default function Home() {
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground">
-                  Access photos, videos, and documents shared by the BadBlue community documenting police accountability issues.
+                  Access photos, videos, and documents shared by the BadBlue community exposing corrupt law enforcement and informants.
                 </p>
               </CardContent>
             </Card>

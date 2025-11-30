@@ -85,7 +85,7 @@ export default function EvidenceHub() {
   };
 
   const breadcrumbs = [
-    { name: "Evidence Hub", url: "https://bad-blue.com/evidence-hub" }
+    { name: "Corrupt Law Enforcement & Informant Hub", url: "https://bad-blue.com/evidence-hub" }
   ];
 
   return (
@@ -104,7 +104,7 @@ export default function EvidenceHub() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-6 h-6 text-destructive" />
-            <span className="font-semibold text-lg" data-testid="text-hub-title">Evidence Hub</span>
+            <span className="font-semibold text-lg" data-testid="text-hub-title">Corrupt Law Enforcement & Informant Hub</span>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={() => window.location.href = "/home"} data-testid="button-back-home">
