@@ -26,10 +26,16 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Railway uses SUPABASE_URL, other platforms may use different variable names
 const supabaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.SUPABASE_URL;
 
-// Helper to detect if a connection string is a Supabase database
+// Helper to detect if a connection string is a valid PostgreSQL Supabase connection
 const isSupabaseConnectionString = (url: string | undefined): boolean => {
   if (!url) return false;
-  // Supabase connection strings can use various domains:
+  
+  // CRITICAL: Must be a PostgreSQL connection string (not HTTP API URL)
+  // Supabase REST API URLs (https://xxx.supabase.co) are NOT valid for pg client
+  const isPostgresProtocol = url.startsWith('postgres://') || url.startsWith('postgresql://');
+  if (!isPostgresProtocol) return false;
+  
+  // Check for Supabase domains in the connection string:
   // - supabase.co (main dashboard and direct connections)
   // - supabase.com (alternative domain)
   // - supabase.net (pooled/pgBouncer connections via pooler.supabase.net)
@@ -38,6 +44,13 @@ const isSupabaseConnectionString = (url: string | undefined): boolean => {
          url.includes('supabase.com') || 
          url.includes('supabase.net') ||
          url.includes('.supabase.');  // Catches any subdomain pattern
+};
+
+// Helper to check if URL is an HTTP Supabase URL (wrong format for database)
+const isHttpSupabaseUrl = (url: string | undefined): boolean => {
+  if (!url) return false;
+  return (url.startsWith('http://') || url.startsWith('https://')) && 
+         (url.includes('supabase.co') || url.includes('supabase.com') || url.includes('.supabase.'));
 };
 
 // Determine the database URL to use, with smart detection
@@ -49,10 +62,24 @@ const isUsingSupabase = isExplicitSupabaseEnv || isDatabaseUrlSupabase;
 // STARTUP GUARD: Fail fast if production doesn't have a Supabase connection
 if (isProduction && !isUsingSupabase) {
   console.error('[DATABASE] ❌ CRITICAL: Production environment requires Supabase database');
-  console.error('[DATABASE] ❌ No Supabase connection string detected');
-  console.error('[DATABASE] ❌ Set SUPABASE_URL, SUPABASE_DATABASE_URL, or DATABASE_URL pointing to Supabase');
-  console.error('[DATABASE] ❌ Detected DATABASE_URL does not appear to be a Supabase connection');
-  throw new Error('Supabase database connection required in production. Set SUPABASE_URL, SUPABASE_DATABASE_URL, or ensure DATABASE_URL points to Supabase.');
+  console.error('[DATABASE] ❌ No valid PostgreSQL Supabase connection string detected');
+  
+  // Check if user provided HTTP URL instead of PostgreSQL connection string
+  const providedUrl = supabaseUrl || process.env.DATABASE_URL;
+  if (isHttpSupabaseUrl(providedUrl)) {
+    console.error('[DATABASE] ❌ ERROR: You provided a Supabase REST API URL (https://...)');
+    console.error('[DATABASE] ❌ This is NOT a database connection string!');
+    console.error('[DATABASE] ❌ ');
+    console.error('[DATABASE] ❌ Go to Supabase Dashboard → Project Settings → Database');
+    console.error('[DATABASE] ❌ Copy the "Connection string" (starts with postgres://...)');
+    console.error('[DATABASE] ❌ Set that as SUPABASE_DATABASE_URL or DATABASE_URL');
+    throw new Error('Invalid database URL: You provided a Supabase REST API URL (https://...). Use the PostgreSQL connection string from Supabase Dashboard → Project Settings → Database (starts with postgres://...)');
+  }
+  
+  console.error('[DATABASE] ❌ Set SUPABASE_DATABASE_URL or DATABASE_URL with PostgreSQL connection string');
+  console.error('[DATABASE] ❌ Format: postgres://user:password@host:port/database');
+  console.error('[DATABASE] ❌ Get it from: Supabase Dashboard → Project Settings → Database → Connection string');
+  throw new Error('Supabase database connection required in production. Set SUPABASE_DATABASE_URL or DATABASE_URL with PostgreSQL connection string (postgres://...)');
 }
 
 // Log which database connection is being used with prominent warning for fallback
