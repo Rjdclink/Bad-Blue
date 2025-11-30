@@ -268,5 +268,53 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T05:42:40.228Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T05:42:45.852Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@vite/client"
+  },
+  {
+    "timestamp": "2025-11-30T05:42:50.509Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T05:42:51.033Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@replit/vite-plugin-dev-banner/banner-script.js"
+  },
+  {
+    "timestamp": "2025-11-30T05:42:56.914Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T05:42:59.897Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@react-refresh"
+  },
+  {
+    "timestamp": "2025-11-30T05:43:02.132Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2025-11-30T05:43:05.861Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon.ico"
   }
 ]
