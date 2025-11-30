@@ -152,5 +152,19 @@
     },
     "processed": true,
     "processedAt": "2025-11-30T21:27:40.529Z"
+  },
+  {
+    "timestamp": "2025-11-30T21:56:52.254Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "IA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable data located for Officer Nathan Ewalt from Iowa. No substantive accountability information could be confirmed."
+    },
+    "processed": true,
+    "processedAt": "2025-11-30T22:00:32.489Z"
   }
 ]

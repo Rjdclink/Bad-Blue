@@ -264,13 +264,21 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
           </CardHeader>
           <CardContent className="space-y-6">
             {searchMutation.isPending && (
-              <>
-                <div className="p-4 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
-                  <p className="text-sm text-blue-800 dark:text-blue-200">
-                    <strong>Note:</strong> Comprehensive searches may take up to 2 minutes as we search multiple databases and sources...
-                  </p>
+              <div className="space-y-4" data-testid="search-loading-container">
+                <div className="p-4 bg-blue-50 dark:bg-blue-950 border-2 border-blue-300 dark:border-blue-700 rounded-lg" data-testid="search-hang-tight-notification">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="w-5 h-5 animate-spin text-blue-600 dark:text-blue-400" />
+                    <div>
+                      <p className="font-semibold text-blue-800 dark:text-blue-200">
+                        Hang tight! Comprehensive search in progress...
+                      </p>
+                      <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                        This may take up to 2 minutes as we search multiple databases and public records.
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                {progress && (
+                {progress ? (
                   <OfficerSearchProgress
                     stage={progress.stage}
                     totalStages={progress.totalStages}
@@ -278,8 +286,15 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                     message={progress.message}
                     percentage={progress.percentage}
                   />
+                ) : (
+                  <div className="flex items-center justify-center py-6" data-testid="search-initial-loading">
+                    <div className="flex flex-col items-center gap-3">
+                      <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                      <p className="text-sm text-muted-foreground">Initializing search...</p>
+                    </div>
+                  </div>
                 )}
-              </>
+              </div>
             )}
             {!searchResults ? (
               <>
@@ -315,10 +330,14 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                 </div>
 
                 {state && (
-                  <>
+                  <div className="space-y-4 p-4 border rounded-lg bg-card/50" data-testid="location-refinement-section">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-muted-foreground" />
+                      <Label className="text-base font-semibold">Refine Location <span className="text-muted-foreground font-normal text-sm">(optional)</span></Label>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="input-county">County <span className="text-muted-foreground text-sm">(optional)</span></Label>
+                        <Label htmlFor="input-county">County</Label>
                         <Input
                           id="input-county"
                           data-testid="input-county"
@@ -328,7 +347,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="input-city">City <span className="text-muted-foreground text-sm">(optional)</span></Label>
+                        <Label htmlFor="input-city">City</Label>
                         <Input
                           id="input-city"
                           data-testid="input-city"
@@ -338,34 +357,37 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                         />
                       </div>
                     </div>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-sm text-muted-foreground italic">
                       Leave both County and City blank to search for State-level officers
                     </p>
-                  </>
+                  </div>
                 )}
 
-                <div className="space-y-3 pt-2">
-                  <Label className="text-base">Officer Categories</Label>
+                <div className="space-y-3 pt-4 border-t" data-testid="officer-categories-section">
+                  <Label className="text-base font-semibold">Officer Categories <span className="text-muted-foreground font-normal text-sm">(optional)</span></Label>
+                  <p className="text-sm text-muted-foreground">Include additional officer types in your search:</p>
                   <div className="flex flex-col sm:flex-row gap-4">
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-3 p-2 rounded-md border bg-card hover-elevate cursor-pointer" onClick={() => setIncludeGovernment(!includeGovernment)} data-testid="checkbox-government-container">
                       <Checkbox
                         id="checkbox-government"
                         data-testid="checkbox-government"
                         checked={includeGovernment}
                         onCheckedChange={(checked) => setIncludeGovernment(checked === true)}
+                        className="border-2"
                       />
-                      <Label htmlFor="checkbox-government" className="font-normal cursor-pointer">
+                      <Label htmlFor="checkbox-government" className="font-normal cursor-pointer flex-1">
                         Government Officers
                       </Label>
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-3 p-2 rounded-md border bg-card hover-elevate cursor-pointer" onClick={() => setIncludeCorrections(!includeCorrections)} data-testid="checkbox-corrections-container">
                       <Checkbox
                         id="checkbox-corrections"
                         data-testid="checkbox-corrections"
                         checked={includeCorrections}
                         onCheckedChange={(checked) => setIncludeCorrections(checked === true)}
+                        className="border-2"
                       />
-                      <Label htmlFor="checkbox-corrections" className="font-normal cursor-pointer">
+                      <Label htmlFor="checkbox-corrections" className="font-normal cursor-pointer flex-1">
                         Corrections Officers
                       </Label>
                     </div>
