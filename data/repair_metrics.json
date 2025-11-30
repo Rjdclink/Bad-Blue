@@ -1,12 +1,12 @@
 {
-  "timestamp": "2025-11-30T14:55:49.040Z",
+  "timestamp": "2025-11-30T16:57:04.842Z",
   "averageQueueLatencyMs": 0,
   "averageResolutionTimeMs": 0,
   "successRate": 0,
   "totalRepairs": 434,
   "successfulRepairs": 0,
   "resourceUtilization": {
-    "cpu": 59.163051983215475,
-    "memory": 51.569999969019456
+    "cpu": 48.4847932425706,
+    "memory": 36.49886671950773
   }
 }

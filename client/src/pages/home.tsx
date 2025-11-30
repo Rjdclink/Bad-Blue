@@ -593,18 +593,18 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {/* 4g. Admin Panel - Subscription Management */}
+            {/* 4g. Admin Panel - User Management */}
             <Card className="hover-elevate cursor-pointer transition-all border-2 border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-950/20" onClick={() => setLocation('/admin-subscriptions')} data-testid="card-admin-subscriptions">
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
                     <div className="p-3 rounded-lg bg-emerald-500/10">
-                      <CreditCard className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+                      <Users className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
                     </div>
                     <div>
-                      <CardTitle className="text-2xl">Admin Panel: Subscriptions</CardTitle>
+                      <CardTitle className="text-2xl">Admin Panel: Bad Blue Users</CardTitle>
                       <CardDescription className="mt-1">
-                        Manage subscription tiers and user accounts
+                        View all registered users and their purchased services
                       </CardDescription>
                     </div>
                   </div>
@@ -613,18 +613,18 @@ export default function Home() {
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-3">
-                  Create and manage subscription plans, assign subscriptions to users, and view active subscriptions.
+                  View all registered users, their account details, and the paid services they have purchased.
                 </p>
                 <ul className="text-sm text-muted-foreground space-y-1">
-                  <li>• Create and edit subscription tiers</li>
-                  <li>• Set pricing and duration</li>
-                  <li>• Assign subscriptions to users</li>
-                  <li>• View and cancel active subscriptions</li>
+                  <li>• View all registered user accounts</li>
+                  <li>• See user sign-up dates and last login</li>
+                  <li>• Track purchased services per user</li>
+                  <li>• Monitor complaints, lawsuits, petitions, FOIA requests</li>
                 </ul>
               </CardContent>
             </Card>
 
-            {/* 4h. Admin Panel - Evidence Hub Management */}
+            {/* 4h. Admin Panel - Corrupt Law Enforcement & Informant Hub */}
             <Card className="hover-elevate cursor-pointer transition-all border-2 border-purple-500/50 bg-purple-50/50 dark:bg-purple-950/20" onClick={() => setLocation('/admin-evidence-hub')} data-testid="card-admin-evidence-hub">
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -633,9 +633,9 @@ export default function Home() {
                       <ImageIcon className="w-6 h-6 text-purple-600 dark:text-purple-400" />
                     </div>
                     <div>
-                      <CardTitle className="text-2xl">Admin Panel: Evidence Hub</CardTitle>
+                      <CardTitle className="text-2xl">Admin Panel: Corrupt Law Enforcement & Informant Hub</CardTitle>
                       <CardDescription className="mt-1">
-                        Manage community-shared evidence submissions
+                        Manage corruption and informant evidence submissions
                       </CardDescription>
                     </div>
                   </div>
@@ -644,13 +644,13 @@ export default function Home() {
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-3">
-                  View, edit, and manage all evidence shared by the community, including bulk deletion capabilities.
+                  View, edit, and manage all corruption and informant evidence shared by the community.
                 </p>
                 <ul className="text-sm text-muted-foreground space-y-1">
-                  <li>• View all shared evidence submissions</li>
+                  <li>• View corruption documentation submissions</li>
+                  <li>• Manage informant exposure evidence</li>
                   <li>• Edit evidence metadata and details</li>
                   <li>• Bulk delete inappropriate content</li>
-                  <li>• Monitor community contributions</li>
                 </ul>
               </CardContent>
             </Card>
