@@ -1,27 +1,24 @@
-// Email service for BadBlue - Resend API
-// Requires RESEND_API_KEY environment variable
+// Email service for BadBlue - Resend API via Replit Integration
+// Uses Replit's secure connector for API key management
 
 import { Resend } from "resend";
 import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getBaseURL } from "./platformConfig";
+import { getResendClient } from "./mailer";
 
-// Initialize Resend client
-const resend = new Resend(process.env.RESEND_API_KEY!);
-
-// Default from email for Resend (must be verified domain)
-// Use DEFAULT_FROM_EMAIL env var if set, otherwise use Resend's test domain
-const DEFAULT_FROM = process.env.DEFAULT_FROM_EMAIL 
-  ? `${process.env.DEFAULT_FROM_NAME || 'BadBlue'} <${process.env.DEFAULT_FROM_EMAIL}>`
-  : "BadBlue <onboarding@resend.dev>";
+// Cached Resend client and from email (refreshed on each use)
+let cachedFromEmail: string = "onboarding@resend.dev";
 
 export const emailTransporter = {
   verify: async () => {
-    if (!process.env.RESEND_API_KEY) {
-      throw new Error("RESEND_API_KEY is not set");
+    try {
+      const { client } = await getResendClient();
+      return true;
+    } catch (error) {
+      throw new Error("Resend not configured - set up the Resend integration");
     }
-    return true;
   },
 };
 
@@ -95,30 +92,33 @@ async function sendWithResend(
   text?: string,
   fromOverride?: string,
 ): Promise<boolean> {
-  if (!process.env.RESEND_API_KEY) {
-    console.error("[EMAIL] RESEND_API_KEY not set");
+  try {
+    const { client: resend, fromEmail } = await getResendClient();
+    cachedFromEmail = fromEmail;
+    
+    const from = fromOverride || `BadBlue <${fromEmail}>`;
+
+    const emailPayload: any = {
+      from,
+      to,
+      subject,
+    };
+
+    if (html) emailPayload.html = html;
+    if (text) emailPayload.text = text;
+
+    const { data, error } = await resend.emails.send(emailPayload);
+
+    if (error) {
+      console.error("[EMAIL] Resend API error:", error);
+      return false;
+    }
+
+    return !!data?.id;
+  } catch (error: any) {
+    console.error("[EMAIL] Failed to send email:", error.message);
     return false;
   }
-
-  const from = fromOverride || DEFAULT_FROM;
-
-  const emailPayload: any = {
-    from,
-    to,
-    subject,
-  };
-
-  if (html) emailPayload.html = html;
-  if (text) emailPayload.text = text;
-
-  const { data, error } = await resend.emails.send(emailPayload);
-
-  if (error) {
-    console.error("[EMAIL] Resend API error:", error);
-    return false;
-  }
-
-  return !!data?.id;
 }
 
 // --- Public generic send ----------------------------------------------------

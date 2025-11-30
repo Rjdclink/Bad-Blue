@@ -1,5 +1,5 @@
-// Email Service using Resend API
-// Requires RESEND_API_KEY environment variable
+// Email Service using Resend API via Replit Integration
+// Uses Replit's secure connector for API key management
 
 import { Resend } from 'resend';
 
@@ -16,41 +16,71 @@ interface EmailOptions {
   }>;
 }
 
-// Initialize Resend client (lazily)
-let resendClient: Resend | null = null;
+// Connection settings cache (short-lived, refreshed each call)
+let connectionSettings: any;
 
-function getResendClient(): Resend {
-  if (!resendClient) {
-    if (!process.env.RESEND_API_KEY) {
-      throw new Error('RESEND_API_KEY environment variable must be set');
+/**
+ * Get Resend credentials from Replit connector
+ */
+async function getCredentials(): Promise<{ apiKey: string; fromEmail: string }> {
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  const xReplitToken = process.env.REPL_IDENTITY 
+    ? 'repl ' + process.env.REPL_IDENTITY 
+    : process.env.WEB_REPL_RENEWAL 
+    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
+    : null;
+
+  if (!xReplitToken || !hostname) {
+    // Fallback to environment variable if connector not available
+    if (process.env.RESEND_API_KEY) {
+      return {
+        apiKey: process.env.RESEND_API_KEY,
+        fromEmail: process.env.DEFAULT_FROM_EMAIL || 'onboarding@resend.dev'
+      };
     }
-    resendClient = new Resend(process.env.RESEND_API_KEY);
-    console.log('[RESEND] ✓ Client initialized');
+    throw new Error('Resend credentials not available - configure Replit connector or RESEND_API_KEY');
   }
-  return resendClient;
+
+  connectionSettings = await fetch(
+    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=resend',
+    {
+      headers: {
+        'Accept': 'application/json',
+        'X_REPLIT_TOKEN': xReplitToken
+      }
+    }
+  ).then(res => res.json()).then(data => data.items?.[0]);
+
+  if (!connectionSettings || !connectionSettings.settings?.api_key) {
+    // Fallback to environment variable
+    if (process.env.RESEND_API_KEY) {
+      return {
+        apiKey: process.env.RESEND_API_KEY,
+        fromEmail: process.env.DEFAULT_FROM_EMAIL || 'onboarding@resend.dev'
+      };
+    }
+    throw new Error('Resend not connected - set up the Resend integration');
+  }
+
+  return {
+    apiKey: connectionSettings.settings.api_key,
+    fromEmail: connectionSettings.settings.from_email || 'onboarding@resend.dev'
+  };
 }
 
-// Get the from address - use verified Resend domain or env variable
-function getDefaultFromAddress(): string {
-  // Priority: DEFAULT_FROM_EMAIL env var > Resend verified domain
-  if (process.env.DEFAULT_FROM_EMAIL) {
-    const fromName = process.env.DEFAULT_FROM_NAME || 'BadBlue';
-    return `${fromName} <${process.env.DEFAULT_FROM_EMAIL}>`;
-  }
-  // Use Resend verified domain (update this to your verified domain)
-  return 'BadBlue <onboarding@resend.dev>';
+/**
+ * Get a fresh Resend client (never cache - tokens can expire)
+ */
+export async function getResendClient(): Promise<{ client: Resend; fromEmail: string }> {
+  const { apiKey, fromEmail } = await getCredentials();
+  return {
+    client: new Resend(apiKey),
+    fromEmail
+  };
 }
 
 /**
  * Send email via Resend API
- * 
- * @param to - Recipient email address
- * @param subject - Email subject line
- * @param html - HTML body content (optional)
- * @param text - Plain text content (optional, recommended as fallback)
- * @param from - From address (defaults to Resend verified domain)
- * @param attachments - Optional email attachments
- * @returns Promise<boolean> - true if sent successfully, false otherwise
  */
 export async function sendMail(
   to: string,
@@ -65,8 +95,8 @@ export async function sendMail(
   }>
 ): Promise<boolean> {
   try {
-    const resend = getResendClient();
-    const fromAddress = from || getDefaultFromAddress();
+    const { client: resend, fromEmail } = await getResendClient();
+    const fromAddress = from || `BadBlue <${fromEmail}>`;
 
     const emailPayload: any = {
       from: fromAddress,
@@ -96,13 +126,6 @@ export async function sendMail(
     return true;
   } catch (error: any) {
     console.error(`[RESEND] Failed to send email to ${to}:`, error.message);
-    
-    if (error.message?.includes('API key')) {
-      console.error('[RESEND] Invalid or missing API key - check RESEND_API_KEY');
-    } else if (error.message?.includes('domain')) {
-      console.error('[RESEND] Domain not verified - use a verified Resend domain');
-    }
-    
     return false;
   }
 }
@@ -112,8 +135,7 @@ export async function sendMail(
  */
 export async function verifySMTPConnection(): Promise<boolean> {
   try {
-    const resend = getResendClient();
-    // Test API by listing domains (lightweight API call)
+    const { client: resend } = await getResendClient();
     const { data, error } = await resend.domains.list();
     
     if (error) {
