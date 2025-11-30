@@ -580,5 +580,197 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:30.676Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:31.167Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:38.293Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:38.297Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:38.922Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:39.091Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/button-D4bqKO-K.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:39.176Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/dropdown-menu-DuH9md59.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:39.311Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Combination-BxgkiBe1.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:39.437Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-C2h2qaJP.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:39.563Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/check-CdrMYR9S.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:39.658Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/textarea-BJLBH-8F.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:39.738Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-CksQyhPZ.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:39.819Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/select-BCZxAyUc.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:39.945Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/chevron-up-b1PxxVfD.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:40.076Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/loader-circle-Dhu3ITQp.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:40.189Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/circle-check-BDFWxcSk.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:40.270Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/circle-alert-DXslWFLw.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:40.403Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/input-DQfs2i3p.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:40.483Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/progress-DDYmeNGR.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:40.637Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/map-pin-l9-xidT_.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:40.750Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/shield-7faESzar.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:40.892Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/dollar-sign-CvgOWdSx.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:41.042Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/scroll-area-BSFrzjFF.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:41.162Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/send-Dyuf-Q1L.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:41.168Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/circle-check-big-IucwP7W7.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:41.265Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/mail-B5XkwkcA.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:41.387Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SEOHead-b0nf3qYO.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:41.525Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/credit-card-B8MKwAhy.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:44:41.773Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T18:45:08.888Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:45:40.149Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:46:01.932Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
   }
 ]
