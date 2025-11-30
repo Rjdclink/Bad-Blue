@@ -1,20 +1,230 @@
 [
   {
-    "timestamp": "2025-11-30T17:03:02.805Z",
+    "timestamp": "2025-11-30T17:18:53.302Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
+    "path": "/src/components/ui/label.tsx"
   },
   {
-    "timestamp": "2025-11-30T17:03:02.862Z",
+    "timestamp": "2025-11-30T17:18:53.339Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/favicon.ico"
+    "path": "/src/components/ui/tabs.tsx"
   },
   {
-    "timestamp": "2025-11-30T17:03:04.238Z",
+    "timestamp": "2025-11-30T17:18:53.343Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+    "path": "/src/components/LanguageSelector.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T17:18:53.347Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T17:18:53.351Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SEOHead.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T17:18:53.425Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T17:18:53.483Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/video/badblue-demo.mp4"
+  },
+  {
+    "timestamp": "2025-11-30T17:18:53.641Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T17:18:53.702Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/video/badblue-demo.mp4"
+  },
+  {
+    "timestamp": "2025-11-30T17:18:53.810Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T17:19:13.068Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2025-11-30T17:19:21.897Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:19:23.272Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:19:23.813Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2025-11-30T17:19:34.000Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2025-11-30T17:19:52.095Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:19:54.123Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:20:22.411Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:20:25.020Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:20:52.753Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:20:56.037Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:21:23.128Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:21:26.224Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:21:34.648Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2025-11-30T17:21:45.123Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2025-11-30T17:21:53.380Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:21:57.104Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:16.406Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:16.570Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:16.633Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:16.697Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:16.747Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:16.758Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:17.065Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:17.353Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:17.625Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:17.859Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:22:20.045Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-BAZECk9-.js"
   }
 ]
