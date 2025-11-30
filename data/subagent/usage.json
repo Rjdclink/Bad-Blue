@@ -1,204 +1,54 @@
 [
   {
-    "timestamp": "2025-11-30T08:57:26.968Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/SupportEmailFooter.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:26.983Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/button.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:26.986Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/checkbox.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.029Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.032Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/LanguageSelectorLight.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.040Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/SEOHead.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.043Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-slot.js"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.045Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-checkbox.js"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.054Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/SupportEmailFooter.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.083Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/hooks/useFaqSchema.ts"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.089Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/dropdown-menu.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.155Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-GTF7DNNX.js"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.160Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/dropdown-menu.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.178Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.198Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-dropdown-menu.js"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.380Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-KZSZPJZR.js"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.469Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:27.671Z",
+    "timestamp": "2025-11-30T09:01:41.828Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T08:57:27.781Z",
+    "timestamp": "2025-11-30T09:01:41.947Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T08:57:27.881Z",
+    "timestamp": "2025-11-30T09:01:42.031Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T08:57:28.025Z",
+    "timestamp": "2025-11-30T09:01:42.076Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T08:57:28.080Z",
+    "timestamp": "2025-11-30T09:01:42.131Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
   },
   {
-    "timestamp": "2025-11-30T08:57:28.189Z",
+    "timestamp": "2025-11-30T09:01:42.139Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T08:57:28.234Z",
+    "timestamp": "2025-11-30T09:01:49.151Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
   },
   {
-    "timestamp": "2025-11-30T08:57:56.714Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T08:57:57.491Z",
+    "timestamp": "2025-11-30T09:02:08.522Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T08:58:26.967Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T08:58:28.503Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T08:58:57.767Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T08:58:59.498Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T08:59:27.924Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T08:59:30.445Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T08:59:58.263Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T09:00:02.573Z",
+    "timestamp": "2025-11-30T09:02:09.804Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
