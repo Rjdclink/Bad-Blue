@@ -166,5 +166,47 @@
     },
     "processed": true,
     "processedAt": "2025-11-30T22:00:32.489Z"
+  },
+  {
+    "timestamp": "2025-11-30T22:05:16.156Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "IA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verified data located for Officer Nathan Ewalt from Iowa. No substantive accountability information could be confirmed."
+    },
+    "processed": true,
+    "processedAt": "2025-11-30T22:10:33.984Z"
+  },
+  {
+    "timestamp": "2025-11-30T22:09:35.266Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "CA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable data collected for Officer John Smith from California. No substantive accountability information could be confirmed."
+    },
+    "processed": true,
+    "processedAt": "2025-11-30T22:10:34.191Z"
+  },
+  {
+    "timestamp": "2025-11-30T22:19:49.282Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "CA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable data collected for Officer John Smith from California. No substantive accountability information could be confirmed."
+    },
+    "processed": true,
+    "processedAt": "2025-11-30T22:20:40.974Z"
   }
 ]

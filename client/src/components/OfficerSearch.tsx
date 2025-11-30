@@ -580,6 +580,48 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                     </Card>
                   )}
 
+                  {/* No detailed data fallback message */}
+                  {(() => {
+                    const hasData = 
+                      (searchResults.summary && searchResults.summary !== 'None found') ||
+                      (searchResults.disciplinaryReports && searchResults.disciplinaryReports !== 'None found') ||
+                      (searchResults.lawsuits && searchResults.lawsuits !== 'None found') ||
+                      (searchResults.sanctions && searchResults.sanctions !== 'None found') ||
+                      (searchResults.newsArticles && searchResults.newsArticles !== 'None found') ||
+                      (searchResults.training && searchResults.training !== 'None found') ||
+                      (searchResults.sources && searchResults.sources.length > 0);
+                    
+                    if (!hasData) {
+                      return (
+                        <Card className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950">
+                          <CardContent className="pt-4">
+                            <div className="flex items-start gap-3">
+                              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="font-semibold text-amber-800 dark:text-amber-200" data-testid="text-no-records-title">
+                                  Limited Public Records Found
+                                </p>
+                                <p className="text-sm text-amber-700 dark:text-amber-300 mt-1" data-testid="text-no-records-message">
+                                  Our search found limited publicly available information for this officer. This may mean:
+                                </p>
+                                <ul className="text-sm text-amber-700 dark:text-amber-300 mt-2 space-y-1 list-disc pl-4">
+                                  <li>The officer has a clean public record</li>
+                                  <li>Records are sealed or not publicly accessible</li>
+                                  <li>The officer name/location may need refinement</li>
+                                  <li>Try adding city or county for more specific results</li>
+                                </ul>
+                                <p className="text-sm text-amber-700 dark:text-amber-300 mt-3">
+                                  Consider filing a <strong>FOIA request</strong> for official department records.
+                                </p>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    }
+                    return null;
+                  })()}
+
                   {/* Action Buttons */}
                   <div className="flex gap-4">
                     <Button

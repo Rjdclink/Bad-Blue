@@ -187,5 +187,32 @@
       "response": "Officer search completed for \"Nathan Ewalt\". Found: None found",
       "success": true
     }
+  },
+  {
+    "timestamp": "2025-11-30T22:05:16.149Z",
+    "command": "search officer \"Nathan Ewalt\" state=IA city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Nathan Ewalt\". Found: None found",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T22:09:35.251Z",
+    "command": "search officer \"John Smith\" state=CA city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"John Smith\". Found: None found",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T22:19:49.264Z",
+    "command": "search officer \"John Smith\" state=CA city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"John Smith\". Found: None found",
+      "success": true
+    }
   }
 ]
