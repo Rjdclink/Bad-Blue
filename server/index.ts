@@ -362,13 +362,7 @@ app.get("/api/schema-verify", async (_req, res) => {
     }
   });
 
-  app.use(express.static("public"));
-  
-  app.get("/robots.txt", (_req, res) => {
-    res.type("text/plain");
-    res.sendFile("robots.txt", { root: "public" });
-  });
-
+  // Dynamic SEO endpoints MUST be registered BEFORE static file serving
   app.get("/sitemap.xml", (_req, res) => {
     res.type("application/xml");
     
@@ -405,6 +399,9 @@ app.get("/api/schema-verify", async (_req, res) => {
 
     res.send(sitemap);
   });
+
+  // Static file serving AFTER dynamic routes
+  app.use(express.static("public"));
 
   if (app.get("env") === "development") {
     await setupVite(app, httpServer);

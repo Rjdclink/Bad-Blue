@@ -1,278 +1,86 @@
 [
   {
-    "timestamp": "2025-11-30T18:34:56.582Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.600Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/external-link-ByCvNBaf.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.616Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scroll-area-BSFrzjFF.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.622Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/send-Dyuf-Q1L.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.623Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-big-IucwP7W7.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.655Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/mail-B5XkwkcA.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.674Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SEOHead-b0nf3qYO.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.676Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/image-D3s3Sulp.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.682Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/users-CFAHCUDf.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.683Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/credit-card-B8MKwAhy.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.708Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/home-Dcw_-9f9.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.711Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/button-D4bqKO-K.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.727Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/LanguageSelector-Dy5-N4Tb.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.734Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/dropdown-menu-DuH9md59.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.746Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Combination-BxgkiBe1.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.761Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-C2h2qaJP.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.766Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-BAZECk9-.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.781Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/check-CdrMYR9S.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.789Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useMutation-Mjqxl1or.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.803Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/textarea-BJLBH-8F.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.805Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/checkbox-B6rcMTgW.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.813Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.822Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/label-CJGrPGCK.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.836Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/select-BCZxAyUc.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.848Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-BdQq_4o_.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.860Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-CksQyhPZ.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.868Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useFaqSchema--GUw8NK0.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.876Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scale-OSfZKrf3.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.890Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/loader-circle-Dhu3ITQp.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.903Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/sparkles-B6HyZdYK.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.915Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-BDFWxcSk.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.921Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-x-BaY5SahM.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.927Z",
+    "timestamp": "2025-11-30T18:36:10.424Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/file-text-CBNIfD09.js"
   },
   {
-    "timestamp": "2025-11-30T18:34:56.930Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-alert-DXslWFLw.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.947Z",
+    "timestamp": "2025-11-30T18:36:10.486Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/input-DQfs2i3p.js"
   },
   {
-    "timestamp": "2025-11-30T18:34:56.960Z",
+    "timestamp": "2025-11-30T18:36:10.499Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
+    "path": "/assets/map-pin-l9-xidT_.js"
   },
   {
-    "timestamp": "2025-11-30T18:34:56.975Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.982Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:56.997Z",
+    "timestamp": "2025-11-30T18:36:10.543Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/triangle-alert-SGGehtzG.js"
   },
   {
-    "timestamp": "2025-11-30T18:34:57.024Z",
+    "timestamp": "2025-11-30T18:36:10.568Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/dollar-sign-CvgOWdSx.js"
+    "path": "/assets/send-Dyuf-Q1L.js"
   },
   {
-    "timestamp": "2025-11-30T18:34:57.030Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scroll-area-BSFrzjFF.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:34:57.060Z",
+    "timestamp": "2025-11-30T18:36:10.600Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/circle-check-big-IucwP7W7.js"
   },
   {
-    "timestamp": "2025-11-30T18:34:57.109Z",
+    "timestamp": "2025-11-30T18:36:10.615Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:36:10.619Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/mail-B5XkwkcA.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:36:10.630Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/image-D3s3Sulp.js"
   },
   {
-    "timestamp": "2025-11-30T18:34:57.113Z",
+    "timestamp": "2025-11-30T18:36:10.632Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/users-CFAHCUDf.js"
+  },
+  {
+    "timestamp": "2025-11-30T18:36:10.655Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/credit-card-B8MKwAhy.js"
   },
   {
-    "timestamp": "2025-11-30T18:34:57.504Z",
+    "timestamp": "2025-11-30T18:36:10.705Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T18:34:57.924Z",
+    "timestamp": "2025-11-30T18:36:11.376Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T18:36:15.008Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/sitemap.xml"
   }
 ]
