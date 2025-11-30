@@ -152,11 +152,13 @@ export interface AdaptiveSearchDelayResult {
 
 class AITokenGovernorEnhanced {
   private static instance: AITokenGovernorEnhanced;
-  private readonly AUTONOMOUS_GROQ_LIMIT_PERCENT = 35; // 35% for autonomous - increased to give workers/sub-agents more resources while still prioritizing user AI needs
+  // GROQ POLICY: No autonomous rate limit. Groq is EXCLUSIVELY for autonomous functions.
+  // Groq should NOT be used for user searches unless it's the ONLY fallback option.
+  private readonly GROQ_EXCLUSIVE_AUTONOMOUS = true; // Groq reserved for autonomous only
   
   // Daily token limits for 4-way AI collaboration
   private readonly MISTRAL_DAILY_TOKEN_LIMIT = 150000;  // 50% of total AI usage
-  private readonly GROQ_DAILY_TOKEN_LIMIT = 100000;     // 30-35% of total AI usage
+  private readonly GROQ_DAILY_TOKEN_LIMIT = 100000;     // Unlimited for autonomous functions
   private readonly GEMINI_DAILY_REQUEST_LIMIT = 50;     // 10% of total AI usage (request-based)
   private readonly CLAUDE_DAILY_TOKEN_LIMIT = 25000;    // 5-10% of total AI usage
   
@@ -235,24 +237,10 @@ class AITokenGovernorEnhanced {
    * Uses memoized quota data for efficiency (Nov 30, 2025 - Connection pool optimization)
    */
   public async canAutonomousUseGroq(): Promise<boolean> {
-    try {
-      // Use memoized quota status instead of direct DB call
-      const quotaStatus = await this.getQuotaStatus();
-      const autonomousLimit = Math.floor((this.GROQ_DAILY_TOKEN_LIMIT * this.AUTONOMOUS_GROQ_LIMIT_PERCENT) / 100);
-      const autonomousUsed = quotaStatus.groq.autonomousUsed || 0;
-      
-      const canUse = autonomousUsed < autonomousLimit;
-      
-      if (!canUse) {
-        console.log(`[AI Governor] ⛔ Autonomous Groq limit reached: ${autonomousUsed}/${autonomousLimit} tokens (${this.AUTONOMOUS_GROQ_LIMIT_PERCENT}% of daily limit)`);
-        console.log(`[AI Governor] Autonomous functions will resume after daily reset at midnight UTC`);
-      }
-      
-      return canUse;
-    } catch (error) {
-      console.error('[AI Governor] Error checking autonomous Groq limit:', error);
-      return false; // Fail safe - don't allow if we can't check
-    }
+    // GROQ POLICY: No rate limit for autonomous functions
+    // Groq is exclusively for autonomous use with unlimited capacity
+    // Only check if Groq API key is available
+    return this.isProviderAvailable(AIProvider.GROQ);
   }
 
   /**
@@ -411,104 +399,40 @@ class AITokenGovernorEnhanced {
       return null;
     }
 
-    // RULE 2: User functions use weighted distribution
-    // Only count usage for available providers
+    // RULE 2: User functions - EXCLUDE Groq (reserved for autonomous)
+    // Use Gemini → Mistral → Claude priority order, Groq only as last resort
     const availableProviders = {
       mistral: this.isProviderAvailable(AIProvider.MISTRAL),
-      groq: this.isProviderAvailable(AIProvider.GROQ),
       gemini: this.isProviderAvailable(AIProvider.GEMINI),
-      claude: this.isProviderAvailable(AIProvider.CLAUDE)
+      claude: this.isProviderAvailable(AIProvider.CLAUDE),
+      groq: this.isProviderAvailable(AIProvider.GROQ) // Only for last resort fallback
     };
     
-    // Calculate total usage across AVAILABLE providers
-    const totalUsage = 
-      (availableProviders.mistral ? quotaStatus.mistral.used : 0) + 
-      (availableProviders.groq ? quotaStatus.groq.used : 0) + 
-      (availableProviders.gemini ? (quotaStatus.gemini.used * 1000) : 0) + // Approximate request to token conversion
-      (availableProviders.claude ? quotaStatus.claude.used : 0);
-    
-    if (totalUsage === 0) {
-      // No usage yet, start with first available provider (prefer Mistral > Groq > Gemini > Claude)
-      if (quotaStatus.mistral.percentUsed < 95 && availableProviders.mistral) return AIProvider.MISTRAL;
-      if (quotaStatus.groq.percentUsed < 95 && availableProviders.groq) return AIProvider.GROQ;
-      if (quotaStatus.gemini.percentUsed < 95 && availableProviders.gemini) return AIProvider.GEMINI;
-      if (quotaStatus.claude.percentUsed < 95 && availableProviders.claude) return AIProvider.CLAUDE;
-      return null;
-    }
-
-    // Recalculate target percentages based on available providers
-    const totalTargetPercent = 
-      (availableProviders.mistral ? this.MISTRAL_TARGET_PERCENT : 0) +
-      (availableProviders.groq ? this.GROQ_TARGET_PERCENT : 0) +
-      (availableProviders.gemini ? this.GEMINI_TARGET_PERCENT : 0) +
-      (availableProviders.claude ? this.CLAUDE_TARGET_PERCENT : 0);
-    
-    // Normalize targets to 100% based on available providers
-    const adjustedTargets = {
-      mistral: availableProviders.mistral ? (this.MISTRAL_TARGET_PERCENT / totalTargetPercent) * 100 : 0,
-      groq: availableProviders.groq ? (this.GROQ_TARGET_PERCENT / totalTargetPercent) * 100 : 0,
-      gemini: availableProviders.gemini ? (this.GEMINI_TARGET_PERCENT / totalTargetPercent) * 100 : 0,
-      claude: availableProviders.claude ? (this.CLAUDE_TARGET_PERCENT / totalTargetPercent) * 100 : 0
-    };
-
-    // Calculate actual distribution percentages
-    const mistralActualPercent = availableProviders.mistral ? (quotaStatus.mistral.used / totalUsage) * 100 : 100;
-    const groqActualPercent = availableProviders.groq ? (quotaStatus.groq.used / totalUsage) * 100 : 100;
-    const geminiActualPercent = availableProviders.gemini ? ((quotaStatus.gemini.used * 1000) / totalUsage) * 100 : 100;
-    const claudeActualPercent = availableProviders.claude ? (quotaStatus.claude.used / totalUsage) * 100 : 100;
-
-    // Calculate how far behind target each provider is (negative = behind, positive = ahead)
-    const mistralDelta = mistralActualPercent - adjustedTargets.mistral;
-    const groqDelta = groqActualPercent - adjustedTargets.groq;
-    const geminiDelta = geminiActualPercent - adjustedTargets.gemini;
-    const claudeDelta = claudeActualPercent - adjustedTargets.claude;
-
-    // Build array of providers with their deltas and availability
-    // Check both quota AND API key availability
-    const providers = [
-      { 
-        provider: AIProvider.MISTRAL, 
-        delta: mistralDelta, 
-        available: quotaStatus.mistral.percentUsed < 95 && availableProviders.mistral
-      },
-      { 
-        provider: AIProvider.GROQ, 
-        delta: groqDelta, 
-        available: quotaStatus.groq.percentUsed < 95 && availableProviders.groq
-      },
-      { 
-        provider: AIProvider.GEMINI, 
-        delta: geminiDelta, 
-        available: quotaStatus.gemini.percentUsed < 95 && availableProviders.gemini
-      },
-      { 
-        provider: AIProvider.CLAUDE, 
-        delta: claudeDelta, 
-        available: quotaStatus.claude.percentUsed < 95 && availableProviders.claude
-      },
-    ];
-
-    // Filter to only available providers (both quota and API key)
-    const availableList = providers.filter(p => p.available);
-    
-    if (availableList.length === 0) {
-      // Fallback to Gemini if all providers are exhausted or unavailable
-      console.warn('[AI Governor] All providers exhausted or unavailable - falling back to Gemini');
+    // USER search priority: Gemini → Mistral → Claude (Groq excluded unless last resort)
+    // Check each provider in priority order
+    if (quotaStatus.gemini.percentUsed < 95 && availableProviders.gemini) {
+      console.log('[AI Governor] USER search: using Gemini (primary)');
       return AIProvider.GEMINI;
     }
-
-    // Sort by delta (most behind target first)
-    availableList.sort((a, b) => a.delta - b.delta);
-
-    // Select the provider that's most behind its target
-    const selected = availableList[0];
     
-    // Log selection reasoning for debugging
-    if (selected.delta < -5) {
-      console.log(`[AI Governor] Selected ${selected.provider} (${Math.abs(selected.delta).toFixed(1)}% behind target)`);
+    if (quotaStatus.mistral.percentUsed < 95 && availableProviders.mistral) {
+      console.log('[AI Governor] USER search: using Mistral (fallback)');
+      return AIProvider.MISTRAL;
     }
-
-    return selected.provider;
+    
+    if (quotaStatus.claude.percentUsed < 95 && availableProviders.claude) {
+      console.log('[AI Governor] USER search: using Claude (fallback)');
+      return AIProvider.CLAUDE;
+    }
+    
+    // LAST RESORT: Use Groq only if all other providers are exhausted
+    if (quotaStatus.groq.percentUsed < 95 && availableProviders.groq) {
+      console.log('[AI Governor] USER search: using Groq (LAST RESORT - all other providers exhausted)');
+      return AIProvider.GROQ;
+    }
+    
+    console.warn('[AI Governor] All USER providers exhausted or unavailable');
+    return null;
   }
 
   /**
@@ -529,6 +453,12 @@ class AITokenGovernorEnhanced {
     // CRITICAL: Zero out Gemini for autonomous tasks - hard block before any scoring
     if (provider === AIProvider.GEMINI && task.context === UsageContext.AUTONOMOUS) {
       return 0; // Completely ineligible - prevents any allocation
+    }
+    
+    // GROQ POLICY: Groq is exclusively for autonomous. For USER tasks, return very low efficiency
+    // so Groq is only selected as absolute last resort when all other providers fail
+    if (provider === AIProvider.GROQ && task.context === UsageContext.USER) {
+      return 0.01; // Near-zero efficiency - only use if no other option
     }
 
     // Base capability multipliers by provider and complexity
@@ -778,20 +708,9 @@ class AITokenGovernorEnhanced {
     try {
       const quotaStatus = await this.getQuotaStatus();
       
-      // Check autonomous limit first
-      if (task.context === UsageContext.AUTONOMOUS) {
-        const canUseGroq = await this.canAutonomousUseGroq();
-        if (!canUseGroq) {
-          const nextReset = this.getNextResetTime();
-          return {
-            provider: AIProvider.GROQ,
-            maxTokens: 0,
-            verbosityLevel: 'concise',
-            shouldProceed: false,
-            deferralReason: `Autonomous Groq limit (${this.AUTONOMOUS_GROQ_LIMIT_PERCENT}%) reached. Will resume at ${nextReset.toISOString()}`
-          };
-        }
-      }
+      // GROQ POLICY: No rate limit for autonomous functions
+      // Only check if Groq is available (API key exists) - no limit enforcement
+      // Autonomous tasks use Groq exclusively with unlimited capacity
 
       // Estimate required budget as expectedTokens or derived from complexity
       const complexityBudgets = {
@@ -808,10 +727,11 @@ class AITokenGovernorEnhanced {
         // CRITICAL FIX: For USER context, NEVER return shouldProceed=false
         // Always provide a fallback provider for user-initiated searches
         if (task.context === UsageContext.USER) {
-          console.log('[AI Governor] USER search: forcing fallback chain (Mistral → Claude → Gemini)');
+          console.log('[AI Governor] USER search: forcing fallback chain (Gemini → Mistral → Claude → Groq)');
           
           // Try providers in fallback order for user searches
-          const fallbackOrder = [AIProvider.MISTRAL, AIProvider.CLAUDE, AIProvider.GEMINI, AIProvider.GROQ];
+          // GROQ POLICY: Groq is last resort - reserved for autonomous functions
+          const fallbackOrder = [AIProvider.GEMINI, AIProvider.MISTRAL, AIProvider.CLAUDE, AIProvider.GROQ];
           for (const provider of fallbackOrder) {
             if (this.isProviderAvailable(provider)) {
               console.log(`[AI Governor] USER fallback: using ${provider}`);
@@ -949,12 +869,11 @@ class AITokenGovernorEnhanced {
         source,
       });
 
-      // Log autonomous usage for monitoring (use memoized quota data for efficiency)
+      // Log autonomous Groq usage for monitoring (no limit, just tracking)
       if (provider === AIProvider.GROQ && context === UsageContext.AUTONOMOUS) {
         const quotaStatus = await this.getQuotaStatus();
-        const autonomousLimit = Math.floor((this.GROQ_DAILY_TOKEN_LIMIT * this.AUTONOMOUS_GROQ_LIMIT_PERCENT) / 100);
         const autonomousUsed = quotaStatus.groq.autonomousUsed || 0;
-        console.log(`[AI Governor] Autonomous Groq usage: ${autonomousUsed}/${autonomousLimit} (${Math.round((autonomousUsed / autonomousLimit) * 100)}%)`);
+        console.log(`[AI Governor] Autonomous Groq usage: ${autonomousUsed} tokens (no limit - exclusive autonomous provider)`);
       }
 
       // Warn if autonomous uses Gemini (violation)
@@ -1221,13 +1140,24 @@ class AITokenGovernorEnhanced {
     delayMs: number;
     reason: string;
   }> {
+    // GROQ POLICY: No rate limit for autonomous functions
+    // Only reschedule if Groq API is completely unavailable
     const canUse = await this.canAutonomousUseGroq();
     
     if (canUse) {
       return {
         shouldReschedule: false,
         delayMs: 0,
-        reason: 'Within 35% autonomous limit'
+        reason: 'Groq available for autonomous functions'
+      };
+    }
+
+    // Groq unavailable - try fallback to Mistral/Claude
+    if (this.isProviderAvailable(AIProvider.MISTRAL) || this.isProviderAvailable(AIProvider.CLAUDE)) {
+      return {
+        shouldReschedule: false,
+        delayMs: 0,
+        reason: 'Groq unavailable but Mistral/Claude available for autonomous fallback'
       };
     }
 
@@ -1237,7 +1167,7 @@ class AITokenGovernorEnhanced {
     return {
       shouldReschedule: true,
       delayMs,
-      reason: `Autonomous Groq 35% limit reached. Will resume at ${resetTime.toISOString()}`
+      reason: `All autonomous AI providers unavailable. Will retry at ${resetTime.toISOString()}`
     };
   }
 

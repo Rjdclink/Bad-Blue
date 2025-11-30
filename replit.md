@@ -18,7 +18,11 @@ The platform features a React 18 frontend with TypeScript, Vite, Wouter for rout
     - **Single Aggregated Query**: `getAllQuotaMetrics()` in tokenMetricsRepository replaces multiple parallel queries
     - **Relaxed Polling**: SearchSessionManager polls every 180 seconds (vs 60s) to reduce database pressure
     - **Pool Monitoring**: `getPoolStats()` in server/db.ts for diagnostics
-*   **Intelligent AI Architecture**: A coordinated multi-provider AI system (Gemini → Groq → Mistral → Claude) with intelligent fallback chains. Features provider-specific model validation (`getProviderModel()`) that automatically maps invalid models to provider defaults (e.g., "gpt-4o-mini" → "mistral-large-latest" for Mistral). Smart rate limiting ensures proactive switching before user disruption.
+*   **Intelligent AI Architecture**: A coordinated multi-provider AI system with context-aware routing:
+    - **USER Searches**: Gemini → Mistral → Claude → Groq (Groq last resort only)
+    - **AUTONOMOUS Functions**: Groq exclusively (no rate limit, unlimited capacity)
+    - **Groq Policy**: Reserved for autonomous functions only. No autonomous rate limit. Only used for user searches as absolute last resort when all other providers fail.
+    - Features provider-specific model validation (`getProviderModel()`) that automatically maps invalid models to provider defaults.
 *   **AI Sub-Agent**: An admin-only AI Sub-Agent provides autonomous capabilities for system management, error recovery, and learning, with full application control including file, database, and service manipulation. Features:
     - **Self-Improvement Engine Integration**: Consumes training queue from `learningData.json` every 30 minutes via `consumeTrainingQueue()` and `processLearningPattern()` methods
     - **4-Way AI Collaboration**: Gemini → Groq → Mistral → Claude fallback with `callAIWithFallback()` function

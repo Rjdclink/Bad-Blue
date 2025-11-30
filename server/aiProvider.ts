@@ -100,16 +100,22 @@ export async function generateText(
       }
     });
 
-    // Still apply autonomous Gemini block even if governor suggested it
+    // Apply context-specific provider blocks
     if (task.context === UsageContext.AUTONOMOUS) {
+      // Autonomous: exclude Gemini
       providersToRun = providersToRun.filter(p => p !== AIProvider.GEMINI);
       providerBudgets.delete(AIProvider.GEMINI);
+    } else {
+      // USER: exclude Groq from parallel (reserved for autonomous, only use as last resort fallback)
+      providersToRun = providersToRun.filter(p => p !== AIProvider.GROQ);
+      providerBudgets.delete(AIProvider.GROQ);
     }
   } else {
-    // Fallback: use context-based provider selection (original behavior)
+    // Fallback: use context-based provider selection
+    // GROQ POLICY: Groq is exclusively for autonomous, only last resort for USER
     providersToRun = task.context === UsageContext.AUTONOMOUS
-      ? [AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE] // Autonomous: exclude Gemini
-      : [AIProvider.GEMINI, AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE];
+      ? [AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE] // Autonomous: Groq preferred, no Gemini
+      : [AIProvider.GEMINI, AIProvider.MISTRAL, AIProvider.CLAUDE]; // USER: No Groq in parallel
   }
 
   // Ensure at least one provider to run
@@ -159,7 +165,8 @@ export async function generateText(
     if (task.context === UsageContext.USER) {
       console.log('[AI Provider] All parallel providers failed for USER task, trying sequential fallback...');
       const failedProviders = new Set(failures.map(f => f.provider));
-      const fallbackOrder = [AIProvider.MISTRAL, AIProvider.CLAUDE, AIProvider.GROQ, AIProvider.GEMINI];
+      // GROQ POLICY: Groq is last resort for USER - exclusive to autonomous functions
+      const fallbackOrder = [AIProvider.GEMINI, AIProvider.MISTRAL, AIProvider.CLAUDE, AIProvider.GROQ];
       
       for (const provider of fallbackOrder) {
         if (failedProviders.has(provider)) continue; // Skip already failed
