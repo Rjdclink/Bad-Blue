@@ -151,5 +151,14 @@
       "response": "Officer search completed for \"Nathan Ewalt\". Found: None found",
       "success": true
     }
+  },
+  {
+    "timestamp": "2025-11-30T20:28:24.854Z",
+    "command": "search officer \"Nathan Ewalt\" state=IA city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Nathan Ewalt\". Found: None found",
+      "success": true
+    }
   }
 ]

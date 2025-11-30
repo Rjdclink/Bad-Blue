@@ -110,5 +110,19 @@
     },
     "processed": true,
     "processedAt": "2025-11-30T20:21:54.886Z"
+  },
+  {
+    "timestamp": "2025-11-30T20:28:24.860Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "IA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable data available to generate a comprehensive report on Officer Nathan Ewalt from Iowa. Additional research and official records access required for meaningful accountability assessment."
+    },
+    "processed": true,
+    "processedAt": "2025-11-30T20:31:12.345Z"
   }
 ]
