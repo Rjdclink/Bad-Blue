@@ -106,5 +106,59 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/foia/all-states"
+  },
+  {
+    "timestamp": "2025-11-30T04:08:46.117Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/foia/state-info/CA"
+  },
+  {
+    "timestamp": "2025-11-30T04:08:46.966Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/section-1983/district-courts"
+  },
+  {
+    "timestamp": "2025-11-30T04:09:03.183Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/section-1983/district-courts/CA"
+  },
+  {
+    "timestamp": "2025-11-30T04:09:04.452Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/section-1983/local-rules/cdca"
+  },
+  {
+    "timestamp": "2025-11-30T04:09:05.894Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/complaint-drafting/authority-lookup"
+  },
+  {
+    "timestamp": "2025-11-30T04:09:20.501Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/complaint-drafting/lookup-authorities"
+  },
+  {
+    "timestamp": "2025-11-30T04:09:21.850Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/foia/lookup-authorities"
+  },
+  {
+    "timestamp": "2025-11-30T04:09:38.636Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/section-1983/preview"
+  },
+  {
+    "timestamp": "2025-11-30T04:09:57.255Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/section-1983/preview"
   }
 ]
