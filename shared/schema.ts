@@ -1552,3 +1552,258 @@ export const insertWorkerDeferredJobSchema = createInsertSchema(workerDeferredJo
 
 export type WorkerDeferredJob = typeof workerDeferredJobs.$inferSelect;
 export type InsertWorkerDeferredJob = z.infer<typeof insertWorkerDeferredJobSchema>;
+
+// ============================================
+// PETITION WORKFLOWS TABLE
+// ============================================
+// Main table tracking petition creation workflows
+export const petitionWorkflows = pgTable("petition_workflows", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: 'set null' }),
+  
+  // Core petition information
+  city: varchar("city", { length: 100 }).notNull(),
+  state: varchar("state", { length: 2 }).notNull(),
+  cityPopulation: integer("city_population"),
+  requiredSignatures: integer("required_signatures").notNull(),
+  
+  // Officer and misconduct details
+  officerName: text("officer_name").notNull(),
+  officerBadge: varchar("officer_badge"),
+  officerDepartment: text("officer_department"),
+  misconductSummary: text("misconduct_summary").notNull(),
+  requestedAction: text("requested_action").notNull(),
+  
+  // Petitioner information
+  petitionerName: text("petitioner_name").notNull(),
+  petitionerEmail: varchar("petitioner_email"),
+  petitionerAddress: text("petitioner_address"),
+  
+  // Workflow status
+  status: varchar("status", { length: 30 }).notNull().default('collecting_input'),
+  // Status values: 'collecting_input', 'gathering_residents', 'generating_content', 
+  // 'ready_to_submit', 'submitted', 'failed', 'cancelled'
+  
+  // Generated content
+  petitionContent: text("petition_content"),
+  petitionContentGeneratedAt: timestamp("petition_content_generated_at"),
+  
+  // Submission channel information
+  submissionChannel: varchar("submission_channel", { length: 50 }), // 'portal', 'email', 'clerk'
+  submissionTarget: text("submission_target"), // URL, email address, or address
+  
+  // Resident collection progress
+  residentsCollected: integer("residents_collected").default(0),
+  lastHarvestAt: timestamp("last_harvest_at"),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  submittedAt: timestamp("submitted_at"),
+}, (table) => [
+  index("idx_petition_user").on(table.userId),
+  index("idx_petition_status").on(table.status),
+  index("idx_petition_city_state").on(table.city, table.state),
+]);
+
+export const petitionWorkflowsRelations = relations(petitionWorkflows, ({ one, many }) => ({
+  user: one(users, {
+    fields: [petitionWorkflows.userId],
+    references: [users.id],
+  }),
+  sources: many(petitionSources),
+  signers: many(petitionSigners),
+  submissions: many(petitionSubmissions),
+}));
+
+export const insertPetitionWorkflowSchema = createInsertSchema(petitionWorkflows).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type PetitionWorkflow = typeof petitionWorkflows.$inferSelect;
+export type InsertPetitionWorkflow = z.infer<typeof insertPetitionWorkflowSchema>;
+
+// ============================================
+// PETITION SOURCES TABLE
+// ============================================
+// Data sources used for resident collection
+export const petitionSources = pgTable("petition_sources", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  workflowId: varchar("workflow_id").notNull().references(() => petitionWorkflows.id, { onDelete: 'cascade' }),
+  
+  // Source information
+  sourceType: varchar("source_type", { length: 30 }).notNull(), 
+  // 'property_tax', 'gis_parcel', 'voter_registration'
+  sourceUrl: text("source_url"),
+  sourceName: text("source_name"), // E.g., "Maricopa County Assessor"
+  
+  // Harvesting status
+  status: varchar("status", { length: 20 }).notNull().default('pending'),
+  // 'pending', 'harvesting', 'completed', 'failed'
+  
+  // Results
+  residentsFound: integer("residents_found").default(0),
+  errorMessage: text("error_message"),
+  
+  // Timestamps
+  harvestedAt: timestamp("harvested_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_source_workflow").on(table.workflowId),
+  index("idx_source_type").on(table.sourceType),
+]);
+
+export const petitionSourcesRelations = relations(petitionSources, ({ one }) => ({
+  workflow: one(petitionWorkflows, {
+    fields: [petitionSources.workflowId],
+    references: [petitionWorkflows.id],
+  }),
+}));
+
+export const insertPetitionSourceSchema = createInsertSchema(petitionSources).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type PetitionSource = typeof petitionSources.$inferSelect;
+export type InsertPetitionSource = z.infer<typeof insertPetitionSourceSchema>;
+
+// ============================================
+// PETITION SIGNERS TABLE
+// ============================================
+// Residents collected from public sources for petition
+export const petitionSigners = pgTable("petition_signers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  workflowId: varchar("workflow_id").notNull().references(() => petitionWorkflows.id, { onDelete: 'cascade' }),
+  sourceId: varchar("source_id").references(() => petitionSources.id, { onDelete: 'set null' }),
+  
+  // Signer information (from public records)
+  fullName: text("full_name").notNull(),
+  address: text("address"),
+  city: varchar("city", { length: 100 }),
+  state: varchar("state", { length: 2 }),
+  zipCode: varchar("zip_code", { length: 10 }),
+  
+  // Deduplication key (hash of normalized name + address)
+  dedupeKey: varchar("dedupe_key", { length: 64 }),
+  
+  // Source metadata
+  sourceType: varchar("source_type", { length: 30 }), // Where this record came from
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_signer_workflow").on(table.workflowId),
+  index("idx_signer_dedupe").on(table.dedupeKey),
+  unique("unique_signer_per_workflow").on(table.workflowId, table.dedupeKey),
+]);
+
+export const petitionSignersRelations = relations(petitionSigners, ({ one }) => ({
+  workflow: one(petitionWorkflows, {
+    fields: [petitionSigners.workflowId],
+    references: [petitionWorkflows.id],
+  }),
+  source: one(petitionSources, {
+    fields: [petitionSigners.sourceId],
+    references: [petitionSources.id],
+  }),
+}));
+
+export const insertPetitionSignerSchema = createInsertSchema(petitionSigners).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type PetitionSigner = typeof petitionSigners.$inferSelect;
+export type InsertPetitionSigner = z.infer<typeof insertPetitionSignerSchema>;
+
+// ============================================
+// PETITION SUBMISSIONS TABLE
+// ============================================
+// Tracks submission attempts to city council
+export const petitionSubmissions = pgTable("petition_submissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  workflowId: varchar("workflow_id").notNull().references(() => petitionWorkflows.id, { onDelete: 'cascade' }),
+  
+  // Submission details
+  submissionMethod: varchar("submission_method", { length: 30 }).notNull(),
+  // 'portal', 'email', 'clerk', 'manual'
+  targetAddress: text("target_address").notNull(), // URL, email, or physical address
+  
+  // Status
+  status: varchar("status", { length: 20 }).notNull().default('pending'),
+  // 'pending', 'sent', 'delivered', 'failed', 'confirmed'
+  
+  // Response tracking
+  responseReceived: boolean("response_received").default(false),
+  responseContent: text("response_content"),
+  confirmationNumber: varchar("confirmation_number"),
+  
+  // Error handling
+  errorMessage: text("error_message"),
+  retryCount: integer("retry_count").default(0),
+  
+  // Timestamps
+  attemptedAt: timestamp("attempted_at"),
+  confirmedAt: timestamp("confirmed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_submission_workflow").on(table.workflowId),
+  index("idx_submission_status").on(table.status),
+]);
+
+export const petitionSubmissionsRelations = relations(petitionSubmissions, ({ one }) => ({
+  workflow: one(petitionWorkflows, {
+    fields: [petitionSubmissions.workflowId],
+    references: [petitionWorkflows.id],
+  }),
+}));
+
+export const insertPetitionSubmissionSchema = createInsertSchema(petitionSubmissions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type PetitionSubmission = typeof petitionSubmissions.$inferSelect;
+export type InsertPetitionSubmission = z.infer<typeof insertPetitionSubmissionSchema>;
+
+// ============================================
+// CITY COUNCIL CHANNELS TABLE
+// ============================================
+// Cached submission channels for cities
+export const cityCouncilChannels = pgTable("city_council_channels", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // City identification
+  city: varchar("city", { length: 100 }).notNull(),
+  state: varchar("state", { length: 2 }).notNull(),
+  
+  // Submission channels (in priority order)
+  portalUrl: text("portal_url"), // Public comment form or complaint portal
+  emailAddresses: text("email_addresses"), // Comma-separated council emails
+  clerkEmail: text("clerk_email"),
+  clerkAddress: text("clerk_address"),
+  
+  // Metadata
+  lastVerifiedAt: timestamp("last_verified_at"),
+  verificationStatus: varchar("verification_status", { length: 20 }).default('unverified'),
+  notes: text("notes"),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_city_state_unique").on(table.city, table.state),
+  index("idx_channel_verification").on(table.verificationStatus),
+]);
+
+export const insertCityCouncilChannelSchema = createInsertSchema(cityCouncilChannels).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type CityCouncilChannel = typeof cityCouncilChannels.$inferSelect;
+export type InsertCityCouncilChannel = z.infer<typeof insertCityCouncilChannelSchema>;

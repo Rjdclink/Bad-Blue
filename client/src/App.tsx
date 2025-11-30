@@ -35,6 +35,7 @@ const LawsuitDetail = lazy(() => import("@/pages/lawsuit-detail"));
 const PetitionForm = lazy(() => import("@/pages/petition-form"));
 const PetitionDetail = lazy(() => import("@/pages/petition-detail"));
 const Petitions = lazy(() => import("@/pages/petitions"));
+const PetitionWorkflow = lazy(() => import("@/pages/petition-workflow"));
 const FOIARequestForm = lazy(() => import("@/pages/foia-request-form"));
 const Complaints = lazy(() => import("@/pages/complaints"));
 const History = lazy(() => import("@/pages/history"));
@@ -111,6 +112,7 @@ function Router() {
             <Route path="/lawsuit/:id" component={LawsuitDetail} />
             <Route path="/petition-form" component={PetitionForm} />
             <Route path="/petition" component={PetitionForm} />
+            <Route path="/petition-workflow" component={PetitionWorkflow} />
             <Route path="/petitions" component={Petitions} />
             <Route path="/foia-request" component={FOIARequestForm} />
             <Route path="/foia" component={FOIARequestForm} />

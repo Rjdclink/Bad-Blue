@@ -1556,6 +1556,245 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // (Omitted here for brevity; original logic unchanged — keep existing lines 1649-2033 from original file)
 
   // ============================================
+  // PETITION WORKFLOW SYSTEM (Automated Petition Creation)
+  // ============================================
+  
+  // Import petition service functions
+  const petitionService = await import('./petitionService');
+  
+  // Create new petition workflow
+  app.post('/api/petition-workflow', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const workflowSchema = z.object({
+      city: z.string().min(2, "City name is required"),
+      state: z.string().min(2, "State is required"),
+      officerName: z.string().min(2, "Officer name is required"),
+      officerBadge: z.string().optional(),
+      officerDepartment: z.string().optional(),
+      misconductSummary: z.string().min(50, "Please provide a detailed misconduct description (at least 50 characters)"),
+      requestedAction: z.string().min(20, "Please describe the requested action"),
+      petitionerName: z.string().min(2, "Your name is required"),
+      petitionerEmail: z.string().email().optional(),
+      petitionerAddress: z.string().optional(),
+    });
+    
+    const data = workflowSchema.parse(req.body);
+    const userId = req.user?.claims?.sub;
+    
+    const workflow = await petitionService.createPetitionWorkflow({
+      userId,
+      ...data
+    });
+    
+    res.status(201).json({ 
+      success: true, 
+      workflow,
+      message: `Petition workflow created. Population: ${workflow.cityPopulation?.toLocaleString()}, Required signatures: ${workflow.requiredSignatures}`
+    });
+  }));
+  
+  // Get user's petition workflows
+  app.get('/api/petition-workflows', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ message: "User ID required" });
+    }
+    
+    const workflows = await petitionService.getUserPetitionWorkflows(userId);
+    res.json({ success: true, workflows });
+  }));
+  
+  // Get specific workflow details
+  app.get('/api/petition-workflow/:id', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    const workflow = await petitionService.getPetitionWorkflow(id);
+    
+    if (!workflow) {
+      return res.status(404).json({ message: "Petition workflow not found" });
+    }
+    
+    // Get related data
+    const [sources, signers, submissions] = await Promise.all([
+      petitionService.getPetitionSources(id),
+      petitionService.getPetitionSigners(id),
+      petitionService.getPetitionSubmissions(id)
+    ]);
+    
+    res.json({
+      success: true,
+      workflow,
+      sources,
+      signers,
+      submissions
+    });
+  }));
+  
+  // Discover data sources for resident harvesting
+  app.post('/api/petition-workflow/:id/discover-sources', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    const workflow = await petitionService.getPetitionWorkflow(id);
+    
+    if (!workflow) {
+      return res.status(404).json({ message: "Petition workflow not found" });
+    }
+    
+    const { county } = req.body;
+    const sources = await petitionService.discoverDataSources(workflow.city, workflow.state, county);
+    
+    // Save discovered sources to database
+    for (const source of sources) {
+      await petitionService.createPetitionSource({
+        workflowId: id,
+        sourceType: source.type,
+        sourceUrl: source.url,
+        sourceName: source.name,
+        status: 'pending'
+      });
+    }
+    
+    res.json({ success: true, sources });
+  }));
+  
+  // Add signers manually or via harvesting
+  app.post('/api/petition-workflow/:id/signers', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    
+    const signerSchema = z.object({
+      fullName: z.string().min(2),
+      address: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      zipCode: z.string().optional(),
+      sourceType: z.string().optional()
+    });
+    
+    const data = signerSchema.parse(req.body);
+    const signer = await petitionService.addPetitionSigner({
+      workflowId: id,
+      ...data
+    });
+    
+    if (!signer) {
+      return res.status(409).json({ message: "Signer already exists or could not be added" });
+    }
+    
+    res.status(201).json({ success: true, signer });
+  }));
+  
+  // Bulk add signers
+  app.post('/api/petition-workflow/:id/signers/bulk', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    const { signers } = req.body;
+    
+    if (!Array.isArray(signers)) {
+      return res.status(400).json({ message: "Signers must be an array" });
+    }
+    
+    let added = 0;
+    let duplicates = 0;
+    
+    for (const signer of signers) {
+      const result = await petitionService.addPetitionSigner({
+        workflowId: id,
+        fullName: signer.fullName,
+        address: signer.address,
+        city: signer.city,
+        state: signer.state,
+        zipCode: signer.zipCode,
+        sourceType: signer.sourceType
+      });
+      
+      if (result) {
+        added++;
+      } else {
+        duplicates++;
+      }
+    }
+    
+    res.json({ success: true, added, duplicates, total: signers.length });
+  }));
+  
+  // Generate petition content using AI
+  app.post('/api/petition-workflow/:id/generate', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    const workflow = await petitionService.getPetitionWorkflow(id);
+    
+    if (!workflow) {
+      return res.status(404).json({ message: "Petition workflow not found" });
+    }
+    
+    const content = await petitionService.generatePetitionContent(workflow);
+    
+    res.json({ 
+      success: true, 
+      content,
+      message: "Petition content generated successfully"
+    });
+  }));
+  
+  // Discover submission channels
+  app.post('/api/petition-workflow/:id/discover-channels', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    const workflow = await petitionService.getPetitionWorkflow(id);
+    
+    if (!workflow) {
+      return res.status(404).json({ message: "Petition workflow not found" });
+    }
+    
+    const channels = await petitionService.discoverSubmissionChannels(workflow.city, workflow.state);
+    
+    res.json({ 
+      success: true, 
+      channels,
+      message: channels ? "Submission channels discovered" : "No submission channels found"
+    });
+  }));
+  
+  // Submit petition to city council
+  app.post('/api/petition-workflow/:id/submit', isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    const workflow = await petitionService.getPetitionWorkflow(id);
+    
+    if (!workflow) {
+      return res.status(404).json({ message: "Petition workflow not found" });
+    }
+    
+    if (!workflow.petitionContent) {
+      return res.status(400).json({ message: "Petition content must be generated first" });
+    }
+    
+    const submission = await petitionService.submitPetition(id);
+    
+    res.json({
+      success: true,
+      submission,
+      message: `Petition submitted via ${submission.submissionMethod} to ${submission.targetAddress}`
+    });
+  }));
+  
+  // Get signature threshold calculation
+  app.get('/api/petition-workflow/calculate-threshold', asyncHandler(async (req, res) => {
+    const { population } = req.query;
+    
+    if (!population) {
+      return res.status(400).json({ message: "Population is required" });
+    }
+    
+    const pop = parseInt(population as string, 10);
+    const requiredSignatures = petitionService.calculateRequiredSignatures(pop);
+    
+    res.json({
+      population: pop,
+      requiredSignatures,
+      thresholds: [
+        { range: "5,000 - 15,000", signatures: 100 },
+        { range: "15,001 - 25,000", signatures: 200 },
+        { range: "25,001 - 60,000", signatures: 300 },
+        { range: "60,001+", signatures: 1200 }
+      ]
+    });
+  }));
+
+  // ============================================
   // ============================================
 // ============================================
 // ADMIN EMAIL ROUTE (fixed access control)

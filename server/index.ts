@@ -158,6 +158,7 @@ async function runMigrations(): Promise<void> {
     { name: 'Sub-Agent tables', module: './migrations/createSubAgentTables', fn: 'createSubAgentTables' },
     { name: 'Token Metrics tables', module: './migrations/createTokenMetrics', fn: 'createTokenMetricsTables' },
     { name: 'Device Rate Limit tables', module: './migrations/createDeviceRateLimitTables', fn: 'createDeviceRateLimitTables' },
+    { name: 'Petition tables', module: './migrations/createPetitionTables', fn: 'createPetitionTables' },
   ];
 
   for (const migration of migrations) {
