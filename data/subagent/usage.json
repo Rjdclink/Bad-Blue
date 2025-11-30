@@ -1,50 +1,54 @@
 [
   {
-    "timestamp": "2025-11-30T22:24:54.635Z",
+    "timestamp": "2025-11-30T23:05:34.008Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SEOHead-b0nf3qYO.js"
+  },
+  {
+    "timestamp": "2025-11-30T23:05:34.014Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
+  },
+  {
+    "timestamp": "2025-11-30T23:05:34.061Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/file-text-CBNIfD09.js"
+  },
+  {
+    "timestamp": "2025-11-30T23:05:34.110Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T23:05:34.131Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T22:25:23.219Z",
+    "timestamp": "2025-11-30T23:05:34.145Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
   },
   {
-    "timestamp": "2025-11-30T22:25:53.326Z",
+    "timestamp": "2025-11-30T23:05:34.205Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/favicon.ico"
   },
   {
-    "timestamp": "2025-11-30T22:26:23.452Z",
+    "timestamp": "2025-11-30T23:05:36.392Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
   },
   {
-    "timestamp": "2025-11-30T22:26:56.195Z",
-    "action": "training_queue_consumption",
-    "provider": "self_improvement",
-    "processed": 0,
-    "successful": 0,
-    "failed": 0,
-    "skipped": 0,
-    "durationMs": 2
-  },
-  {
-    "timestamp": "2025-11-30T22:28:37.058Z",
-    "action": "training_queue_consumption",
-    "provider": "self_improvement",
-    "processed": 0,
-    "successful": 0,
-    "failed": 0,
-    "skipped": 0,
-    "durationMs": 13
-  },
-  {
-    "timestamp": "2025-11-30T22:28:53.720Z",
+    "timestamp": "2025-11-30T23:05:38.117Z",
     "action": "training_queue_consumption",
     "provider": "self_improvement",
     "processed": 0,
@@ -52,85 +56,5 @@
     "failed": 0,
     "skipped": 0,
     "durationMs": 3
-  },
-  {
-    "timestamp": "2025-11-30T22:29:09.804Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:09.835Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DQjPlvzS.css"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:09.912Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/auth/user"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:09.999Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-Qxa7_5PZ.js"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:10.115Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/mail-B5XkwkcA.js"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:10.258Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:10.275Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:10.393Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:10.501Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/favicon.ico"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:11.445Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
-  },
-  {
-    "timestamp": "2025-11-30T22:29:13.985Z",
-    "action": "training_queue_consumption",
-    "provider": "self_improvement",
-    "processed": 0,
-    "successful": 0,
-    "failed": 0,
-    "skipped": 0,
-    "durationMs": 2
-  },
-  {
-    "timestamp": "2025-11-30T22:29:41.914Z",
-    "action": "training_queue_consumption",
-    "provider": "self_improvement",
-    "processed": 0,
-    "successful": 0,
-    "failed": 0,
-    "skipped": 0,
-    "durationMs": 4
   }
 ]

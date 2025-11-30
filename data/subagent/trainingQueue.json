@@ -163,5 +163,16 @@
       },
       "content": "Insufficient verifiable data collected for Officer John Smith from California. No substantive accountability information could be confirmed."
     }
+  },
+  {
+    "receivedAt": "2025-11-30T23:02:59.807Z",
+    "payload": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "CA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable information available to generate a comprehensive report on Officer John Smith from California."
+    }
   }
 ]

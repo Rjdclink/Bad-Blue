@@ -1312,6 +1312,8 @@ export async function processSubAgentCommand(opts: {
             const countyMatch = cmd.match(/county=([^\s]+)/i);
             const badgeMatch = cmd.match(/badge=([^\s]+)/i);
             const typeMatch = cmd.match(/type=([^\s]+)/i);
+            const govMatch = cmd.match(/includeGovernment=(true|false)/i);
+            const corrMatch = cmd.match(/includeCorrections=(true|false)/i);
             return {
               officerName: nameMatch?.[1] || intent.parameters?.query || '',
               state: stateMatch?.[1] || undefined,
@@ -1319,6 +1321,8 @@ export async function processSubAgentCommand(opts: {
               county: countyMatch?.[1] || undefined,
               badgeNumber: badgeMatch?.[1] || undefined,
               departmentType: typeMatch?.[1] as 'city' | 'state' | 'county' | 'government' | 'corrections' | undefined,
+              includeGovernment: govMatch?.[1]?.toLowerCase() === 'true',
+              includeCorrections: corrMatch?.[1]?.toLowerCase() === 'true',
             };
           };
           const params = parseOfficerParams(command);
@@ -1330,6 +1334,8 @@ export async function processSubAgentCommand(opts: {
                 state: params.state,
                 city: params.city,
                 county: params.county,
+                includeGovernment: params.includeGovernment,
+                includeCorrections: params.includeCorrections,
                 departmentType: params.departmentType,
                 bypassCache: false,
               }, `subagent_${Date.now()}`);
@@ -1993,7 +1999,7 @@ export async function executeStructuredCommand(command: {
     let textCommand = '';
     if (command.type === 'search_officers') {
       const p = command.searchParams || {};
-      textCommand = `search officer "${p.name || ''}" state=${p.state || ''} city=${p.city || ''} county=${p.county || ''} badge=${p.badgeNumber || ''} type=${p.officerType || ''} limit=${command.limit ?? 10}`;
+      textCommand = `search officer "${p.name || ''}" state=${p.state || ''} city=${p.city || ''} county=${p.county || ''} badge=${p.badgeNumber || ''} type=${p.officerType || ''} includeGovernment=${p.includeGovernment || 'false'} includeCorrections=${p.includeCorrections || 'false'} limit=${command.limit ?? 10}`;
     } else {
       textCommand = `execute ${JSON.stringify(command)}`;
     }
