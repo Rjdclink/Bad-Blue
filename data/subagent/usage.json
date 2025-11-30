@@ -100,5 +100,11 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/foia/state-info/ZZ"
+  },
+  {
+    "timestamp": "2025-11-30T04:01:42.885Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/foia/all-states"
   }
 ]
