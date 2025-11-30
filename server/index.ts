@@ -371,7 +371,39 @@ app.get("/api/schema-verify", async (_req, res) => {
 
   app.get("/sitemap.xml", (_req, res) => {
     res.type("application/xml");
-    res.sendFile("sitemap.xml", { root: "public" });
+    
+    const BASE_URL = "https://bad-blue.com";
+    const today = new Date().toISOString().split('T')[0];
+    
+    const sitemapRoutes = [
+      { path: "/", priority: "1.0", changefreq: "weekly", title: "BadBlue - Police Accountability Platform" },
+      { path: "/landing", priority: "0.95", changefreq: "weekly" },
+      { path: "/officer", priority: "0.9", changefreq: "daily" },
+      { path: "/complaint-form", priority: "0.9", changefreq: "weekly" },
+      { path: "/lawsuit-form", priority: "0.9", changefreq: "weekly" },
+      { path: "/foia-request-form", priority: "0.9", changefreq: "weekly" },
+      { path: "/petitions", priority: "0.8", changefreq: "daily" },
+      { path: "/evidence-hub", priority: "0.8", changefreq: "daily" },
+      { path: "/contact", priority: "0.7", changefreq: "monthly" },
+      { path: "/privacy", priority: "0.5", changefreq: "monthly" },
+      { path: "/terms", priority: "0.5", changefreq: "monthly" },
+    ];
+
+    const urls = sitemapRoutes.map(route => `
+  <url>
+    <loc>${BASE_URL}${route.path}</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>${route.changefreq}</changefreq>
+    <priority>${route.priority}</priority>
+  </url>`).join('');
+
+    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <!-- Dynamic Sitemap Generated ${today} -->${urls}
+</urlset>`;
+
+    res.send(sitemap);
   });
 
   if (app.get("env") === "development") {
