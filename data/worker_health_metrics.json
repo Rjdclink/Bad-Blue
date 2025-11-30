@@ -4455,5 +4455,12 @@
     "timestamp": "2025-11-30T07:07:12.474Z",
     "check": "database_heartbeat",
     "status": "success"
+  },
+  {
+    "timestamp": "2025-11-30T07:22:02.477Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: ",
+    "consecutiveFailures": 1
   }
 ]

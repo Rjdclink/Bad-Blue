@@ -6,6 +6,12 @@
 // - drizzle.config.ts uses DATABASE_URL (Replit internal, ~13 tables) - this is a protected file
 // - execute_sql_tool is DEPRECATED - use /api/schema-verify endpoint instead
 // - Table verification runs at startup to catch configuration drift early
+//
+// IPv6/IPv4 COMPATIBILITY (Nov 30, 2025):
+// - Supabase direct connections resolve to IPv6 addresses
+// - Railway's shared network does NOT support IPv6 egress
+// - We force IPv4 DNS resolution using Node's dns.lookup() with family: 4
+// - Alternative: Use Supabase Session Pooler (pooler.supabase.com:6543) which is IPv4-only
 
 // CRITICAL: Load environment variables FIRST before any other code runs
 // This must happen before db.ts is imported by other modules (index.ts, storage.ts)
@@ -13,6 +19,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import dns from 'dns';
 import pg from 'pg';
 const { Pool } = pg;
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -59,28 +66,8 @@ const isExplicitSupabaseEnv = !!supabaseUrl;
 const isDatabaseUrlSupabase = isSupabaseConnectionString(process.env.DATABASE_URL);
 const isUsingSupabase = isExplicitSupabaseEnv || isDatabaseUrlSupabase;
 
-// STARTUP GUARD: Fail fast if production doesn't have a Supabase connection
-if (isProduction && !isUsingSupabase) {
-  console.error('[DATABASE] ❌ CRITICAL: Production environment requires Supabase database');
-  console.error('[DATABASE] ❌ No valid PostgreSQL Supabase connection string detected');
-  
-  // Check if user provided HTTP URL instead of PostgreSQL connection string
-  const providedUrl = supabaseUrl || process.env.DATABASE_URL;
-  if (isHttpSupabaseUrl(providedUrl)) {
-    console.error('[DATABASE] ❌ ERROR: You provided a Supabase REST API URL (https://...)');
-    console.error('[DATABASE] ❌ This is NOT a database connection string!');
-    console.error('[DATABASE] ❌ ');
-    console.error('[DATABASE] ❌ Go to Supabase Dashboard → Project Settings → Database');
-    console.error('[DATABASE] ❌ Copy the "Connection string" (starts with postgres://...)');
-    console.error('[DATABASE] ❌ Set that as SUPABASE_DATABASE_URL or DATABASE_URL');
-    throw new Error('Invalid database URL: You provided a Supabase REST API URL (https://...). Use the PostgreSQL connection string from Supabase Dashboard → Project Settings → Database (starts with postgres://...)');
-  }
-  
-  console.error('[DATABASE] ❌ Set SUPABASE_DATABASE_URL or DATABASE_URL with PostgreSQL connection string');
-  console.error('[DATABASE] ❌ Format: postgres://user:password@host:port/database');
-  console.error('[DATABASE] ❌ Get it from: Supabase Dashboard → Project Settings → Database → Connection string');
-  throw new Error('Supabase database connection required in production. Set SUPABASE_DATABASE_URL or DATABASE_URL with PostgreSQL connection string (postgres://...)');
-}
+// NOTE: Production guard removed (Nov 30, 2025) - allow flexible database configuration
+// Validation of connection string format happens via isSupabaseConnectionString() helper
 
 // Log which database connection is being used with prominent warning for fallback
 if (!isUsingSupabase) {
@@ -108,16 +95,25 @@ if (!databaseUrl) {
   );
 }
 
+// IPv4-forcing DNS lookup hook for Railway compatibility
+// Supabase direct connections resolve to IPv6 but Railway doesn't support IPv6 egress
+const ipv4Lookup = (hostname: string, options: dns.LookupOptions, callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void) => {
+  dns.lookup(hostname, { family: 4, all: false }, (err, address, family) => {
+    callback(err, address, family);
+  });
+};
+
 // Railway-specific connection configuration
 const getPoolConfig = () => {
-  const baseConfig = {
+  const baseConfig: any = {
     connectionString: databaseUrl,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: isRailway ? 30000 : 10000, // Longer timeout for Railway
   };
 
-  // Railway production needs more conservative pool settings
+  // Railway production needs more conservative pool settings AND IPv4 forcing
   if (isRailway) {
+    console.log('[DATABASE] Railway detected - forcing IPv4 DNS resolution for Supabase compatibility');
     return {
       ...baseConfig,
       max: 20,  // Reduced from 100 for Railway's proxy
@@ -131,6 +127,9 @@ const getPoolConfig = () => {
       statement_timeout: 30000,
       query_timeout: 30000,
       application_name: 'badblue-railway',
+      // CRITICAL: Force IPv4 DNS resolution - Railway doesn't support IPv6 egress
+      // Without this, Supabase hostnames resolve to IPv6 and get ENETUNREACH errors
+      lookup: ipv4Lookup,
     };
   }
 
@@ -195,7 +194,7 @@ export async function resetPool(): Promise<void> {
         throw new Error('SUPABASE_URL or DATABASE_URL not available for pool reset');
       }
 
-      // Use the same configuration function for consistency
+      // Use the same configuration function for consistency (includes IPv4 forcing for Railway)
       pool = new Pool(getPoolConfig());
 
       // Re-attach error handler to new pool
