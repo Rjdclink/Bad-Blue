@@ -11,6 +11,7 @@ import { Shield, MapPin, Calendar, ArrowLeft, FileText, Building2 } from "lucide
 import type { BadgeLookup } from "@shared/schema";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 
 export default function OfficerInfo() {
   const { id } = useParams();
@@ -35,6 +36,8 @@ export default function OfficerInfo() {
     queryKey: [`/api/badge-lookups/${id}`],
     enabled: !!user && !!id,
   });
+
+  usePageFaqSchema();
 
   if (authLoading || isLoading) {
     return (

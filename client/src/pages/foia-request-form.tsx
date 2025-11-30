@@ -15,6 +15,7 @@ import { FormAssistant } from "@/components/FormAssistant";
 import { FOIA_REQUEST_PRICING_CENTS } from "@shared/schema";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 
 const US_STATES = [
   { code: 'AL', name: 'Alabama' }, { code: 'AK', name: 'Alaska' }, { code: 'AZ', name: 'Arizona' },
@@ -50,6 +51,8 @@ export default function FOIARequestForm() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { sessionData, hydrateFromUrl } = useClientSession();
+
+  usePageFaqSchema();
 
   const [state, setState] = useState("");
   const [agencyType, setAgencyType] = useState("");

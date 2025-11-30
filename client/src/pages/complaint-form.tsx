@@ -14,6 +14,7 @@ import type { UploadResult } from "@uppy/core";
 import { FormAssistant } from "@/components/FormAssistant";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 
 // Component for rendering the actual complaint document preview from backend
 function ComplaintDocumentPreview({
@@ -123,6 +124,8 @@ export default function ComplaintForm() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { sessionData, hydrateFromUrl } = useClientSession();
+  
+  usePageFaqSchema();
   
   // AI-collected form data
   const [officerName, setOfficerName] = useState("");

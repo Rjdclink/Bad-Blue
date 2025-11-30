@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 import { 
   AlertTriangle, 
   Image as ImageIcon, 
@@ -41,6 +42,8 @@ export default function EvidenceHub() {
   const { user } = useAuth();
   const [filterType, setFilterType] = useState<string>("all");
   const [filterCategory, setFilterCategory] = useState<string>("all");
+
+  usePageFaqSchema();
 
   const { data: evidence, isLoading } = useQuery<PublicEvidence[]>({
     queryKey: ['/api/evidence-hub', filterType, filterCategory],

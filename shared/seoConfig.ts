@@ -289,3 +289,215 @@ export function getBreadcrumbsForPath(path: string): BreadcrumbItem[] {
   const seo = SEO_CONFIG[path];
   return seo?.breadcrumbs || [];
 }
+
+export interface FaqItem {
+  question: string;
+  answer: string;
+}
+
+export interface PageFaqConfig {
+  name: string;
+  description: string;
+  faqs: FaqItem[];
+}
+
+export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
+  "/officer": {
+    name: "Police Officer Search FAQ",
+    description: "Frequently asked questions about searching for police officers and finding misconduct records.",
+    faqs: [
+      {
+        question: "How do I search for a police officer?",
+        answer: "Enter the officer's name, badge number, or department in the search box. Bad Blue's AI-powered search finds officer records, misconduct history, and department information. Search entirely from home without visiting any office."
+      },
+      {
+        question: "What information can I find about a police officer?",
+        answer: "You can find officer names, badge numbers, departments, rank, misconduct complaints, disciplinary actions, lawsuits filed against them, and public records. Bad Blue compiles information from multiple sources."
+      },
+      {
+        question: "Is the officer search free?",
+        answer: "Basic officer searches are free. You can search by name, badge number, or department at no cost. Advanced features and detailed reports may require a subscription."
+      },
+      {
+        question: "How accurate is the officer search?",
+        answer: "Bad Blue uses AI to search multiple databases and public records. Results are compiled from official sources, news reports, court records, and community submissions. We verify information where possible."
+      },
+      {
+        question: "Can I search for officers in any state?",
+        answer: "Yes, Bad Blue's officer search covers police departments across all 50 states. Enter any department name or location to find officers in that jurisdiction."
+      }
+    ]
+  },
+  "/complaint-form": {
+    name: "Police Complaint Filing FAQ",
+    description: "Frequently asked questions about filing police misconduct complaints online from home.",
+    faqs: [
+      {
+        question: "How do I file a police complaint online?",
+        answer: "Fill out Bad Blue's complaint form with details about the incident, officer involved, and your contact information. Bad Blue generates a professional complaint document and automatically routes it to the correct authorities. File entirely from home."
+      },
+      {
+        question: "Where does my complaint get sent?",
+        answer: "Bad Blue automatically identifies and routes your complaint to internal affairs divisions, civilian oversight boards, police chiefs, and relevant authorities based on the department and jurisdiction. We do all the work."
+      },
+      {
+        question: "Do I need a lawyer to file a police complaint?",
+        answer: "No lawyers needed. Bad Blue generates professional complaint documents that meet official requirements. You can file a complete complaint on your own without legal representation."
+      },
+      {
+        question: "What happens after I file a complaint?",
+        answer: "After filing, your complaint is sent to the appropriate authorities who are required to investigate. You'll receive confirmation and can track your complaint status. Response times vary by department."
+      },
+      {
+        question: "Is my complaint confidential?",
+        answer: "Bad Blue protects your privacy. Your personal information is encrypted and stored securely. Some jurisdictions allow anonymous complaints, though identified complaints often carry more weight in investigations."
+      },
+      {
+        question: "What should I include in my complaint?",
+        answer: "Include the date, time, and location of the incident, officer name or badge number if known, detailed description of what happened, names of witnesses, and any evidence you have. More detail strengthens your complaint."
+      }
+    ]
+  },
+  "/lawsuit-form": {
+    name: "Section 1983 Lawsuit FAQ",
+    description: "Frequently asked questions about filing civil rights lawsuits against police officers.",
+    faqs: [
+      {
+        question: "What is a Section 1983 lawsuit?",
+        answer: "A Section 1983 lawsuit (42 U.S.C. § 1983) allows you to sue police officers and government officials who violate your constitutional rights. This includes excessive force, false arrest, unlawful search, and other civil rights violations."
+      },
+      {
+        question: "Can I file a lawsuit without a lawyer?",
+        answer: "Yes, you can file pro se (representing yourself). Bad Blue generates court-ready Section 1983 lawsuit documents formatted for U.S. District Court. Our platform provides an affordable alternative to expensive attorneys."
+      },
+      {
+        question: "What is qualified immunity?",
+        answer: "Qualified immunity protects officers from lawsuits unless they violate 'clearly established' constitutional rights. Bad Blue helps you identify relevant precedents and structure your case to overcome qualified immunity defenses."
+      },
+      {
+        question: "How much does it cost to file a lawsuit?",
+        answer: "Federal court filing fees are typically around $400. Bad Blue's lawsuit generation is significantly cheaper than hiring an attorney. You may qualify for fee waivers if you cannot afford filing fees."
+      },
+      {
+        question: "What damages can I recover?",
+        answer: "You may recover compensatory damages for injuries, medical bills, lost wages, and emotional distress. Punitive damages may be awarded for egregious misconduct. Attorney fees can also be recovered if you win."
+      },
+      {
+        question: "What is the deadline to file a lawsuit?",
+        answer: "Statutes of limitations vary by state, typically 2-3 years from the date of the incident. Some states have shorter deadlines. Don't wait - file your lawsuit promptly to preserve your rights."
+      }
+    ]
+  },
+  "/foia-request-form": {
+    name: "FOIA Request FAQ",
+    description: "Frequently asked questions about requesting police records through Freedom of Information Act requests.",
+    faqs: [
+      {
+        question: "What is a FOIA request?",
+        answer: "A Freedom of Information Act (FOIA) request is a legal demand for government records. You can request police body camera footage, incident reports, arrest records, use of force reports, and other police documents."
+      },
+      {
+        question: "How do I request police body camera footage?",
+        answer: "Use Bad Blue's FOIA Request Generator. Enter the incident date, location, and officers involved. We automatically identify the correct agency, apply state-specific rules, and generate a compliant request. File from home."
+      },
+      {
+        question: "How long does a FOIA request take?",
+        answer: "Response times vary by agency and state law. Federal agencies have 20 business days. State and local agencies may have different deadlines. Agencies can request extensions for complex requests."
+      },
+      {
+        question: "What records can I request?",
+        answer: "You can request body camera footage, dash cam video, incident reports, arrest reports, use of force reports, internal affairs files, training records, policy documents, and other police records."
+      },
+      {
+        question: "Are there fees for FOIA requests?",
+        answer: "Agencies may charge search and copying fees. Many agencies waive fees for small requests. Bad Blue's request includes language requesting fee waivers when applicable."
+      },
+      {
+        question: "What if my request is denied?",
+        answer: "You have the right to appeal denials. Bad Blue can help you understand exemptions cited and prepare appeals. Some records may be partially redacted rather than fully denied."
+      }
+    ]
+  },
+  "/petitions": {
+    name: "Police Accountability Petitions FAQ",
+    description: "Frequently asked questions about creating and signing police accountability petitions.",
+    faqs: [
+      {
+        question: "How do I create a police accountability petition?",
+        answer: "Click 'Create Petition' and describe the officer, incident, and action you're demanding. Bad Blue helps you craft an effective petition that can be shared with your community and submitted to officials."
+      },
+      {
+        question: "Who sees my petition?",
+        answer: "Petitions can be shared publicly to gather community signatures. Once you have enough signatures, petitions are submitted to city councils, police chiefs, oversight boards, and relevant officials."
+      },
+      {
+        question: "How many signatures do I need?",
+        answer: "There's no minimum requirement, but more signatures demonstrate stronger community support. Some officials require minimum signatures for official consideration. Aim for as many as possible."
+      },
+      {
+        question: "Can I sign petitions anonymously?",
+        answer: "You can view petitions without signing in. To sign, you'll need to create an account. Your signature shows community support - named signatures carry more weight with officials."
+      },
+      {
+        question: "What actions can petitions demand?",
+        answer: "Petitions can demand officer discipline, termination, policy changes, independent investigations, body camera requirements, use of force policy reforms, or other accountability measures."
+      }
+    ]
+  },
+  "/evidence-hub": {
+    name: "Evidence Hub FAQ",
+    description: "Frequently asked questions about uploading and sharing police misconduct evidence.",
+    faqs: [
+      {
+        question: "What evidence can I upload?",
+        answer: "You can upload videos, photos, audio recordings, documents, medical records, witness statements, and other evidence of police misconduct. All file types are accepted."
+      },
+      {
+        question: "Is my evidence secure?",
+        answer: "Yes, all uploads are encrypted and stored securely. Your evidence is protected with bank-level security. Only you control who can access your evidence."
+      },
+      {
+        question: "Can I share evidence with my attorney?",
+        answer: "Yes, you can share evidence with attorneys, journalists, investigators, or anyone you choose. Generate secure sharing links with customizable access permissions."
+      },
+      {
+        question: "How long is evidence stored?",
+        answer: "Evidence is stored securely for as long as you need it. We recommend keeping evidence until any legal proceedings are complete. You can delete your uploads at any time."
+      },
+      {
+        question: "Can evidence be used in court?",
+        answer: "Evidence uploaded to Bad Blue maintains its integrity and can be used in legal proceedings. We preserve metadata and chain of custody information for evidentiary purposes."
+      }
+    ]
+  },
+  "/landing": {
+    name: "Bad Blue Platform FAQ",
+    description: "Frequently asked questions about the Bad Blue police accountability platform.",
+    faqs: [
+      {
+        question: "What is Bad Blue?",
+        answer: "Bad Blue is an AI-powered police accountability platform that helps citizens file complaints, generate Section 1983 lawsuits, submit FOIA requests, and search for officer records. Do everything from home - Bad Blue does all the work."
+      },
+      {
+        question: "How much does Bad Blue cost?",
+        answer: "Many features are free, including officer search and basic complaint filing. Premium features like lawsuit generation and advanced FOIA requests are available at affordable prices - a fraction of what lawyers charge."
+      },
+      {
+        question: "Do I need legal experience?",
+        answer: "No legal experience needed. Bad Blue guides you through every step and generates professional legal documents automatically. Our platform is designed for regular citizens, not lawyers."
+      },
+      {
+        question: "Is Bad Blue available nationwide?",
+        answer: "Yes, Bad Blue covers all 50 states. We have jurisdiction-specific rules for complaints, FOIA requests, and lawsuits. Our system automatically applies the correct requirements for your location."
+      },
+      {
+        question: "How does the AI officer search work?",
+        answer: "Bad Blue's AI searches multiple databases, public records, news sources, and court records to compile officer information. Enter a name, badge number, or department to find misconduct history and officer details."
+      }
+    ]
+  }
+};
+
+export function getPageFaqs(path: string): PageFaqConfig | undefined {
+  return PAGE_FAQ_CONFIG[path];
+}

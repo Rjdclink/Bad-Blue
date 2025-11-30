@@ -6,11 +6,14 @@ import { Button } from "@/components/ui/button";
 import { FileText, Users, AlertTriangle, ArrowRight, ArrowLeft } from "lucide-react";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 
 export default function Petitions() {
   const { data: petitions, isLoading } = useQuery<any[]>({
     queryKey: ['/api/petitions'],
   });
+
+  usePageFaqSchema();
 
   if (isLoading) {
     return (

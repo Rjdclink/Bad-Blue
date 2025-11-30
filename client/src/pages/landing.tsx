@@ -10,13 +10,15 @@ import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
-import { useFaqSchema } from "@/hooks/useFaqSchema";
+import { useFaqSchema, usePageFaqSchema } from "@/hooks/useFaqSchema";
 
 export default function Landing() {
   const [, setLocation] = useLocation();
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   
   const baseUrl = import.meta.env.VITE_BASE_URL || "https://bad-blue.com";
+  
+  usePageFaqSchema();
   
   useFaqSchema("landing-page", [
     {
