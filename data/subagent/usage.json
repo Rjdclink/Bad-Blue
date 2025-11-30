@@ -70,5 +70,23 @@
     "action": "GET",
     "tokens": 0,
     "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T04:33:42.407Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/foia/all-states"
+  },
+  {
+    "timestamp": "2025-11-30T04:33:51.002Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/district-courts"
+  },
+  {
+    "timestamp": "2025-11-30T04:33:53.050Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/complaint-drafting/lookup-authorities"
   }
 ]
