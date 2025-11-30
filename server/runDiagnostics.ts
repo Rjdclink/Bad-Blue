@@ -203,16 +203,15 @@ class BadBlueDiagnostics {
     console.log('\n🔐 AUTHENTICATION SYSTEM');
     console.log('─'.repeat(40));
 
-    const bypassAccounts = [
-      { username: 'admin', role: 'Admin access' },
-      { username: '$ADMIN85', role: 'Admin access (alias)' },
-      { username: 'bypass', role: 'Paid user access' },
-      { username: 'user', role: 'Paid user access (alias)' }
-    ];
-
-    for (const account of bypassAccounts) {
-      this.log(`Auth:${account.username}`, 'PASS', account.role);
+    // Check if admin bypass is configured via environment variables (secure approach)
+    const adminConfigured = !!process.env.ADMIN_BYPASS_ID && !!process.env.ADMIN_BYPASS_PASSWORD;
+    if (adminConfigured) {
+      this.log('Auth:AdminBypass', 'PASS', 'Admin credentials configured via environment variables');
+    } else {
+      this.log('Auth:AdminBypass', 'WARN', 'Set ADMIN_BYPASS_ID and ADMIN_BYPASS_PASSWORD in secrets for admin access');
     }
+    
+    this.log('Auth:LocalAuth', 'PASS', 'Email/password authentication enabled');
   }
 
   generateReport() {

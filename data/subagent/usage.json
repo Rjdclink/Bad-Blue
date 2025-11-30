@@ -1,270 +1,54 @@
 [
   {
-    "timestamp": "2025-11-30T16:09:57.007Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/external-link-ByCvNBaf.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.065Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scroll-area-BSFrzjFF.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.073Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/mail-B5XkwkcA.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.110Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SEOHead-b0nf3qYO.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.125Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/users-CFAHCUDf.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.130Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/credit-card-B8MKwAhy.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.136Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/home-Dcw_-9f9.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.164Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/button-D4bqKO-K.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.187Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/dropdown-menu-DuH9md59.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.198Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Combination-BxgkiBe1.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.217Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-BAZECk9-.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.246Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/check-CdrMYR9S.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.248Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useMutation-Mjqxl1or.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.262Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/checkbox-B6rcMTgW.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.269Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-CksQyhPZ.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.298Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/select-BCZxAyUc.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.304Z",
+    "timestamp": "2025-11-30T16:21:22.526Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/useFaqSchema--GUw8NK0.js"
   },
   {
-    "timestamp": "2025-11-30T16:09:57.313Z",
+    "timestamp": "2025-11-30T16:21:22.578Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/chevron-up-b1PxxVfD.js"
+    "path": "/assets/file-text-CBNIfD09.js"
   },
   {
-    "timestamp": "2025-11-30T16:09:57.322Z",
+    "timestamp": "2025-11-30T16:21:22.601Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/sparkles-B6HyZdYK.js"
+    "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T16:09:57.363Z",
+    "timestamp": "2025-11-30T16:21:22.625Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/circle-check-BDFWxcSk.js"
+    "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T16:09:57.368Z",
+    "timestamp": "2025-11-30T16:21:22.706Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/circle-x-BaY5SahM.js"
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
   },
   {
-    "timestamp": "2025-11-30T16:09:57.372Z",
+    "timestamp": "2025-11-30T16:21:22.885Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/input-DQfs2i3p.js"
+    "path": "/favicon.ico"
   },
   {
-    "timestamp": "2025-11-30T16:09:57.378Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.408Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-alert-DXslWFLw.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.415Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/progress-DDYmeNGR.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.422Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.427Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.432Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.460Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/dollar-sign-CvgOWdSx.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.469Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/external-link-ByCvNBaf.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.476Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scroll-area-BSFrzjFF.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.481Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/brain-3CMxcxOD.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.482Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/send-Dyuf-Q1L.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.487Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-big-IucwP7W7.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.511Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.524Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/mail-B5XkwkcA.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.531Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SEOHead-b0nf3qYO.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.535Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/image-D3s3Sulp.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.537Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/users-CFAHCUDf.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.543Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/credit-card-B8MKwAhy.js"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:57.563Z",
+    "timestamp": "2025-11-30T16:21:23.459Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/bundleAnalyzer-C1yhvntE.js"
   },
   {
-    "timestamp": "2025-11-30T16:09:57.677Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T16:09:58.028Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T16:10:24.413Z",
+    "timestamp": "2025-11-30T16:21:49.137Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T16:10:24.916Z",
+    "timestamp": "2025-11-30T16:21:49.990Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"

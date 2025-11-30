@@ -2,10 +2,15 @@ import { EventEmitter } from "events";
 import { findOfficerInRoster, addOfficerToRoster, addDepartmentToRoster } from "./officerRoster";
 import { findDepartmentUrlsByState, getAllDepartmentUrls } from "./policeUrls";
 import { rateLimitTracker } from "./rateLimitTracker";
-import { generateGeminiStructuredResponse, isGeminiAvailable } from './gemini';
+import { generateGeminiStructuredResponse, isGeminiAvailable, isGeminiRateLimited } from './gemini';
 import { isClaudeAvailable, generateClaudeJSON, callClaude } from "./claude";
 import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 import { searchOfficerRecords as webSearchOfficerRecords, unifiedSearch, isWebSearchAvailable } from './webSearchService';
+
+// Helper to check if Gemini is truly available (has key AND not rate limited)
+function canUseGemini(): boolean {
+  return isGeminiAvailable() && !isGeminiRateLimited();
+}
 
 // In-memory cache for officer search results
 const searchCache = new Map<string, { result: OfficerSearchResult; timestamp: number }>();
@@ -529,17 +534,19 @@ export async function searchOfficerInformation(
     emitProgress(2, 'AI Retrieval', 'Searching databases and public records...');
     
     let geminiData: GeminiRawData = {};
-    if (isGeminiAvailable()) {
+    if (canUseGemini()) {
       try {
         geminiData = await geminiDataHarvest(normalizedName, state, departmentType, priorityUrls);
-      } catch (geminiError) {
-        console.error('[Officer Search] Gemini harvest failed, trying Groq fallback:', geminiError);
+      } catch (geminiError: any) {
+        console.error('[Officer Search] Gemini harvest failed, trying Groq fallback:', geminiError?.message || geminiError);
         if (isGroqAvailable()) {
+          console.log('[Officer Search] Switching to Groq fallback...');
           geminiData = await groqDataHarvest(normalizedName, state, departmentType);
         }
       }
     } else if (isGroqAvailable()) {
-      console.log('[Officer Search] Gemini not available, using Groq fallback');
+      const reason = isGeminiRateLimited() ? 'rate limited' : 'not configured';
+      console.log(`[Officer Search] Gemini ${reason}, using Groq fallback`);
       geminiData = await groqDataHarvest(normalizedName, state, departmentType);
     } else {
       console.log('[Officer Search] No AI providers available for officer search');
@@ -578,17 +585,19 @@ export async function searchOfficerInformation(
       
       // Perform broadened search with fallback
       let broadenedData: GeminiRawData = {};
-      if (isGeminiAvailable()) {
+      if (canUseGemini()) {
         try {
           broadenedData = await geminiDataHarvestBroadened(normalizedName, state);
-        } catch (error) {
-          console.error('[Officer Search] Broadened Gemini search failed, trying Groq:', error);
+        } catch (error: any) {
+          console.error('[Officer Search] Broadened Gemini search failed, trying Groq:', error?.message || error);
           if (isGroqAvailable()) {
+            console.log('[Officer Search] Switching to Groq for broadened search...');
             broadenedData = await groqDataHarvest(normalizedName, state, departmentType);
           }
         }
       } else if (isGroqAvailable()) {
-        console.log('[Officer Search] Gemini unavailable for broadened search, using Groq');
+        const reason = isGeminiRateLimited() ? 'rate limited' : 'not configured';
+        console.log(`[Officer Search] Gemini ${reason} for broadened search, using Groq`);
         broadenedData = await groqDataHarvest(normalizedName, state, departmentType);
       }
       

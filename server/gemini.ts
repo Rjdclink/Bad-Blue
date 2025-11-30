@@ -40,11 +40,65 @@ function getGeminiClient(): GoogleGenAI {
   return geminiClient;
 }
 
+// Custom error class for rate limiting
+export class GeminiRateLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GeminiRateLimitError';
+  }
+}
+
+// Track rate limit state with adaptive cooldown
+let geminiRateLimited = false;
+let rateLimitResetTime = 0;
+let consecutiveFailures = 0;
+const BASE_COOLDOWN_MS = 30000; // 30 seconds base cooldown
+const MAX_COOLDOWN_MS = 300000; // 5 minutes max cooldown
+
+export function isGeminiRateLimited(): boolean {
+  if (geminiRateLimited && Date.now() < rateLimitResetTime) {
+    return true;
+  }
+  // Reset if cooldown has passed
+  if (geminiRateLimited && Date.now() >= rateLimitResetTime) {
+    geminiRateLimited = false;
+    console.log('[Gemini] Rate limit cooldown expired, Gemini available again');
+  }
+  return false;
+}
+
+// Call this on successful Gemini requests to reset failure tracking
+function recordGeminiSuccess(): void {
+  if (consecutiveFailures > 0) {
+    console.log('[Gemini] Request successful, resetting failure count');
+  }
+  consecutiveFailures = 0;
+  geminiRateLimited = false;
+}
+
+// Call this on rate limit errors to track and set cooldown
+function recordGeminiRateLimit(): void {
+  consecutiveFailures++;
+  geminiRateLimited = true;
+  // Exponential backoff with jitter
+  const cooldownMs = Math.min(
+    BASE_COOLDOWN_MS * Math.pow(2, consecutiveFailures - 1) + Math.random() * 5000,
+    MAX_COOLDOWN_MS
+  );
+  rateLimitResetTime = Date.now() + cooldownMs;
+  console.warn(`[Gemini] Rate limit #${consecutiveFailures} - cooldown for ${Math.round(cooldownMs / 1000)}s`);
+}
+
 export async function callGemini(
   prompt: string,
   options: GeminiOptions = {},
-  maxTokens: number
+  maxTokens: number = 8192
 ): Promise<string> {
+  // Check if we're in rate limit cooldown
+  if (isGeminiRateLimited()) {
+    throw new GeminiRateLimitError('Gemini is rate limited - use fallback provider');
+  }
+
   const modelName = options.model || "gemini-2.5-flash";
   const client = getGeminiClient();
 
@@ -60,17 +114,40 @@ export async function callGemini(
     config.responseMimeType = "application/json";
   }
 
-  const response = await client.models.generateContent({
-    model: modelName,
-    contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-    config,
-  });
+  try {
+    const response = await client.models.generateContent({
+      model: modelName,
+      contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+      config,
+    });
 
-  const text = response.text || "";
+    const text = response.text || "";
 
-  if (!text) throw new Error("❌ Empty response from Gemini");
+    if (!text) throw new Error("❌ Empty response from Gemini");
 
-  return text;
+    // Record successful call to reset failure tracking
+    recordGeminiSuccess();
+    
+    return text;
+  } catch (error: any) {
+    const errorMessage = error?.message || String(error);
+    
+    // Detect rate limiting errors
+    if (
+      errorMessage.includes('429') ||
+      errorMessage.includes('RESOURCE_EXHAUSTED') ||
+      errorMessage.includes('rate limit') ||
+      errorMessage.includes('quota') ||
+      errorMessage.includes('Too Many Requests')
+    ) {
+      // Use adaptive cooldown tracking
+      recordGeminiRateLimit();
+      throw new GeminiRateLimitError(`Gemini rate limited: ${errorMessage}`);
+    }
+    
+    // Re-throw other errors
+    throw error;
+  }
 }
 
 export async function generateGeminiStructuredResponse<T = any>(

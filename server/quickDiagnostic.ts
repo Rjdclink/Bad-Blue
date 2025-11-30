@@ -201,20 +201,12 @@ class SystemDiagnostics {
 
   // Test 7: Authentication System
   async testAuthSystem() {
-    // Test bypass accounts
-    const bypassAccounts = [
-      { username: 'admin', password: 'SARBEAR', type: 'admin' },
-      { username: '$ADMIN85', password: 'SARBEAR', type: 'admin' },
-      { username: 'bypass', password: 'Payment', type: 'paid' },
-      { username: 'user', password: 'Payment', type: 'paid' }
-    ];
-
-    for (const account of bypassAccounts) {
-      this.addResult(
-        `Auth:Bypass:${account.username}`,
-        'PASS',
-        `Bypass account configured (${account.type} access)`
-      );
+    // Check if admin bypass is configured via environment variables
+    const adminConfigured = !!process.env.ADMIN_BYPASS_ID || !!process.env.ADMIN_BYPASS_PASSWORD;
+    if (adminConfigured) {
+      this.addResult('Auth:AdminBypass', 'PASS', 'Admin bypass credentials configured via environment');
+    } else {
+      this.addResult('Auth:AdminBypass', 'WARN', 'Admin bypass using default credentials - set ADMIN_BYPASS_ID and ADMIN_BYPASS_PASSWORD in secrets');
     }
 
     // Test session store

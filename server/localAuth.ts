@@ -83,12 +83,12 @@ export function setupLocalStrategy() {
       { usernameField: 'email', passwordField: 'password' }, // Use email instead of username
       async (email, password, done) => {
         try {
-          // Special case: Admin bypass (requires specific password)
-          const adminBypassId = process.env.ADMIN_BYPASS_ID || "$ADMIN85";
-          const adminBypassPassword = process.env.ADMIN_BYPASS_PASSWORD || "SARBEAR";
+          // Special case: Admin bypass (requires environment variables - no fallback defaults for security)
+          const adminBypassId = process.env.ADMIN_BYPASS_ID;
+          const adminBypassPassword = process.env.ADMIN_BYPASS_PASSWORD;
           
-          // Allow both $ADMIN85 and admin (for login form compatibility)
-          if (email === adminBypassId || email === "admin") {
+          // Only allow admin bypass if credentials are explicitly configured - ONLY matches env var value, no "admin" fallback
+          if (adminBypassId && adminBypassPassword && email === adminBypassId) {
             // Verify admin password
             if (password !== adminBypassPassword) {
               return done(null, false, { message: "Invalid admin credentials" });
@@ -129,12 +129,17 @@ export function setupLocalStrategy() {
           }
 
           // Special case: Payment bypass (allows paid access without admin privileges)
-          // Accept both "Bypass" and "bypass" for better usability
-          if (email === "Bypass" || email === "bypass" || email === "user") {
+          // Requires environment variables - no hardcoded defaults for security
+          const paymentBypassId = process.env.PAYMENT_BYPASS_ID;
+          const paymentBypassPassword = process.env.PAYMENT_BYPASS_PASSWORD;
+          
+          // Only allow payment bypass if credentials are explicitly configured
+          if (paymentBypassId && paymentBypassPassword && 
+              (email === paymentBypassId || email.toLowerCase() === paymentBypassId.toLowerCase())) {
             console.log(`[SECURITY] Payment bypass login attempt detected`);
             
             // Verify bypass password
-            if (password !== "Payment") {
+            if (password !== paymentBypassPassword) {
               console.log(`[SECURITY] Payment bypass authentication FAILED - incorrect password`);
               return done(null, false, { message: "Invalid bypass credentials" });
             }
