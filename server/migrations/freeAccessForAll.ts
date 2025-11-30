@@ -36,7 +36,7 @@ export async function runFreeAccessMigration() {
     console.error('Migration failed:', error);
     return {
       success: false,
-      message: `Migration failed: ${error.message || 'Unknown error'}`,
+      message: `Migration failed: ${(error as Error).message || 'Unknown error'}`,
       usersUpdated: 0
     };
   }

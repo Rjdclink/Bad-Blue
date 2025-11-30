@@ -96,7 +96,7 @@ export default function History() {
                         #{lookup.badgeNumber || 'Unknown'}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {format(new Date(lookup.createdAt), 'MMM dd, yyyy')}
+                        {lookup.createdAt ? format(new Date(lookup.createdAt), 'MMM dd, yyyy') : 'Unknown date'}
                       </div>
                     </div>
                   </CardHeader>

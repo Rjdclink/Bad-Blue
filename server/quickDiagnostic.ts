@@ -3,7 +3,8 @@
 
 import { db } from './db';
 import { emailTransporter } from './emailService';
-import { initializeGroq } from './groq';
+import { getGroqClient } from './groq';
+import { callGemini } from './gemini';
 import Stripe from 'stripe';
 import { config as dotenvConfig } from 'dotenv';
 import { existsSync, mkdirSync } from 'fs';
@@ -78,11 +79,13 @@ class SystemDiagnostics {
           await db.execute(`SELECT COUNT(*) FROM ${table}`);
           this.addResult(`Database:Table:${table}`, 'PASS', `Table ${table} is accessible`);
         } catch (err) {
-          this.addResult(`Database:Table:${table}`, 'FAIL', `Cannot access table: ${err.message}`);
+          const message = err instanceof Error ? err.message : String(err);
+          this.addResult(`Database:Table:${table}`, 'FAIL', `Cannot access table: ${message}`);
         }
       }
     } catch (err) {
-      this.addResult('Database:Connection', 'FAIL', `Database connection failed: ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.addResult('Database:Connection', 'FAIL', `Database connection failed: ${message}`);
     }
   }
 
@@ -98,7 +101,8 @@ class SystemDiagnostics {
       await emailTransporter.verify();
       this.addResult('Email:SMTP', 'PASS', 'SMTP connection verified');
     } catch (err) {
-      this.addResult('Email:SMTP', 'FAIL', `Email service error: ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.addResult('Email:SMTP', 'FAIL', `Email service error: ${message}`);
     }
   }
 
@@ -109,7 +113,7 @@ class SystemDiagnostics {
       if (!process.env.GROQ_API_KEY) {
         this.addResult('AI:Groq', 'FAIL', 'GROQ_API_KEY not configured');
       } else {
-        const groq = initializeGroq();
+        const groq = getGroqClient();
         const response = await groq.chat.completions.create({
           messages: [{ role: 'user', content: 'Respond with OK' }],
           model: 'llama-3.2-3b-preview',
@@ -120,7 +124,8 @@ class SystemDiagnostics {
         }
       }
     } catch (err) {
-      this.addResult('AI:Groq', 'FAIL', `Groq API error: ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.addResult('AI:Groq', 'FAIL', `Groq API error: ${message}`);
     }
 
     // Test Gemini
@@ -128,13 +133,14 @@ class SystemDiagnostics {
       if (!process.env.GEMINI_API_KEY) {
         this.addResult('AI:Gemini', 'WARN', 'GEMINI_API_KEY not configured');
       } else {
-        const result = await console.log('Respond with OK');
-        if (result.includes('OK')) {
+        const result = await callGemini('Respond with OK', {}, 10);
+        if (result && result.includes('OK')) {
           this.addResult('AI:Gemini', 'PASS', 'Gemini API is working');
         }
       }
     } catch (err) {
-      this.addResult('AI:Gemini', 'WARN', `Gemini API error (using Groq fallback): ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.addResult('AI:Gemini', 'WARN', `Gemini API error (using Groq fallback): ${message}`);
     }
   }
 
@@ -162,7 +168,8 @@ class SystemDiagnostics {
         this.addResult('Payment:Products', 'WARN', 'No Stripe products found');
       }
     } catch (err) {
-      this.addResult('Payment:Stripe', 'FAIL', `Stripe error: ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.addResult('Payment:Stripe', 'FAIL', `Stripe error: ${message}`);
     }
   }
 
@@ -185,7 +192,8 @@ class SystemDiagnostics {
           mkdirSync(fullPath, { recursive: true });
           this.addResult(`Storage:${dir}`, 'PASS', `Directory created: ${dir}`);
         } catch (err) {
-          this.addResult(`Storage:${dir}`, 'FAIL', `Cannot create directory: ${err.message}`);
+          const message = err instanceof Error ? err.message : String(err);
+          this.addResult(`Storage:${dir}`, 'FAIL', `Cannot create directory: ${message}`);
         }
       }
     }
@@ -217,7 +225,8 @@ class SystemDiagnostics {
         this.addResult('Auth:Sessions', 'WARN', 'Using in-memory session store (not for production)');
       }
     } catch (err) {
-      this.addResult('Auth:Sessions', 'WARN', `Session store issue: ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.addResult('Auth:Sessions', 'WARN', `Session store issue: ${message}`);
     }
   }
 
@@ -253,10 +262,11 @@ class SystemDiagnostics {
           );
         }
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         this.addResult(
           `API:${endpoint.path}`,
           endpoint.critical ? 'FAIL' : 'WARN',
-          `Cannot reach endpoint: ${err.message}`
+          `Cannot reach endpoint: ${message}`
         );
       }
     }

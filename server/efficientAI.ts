@@ -11,6 +11,7 @@ import {
   AIProvider,
   TaskPriority,
   TaskComplexity,
+  UsageContext,
   type AITaskMetadata,
   type TokenBudget,
 } from './aiTokenGovernor';
@@ -79,6 +80,7 @@ export const EfficientWorkerAI = {
       complexity: TaskComplexity.MODERATE,
       isUserFacing: false,
       allowDeferral: issue.severity <= 2,
+      context: UsageContext.AUTONOMOUS,
     };
 
     // Get token budget
@@ -205,6 +207,7 @@ export const EfficientWorkerAI = {
       complexity: TaskComplexity.LIGHTWEIGHT,
       isUserFacing: false,
       allowDeferral: true,
+      context: UsageContext.AUTONOMOUS,
     };
 
     const budget = await getBudgetForTask(taskMetadata);
@@ -258,6 +261,7 @@ export const EfficientUserAI = {
       complexity: maxComplexity,
       isUserFacing: true,
       allowDeferral: false, // Never defer user requests
+      context: UsageContext.USER,
     };
 
     const budget = await getBudgetForTask(taskMetadata);

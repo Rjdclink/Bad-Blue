@@ -123,9 +123,9 @@ export function setupLocalStrategy() {
             }
             
             return done(null, {
-              claims: { sub: user.id, email: user.email || "brclink1985@gmail.com", first_name: user.firstName, last_name: user.lastName },
+              claims: { sub: user.id, email: user.email || "brclink1985@gmail.com", firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
               isAdminBypass: true,
-            });
+            } as Express.User);
           }
 
           // Special case: Payment bypass (allows paid access without admin privileges)
@@ -170,9 +170,9 @@ export function setupLocalStrategy() {
             console.log(`[SECURITY] Payment bypass login complete for user: ${user.id}`);
             
             return done(null, {
-              claims: { sub: user.id, email: user.email || "bypass@badblue.internal", first_name: user.firstName, last_name: user.lastName },
+              claims: { sub: user.id, email: user.email || "bypass@badblue.internal", firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
               isAdminBypass: false, // Not admin - just payment bypass
-            });
+            } as Express.User);
           }
 
           // Normal email/password authentication
@@ -199,9 +199,9 @@ export function setupLocalStrategy() {
           await storage.updateUserLastLogin(authAccount.userId);
 
           return done(null, {
-            claims: { sub: user.id, email: user.email, first_name: user.firstName, last_name: user.lastName },
+            claims: { sub: user.id, email: user.email ?? undefined, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
             isAdminBypass: false,
-          });
+          } as Express.User);
         } catch (error) {
           return done(error);
         }

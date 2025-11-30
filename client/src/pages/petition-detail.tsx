@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Users, MapPin, Building2, Share2, CheckCircle2, X } from "lucide-react";
 import { SEOHead } from "@/components/SEOHead";
+import type { Petition } from "@shared/schema";
 
 const signatureSchema = z.object({
   fullName: z.string().min(2, "Full name is required"),
@@ -37,7 +38,7 @@ export default function PetitionDetail() {
 
   const slug = params?.slug;
 
-  const { data: petition, isLoading } = useQuery({
+  const { data: petition, isLoading } = useQuery<Petition>({
     queryKey: ['/api/petition-public', slug],
     enabled: !!slug,
   });
@@ -141,6 +142,7 @@ export default function PetitionDetail() {
   };
 
   const createOnChangeOrg = () => {
+    if (!petition) return;
     const title = encodeURIComponent(`Demand Resignation: Officer ${petition.officerName}`);
     const description = encodeURIComponent(petition.offenseDescriptionRedrafted || petition.offenseDescriptionOriginal);
     const changeOrgUrl = `https://www.change.org/start-a-petition?title=${title}&description=${description}`;

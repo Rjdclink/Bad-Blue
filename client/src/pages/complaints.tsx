@@ -7,12 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { Shield, Plus, FileText, Lock, Calendar, MapPin, TrendingUp, ArrowLeft } from "lucide-react";
+import { Shield, Plus, FileText, Calendar, MapPin, ArrowLeft } from "lucide-react";
 import type { Complaint } from "@shared/schema";
 import { format } from "date-fns";
 
 export default function Complaints() {
-  const { user, isLoading: authLoading, isPremiumTier } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
 
   // Redirect if not authenticated
@@ -85,9 +85,7 @@ export default function Complaints() {
               Complaints
             </h1>
             <p className="text-muted-foreground">
-              {isPremiumTier 
-                ? "Track and manage your filed complaints"
-                : "View your filed complaints. Upgrade to Premium for status tracking."}
+              Track and manage your filed complaints
             </p>
           </div>
           <div className="flex gap-3">
@@ -103,30 +101,6 @@ export default function Complaints() {
           </div>
         </div>
 
-        {/* Premium Upsell for Basic Users */}
-        {!isPremiumTier && (
-          <Card className="mb-6 border-primary/20 bg-primary/5">
-            <CardContent className="p-6">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <TrendingUp className="w-6 h-6 text-primary" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-lg mb-2">Unlock Complaint Tracking with Premium</h3>
-                  <p className="text-muted-foreground mb-4">
-                    See real-time status updates, track case progress, and access detailed analytics for your complaints. Get bulk upload capabilities and priority support.
-                  </p>
-                  <Button asChild data-testid="button-upgrade-premium">
-                    <Link href="/subscription">
-                      <Lock className="w-4 h-4 mr-2" />
-                      Upgrade to Premium - $19.99/mo
-                    </Link>
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         {/* Complaints List */}
         {isLoading ? (
@@ -146,11 +120,9 @@ export default function Complaints() {
                         <CardTitle className="text-xl">
                           {complaint.officerName}
                         </CardTitle>
-                        {isPremiumTier && (
-                          <Badge className={`${getStatusColor(complaint.status)} border`}>
-                            {getStatusLabel(complaint.status)}
-                          </Badge>
-                        )}
+                        <Badge className={`${getStatusColor(complaint.status)} border`}>
+                          {getStatusLabel(complaint.status)}
+                        </Badge>
                       </div>
                       <CardDescription className="flex flex-wrap gap-4 text-sm">
                         {complaint.officerBadge && (
@@ -165,16 +137,10 @@ export default function Complaints() {
                         </span>
                         <span className="flex items-center gap-1">
                           <MapPin className="w-3 h-3" />
-                          {complaint.incidentLocation}
+                          {complaint.city}, {complaint.state}
                         </span>
                       </CardDescription>
                     </div>
-                    {!isPremiumTier && (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Lock className="w-4 h-4" />
-                        <span>Premium Feature</span>
-                      </div>
-                    )}
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -191,7 +157,7 @@ export default function Complaints() {
                       <p className="text-sm line-clamp-3">{complaint.description}</p>
                     </div>
 
-                    {isPremiumTier && complaint.statusUpdatedAt && (
+                    {complaint.statusUpdatedAt && (
                       <div className="pt-3 border-t text-sm text-muted-foreground">
                         Last updated: {format(new Date(complaint.statusUpdatedAt), 'MMM dd, yyyy h:mm a')}
                       </div>
