@@ -10,7 +10,6 @@ import { sendAdminEmail } from "./emailService";
 import {
   generateLegalDocument,
   searchPublicRecords,
-  analyzePatternsAndLearn,
   analyzeActionability,
   analyzeLegalIssue,
   searchLawsuitFormsAndRules,
@@ -2516,6 +2515,25 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
     const { id } = req.params;
     await storage.deletePublicEvidence(id);
     res.json({ success: true });
+  }));
+
+  // ============================================
+  // SYSTEM STATUS ROUTES
+  // ============================================
+  
+  // Maintenance status - returns whether the app is in maintenance mode
+  app.get("/api/maintenance-status", asyncHandler(async (req, res) => {
+    res.json({ 
+      isMaintenanceMode: false,
+      message: null
+    });
+  }));
+  
+  // Support email endpoint
+  app.get("/api/support-email", asyncHandler(async (req, res) => {
+    res.json({ 
+      email: process.env.SUPPORT_EMAIL || 'contact.badblue@gmail.com'
+    });
   }));
 
   // Apply notFoundHandler ONLY to API routes
