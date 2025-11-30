@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SEOHead } from "@/components/SEOHead";
+import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { 
   AlertTriangle, 
   Image as ImageIcon, 
@@ -115,6 +116,7 @@ export default function EvidenceHub() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        <PageBreadcrumbs currentPageName="Evidence Hub" />
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-2 flex items-center gap-3" data-testid="text-page-title">
             <AlertTriangle className="w-8 h-8 text-destructive" />

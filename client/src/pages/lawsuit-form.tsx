@@ -15,6 +15,7 @@ import { ObjectUploader } from "@/components/ObjectUploader";
 import type { UploadResult } from "@uppy/core";
 import { FormAssistant } from "@/components/FormAssistant";
 import { SEOHead } from "@/components/SEOHead";
+import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 
 // Component for rendering the actual lawsuit document preview from backend
 function LawsuitDocumentPreview({
@@ -784,6 +785,7 @@ export default function LawsuitForm() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-12">
+        <PageBreadcrumbs currentPageName="Generate Lawsuit" />
         <div className="mb-8">
           <div className="flex items-center gap-2 mb-2">
             <Scale className="w-8 h-8 text-primary" />

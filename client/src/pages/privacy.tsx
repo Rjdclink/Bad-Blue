@@ -1,6 +1,7 @@
 import { Shield } from "lucide-react";
 import { Link } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
+import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 
 export default function Privacy() {
@@ -30,6 +31,7 @@ export default function Privacy() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-12">
+        <PageBreadcrumbs currentPageName="Privacy Policy" />
         <h1 className="text-4xl font-bold mb-8">Privacy Policy</h1>
         <p className="text-muted-foreground mb-8">Last Updated: November 30, 2025</p>
 

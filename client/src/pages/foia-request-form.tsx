@@ -14,6 +14,7 @@ import { useClientSession } from "@/contexts/ClientSessionContext";
 import { FormAssistant } from "@/components/FormAssistant";
 import { FOIA_REQUEST_PRICING_CENTS } from "@shared/schema";
 import { SEOHead } from "@/components/SEOHead";
+import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 
 const US_STATES = [
   { code: 'AL', name: 'Alabama' }, { code: 'AK', name: 'Alaska' }, { code: 'AZ', name: 'Arizona' },
@@ -300,6 +301,7 @@ export default function FOIARequestForm() {
 
       <main className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto space-y-6">
+          <PageBreadcrumbs currentPageName="FOIA Request" />
           <div>
             <h1 className="text-3xl font-bold mb-2">FOIA Records Request</h1>
             <p className="text-muted-foreground">

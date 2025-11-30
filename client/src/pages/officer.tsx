@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Shield, MapPin, Calendar, ArrowLeft, FileText, Building2 } from "lucide-react";
 import type { BadgeLookup } from "@shared/schema";
 import { SEOHead } from "@/components/SEOHead";
+import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 
 export default function OfficerInfo() {
   const { id } = useParams();
@@ -108,6 +109,7 @@ export default function OfficerInfo() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-8">
+        <PageBreadcrumbs currentPageName="Officer Search" />
         {/* Back Button */}
         <Button variant="ghost" asChild className="mb-6" data-testid="button-back">
           <Link href="/">

@@ -13,6 +13,7 @@ import { ObjectUploader } from "@/components/ObjectUploader";
 import type { UploadResult } from "@uppy/core";
 import { FormAssistant } from "@/components/FormAssistant";
 import { SEOHead } from "@/components/SEOHead";
+import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 
 // Component for rendering the actual complaint document preview from backend
 function ComplaintDocumentPreview({
@@ -589,6 +590,7 @@ export default function ComplaintForm() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-12">
+        <PageBreadcrumbs currentPageName="File Complaint" />
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-2">File a Complaint</h1>
           <p className="text-muted-foreground">

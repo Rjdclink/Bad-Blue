@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FileText, Users, AlertTriangle, ArrowRight, ArrowLeft } from "lucide-react";
 import { SEOHead } from "@/components/SEOHead";
+import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 
 export default function Petitions() {
   const { data: petitions, isLoading } = useQuery<any[]>({
@@ -55,6 +56,7 @@ export default function Petitions() {
         pageType="service"
       />
       <div className="max-w-4xl mx-auto space-y-6">
+        <PageBreadcrumbs currentPageName="Petitions" />
         {/* Back Button */}
         <Link href="/">
           <Button variant="ghost" data-testid="button-back">

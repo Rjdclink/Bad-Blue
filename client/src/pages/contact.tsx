@@ -14,6 +14,7 @@ import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
+import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 
 const contactFormSchema = z.object({
@@ -143,6 +144,7 @@ export default function Contact() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-12">
+        <PageBreadcrumbs currentPageName="Contact Us" />
         {/* Hero Section - What BadBlue Does */}
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold mb-4">Contact BadBlue</h1>
