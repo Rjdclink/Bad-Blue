@@ -1,0 +1,86 @@
+[
+  {
+    "timestamp": "2025-11-30T18:09:05.333Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "IL",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verified information available to produce a comprehensive report on Officer Jason Dyke. Additional research and data collection required for meaningful accountability assessment."
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:12:20.850Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "AZ",
+        "category": "officer_search"
+      },
+      "content": "Joe Arpaio served as Maricopa County Sheriff with a highly controversial record of racial profiling and aggressive law enforcement tactics. He was ultimately held legally accountable through federal court intervention and civil rights litigation."
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:12:36.668Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "AZ",
+        "category": "officer_search"
+      },
+      "content": "Philip Brailsford was a Mesa Police Department officer involved in a highly controversial fatal shooting of Daniel Shaver in 2016. He was initially fired, then briefly reinstated to receive pension benefits, and was acquitted of criminal charges related to the incident."
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:12:41.718Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "MN",
+        "category": "officer_search"
+      },
+      "content": "Derek Chauvin was a Minneapolis police officer convicted of murdering George Floyd in 2020. His actions sparked nationwide protests and significant legal consequences, including criminal convictions and civil penalties."
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:12:57.536Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "AZ",
+        "category": "officer_search"
+      },
+      "content": "Border Patrol Agent Lonnie Swartz was involved in a controversial cross-border shooting of a teenage Mexican citizen. He was acquitted of murder charges but faced significant civil litigation from the victim's family."
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:13:00.460Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "NY",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verified data to generate a comprehensive report about Officer Byron Mitchell from NY. Additional research and official records review required."
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:13:03.684Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "PA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verified data to generate a comprehensive report about Officer Andrew Pollard. Additional research and official records review required to substantiate any claims."
+    }
+  }
+]

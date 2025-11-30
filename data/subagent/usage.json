@@ -1,354 +1,180 @@
 [
   {
-    "timestamp": "2025-11-30T17:54:11.920Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:11.954Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:11.961Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/progress-DDYmeNGR.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:11.972Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:11.974Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/map-pin-l9-xidT_.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:11.980Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.009Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.011Z",
+    "timestamp": "2025-11-30T18:11:55.511Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/dollar-sign-CvgOWdSx.js"
   },
   {
-    "timestamp": "2025-11-30T17:54:12.018Z",
+    "timestamp": "2025-11-30T18:11:55.540Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/external-link-ByCvNBaf.js"
   },
   {
-    "timestamp": "2025-11-30T17:54:12.030Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scroll-area-BSFrzjFF.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.039Z",
+    "timestamp": "2025-11-30T18:11:55.572Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/send-Dyuf-Q1L.js"
   },
   {
-    "timestamp": "2025-11-30T17:54:12.062Z",
+    "timestamp": "2025-11-30T18:11:55.602Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/circle-check-big-IucwP7W7.js"
   },
   {
-    "timestamp": "2025-11-30T17:54:12.068Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.073Z",
+    "timestamp": "2025-11-30T18:11:55.631Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/mail-B5XkwkcA.js"
   },
   {
-    "timestamp": "2025-11-30T17:54:12.084Z",
+    "timestamp": "2025-11-30T18:11:55.656Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/SEOHead-b0nf3qYO.js"
   },
   {
-    "timestamp": "2025-11-30T17:54:12.086Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/image-D3s3Sulp.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.093Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/users-CFAHCUDf.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.118Z",
+    "timestamp": "2025-11-30T18:11:55.690Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/credit-card-B8MKwAhy.js"
   },
   {
-    "timestamp": "2025-11-30T17:54:12.123Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/home-Dcw_-9f9.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.127Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/button-D4bqKO-K.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.142Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/dropdown-menu-DuH9md59.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.149Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-Qxa7_5PZ.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.171Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-CksQyhPZ.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.178Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/select-BCZxAyUc.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.181Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Combination-BxgkiBe1.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.202Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-BAZECk9-.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.206Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-BdQq_4o_.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.225Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/check-CdrMYR9S.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.230Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useMutation-Mjqxl1or.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.235Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/textarea-BJLBH-8F.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.259Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/checkbox-B6rcMTgW.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.262Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/chevron-up-b1PxxVfD.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.277Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useFaqSchema--GUw8NK0.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.287Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scale-OSfZKrf3.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.290Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/loader-circle-Dhu3ITQp.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.308Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.318Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-x-BaY5SahM.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.328Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-alert-DXslWFLw.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.343Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.345Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/input-DQfs2i3p.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.374Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.377Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/progress-DDYmeNGR.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.384Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.394Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/map-pin-l9-xidT_.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.398Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.429Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.439Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/external-link-ByCvNBaf.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.447Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scroll-area-BSFrzjFF.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.450Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/send-Dyuf-Q1L.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.485Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-big-IucwP7W7.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.495Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.500Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/mail-B5XkwkcA.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.511Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/users-CFAHCUDf.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.541Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/credit-card-B8MKwAhy.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:54:12.586Z",
+    "timestamp": "2025-11-30T18:11:56.268Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T17:54:12.856Z",
+    "timestamp": "2025-11-30T18:11:56.428Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T17:54:29.025Z",
-    "action": "POST",
-    "tokens": 0,
-    "path": "/api/officer-search"
+    "timestamp": "2025-11-30T18:12:20.847Z",
+    "action": "learning_event",
+    "provider": "internal",
+    "tokens": 62,
+    "category": "officer_search",
+    "state": "AZ"
   },
   {
-    "timestamp": "2025-11-30T17:54:39.885Z",
+    "timestamp": "2025-11-30T18:12:22.933Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T17:54:41.066Z",
+    "timestamp": "2025-11-30T18:12:23.271Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:12:31.661Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/officer-search"
+  },
+  {
+    "timestamp": "2025-11-30T18:12:36.665Z",
+    "action": "learning_event",
+    "provider": "internal",
+    "tokens": 68,
+    "category": "officer_search",
+    "state": "AZ"
+  },
+  {
+    "timestamp": "2025-11-30T18:12:36.896Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/officer-search"
+  },
+  {
+    "timestamp": "2025-11-30T18:12:41.716Z",
+    "action": "learning_event",
+    "provider": "internal",
+    "tokens": 55,
+    "category": "officer_search",
+    "state": "MN"
+  },
+  {
+    "timestamp": "2025-11-30T18:12:52.346Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/officer-search"
+  },
+  {
+    "timestamp": "2025-11-30T18:12:54.237Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:12:54.699Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:12:57.534Z",
+    "action": "learning_event",
+    "provider": "internal",
+    "tokens": 54,
+    "category": "officer_search",
+    "state": "AZ"
+  },
+  {
+    "timestamp": "2025-11-30T18:12:57.786Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/officer-search"
+  },
+  {
+    "timestamp": "2025-11-30T18:13:00.439Z",
+    "action": "learning_event",
+    "provider": "internal",
+    "tokens": 39,
+    "category": "officer_search",
+    "state": "NY"
+  },
+  {
+    "timestamp": "2025-11-30T18:13:00.928Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/officer-search"
+  },
+  {
+    "timestamp": "2025-11-30T18:13:03.682Z",
+    "action": "learning_event",
+    "provider": "internal",
+    "tokens": 44,
+    "category": "officer_search",
+    "state": "PA"
+  },
+  {
+    "timestamp": "2025-11-30T18:13:26.429Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:13:27.923Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:13:57.323Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T18:14:00.837Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"

@@ -24,6 +24,7 @@ import {
   TaskPriority,
 } from './aiProvider';
 import { unifiedSearch, searchOfficerRecords, searchTechnicalGuidance, isWebSearchAvailable } from './webSearchService';
+import { searchOfficerInformation } from './officerSearch';
 
 const SUBAGENT_DATA_DIR = path.join(process.cwd(), 'data', 'subagent');
 const COMMAND_LOG = path.join(SUBAGENT_DATA_DIR, 'commands.log');
@@ -905,18 +906,53 @@ export async function processSubAgentCommand(opts: {
     switch (intent.action) {
       case 'search':
         if (intent.target === 'officer') {
-          const q = intent.parameters?.query || command;
-          const dbResult = await queryDatabase(
-            `SELECT * FROM officers WHERE name ILIKE $1 OR badge_number ILIKE $1 OR department ILIKE $1 LIMIT 20`,
-            [`%${q}%`]
-          );
-          if (dbResult.success) {
-            data = dbResult.data?.rows || [];
-            response = `Found ${data.length} officer(s) matching "${q}"`;
+          const parseOfficerParams = (cmd: string) => {
+            const nameMatch = cmd.match(/search officer\s+"([^"]+)"/i);
+            const stateMatch = cmd.match(/state=(\w+)/i);
+            const cityMatch = cmd.match(/city=([^\s]+)/i);
+            const countyMatch = cmd.match(/county=([^\s]+)/i);
+            const badgeMatch = cmd.match(/badge=([^\s]+)/i);
+            const typeMatch = cmd.match(/type=([^\s]+)/i);
+            return {
+              officerName: nameMatch?.[1] || intent.parameters?.query || '',
+              state: stateMatch?.[1] || undefined,
+              city: cityMatch?.[1] || undefined,
+              county: countyMatch?.[1] || undefined,
+              badgeNumber: badgeMatch?.[1] || undefined,
+              departmentType: typeMatch?.[1] as 'city' | 'state' | 'county' | 'government' | 'corrections' | undefined,
+            };
+          };
+          const params = parseOfficerParams(command);
+          
+          if (params.officerName) {
+            try {
+              const searchResult = await searchOfficerInformation({
+                officerName: params.officerName,
+                state: params.state,
+                city: params.city,
+                county: params.county,
+                departmentType: params.departmentType,
+                bypassCache: false,
+              }, `subagent_${Date.now()}`);
+              
+              data = { result: searchResult, success: true };
+              response = `Officer search completed for "${params.officerName}". Found: ${searchResult.agency || 'Agency unknown'}`;
+            } catch (searchError: any) {
+              const dbResult = await queryDatabase(
+                `SELECT * FROM officer_profiles WHERE name ILIKE $1 OR department ILIKE $1 LIMIT 20`,
+                [`%${params.officerName}%`]
+              );
+              if (dbResult.success && dbResult.data?.rows?.length > 0) {
+                data = { result: dbResult.data.rows[0], success: true };
+                response = `Found ${dbResult.data.rows.length} officer(s) matching "${params.officerName}" in database`;
+              } else {
+                data = { success: false, error: searchError?.message };
+                response = `Officer search failed: ${searchError?.message}`;
+              }
+            }
           } else {
-            const webResult = await webSearch(`law enforcement officer ${q}`, 10);
-            data = webResult;
-            response = `Web search completed, found ${webResult.length} results`;
+            response = 'Officer name is required for search';
+            data = { success: false, error: 'Officer name required' };
           }
         } else {
           const webResult = await webSearch(command, 10);

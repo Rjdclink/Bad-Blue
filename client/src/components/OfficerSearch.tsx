@@ -108,6 +108,8 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   const [officerName, setOfficerName] = useState("");
   const [state, setState] = useState("");
   const [departmentType, setDepartmentType] = useState("");
+  const [city, setCity] = useState("");
+  const [county, setCounty] = useState("");
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searchId, setSearchId] = useState<string | null>(null);
   const [progress, setProgress] = useState<{
@@ -152,7 +154,14 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   }, [searchId]);
 
   const searchMutation = useMutation({
-    mutationFn: async (data: { officerName: string; state?: string; departmentType?: string; searchId: string }) => {
+    mutationFn: async (data: { 
+      officerName: string; 
+      state?: string; 
+      departmentType?: string; 
+      city?: string;
+      county?: string;
+      searchId: string 
+    }) => {
       const response = await apiRequest("/api/officer-search", "POST", data);
 
       if (!response.ok) {
@@ -205,29 +214,40 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       return;
     }
 
-    // Validate based on officer type
-    if (!officerName.trim()) {
-  toast({
-    title: "Name required",
-    description: "Enter an officer name to search.",
-    variant: "destructive",
-  });
-  return;
-    }
-
-    if (!state) {
+    if (!departmentType) {
       toast({
-        title: "State required",
-        description: "Select a state for search.",
+        title: "Department Type required",
+        description: "Select the type of law enforcement agency.",
         variant: "destructive",
       });
       return;
     }
 
-    if (!departmentType) {
+    // Validate state for city, state, and county departments
+    if ((departmentType === "city" || departmentType === "state" || departmentType === "county") && !state) {
       toast({
-        title: "Department Type required",
-        description: "Select the type of law enforcement agency.",
+        title: "State required",
+        description: "Select a state for this type of department.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate city for city police
+    if (departmentType === "city" && !city.trim()) {
+      toast({
+        title: "City required",
+        description: "Enter the city name for city police search.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate county for county sheriff
+    if (departmentType === "county" && !county.trim()) {
+      toast({
+        title: "County required",
+        description: "Enter the county name for county sheriff search.",
         variant: "destructive",
       });
       return;
@@ -242,6 +262,8 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       officerName, 
       state: state || undefined,
       departmentType: departmentType || undefined,
+      city: city.trim() || undefined,
+      county: county.trim() || undefined,
       searchId: newSearchId,
     });
   };
@@ -292,24 +314,15 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="select-state">State</Label>
-                  <Select value={state} onValueChange={setState}>
-                    <SelectTrigger id="select-state" data-testid="select-state">
-                      <SelectValue placeholder="Select state" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {US_STATES.map((s) => (
-                        <SelectItem key={s.code} value={s.code}>
-                          {s.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
                   <Label htmlFor="select-department-type">Department Type</Label>
-                  <Select value={departmentType} onValueChange={setDepartmentType}>
+                  <Select value={departmentType} onValueChange={(value) => {
+                    setDepartmentType(value);
+                    setCity("");
+                    setCounty("");
+                    if (value === "government" || value === "corrections") {
+                      setState("");
+                    }
+                  }}>
                     <SelectTrigger id="select-department-type" data-testid="select-department-type">
                       <SelectValue placeholder="Select department type" />
                     </SelectTrigger>
@@ -322,6 +335,50 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {(departmentType === "city" || departmentType === "state" || departmentType === "county") && (
+                  <div className="space-y-2">
+                    <Label htmlFor="select-state">State</Label>
+                    <Select value={state} onValueChange={setState}>
+                      <SelectTrigger id="select-state" data-testid="select-state">
+                        <SelectValue placeholder="Select state" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {US_STATES.map((s) => (
+                          <SelectItem key={s.code} value={s.code}>
+                            {s.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {departmentType === "city" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="input-city">City</Label>
+                    <Input
+                      id="input-city"
+                      data-testid="input-city"
+                      placeholder="Enter city name (e.g., Chicago, Los Angeles)"
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                {departmentType === "county" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="input-county">County</Label>
+                    <Input
+                      id="input-county"
+                      data-testid="input-county"
+                      placeholder="Enter county name (e.g., Cook, Los Angeles)"
+                      value={county}
+                      onChange={(e) => setCounty(e.target.value)}
+                    />
+                  </div>
+                )}
 
                 <div className="flex gap-4">
                   <Button
@@ -518,6 +575,8 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                         setOfficerName("");
                         setState("");
                         setDepartmentType("");
+                        setCity("");
+                        setCounty("");
                         setProgress(null);
                         setSearchId(null);
                         if (eventSourceRef.current) {

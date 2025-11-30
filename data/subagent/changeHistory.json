@@ -61,5 +61,86 @@
       "response": "Web search completed, found 2 results",
       "success": true
     }
+  },
+  {
+    "timestamp": "2025-11-30T18:09:05.327Z",
+    "command": "search officer \"Jason Van Dyke\" state=IL city=Chicago county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Jason Van Dyke\". Found: Chicago Police Department",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:09:21.541Z",
+    "command": "search officer \"Joe Arpaio\" state=AZ city= county=Maricopa badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search failed: Officer search failed: v.toLowerCase is not a function",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:09:27.890Z",
+    "command": "search officer \"Derek Chauvin\" state=MN city=Minneapolis county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search failed: Officer search failed: v.toLowerCase is not a function",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:12:20.837Z",
+    "command": "search officer \"Joe Arpaio\" state=AZ city= county=Maricopa badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Joe Arpaio\". Found: Maricopa County Sheriff's Office, Arizona",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:12:36.663Z",
+    "command": "search officer \"Philip Brailsford\" state=AZ city=Mesa county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Philip Brailsford\". Found: Mesa Police Department, Mesa, Arizona",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:12:41.713Z",
+    "command": "search officer \"Derek Chauvin\" state=MN city=Minneapolis county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Derek Chauvin\". Found: Minneapolis Police Department",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:12:57.529Z",
+    "command": "search officer \"Lonnie Swartz\" state=AZ city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Lonnie Swartz\". Found: U.S. Border Patrol, Nogales Station, Arizona",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:13:00.404Z",
+    "command": "search officer \"Byron Mitchell\" state=NY city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Byron Mitchell\". Found: None found",
+      "success": true
+    }
+  },
+  {
+    "timestamp": "2025-11-30T18:13:03.677Z",
+    "command": "search officer \"Andrew Pollard\" state=PA city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Andrew Pollard\". Found: None found",
+      "success": true
+    }
   }
 ]
