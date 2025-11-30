@@ -1,86 +1,44 @@
 [
   {
-    "timestamp": "2025-11-30T09:40:19.287Z",
+    "timestamp": "2025-11-30T09:46:26.608Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
+    "path": "/assets/scale-OSfZKrf3.js"
   },
   {
-    "timestamp": "2025-11-30T09:40:19.468Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-CksQyhPZ.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:40:19.675Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useFaqSchema--GUw8NK0.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:40:19.730Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:40:19.815Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T09:40:19.856Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
-  },
-  {
-    "timestamp": "2025-11-30T09:40:20.054Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T09:40:20.258Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T09:40:20.581Z",
+    "timestamp": "2025-11-30T09:46:26.618Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/bundleAnalyzer-C1yhvntE.js"
   },
   {
-    "timestamp": "2025-11-30T09:40:42.552Z",
+    "timestamp": "2025-11-30T09:46:26.642Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T09:46:26.991Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T09:46:27.009Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T09:46:27.027Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
   },
   {
-    "timestamp": "2025-11-30T09:40:48.918Z",
+    "timestamp": "2025-11-30T09:46:27.261Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T09:40:49.502Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T09:41:19.238Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T09:41:20.501Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/api/support-email"
   }
 ]
