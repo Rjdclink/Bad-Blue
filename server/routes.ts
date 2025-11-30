@@ -1,6 +1,22 @@
 // API Routes - BadBlue
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
+
+// Extend Express types for authentication
+declare global {
+  namespace Express {
+    interface User {
+      claims?: {
+        sub: string;
+        email?: string;
+        firstName?: string;
+        lastName?: string;
+      };
+      id?: string;
+      isAdmin?: boolean;
+    }
+  }
+}
 import Stripe from "stripe";
 import multer from "multer";
 import { z } from "zod";
@@ -1564,7 +1580,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const petitionService = await import('./petitionService');
   
   // Create new petition workflow
-  app.post('/api/petition-workflow', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const workflowSchema = z.object({
       city: z.string().min(2, "City name is required"),
       state: z.string().min(2, "State is required"),
@@ -1594,7 +1610,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Get user's petition workflows
-  app.get('/api/petition-workflows', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.get('/api/petition-workflows', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.claims?.sub;
     if (!userId) {
       return res.status(401).json({ message: "User ID required" });
@@ -1605,7 +1621,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Get specific workflow details
-  app.get('/api/petition-workflow/:id', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.get('/api/petition-workflow/:id', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const workflow = await petitionService.getPetitionWorkflow(id);
     
@@ -1630,7 +1646,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Discover data sources for resident harvesting
-  app.post('/api/petition-workflow/:id/discover-sources', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow/:id/discover-sources', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const workflow = await petitionService.getPetitionWorkflow(id);
     
@@ -1656,7 +1672,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Add signers manually or via harvesting
-  app.post('/api/petition-workflow/:id/signers', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow/:id/signers', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     
     const signerSchema = z.object({
@@ -1682,7 +1698,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Bulk add signers
-  app.post('/api/petition-workflow/:id/signers/bulk', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow/:id/signers/bulk', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const { signers } = req.body;
     
@@ -1715,7 +1731,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Generate petition content using AI
-  app.post('/api/petition-workflow/:id/generate', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow/:id/generate', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const workflow = await petitionService.getPetitionWorkflow(id);
     
@@ -1733,7 +1749,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Discover submission channels
-  app.post('/api/petition-workflow/:id/discover-channels', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow/:id/discover-channels', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const workflow = await petitionService.getPetitionWorkflow(id);
     
@@ -1751,7 +1767,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Submit petition to city council
-  app.post('/api/petition-workflow/:id/submit', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow/:id/submit', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const workflow = await petitionService.getPetitionWorkflow(id);
     
@@ -1773,7 +1789,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Get signature threshold calculation
-  app.get('/api/petition-workflow/calculate-threshold', asyncHandler(async (req, res) => {
+  app.get('/api/petition-workflow/calculate-threshold', asyncHandler(async (req: Request, res: Response) => {
     const { population } = req.query;
     
     if (!population) {
@@ -1796,7 +1812,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Harvest residents from free public sources
-  app.post('/api/petition-workflow/:id/harvest', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow/:id/harvest', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const workflow = await petitionService.getPetitionWorkflow(id);
     
@@ -1822,7 +1838,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Get harvested signers for a workflow
-  app.get('/api/petition-workflow/:id/harvested-signers', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.get('/api/petition-workflow/:id/harvested-signers', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     
     const signers = await petitionService.getHarvestedSigners(id);
@@ -1835,7 +1851,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Verify a single signer
-  app.post('/api/petition-workflow/:id/signers/:signerId/verify', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow/:id/signers/:signerId/verify', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { signerId } = req.params;
     
     const success = await petitionService.verifySigner(signerId);
@@ -1844,7 +1860,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Verify all signers for a workflow
-  app.post('/api/petition-workflow/:id/verify-all', isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post('/api/petition-workflow/:id/verify-all', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     
     const count = await petitionService.verifyAllSigners(id);
@@ -2637,7 +2653,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
   
   // GET evidence hub - public viewing
-  app.get("/api/evidence-hub", asyncHandler(async (req, res) => {
+  app.get("/api/evidence-hub", asyncHandler(async (req: Request, res: Response) => {
     const { type, category } = req.query;
     const fileType = type === 'all' ? null : (type as string | null);
     const evidenceCategory = category === 'all' ? null : (category as string | null);
@@ -2658,7 +2674,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // POST share evidence - requires auth
-  app.post("/api/evidence-hub", isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post("/api/evidence-hub", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
     if (!userId) {
       return res.status(401).json({ error: "Authentication required" });
@@ -2687,7 +2703,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Admin routes for evidence management
-  app.get("/api/admin/evidence-hub", isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.get("/api/admin/evidence-hub", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     // All evidence for admin
     const evidence = await storage.getPublicEvidence(null, null);
     
@@ -2704,7 +2720,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     res.json(evidenceWithUser);
   }));
   
-  app.patch("/api/admin/evidence-hub/:id", isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.patch("/api/admin/evidence-hub/:id", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const { officerName, department, location, incidentDate, description, evidenceCategory } = req.body;
     
@@ -2724,7 +2740,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     res.json(updated);
   }));
   
-  app.post("/api/admin/evidence-hub/bulk-delete", isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.post("/api/admin/evidence-hub/bulk-delete", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { ids } = req.body;
     
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -2735,7 +2751,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     res.json({ success: true, deleted: ids.length });
   }));
   
-  app.delete("/api/admin/evidence-hub/:id", isAuthenticated, asyncHandler(async (req: any, res) => {
+  app.delete("/api/admin/evidence-hub/:id", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     await storage.deletePublicEvidence(id);
     res.json({ success: true });
@@ -2746,7 +2762,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
   
   // Lookup department authorities (Internal Affairs, oversight, etc.)
-  app.post("/api/complaint-drafting/lookup-authorities", asyncHandler(async (req: any, res) => {
+  app.post("/api/complaint-drafting/lookup-authorities", asyncHandler(async (req: Request, res: Response) => {
     const { department, city, county, state, officerName } = req.body;
     
     if (!department || !city || !state) {
@@ -2760,8 +2776,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Generate professional complaint document
-  app.post("/api/complaint-drafting/generate", isAuthenticated, asyncHandler(async (req: any, res) => {
-    const userId = req.user.claims.sub;
+  app.post("/api/complaint-drafting/generate", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
     
     const { 
       complainantName, complainantAddress, complainantPhone, complainantEmail,
@@ -2826,8 +2845,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Route complaint to authorities with fallback
-  app.post("/api/complaint-drafting/route", isAuthenticated, asyncHandler(async (req: any, res) => {
-    const userId = req.user.claims.sub;
+  app.post("/api/complaint-drafting/route", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
     
     const { 
       complaintId, 
@@ -2935,7 +2957,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   };
   
   // Get district court information for a state
-  app.get("/api/section-1983/district-courts/:state", asyncHandler(async (req: any, res) => {
+  app.get("/api/section-1983/district-courts/:state", asyncHandler(async (req: Request, res: Response) => {
     const { state } = req.params;
     
     if (!state || state.length !== 2) {
@@ -2947,7 +2969,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Get local rules for a specific district court
-  app.get("/api/section-1983/local-rules/:districtCourt", asyncHandler(async (req: any, res) => {
+  app.get("/api/section-1983/local-rules/:districtCourt", asyncHandler(async (req: Request, res: Response) => {
     const { districtCourt } = req.params;
     
     if (!districtCourt) {
@@ -2960,8 +2982,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Generate Section 1983 lawsuit document
-  app.post("/api/section-1983/generate", isAuthenticated, asyncHandler(async (req: any, res) => {
-    const userId = req.user.claims.sub;
+  app.post("/api/section-1983/generate", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
     
     const {
       plaintiff,
@@ -3054,7 +3079,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Preview Section 1983 lawsuit (no authentication required)
-  app.post("/api/section-1983/preview", asyncHandler(async (req: any, res) => {
+  app.post("/api/section-1983/preview", asyncHandler(async (req: Request, res: Response) => {
     const {
       plaintiff,
       defendants,
@@ -3101,8 +3126,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Get user's Section 1983 filings
-  app.get("/api/section-1983/filings", isAuthenticated, asyncHandler(async (req: any, res) => {
-    const userId = req.user.claims.sub;
+  app.get("/api/section-1983/filings", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
     
     const filings = await db.select()
       .from(schema.section1983Filings)
@@ -3113,8 +3141,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Get single Section 1983 filing
-  app.get("/api/section-1983/filings/:id", isAuthenticated, asyncHandler(async (req: any, res) => {
-    const userId = req.user.claims.sub;
+  app.get("/api/section-1983/filings/:id", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
     const { id } = req.params;
     
     const filings = await db.select()
@@ -3136,7 +3167,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
   
   // Lookup FOIA authorities for an agency
-  app.post("/api/foia/lookup-authorities", asyncHandler(async (req: any, res) => {
+  app.post("/api/foia/lookup-authorities", asyncHandler(async (req: Request, res: Response) => {
     const { agencyName, agencyType, state, city, county } = req.body;
     
     if (!agencyName || !state) {
@@ -3150,7 +3181,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Get state FOIA information (statutes, deadlines)
-  app.get("/api/foia/state-info/:state", asyncHandler(async (req: any, res) => {
+  app.get("/api/foia/state-info/:state", asyncHandler(async (req: Request, res: Response) => {
     const { state } = req.params;
     
     if (!state || state.length !== 2) {
@@ -3177,8 +3208,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Generate enhanced FOIA request
-  app.post("/api/foia/generate", isAuthenticated, asyncHandler(async (req: any, res) => {
-    const userId = req.user.claims.sub;
+  app.post("/api/foia/generate", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
     
     const {
       agencyName,
@@ -3238,8 +3272,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Route FOIA request to authorities with fallback
-  app.post("/api/foia/route", isAuthenticated, asyncHandler(async (req: any, res) => {
-    const userId = req.user.claims.sub;
+  app.post("/api/foia/route", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
     
     const { foiaData, generatedFOIA, authority, foiaId } = req.body;
     
@@ -3260,7 +3297,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Get all 50 states FOIA info
-  app.get("/api/foia/all-states", asyncHandler(async (req: any, res) => {
+  app.get("/api/foia/all-states", asyncHandler(async (req: Request, res: Response) => {
     const { getStateFOIAInfo } = await import('./foiaRoutingSystem');
     
     const states = [
@@ -3284,7 +3321,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
   
   // Maintenance status - returns whether the app is in maintenance mode
-  app.get("/api/maintenance-status", asyncHandler(async (req, res) => {
+  app.get("/api/maintenance-status", asyncHandler(async (req: Request, res: Response) => {
     res.json({ 
       isMaintenanceMode: false,
       message: null
@@ -3292,7 +3329,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
   
   // Support email endpoint
-  app.get("/api/support-email", asyncHandler(async (req, res) => {
+  app.get("/api/support-email", asyncHandler(async (req: Request, res: Response) => {
     res.json({ 
       email: process.env.SUPPORT_EMAIL || 'contact.badblue@gmail.com'
     });
