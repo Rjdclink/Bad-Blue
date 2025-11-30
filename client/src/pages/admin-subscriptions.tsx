@@ -313,6 +313,7 @@ export default function AdminSubscriptions() {
       <SEOHead 
         title="Subscription Management - Admin - BadBlue"
         description="Manage subscription tiers and user accounts"
+        noIndex={true}
       />
 
       <div className="container mx-auto py-8 px-4 max-w-7xl">

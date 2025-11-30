@@ -361,6 +361,7 @@ export default function AdminEmail() {
       <SEOHead
         title="Email Administration - BadBlue Admin"
         description="Configure email settings and view user login activity"
+        noIndex={true}
       />
 
       <div className="container mx-auto p-6 space-y-6">

@@ -305,6 +305,7 @@ This petition will circulate for 90 days and will be sent to ${department} with 
           title="Review Your Petition"
           description="Review all information before proceeding to payment."
           keywords={SEO_KEYWORDS.join(", ")}
+          noIndex={true}
         />
         <header className="border-b bg-card sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -420,6 +421,7 @@ This petition will circulate for 90 days and will be sent to ${department} with 
         title="Start an Officer Resignation Petition"
         description="Create an officer resignation petition demanding officer resignation. Your officer resignation petition will circulate for 90 days and be automatically sent to the department with all signatures."
         keywords={SEO_KEYWORDS.join(", ")}
+        noIndex={true}
       />
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">

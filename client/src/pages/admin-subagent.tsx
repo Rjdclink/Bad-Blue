@@ -244,6 +244,7 @@ export default function AdminSubAgent() {
       <SEOHead
         title="AI Sub-Agent Control Panel | BadBlue"
         description="Advanced AI assistant with full system control"
+        noIndex={true}
       />
 
       <header className="border-b bg-card sticky top-0 z-50">

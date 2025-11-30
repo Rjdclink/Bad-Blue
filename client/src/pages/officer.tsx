@@ -66,12 +66,36 @@ export default function OfficerInfo() {
     );
   }
 
+  const officerSearchSchema = {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "name": "Police Officer Information Search",
+    "description": "Search and view detailed police officer information including badge numbers, departments, ranks, and service records for accountability purposes",
+    "provider": {
+      "@type": "Organization",
+      "name": "BadBlue"
+    },
+    "serviceType": "Police Officer Information Search",
+    "areaServed": {
+      "@type": "Country",
+      "name": "United States"
+    }
+  };
+
+  const breadcrumbs = [
+    { name: "Officer Search", url: "https://bad-blue.com/officer" }
+  ];
+
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
         title="Officer Information | BadBlue - Professional Police Accountability Platform"
         description="View officer information and records. Professional legal rights protection service for reporting police misconduct and civil rights violations."
         keywords="police officer information, officer badge lookup, police accountability, bad cops, officer assault, law enforcement abuse, police misconduct records"
+        canonicalUrl="https://bad-blue.com/officer"
+        structuredData={officerSearchSchema}
+        breadcrumbs={breadcrumbs}
+        pageType="service"
       />
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50">

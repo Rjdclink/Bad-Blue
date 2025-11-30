@@ -1,8 +1,59 @@
 # BadBlue - Police Accountability Platform
 # https://bad-blue.com
+# Last updated: 2025-11-30
 
+# Allow all search engine crawlers
 User-agent: *
 Allow: /
+Allow: /landing
+Allow: /officer
+Allow: /complaint-form
+Allow: /lawsuit-form
+Allow: /foia-request-form
+Allow: /petitions
+Allow: /evidence-hub
+Allow: /contact
+Allow: /privacy
+Allow: /terms
+
+# Block auth and admin pages from indexing
+Disallow: /login
+Disallow: /home
+Disallow: /history
+Disallow: /complaints
+Disallow: /complaint-detail
+Disallow: /lawsuit-detail
+Disallow: /petition-form
+Disallow: /petition-edit
+Disallow: /petition-workflow
+Disallow: /confirmation
+Disallow: /admin-*
+Disallow: /api/
+
+# Block development and staging resources
+Disallow: /*.json$
+Disallow: /*.map$
+
+# Crawl-delay for politeness (optional - 1 second between requests)
+Crawl-delay: 1
 
 # Sitemap location
 Sitemap: https://bad-blue.com/sitemap.xml
+
+# Googlebot-specific directives
+User-agent: Googlebot
+Allow: /
+Disallow: /login
+Disallow: /home
+Disallow: /history
+Disallow: /admin-*
+Disallow: /api/
+
+# Bingbot-specific directives
+User-agent: Bingbot
+Allow: /
+Disallow: /login
+Disallow: /home
+Disallow: /history
+Disallow: /admin-*
+Disallow: /api/

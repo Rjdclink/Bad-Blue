@@ -166,6 +166,7 @@ export default function AdminEvidenceHub() {
       <SEOHead
         title="Admin: Corrupt Law Enforcement & Snitch Evidence Hub | BadBlue"
         description="Admin panel for managing corruption and informant evidence submissions"
+        noIndex={true}
       />
 
       <header className="border-b bg-card sticky top-0 z-50">

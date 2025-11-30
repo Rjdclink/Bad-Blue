@@ -1,92 +1,80 @@
 [
   {
-    "timestamp": "2025-11-30T09:27:01.824Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/button-D4bqKO-K.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:27:01.887Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:27:01.890Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useFaqSchema--GUw8NK0.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:27:01.914Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:27:01.918Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:27:01.938Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scale-OSfZKrf3.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:27:01.945Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
-  },
-  {
-    "timestamp": "2025-11-30T09:27:01.948Z",
+    "timestamp": "2025-11-30T09:39:12.359Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/bundleAnalyzer-C1yhvntE.js"
   },
   {
-    "timestamp": "2025-11-30T09:27:02.457Z",
+    "timestamp": "2025-11-30T09:39:12.413Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/support-email"
+    "path": "/assets/mail-B5XkwkcA.js"
   },
   {
-    "timestamp": "2025-11-30T09:27:02.476Z",
+    "timestamp": "2025-11-30T09:39:12.418Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/search-k8SGdotS.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:39:12.424Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/scale-OSfZKrf3.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:39:12.432Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/file-text-CBNIfD09.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:39:12.435Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:39:12.522Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T09:27:02.498Z",
+    "timestamp": "2025-11-30T09:39:12.729Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
+    "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T09:27:02.604Z",
+    "timestamp": "2025-11-30T09:39:12.829Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T09:39:12.888Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T09:27:03.659Z",
+    "timestamp": "2025-11-30T09:39:12.924Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
   },
   {
-    "timestamp": "2025-11-30T09:27:30.059Z",
+    "timestamp": "2025-11-30T09:39:13.002Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T09:27:30.767Z",
+    "timestamp": "2025-11-30T09:39:17.753Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
   }
 ]

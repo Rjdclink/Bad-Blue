@@ -527,17 +527,25 @@ export default function ComplaintForm() {
     );
   }
 
-  const structuredData = {
+  const complaintFilingSchema = {
     "@context": "https://schema.org",
-    "@type": "GovernmentService",
-    "name": "BadBlue Police Complaint Filing",
-    "description": "File formal police misconduct complaints online with automated routing to proper authorities",
-    "serviceType": "Police Misconduct Complaint Filing",
+    "@type": "LegalService",
+    "name": "Police Misconduct Complaint Filing Service",
+    "description": "File formal police misconduct complaints online with automated routing to Internal Affairs, oversight boards, and command staff. Professional document generation for excessive force, false arrest, and civil rights violations.",
     "provider": {
       "@type": "Organization",
       "name": "BadBlue"
+    },
+    "serviceType": "Police Misconduct Complaint Filing",
+    "areaServed": {
+      "@type": "Country",
+      "name": "United States"
     }
   };
+
+  const breadcrumbs = [
+    { name: "File Complaint", url: "https://bad-blue.com/complaints/new" }
+  ];
 
   return (
     <div className="min-h-screen bg-background">
@@ -547,8 +555,10 @@ export default function ComplaintForm() {
         keywords="file police complaint online, file officer complaint online, police misconduct complaint form, officer misconduct grievance form, report police brutality, report officer assault, file complaint against police officer, file grievance against officer, excessive force police complaint, excessive force officer grievance, police harassment complaint, officer harassment grievance, false arrest police complaint, wrongful arrest officer complaint, police discrimination report, officer discrimination complaint, internal affairs complaint police, internal affairs grievance officer, file complaint police department, file grievance officer department, civilian complaint review board police, civilian complaint officer, report law enforcement misconduct, report officer misconduct, police accountability complaint, officer accountability grievance, police brutality complaint online, officer brutality grievance online, police assault complaint form, officer assault complaint form, police violence complaint, officer violence grievance, department misconduct complaint, department brutality grievance, complaint police excessive force, complaint officer assault, grievance police harassment, grievance officer discrimination, police complaint process online, officer grievance process online, submit police complaint online, submit officer grievance online, file formal police complaint, file formal officer grievance, police misconduct documentation, officer misconduct evidence, complaint against police online, complaint against officer online, police brutality report online, officer assault report online, police harassment grievance, officer harassment complaint, false arrest police report, wrongful detention officer complaint, police rights violation complaint, officer constitutional violation grievance, police abuse complaint online, officer abuse grievance online, police corruption complaint, officer corruption grievance, department accountability complaint, department misconduct grievance, how to file police complaint, how to file officer grievance, how to report police brutality, how to report officer assault, how to complain about police, how to complain about officer, police complaint help online, officer grievance help online, assistance filing police complaint, assistance filing officer grievance, guidance police complaint process, guidance officer grievance process, police complaint legal help, officer grievance legal advice, police misconduct complaint assistance, officer misconduct grievance support, file police brutality complaint, file officer assault grievance, submit police harassment complaint, submit officer discrimination grievance, police excessive force complaint form, officer assault complaint form online, police department complaint online, officer department grievance online"
         ogTitle="File Police Misconduct Complaint Online | BadBlue"
         ogDescription="Report police brutality, excessive force, and civil rights violations. File formal complaints with automated routing to proper authorities."
-        canonicalUrl="https://bad-blue.com/complaint-form"
-        structuredData={structuredData}
+        canonicalUrl="https://bad-blue.com/complaints/new"
+        structuredData={complaintFilingSchema}
+        breadcrumbs={breadcrumbs}
+        pageType="service"
       />
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50">

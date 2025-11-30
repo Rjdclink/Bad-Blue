@@ -253,6 +253,26 @@ export default function FOIARequestForm() {
     }).format(cents / 100);
   };
 
+  const foiaServiceSchema = {
+    "@context": "https://schema.org",
+    "@type": "LegalService",
+    "name": "FOIA Request Filing Service",
+    "description": "Generate and file state-specific FOIA requests for police records including body camera footage, disciplinary records, use-of-force reports, and internal investigation files. Automatic routing to records custodians via certified mail.",
+    "provider": {
+      "@type": "Organization",
+      "name": "BadBlue"
+    },
+    "serviceType": "Freedom of Information Act Request Filing",
+    "areaServed": {
+      "@type": "Country",
+      "name": "United States"
+    }
+  };
+
+  const breadcrumbs = [
+    { name: "FOIA Request", url: "https://bad-blue.com/foia-request" }
+  ];
+
   return (
     <div className="min-h-screen bg-background">
       <SEOHead 
@@ -260,6 +280,9 @@ export default function FOIARequestForm() {
         description="Generate state-specific FOIA requests for body camera footage, disciplinary records, use-of-force reports, and police investigation files. Automatic routing to records custodians. Affordable, fully online."
         keywords={seoKeywords}
         canonicalUrl="https://bad-blue.com/foia-request"
+        structuredData={foiaServiceSchema}
+        breadcrumbs={breadcrumbs}
+        pageType="service"
       />
       <header className="border-b">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">

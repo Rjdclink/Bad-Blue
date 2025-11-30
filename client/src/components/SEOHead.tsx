@@ -17,9 +17,15 @@ interface SEOHeadProps {
   structuredData?: object;
   breadcrumbs?: BreadcrumbItem[];
   pageType?: "website" | "article" | "service" | "faq";
+  noIndex?: boolean; // For pages that should not be indexed (auth pages, admin, etc.)
+  ogImageAlt?: string; // Alt text for Open Graph image
+  twitterSite?: string; // Twitter @username
+  articlePublishedTime?: string; // For article pages
+  articleModifiedTime?: string; // For article pages
 }
 
 const BASE_URL = "https://bad-blue.com";
+const TWITTER_SITE = "@BadBlueApp"; // Official Twitter handle
 
 export function SEOHead({
   title,
@@ -33,9 +39,15 @@ export function SEOHead({
   structuredData,
   breadcrumbs,
   pageType = "website",
+  noIndex = false,
+  ogImageAlt,
+  twitterSite,
+  articlePublishedTime,
+  articleModifiedTime,
 }: SEOHeadProps) {
-  const defaultOgImage = `${import.meta.env.VITE_BASE_URL || window.location.origin}/preview.png`;
+  const defaultOgImage = `${BASE_URL}/preview.png`;
   const finalOgImage = ogImage || defaultOgImage;
+  const finalOgImageAlt = ogImageAlt || "BadBlue - AI-powered police accountability platform for filing complaints and civil rights lawsuits";
   
   // Enhanced keywords including existing and new target keywords
   const enhancedKeywords = keywords ? 
@@ -63,16 +75,20 @@ export function SEOHead({
     // Set basic meta tags
     setMetaTag("description", description);
     setMetaTag("keywords", enhancedKeywords);
-    setMetaTag("robots", "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1");
+    
+    // Set robots directive based on noIndex prop
+    const robotsDirective = noIndex 
+      ? "noindex, nofollow" 
+      : "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1";
+    setMetaTag("robots", robotsDirective);
+    setMetaTag("googlebot", noIndex ? "noindex, nofollow" : "index, follow, max-snippet:-1, max-image-preview:large");
+    setMetaTag("bingbot", noIndex ? "noindex, nofollow" : "index, follow");
+    
     setMetaTag("author", "BadBlue");
     setMetaTag("language", "English");
     setMetaTag("revisit-after", "1 days");
     setMetaTag("rating", "General");
     setMetaTag("distribution", "Global");
-    
-    // Additional SEO meta tags
-    setMetaTag("googlebot", "index, follow");
-    setMetaTag("bingbot", "index, follow");
     setMetaTag("referrer", "origin-when-cross-origin");
     setMetaTag("format-detection", "telephone=no");
     setMetaTag("HandheldFriendly", "True");
@@ -90,11 +106,29 @@ export function SEOHead({
       setMetaTag("og:url", canonicalUrl, true);
     }
 
-    // Set Twitter Card tags
+    // Set Twitter Card tags with enhanced metadata
     setMetaTag("twitter:card", "summary_large_image");
+    setMetaTag("twitter:site", twitterSite || TWITTER_SITE);
+    setMetaTag("twitter:creator", twitterSite || TWITTER_SITE);
     setMetaTag("twitter:title", ogTitle || title);
     setMetaTag("twitter:description", ogDescription || description);
     setMetaTag("twitter:image", finalOgImage);
+    setMetaTag("twitter:image:alt", finalOgImageAlt);
+    
+    // Additional Open Graph metadata
+    setMetaTag("og:site_name", "BadBlue", true);
+    setMetaTag("og:locale", "en_US", true);
+    setMetaTag("og:image:alt", finalOgImageAlt, true);
+    setMetaTag("og:image:width", "1200", true);
+    setMetaTag("og:image:height", "630", true);
+    
+    // Article-specific metadata (for blog posts, news, etc.)
+    if (articlePublishedTime) {
+      setMetaTag("article:published_time", articlePublishedTime, true);
+    }
+    if (articleModifiedTime) {
+      setMetaTag("article:modified_time", articleModifiedTime, true);
+    }
 
     // Set canonical URL
     if (canonicalUrl) {
@@ -264,7 +298,7 @@ export function SEOHead({
       document.head.appendChild(hreflangXDefault);
     }
     hreflangXDefault.setAttribute("href", canonicalUrl || BASE_URL);
-  }, [title, description, enhancedKeywords, ogTitle, ogDescription, ogType, finalOgImage, canonicalUrl, structuredData, breadcrumbs, pageType]);
+  }, [title, description, enhancedKeywords, ogTitle, ogDescription, ogType, finalOgImage, canonicalUrl, structuredData, breadcrumbs, pageType, noIndex, finalOgImageAlt, twitterSite, articlePublishedTime, articleModifiedTime]);
 
   return null;
 }

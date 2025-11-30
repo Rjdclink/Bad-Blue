@@ -165,6 +165,7 @@ export default function PetitionEdit() {
       <SEOHead
         title={`Edit Petition: Officer ${petition.officerName}`}
         description="Manage petition details and view signatures"
+        noIndex={true}
       />
       
       <div className="min-h-screen bg-background">

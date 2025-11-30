@@ -219,6 +219,7 @@ export default function Login() {
         ogDescription="Step-by-step platform to file police misconduct complaints and civil rights lawsuits. AI-powered badge identification, legal analysis, and automated routing to proper authorities."
         canonicalUrl="https://bad-blue.com/login"
         structuredData={structuredData}
+        noIndex={true}
       />
       {/* Header */}
       <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">

@@ -116,6 +116,7 @@ export default function AdminFOIA() {
       <SEOHead
         title="Admin: FOIA Requests | BadBlue"
         description="Admin panel for managing FOIA requests"
+        noIndex={true}
       />
 
       <header className="border-b bg-card sticky top-0 z-50">

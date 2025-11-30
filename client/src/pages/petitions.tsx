@@ -4,9 +4,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FileText, Users, AlertTriangle, ArrowRight, ArrowLeft } from "lucide-react";
+import { SEOHead } from "@/components/SEOHead";
 
 export default function Petitions() {
-  const { data: petitions, isLoading } = useQuery({
+  const { data: petitions, isLoading } = useQuery<any[]>({
     queryKey: ['/api/petitions'],
   });
 
@@ -22,8 +23,37 @@ export default function Petitions() {
     );
   }
 
+  const petitionServiceSchema = {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "name": "Officer Resignation Petition Service",
+    "description": "Community-driven platform for officer resignation petitions. When officers receive multiple complaints, automatic petitions are created for community signatures calling for accountability and department review.",
+    "provider": {
+      "@type": "Organization",
+      "name": "BadBlue"
+    },
+    "serviceType": "Police Accountability Petition Platform",
+    "areaServed": {
+      "@type": "Country",
+      "name": "United States"
+    }
+  };
+
+  const breadcrumbs = [
+    { name: "Petitions", url: "https://bad-blue.com/petitions" }
+  ];
+
   return (
     <div className="container mx-auto p-6">
+      <SEOHead
+        title="Officer Resignation Petitions | BadBlue - Police Accountability Platform"
+        description="View and sign community-driven officer resignation petitions. When officers receive multiple complaints, petitions are automatically created for accountability and department review."
+        keywords="police officer petition, officer resignation petition, police accountability petition, community petition police, sign petition police officer, officer complaint petition, police misconduct petition, bad cop petition, officer removal petition, police department accountability"
+        canonicalUrl="https://bad-blue.com/petitions"
+        structuredData={petitionServiceSchema}
+        breadcrumbs={breadcrumbs}
+        pageType="service"
+      />
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Back Button */}
         <Link href="/">

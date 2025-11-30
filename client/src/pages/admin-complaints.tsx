@@ -55,6 +55,7 @@ export default function AdminComplaints() {
       <SEOHead
         title="Admin: Complaints | BadBlue"
         description="Admin panel for managing complaints"
+        noIndex={true}
       />
 
       <header className="border-b bg-card sticky top-0 z-50">

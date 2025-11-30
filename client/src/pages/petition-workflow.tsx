@@ -327,6 +327,7 @@ export default function PetitionWorkflow() {
       <SEOHead 
         title="Create Petition | BadBlue"
         description="Create an automated community petition for police accountability with AI-powered content generation and automated city council submission."
+        noIndex={true}
       />
       
       <div className="container mx-auto px-4 py-8 max-w-4xl">

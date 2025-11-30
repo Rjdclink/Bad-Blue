@@ -161,6 +161,7 @@ export default function AdminPetitions() {
       <SEOHead
         title="Officer Resignation Petition Management - Admin Panel"
         description="Manage all officer resignation petitions in the BadBlue system"
+        noIndex={true}
       />
       
       <div className="min-h-screen bg-background">

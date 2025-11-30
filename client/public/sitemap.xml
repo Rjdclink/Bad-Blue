@@ -1,29 +1,82 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <!-- Main Landing Page -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  
+  <!-- Main Landing Page - Highest Priority -->
   <url>
     <loc>https://bad-blue.com/</loc>
     <lastmod>2025-11-30</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://bad-blue.com/preview.png</image:loc>
+      <image:title>BadBlue - Police Accountability Platform</image:title>
+      <image:caption>AI-powered legal tools for filing police complaints and civil rights lawsuits</image:caption>
+    </image:image>
   </url>
 
-  <!-- Landing Page -->
+  <!-- Landing Page - Marketing/Hero -->
   <url>
     <loc>https://bad-blue.com/landing</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.95</priority>
+  </url>
+
+  <!-- Core Legal Tools - High Priority -->
+  
+  <!-- Officer Search - Key Feature -->
+  <url>
+    <loc>https://bad-blue.com/officer</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Complaint Form - Core Service -->
+  <url>
+    <loc>https://bad-blue.com/complaint-form</loc>
     <lastmod>2025-11-30</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
 
-  <!-- Login Page -->
+  <!-- Lawsuit Generator - Core Service -->
   <url>
-    <loc>https://bad-blue.com/login</loc>
+    <loc>https://bad-blue.com/lawsuit-form</loc>
     <lastmod>2025-11-30</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
   </url>
 
+  <!-- FOIA Request Form - Core Service -->
+  <url>
+    <loc>https://bad-blue.com/foia-request-form</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Community Features -->
+  
+  <!-- Public Petitions Listing -->
+  <url>
+    <loc>https://bad-blue.com/petitions</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Evidence Hub - Public Evidence Repository -->
+  <url>
+    <loc>https://bad-blue.com/evidence-hub</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Support Pages -->
+  
   <!-- Contact Page -->
   <url>
     <loc>https://bad-blue.com/contact</loc>
@@ -32,6 +85,8 @@
     <priority>0.7</priority>
   </url>
 
+  <!-- Legal/Policy Pages -->
+  
   <!-- Privacy Policy -->
   <url>
     <loc>https://bad-blue.com/privacy</loc>
@@ -47,4 +102,5 @@
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
+
 </urlset>

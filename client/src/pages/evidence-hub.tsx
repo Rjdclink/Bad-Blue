@@ -68,11 +68,36 @@ export default function EvidenceHub() {
     return <Badge variant="secondary" className="text-xs">Misconduct</Badge>;
   };
 
+  const evidenceHubSchema = {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "name": "Police Misconduct Evidence Hub",
+    "description": "Community platform for uploading and sharing evidence of law enforcement corruption, misconduct, and informant documents. All media types accepted including photos, videos, audio recordings, and documents.",
+    "provider": {
+      "@type": "Organization",
+      "name": "BadBlue"
+    },
+    "serviceType": "Police Misconduct Evidence Repository",
+    "areaServed": {
+      "@type": "Country",
+      "name": "United States"
+    }
+  };
+
+  const breadcrumbs = [
+    { name: "Evidence Hub", url: "https://bad-blue.com/evidence-hub" }
+  ];
+
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
         title="Corrupt Law Enforcement & Snitch Evidence Hub | BadBlue"
         description="Community platform for uploading evidence of law enforcement corruption and informant documents. All media types accepted."
+        keywords="police corruption evidence, law enforcement misconduct evidence, police brutality video, body camera footage, police abuse documentation, informant documents, snitch evidence, police misconduct photos, officer corruption proof, police accountability evidence"
+        canonicalUrl="https://bad-blue.com/evidence-hub"
+        structuredData={evidenceHubSchema}
+        breadcrumbs={breadcrumbs}
+        pageType="service"
       />
       
       <header className="border-b bg-card sticky top-0 z-50">
