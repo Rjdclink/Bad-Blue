@@ -55,7 +55,7 @@ const GEMINI_MODEL_CANDIDATES = [
   () => 'gemini-1.5-pro-002'
 ].map(fn => fn()).filter(Boolean) as string[];
 
-let autonomousExecutionEnabled = false;
+let autonomousExecutionEnabled = true;
 let stateLoaded = false;
 let officerSearchTimeout: NodeJS.Timeout | null = null;
 let dailyScrapeTimeout: NodeJS.Timeout | null = null;

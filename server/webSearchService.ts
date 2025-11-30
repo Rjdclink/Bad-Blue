@@ -420,7 +420,9 @@ export async function unifiedSearch(
            (reliabilityOrder[a.reliability || 'undefined'] || 0);
   });
 
-  console.log(`[Unified Search] Combined ${allResults.length} unique results`);
+  if (allResults.length > 0) {
+    console.log(`[Unified Search] Found ${allResults.length} unique results`);
+  }
   return allResults.slice(0, options.limit || 20);
 }
 
