@@ -124,5 +124,17 @@
     },
     "processed": true,
     "processedAt": "2025-11-30T20:31:12.345Z"
+  },
+  {
+    "timestamp": "2025-11-30T20:32:35.218Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "MN",
+        "category": "officer_search"
+      },
+      "content": "Derek Chauvin was a Minneapolis police officer convicted of murdering George Floyd in 2020, resulting in significant legal and professional consequences. His actions sparked nationwide protests and discussions about police accountability and systemic racism in law enforcement."
+    }
   }
 ]

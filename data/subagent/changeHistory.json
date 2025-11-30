@@ -160,5 +160,14 @@
       "response": "Officer search completed for \"Nathan Ewalt\". Found: None found",
       "success": true
     }
+  },
+  {
+    "timestamp": "2025-11-30T20:32:35.212Z",
+    "command": "search officer \"Derek Chauvin\" state=MN city=Minneapolis county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Derek Chauvin\". Found: Minneapolis Police Department, Hennepin County, Minnesota",
+      "success": true
+    }
   }
 ]
