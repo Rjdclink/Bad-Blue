@@ -169,10 +169,13 @@ export async function runComprehensiveDiagnostics(): Promise<{
   } else {
     try {
       const geminiStart = Date.now();
-      const genAI = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-2.5-flash',
+        generationConfig: { temperature: 0.0 }
+      });
 
-      const result = await genAI.models.generateContent({
-        model: 'gemini-1.5-flash-latest',
+      const result = await model.generateContent({
         contents: [
           {
             role: 'user',
@@ -180,7 +183,7 @@ export async function runComprehensiveDiagnostics(): Promise<{
           }
         ]
       });
-      const text = result.text;
+      const text = result.response?.text() ?? '';
       const geminiTime = Date.now() - geminiStart;
 
       if (text && text.length > 0) {
@@ -190,7 +193,7 @@ export async function runComprehensiveDiagnostics(): Promise<{
           message: 'Gemini API working correctly',
           responseTime: geminiTime,
           details: {
-            model: 'gemini-1.5-flash-latest',
+            model: 'gemini-2.5-flash',
             responseLength: text.length
           }
         });
@@ -358,7 +361,7 @@ export async function runComprehensiveDiagnostics(): Promise<{
         : 'Session secret is short or missing',
       details: {
         sessionSecretConfigured: !!process.env.SESSION_SECRET,
-        bypassUserExists: bypassUser.rows[0]?.count > 0
+        bypassUserExists: Boolean(bypassUser.rows?.[0] && (bypassUser.rows[0] as { count: number }).count > 0)
       }
     });
 

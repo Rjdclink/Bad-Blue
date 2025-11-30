@@ -3,13 +3,13 @@ import {
   generateUserText,
   TaskPriority
 } from './aiProvider';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { EventEmitter } from "events";
 import type { OfficerProfile, InsertOfficerProfile } from "@shared/schema";
 import { rateLimitTracker } from "./rateLimitTracker";
 import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 
-let gemini: GoogleGenerativeAI | null = null;
+let geminiClient: GoogleGenAI | null = null;
 
 // Event emitter for tracking collection progress
 export const collectionProgressEmitter = new EventEmitter();
@@ -28,14 +28,14 @@ const profileCache = new Map<string, { profile: OfficerProfile; timestamp: numbe
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_CACHE_SIZE = 500;
 
-function getGeminiClient(): GoogleGenerativeAI {
-  if (!gemini) {
+function getGeminiClient(): GoogleGenAI {
+  if (!geminiClient) {
     if (!process.env.GEMINI_API_KEY) {
       throw new Error('GEMINI_API_KEY environment variable is not set');
     }
-    gemini = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+    geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
-  return gemini;
+  return geminiClient;
 }
 
 /**
@@ -156,7 +156,7 @@ Provide detailed information with specific sources. Be thorough and accurate.`;
 
   const client = getGeminiClient();
   const response = await client.models.generateContent({
-    model: "gemini-2.0-flash-thinking-exp",
+    model: "gemini-2.5-flash",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: {
       temperature: 0.0,
@@ -171,7 +171,7 @@ Provide detailed information with specific sources. Be thorough and accurate.`;
     const candidate = response.candidates?.[0];
     if (candidate?.groundingMetadata?.groundingChunks) {
       for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if (chunk.web?.uri) sources.push(chunk.web.uri);
+        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
       }
     }
   } catch (e) {
@@ -365,7 +365,7 @@ Provide accurate roster information with official sources.`;
 
   const client = getGeminiClient();
   const response = await client.models.generateContent({
-    model: "gemini-2.0-flash-thinking-exp",
+    model: "gemini-2.5-flash",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: {
       temperature: 0.0,
@@ -380,7 +380,7 @@ Provide accurate roster information with official sources.`;
     const candidate = response.candidates?.[0];
     if (candidate?.groundingMetadata?.groundingChunks) {
       for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if (chunk.web?.uri) sources.push(chunk.web.uri);
+        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
       }
     }
   } catch (e) {
@@ -509,7 +509,7 @@ Be critical and prioritize accuracy over comprehensiveness.`;
 
   const client = getGeminiClient();
   const response = await client.models.generateContent({
-    model: "gemini-2.0-flash-thinking-exp",
+    model: "gemini-2.5-flash",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: {
       temperature: 0.0,
