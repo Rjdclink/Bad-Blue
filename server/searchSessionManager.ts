@@ -7,26 +7,29 @@ import {
   subagentSearchQueue
 } from '@shared/schema';
 import { eq, desc, and, gte, lte, isNull, or } from 'drizzle-orm';
+import { 
+  computeAdaptiveSearchDelay, 
+  getProviderRateProfiles,
+  UsageContext,
+  AIProvider 
+} from './aiTokenGovernor';
 
 interface SessionState {
   isActive: boolean;
   currentSession: typeof subagentSearchSessions.$inferSelect | null;
-  isInSearchInterval: boolean;
-  timeUntilNextInterval: number;
+  canSearchNow: boolean;
+  waitSeconds: number;
+  reason: string;
   minutesRemaining: number;
   dailyBudget: number;
-  elapsedMinutes: number;
+  nextProvider: AIProvider | null;
 }
 
-interface IntervalPlan {
-  searchDuration: number;
-  restDuration: number;
+interface AdaptiveIntervalPlan {
   sessionStartedAt: string;
-  intervals: Array<{
-    type: 'search' | 'rest';
-    startMinute: number;
-    endMinute: number;
-  }>;
+  lastSearchAt: string | null;
+  currentDelaySeconds: number;
+  providerSequence: AIProvider[];
 }
 
 class SearchSessionManager {
@@ -34,10 +37,12 @@ class SearchSessionManager {
   private sessionCheckInterval: NodeJS.Timeout | null = null;
   private currentSessionDate: string | null = null;
   private sessionStartedAt: Date | null = null;
+  private lastSearchTime: Date | null = null;
+  private currentDelaySeconds: number = 60;
 
   private readonly DAILY_BUDGET_MINUTES = 180;
-  private readonly SEARCH_INTERVAL_MINUTES = 10;
-  private readonly REST_INTERVAL_MINUTES = 10;
+  private readonly MIN_DELAY_SECONDS = 30;
+  private readonly MAX_DELAY_SECONDS = 300;
 
   private constructor() {}
 
@@ -53,14 +58,27 @@ class SearchSessionManager {
     
     try {
       const session = await this.ensureTodaySession();
-      const intervalPlan = session.intervalPlan as IntervalPlan | null;
+      const intervalPlan = session.intervalPlan as AdaptiveIntervalPlan | null;
+      
       if (intervalPlan?.sessionStartedAt) {
         this.sessionStartedAt = new Date(intervalPlan.sessionStartedAt);
       } else {
         this.sessionStartedAt = new Date();
       }
+      
+      if (intervalPlan?.lastSearchAt) {
+        this.lastSearchTime = new Date(intervalPlan.lastSearchAt);
+      }
+      
+      if (intervalPlan?.currentDelaySeconds) {
+        this.currentDelaySeconds = intervalPlan.currentDelaySeconds;
+      }
+
+      const delay = await this.computeCurrentDelay();
+      this.currentDelaySeconds = delay.delaySeconds;
+      
       this.startIntervalMonitor();
-      console.log('[SearchSessionManager] ✓ Initialized with 3-hour daily budget');
+      console.log(`[SearchSessionManager] ✓ Initialized with adaptive intervals (current: ${this.currentDelaySeconds}s)`);
     } catch (error: any) {
       console.error('[SearchSessionManager] Initialization failed:', error.message);
     }
@@ -81,16 +99,22 @@ class SearchSessionManager {
 
     if (existingSession.length > 0) {
       this.currentSessionDate = today;
-      const intervalPlan = existingSession[0].intervalPlan as IntervalPlan | null;
-      if (intervalPlan?.sessionStartedAt) {
-        this.sessionStartedAt = new Date(intervalPlan.sessionStartedAt);
-      }
       return existingSession[0];
     }
 
     const now = new Date();
     this.sessionStartedAt = now;
-    const intervalPlan = this.generateIntervalPlan(now);
+    this.lastSearchTime = null;
+    
+    const delay = await this.computeCurrentDelay();
+    this.currentDelaySeconds = delay.delaySeconds;
+    
+    const intervalPlan: AdaptiveIntervalPlan = {
+      sessionStartedAt: now.toISOString(),
+      lastSearchAt: null,
+      currentDelaySeconds: this.currentDelaySeconds,
+      providerSequence: []
+    };
     
     const [newSession] = await db.insert(subagentSearchSessions).values({
       sessionDate: today,
@@ -104,39 +128,33 @@ class SearchSessionManager {
     }).returning();
 
     this.currentSessionDate = today;
-    console.log(`[SearchSessionManager] Created new session for ${today} with ${this.DAILY_BUDGET_MINUTES}min budget`);
+    console.log(`[SearchSessionManager] Created new session for ${today} with adaptive intervals`);
     
     return newSession;
   }
 
-  private generateIntervalPlan(startTime: Date): IntervalPlan {
-    const intervals: IntervalPlan['intervals'] = [];
-    const cycleLength = this.SEARCH_INTERVAL_MINUTES + this.REST_INTERVAL_MINUTES;
-    const totalCycles = Math.ceil(this.DAILY_BUDGET_MINUTES / this.SEARCH_INTERVAL_MINUTES);
-    
-    let currentMinute = 0;
-    for (let i = 0; i < totalCycles && currentMinute < this.DAILY_BUDGET_MINUTES * 2; i++) {
-      intervals.push({
-        type: 'search',
-        startMinute: currentMinute,
-        endMinute: currentMinute + this.SEARCH_INTERVAL_MINUTES
-      });
-      currentMinute += this.SEARCH_INTERVAL_MINUTES;
+  private async computeCurrentDelay(): Promise<{ delaySeconds: number; reason: string; nextProvider: AIProvider | null }> {
+    try {
+      const result = await computeAdaptiveSearchDelay(UsageContext.AUTONOMOUS);
       
-      intervals.push({
-        type: 'rest',
-        startMinute: currentMinute,
-        endMinute: currentMinute + this.REST_INTERVAL_MINUTES
-      });
-      currentMinute += this.REST_INTERVAL_MINUTES;
+      const clampedDelay = Math.max(
+        this.MIN_DELAY_SECONDS,
+        Math.min(this.MAX_DELAY_SECONDS, result.delaySeconds)
+      );
+      
+      return {
+        delaySeconds: clampedDelay,
+        reason: result.reason,
+        nextProvider: result.nextProvider
+      };
+    } catch (error: any) {
+      console.error('[SearchSessionManager] Error computing delay:', error.message);
+      return {
+        delaySeconds: 60,
+        reason: 'Fallback delay due to error',
+        nextProvider: null
+      };
     }
-
-    return {
-      searchDuration: this.SEARCH_INTERVAL_MINUTES,
-      restDuration: this.REST_INTERVAL_MINUTES,
-      sessionStartedAt: startTime.toISOString(),
-      intervals
-    };
   }
 
   private startIntervalMonitor(): void {
@@ -153,57 +171,57 @@ class SearchSessionManager {
     const today = this.getTodayDateString();
     
     if (this.currentSessionDate !== today) {
+      this.lastSearchTime = null;
       await this.ensureTodaySession();
     }
+    
+    const delay = await this.computeCurrentDelay();
+    if (Math.abs(delay.delaySeconds - this.currentDelaySeconds) > 10) {
+      this.currentDelaySeconds = delay.delaySeconds;
+      console.log(`[SearchSessionManager] Adjusted interval to ${this.currentDelaySeconds}s: ${delay.reason}`);
+    }
   }
 
-  private getElapsedMinutes(): number {
-    if (!this.sessionStartedAt) {
-      return 0;
+  private getSecondsSinceLastSearch(): number {
+    if (!this.lastSearchTime) {
+      return Infinity;
     }
     const now = new Date();
-    const elapsedMs = now.getTime() - this.sessionStartedAt.getTime();
-    return Math.floor(elapsedMs / 60000);
-  }
-
-  private calculateCurrentInterval(): { type: 'search' | 'rest'; minutesIntoInterval: number; minutesUntilEnd: number } {
-    const elapsedMinutes = this.getElapsedMinutes();
-    const cycleLength = this.SEARCH_INTERVAL_MINUTES + this.REST_INTERVAL_MINUTES;
-    const positionInCycle = elapsedMinutes % cycleLength;
-    
-    if (positionInCycle < this.SEARCH_INTERVAL_MINUTES) {
-      return {
-        type: 'search',
-        minutesIntoInterval: positionInCycle,
-        minutesUntilEnd: this.SEARCH_INTERVAL_MINUTES - positionInCycle
-      };
-    } else {
-      const restPosition = positionInCycle - this.SEARCH_INTERVAL_MINUTES;
-      return {
-        type: 'rest',
-        minutesIntoInterval: restPosition,
-        minutesUntilEnd: this.REST_INTERVAL_MINUTES - restPosition
-      };
-    }
+    return Math.floor((now.getTime() - this.lastSearchTime.getTime()) / 1000);
   }
 
   async getSessionState(): Promise<SessionState> {
     const session = await this.ensureTodaySession();
-    const interval = this.calculateCurrentInterval();
-    const elapsedMinutes = this.getElapsedMinutes();
+    const delay = await this.computeCurrentDelay();
+    
+    const secondsSinceLastSearch = this.getSecondsSinceLastSearch();
+    const canSearchNow = secondsSinceLastSearch >= this.currentDelaySeconds;
+    const waitSeconds = canSearchNow ? 0 : (this.currentDelaySeconds - secondsSinceLastSearch);
+    
+    let reason = '';
+    if (!canSearchNow) {
+      reason = `Wait ${waitSeconds}s until next search allowed`;
+    } else if (session.status !== 'active') {
+      reason = 'Session not active';
+    } else if ((session.minutesRemaining ?? 0) <= 0) {
+      reason = 'Daily budget exhausted';
+    } else {
+      reason = 'Ready to search';
+    }
     
     return {
       isActive: session.status === 'active',
       currentSession: session,
-      isInSearchInterval: interval.type === 'search',
-      timeUntilNextInterval: interval.minutesUntilEnd,
+      canSearchNow: canSearchNow && session.status === 'active' && (session.minutesRemaining ?? 0) > 0,
+      waitSeconds,
+      reason,
       minutesRemaining: session.minutesRemaining ?? 0,
       dailyBudget: session.totalBudgetMinutes ?? this.DAILY_BUDGET_MINUTES,
-      elapsedMinutes
+      nextProvider: delay.nextProvider
     };
   }
 
-  async canStartSearch(): Promise<{ allowed: boolean; reason: string; waitMinutes?: number }> {
+  async canStartSearch(): Promise<{ allowed: boolean; reason: string; waitSeconds?: number; nextProvider?: AIProvider | null }> {
     const state = await this.getSessionState();
     
     if (!state.isActive) {
@@ -214,15 +232,47 @@ class SearchSessionManager {
       return { allowed: false, reason: 'Daily budget exhausted' };
     }
     
-    if (!state.isInSearchInterval) {
+    if (!state.canSearchNow) {
       return { 
         allowed: false, 
-        reason: 'Currently in rest interval',
-        waitMinutes: state.timeUntilNextInterval
+        reason: state.reason,
+        waitSeconds: state.waitSeconds,
+        nextProvider: state.nextProvider
       };
     }
     
-    return { allowed: true, reason: 'Search allowed' };
+    return { 
+      allowed: true, 
+      reason: 'Search allowed',
+      nextProvider: state.nextProvider
+    };
+  }
+
+  async getAdaptiveDelay(): Promise<{ delaySeconds: number; reason: string; nextProvider: AIProvider | null }> {
+    return this.computeCurrentDelay();
+  }
+
+  async recordSearchStart(): Promise<void> {
+    this.lastSearchTime = new Date();
+    
+    const today = this.getTodayDateString();
+    const delay = await this.computeCurrentDelay();
+    this.currentDelaySeconds = delay.delaySeconds;
+    
+    const intervalPlan: AdaptiveIntervalPlan = {
+      sessionStartedAt: this.sessionStartedAt?.toISOString() || new Date().toISOString(),
+      lastSearchAt: this.lastSearchTime.toISOString(),
+      currentDelaySeconds: this.currentDelaySeconds,
+      providerSequence: []
+    };
+    
+    await db.execute(sql`
+      UPDATE subagent_search_sessions 
+      SET 
+        interval_plan = ${JSON.stringify(intervalPlan)}::jsonb,
+        updated_at = NOW()
+      WHERE session_date = ${today}
+    `);
   }
 
   async recordSearchTime(durationMinutes: number): Promise<void> {
@@ -238,7 +288,7 @@ class SearchSessionManager {
     `);
   }
 
-  async recordSearchCompletion(officersFound: number): Promise<void> {
+  async recordSearchCompletion(officersFound: number, provider?: AIProvider): Promise<void> {
     const today = this.getTodayDateString();
     
     await db.execute(sql`
@@ -249,6 +299,9 @@ class SearchSessionManager {
         updated_at = NOW()
       WHERE session_date = ${today}
     `);
+    
+    const delay = await this.computeCurrentDelay();
+    this.currentDelaySeconds = delay.delaySeconds;
   }
 
   async pauseSession(reason?: string): Promise<void> {
@@ -298,7 +351,8 @@ class SearchSessionManager {
   async getSessionStats(): Promise<{
     today: typeof subagentSearchSessions.$inferSelect | null;
     weekTotal: { searches: number; officers: number; minutes: number };
-    currentInterval: { type: 'search' | 'rest'; minutesIntoInterval: number; minutesUntilEnd: number };
+    currentDelay: { seconds: number; reason: string; nextProvider: AIProvider | null };
+    providerProfiles: any[];
   }> {
     const today = this.getTodayDateString();
     const weekAgo = new Date();
@@ -321,7 +375,14 @@ class SearchSessionManager {
     `);
 
     const stats = weekStats.rows[0] as any;
-    const currentInterval = this.calculateCurrentInterval();
+    const delay = await this.computeCurrentDelay();
+    
+    let providerProfiles: any[] = [];
+    try {
+      providerProfiles = await getProviderRateProfiles();
+    } catch (e) {
+      console.error('[SearchSessionManager] Failed to get provider profiles');
+    }
 
     return {
       today: todaySession[0] ?? null,
@@ -330,7 +391,12 @@ class SearchSessionManager {
         officers: parseInt(stats.total_officers) || 0,
         minutes: parseInt(stats.total_minutes) || 0
       },
-      currentInterval
+      currentDelay: {
+        seconds: delay.delaySeconds,
+        reason: delay.reason,
+        nextProvider: delay.nextProvider
+      },
+      providerProfiles
     };
   }
 
@@ -347,7 +413,9 @@ class SearchSessionManager {
     
     const canSearch = await this.canStartSearch();
     if (!canSearch.allowed) {
-      console.log(`[SearchSessionManager] Cannot search: ${canSearch.reason}`);
+      if (canSearch.waitSeconds && canSearch.waitSeconds < 60) {
+        console.log(`[SearchSessionManager] Wait ${canSearch.waitSeconds}s before next search`);
+      }
       return null;
     }
 
@@ -370,6 +438,8 @@ class SearchSessionManager {
   }
 
   async markSearchInProgress(queueId: string): Promise<void> {
+    await this.recordSearchStart();
+    
     await db
       .update(subagentSearchQueue)
       .set({
@@ -391,7 +461,8 @@ class SearchSessionManager {
   }
 
   async markSearchFailed(queueId: string, errorMessage: string): Promise<void> {
-    const retryDelay = 30 * 60 * 1000;
+    const delay = await this.computeCurrentDelay();
+    const retryDelay = Math.max(delay.delaySeconds * 1000, 30 * 60 * 1000);
     const nextAttempt = new Date(Date.now() + retryDelay);
     
     await db

@@ -106,6 +106,33 @@ interface QuotaStatus {
   };
 }
 
+/**
+ * Provider rate profile for adaptive search delay calculations
+ * Provides comprehensive rate limiting information for each AI provider
+ */
+export interface ProviderRateProfile {
+  provider: AIProvider;
+  requestsPerMinute: number;
+  tokensPerMinute: number;
+  dailyTokenLimit: number;
+  dailyRequestLimit: number;
+  currentUsage: { tokens: number; requests: number };
+  remainingCapacity: { tokens: number; requests: number };
+  percentUsed: number;
+  isAvailable: boolean;
+  autonomousLimit: number;
+  autonomousUsed: number;
+}
+
+/**
+ * Adaptive search delay result
+ */
+export interface AdaptiveSearchDelayResult {
+  delaySeconds: number;
+  reason: string;
+  nextProvider: AIProvider;
+}
+
 class AITokenGovernorEnhanced {
   private static instance: AITokenGovernorEnhanced;
   private readonly AUTONOMOUS_GROQ_LIMIT_PERCENT = 35; // 35% for autonomous - increased to give workers/sub-agents more resources while still prioritizing user AI needs
@@ -115,6 +142,18 @@ class AITokenGovernorEnhanced {
   private readonly GROQ_DAILY_TOKEN_LIMIT = 100000;     // 30-35% of total AI usage
   private readonly GEMINI_DAILY_REQUEST_LIMIT = 50;     // 10% of total AI usage (request-based)
   private readonly CLAUDE_DAILY_TOKEN_LIMIT = 25000;    // 5-10% of total AI usage
+  
+  // Requests per minute limits (conservative estimates for rate limiting)
+  private readonly MISTRAL_RPM = 5;    // Conservative ~5 RPM
+  private readonly GROQ_RPM = 30;      // ~30 RPM
+  private readonly GEMINI_RPM = 2;     // ~2 RPM (very limited)
+  private readonly CLAUDE_RPM = 5;     // ~5 RPM
+  
+  // Tokens per minute estimates (derived from daily limits / minutes in day)
+  private readonly MISTRAL_TPM = Math.floor(150000 / 1440); // ~104 TPM
+  private readonly GROQ_TPM = Math.floor(100000 / 1440);    // ~69 TPM
+  private readonly GEMINI_TPM = Math.floor(50000 / 1440);   // ~35 TPM (estimated from requests)
+  private readonly CLAUDE_TPM = Math.floor(25000 / 1440);   // ~17 TPM
   
   // Target distribution percentages (for weighted selection)
   private readonly MISTRAL_TARGET_PERCENT = 50;
@@ -898,6 +937,212 @@ class AITokenGovernorEnhanced {
   }
 
   /**
+   * Get provider rate profiles for all 4 providers
+   * Returns comprehensive rate limiting information for adaptive search delay calculations
+   */
+  public async getProviderRateProfiles(): Promise<ProviderRateProfile[]> {
+    try {
+      const quotaStatus = await this.getQuotaStatus();
+      
+      const profiles: ProviderRateProfile[] = [
+        {
+          provider: AIProvider.MISTRAL,
+          requestsPerMinute: this.MISTRAL_RPM,
+          tokensPerMinute: this.MISTRAL_TPM,
+          dailyTokenLimit: this.MISTRAL_DAILY_TOKEN_LIMIT,
+          dailyRequestLimit: Math.floor(this.MISTRAL_DAILY_TOKEN_LIMIT / 500),
+          currentUsage: { 
+            tokens: quotaStatus.mistral.used, 
+            requests: Math.ceil(quotaStatus.mistral.used / 500) 
+          },
+          remainingCapacity: { 
+            tokens: Math.max(0, this.MISTRAL_DAILY_TOKEN_LIMIT - quotaStatus.mistral.used),
+            requests: Math.max(0, Math.floor((this.MISTRAL_DAILY_TOKEN_LIMIT - quotaStatus.mistral.used) / 500))
+          },
+          percentUsed: quotaStatus.mistral.percentUsed,
+          isAvailable: this.isProviderAvailable(AIProvider.MISTRAL) && quotaStatus.mistral.percentUsed < 95,
+          autonomousLimit: this.MISTRAL_DAILY_TOKEN_LIMIT,
+          autonomousUsed: quotaStatus.mistral.autonomousUsed
+        },
+        {
+          provider: AIProvider.GROQ,
+          requestsPerMinute: this.GROQ_RPM,
+          tokensPerMinute: this.GROQ_TPM,
+          dailyTokenLimit: this.GROQ_DAILY_TOKEN_LIMIT,
+          dailyRequestLimit: Math.floor(this.GROQ_DAILY_TOKEN_LIMIT / 500),
+          currentUsage: { 
+            tokens: quotaStatus.groq.used, 
+            requests: Math.ceil(quotaStatus.groq.used / 500) 
+          },
+          remainingCapacity: { 
+            tokens: Math.max(0, this.GROQ_DAILY_TOKEN_LIMIT - quotaStatus.groq.used),
+            requests: Math.max(0, Math.floor((this.GROQ_DAILY_TOKEN_LIMIT - quotaStatus.groq.used) / 500))
+          },
+          percentUsed: quotaStatus.groq.percentUsed,
+          isAvailable: this.isProviderAvailable(AIProvider.GROQ) && quotaStatus.groq.percentUsed < 95,
+          autonomousLimit: quotaStatus.groq.autonomousLimit,
+          autonomousUsed: quotaStatus.groq.autonomousUsed
+        },
+        {
+          provider: AIProvider.GEMINI,
+          requestsPerMinute: this.GEMINI_RPM,
+          tokensPerMinute: this.GEMINI_TPM,
+          dailyTokenLimit: this.GEMINI_DAILY_REQUEST_LIMIT * 1000,
+          dailyRequestLimit: this.GEMINI_DAILY_REQUEST_LIMIT,
+          currentUsage: { 
+            tokens: quotaStatus.gemini.used * 1000,
+            requests: quotaStatus.gemini.used 
+          },
+          remainingCapacity: { 
+            tokens: Math.max(0, (this.GEMINI_DAILY_REQUEST_LIMIT - quotaStatus.gemini.used) * 1000),
+            requests: Math.max(0, this.GEMINI_DAILY_REQUEST_LIMIT - quotaStatus.gemini.used)
+          },
+          percentUsed: quotaStatus.gemini.percentUsed,
+          isAvailable: this.isProviderAvailable(AIProvider.GEMINI) && quotaStatus.gemini.percentUsed < 95,
+          autonomousLimit: 0,
+          autonomousUsed: 0
+        },
+        {
+          provider: AIProvider.CLAUDE,
+          requestsPerMinute: this.CLAUDE_RPM,
+          tokensPerMinute: this.CLAUDE_TPM,
+          dailyTokenLimit: this.CLAUDE_DAILY_TOKEN_LIMIT,
+          dailyRequestLimit: Math.floor(this.CLAUDE_DAILY_TOKEN_LIMIT / 500),
+          currentUsage: { 
+            tokens: quotaStatus.claude.used, 
+            requests: Math.ceil(quotaStatus.claude.used / 500) 
+          },
+          remainingCapacity: { 
+            tokens: Math.max(0, this.CLAUDE_DAILY_TOKEN_LIMIT - quotaStatus.claude.used),
+            requests: Math.max(0, Math.floor((this.CLAUDE_DAILY_TOKEN_LIMIT - quotaStatus.claude.used) / 500))
+          },
+          percentUsed: quotaStatus.claude.percentUsed,
+          isAvailable: this.isProviderAvailable(AIProvider.CLAUDE) && quotaStatus.claude.percentUsed < 95,
+          autonomousLimit: this.CLAUDE_DAILY_TOKEN_LIMIT,
+          autonomousUsed: quotaStatus.claude.autonomousUsed
+        }
+      ];
+
+      return profiles;
+    } catch (error) {
+      console.error('[AI Governor] Error getting provider rate profiles:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Compute adaptive search delay based on current provider rate profiles
+   * Calculates minimum safe delay between searches based on RPM/TPM limits
+   * 
+   * For autonomous context: prioritizes Groq (35% limit) with Mistral/Claude fallbacks
+   * For user context: uses weighted distribution across all available providers
+   */
+  public async computeAdaptiveSearchDelay(context: UsageContext): Promise<AdaptiveSearchDelayResult> {
+    try {
+      const profiles = await this.getProviderRateProfiles();
+      
+      if (profiles.length === 0) {
+        return {
+          delaySeconds: 60,
+          reason: 'No provider profiles available - using conservative 60s delay',
+          nextProvider: AIProvider.GEMINI
+        };
+      }
+
+      if (context === UsageContext.AUTONOMOUS) {
+        const groqProfile = profiles.find(p => p.provider === AIProvider.GROQ);
+        const mistralProfile = profiles.find(p => p.provider === AIProvider.MISTRAL);
+        const claudeProfile = profiles.find(p => p.provider === AIProvider.CLAUDE);
+
+        const autonomousGroqRemaining = groqProfile 
+          ? Math.max(0, groqProfile.autonomousLimit - groqProfile.autonomousUsed)
+          : 0;
+
+        if (groqProfile?.isAvailable && autonomousGroqRemaining > 500) {
+          const groqRpmDelay = 60 / this.GROQ_RPM;
+          const autonomousPercentUsed = groqProfile.autonomousLimit > 0 
+            ? (groqProfile.autonomousUsed / groqProfile.autonomousLimit) * 100 
+            : 100;
+          const scaleFactor = autonomousPercentUsed > 70 ? 2.0 : autonomousPercentUsed > 50 ? 1.5 : 1.0;
+          
+          return {
+            delaySeconds: Math.ceil(groqRpmDelay * scaleFactor),
+            reason: `Groq autonomous: ${groqProfile.autonomousUsed}/${groqProfile.autonomousLimit} tokens (${autonomousPercentUsed.toFixed(1)}% of 35% limit)`,
+            nextProvider: AIProvider.GROQ
+          };
+        }
+
+        if (mistralProfile?.isAvailable && mistralProfile.remainingCapacity.tokens > 500) {
+          const mistralRpmDelay = 60 / this.MISTRAL_RPM;
+          const scaleFactor = mistralProfile.percentUsed > 80 ? 2.0 : mistralProfile.percentUsed > 60 ? 1.5 : 1.0;
+          
+          return {
+            delaySeconds: Math.ceil(mistralRpmDelay * scaleFactor),
+            reason: `Fallback to Mistral: Groq autonomous limit exhausted (${mistralProfile.percentUsed.toFixed(1)}% used)`,
+            nextProvider: AIProvider.MISTRAL
+          };
+        }
+
+        if (claudeProfile?.isAvailable && claudeProfile.remainingCapacity.tokens > 500) {
+          const claudeRpmDelay = 60 / this.CLAUDE_RPM;
+          const scaleFactor = claudeProfile.percentUsed > 80 ? 2.0 : claudeProfile.percentUsed > 60 ? 1.5 : 1.0;
+          
+          return {
+            delaySeconds: Math.ceil(claudeRpmDelay * scaleFactor),
+            reason: `Fallback to Claude: Groq and Mistral exhausted (${claudeProfile.percentUsed.toFixed(1)}% used)`,
+            nextProvider: AIProvider.CLAUDE
+          };
+        }
+
+        const resetTime = this.getNextResetTime();
+        const msToReset = resetTime.getTime() - Date.now();
+        const secondsToReset = Math.ceil(msToReset / 1000);
+        
+        return {
+          delaySeconds: Math.min(secondsToReset, 3600),
+          reason: `All autonomous providers exhausted - waiting for reset at ${resetTime.toISOString()}`,
+          nextProvider: AIProvider.GROQ
+        };
+      }
+
+      const availableProfiles = profiles.filter(p => p.isAvailable && p.remainingCapacity.tokens > 500);
+      
+      if (availableProfiles.length === 0) {
+        return {
+          delaySeconds: 60,
+          reason: 'All user providers near capacity - using conservative 60s delay',
+          nextProvider: AIProvider.GEMINI
+        };
+      }
+
+      availableProfiles.sort((a, b) => {
+        const scoreA = (100 - a.percentUsed) * a.requestsPerMinute;
+        const scoreB = (100 - b.percentUsed) * b.requestsPerMinute;
+        return scoreB - scoreA;
+      });
+
+      const bestProvider = availableProfiles[0];
+      const baseDelay = 60 / bestProvider.requestsPerMinute;
+      const usageScaleFactor = bestProvider.percentUsed > 70 ? 1.5 : bestProvider.percentUsed > 50 ? 1.2 : 1.0;
+      const providerCountFactor = availableProfiles.length >= 3 ? 0.8 : availableProfiles.length >= 2 ? 0.9 : 1.0;
+      const delaySeconds = Math.ceil(baseDelay * usageScaleFactor * providerCountFactor);
+
+      return {
+        delaySeconds,
+        reason: `Best provider: ${bestProvider.provider} (${bestProvider.percentUsed.toFixed(1)}% used, ${bestProvider.requestsPerMinute} RPM, ${availableProfiles.length} providers available)`,
+        nextProvider: bestProvider.provider
+      };
+    } catch (error) {
+      console.error('[AI Governor] Error computing adaptive search delay:', error);
+      return {
+        delaySeconds: 30,
+        reason: 'Error computing delay - using fallback 30s',
+        nextProvider: AIProvider.GEMINI
+      };
+    }
+  }
+
+  /**
    * Get next reset time (midnight UTC)
    */
   public getNextResetTime(): Date {
@@ -1007,4 +1252,13 @@ export function getPromptInstruction(verbosity: 'concise' | 'standard' | 'detail
     case 'detailed':
       return 'Provide a comprehensive analysis with detailed explanations and supporting information.';
   }
+}
+
+// Export new rate profile and adaptive delay functions
+export async function getProviderRateProfiles(): Promise<ProviderRateProfile[]> {
+  return aiTokenGovernor.getProviderRateProfiles();
+}
+
+export async function computeAdaptiveSearchDelay(context: UsageContext): Promise<AdaptiveSearchDelayResult> {
+  return aiTokenGovernor.computeAdaptiveSearchDelay(context);
 }

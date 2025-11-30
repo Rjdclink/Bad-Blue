@@ -24,6 +24,7 @@ import { eq, sql, and, or, like } from 'drizzle-orm';
 import { unifiedSearch, batchOfficerSearch, searchOfficerRecords } from './webSearchService';
 import { searchSessionManager } from './searchSessionManager';
 import { populationPriorityQueue } from './populationPriorityQueue';
+import { selfImprovementEngine } from './selfImprovementEngine';
 
 const exec = promisify(execCb);
 
@@ -329,8 +330,8 @@ class SubAgentWebHarvester {
     
     if (!canSearch.allowed) {
       console.log(`[Sub-Agent Harvester] Priority harvest blocked: ${canSearch.reason}`);
-      if (canSearch.waitMinutes) {
-        console.log(`[Sub-Agent Harvester] Next search window in ${canSearch.waitMinutes} minutes`);
+      if (canSearch.waitSeconds) {
+        console.log(`[Sub-Agent Harvester] Next search window in ${Math.ceil(canSearch.waitSeconds / 60)} minutes`);
       }
       return {
         success: false,
@@ -393,8 +394,32 @@ class SubAgentWebHarvester {
       await searchSessionManager.recordSearchTime(durationMinutes);
       await searchSessionManager.recordSearchCompletion(officersFound);
 
+      try {
+        await selfImprovementEngine.recordSuccess(
+          queueItem.id,
+          officersFound,
+          canSearch.nextProvider || 'mistral',
+          Date.now() - startTime,
+          0
+        );
+      } catch (e: any) {
+        console.warn('[Sub-Agent Harvester] Failed to record success:', e.message);
+      }
+
     } catch (e: any) {
       errors.push(`Priority harvest failed: ${e.message}`);
+      
+      try {
+        await selfImprovementEngine.recordFailure(
+          'priority-harvest',
+          e.message.includes('rate') ? 'rate_limit' : 
+          e.message.includes('timeout') ? 'timeout' : 'search_failure',
+          canSearch.nextProvider || 'mistral',
+          { error: e.message }
+        );
+      } catch (selfImpErr: any) {
+        console.warn('[Sub-Agent Harvester] Failed to record failure:', selfImpErr.message);
+      }
     }
 
     const duration = Date.now() - startTime;
