@@ -451,27 +451,27 @@ export default function AdminSubscriptions() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              {u.paidServices && u.paidServices.total > 0 ? (
+                              {u.paidServices && (u.paidServices.total || 0) > 0 ? (
                                 <div className="flex flex-wrap gap-1">
-                                  {u.paidServices.complaints > 0 && (
+                                  {(u.paidServices?.complaints || 0) > 0 && (
                                     <Badge variant="outline" className="text-xs" title="Complaints filed">
                                       <FileText className="h-3 w-3 mr-1" />
                                       {u.paidServices.complaints}
                                     </Badge>
                                   )}
-                                  {u.paidServices.lawsuits > 0 && (
+                                  {(u.paidServices?.lawsuits || 0) > 0 && (
                                     <Badge variant="outline" className="text-xs" title="Lawsuits filed">
                                       <Scale className="h-3 w-3 mr-1" />
                                       {u.paidServices.lawsuits}
                                     </Badge>
                                   )}
-                                  {u.paidServices.petitions > 0 && (
+                                  {(u.paidServices?.petitions || 0) > 0 && (
                                     <Badge variant="outline" className="text-xs" title="Petitions created">
                                       <Megaphone className="h-3 w-3 mr-1" />
                                       {u.paidServices.petitions}
                                     </Badge>
                                   )}
-                                  {u.paidServices.foiaRequests > 0 && (
+                                  {(u.paidServices?.foiaRequests || 0) > 0 && (
                                     <Badge variant="outline" className="text-xs" title="FOIA requests">
                                       <FileSearch className="h-3 w-3 mr-1" />
                                       {u.paidServices.foiaRequests}

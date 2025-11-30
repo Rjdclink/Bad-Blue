@@ -1,20 +1,218 @@
 [
   {
-    "timestamp": "2025-11-30T15:54:55.748Z",
+    "timestamp": "2025-11-30T15:55:37.859Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+    "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T15:54:55.788Z",
+    "timestamp": "2025-11-30T15:55:37.872Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/queryClient.ts"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:37.972Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/MaintenanceMode.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:37.982Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/page-skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:37.995Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon.ico"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.040Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/toast.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.066Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/utils.ts"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.097Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/translation.ts"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.105Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/card.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.328Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.501Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.554Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/tabs.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.584Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/LanguageSelector.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.594Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SupportEmailFooter.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.697Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.755Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/login.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.861Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.902Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/button.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.910Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/tabs.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.919Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/LanguageSelector.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.959Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SEOHead.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:38.969Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SupportEmailFooter.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:39.076Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:39.161Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/video/badblue-demo.mp4"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:39.387Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:39.423Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T15:54:56.119Z",
+    "timestamp": "2025-11-30T15:55:39.447Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/video/badblue-demo.mp4"
+  },
+  {
+    "timestamp": "2025-11-30T15:55:39.604Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T15:56:08.240Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T15:56:08.762Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T15:56:19.252Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/register/local"
+  },
+  {
+    "timestamp": "2025-11-30T15:56:38.820Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T15:56:39.171Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T15:56:42.915Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/register/local"
+  },
+  {
+    "timestamp": "2025-11-30T15:57:09.535Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T15:57:11.926Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]
