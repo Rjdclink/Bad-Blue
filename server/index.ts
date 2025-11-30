@@ -7,6 +7,16 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import type { Server } from "http";
 
+// Static imports for migrations - ensures esbuild bundles them (dynamic imports don't work with bundlers)
+import { createCoreTables } from "./migrations/createCoreTables";
+import { createSubAgentTables } from "./migrations/createSubAgentTables";
+import { createTokenMetricsTables } from "./migrations/createTokenMetrics";
+import { createDeviceRateLimitTables } from "./migrations/createDeviceRateLimitTables";
+import { createPetitionTables } from "./migrations/createPetitionTables";
+import { createPublicEvidenceTables } from "./migrations/createPublicEvidenceTables";
+import { createComplaintRoutingTables } from "./migrations/createComplaintRoutingTables";
+import { createFOIARoutingTables } from "./migrations/createFOIARoutingTables";
+
 const app = express();
 
 let isReady = false;
@@ -154,26 +164,23 @@ async function initializeDatabase(): Promise<void> {
 async function runMigrations(): Promise<void> {
   console.log('[STARTUP] Stage 2: Running migrations...');
   
-  // IMPORTANT: Use .js extension for Node.js ESM compatibility in production builds
-  // In development, tsx handles extensionless imports, but compiled JS requires explicit extensions
-  const migrations = [
-    { name: 'Core tables', module: './migrations/createCoreTables.js', fn: 'createCoreTables' },
-    { name: 'Sub-Agent tables', module: './migrations/createSubAgentTables.js', fn: 'createSubAgentTables' },
-    { name: 'Token Metrics tables', module: './migrations/createTokenMetrics.js', fn: 'createTokenMetricsTables' },
-    { name: 'Device Rate Limit tables', module: './migrations/createDeviceRateLimitTables.js', fn: 'createDeviceRateLimitTables' },
-    { name: 'Petition tables', module: './migrations/createPetitionTables.js', fn: 'createPetitionTables' },
-    { name: 'Public Evidence tables', module: './migrations/createPublicEvidenceTables.js', fn: 'createPublicEvidenceTables' },
-    { name: 'Complaint Routing tables', module: './migrations/createComplaintRoutingTables.js', fn: 'createComplaintRoutingTables' },
-    { name: 'FOIA Routing tables', module: './migrations/createFOIARoutingTables.js', fn: 'createFOIARoutingTables' },
+  // Using static imports (defined at top of file) - ensures esbuild includes migrations in bundle
+  // Dynamic imports don't work with bundlers because they can't analyze variable-based import paths
+  const migrations: Array<{ name: string; fn: () => Promise<unknown> }> = [
+    { name: 'Core tables', fn: createCoreTables },
+    { name: 'Sub-Agent tables', fn: createSubAgentTables },
+    { name: 'Token Metrics tables', fn: createTokenMetricsTables },
+    { name: 'Device Rate Limit tables', fn: createDeviceRateLimitTables },
+    { name: 'Petition tables', fn: createPetitionTables },
+    { name: 'Public Evidence tables', fn: createPublicEvidenceTables },
+    { name: 'Complaint Routing tables', fn: createComplaintRoutingTables },
+    { name: 'FOIA Routing tables', fn: createFOIARoutingTables },
   ];
 
   for (const migration of migrations) {
     try {
-      const mod = await import(migration.module);
-      if (mod[migration.fn]) {
-        await mod[migration.fn]();
-        console.log(`[STARTUP] ✓ ${migration.name} migration complete`);
-      }
+      await migration.fn();
+      console.log(`[STARTUP] ✓ ${migration.name} migration complete`);
     } catch (error: any) {
       console.warn(`[STARTUP] ⚠ ${migration.name} migration skipped:`, error?.message ?? error);
     }

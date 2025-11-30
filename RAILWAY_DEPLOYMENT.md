@@ -66,6 +66,35 @@ This makes Node.js prefer IPv4 addresses in DNS resolution, which happens **befo
 - **Session Pooler (port 5432/6543)**: Still dual-stack, prefers IPv6
 - **Custom DNS code**: Doesn't intercept Node's DNS at the right layer
 
+## Migration Bundling Architecture
+
+### The Problem
+The build process uses `esbuild` to bundle `server/index.ts` into a single `dist/index.js` file. Originally, migrations were loaded via **dynamic imports**:
+```typescript
+await import(migration.module); // esbuild can't analyze variable-based imports
+```
+
+This caused `ENOENT: no such file or directory 'dist/migrations/...'` errors in production because esbuild couldn't include files referenced by dynamic string paths.
+
+### The Solution
+Migrations are now **statically imported** at the top of `server/index.ts`:
+```typescript
+import { createCoreTables } from "./migrations/createCoreTables";
+import { createSubAgentTables } from "./migrations/createSubAgentTables";
+// ... all 8 migrations
+```
+
+The `runMigrations()` function uses these static references directly:
+```typescript
+const migrations = [
+  { name: 'Core tables', fn: createCoreTables },
+  { name: 'Sub-Agent tables', fn: createSubAgentTables },
+  // ...
+];
+```
+
+This ensures esbuild bundles all migration code into the single `dist/index.js` file (~686KB).
+
 ## Required Environment Variables
 
 ### CRITICAL: IPv4 Fix (Required for Supabase)

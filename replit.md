@@ -65,6 +65,11 @@ The platform utilizes a modern web stack featuring a React 18 frontend with Type
 -   **Google AI SDKs**: Uses both `@google/genai` (for web-grounded searches) and `@google/generative-ai` (for standard AI calls)
 -   All database operations verified working with the updated packages
 
+**RAILWAY DEPLOYMENT FIXES (Nov 30, 2025)**:
+-   **IPv6/IPv4 Connectivity**: Railway's shared network doesn't support IPv6 egress. Fix: Set `NODE_OPTIONS="--dns-result-order=ipv4first"` in Railway env vars
+-   **Migration Bundling**: Changed from dynamic imports to static imports for all 8 migration modules. Dynamic imports (`await import(path)`) can't be analyzed by esbuild bundler, causing `ENOENT` errors in production. Static imports are now at top of `server/index.ts` and bundled into single `dist/index.js` (~686KB)
+-   **Documentation**: See `RAILWAY_DEPLOYMENT.md` for full Railway-specific configuration
+
 **CRITICAL BUG FIXES (Nov 14, 2025)**:
 -   **Groq Quota Exhaustion Prevention**: Disabled autonomous data collection system that was consuming 100% of daily Groq quotas (100,000 tokens), violating the 35% limit requirement. System now prevents quota exhaustion with autonomous functions temporarily disabled pending proper token budget implementation.
 -   **Frontend Serving Fix**: Fixed critical issue where notFoundHandler middleware was catching all routes before Vite could serve the frontend, causing JSON 404 errors for all UI routes. Implemented scoped notFoundHandler only for /api routes.
