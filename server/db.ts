@@ -17,8 +17,8 @@ const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || !!process.
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Check for Supabase connection from multiple possible environment variable names
-// Railway and other platforms may use different variable names
-const supabaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_DB_URL;
+// Railway uses SUPABASE_URL, other platforms may use different variable names
+const supabaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.SUPABASE_URL;
 
 // Helper to detect if a connection string is a Supabase database
 const isSupabaseConnectionString = (url: string | undefined): boolean => {
@@ -44,9 +44,9 @@ const isUsingSupabase = isExplicitSupabaseEnv || isDatabaseUrlSupabase;
 if (isProduction && !isUsingSupabase) {
   console.error('[DATABASE] ❌ CRITICAL: Production environment requires Supabase database');
   console.error('[DATABASE] ❌ No Supabase connection string detected');
-  console.error('[DATABASE] ❌ Set SUPABASE_DATABASE_URL environment variable, or use a DATABASE_URL pointing to Supabase');
+  console.error('[DATABASE] ❌ Set SUPABASE_URL, SUPABASE_DATABASE_URL, or DATABASE_URL pointing to Supabase');
   console.error('[DATABASE] ❌ Detected DATABASE_URL does not appear to be a Supabase connection');
-  throw new Error('Supabase database connection required in production. Set SUPABASE_DATABASE_URL or ensure DATABASE_URL points to Supabase.');
+  throw new Error('Supabase database connection required in production. Set SUPABASE_URL, SUPABASE_DATABASE_URL, or ensure DATABASE_URL points to Supabase.');
 }
 
 // Log which database connection is being used with prominent warning for fallback
@@ -56,14 +56,22 @@ if (!isUsingSupabase) {
   console.warn('[DATABASE] ⚠️ Use /api/schema-verify endpoint for accurate table counts');
   console.warn('[DATABASE] ⚠️ execute_sql_tool is DEPRECATED - it connects to wrong database');
 } else {
-  const source = isExplicitSupabaseEnv ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL (Supabase detected)';
+  // Determine exact source for logging
+  let source = 'DATABASE_URL (Supabase detected)';
+  if (process.env.SUPABASE_DATABASE_URL) {
+    source = 'SUPABASE_DATABASE_URL';
+  } else if (process.env.SUPABASE_DB_URL) {
+    source = 'SUPABASE_DB_URL';
+  } else if (process.env.SUPABASE_URL) {
+    source = 'SUPABASE_URL';
+  }
   console.log(`[DATABASE] ✓ Using ${source} (production database)`);
 }
 console.log(`[DATABASE] Environment: ${isProduction ? 'production' : 'development'}, Platform: ${isRailway ? 'Railway' : 'Replit/local'}`);
 
 if (!databaseUrl) {
   throw new Error(
-    "SUPABASE_DATABASE_URL or DATABASE_URL must be set. Did you forget to provision a database?",
+    "SUPABASE_URL, SUPABASE_DATABASE_URL, or DATABASE_URL must be set. Did you forget to provision a database?",
   );
 }
 
@@ -149,9 +157,9 @@ export async function resetPool(): Promise<void> {
         console.warn('[DATABASE] Error closing old pool (may already be closed):', error);
       }
 
-      const newDatabaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL;
+      const newDatabaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.SUPABASE_URL || process.env.DATABASE_URL;
       if (!newDatabaseUrl) {
-        throw new Error('DATABASE_URL not available for pool reset');
+        throw new Error('SUPABASE_URL or DATABASE_URL not available for pool reset');
       }
 
       // Use the same configuration function for consistency
@@ -208,14 +216,22 @@ export async function verifyDatabaseSchema(): Promise<{
   allTables?: string[];
   isProductionDatabase: boolean;
 }> {
-  // Use the same detection logic as startup
-  const explicitSupabaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_DB_URL;
+  // Use the same detection logic as startup (include all possible env var names)
+  const explicitSupabaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.SUPABASE_URL;
   const dbUrl = process.env.DATABASE_URL;
-  const isDbUrlSupabase = dbUrl && (dbUrl.includes('supabase.co') || dbUrl.includes('supabase.com') || dbUrl.includes('pooler.supabase'));
+  const isDbUrlSupabase = isSupabaseConnectionString(dbUrl);
   
-  const connectionSource = explicitSupabaseUrl 
-    ? 'SUPABASE_DATABASE_URL' 
-    : (isDbUrlSupabase ? 'DATABASE_URL (Supabase)' : 'DATABASE_URL');
+  // Determine which environment variable is being used for logging
+  let connectionSource = 'DATABASE_URL';
+  if (process.env.SUPABASE_DATABASE_URL) {
+    connectionSource = 'SUPABASE_DATABASE_URL';
+  } else if (process.env.SUPABASE_DB_URL) {
+    connectionSource = 'SUPABASE_DB_URL';
+  } else if (process.env.SUPABASE_URL) {
+    connectionSource = 'SUPABASE_URL';
+  } else if (isDbUrlSupabase) {
+    connectionSource = 'DATABASE_URL (Supabase detected)';
+  }
   const isProductionDatabase = !!explicitSupabaseUrl || !!isDbUrlSupabase;
   
   // Critical tables that must exist for core BadBlue functionality

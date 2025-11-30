@@ -1,108 +1,174 @@
 [
   {
-    "timestamp": "2025-11-30T06:30:52.633Z",
+    "timestamp": "2025-11-30T06:41:39.741Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/SEOHead.tsx"
+    "path": "/src/lib/translation.ts"
   },
   {
-    "timestamp": "2025-11-30T06:30:52.667Z",
+    "timestamp": "2025-11-30T06:41:39.821Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/hooks/useFaqSchema.ts"
+    "path": "/src/components/ui/skeleton.tsx"
   },
   {
-    "timestamp": "2025-11-30T06:30:52.671Z",
+    "timestamp": "2025-11-30T06:41:39.841Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
+    "path": "/src/components/ui/tooltip.tsx"
   },
   {
-    "timestamp": "2025-11-30T06:30:52.766Z",
+    "timestamp": "2025-11-30T06:41:39.869Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/badge.tsx"
+    "path": "/src/contexts/ClientSessionContext.tsx"
   },
   {
-    "timestamp": "2025-11-30T06:30:52.769Z",
+    "timestamp": "2025-11-30T06:41:39.876Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/checkbox.tsx"
+    "path": "/src/contexts/LanguageContext.tsx"
   },
   {
-    "timestamp": "2025-11-30T06:30:52.772Z",
+    "timestamp": "2025-11-30T06:41:39.900Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+    "path": "/src/components/ui/page-skeleton.tsx"
   },
   {
-    "timestamp": "2025-11-30T06:30:52.775Z",
+    "timestamp": "2025-11-30T06:41:40.136Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/SEOHead.tsx"
+    "path": "/src/hooks/use-toast.ts"
   },
   {
-    "timestamp": "2025-11-30T06:30:52.832Z",
+    "timestamp": "2025-11-30T06:41:40.140Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/SupportEmailFooter.tsx"
+    "path": "/src/lib/translation.ts"
   },
   {
-    "timestamp": "2025-11-30T06:30:52.835Z",
+    "timestamp": "2025-11-30T06:41:40.186Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/dropdown-menu.tsx"
+    "path": "/src/components/ui/skeleton.tsx"
   },
   {
-    "timestamp": "2025-11-30T06:30:52.935Z",
+    "timestamp": "2025-11-30T06:41:40.688Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/dropdown-menu.tsx"
+    "path": "/api/auth/user"
   },
   {
-    "timestamp": "2025-11-30T06:30:53.384Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T06:30:53.429Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
-  },
-  {
-    "timestamp": "2025-11-30T06:30:53.699Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T06:30:53.738Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
-  },
-  {
-    "timestamp": "2025-11-30T06:30:53.883Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T06:30:55.243Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
-  },
-  {
-    "timestamp": "2025-11-30T06:31:22.132Z",
+    "timestamp": "2025-11-30T06:41:40.753Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T06:31:23.447Z",
+    "timestamp": "2025-11-30T06:41:40.787Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon.ico"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:41.029Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/landing.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:41.373Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/landing.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:41.385Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SEOHead.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:41.403Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/useFaqSchema.ts"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:42.287Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:42.340Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/useFaqSchema.ts"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:42.352Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:42.461Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:42.509Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:42.586Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:43.127Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:43.568Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:43.598Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:43.626Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T06:41:49.389Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T06:42:11.051Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T06:42:11.514Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
