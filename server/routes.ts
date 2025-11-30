@@ -48,6 +48,8 @@ import {
   executeAdvancedReasoning,
 } from "./aiSubAgent";
 import { runAutomatedCleanup, getCleanupLogs, getCleanupStats, deleteOldErrorLogs, getErrorLogCleanupHistory, getErrorLogCleanupStats } from "./dataCleanup";
+import { generateEnhancedComplaint, searchOfficerAuthority, routeComplaint, enhanceComplaintNarrative } from "./complaintDraftingSystem";
+import { generateSection1983Lawsuit } from "./section1983LawsuitGenerator";
 import { runFullDiagnostics } from "./systemDiagnostics";
 import {
   apiRateLimit,
@@ -2515,6 +2517,396 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
     const { id } = req.params;
     await storage.deletePublicEvidence(id);
     res.json({ success: true });
+  }));
+
+  // ============================================
+  // ENHANCED COMPLAINT DRAFTING SYSTEM ROUTES
+  // ============================================
+  
+  // Lookup department authorities (Internal Affairs, oversight, etc.)
+  app.post("/api/complaint-drafting/lookup-authorities", asyncHandler(async (req: any, res) => {
+    const { department, city, county, state, officerName } = req.body;
+    
+    if (!department || !city || !state) {
+      return res.status(400).json({ 
+        error: "Missing required fields: department, city, and state are required" 
+      });
+    }
+    
+    const authorities = await searchOfficerAuthority(officerName || '', department, city, county, state);
+    res.json({ authorities });
+  }));
+  
+  // Generate professional complaint document
+  app.post("/api/complaint-drafting/generate", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    
+    const { 
+      complainantName, complainantAddress, complainantPhone, complainantEmail,
+      officerName, officerBadge, officerRank, officerDepartment,
+      incidentDate, incidentTime, incidentLocation, city, county, state,
+      incidentDescription, complaintType,
+      witnesses, injuries, propertyDamage, evidenceDescription,
+      priorComplaints, immediateActions
+    } = req.body;
+    
+    // Validate required fields
+    const missingFields = [];
+    if (!complainantName) missingFields.push('complainantName');
+    if (!complainantAddress) missingFields.push('complainantAddress');
+    if (!officerName) missingFields.push('officerName');
+    if (!officerDepartment) missingFields.push('officerDepartment');
+    if (!incidentDate) missingFields.push('incidentDate');
+    if (!incidentLocation) missingFields.push('incidentLocation');
+    if (!city) missingFields.push('city');
+    if (!state) missingFields.push('state');
+    if (!incidentDescription) missingFields.push('incidentDescription');
+    if (!complaintType) missingFields.push('complaintType');
+    
+    if (missingFields.length > 0) {
+      throw ErrorTypes.MISSING_REQUIRED_FIELDS(missingFields);
+    }
+    
+    const complaintData = {
+      complainantName,
+      complainantAddress,
+      complainantPhone: complainantPhone || '',
+      complainantEmail: complainantEmail || '',
+      officerName,
+      officerBadge,
+      officerRank,
+      officerDepartment,
+      incidentDate: new Date(incidentDate),
+      incidentTime,
+      incidentLocation,
+      city,
+      county,
+      state,
+      incidentDescription,
+      complaintType,
+      witnesses,
+      injuries,
+      propertyDamage,
+      evidenceDescription,
+      priorComplaints,
+      immediateActions
+    };
+    
+    const result = await generateEnhancedComplaint(complaintData);
+    
+    res.json({
+      document: result.document,
+      routing: result.routing,
+      legalBasis: result.legalBasis,
+      recommendedActions: result.recommendedActions,
+      documentFormat: result.documentFormat
+    });
+  }));
+  
+  // Route complaint to authorities with fallback
+  app.post("/api/complaint-drafting/route", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    
+    const { 
+      complaintId, 
+      generatedComplaint, 
+      complaintData 
+    } = req.body;
+    
+    if (!generatedComplaint || !complaintData) {
+      return res.status(400).json({ error: "Missing generatedComplaint or complaintData" });
+    }
+    
+    const complaint = {
+      document: generatedComplaint.document,
+      routing: generatedComplaint.routing,
+      legalBasis: generatedComplaint.legalBasis || [],
+      recommendedActions: generatedComplaint.recommendedActions || [],
+      documentFormat: generatedComplaint.documentFormat || 'text' as const,
+    };
+    
+    const data = {
+      ...complaintData,
+      incidentDate: new Date(complaintData.incidentDate),
+    };
+    
+    const result = await routeComplaint(complaint, data, complaintId);
+    
+    res.json(result);
+  }));
+  
+  // ============================================
+  // SECTION 1983 LAWSUIT GENERATION ROUTES
+  // ============================================
+  
+  // District court mapping by state
+  const DISTRICT_COURTS_BY_STATE: Record<string, { name: string; divisions?: string[] }[]> = {
+    'AL': [{ name: 'N.D. Ala.', divisions: ['Birmingham', 'Florence', 'Huntsville', 'Jasper'] }, { name: 'M.D. Ala.' }, { name: 'S.D. Ala.' }],
+    'AK': [{ name: 'D. Alaska' }],
+    'AZ': [{ name: 'D. Ariz.', divisions: ['Phoenix', 'Tucson', 'Prescott'] }],
+    'AR': [{ name: 'E.D. Ark.' }, { name: 'W.D. Ark.' }],
+    'CA': [{ name: 'N.D. Cal.', divisions: ['San Francisco', 'Oakland', 'San Jose'] }, { name: 'E.D. Cal.' }, { name: 'C.D. Cal.', divisions: ['Los Angeles', 'Riverside', 'Santa Ana'] }, { name: 'S.D. Cal.' }],
+    'CO': [{ name: 'D. Colo.' }],
+    'CT': [{ name: 'D. Conn.' }],
+    'DE': [{ name: 'D. Del.' }],
+    'FL': [{ name: 'N.D. Fla.' }, { name: 'M.D. Fla.', divisions: ['Jacksonville', 'Orlando', 'Tampa'] }, { name: 'S.D. Fla.', divisions: ['Miami', 'Fort Lauderdale', 'West Palm Beach'] }],
+    'GA': [{ name: 'N.D. Ga.', divisions: ['Atlanta', 'Rome', 'Newnan', 'Gainesville'] }, { name: 'M.D. Ga.' }, { name: 'S.D. Ga.' }],
+    'HI': [{ name: 'D. Haw.' }],
+    'ID': [{ name: 'D. Idaho' }],
+    'IL': [{ name: 'N.D. Ill.', divisions: ['Eastern (Chicago)', 'Western'] }, { name: 'C.D. Ill.' }, { name: 'S.D. Ill.' }],
+    'IN': [{ name: 'N.D. Ind.' }, { name: 'S.D. Ind.' }],
+    'IA': [{ name: 'N.D. Iowa' }, { name: 'S.D. Iowa' }],
+    'KS': [{ name: 'D. Kan.' }],
+    'KY': [{ name: 'E.D. Ky.' }, { name: 'W.D. Ky.' }],
+    'LA': [{ name: 'E.D. La.' }, { name: 'M.D. La.' }, { name: 'W.D. La.' }],
+    'ME': [{ name: 'D. Me.' }],
+    'MD': [{ name: 'D. Md.', divisions: ['Baltimore', 'Greenbelt'] }],
+    'MA': [{ name: 'D. Mass.' }],
+    'MI': [{ name: 'E.D. Mich.', divisions: ['Detroit', 'Ann Arbor', 'Flint'] }, { name: 'W.D. Mich.' }],
+    'MN': [{ name: 'D. Minn.' }],
+    'MS': [{ name: 'N.D. Miss.' }, { name: 'S.D. Miss.' }],
+    'MO': [{ name: 'E.D. Mo.' }, { name: 'W.D. Mo.' }],
+    'MT': [{ name: 'D. Mont.' }],
+    'NE': [{ name: 'D. Neb.' }],
+    'NV': [{ name: 'D. Nev.' }],
+    'NH': [{ name: 'D.N.H.' }],
+    'NJ': [{ name: 'D.N.J.', divisions: ['Newark', 'Trenton', 'Camden'] }],
+    'NM': [{ name: 'D.N.M.' }],
+    'NY': [{ name: 'N.D.N.Y.' }, { name: 'S.D.N.Y.', divisions: ['Manhattan', 'White Plains'] }, { name: 'E.D.N.Y.', divisions: ['Brooklyn', 'Central Islip'] }, { name: 'W.D.N.Y.' }],
+    'NC': [{ name: 'E.D.N.C.' }, { name: 'M.D.N.C.' }, { name: 'W.D.N.C.' }],
+    'ND': [{ name: 'D.N.D.' }],
+    'OH': [{ name: 'N.D. Ohio', divisions: ['Cleveland', 'Akron', 'Toledo', 'Youngstown'] }, { name: 'S.D. Ohio', divisions: ['Cincinnati', 'Columbus', 'Dayton'] }],
+    'OK': [{ name: 'N.D. Okla.' }, { name: 'E.D. Okla.' }, { name: 'W.D. Okla.' }],
+    'OR': [{ name: 'D. Or.', divisions: ['Portland', 'Eugene', 'Medford', 'Pendleton'] }],
+    'PA': [{ name: 'E.D. Pa.' }, { name: 'M.D. Pa.' }, { name: 'W.D. Pa.' }],
+    'RI': [{ name: 'D.R.I.' }],
+    'SC': [{ name: 'D.S.C.', divisions: ['Charleston', 'Columbia', 'Florence', 'Greenville'] }],
+    'SD': [{ name: 'D.S.D.' }],
+    'TN': [{ name: 'E.D. Tenn.' }, { name: 'M.D. Tenn.' }, { name: 'W.D. Tenn.' }],
+    'TX': [{ name: 'N.D. Tex.', divisions: ['Dallas', 'Fort Worth', 'Lubbock', 'Amarillo'] }, { name: 'E.D. Tex.' }, { name: 'S.D. Tex.', divisions: ['Houston', 'Galveston', 'Corpus Christi', 'Brownsville'] }, { name: 'W.D. Tex.', divisions: ['San Antonio', 'Austin', 'El Paso'] }],
+    'UT': [{ name: 'D. Utah' }],
+    'VT': [{ name: 'D. Vt.' }],
+    'VA': [{ name: 'E.D. Va.', divisions: ['Alexandria', 'Norfolk', 'Richmond', 'Newport News'] }, { name: 'W.D. Va.' }],
+    'WA': [{ name: 'E.D. Wash.' }, { name: 'W.D. Wash.', divisions: ['Seattle', 'Tacoma'] }],
+    'WV': [{ name: 'N.D.W. Va.' }, { name: 'S.D.W. Va.' }],
+    'WI': [{ name: 'E.D. Wis.' }, { name: 'W.D. Wis.' }],
+    'WY': [{ name: 'D. Wyo.' }],
+    'DC': [{ name: 'D.D.C.' }],
+  };
+  
+  // Local rules by district court
+  const LOCAL_RULES_BY_COURT: Record<string, any> = {
+    'default': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'right' },
+    'C.D. Cal.': { fontFamily: 'Times New Roman', fontSize: 14, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: true, maxLinesPerPage: 28, captionFormat: 'california-central', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'left' },
+    'N.D. Cal.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: true, maxLinesPerPage: 28, captionFormat: 'california', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'left' },
+    'S.D.N.Y.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: true, signatureBlock: 'right' },
+    'E.D.N.Y.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: true, signatureBlock: 'right' },
+    'N.D. Ill.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'right' },
+    'N.D. Tex.': { fontFamily: 'Courier New', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'right' },
+    'S.D. Tex.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1.5, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'right' },
+    'D.D.C.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'center' },
+    'E.D. Pa.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1.5, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'right' },
+    'N.D. Ga.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'right' },
+    'S.D. Fla.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: true, signatureBlock: 'right' },
+    'M.D. Fla.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'right' },
+    'E.D. Mich.': { fontFamily: 'Times New Roman', fontSize: 12, lineSpacing: 'double', margins: { top: 1, bottom: 1, left: 1, right: 1 }, lineNumbering: false, captionFormat: 'standard', paperSize: '8.5x11', footerRequired: false, signatureBlock: 'left' },
+  };
+  
+  // Get district court information for a state
+  app.get("/api/section-1983/district-courts/:state", asyncHandler(async (req: any, res) => {
+    const { state } = req.params;
+    
+    if (!state || state.length !== 2) {
+      return res.status(400).json({ error: "Invalid state code" });
+    }
+    
+    const courts = DISTRICT_COURTS_BY_STATE[state.toUpperCase()] || [];
+    res.json({ courts });
+  }));
+  
+  // Get local rules for a specific district court
+  app.get("/api/section-1983/local-rules/:districtCourt", asyncHandler(async (req: any, res) => {
+    const { districtCourt } = req.params;
+    
+    if (!districtCourt) {
+      return res.status(400).json({ error: "Missing district court" });
+    }
+    
+    const courtName = decodeURIComponent(districtCourt);
+    const localRules = LOCAL_RULES_BY_COURT[courtName] || LOCAL_RULES_BY_COURT['default'];
+    res.json({ localRules });
+  }));
+  
+  // Generate Section 1983 lawsuit document
+  app.post("/api/section-1983/generate", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    
+    const {
+      plaintiff,
+      defendants,
+      incident,
+      claims,
+      damages,
+      jurisdiction,
+      attorney
+    } = req.body;
+    
+    // Validate required fields
+    if (!plaintiff || !defendants || !incident || !claims || !damages || !jurisdiction) {
+      return res.status(400).json({ 
+        error: "Missing required lawsuit data: plaintiff, defendants, incident, claims, damages, jurisdiction" 
+      });
+    }
+    
+    // Parse dates
+    const lawsuitData = {
+      plaintiff,
+      defendants,
+      incident: {
+        ...incident,
+        date: new Date(incident.date)
+      },
+      claims,
+      damages,
+      jurisdiction,
+      attorney
+    };
+    
+    const result = generateSection1983Lawsuit(lawsuitData);
+    
+    // Store the filing in database
+    try {
+      await db.insert(schema.section1983Filings).values({
+        userId,
+        plaintiffName: plaintiff.name,
+        plaintiffAddress: plaintiff.address,
+        plaintiffCity: plaintiff.city,
+        plaintiffState: plaintiff.state,
+        plaintiffZip: plaintiff.zipCode,
+        plaintiffPhone: plaintiff.phone,
+        plaintiffEmail: plaintiff.email,
+        isProSe: plaintiff.isProSe,
+        attorneyName: attorney?.name,
+        attorneyBarNumber: attorney?.barNumber,
+        attorneyFirm: attorney?.firmName,
+        attorneyAddress: attorney?.address,
+        attorneyPhone: attorney?.phone,
+        attorneyEmail: attorney?.email,
+        defendants: JSON.stringify(defendants),
+        incidentDate: new Date(incident.date),
+        incidentTime: incident.time,
+        incidentLocation: incident.location,
+        incidentCity: incident.city,
+        incidentCounty: incident.county,
+        incidentState: incident.state,
+        incidentDescription: incident.description,
+        claims: JSON.stringify(claims),
+        damagesCompensatory: damages.compensatory ? JSON.stringify(damages.compensatory) : null,
+        damagesPunitive: damages.punitive,
+        damagesPunitiveDescription: damages.punitiveDescription,
+        damagesInjunctive: damages.injunctiveRelief,
+        damagesDeclaratory: damages.declaratoryRelief,
+        damagesAttorneysFees: damages.attorneysFees,
+        districtCourt: jurisdiction.districtCourt,
+        courtDivision: jurisdiction.division,
+        venueReason: jurisdiction.venueReason,
+        generatedDocument: result.document,
+        localRulesApplied: JSON.stringify(result.localRules),
+        filingFee: result.estimatedFilingFee,
+        status: 'generated',
+        generatedAt: new Date()
+      });
+    } catch (dbError: any) {
+      console.error('[1983] Error storing filing:', dbError.message);
+      // Continue anyway - document was generated successfully
+    }
+    
+    res.json({
+      document: result.document,
+      localRules: result.localRules,
+      filingInstructions: result.filingInstructions,
+      requiredDocuments: result.requiredDocuments,
+      estimatedFilingFee: result.estimatedFilingFee,
+      ifrRequirements: result.ifrRequirements
+    });
+  }));
+  
+  // Preview Section 1983 lawsuit (no authentication required)
+  app.post("/api/section-1983/preview", asyncHandler(async (req: any, res) => {
+    const {
+      plaintiff,
+      defendants,
+      incident,
+      claims,
+      damages,
+      jurisdiction
+    } = req.body;
+    
+    if (!plaintiff || !defendants || !incident || !claims || !damages || !jurisdiction) {
+      return res.status(400).json({ 
+        error: "Missing required lawsuit data for preview" 
+      });
+    }
+    
+    const lawsuitData = {
+      plaintiff: {
+        ...plaintiff,
+        name: plaintiff.name || "[PLAINTIFF NAME]",
+        address: plaintiff.address || "[ADDRESS]",
+        city: plaintiff.city || "[CITY]",
+        state: plaintiff.state || "[STATE]",
+        zipCode: plaintiff.zipCode || "[ZIP]",
+        isProSe: plaintiff.isProSe !== false
+      },
+      defendants,
+      incident: {
+        ...incident,
+        date: new Date(incident.date)
+      },
+      claims,
+      damages,
+      jurisdiction
+    };
+    
+    const result = generateSection1983Lawsuit(lawsuitData);
+    
+    res.json({
+      document: result.document,
+      localRules: result.localRules,
+      filingInstructions: result.filingInstructions,
+      estimatedFilingFee: result.estimatedFilingFee
+    });
+  }));
+  
+  // Get user's Section 1983 filings
+  app.get("/api/section-1983/filings", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    
+    const filings = await db.select()
+      .from(schema.section1983Filings)
+      .where(eq(schema.section1983Filings.userId, userId))
+      .orderBy(desc(schema.section1983Filings.createdAt));
+    
+    res.json({ filings });
+  }));
+  
+  // Get single Section 1983 filing
+  app.get("/api/section-1983/filings/:id", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    const { id } = req.params;
+    
+    const filings = await db.select()
+      .from(schema.section1983Filings)
+      .where(and(
+        eq(schema.section1983Filings.id, id),
+        eq(schema.section1983Filings.userId, userId)
+      ));
+    
+    if (filings.length === 0) {
+      return res.status(404).json({ error: "Filing not found" });
+    }
+    
+    res.json({ filing: filings[0] });
   }));
 
   // ============================================

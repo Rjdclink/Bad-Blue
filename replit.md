@@ -23,6 +23,15 @@ The platform utilizes a modern web stack featuring a React 18 frontend with Type
 -   **Integration Points**: Officer search, sub-agent autonomous collection, worker repair guidance, legal statute research
 -   **Key Functions**: `unifiedSearch()`, `searchOfficerRecords()`, `searchLegalStatutes()`, `searchTechnicalGuidance()`, `batchOfficerSearch()`
 
+**COMPLAINT & LAWSUIT DRAFTING SYSTEM (Nov 30, 2025)**:
+-   **Enhanced Complaint Drafting**: Professional complaint generation in `server/complaintDraftingSystem.ts` with web search for authority lookup
+-   **Authority Lookup**: Automated search for Internal Affairs, oversight boards, and command staff contacts via unified web search
+-   **Automatic Routing**: Complaints routed to discovered authorities with fallback to `contact.badblue@gmail.com` if no contacts found
+-   **Section 1983 Lawsuit Generator**: Federal civil rights lawsuit generation in `server/section1983LawsuitGenerator.ts`
+-   **District Court Rules**: Per-district formatting rules (California line numbering, font requirements, margin specs)
+-   **New Database Tables**: `authority_contacts_cache`, `complaint_routing_history`, `section_1983_filings`
+-   **API Endpoints**: `/api/complaint-drafting/*` and `/api/section-1983/*` routes
+
 **PACKAGE UPDATES (Nov 30, 2025)**:
 -   **Drizzle ORM**: Updated from 0.39.3 to 0.44.7 - latest stable version with improved PostgreSQL support
 -   **Drizzle Kit**: Updated from 0.20.18 to 0.31.7 - latest schema migration tools  

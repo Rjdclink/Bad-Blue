@@ -1809,3 +1809,249 @@ export const insertCityCouncilChannelSchema = createInsertSchema(cityCouncilChan
 
 export type CityCouncilChannel = typeof cityCouncilChannels.$inferSelect;
 export type InsertCityCouncilChannel = z.infer<typeof insertCityCouncilChannelSchema>;
+
+// ============================================
+// AUTHORITY CONTACTS CACHE TABLE
+// ============================================
+// Cached internal affairs, oversight, and command staff contacts
+export const authorityContactsCache = pgTable("authority_contacts_cache", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Department identification
+  departmentName: text("department_name").notNull(),
+  city: varchar("city", { length: 100 }).notNull(),
+  county: varchar("county", { length: 100 }),
+  state: varchar("state", { length: 2 }).notNull(),
+  
+  // Contact information
+  contactName: text("contact_name"),
+  contactTitle: text("contact_title"),
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
+  contactAddress: text("contact_address"),
+  
+  // Contact type and confidence
+  contactType: varchar("contact_type", { length: 30 }).notNull(), // 'internal_affairs', 'oversight', 'command_staff', 'professional_standards', 'civilian_review'
+  confidence: varchar("confidence", { length: 10 }).notNull().default('medium'), // 'high', 'medium', 'low'
+  
+  // Source information
+  sourceUrl: text("source_url"),
+  sourceType: varchar("source_type", { length: 30 }), // 'official_website', 'web_search', 'manual_entry'
+  
+  // Verification
+  lastVerifiedAt: timestamp("last_verified_at"),
+  verificationStatus: varchar("verification_status", { length: 20 }).default('unverified'),
+  isActive: boolean("is_active").default(true),
+  
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_authority_dept_city_state").on(table.departmentName, table.city, table.state),
+  index("idx_authority_contact_type").on(table.contactType),
+  index("idx_authority_active").on(table.isActive),
+]);
+
+export const insertAuthorityContactsCacheSchema = createInsertSchema(authorityContactsCache).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type AuthorityContactsCache = typeof authorityContactsCache.$inferSelect;
+export type InsertAuthorityContactsCache = z.infer<typeof insertAuthorityContactsCacheSchema>;
+
+// ============================================
+// COMPLAINT ROUTING HISTORY TABLE
+// ============================================
+// Track complaint routing attempts and results
+export const complaintRoutingHistory = pgTable("complaint_routing_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  
+  // Reference to complaint
+  complaintId: varchar("complaint_id").references(() => complaints.id, { onDelete: 'cascade' }),
+  
+  // Routing attempt details
+  attemptNumber: integer("attempt_number").notNull().default(1),
+  recipientEmail: text("recipient_email").notNull(),
+  recipientName: text("recipient_name"),
+  recipientType: varchar("recipient_type", { length: 30 }), // 'internal_affairs', 'oversight', 'command_staff', 'admin_fallback'
+  
+  // Status
+  status: varchar("status", { length: 20 }).notNull().default('pending'), // 'pending', 'sent', 'delivered', 'failed', 'bounced'
+  statusMessage: text("status_message"),
+  
+  // Email details
+  emailSubject: text("email_subject"),
+  emailMessageId: varchar("email_message_id"), // From email provider
+  
+  // Fallback tracking
+  isFallback: boolean("is_fallback").default(false),
+  fallbackReason: text("fallback_reason"),
+  
+  // Timestamps
+  attemptedAt: timestamp("attempted_at").defaultNow(),
+  deliveredAt: timestamp("delivered_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_routing_complaint").on(table.complaintId),
+  index("idx_routing_status").on(table.status),
+  index("idx_routing_fallback").on(table.isFallback),
+]);
+
+export const complaintRoutingHistoryRelations = relations(complaintRoutingHistory, ({ one }) => ({
+  complaint: one(complaints, {
+    fields: [complaintRoutingHistory.complaintId],
+    references: [complaints.id],
+  }),
+}));
+
+export const insertComplaintRoutingHistorySchema = createInsertSchema(complaintRoutingHistory).omit({
+  id: true,
+  createdAt: true,
+  attemptedAt: true,
+});
+
+export type ComplaintRoutingHistory = typeof complaintRoutingHistory.$inferSelect;
+export type InsertComplaintRoutingHistory = z.infer<typeof insertComplaintRoutingHistorySchema>;
+
+// ============================================
+// SECTION 1983 LAWSUIT FILINGS TABLE
+// ============================================
+// Enhanced tracking for §1983 federal civil rights lawsuits
+export const section1983Filings = pgTable("section_1983_filings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  
+  // Link to original complaint or lawsuit if applicable
+  complaintId: varchar("complaint_id").references(() => complaints.id, { onDelete: 'set null' }),
+  lawsuitFilingId: varchar("lawsuit_filing_id").references(() => lawsuitFilings.id, { onDelete: 'set null' }),
+  
+  // Plaintiff information
+  plaintiffName: text("plaintiff_name").notNull(),
+  plaintiffAddress: text("plaintiff_address").notNull(),
+  plaintiffCity: varchar("plaintiff_city", { length: 100 }).notNull(),
+  plaintiffState: varchar("plaintiff_state", { length: 2 }).notNull(),
+  plaintiffZip: varchar("plaintiff_zip", { length: 10 }),
+  plaintiffPhone: varchar("plaintiff_phone"),
+  plaintiffEmail: varchar("plaintiff_email"),
+  isProSe: boolean("is_pro_se").default(true),
+  
+  // Attorney information (if not pro se)
+  attorneyName: text("attorney_name"),
+  attorneyBarNumber: varchar("attorney_bar_number"),
+  attorneyFirm: text("attorney_firm"),
+  attorneyAddress: text("attorney_address"),
+  attorneyPhone: varchar("attorney_phone"),
+  attorneyEmail: varchar("attorney_email"),
+  
+  // Defendant information (JSON array of defendants)
+  defendants: jsonb("defendants").notNull(), // Array of DefendantInfo objects
+  
+  // Incident information
+  incidentDate: timestamp("incident_date").notNull(),
+  incidentTime: varchar("incident_time"),
+  incidentLocation: text("incident_location").notNull(),
+  incidentCity: varchar("incident_city", { length: 100 }).notNull(),
+  incidentCounty: varchar("incident_county", { length: 100 }),
+  incidentState: varchar("incident_state", { length: 2 }).notNull(),
+  incidentDescription: text("incident_description").notNull(),
+  
+  // Claims (JSON array of claims)
+  claims: jsonb("claims").notNull(), // Array of ClaimInfo objects
+  
+  // Damages
+  damagesCompensatory: jsonb("damages_compensatory"), // CompensatoryDamages object
+  damagesPunitive: boolean("damages_punitive").default(false),
+  damagesPunitiveDescription: text("damages_punitive_description"),
+  damagesInjunctive: text("damages_injunctive"),
+  damagesDeclaratory: text("damages_declaratory"),
+  damagesAttorneysFees: boolean("damages_attorneys_fees").default(true),
+  
+  // Jurisdiction
+  districtCourt: text("district_court").notNull(),
+  courtDivision: varchar("court_division", { length: 100 }),
+  venueReason: text("venue_reason").notNull(),
+  
+  // Generated document
+  generatedDocument: text("generated_document"),
+  localRulesApplied: jsonb("local_rules_applied"), // LocalRules object
+  
+  // Filing information
+  filingFee: integer("filing_fee").default(40200), // $402.00 in cents
+  serviceDeadline: timestamp("service_deadline"),
+  
+  // Status
+  status: varchar("status", { length: 30 }).notNull().default('draft'), // 'draft', 'generated', 'downloaded', 'filed', 'served'
+  
+  // Payment
+  paymentId: varchar("payment_id"),
+  paymentStatus: varchar("payment_status").default('pending'),
+  amountPaid: integer("amount_paid"),
+  
+  // Timestamps
+  generatedAt: timestamp("generated_at"),
+  downloadedAt: timestamp("downloaded_at"),
+  filedAt: timestamp("filed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_1983_user").on(table.userId),
+  index("idx_1983_status").on(table.status),
+  index("idx_1983_district").on(table.districtCourt),
+  index("idx_1983_incident_date").on(table.incidentDate),
+]);
+
+export const section1983FilingsRelations = relations(section1983Filings, ({ one }) => ({
+  user: one(users, {
+    fields: [section1983Filings.userId],
+    references: [users.id],
+  }),
+  complaint: one(complaints, {
+    fields: [section1983Filings.complaintId],
+    references: [complaints.id],
+  }),
+  lawsuitFiling: one(lawsuitFilings, {
+    fields: [section1983Filings.lawsuitFilingId],
+    references: [lawsuitFilings.id],
+  }),
+}));
+
+export const insertSection1983FilingSchema = createInsertSchema(section1983Filings).omit({
+  id: true,
+  userId: true,
+  generatedDocument: true,
+  localRulesApplied: true,
+  serviceDeadline: true,
+  paymentId: true,
+  paymentStatus: true,
+  amountPaid: true,
+  generatedAt: true,
+  downloadedAt: true,
+  filedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  status: true,
+}).extend({
+  incidentDate: z.string().or(z.date()),
+  defendants: z.array(z.object({
+    name: z.string(),
+    title: z.string().optional(),
+    badgeNumber: z.string().optional(),
+    department: z.string(),
+    address: z.string().optional(),
+    capacity: z.enum(['individual', 'official', 'both']),
+    role: z.string(),
+  })),
+  claims: z.array(z.object({
+    claimNumber: z.number(),
+    constitutionalProvision: z.string(),
+    statute: z.string(),
+    description: z.string(),
+    defendantsInvolved: z.array(z.string()),
+    factualBasis: z.string(),
+  })),
+});
+
+export type Section1983Filing = typeof section1983Filings.$inferSelect;
+export type InsertSection1983Filing = z.infer<typeof insertSection1983FilingSchema>;

@@ -106,5 +106,35 @@
     "action": "GET",
     "tokens": 0,
     "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T03:45:43.217Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/section-1983/district-courts/CA"
+  },
+  {
+    "timestamp": "2025-11-30T03:45:44.729Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/section-1983/local-rules/C.D.%20Cal."
+  },
+  {
+    "timestamp": "2025-11-30T03:48:13.279Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/complaint-drafting/lookup-authorities"
+  },
+  {
+    "timestamp": "2025-11-30T03:48:50.388Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/section-1983/district-courts/CA"
+  },
+  {
+    "timestamp": "2025-11-30T03:48:56.235Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/section-1983/local-rules/C.D.%20Cal."
   }
 ]

@@ -161,6 +161,7 @@ async function runMigrations(): Promise<void> {
     { name: 'Device Rate Limit tables', module: './migrations/createDeviceRateLimitTables', fn: 'createDeviceRateLimitTables' },
     { name: 'Petition tables', module: './migrations/createPetitionTables', fn: 'createPetitionTables' },
     { name: 'Public Evidence tables', module: './migrations/createPublicEvidenceTables', fn: 'createPublicEvidenceTables' },
+    { name: 'Complaint Routing tables', module: './migrations/createComplaintRoutingTables', fn: 'createComplaintRoutingTables' },
   ];
 
   for (const migration of migrations) {
