@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
+import { searchTechnicalGuidance, isWebSearchAvailable } from './webSearchService';
 const exec = promisify(execCb);
 // Severity levels
 export enum Severity {
@@ -727,6 +728,29 @@ class BadBlueWorker {
     };
   }
 
+  private async lookupTechnicalGuidance(
+    errorMessage: string,
+    technology: string
+  ): Promise<{ hasGuidance: boolean; suggestions: string[] }> {
+    try {
+      if (!isWebSearchAvailable().any) {
+        return { hasGuidance: false, suggestions: [] };
+      }
+      
+      const results = await searchTechnicalGuidance(errorMessage, technology);
+      if (results.length > 0) {
+        const suggestions = results
+          .slice(0, 3)
+          .map(r => `${r.title}: ${r.snippet || r.aiSummary || ''}`.substring(0, 200));
+        console.log(`[BadBlue Worker] Found ${results.length} technical guidance results for: ${technology}`);
+        return { hasGuidance: true, suggestions };
+      }
+    } catch (e) {
+      console.warn('[BadBlue Worker] Technical guidance lookup failed:', (e as any)?.message || e);
+    }
+    return { hasGuidance: false, suggestions: [] };
+  }
+
   private async executeRepair(issue: FailureLogEntry) {
     const _analysis = this.performLocalAnalysis(issue);
     let success = false;
@@ -734,12 +758,37 @@ class BadBlueWorker {
     const fn = issue.functionAffected.toLowerCase();
     try {
       if (fn.includes('database') && issue.systemState === 'not_working') {
+        const guidance = await this.lookupTechnicalGuidance(
+          issue.cause || 'database connection failed',
+          'postgresql nodejs'
+        );
+        if (guidance.hasGuidance) {
+          console.log('[BadBlue Worker] Database repair guidance found:', guidance.suggestions[0]);
+        }
         success = await this.repairDatabaseConnection();
       } else if (fn.includes('code quality')) {
         const hasTsc = await this.commandExists('tsc');
-        if (hasTsc) await exec('npx tsc --noEmit --pretty false 2>&1 || true');
+        if (hasTsc) {
+          const guidance = await this.lookupTechnicalGuidance(
+            issue.cause || 'typescript compilation error',
+            'typescript tsc'
+          );
+          if (guidance.hasGuidance) {
+            console.log('[BadBlue Worker] TypeScript fix guidance:', guidance.suggestions[0]);
+          }
+          await exec('npx tsc --noEmit --pretty false 2>&1 || true');
+        }
         success = false;
       } else if (fn.includes('env') || fn.includes('secret')) {
+        success = false;
+      } else if (issue.cause) {
+        const guidance = await this.lookupTechnicalGuidance(
+          issue.cause,
+          'nodejs express'
+        );
+        if (guidance.hasGuidance) {
+          console.log('[BadBlue Worker] General fix guidance:', guidance.suggestions[0]);
+        }
         success = false;
       } else {
         success = false;

@@ -4,6 +4,7 @@ import { findDepartmentUrlsByState, getAllDepartmentUrls } from "./policeUrls";
 import { rateLimitTracker } from "./rateLimitTracker";
 import { generateGeminiStructuredResponse, isGeminiAvailable } from './gemini';
 import { isClaudeAvailable, generateClaudeJSON, callClaude } from "./claude";
+import { searchOfficerRecords as webSearchOfficerRecords, unifiedSearch, isWebSearchAvailable } from './webSearchService';
 
 // In-memory cache for officer search results
 const searchCache = new Map<string, { result: OfficerSearchResult; timestamp: number }>();
@@ -153,22 +154,76 @@ function isResultMeaningful(report: ClaudeVerifiedReport): boolean {
 }
 
 /**
+ * Web search service supplemental data gathering
+ * Uses unified search for additional coverage before AI processing
+ */
+async function webSearchSupplementalData(
+  officerName: string,
+  state: string | undefined
+): Promise<{ additionalSources: string[]; snippets: string[] }> {
+  const additionalSources: string[] = [];
+  const snippets: string[] = [];
+  
+  try {
+    if (isWebSearchAvailable().any) {
+      const searchResult = await webSearchOfficerRecords(officerName, undefined, state);
+      if (searchResult.sources && searchResult.sources.length > 0) {
+        additionalSources.push(...searchResult.sources);
+      }
+      
+      const supplementalQueries = [
+        `"${officerName}" police officer ${state || ''} complaint`,
+        `"${officerName}" police ${state || ''} lawsuit`,
+      ];
+      
+      for (const query of supplementalQueries.slice(0, 2)) {
+        try {
+          const results = await unifiedSearch(query, { limit: 3 });
+          for (const r of results) {
+            if (r.url && !additionalSources.includes(r.url)) {
+              additionalSources.push(r.url);
+            }
+            if (r.snippet) {
+              snippets.push(r.snippet);
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('[Officer Search] Web search supplemental data failed:', error);
+  }
+  
+  return { additionalSources, snippets };
+}
+
+/**
  * Gemini data harvesting - fast multimodal search
  * Leverages Gemini's strength in real-time data retrieval and web grounding
+ * Enhanced with unified web search for additional coverage
  */
 async function geminiDataHarvest(
   officerName: string,
   state: string | undefined,
   priorityUrls: string[]
 ): Promise<GeminiRawData> {
-  const urlContext = priorityUrls.length > 0 
-    ? `Priority URLs to check:\n${priorityUrls.slice(0, 10).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
+  const webSupplemental = await webSearchSupplementalData(officerName, state);
+  const allUrls = [...new Set([...priorityUrls, ...webSupplemental.additionalSources])];
+  
+  const urlContext = allUrls.length > 0 
+    ? `Priority URLs to check:\n${allUrls.slice(0, 15).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
+    : '';
+    
+  const snippetContext = webSupplemental.snippets.length > 0
+    ? `\n\nWeb search findings:\n${webSupplemental.snippets.slice(0, 5).join('\n')}`
     : '';
 
   const prompt = `Search for police officer information:
 Name: ${officerName}
 State: ${state || 'Unknown'}
-${urlContext}
+${urlContext}${snippetContext}
 
 Extract ONLY factual, verifiable information. Return JSON with:
 {
@@ -187,6 +242,9 @@ Return ONLY facts with sources. Omit empty fields. No speculation.`;
 
   try {
     const result = await generateGeminiStructuredResponse<GeminiRawData>(prompt, { useJSON: true });
+    if (result && webSupplemental.additionalSources.length > 0) {
+      result.sources = [...new Set([...(result.sources || []), ...webSupplemental.additionalSources])];
+    }
     return result || {};
   } catch (error) {
     console.error('[Officer Search] Gemini harvest failed:', error);

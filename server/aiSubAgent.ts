@@ -23,6 +23,7 @@ import {
   getAutonomousRescheduleInfo,
   TaskPriority,
 } from './aiProvider';
+import { unifiedSearch, searchOfficerRecords, searchTechnicalGuidance, isWebSearchAvailable } from './webSearchService';
 
 const SUBAGENT_DATA_DIR = path.join(process.cwd(), 'data', 'subagent');
 const COMMAND_LOG = path.join(SUBAGENT_DATA_DIR, 'commands.log');
@@ -251,12 +252,24 @@ export function getGroqClientWithGovernor(): any {
 }
 
 /**
- * Web search with Bing/DuckDuckGo fallback
+ * Web search with unified Bing + Gemini service (backward compatible)
+ * Uses the new unified search service for better coverage, falls back to legacy if unavailable
  */
 export async function webSearch(query: string, limit = 5): Promise<Array<{ title: string; url: string; snippet?: string }>> {
   if (!WEB_SEARCH_ENABLED) return [];
 
   try {
+    const searchAvailability = isWebSearchAvailable();
+    
+    if (searchAvailability.any) {
+      const results = await unifiedSearch(query, { limit });
+      return results.map(r => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.snippet || r.aiSummary || undefined,
+      }));
+    }
+    
     if (BING_API_KEY) {
       const url = `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(query)}&count=${limit}`;
       const res = await fetchWithFallback(url, {
@@ -287,6 +300,49 @@ export async function webSearch(query: string, limit = 5): Promise<Array<{ title
     }
   } catch (error) {
     console.warn('[webSearch] Web search error:', (error as any)?.message || error);
+    return [];
+  }
+}
+
+/**
+ * Enhanced officer search using the unified web search service
+ */
+export async function searchOfficerData(
+  officerName: string,
+  department?: string,
+  state?: string
+): Promise<{ name: string; department?: string; badgeNumber?: string; rank?: string; sources: string[]; dataQuality: number }> {
+  try {
+    const result = await searchOfficerRecords(officerName, department, state);
+    return result;
+  } catch (error) {
+    console.warn('[searchOfficerData] Officer search error:', (error as any)?.message || error);
+    return {
+      name: officerName,
+      department,
+      sources: [],
+      dataQuality: 0,
+    };
+  }
+}
+
+/**
+ * Technical guidance search for repair operations
+ */
+export async function searchTechnicalFix(
+  errorMessage: string,
+  technology: string
+): Promise<Array<{ title: string; url: string; snippet?: string; relevanceScore?: number }>> {
+  try {
+    const results = await searchTechnicalGuidance(errorMessage, technology);
+    return results.map(r => ({
+      title: r.title,
+      url: r.url,
+      snippet: r.snippet || r.aiSummary || undefined,
+      relevanceScore: r.relevanceScore,
+    }));
+  } catch (error) {
+    console.warn('[searchTechnicalFix] Technical search error:', (error as any)?.message || error);
     return [];
   }
 }

@@ -21,6 +21,7 @@ import path from 'path';
 import { db } from './db';
 import { officerProfiles } from '@shared/schema';
 import { eq, sql, and, or, like } from 'drizzle-orm';
+import { unifiedSearch, batchOfficerSearch, searchOfficerRecords } from './webSearchService';
 
 const exec = promisify(execCb);
 
@@ -326,6 +327,27 @@ class SubAgentWebHarvester {
     const results: WebSearchResult[] = [];
     
     try {
+      const unifiedResults = await unifiedSearch(query, { limit: 10, category: 'officer' });
+      
+      for (const result of unifiedResults) {
+        if (result.url) {
+          results.push({
+            title: result.title || '',
+            url: result.url,
+            snippet: result.snippet || result.aiSummary || '',
+          });
+        }
+      }
+      
+      if (results.length > 0) {
+        console.log(`[Sub-Agent Harvester] Unified search returned ${results.length} results`);
+        return results;
+      }
+    } catch (e: any) {
+      console.warn('[Sub-Agent Harvester] Unified search failed, trying fallback:', e.message);
+    }
+    
+    try {
       const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
       
       const response = await this.fetchWithTimeout(searchUrl, 10000);
@@ -336,7 +358,7 @@ class SubAgentWebHarvester {
         results.push(...extractedResults);
       }
     } catch (e: any) {
-      console.warn('[Sub-Agent Harvester] Web search failed:', e.message);
+      console.warn('[Sub-Agent Harvester] Google search failed:', e.message);
     }
     
     if (results.length === 0) {
@@ -389,20 +411,49 @@ class SubAgentWebHarvester {
   }
 
   private async searchPublicDatabases(query: string): Promise<WebSearchResult[]> {
-    const publicSources = [
-      { name: 'Police1', url: 'https://www.police1.com' },
-      { name: 'Open Oversight', url: 'https://openoversight.com' },
-      { name: 'Citizens Police Data', url: 'https://cpdp.co' },
-    ];
-    
     const results: WebSearchResult[] = [];
     
-    for (const source of publicSources) {
-      results.push({
-        title: `${source.name} - ${query}`,
-        url: source.url,
-        snippet: `Public police accountability database`,
-      });
+    try {
+      const databaseQueries = [
+        `${query} site:openoversight.com`,
+        `${query} site:cpdp.co`,
+        `${query} police accountability database`,
+      ];
+      
+      for (const dbQuery of databaseQueries.slice(0, 2)) {
+        try {
+          const searchResults = await unifiedSearch(dbQuery, { limit: 3 });
+          for (const result of searchResults) {
+            if (result.url) {
+              results.push({
+                title: result.title || '',
+                url: result.url,
+                snippet: result.snippet || result.aiSummary || 'Public police accountability database',
+              });
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Sub-Agent Harvester] Database search via unified service failed:', e.message);
+    }
+    
+    if (results.length === 0) {
+      const publicSources = [
+        { name: 'Police1', url: 'https://www.police1.com' },
+        { name: 'Open Oversight', url: 'https://openoversight.com' },
+        { name: 'Citizens Police Data', url: 'https://cpdp.co' },
+      ];
+      
+      for (const source of publicSources) {
+        results.push({
+          title: `${source.name} - ${query}`,
+          url: source.url,
+          snippet: `Public police accountability database`,
+        });
+      }
     }
     
     return results;
