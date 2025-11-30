@@ -32,6 +32,14 @@ The platform utilizes a modern web stack featuring a React 18 frontend with Type
 -   **New Database Tables**: `authority_contacts_cache`, `complaint_routing_history`, `section_1983_filings`
 -   **API Endpoints**: `/api/complaint-drafting/*` and `/api/section-1983/*` routes
 
+**FOIA ROUTING SYSTEM (Nov 30, 2025)**:
+-   **FOIA Authority Lookup**: Automated search for FOIA officers, records custodians, and transparency offices via unified web search
+-   **State FOIA Information**: Complete database of all 50 states + DC FOIA statutes, deadlines, and exemption references
+-   **Enhanced FOIA Generation**: Professional FOIA request generation in `server/foiaRoutingSystem.ts` with state-specific statute compliance
+-   **Automatic FOIA Routing**: FOIA requests routed to discovered FOIA officers/portals with fallback to `contact.badblue@gmail.com`
+-   **New Database Tables**: `foia_routing_history` for tracking submission attempts and outcomes
+-   **API Endpoints**: `/api/foia/lookup-authorities`, `/api/foia/state-info/:state`, `/api/foia/generate`, `/api/foia/route`, `/api/foia/all-states`
+
 **PACKAGE UPDATES (Nov 30, 2025)**:
 -   **Drizzle ORM**: Updated from 0.39.3 to 0.44.7 - latest stable version with improved PostgreSQL support
 -   **Drizzle Kit**: Updated from 0.20.18 to 0.31.7 - latest schema migration tools  

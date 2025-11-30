@@ -1,140 +1,104 @@
 [
   {
-    "timestamp": "2025-11-30T03:24:00.970Z",
+    "timestamp": "2025-11-30T03:54:25.633Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@tanstack_react-query.js"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-3R3LPCWV.js"
   },
   {
-    "timestamp": "2025-11-30T03:24:00.983Z",
+    "timestamp": "2025-11-30T03:54:25.663Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/toaster.tsx"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-O2LWC6XU.js"
   },
   {
-    "timestamp": "2025-11-30T03:24:00.992Z",
+    "timestamp": "2025-11-30T03:54:25.807Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/contexts/LanguageContext.tsx"
+    "path": "/api/auth/user"
   },
   {
-    "timestamp": "2025-11-30T03:24:01.027Z",
+    "timestamp": "2025-11-30T03:54:25.811Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-tooltip.js"
+    "path": "/favicon.ico"
   },
   {
-    "timestamp": "2025-11-30T03:24:01.045Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/utils.ts"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.047Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/skeleton.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.072Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-E6PNPDKY.js"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.083Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/clsx.js"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.088Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-U7P2NEEE.js"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.200Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.238Z",
+    "timestamp": "2025-11-30T03:54:25.867Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/pages/landing.tsx"
   },
   {
-    "timestamp": "2025-11-30T03:24:01.457Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-slot.js"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.474Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-dropdown-menu.js"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.482Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-O5NM2W4X.js"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.504Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.521Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T03:24:01.531Z",
+    "timestamp": "2025-11-30T03:54:26.081Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-30T03:24:02.196Z",
+    "timestamp": "2025-11-30T03:54:26.112Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-43G6IMPT.js"
+  },
+  {
+    "timestamp": "2025-11-30T03:54:26.120Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-4RO2SXZU.js"
+  },
+  {
+    "timestamp": "2025-11-30T03:54:26.144Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T03:54:26.175Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T03:54:26.189Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T03:54:26.813Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/lib/bundleAnalyzer.ts"
   },
   {
-    "timestamp": "2025-11-30T03:45:43.217Z",
+    "timestamp": "2025-11-30T03:58:00.682Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/section-1983/district-courts/CA"
+    "path": "/api/foia/state-info/CA"
   },
   {
-    "timestamp": "2025-11-30T03:45:44.729Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/section-1983/local-rules/C.D.%20Cal."
-  },
-  {
-    "timestamp": "2025-11-30T03:48:13.279Z",
+    "timestamp": "2025-11-30T03:58:07.507Z",
     "action": "POST",
     "tokens": 0,
-    "path": "/api/complaint-drafting/lookup-authorities"
+    "path": "/api/foia/lookup-authorities"
   },
   {
-    "timestamp": "2025-11-30T03:48:50.388Z",
+    "timestamp": "2025-11-30T03:58:14.710Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/section-1983/district-courts/CA"
+    "path": "/api/foia/all-states"
   },
   {
-    "timestamp": "2025-11-30T03:48:56.235Z",
+    "timestamp": "2025-11-30T03:59:56.831Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/section-1983/local-rules/C.D.%20Cal."
+    "path": "/api/foia/state-info/CA"
+  },
+  {
+    "timestamp": "2025-11-30T04:00:05.228Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/foia/state-info/ZZ"
   }
 ]

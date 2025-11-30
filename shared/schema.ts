@@ -2055,3 +2055,43 @@ export const insertSection1983FilingSchema = createInsertSchema(section1983Filin
 
 export type Section1983Filing = typeof section1983Filings.$inferSelect;
 export type InsertSection1983Filing = z.infer<typeof insertSection1983FilingSchema>;
+
+// ============================================
+// FOIA ROUTING HISTORY TABLE
+// ============================================
+// Tracks FOIA request routing attempts and outcomes
+export const foiaRoutingHistory = pgTable("foia_routing_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  foiaId: varchar("foia_id").references(() => foiaRequests.id, { onDelete: 'set null' }),
+  agencyName: varchar("agency_name").notNull(),
+  state: varchar("state", { length: 2 }).notNull(),
+  city: varchar("city"),
+  routingMethod: varchar("routing_method", { length: 50 }).notNull(), // 'direct_email', 'portal_link', 'admin_fallback'
+  success: boolean("success").notNull().default(false),
+  recipientEmail: varchar("recipient_email"),
+  recipientType: varchar("recipient_type", { length: 50 }), // 'foia_officer', 'records_custodian', 'transparency_office', 'admin_fallback'
+  notes: text("notes"),
+  errorMessage: text("error_message"),
+  attemptedAt: timestamp("attempted_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_foia_routing_agency").on(table.agencyName, table.state),
+  index("idx_foia_routing_foia_id").on(table.foiaId),
+  index("idx_foia_routing_success").on(table.success),
+  index("idx_foia_routing_attempted").on(table.attemptedAt),
+]);
+
+export const foiaRoutingHistoryRelations = relations(foiaRoutingHistory, ({ one }) => ({
+  foiaRequest: one(foiaRequests, {
+    fields: [foiaRoutingHistory.foiaId],
+    references: [foiaRequests.id],
+  }),
+}));
+
+export const insertFoiaRoutingHistorySchema = createInsertSchema(foiaRoutingHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type FoiaRoutingHistory = typeof foiaRoutingHistory.$inferSelect;
+export type InsertFoiaRoutingHistory = z.infer<typeof insertFoiaRoutingHistorySchema>;

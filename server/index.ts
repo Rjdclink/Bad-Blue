@@ -162,6 +162,7 @@ async function runMigrations(): Promise<void> {
     { name: 'Petition tables', module: './migrations/createPetitionTables', fn: 'createPetitionTables' },
     { name: 'Public Evidence tables', module: './migrations/createPublicEvidenceTables', fn: 'createPublicEvidenceTables' },
     { name: 'Complaint Routing tables', module: './migrations/createComplaintRoutingTables', fn: 'createComplaintRoutingTables' },
+    { name: 'FOIA Routing tables', module: './migrations/createFOIARoutingTables', fn: 'createFOIARoutingTables' },
   ];
 
   for (const migration of migrations) {

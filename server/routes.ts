@@ -2910,6 +2910,154 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
   }));
 
   // ============================================
+  // FOIA ROUTING AND AUTHORITY LOOKUP ROUTES
+  // ============================================
+  
+  // Lookup FOIA authorities for an agency
+  app.post("/api/foia/lookup-authorities", asyncHandler(async (req: any, res) => {
+    const { agencyName, agencyType, state, city, county } = req.body;
+    
+    if (!agencyName || !state) {
+      return res.status(400).json({ error: "Missing required fields: agencyName, state" });
+    }
+    
+    const { lookupFOIAAuthority } = await import('./foiaRoutingSystem');
+    const result = await lookupFOIAAuthority(agencyName, agencyType || 'police', state, city, county);
+    
+    res.json({ authorities: result });
+  }));
+  
+  // Get state FOIA information (statutes, deadlines)
+  app.get("/api/foia/state-info/:state", asyncHandler(async (req: any, res) => {
+    const { state } = req.params;
+    
+    if (!state || state.length !== 2) {
+      return res.status(400).json({ error: "Valid 2-letter state code required" });
+    }
+    
+    const validStates = [
+      'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+      'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+      'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+      'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+      'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'
+    ];
+    
+    const upperState = state.toUpperCase();
+    if (!validStates.includes(upperState)) {
+      return res.status(404).json({ error: `Unknown state code: ${state}` });
+    }
+    
+    const { getStateFOIAInfo } = await import('./foiaRoutingSystem');
+    const info = getStateFOIAInfo(upperState);
+    
+    res.json({ stateInfo: info });
+  }));
+  
+  // Generate enhanced FOIA request
+  app.post("/api/foia/generate", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    
+    const {
+      agencyName,
+      agencyType,
+      state,
+      city,
+      county,
+      officerName,
+      recordsDescription,
+      incidentDate,
+      incidentLocation,
+      requesterName,
+      requesterEmail,
+      requesterAddress,
+      requesterPhone
+    } = req.body;
+    
+    if (!agencyName || !state || !recordsDescription || !requesterName || !requesterEmail || !requesterAddress) {
+      return res.status(400).json({ 
+        error: "Missing required fields: agencyName, state, recordsDescription, requesterName, requesterEmail, requesterAddress" 
+      });
+    }
+    
+    const { generateEnhancedFOIARequest, lookupFOIAAuthority } = await import('./foiaRoutingSystem');
+    
+    const foiaData = {
+      agencyName,
+      agencyType: agencyType || 'police',
+      state,
+      city,
+      county,
+      officerName,
+      recordsDescription,
+      incidentDate: incidentDate ? new Date(incidentDate) : undefined,
+      incidentLocation,
+      requesterName,
+      requesterEmail,
+      requesterAddress,
+      requesterPhone
+    };
+    
+    const authority = await lookupFOIAAuthority(agencyName, agencyType || 'police', state, city, county);
+    const generatedFOIA = generateEnhancedFOIARequest(foiaData);
+    generatedFOIA.authority = authority;
+    
+    res.json({
+      document: generatedFOIA.document,
+      authority: generatedFOIA.authority,
+      stateStatute: generatedFOIA.stateStatute,
+      statutoryDeadline: generatedFOIA.statutoryDeadline,
+      submissionMethod: authority.onlineSubmissionUrl ? 'portal' : 
+                        authority.primaryAuthority?.email ? 'email' : 'mail',
+      submissionAddress: authority.primaryAuthority?.email || 
+                         authority.onlineSubmissionUrl || 
+                         `${agencyName} Records Division`
+    });
+  }));
+  
+  // Route FOIA request to authorities with fallback
+  app.post("/api/foia/route", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    
+    const { foiaData, generatedFOIA, authority, foiaId } = req.body;
+    
+    if (!foiaData || !generatedFOIA) {
+      return res.status(400).json({ error: "Missing required fields: foiaData, generatedFOIA" });
+    }
+    
+    const { routeFOIARequest } = await import('./foiaRoutingSystem');
+    
+    const parsedFoiaData = {
+      ...foiaData,
+      incidentDate: foiaData.incidentDate ? new Date(foiaData.incidentDate) : undefined
+    };
+    
+    const result = await routeFOIARequest(parsedFoiaData, generatedFOIA, authority, foiaId);
+    
+    res.json(result);
+  }));
+  
+  // Get all 50 states FOIA info
+  app.get("/api/foia/all-states", asyncHandler(async (req: any, res) => {
+    const { getStateFOIAInfo } = await import('./foiaRoutingSystem');
+    
+    const states = [
+      'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+      'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+      'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+      'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+      'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'
+    ];
+    
+    const statesInfo = states.map(state => ({
+      state,
+      ...getStateFOIAInfo(state)
+    }));
+    
+    res.json({ states: statesInfo });
+  }));
+
+  // ============================================
   // SYSTEM STATUS ROUTES
   // ============================================
   
