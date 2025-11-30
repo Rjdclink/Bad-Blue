@@ -20,7 +20,9 @@ The platform features a React 18 frontend with TypeScript, Vite, Wouter for rout
 *   **Automated Data Cleanup System**: A privacy-focused system automatically deletes user data after 14 days post-payment and error logs after 30 days, preserving essential user information and evidence files.
 *   **Security Firewall**: A 4-layer protection system mitigates RCE vulnerabilities while preserving autonomous execution.
 *   **Critical Monitoring System**: Monitors API rate limits (Gemini, Groq), database health, payment gateway connectivity, and email service availability every 30 minutes, with strategic automated pausing and resuming of autonomous searches.
-*   **Admin Management**: An admin panel for managing community-shared evidence submissions with full CRUD capabilities.
+*   **Admin Management**: 
+    - **Bad Blue Users Panel**: Admin panel showing all registered users with their purchased services (complaints, lawsuits, petitions, FOIA requests), sign-up dates, and last login information.
+    - **Corrupt Law Enforcement & Informant Hub**: Admin panel for managing community-shared corruption and informant evidence submissions with full CRUD capabilities.
 *   **Web Search Integration**: A unified `server/webSearchService.ts` combines Bing Search API and Gemini AI with Google Search grounding for officer searches, legal statute research, and other data collection.
 *   **Complaint & Lawsuit Drafting System**: Professional complaint generation with automated web search for authority lookup and automatic routing. Includes a Section 1983 Lawsuit Generator with per-district formatting rules.
 *   **FOIA Routing System**: Automated search for FOIA officers, comprehensive database of state FOIA statutes, and professional FOIA request generation with state-specific compliance.

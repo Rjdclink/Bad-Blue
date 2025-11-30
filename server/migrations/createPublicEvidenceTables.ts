@@ -2,7 +2,7 @@ import { db } from '../db';
 import { sql } from 'drizzle-orm';
 
 export async function createPublicEvidenceTables() {
-  console.log('[Migration] Starting Corrupt Law Enforcement & Snitch Evidence Hub tables creation...');
+  console.log('[Migration] Starting Corrupt Law Enforcement & Informant Hub tables creation...');
 
   try {
     // Create table first
@@ -57,6 +57,6 @@ export async function createPublicEvidenceTables() {
     console.log('[Migration] ✓ Indexes already exist or created');
   }
 
-  console.log('[Migration] ✅ Successfully created Corrupt Law Enforcement & Snitch Evidence Hub tables');
+  console.log('[Migration] ✅ Successfully created Corrupt Law Enforcement & Informant Hub tables');
   console.log('[Migration] ✅ Public Evidence table: READY for corruption and informant documentation');
 }

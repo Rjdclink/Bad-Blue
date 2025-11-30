@@ -164,7 +164,7 @@ export default function AdminEvidenceHub() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Admin: Corrupt Law Enforcement & Snitch Evidence Hub | BadBlue"
+        title="Admin: Corrupt Law Enforcement & Informant Hub | BadBlue"
         description="Admin panel for managing corruption and informant evidence submissions"
         noIndex={true}
       />
@@ -173,7 +173,7 @@ export default function AdminEvidenceHub() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ImageIcon className="w-6 h-6 text-destructive" />
-            <span className="font-semibold text-lg">Admin: Corruption & Snitch Evidence Hub</span>
+            <span className="font-semibold text-lg">Admin: Corrupt Law Enforcement & Informant Hub</span>
           </div>
           <Link href="/home">
             <Button variant="ghost" data-testid="button-back-home">Back to Home</Button>
@@ -185,7 +185,7 @@ export default function AdminEvidenceHub() {
         <div className="mb-8">
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-3xl font-bold mb-2">Corrupt Law Enforcement & Snitch Evidence Management</h1>
+              <h1 className="text-3xl font-bold mb-2">Corrupt Law Enforcement & Informant Hub Management</h1>
               <p className="text-muted-foreground">
                 Manage all corruption and informant evidence submissions
               </p>

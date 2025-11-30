@@ -91,7 +91,7 @@ export default function EvidenceHub() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Corrupt Law Enforcement & Snitch Evidence Hub | BadBlue"
+        title="Corrupt Law Enforcement & Informant Hub | BadBlue"
         description="Community platform for uploading evidence of law enforcement corruption and informant documents. All media types accepted."
         keywords="police corruption evidence, law enforcement misconduct evidence, police brutality video, body camera footage, police abuse documentation, informant documents, snitch evidence, police misconduct photos, officer corruption proof, police accountability evidence"
         canonicalUrl="https://bad-blue.com/evidence-hub"
@@ -118,7 +118,7 @@ export default function EvidenceHub() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-2 flex items-center gap-3" data-testid="text-page-title">
             <AlertTriangle className="w-8 h-8 text-destructive" />
-            Corrupt Law Enforcement & Snitch Evidence Hub
+            Corrupt Law Enforcement & Informant Hub
           </h1>
           <p className="text-muted-foreground text-lg">
             Upload and share evidence of law enforcement wrongdoings and informant documents. 

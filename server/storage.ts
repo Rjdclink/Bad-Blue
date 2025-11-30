@@ -64,7 +64,7 @@ import {
   type InsertDeviceFingerprint,
 } from "@shared/schema";
 
-// Define types for PublicEvidence (Corrupt Law Enforcement & Snitch Evidence Hub)
+// Define types for PublicEvidence (Corrupt Law Enforcement & Informant Hub)
 type PublicEvidence = {
   id: string;
   userId: string;
@@ -155,7 +155,7 @@ export interface IStorage {
   findVerifiedJurisdiction(city: string | null, county: string | null, state: string, agencyType: 'police' | 'sheriff' | 'trooper'): Promise<Jurisdiction | undefined>;
   getAllJurisdictions(): Promise<Jurisdiction[]>;
 
-  // Public evidence operations (Corrupt Law Enforcement & Snitch Evidence Hub)
+  // Public evidence operations (Corrupt Law Enforcement & Informant Hub)
   getPublicEvidence(fileType?: string | null, category?: string | null): Promise<PublicEvidence[]>;
   sharePublicEvidence(data: InsertPublicEvidence): Promise<PublicEvidence>;
   updatePublicEvidence(id: string, data: Partial<InsertPublicEvidence>): Promise<PublicEvidence | undefined>;
