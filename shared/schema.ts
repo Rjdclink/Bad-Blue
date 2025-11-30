@@ -1242,6 +1242,132 @@ export type SubAgentSelfImprovementAction = typeof subAgentSelfImprovementAction
 export type InsertSubAgentSelfImprovementAction = z.infer<typeof insertSubAgentSelfImprovementActionSchema>;
 
 // ============================================
+// JURISDICTION POPULATIONS TABLE
+// ============================================
+// Track cities/jurisdictions with population data for prioritized searches
+export const jurisdictionPopulations = pgTable("jurisdiction_populations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  city: varchar("city", { length: 100 }).notNull(),
+  state: varchar("state", { length: 2 }).notNull(),
+  population: integer("population").notNull(),
+  region: text("region"), // e.g., "midwest", "northeast", "southeast", "southwest", "west"
+  entityType: varchar("entity_type", { length: 30 }), // 'city', 'town', 'state_agency', 'government', 'corrections'
+  priorityScore: integer("priority_score"), // computed from population + category weight
+  searchStatus: varchar("search_status", { length: 20 }).default('pending').notNull(), // 'pending', 'in_progress', 'completed', 'failed'
+  lastSearchedAt: timestamp("last_searched_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_jurisdiction_state").on(table.state),
+  index("idx_jurisdiction_population").on(sql`${table.population} DESC`),
+  index("idx_jurisdiction_entity_type").on(table.entityType),
+  index("idx_jurisdiction_search_status").on(table.searchStatus),
+  index("idx_jurisdiction_priority_score").on(sql`${table.priorityScore} DESC`),
+]);
+
+export const insertJurisdictionPopulationSchema = createInsertSchema(jurisdictionPopulations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type JurisdictionPopulation = typeof jurisdictionPopulations.$inferSelect;
+export type InsertJurisdictionPopulation = z.infer<typeof insertJurisdictionPopulationSchema>;
+
+// ============================================
+// OFFICER CATEGORY PRIORITY TABLE
+// ============================================
+// Define category ordering and rate limits for officer searches
+export const officerCategoryPriority = pgTable("officer_category_priority", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  categoryName: varchar("category_name", { length: 50 }).notNull().unique(), // 'municipal', 'town', 'state', 'government', 'corrections'
+  priorityOrder: integer("priority_order").notNull(), // 1=highest priority
+  searchIntervalMinutes: integer("search_interval_minutes").default(10).notNull(), // on interval duration
+  restIntervalMinutes: integer("rest_interval_minutes").default(10).notNull(), // off interval duration
+  dailyBudgetMinutes: integer("daily_budget_minutes").default(60).notNull(), // per category daily budget
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_category_priority_order").on(table.priorityOrder),
+]);
+
+export const insertOfficerCategoryPrioritySchema = createInsertSchema(officerCategoryPriority).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type OfficerCategoryPriority = typeof officerCategoryPriority.$inferSelect;
+export type InsertOfficerCategoryPriority = z.infer<typeof insertOfficerCategoryPrioritySchema>;
+
+// ============================================
+// SUBAGENT SEARCH QUEUE TABLE
+// ============================================
+// Priority queue for search targets
+export const subagentSearchQueue = pgTable("subagent_search_queue", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jurisdictionId: varchar("jurisdiction_id").references(() => jurisdictionPopulations.id, { onDelete: 'set null' }),
+  entityType: varchar("entity_type", { length: 30 }).notNull(),
+  priorityScore: integer("priority_score").notNull(),
+  status: varchar("status", { length: 20 }).default('queued').notNull(), // 'queued', 'in_progress', 'completed', 'failed', 'deferred'
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  lastAttemptAt: timestamp("last_attempt_at"),
+  nextAttemptAt: timestamp("next_attempt_at"),
+  errorMessage: text("error_message"),
+  officersFound: integer("officers_found").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_search_queue_status").on(table.status),
+  index("idx_search_queue_priority").on(sql`${table.priorityScore} DESC`),
+  index("idx_search_queue_next_attempt").on(table.nextAttemptAt),
+]);
+
+export const subagentSearchQueueRelations = relations(subagentSearchQueue, ({ one }) => ({
+  jurisdiction: one(jurisdictionPopulations, {
+    fields: [subagentSearchQueue.jurisdictionId],
+    references: [jurisdictionPopulations.id],
+  }),
+}));
+
+export const insertSubagentSearchQueueSchema = createInsertSchema(subagentSearchQueue).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type SubagentSearchQueue = typeof subagentSearchQueue.$inferSelect;
+export type InsertSubagentSearchQueue = z.infer<typeof insertSubagentSearchQueueSchema>;
+
+// ============================================
+// SUBAGENT SEARCH SESSIONS TABLE
+// ============================================
+// Track daily session time budget
+export const subagentSearchSessions = pgTable("subagent_search_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionDate: varchar("session_date", { length: 10 }).notNull().unique(), // 'YYYY-MM-DD' format
+  totalBudgetMinutes: integer("total_budget_minutes").default(180).notNull(), // 3 hours
+  minutesUsed: integer("minutes_used").default(0).notNull(),
+  minutesRemaining: integer("minutes_remaining").default(180).notNull(), // computed: totalBudgetMinutes - minutesUsed
+  intervalPlan: jsonb("interval_plan"), // stores on/off interval configuration
+  searchesCompleted: integer("searches_completed").default(0).notNull(),
+  officersFound: integer("officers_found").default(0).notNull(),
+  status: varchar("status", { length: 20 }).default('active').notNull(), // 'active', 'paused', 'exhausted', 'completed'
+  pausedAt: timestamp("paused_at"),
+  resumedAt: timestamp("resumed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_search_session_date").on(table.sessionDate),
+]);
+
+export const insertSubagentSearchSessionSchema = createInsertSchema(subagentSearchSessions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type SubagentSearchSession = typeof subagentSearchSessions.$inferSelect;
+export type InsertSubagentSearchSession = z.infer<typeof insertSubagentSearchSessionSchema>;
+
+// ============================================
 // SUB-AGENT SEARCH CYCLES TABLE
 // ============================================
 // Tracks autonomous data collection cycles for officer and department URL searches
