@@ -313,11 +313,70 @@ export async function createSubAgentTables() {
     `);
     console.log('[Migration] ✓ Created indexes for worker_function_errors');
 
+    // Create worker_repair_metrics table
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS worker_repair_metrics (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        timestamp TIMESTAMP DEFAULT NOW() NOT NULL,
+        total_repairs INTEGER NOT NULL,
+        successful_repairs INTEGER NOT NULL,
+        repair_success_rate INTEGER NOT NULL,
+        avg_repair_time_ms INTEGER,
+        categories_repaired TEXT[],
+        notable_repairs JSONB,
+        period_start TIMESTAMP NOT NULL,
+        period_end TIMESTAMP NOT NULL,
+        metadata JSONB
+      );
+    `);
+    console.log('[Migration] ✓ Created worker_repair_metrics table');
+
+    // Create indexes for worker_repair_metrics
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_repair_metrics_timestamp ON worker_repair_metrics(timestamp);
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_repair_period ON worker_repair_metrics(period_start, period_end);
+    `);
+    console.log('[Migration] ✓ Created indexes for worker_repair_metrics');
+
+    // Create worker_health_metrics table
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS worker_health_metrics (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        timestamp TIMESTAMP DEFAULT NOW() NOT NULL,
+        check_type VARCHAR(100) NOT NULL,
+        status VARCHAR(20) NOT NULL,
+        consecutive_failures INTEGER DEFAULT 0 NOT NULL,
+        last_success TIMESTAMP,
+        last_failure TIMESTAMP,
+        error_message TEXT,
+        recovery_attempts INTEGER DEFAULT 0,
+        auto_repaired BOOLEAN DEFAULT FALSE,
+        metrics JSONB,
+        metadata JSONB
+      );
+    `);
+    console.log('[Migration] ✓ Created worker_health_metrics table');
+
+    // Create indexes for worker_health_metrics
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_health_check_type ON worker_health_metrics(check_type);
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_health_status ON worker_health_metrics(status);
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_health_timestamp ON worker_health_metrics(timestamp);
+    `);
+    console.log('[Migration] ✓ Created indexes for worker_health_metrics');
+
     console.log('[Migration] ✅ Successfully created all Sub-Agent tables and indexes');
     console.log('[Migration] ✅ Officer Profiles table: READY for autonomous data storage');
     console.log('[Migration] ✅ Department URLs table: READY for autonomous data storage');
     console.log('[Migration] ✅ Search Cycles table: READY for autonomous operations');
     console.log('[Migration] ✅ Worker monitoring tables: READY for system alerts and diagnostics');
+    console.log('[Migration] ✅ Worker health/repair metrics: READY for performance tracking');
     return true;
   } catch (error) {
     console.error('[Migration] ❌ Failed to create Sub-Agent tables:', error);
