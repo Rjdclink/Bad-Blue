@@ -1078,5 +1078,23 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T10:09:53.493Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
+  },
+  {
+    "timestamp": "2025-11-30T10:10:03.243Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T10:10:05.607Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]
