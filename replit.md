@@ -16,6 +16,13 @@ The platform utilizes a modern web stack featuring a React 18 frontend with Type
 -   **File Storage**: Filesystem-based with optional Google Cloud Storage fallback
 -   **All Replit-specific code has been removed** - app is 100% platform-agnostic
 
+**DATABASE CONFIGURATION (Nov 30, 2025)**:
+-   **Dual-URL Architecture**: `drizzle.config.ts` uses `DATABASE_URL` (Replit internal DB, ~13 tables), while runtime uses `SUPABASE_DATABASE_URL` (production DB, 67 tables). This is by design as `drizzle.config.ts` is a protected file.
+-   **Schema Verification**: `/api/schema-verify` endpoint validates 11 critical tables exist and confirms connection source (SUPABASE_DATABASE_URL)
+-   **Migration Pattern**: All migrations use `db.execute(sql`...`)` from Drizzle ORM for consistency
+-   **Connection Logging**: `server/db.ts` logs which database URL is being used at startup
+-   **IMPORTANT**: The execute_sql_tool in the development environment connects to `DATABASE_URL` (Replit internal), NOT the production Supabase database. Use `/api/schema-verify` for accurate table counts.
+
 **WEB SEARCH INTEGRATION (Nov 30, 2025)**:
 -   **Unified Web Search Service**: New `server/webSearchService.ts` combines Bing Search API and Gemini AI with googleSearch grounding
 -   **Bing Search**: Direct API integration for web and news searches (BING_API_KEY required)

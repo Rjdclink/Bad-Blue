@@ -141,6 +141,9 @@ export async function resetPool(): Promise<void> {
 /**
  * Verify database schema by checking table count and comparing expected tables
  * Helps detect configuration drift between drizzle.config.ts and runtime
+ * 
+ * NOTE: expectedCriticalTables contains only the essential tables required for core functionality.
+ * The full database has 67+ tables but we only validate the most critical ones to reduce false positives.
  */
 export async function verifyDatabaseSchema(): Promise<{
   success: boolean;
@@ -148,15 +151,24 @@ export async function verifyDatabaseSchema(): Promise<{
   missingTables: string[];
   connectionSource: string;
   details: string;
+  allTables?: string[];
 }> {
   const connectionSource = process.env.SUPABASE_DATABASE_URL ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL';
   
-  // Expected core tables for BadBlue application
-  const expectedTables = [
-    'users', 'complaints', 'officers', 'evidence_files', 'lawsuit_filings',
-    'foia_requests', 'session', 'audit_logs', 'user_preferences', 'email_notifications',
-    'authority_contacts_cache', 'complaint_routing_history', 'section_1983_filings',
-    'foia_routing_history', 'community_shared_evidence'
+  // Critical tables that must exist for core BadBlue functionality
+  // These match the actual table names from shared/schema.ts and migrations
+  const expectedCriticalTables = [
+    'users',                       // User authentication
+    'complaints',                  // Police complaints
+    'lawsuit_filings',             // Civil rights lawsuits
+    'foia_requests',               // FOIA requests
+    'officer_profiles',            // Officer data (from sub-agent tables)
+    'section_1983_filings',        // Federal civil rights filings
+    'authority_contacts_cache',    // Authority contact lookup cache
+    'complaint_routing_history',   // Complaint routing tracking
+    'foia_routing_history',        // FOIA routing tracking
+    'trial_consultations',         // IP-based consultations
+    'ai_subagent_logs',            // AI sub-agent activity logs
   ];
 
   try {
@@ -165,27 +177,44 @@ export async function verifyDatabaseSchema(): Promise<{
       FROM information_schema.tables 
       WHERE table_schema = 'public' 
       AND table_type = 'BASE TABLE'
+      ORDER BY table_name
     `);
     
     const existingTables = result.rows.map((row: any) => row.table_name);
     const tableCount = existingTables.length;
-    const missingTables = expectedTables.filter(t => !existingTables.includes(t));
+    const missingTables = expectedCriticalTables.filter(t => !existingTables.includes(t));
     
-    const success = missingTables.length === 0;
-    const details = success 
-      ? `All ${expectedTables.length} expected tables found (${tableCount} total tables in database)`
-      : `Missing ${missingTables.length} tables: ${missingTables.join(', ')}`;
+    // Success if we have enough tables (67+) and no critical tables missing
+    const hasEnoughTables = tableCount >= 60;
+    const noCriticalMissing = missingTables.length === 0;
+    const success = hasEnoughTables && noCriticalMissing;
+    
+    let details: string;
+    if (success) {
+      details = `All ${expectedCriticalTables.length} critical tables found (${tableCount} total tables in database)`;
+    } else if (!hasEnoughTables) {
+      details = `Only ${tableCount} tables found (expected 60+). May be connected to wrong database.`;
+    } else {
+      details = `Missing ${missingTables.length} critical tables: ${missingTables.join(', ')}`;
+    }
 
     console.log(`[DATABASE] Schema verification: ${success ? '✓' : '❌'} ${details}`);
     console.log(`[DATABASE] Connection source: ${connectionSource}`);
     
-    return { success, tableCount, missingTables, connectionSource, details };
+    return { 
+      success, 
+      tableCount, 
+      missingTables, 
+      connectionSource, 
+      details,
+      allTables: existingTables
+    };
   } catch (error: any) {
     console.error('[DATABASE] Schema verification failed:', error.message);
     return {
       success: false,
       tableCount: 0,
-      missingTables: expectedTables,
+      missingTables: expectedCriticalTables,
       connectionSource,
       details: `Error querying tables: ${error.message}`
     };

@@ -166,5 +166,35 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/admin/database/status"
+  },
+  {
+    "timestamp": "2025-11-30T04:18:38.829Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/foia/state-info/CA"
+  },
+  {
+    "timestamp": "2025-11-30T04:18:38.874Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/complaint-drafting/status"
+  },
+  {
+    "timestamp": "2025-11-30T04:18:38.908Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/section-1983/status"
+  },
+  {
+    "timestamp": "2025-11-30T04:19:07.733Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/section-1983/district-courts/CA"
+  },
+  {
+    "timestamp": "2025-11-30T04:19:07.778Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/foia/all-states"
   }
 ]
