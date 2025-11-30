@@ -16,11 +16,19 @@ The platform utilizes a modern web stack featuring a React 18 frontend with Type
 -   **File Storage**: Filesystem-based with optional Google Cloud Storage fallback
 -   **All Replit-specific code has been removed** - app is 100% platform-agnostic
 
+**WEB SEARCH INTEGRATION (Nov 30, 2025)**:
+-   **Unified Web Search Service**: New `server/webSearchService.ts` combines Bing Search API and Gemini AI with googleSearch grounding
+-   **Bing Search**: Direct API integration for web and news searches (BING_API_KEY required)
+-   **Gemini Search**: AI-powered search with Google Search grounding for verified sources
+-   **Integration Points**: Officer search, sub-agent autonomous collection, worker repair guidance, legal statute research
+-   **Key Functions**: `unifiedSearch()`, `searchOfficerRecords()`, `searchLegalStatutes()`, `searchTechnicalGuidance()`, `batchOfficerSearch()`
+
 **PACKAGE UPDATES (Nov 30, 2025)**:
 -   **Drizzle ORM**: Updated from 0.39.3 to 0.44.7 - latest stable version with improved PostgreSQL support
 -   **Drizzle Kit**: Updated from 0.20.18 to 0.31.7 - latest schema migration tools  
 -   **Drizzle Zod**: Kept at 0.7.1 (0.8.x requires Zod v4 which would be a breaking change)
 -   **Email System**: Reconfigured to use Resend API exclusively (replaced Google Workspace SMTP)
+-   **Google AI SDKs**: Uses both `@google/genai` (for web-grounded searches) and `@google/generative-ai` (for standard AI calls)
 -   All database operations verified working with the updated packages
 
 **CRITICAL BUG FIXES (Nov 14, 2025)**:

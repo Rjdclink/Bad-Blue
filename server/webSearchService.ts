@@ -197,6 +197,7 @@ export async function bingNewsSearch(
 
 /**
  * Search using Gemini AI with Google Search grounding
+ * Uses @google/genai SDK (v1.30+) which supports the googleSearch tool
  */
 export async function geminiSearch(
   query: string,
@@ -220,6 +221,8 @@ Provide comprehensive, accurate information with sources. Focus on:
 
 Return detailed findings with specific URLs and facts.`;
 
+    console.log(`[Gemini Search] Searching: ${query.substring(0, 50)}...`);
+    
     const response = await client.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -229,8 +232,13 @@ Return detailed findings with specific URLs and facts.`;
       },
     });
 
+    // @google/genai SDK returns .text directly (not .response?.text())
     const text = response.text || "";
     const sources: string[] = [];
+
+    if (!text) {
+      console.log('[Gemini Search] Empty response from API');
+    }
 
     try {
       const candidate = response.candidates?.[0];
@@ -240,9 +248,12 @@ Return detailed findings with specific URLs and facts.`;
             sources.push((chunk as any).web.uri);
           }
         }
+        console.log(`[Gemini Search] Extracted ${sources.length} grounded sources`);
+      } else {
+        console.log('[Gemini Search] No grounding metadata found in response');
       }
     } catch (e) {
-      console.log('[Gemini Search] Could not extract grounding sources');
+      console.log('[Gemini Search] Could not extract grounding sources:', e);
     }
 
     const results: EnhancedSearchResult[] = [];
