@@ -9,8 +9,8 @@
     <priority>1.0</priority>
     <image:image>
       <image:loc>https://bad-blue.com/preview.png</image:loc>
-      <image:title>BadBlue - Professional Police Accountability Platform | File Police Complaint Online</image:title>
-      <image:caption>Professional legal empowerment platform for filing police complaints online, suing officers for misconduct, bad cops, excessive force and civil rights violations. Justice accessibility tools and transparent complaint filing system.</image:caption>
+      <image:title>BadBlue - Police Accountability Platform | File Police Complaint Online</image:title>
+      <image:caption>Professional legal empowerment platform for filing police complaints, suing officers for misconduct, and civil rights violations.</image:caption>
     </image:image>
   </url>
 
@@ -21,11 +21,12 @@
     <priority>1.0</priority>
     <image:image>
       <image:loc>https://bad-blue.com/preview.png</image:loc>
-      <image:title>File Police Complaint Online | Sue Police Officer | BadBlue</image:title>
-      <image:caption>Professional platform for reporting police misconduct, law enforcement abuse, bad cops, and civil rights violations. Legal rights protection service.</image:caption>
+      <image:title>Bad Blue — Police Misconduct Accountability Tools</image:title>
+      <image:caption>Petitions demanding officer resignation, 1983 civil suits, file complaints online, affordable legal alternative.</image:caption>
     </image:image>
   </url>
 
+  <!-- Officer Search - High Priority -->
   <url>
     <loc>https://bad-blue.com/officer</loc>
     <lastmod>2025-11-30</lastmod>
@@ -33,82 +34,94 @@
     <priority>0.95</priority>
     <image:image>
       <image:loc>https://bad-blue.com/preview.png</image:loc>
-      <image:title>Police Officer Search | Find Officer Background Records | BadBlue</image:title>
-      <image:caption>Search police officer public records, department rosters, disciplinary history, and POST certifications. Free officer background search tool.</image:caption>
+      <image:title>Bad Blue — Officer Search &amp; Misconduct Lookup</image:title>
+      <image:caption>Search officers by name and state, pull badge history, use results for petitions or §1983 complaints.</image:caption>
     </image:image>
   </url>
 
   <url>
     <loc>https://bad-blue.com/login</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
 
-  <!-- Core Service Pages - Legal Rights Protection Services -->
+  <!-- Core Service Pages - Complaints/FOIA Tools -->
   <url>
     <loc>https://bad-blue.com/complaint-form</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
     <image:image>
       <image:loc>https://bad-blue.com/preview.png</image:loc>
-      <image:title>File Police Complaint Online | Report Bad Cops</image:title>
-      <image:caption>Professional platform to file police complaints for bad cops, police brutality, excessive force and civil rights violations.</image:caption>
+      <image:title>Bad Blue — File Misconduct Complaints or FOIA Requests</image:title>
+      <image:caption>Generate complaints, submit public-record requests, demand accountability online.</image:caption>
     </image:image>
-  </url>
-
-  <url>
-    <loc>https://bad-blue.com/lawsuit-form</loc>
-    <lastmod>2025-11-15</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
-    <image:image>
-      <image:loc>https://bad-blue.com/preview.png</image:loc>
-      <image:title>Sue Police Officer | File Civil Rights Lawsuit</image:title>
-      <image:caption>Legal empowerment platform to sue police officers for misconduct, excessive force and civil rights violations.</image:caption>
-    </image:image>
-  </url>
-
-  <url>
-    <loc>https://bad-blue.com/petition-form</loc>
-    <lastmod>2025-11-15</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
   </url>
 
   <url>
     <loc>https://bad-blue.com/foia-request</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
+    <priority>0.95</priority>
+    <image:image>
+      <image:loc>https://bad-blue.com/preview.png</image:loc>
+      <image:title>FOIA Request Generator | Public Records Request Tool</image:title>
+      <image:caption>State-specific Freedom of Information Act requests for body camera footage, disciplinary records, and investigation files.</image:caption>
+    </image:image>
   </url>
 
-  <!-- User Pages -->
+  <!-- Legal Tools - §1983 Lawsuits -->
+  <url>
+    <loc>https://bad-blue.com/lawsuit-form</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://bad-blue.com/preview.png</image:loc>
+      <image:title>Bad Blue — 42 USC §1983 Civil Rights Lawsuit Generator</image:title>
+      <image:caption>Create lawsuits for rights violations, remote filing, cheaper than attorney consult.</image:caption>
+    </image:image>
+  </url>
+
+  <!-- Petition Tools -->
+  <url>
+    <loc>https://bad-blue.com/petition-form</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://bad-blue.com/preview.png</image:loc>
+      <image:title>Officer Resignation Petition Creator</image:title>
+      <image:caption>Create community petitions demanding officer resignation, delivered to city councils.</image:caption>
+    </image:image>
+  </url>
+
   <url>
     <loc>https://bad-blue.com/petitions</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
 
+  <!-- User Pages -->
   <url>
     <loc>https://bad-blue.com/complaints</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
 
   <url>
     <loc>https://bad-blue.com/history</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.6</priority>
   </url>
 
   <url>
     <loc>https://bad-blue.com/evidence-hub</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
@@ -116,15 +129,35 @@
   <!-- Support Pages -->
   <url>
     <loc>https://bad-blue.com/contact</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
+    <priority>0.8</priority>
+    <image:image>
+      <image:loc>https://bad-blue.com/preview.png</image:loc>
+      <image:title>Bad Blue — Contact + Support + Misconduct Filing Help</image:title>
+      <image:caption>contact.badblue@gmail.com - FAQs about petitions, officer complaints, §1983 suits.</image:caption>
+    </image:image>
   </url>
 
   <url>
     <loc>https://bad-blue.com/support</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
+  </url>
+
+  <!-- Legal/Policy Pages -->
+  <url>
+    <loc>https://bad-blue.com/privacy</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+
+  <url>
+    <loc>https://bad-blue.com/terms</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
   </url>
 </urlset>

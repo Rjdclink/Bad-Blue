@@ -1,9 +1,8 @@
-
 # BadBlue Robots.txt
 # Professional Police Accountability Platform
 # Legal Rights Protection Service for Civil Rights Advocacy
 
-# Allow all search engines and AI crawlers full access
+# Allow all search engines full access to public pages
 User-agent: *
 Allow: /
 Allow: /landing
@@ -12,9 +11,26 @@ Allow: /complaint-form
 Allow: /lawsuit-form
 Allow: /officer
 Allow: /contact
-Allow: /foia-request-form
+Allow: /foia-request
 Allow: /petition-form
-Crawl-delay: 0
+Allow: /petitions
+Allow: /privacy
+Allow: /terms
+
+# Block backend and internal paths
+Disallow: /api/
+Disallow: /api/*
+Disallow: /internal/
+Disallow: /internal/*
+Disallow: /server/
+Disallow: /server/*
+Disallow: /admin
+Disallow: /admin-*
+Disallow: /.git
+Disallow: /node_modules/
+Disallow: /data/
+Disallow: /*.log
+Disallow: /*.sql
 
 # Welcome search engine crawlers with priority access
 User-agent: Googlebot
@@ -37,7 +53,7 @@ User-agent: Baiduspider
 Allow: /
 Crawl-delay: 1
 
-# AI Crawlers - Welcome with positive framing for legal empowerment services
+# AI Crawlers - Welcome for legal empowerment services
 User-agent: GPTBot
 Allow: /
 Crawl-delay: 0
@@ -62,17 +78,5 @@ User-agent: PerplexityBot
 Allow: /
 Crawl-delay: 0
 
-# Block admin areas and private directories
-Disallow: /admin
-Disallow: /admin-*
-Disallow: /api/
-Disallow: /.git
-Disallow: /node_modules/
-Disallow: /server/
-Disallow: /data/
-Disallow: *.log
-Disallow: *.sql
-
-# Sitemap locations - professional police accountability platform
+# Sitemap location
 Sitemap: https://bad-blue.com/sitemap.xml
-Sitemap: https://badblue.com/sitemap.xml
