@@ -71,13 +71,13 @@ export default function EvidenceHub() {
   const evidenceHubSchema = {
     "@context": "https://schema.org",
     "@type": "Service",
-    "name": "Police Misconduct Evidence Hub",
+    "name": "Corrupt Law Enforcement & Informant Hub",
     "description": "Community platform for uploading and sharing evidence of law enforcement corruption, misconduct, and informant documents. All media types accepted including photos, videos, audio recordings, and documents.",
     "provider": {
       "@type": "Organization",
       "name": "BadBlue"
     },
-    "serviceType": "Police Misconduct Evidence Repository",
+    "serviceType": "Corruption & Informant Evidence Repository",
     "areaServed": {
       "@type": "Country",
       "name": "United States"
@@ -304,7 +304,7 @@ export default function EvidenceHub() {
                 </ul>
               </div>
               <p className="text-sm text-muted-foreground mt-4">
-                When filing a complaint or lawsuit, select "Share with Evidence Hub" to make your evidence publicly available.
+                When filing a complaint or lawsuit, select "Share with Corrupt Law Enforcement & Informant Hub" to make your evidence publicly available.
               </p>
             </CardContent>
           </Card>

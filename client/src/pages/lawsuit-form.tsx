@@ -1007,7 +1007,7 @@ export default function LawsuitForm() {
                 onChange={(e) => localStorage.setItem('shareEvidence', e.target.checked.toString())}
               />
               <label htmlFor="shareEvidence" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Share with BadBlue community (Public Evidence Hub)
+                Share with BadBlue community (Corrupt Law Enforcement & Informant Hub)
               </label>
             </div>
 
