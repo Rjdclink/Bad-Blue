@@ -185,5 +185,16 @@
       },
       "content": "Insufficient verifiable data collected for Officer Smith to generate a comprehensive accountability report."
     }
+  },
+  {
+    "receivedAt": "2025-11-30T23:51:50.267Z",
+    "payload": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "MN",
+        "category": "officer_search"
+      },
+      "content": "Derek Chauvin, a Minneapolis police officer, was convicted of murder for killing George Floyd in 2020. His actions resulted in criminal convictions, termination, and significant legal consequences."
+    }
   }
 ]

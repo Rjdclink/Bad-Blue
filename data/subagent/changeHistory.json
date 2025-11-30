@@ -232,5 +232,14 @@
       "response": "Officer search completed for \"Smith\". Found: None found",
       "success": true
     }
+  },
+  {
+    "timestamp": "2025-11-30T23:51:50.259Z",
+    "command": "search officer \"Derek Chauvin\" state=MN city= county= badge= type= includeGovernment=false includeCorrections=false limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Derek Chauvin\". Found: Minneapolis Police Department",
+      "success": true
+    }
   }
 ]
