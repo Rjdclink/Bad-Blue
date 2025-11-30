@@ -18,12 +18,19 @@ The platform utilizes a modern web stack featuring a React 18 frontend with Type
 
 **DATABASE CONFIGURATION (Nov 30, 2025)**:
 -   **Dual-URL Architecture**: `drizzle.config.ts` uses `DATABASE_URL` (Replit internal DB, ~13 tables), while runtime uses `SUPABASE_DATABASE_URL` (production DB, 69 tables). This is by design as `drizzle.config.ts` is a protected file.
--   **Schema Verification**: `/api/schema-verify` endpoint validates 11 critical tables exist and confirms connection source (SUPABASE_DATABASE_URL)
+-   **Schema Verification**: `/api/schema-verify` endpoint is the CANONICAL SOURCE OF TRUTH for database table counts
+-   **Startup Verification**: Server runs automatic schema verification at startup with prominent logging
+-   **Production Guard**: Production environment REQUIRES `SUPABASE_DATABASE_URL` - will fail fast if missing
 -   **Migration Pattern**: All migrations use `db.execute(sql`...`)` from Drizzle ORM for consistency
--   **Connection Logging**: `server/db.ts` logs which database URL is being used at startup
--   **Worker Metrics Tables**: `worker_health_metrics` and `worker_repair_metrics` tables added for comprehensive worker monitoring
--   **Contact Form Route**: `/api/contact` POST route for contact form submissions with validation, database persistence, and email notifications
--   **IMPORTANT**: The execute_sql_tool in the development environment connects to `DATABASE_URL` (Replit internal), NOT the production Supabase database. Use `/api/schema-verify` for accurate table counts.
+-   **Connection Logging**: `server/db.ts` logs database connection source with warnings for fallback usage
+-   **Worker Metrics Tables**: `worker_health_metrics` and `worker_repair_metrics` tables for comprehensive worker monitoring
+-   **Contact Form Route**: `/api/contact` POST route forwards to `contact.badblue@gmail.com` with database persistence
+
+**⚠️ DEPRECATED TOOLS (Nov 30, 2025)**:
+-   **execute_sql_tool**: DEPRECATED - Connects to `DATABASE_URL` (Replit internal, ~13 tables), NOT production Supabase (69 tables)
+-   **Alternative**: Use `/api/schema-verify` endpoint via `curl http://localhost:5000/api/schema-verify`
+-   **Alternative**: Check startup logs for database verification results
+-   **Why Deprecated**: Tool caused recurring confusion by returning wrong table counts from internal database
 
 **WEB SEARCH INTEGRATION (Nov 30, 2025)**:
 -   **Unified Web Search Service**: New `server/webSearchService.ts` combines Bing Search API and Gemini AI with googleSearch grounding

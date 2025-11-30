@@ -1,5 +1,12 @@
 // Database setup - optimized for Supabase PostgreSQL and Railway
 // Optimized for 500+ concurrent users
+// 
+// CRITICAL DATABASE CONFIGURATION (Nov 30, 2025):
+// - Runtime ALWAYS uses SUPABASE_DATABASE_URL (69 tables, production)
+// - drizzle.config.ts uses DATABASE_URL (Replit internal, ~13 tables) - this is a protected file
+// - execute_sql_tool is DEPRECATED - use /api/schema-verify endpoint instead
+// - Table verification runs at startup to catch configuration drift early
+
 import pg from 'pg';
 const { Pool } = pg;
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -9,13 +16,27 @@ import * as schema from "@shared/schema";
 const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || !!process.env.RAILWAY_PROJECT_ID;
 const isProduction = process.env.NODE_ENV === 'production';
 
-// CRITICAL: Prioritize SUPABASE_DATABASE_URL to avoid dual-database configuration drift
-// drizzle.config.ts uses DATABASE_URL, so ensure runtime always uses SUPABASE_DATABASE_URL
+// CRITICAL: REQUIRE SUPABASE_DATABASE_URL in production to prevent accidental fallback
+const isSupabaseUrl = !!process.env.SUPABASE_DATABASE_URL;
 const databaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL;
 
-// Log which database connection is being used (helps diagnose configuration issues)
-const isSupabaseUrl = !!process.env.SUPABASE_DATABASE_URL;
-console.log(`[DATABASE] Using ${isSupabaseUrl ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL (fallback)'}`);
+// STARTUP GUARD: Fail fast if production uses wrong database
+if (isProduction && !isSupabaseUrl) {
+  console.error('[DATABASE] ❌ CRITICAL: Production environment MUST use SUPABASE_DATABASE_URL');
+  console.error('[DATABASE] ❌ DATABASE_URL fallback is NOT allowed in production');
+  console.error('[DATABASE] ❌ Set SUPABASE_DATABASE_URL environment variable to continue');
+  throw new Error('SUPABASE_DATABASE_URL is required in production. DATABASE_URL fallback is disabled.');
+}
+
+// Log which database connection is being used with prominent warning for fallback
+if (!isSupabaseUrl) {
+  console.warn('[DATABASE] ⚠️ WARNING: Using DATABASE_URL fallback (development only)');
+  console.warn('[DATABASE] ⚠️ This connects to Replit internal DB (~13 tables), NOT production Supabase (69 tables)');
+  console.warn('[DATABASE] ⚠️ Use /api/schema-verify endpoint for accurate table counts');
+  console.warn('[DATABASE] ⚠️ execute_sql_tool is DEPRECATED - it connects to wrong database');
+} else {
+  console.log('[DATABASE] ✓ Using SUPABASE_DATABASE_URL (production database)');
+}
 console.log(`[DATABASE] Environment: ${isProduction ? 'production' : 'development'}, Platform: ${isRailway ? 'Railway' : 'Replit/local'}`);
 
 if (!databaseUrl) {
@@ -138,12 +159,23 @@ export async function resetPool(): Promise<void> {
   await resetInProgress;
 }
 
+// Minimum table count for production database (Supabase has 69 tables)
+// If table count is below this, we're likely connected to wrong database
+const MINIMUM_PRODUCTION_TABLES = 60;
+
 /**
  * Verify database schema by checking table count and comparing expected tables
- * Helps detect configuration drift between drizzle.config.ts and runtime
+ * 
+ * CANONICAL SOURCE OF TRUTH for database schema verification.
+ * Use this function or /api/schema-verify endpoint instead of execute_sql_tool.
+ * 
+ * DEPRECATION NOTICE (Nov 30, 2025):
+ * - execute_sql_tool connects to DATABASE_URL (Replit internal, ~13 tables)
+ * - This function connects to SUPABASE_DATABASE_URL (production, 69 tables)
+ * - Always use /api/schema-verify for accurate table counts
  * 
  * NOTE: expectedCriticalTables contains only the essential tables required for core functionality.
- * The full database has 67+ tables but we only validate the most critical ones to reduce false positives.
+ * The full database has 69 tables but we only validate the most critical ones to reduce false positives.
  */
 export async function verifyDatabaseSchema(): Promise<{
   success: boolean;
@@ -152,8 +184,10 @@ export async function verifyDatabaseSchema(): Promise<{
   connectionSource: string;
   details: string;
   allTables?: string[];
+  isProductionDatabase: boolean;
 }> {
   const connectionSource = process.env.SUPABASE_DATABASE_URL ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL';
+  const isProductionDatabase = !!process.env.SUPABASE_DATABASE_URL;
   
   // Critical tables that must exist for core BadBlue functionality
   // These match the actual table names from shared/schema.ts and migrations
@@ -184,8 +218,8 @@ export async function verifyDatabaseSchema(): Promise<{
     const tableCount = existingTables.length;
     const missingTables = expectedCriticalTables.filter(t => !existingTables.includes(t));
     
-    // Success if we have enough tables (67+) and no critical tables missing
-    const hasEnoughTables = tableCount >= 60;
+    // Success if we have enough tables (60+) and no critical tables missing
+    const hasEnoughTables = tableCount >= MINIMUM_PRODUCTION_TABLES;
     const noCriticalMissing = missingTables.length === 0;
     const success = hasEnoughTables && noCriticalMissing;
     
@@ -193,13 +227,17 @@ export async function verifyDatabaseSchema(): Promise<{
     if (success) {
       details = `All ${expectedCriticalTables.length} critical tables found (${tableCount} total tables in database)`;
     } else if (!hasEnoughTables) {
-      details = `Only ${tableCount} tables found (expected 60+). May be connected to wrong database.`;
+      details = `Only ${tableCount} tables found (expected ${MINIMUM_PRODUCTION_TABLES}+). Connected to wrong database?`;
+      console.error(`[DATABASE] ❌ WRONG DATABASE DETECTED: Only ${tableCount} tables found`);
+      console.error(`[DATABASE] ❌ Expected ${MINIMUM_PRODUCTION_TABLES}+ tables (production has 69)`);
+      console.error(`[DATABASE] ❌ You may be connected to Replit internal database instead of Supabase`);
     } else {
       details = `Missing ${missingTables.length} critical tables: ${missingTables.join(', ')}`;
     }
 
     console.log(`[DATABASE] Schema verification: ${success ? '✓' : '❌'} ${details}`);
     console.log(`[DATABASE] Connection source: ${connectionSource}`);
+    console.log(`[DATABASE] Table count: ${tableCount}`);
     
     return { 
       success, 
@@ -207,7 +245,8 @@ export async function verifyDatabaseSchema(): Promise<{
       missingTables, 
       connectionSource, 
       details,
-      allTables: existingTables
+      allTables: existingTables,
+      isProductionDatabase
     };
   } catch (error: any) {
     console.error('[DATABASE] Schema verification failed:', error.message);
@@ -216,7 +255,46 @@ export async function verifyDatabaseSchema(): Promise<{
       tableCount: 0,
       missingTables: expectedCriticalTables,
       connectionSource,
-      details: `Error querying tables: ${error.message}`
+      details: `Error querying tables: ${error.message}`,
+      isProductionDatabase
     };
   }
+}
+
+/**
+ * Run schema verification at startup and log prominently
+ * Called during server initialization to catch configuration drift early
+ */
+export async function runStartupSchemaVerification(): Promise<boolean> {
+  console.log('[DATABASE] Running startup schema verification...');
+  
+  const result = await verifyDatabaseSchema();
+  
+  if (!result.success) {
+    console.error('╔════════════════════════════════════════════════════════════════╗');
+    console.error('║           DATABASE CONFIGURATION ERROR DETECTED                ║');
+    console.error('╠════════════════════════════════════════════════════════════════╣');
+    console.error(`║ Tables found: ${result.tableCount.toString().padEnd(48)}║`);
+    console.error(`║ Expected minimum: ${MINIMUM_PRODUCTION_TABLES.toString().padEnd(44)}║`);
+    console.error(`║ Connection source: ${result.connectionSource.padEnd(43)}║`);
+    console.error('╠════════════════════════════════════════════════════════════════╣');
+    console.error('║ IMPORTANT: execute_sql_tool is DEPRECATED                      ║');
+    console.error('║ Use /api/schema-verify endpoint for accurate table counts      ║');
+    console.error('╚════════════════════════════════════════════════════════════════╝');
+    
+    // In production, this would be a critical failure
+    if (isProduction) {
+      throw new Error(`Database schema verification failed: ${result.details}`);
+    }
+  } else {
+    console.log('╔════════════════════════════════════════════════════════════════╗');
+    console.log('║              DATABASE VERIFICATION SUCCESSFUL                  ║');
+    console.log('╠════════════════════════════════════════════════════════════════╣');
+    console.log(`║ Tables found: ${result.tableCount.toString().padEnd(48)}║`);
+    console.log(`║ Connection source: ${result.connectionSource.padEnd(43)}║`);
+    console.log(`║ Production database: ${result.isProductionDatabase ? 'YES' : 'NO'.padEnd(40)}║`);
+    console.log('╚════════════════════════════════════════════════════════════════╝');
+  }
+  
+  return result.success;
 }

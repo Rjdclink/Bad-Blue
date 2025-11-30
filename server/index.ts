@@ -376,6 +376,12 @@ app.get("/api/schema-verify", async (_req, res) => {
     log(`serving on port ${port}`);
     
     await runMigrations();
+    
+    // Run startup schema verification to confirm correct database connection
+    // This replaces dependency on execute_sql_tool which connects to wrong database
+    const { runStartupSchemaVerification } = await import('./db');
+    await runStartupSchemaVerification();
+    
     await initializeServices();
     
     isReady = true;
