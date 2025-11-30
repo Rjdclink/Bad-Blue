@@ -48,13 +48,37 @@ When deployed on Railway, the database connection automatically adjusts:
    - Waits up to 5 seconds for operations to complete
    - Cleans up all intervals and timers
 
+## CRITICAL: Supabase IPv6 Fix
+
+Railway's shared network does **NOT** support IPv6 egress. Supabase endpoints (including Session Pooler) return dual-stack DNS with IPv6 preferred. This causes `ENETUNREACH` errors.
+
+### The Fix
+Add this environment variable in Railway:
+
+```env
+NODE_OPTIONS="--dns-result-order=ipv4first"
+```
+
+This makes Node.js prefer IPv4 addresses in DNS resolution, which happens **before** the database client connects.
+
+### Why Other Fixes Don't Work
+- **pg Pool's `lookup` option**: Runs too late - DNS resolution already completed
+- **Session Pooler (port 5432/6543)**: Still dual-stack, prefers IPv6
+- **Custom DNS code**: Doesn't intercept Node's DNS at the right layer
+
 ## Required Environment Variables
+
+### CRITICAL: IPv4 Fix (Required for Supabase)
+```env
+NODE_OPTIONS="--dns-result-order=ipv4first"
+```
 
 ### Database
 ```env
-DATABASE_URL=postgresql://user:password@host:port/database
+# Use Supabase Session Pooler for connection pooling
+SUPABASE_DATABASE_URL=postgresql://postgres.[PROJECT]:[PASSWORD]@aws-0-us-east-2.pooler.supabase.com:5432/postgres
 # or
-SUPABASE_DATABASE_URL=postgresql://user:password@host:port/database
+SUPABASE_URL=postgresql://postgres.[PROJECT]:[PASSWORD]@aws-0-us-east-2.pooler.supabase.com:5432/postgres
 
 # Optional for Railway with SSL requirements
 DATABASE_SSL_CERT=<certificate_content>

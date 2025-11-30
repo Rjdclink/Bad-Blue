@@ -7,11 +7,13 @@
 // - execute_sql_tool is DEPRECATED - use /api/schema-verify endpoint instead
 // - Table verification runs at startup to catch configuration drift early
 //
-// IPv6/IPv4 COMPATIBILITY (Nov 30, 2025):
-// - Supabase direct connections resolve to IPv6 addresses
+// RAILWAY IPv6/IPv4 COMPATIBILITY FIX:
+// - Supabase connections resolve to IPv6 addresses by default
 // - Railway's shared network does NOT support IPv6 egress
-// - We force IPv4 DNS resolution using Node's dns.lookup() with family: 4
-// - Alternative: Use Supabase Session Pooler (pooler.supabase.com:6543) which is IPv4-only
+// - ENETUNREACH errors occur when Railway tries to connect to Supabase
+// - FAILED ATTEMPT: pg Pool's lookup option with family: 4 (runs too late)
+// - WORKING FIX: Set Railway env var: NODE_OPTIONS="--dns-result-order=ipv4first"
+//   This makes Node.js prefer IPv4 in DNS resolution BEFORE pg connects
 
 // CRITICAL: Load environment variables FIRST before any other code runs
 // This must happen before db.ts is imported by other modules (index.ts, storage.ts)
@@ -19,7 +21,6 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import dns from 'dns';
 import pg from 'pg';
 const { Pool } = pg;
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -95,58 +96,25 @@ if (!databaseUrl) {
   );
 }
 
-// IPv4-forcing DNS lookup hook for Supabase compatibility
-// Supabase direct connections resolve to IPv6 but many platforms (Railway, etc.) don't support IPv6 egress
-// Apply IPv4 forcing for ALL Supabase connections, not just Railway
-const ipv4Lookup = (hostname: string, options: dns.LookupOptions, callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void) => {
-  dns.lookup(hostname, { family: 4, all: false }, (err, address, family) => {
-    if (!err) {
-      console.log(`[DATABASE] DNS resolved ${hostname} to IPv4: ${address}`);
-    }
-    callback(err, address, family);
-  });
-};
-
-// Determine if we should force IPv4 - apply to ALL Supabase connections
-// This ensures compatibility with Railway and any other IPv4-only platforms
-const shouldForceIPv4 = isUsingSupabase || isRailway || isProduction;
-
-// Connection configuration - applies IPv4 forcing for Supabase connections
+// Connection configuration - simplified without IPv4 forcing (removed as it doesn't work on Railway)
+// ISSUE: Railway cannot reach Supabase's IPv6 addresses, and the pg Pool's lookup option doesn't help
 const getPoolConfig = () => {
   const baseConfig: any = {
     connectionString: databaseUrl,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: (isRailway || isProduction) ? 30000 : 10000,
+    max: isRailway ? 20 : 100,
+    min: isRailway ? 2 : 10,
+    ssl: process.env.PGSSLMODE !== 'disable' ? { 
+      rejectUnauthorized: false,
+      ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {})
+    } : false,
+    statement_timeout: 30000,
+    query_timeout: 30000,
+    application_name: isRailway ? 'badblue-railway' : 'badblue',
   };
 
-  // Apply IPv4 forcing for ALL Supabase connections (not just Railway)
-  // This prevents ENETUNREACH errors on IPv4-only platforms
-  if (shouldForceIPv4) {
-    console.log('[DATABASE] Forcing IPv4 DNS resolution for Supabase compatibility');
-    return {
-      ...baseConfig,
-      max: isRailway ? 20 : 100,  // Conservative for Railway, generous for others
-      min: isRailway ? 2 : 10,
-      ssl: process.env.PGSSLMODE !== 'disable' ? { 
-        rejectUnauthorized: false,
-        ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {})
-      } : false,
-      statement_timeout: 30000,
-      query_timeout: 30000,
-      application_name: isRailway ? 'badblue-railway' : 'badblue',
-      // CRITICAL: Force IPv4 DNS resolution for ALL Supabase connections
-      // Without this, Supabase hostnames may resolve to IPv6 and get ENETUNREACH errors
-      lookup: ipv4Lookup,
-    };
-  }
-
-  // Default configuration for local development with non-Supabase database
-  return {
-    ...baseConfig,
-    max: 100,
-    min: 10,
-    ssl: { rejectUnauthorized: false },
-  };
+  return baseConfig;
 };
 
 // Module-level pool and drizzle instance (use 'let' so they can be reassigned during repairs)
