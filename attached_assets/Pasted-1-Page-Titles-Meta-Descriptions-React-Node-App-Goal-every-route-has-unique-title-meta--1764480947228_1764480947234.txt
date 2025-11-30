@@ -1,0 +1,256 @@
+1. Page Titles + Meta Descriptions (React/Node App)
+
+Goal: every route has unique <title> + <meta>.
+
+Agent instructions:
+
+1. Open the client routing setup (where Home, OfficerSearch, Complaint/FOIA tools, Legal tools, Contact live).
+
+
+2. For each page, set a unique title + meta description inside its component — NOT in index.html.
+
+
+3. Titles must include keywords, not just “Bad Blue.”
+
+
+4. NO duplicate title/description across pages.
+
+
+
+Examples to follow (not code):
+
+Page	Title should reflect	Meta description must include
+
+Home	Bad Blue — police misconduct accountability tools	Petitions demanding officer resignation, 1983 civil suits, file complaints online, affordable legal alternative
+Officer Search	Bad Blue — officer search & misconduct lookup	Search officers by name + state, pull badge history, use results for petitions or §1983 complaints
+Complaints/FOIA tools	Bad Blue — file misconduct complaints or FOIA requests	Generate complaints, submit public-record requests, demand accountability online
+Legal/1983 tools	Bad Blue — 42 USC §1983 civil rights lawsuit generator	Create lawsuits for rights violations, remote filing, cheaper than attorney consult
+Contact	Bad Blue — contact + support + misconduct filing help	Contact.badblue@gmail.com + FAQs about petitions, officer complaints, §1983 suits
+
+
+
+---
+
+2. XML Sitemap (public/)
+
+Agent instructions:
+
+1. Create sitemap.xml in public/ that lists at minimum:
+
+
+
+/
+ /officer-search
+ /complaints or /foia (whichever you use)
+ /legal-tools or /1983
+ /contact
+ /privacy
+ /terms
+
+2. Confirm it is served publicly after deploy at →
+https://bad-blue.com/sitemap.xml
+
+
+
+
+---
+
+3. robots.txt (public/)
+
+Agent instructions:
+
+1. Create robots.txt with:
+
+
+
+allow main site
+
+block backend paths /api/**, /internal/**, /server/**
+
+include sitemap reference
+
+
+2. Confirm it loads at:
+https://bad-blue.com/robots.txt
+
+
+
+
+---
+
+4. Fix /contact so it actually renders
+
+Agent instructions:
+
+1. Ensure routing points /contact ➜ ContactPage component.
+
+
+2. Confirm the component returns visible JSX.
+
+
+3. Visible content must include:
+
+
+
+what Bad Blue does
+
+contact email contact.badblue@gmail.com
+
+description of petition tools + §1983 lawsuit drafting
+
+that Bad Blue is affordable + fully remote — user never leaves home
+
+
+This page WILL rank — it must not be empty.
+
+
+---
+
+5. Hidden Crawable FAQ (Contact Page)
+
+Agent instructions:
+
+1. Add FAQ block inside the contact component — in the DOM.
+
+
+2. Visually hide it (screen-reader friendly, not display:none).
+
+
+3. FAQ must include answers for:
+
+
+
+police misconduct complaint filing
+
+petition demanding officer resignation
+
+42 USC §1983 lawsuit filing
+
+FOIA requests
+
+pricing + affordability
+
+remote convenience (no lawyer visit required)
+
+
+4. After build → use "view page source" to confirm text exists.
+
+
+
+
+---
+
+6. JSON-LD Schema (Home + Contact)
+
+Agent instructions:
+
+1. On Home — inject JSON-LD describing Bad Blue as:
+
+
+
+> Legal accountability platform offering misconduct complaints, resignation petitions, and §1983 civil rights filings — cheaper than a civil rights attorney consult, fully remote.
+
+
+
+2. On Contact — use ContactPage schema referencing same organization + contact.badblue@gmail.com.
+
+
+3. Confirm JSON-LD appears in page source.
+
+
+
+
+---
+
+7. Internal Linking
+
+Agent instructions:
+
+1. Add nav/footer links to:
+
+
+
+Home
+Officer Search
+Complaints / FOIA
+§1983 Lawsuit Generator
+Contact
+Privacy
+Terms
+
+2. On Home, add contextual links:
+
+
+
+Start a resignation petition
+
+Generate a §1983 complaint
+
+File misconduct report
+
+
+3. Ensure no important page is orphaned.
+
+
+
+
+---
+
+8. Keyword Tuning (All Pages)
+
+Agent instructions:
+
+On each functional page, add 1–2 short keyword-rich paragraphs describing the tool.
+
+Must mention naturally (no stuffing):
+
+✔ police misconduct
+✔ officer search / badge lookup
+✔ FOIA request drafting
+✔ petition demanding resignation
+✔ 42 U.S.C. §1983 civil rights lawsuit
+✔ affordable alternative to attorneys
+✔ fully online — never leave home
+
+Add ALT text for icons/images.
+
+
+---
+
+9. /privacy + /terms Pages
+
+Agent instructions:
+
+1. Add /privacy + /terms routes & components.
+
+
+2. Include — data policy, form usage, liability language.
+
+
+3. Add both pages to:
+
+
+
+footer links
+
+sitemap.xml
+
+
+
+---
+
+10. Google Search Console Setup (You, not agent)
+
+1. Verify domain in GSC.
+
+
+2. Submit sitemap.xml.
+
+
+3. Request indexing for:
+
+
+
+/, officer-search, complaints, legal-tools, contact, privacy, terms.
+
+4. Check query performance in 3–10 days.

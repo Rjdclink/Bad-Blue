@@ -25,6 +25,8 @@ const Login = lazy(() => import("@/pages/login"));
 const NotFound = lazy(() => import("@/pages/not-found"))
 const Home = lazy(() => import("@/pages/home"));
 const Contact = lazy(() => import("@/pages/contact"));
+const Privacy = lazy(() => import("@/pages/privacy"));
+const Terms = lazy(() => import("@/pages/terms"));
 
 // Feature pages - loaded on demand
 const OfficerInfo = lazy(() => import("@/pages/officer"));
@@ -92,6 +94,8 @@ function Router() {
         <Route path="/login" component={Login} />
         <Route path="/contact" component={Contact} />
         <Route path="/support" component={Contact} />
+        <Route path="/privacy" component={Privacy} />
+        <Route path="/terms" component={Terms} />
         
         {/* Public petition page - accessible without authentication */}
         <Route path="/petition/:slug" component={PetitionDetail} />
