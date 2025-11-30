@@ -805,6 +805,29 @@ class AITokenGovernorEnhanced {
       const allocations = await this.orchestrateProviders(task, estimated, quotaStatus);
 
       if (!allocations || allocations.length === 0) {
+        // CRITICAL FIX: For USER context, NEVER return shouldProceed=false
+        // Always provide a fallback provider for user-initiated searches
+        if (task.context === UsageContext.USER) {
+          console.log('[AI Governor] USER search: forcing fallback chain (Mistral → Claude → Gemini)');
+          
+          // Try providers in fallback order for user searches
+          const fallbackOrder = [AIProvider.MISTRAL, AIProvider.CLAUDE, AIProvider.GEMINI, AIProvider.GROQ];
+          for (const provider of fallbackOrder) {
+            if (this.isProviderAvailable(provider)) {
+              console.log(`[AI Governor] USER fallback: using ${provider}`);
+              return {
+                provider,
+                maxTokens: estimated,
+                verbosityLevel: 'standard',
+                shouldProceed: true,
+                providersAllocation: [{ provider, maxTokens: estimated }],
+                deferralReason: undefined
+              };
+            }
+          }
+        }
+        
+        // Only defer for autonomous or if truly no providers available
         return {
           provider: AIProvider.GEMINI,
           maxTokens: 0,

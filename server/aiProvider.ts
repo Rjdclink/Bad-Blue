@@ -138,10 +138,9 @@ export async function generateText(
     }
   });
 
-  // If no successes, throw the last error
+  // If no successes from parallel execution, try sequential fallback for USER context
   if (successes.length === 0) {
-    const last = failures[failures.length - 1];
-    // Record failures
+    // Record parallel failures
     for (const f of failures) {
       await aiTokenGovernor.recordUsage(
         task.taskName,
@@ -155,6 +154,42 @@ export async function generateText(
         String(f.error?.message || f.error)
       );
     }
+    
+    // CRITICAL: For USER context, try sequential fallback before giving up
+    if (task.context === UsageContext.USER) {
+      console.log('[AI Provider] All parallel providers failed for USER task, trying sequential fallback...');
+      const failedProviders = new Set(failures.map(f => f.provider));
+      const fallbackOrder = [AIProvider.MISTRAL, AIProvider.CLAUDE, AIProvider.GROQ, AIProvider.GEMINI];
+      
+      for (const provider of fallbackOrder) {
+        if (failedProviders.has(provider)) continue; // Skip already failed
+        
+        try {
+          console.log(`[AI Provider] Sequential fallback: trying ${provider}...`);
+          const result = await runProvider(provider, actualPrompt, options, defaultMaxTokens, task);
+          
+          // Record success
+          await aiTokenGovernor.recordUsage(
+            task.taskName,
+            provider,
+            result.tokensUsed,
+            task.context,
+            result.latencyMs,
+            true,
+            budget.verbosityLevel,
+            task.priority
+          );
+          
+          console.log(`[AI Provider] Sequential fallback SUCCESS with ${provider}`);
+          return result;
+        } catch (err: any) {
+          console.log(`[AI Provider] Sequential fallback: ${provider} failed - ${err.message}`);
+          continue;
+        }
+      }
+    }
+    
+    const last = failures[failures.length - 1];
     throw last?.error || new Error('All AI providers failed');
   }
 
