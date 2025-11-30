@@ -1,6 +1,226 @@
 [
   {
-    "timestamp": "2025-11-30T21:41:19.058Z",
+    "timestamp": "2025-11-30T21:42:44.735Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99857, Requested 152. Please try again in 7.776s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:42:54.401Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99857, Requested 153. Please try again in 8.64s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:42:54.613Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99857, Requested 153. Please try again in 8.64s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:42:54.711Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99857, Requested 153. Please try again in 8.64s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:42:54.891Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99997, Requested 152. Please try again in 2m8.735999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:42:54.896Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99997, Requested 152. Please try again in 2m8.735999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:42:54.907Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99997, Requested 152. Please try again in 2m8.735999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:01.104Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99997, Requested 153. Please try again in 2m9.6s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:08.922Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": true,
+    "overallSuccess": false,
+    "aiPlan": "**System Issue Analysis and Remediation Plan**\n\n### Issue Overview\nThe system issue is related to code quality, specifically the Liskov Substitution Principle (LSP), with 2 TypeScript errors reported. The system is currently in a working state, but these errors need to be addressed to ensure maintainability and prevent potential issues.\n\n### 1. Root Cause Analysis\nThe root cause of the issue is the presence of 2 TypeScript errors in the application code, which are likely due to:\n* Inconsistent o"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:09.067Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 152. Please try again in 2m0.095999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:18.853Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 153. Please try again in 2m0.96s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:18.941Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 153. Please try again in 2m0.96s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:19.247Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 153. Please try again in 2m0.96s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:19.385Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99975, Requested 152. Please try again in 1m49.728s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:19.388Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99975, Requested 152. Please try again in 1m49.728s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:19.405Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99975, Requested 152. Please try again in 1m49.728s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:26.346Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99975, Requested 153. Please try again in 1m50.592s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:26.374Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99975, Requested 153. Please try again in 1m50.592s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:26.551Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99967, Requested 152. Please try again in 1m42.816s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:35.770Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99967, Requested 153. Please try again in 1m43.68s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:35.978Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99967, Requested 153. Please try again in 1m43.68s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:36.015Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99967, Requested 153. Please try again in 1m43.68s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:36.153Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
@@ -10,7 +230,27 @@
     "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99956, Requested 152. Please try again in 1m33.312s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
   },
   {
-    "timestamp": "2025-11-30T21:41:28.770Z",
+    "timestamp": "2025-11-30T21:43:36.166Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99956, Requested 152. Please try again in 1m33.312s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:36.230Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99956, Requested 152. Please try again in 1m33.312s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:43.002Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
@@ -20,7 +260,7 @@
     "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99956, Requested 153. Please try again in 1m34.176s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
   },
   {
-    "timestamp": "2025-11-30T21:41:28.792Z",
+    "timestamp": "2025-11-30T21:43:43.010Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
@@ -30,73 +270,303 @@
     "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99956, Requested 153. Please try again in 1m34.176s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
   },
   {
-    "timestamp": "2025-11-30T21:41:28.948Z",
+    "timestamp": "2025-11-30T21:43:43.225Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99948, Requested 152. Please try again in 1m26.4s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:43.246Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99948, Requested 152. Please try again in 1m26.4s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:43:52.619Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99956, Requested 153. Please try again in 1m34.176s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99948, Requested 153. Please try again in 1m27.264s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
   },
   {
-    "timestamp": "2025-11-30T21:41:29.092Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99944, Requested 152. Please try again in 1m22.944s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
-  },
-  {
-    "timestamp": "2025-11-30T21:41:29.107Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99944, Requested 152. Please try again in 1m22.944s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
-  },
-  {
-    "timestamp": "2025-11-30T21:41:35.891Z",
+    "timestamp": "2025-11-30T21:43:52.659Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99944, Requested 153. Please try again in 1m23.808s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99948, Requested 153. Please try again in 1m27.264s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
   },
   {
-    "timestamp": "2025-11-30T21:41:36.106Z",
+    "timestamp": "2025-11-30T21:43:52.706Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99944, Requested 153. Please try again in 1m23.808s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99948, Requested 153. Please try again in 1m27.264s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
   },
   {
-    "timestamp": "2025-11-30T21:41:36.269Z",
+    "timestamp": "2025-11-30T21:43:52.857Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99936, Requested 152. Please try again in 1m16.032s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99937, Requested 152. Please try again in 1m16.896s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
   },
   {
-    "timestamp": "2025-11-30T21:41:36.339Z",
+    "timestamp": "2025-11-30T21:45:06.991Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99936, Requested 152. Please try again in 1m16.032s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99851, Requested 152. Please try again in 2.592s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:07.041Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99851, Requested 152. Please try again in 2.592s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:19.346Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99851, Requested 153. Please try again in 3.456s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:19.555Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99851, Requested 153. Please try again in 3.456s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:19.827Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99851, Requested 153. Please try again in 3.456s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:19.984Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 152. Please try again in 2m0.095999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:31.696Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 153. Please try again in 2m0.96s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:31.829Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 153. Please try again in 2m0.96s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:34.376Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": true,
+    "overallSuccess": false,
+    "aiPlan": "**System Issue Analysis and Remediation Plan**\n\n### Issue Overview\n\nThe system issue is related to the LSP (Language Server Protocol) Auto-Fix feature, which is incomplete, causing a NOTICE-level severity issue in the application code category. The system is still in a working state, but the incomplete auto-fix may lead to inconsistencies or errors.\n\n### 1. Root Cause Analysis\n\nThe root cause of the issue is likely due to an incomplete or incorrect implementation of the LSP Auto-Fix feature in t"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:34.445Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": true,
+    "overallSuccess": false,
+    "aiPlan": "**System Issue Analysis and Remediation Plan: LSP Auto-Fix**\n\n### 1. Root Cause Analysis\n\nThe root cause of the issue is that the automatic fix for the LSP (Language Server Protocol) is incomplete. This suggests that there is a problem with the code that is responsible for automatically fixing LSP-related issues. Given the context of a Node.js/TypeScript backend, PostgreSQL/Supabase database, Express server, and React frontend, the issue might stem from:\n\n* Inadequate or incorrect configuration "
+  },
+  {
+    "timestamp": "2025-11-30T21:45:34.600Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 152. Please try again in 2m0.095999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:45.048Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 153. Please try again in 2m0.96s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:45.171Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 153. Please try again in 2m0.96s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:45.543Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99987, Requested 153. Please try again in 2m0.96s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:45.737Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99974, Requested 152. Please try again in 1m48.864s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:54.178Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99974, Requested 153. Please try again in 1m49.728s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:54.266Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99974, Requested 153. Please try again in 1m49.728s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:54.414Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99964, Requested 152. Please try again in 1m40.224s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:45:54.415Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99964, Requested 152. Please try again in 1m40.224s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:46:08.137Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99964, Requested 153. Please try again in 1m41.088s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:46:08.440Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99964, Requested 153. Please try again in 1m41.088s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:46:08.451Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99964, Requested 153. Please try again in 1m41.088s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:46:08.595Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99947, Requested 152. Please try again in 1m25.536s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
+  },
+  {
+    "timestamp": "2025-11-30T21:46:08.613Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (429): {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01k96gctx5f6yshfjp1421dan9` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99947, Requested 152. Please try again in 1m25.536s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n"
   }
 ]
