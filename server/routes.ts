@@ -116,6 +116,7 @@ const {
   userSubscriptions,
   publicEvidence,
   trialConsultations,
+  contactMessages,
 } = schema;
 
 // Lazy initialization for Stripe client
@@ -3313,6 +3314,78 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }));
     
     res.json({ states: statesInfo });
+  }));
+
+  // ============================================
+  // CONTACT FORM ROUTES
+  // ============================================
+  
+  app.post("/api/contact", apiRateLimit, asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const parseResult = insertContactMessageSchema.safeParse(req.body);
+      
+      if (!parseResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Invalid contact form data",
+            details: parseResult.error.errors,
+          },
+        });
+      }
+      
+      const { type, name, email, subject, message } = parseResult.data;
+      
+      const userId = req.user?.id || null;
+      
+      const [savedMessage] = await db.insert(contactMessages).values({
+        type,
+        name,
+        email,
+        subject,
+        message,
+        userId,
+        status: 'new',
+        emailSent: false,
+      }).returning();
+      
+      let emailSent = false;
+      try {
+        emailSent = await sendContactFormEmail({
+          type,
+          name,
+          email,
+          subject,
+          message,
+        });
+        
+        if (emailSent && savedMessage) {
+          await db.update(contactMessages)
+            .set({ emailSent: true })
+            .where(eq(contactMessages.id, savedMessage.id));
+        }
+      } catch (emailError: any) {
+        console.error("[CONTACT] Email sending failed:", emailError.message);
+      }
+      
+      console.log(`[CONTACT] Message received from ${name} (${email}), type: ${type}, email sent: ${emailSent}`);
+      
+      res.json({
+        success: true,
+        message: "Your message has been received. We will respond within 24-48 hours.",
+        emailSent,
+      });
+    } catch (error: any) {
+      console.error("[CONTACT] Error processing contact form:", error.message);
+      res.status(500).json({
+        success: false,
+        error: {
+          code: "SERVER_ERROR",
+          message: "Failed to process your message. Please try again later.",
+        },
+      });
+    }
   }));
 
   // ============================================
