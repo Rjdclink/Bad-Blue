@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Image as ImageIcon, X, Trash2, Edit, Video, File } from "lucide-react";
+import { Image as ImageIcon, X, Trash2, Edit, Video, File, AlertTriangle, UserX } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDistanceToNow, format } from "date-fns";
 import { SEOHead } from "@/components/SEOHead";
 import { useToast } from "@/hooks/use-toast";
@@ -25,6 +26,7 @@ interface EvidenceAdmin {
   location: string | null;
   incidentDate: string | null;
   description: string | null;
+  evidenceCategory: string | null;
   uploadedAt: string;
   userId: string;
   userEmail: string | null;
@@ -45,10 +47,7 @@ export default function AdminEvidenceHub() {
 
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
-      await apiRequest('/api/admin/evidence-hub/bulk-delete', {
-        method: 'POST',
-        body: JSON.stringify({ ids }),
-      });
+      await apiRequest('/api/admin/evidence-hub/bulk-delete', 'POST', { ids });
     },
     onSuccess: (_, ids) => {
       queryClient.invalidateQueries({ queryKey: ['/api/admin/evidence-hub'] });
@@ -70,10 +69,7 @@ export default function AdminEvidenceHub() {
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<EvidenceAdmin> }) => {
-      return await apiRequest(`/api/admin/evidence-hub/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      });
+      return await apiRequest(`/api/admin/evidence-hub/${id}`, 'PATCH', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/admin/evidence-hub'] });
@@ -119,8 +115,19 @@ export default function AdminEvidenceHub() {
       location: ev.location || '',
       incidentDate: ev.incidentDate ? format(new Date(ev.incidentDate), 'yyyy-MM-dd') : '',
       description: ev.description || '',
+      evidenceCategory: ev.evidenceCategory || 'misconduct',
     });
     setEditDialogOpen(true);
+  };
+
+  const getCategoryBadge = (category?: string | null) => {
+    if (category === 'informant') {
+      return <Badge variant="destructive" className="text-xs">Informant</Badge>;
+    }
+    if (category === 'corruption') {
+      return <Badge variant="default" className="bg-orange-600 text-xs">Corruption</Badge>;
+    }
+    return <Badge variant="secondary" className="text-xs">Misconduct</Badge>;
   };
 
   const handleSaveEdit = () => {
@@ -157,15 +164,15 @@ export default function AdminEvidenceHub() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Admin: Evidence Hub | BadBlue"
-        description="Admin panel for managing evidence submissions"
+        title="Admin: Corrupt Law Enforcement & Snitch Evidence Hub | BadBlue"
+        description="Admin panel for managing corruption and informant evidence submissions"
       />
 
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <ImageIcon className="w-6 h-6 text-primary" />
-            <span className="font-semibold text-lg">Admin: Evidence Hub</span>
+            <ImageIcon className="w-6 h-6 text-destructive" />
+            <span className="font-semibold text-lg">Admin: Corruption & Snitch Evidence Hub</span>
           </div>
           <Link href="/home">
             <Button variant="ghost" data-testid="button-back-home">Back to Home</Button>
@@ -177,9 +184,9 @@ export default function AdminEvidenceHub() {
         <div className="mb-8">
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-3xl font-bold mb-2">Evidence Hub Management</h1>
+              <h1 className="text-3xl font-bold mb-2">Corrupt Law Enforcement & Snitch Evidence Management</h1>
               <p className="text-muted-foreground">
-                Manage all community-shared evidence submissions
+                Manage all corruption and informant evidence submissions
               </p>
             </div>
             <div className="flex gap-2">
@@ -237,13 +244,12 @@ export default function AdminEvidenceHub() {
                             <span>•</span>
                             <span>{formatDistanceToNow(new Date(ev.uploadedAt))} ago</span>
                           </div>
-                          {ev.officerName && (
-                            <div className="flex flex-wrap gap-2 text-sm">
-                              <Badge variant="outline">Officer: {ev.officerName}</Badge>
-                              {ev.department && <Badge variant="outline">{ev.department}</Badge>}
-                              {ev.location && <Badge variant="outline">{ev.location}</Badge>}
-                            </div>
-                          )}
+                          <div className="flex flex-wrap gap-2 text-sm mb-2">
+                            {getCategoryBadge(ev.evidenceCategory)}
+                            {ev.officerName && <Badge variant="outline">Subject: {ev.officerName}</Badge>}
+                            {ev.department && <Badge variant="outline">{ev.department}</Badge>}
+                            {ev.location && <Badge variant="outline">{ev.location}</Badge>}
+                          </div>
                           {ev.description && (
                             <p className="mt-2 text-sm text-muted-foreground line-clamp-2">
                               {ev.description}
@@ -347,6 +353,35 @@ export default function AdminEvidenceHub() {
                   rows={4}
                   data-testid="textarea-description"
                 />
+              </div>
+
+              <div>
+                <Label htmlFor="evidenceCategory">Evidence Category</Label>
+                <Select
+                  value={editForm.evidenceCategory || 'misconduct'}
+                  onValueChange={(value) => setEditForm({ ...editForm, evidenceCategory: value })}
+                >
+                  <SelectTrigger data-testid="select-evidence-category">
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="misconduct">
+                      <span className="flex items-center gap-2">General Misconduct</span>
+                    </SelectItem>
+                    <SelectItem value="corruption">
+                      <span className="flex items-center gap-2">
+                        <AlertTriangle className="w-3 h-3 text-orange-600" />
+                        Corruption
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="informant">
+                      <span className="flex items-center gap-2">
+                        <UserX className="w-3 h-3 text-destructive" />
+                        Informant/Snitch
+                      </span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           )}

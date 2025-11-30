@@ -2410,16 +2410,113 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
   });
 
   // ============================================
-  // (All remaining original routes: jurisdiction validation, form assistant,
-  // legal consultations, sample consultations, public records search, legal research,
-  // document generation, pattern analysis, evidence hub, petitions (public/admin),
-  // FOIA requests, complaints, lawsuits, contact form, autosave, data cleanup,
-  // error log cleanup, diagnostics, advanced reasoning admin endpoints, test runner,
-  // maintenance status, health, etc. remain exactly as in original file.)
+  // CORRUPT LAW ENFORCEMENT & SNITCH EVIDENCE HUB ROUTES
   // ============================================
-
-  // For brevity in this response, those large blocks are not reprinted again.
-  // Ensure you keep them from the original server/routes.ts after the officer search section.
+  
+  // GET evidence hub - public viewing
+  app.get("/api/evidence-hub", asyncHandler(async (req, res) => {
+    const { type, category } = req.query;
+    const fileType = type === 'all' ? null : (type as string | null);
+    const evidenceCategory = category === 'all' ? null : (category as string | null);
+    
+    const evidence = await storage.getPublicEvidence(fileType, evidenceCategory);
+    
+    // Get user info for each evidence item
+    const evidenceWithUser = await Promise.all(evidence.map(async (ev) => {
+      const user = await storage.getUser(ev.userId);
+      return {
+        ...ev,
+        uploadedBy: user?.firstName || user?.email || 'Anonymous',
+        evidenceCategory: ev.evidenceCategory || 'misconduct',
+      };
+    }));
+    
+    res.json(evidenceWithUser);
+  }));
+  
+  // POST share evidence - requires auth
+  app.post("/api/evidence-hub", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+    
+    const { fileUrl, fileName, fileType, officerName, department, location, incidentDate, description, evidenceCategory } = req.body;
+    
+    if (!fileUrl || !fileName || !fileType) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    
+    const evidence = await storage.sharePublicEvidence({
+      userId,
+      fileUrl,
+      fileName,
+      fileType,
+      evidenceCategory: evidenceCategory || 'misconduct',
+      officerName: officerName || null,
+      department: department || null,
+      location: location || null,
+      incidentDate: incidentDate ? new Date(incidentDate) : null,
+      description: description || null,
+    });
+    
+    res.status(201).json(evidence);
+  }));
+  
+  // Admin routes for evidence management
+  app.get("/api/admin/evidence-hub", isAuthenticated, asyncHandler(async (req: any, res) => {
+    // All evidence for admin
+    const evidence = await storage.getPublicEvidence(null, null);
+    
+    const evidenceWithUser = await Promise.all(evidence.map(async (ev) => {
+      const user = await storage.getUser(ev.userId);
+      return {
+        ...ev,
+        userEmail: user?.email || null,
+        userName: user?.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : null,
+        evidenceCategory: ev.evidenceCategory || 'misconduct',
+      };
+    }));
+    
+    res.json(evidenceWithUser);
+  }));
+  
+  app.patch("/api/admin/evidence-hub/:id", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    const { officerName, department, location, incidentDate, description, evidenceCategory } = req.body;
+    
+    const updated = await storage.updatePublicEvidence(id, {
+      officerName: officerName || null,
+      department: department || null,
+      location: location || null,
+      incidentDate: incidentDate ? new Date(incidentDate) : null,
+      description: description || null,
+      evidenceCategory: evidenceCategory || 'misconduct',
+    });
+    
+    if (!updated) {
+      return res.status(404).json({ error: "Evidence not found" });
+    }
+    
+    res.json(updated);
+  }));
+  
+  app.post("/api/admin/evidence-hub/bulk-delete", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { ids } = req.body;
+    
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "No evidence IDs provided" });
+    }
+    
+    await storage.bulkDeletePublicEvidence(ids);
+    res.json({ success: true, deleted: ids.length });
+  }));
+  
+  app.delete("/api/admin/evidence-hub/:id", isAuthenticated, asyncHandler(async (req: any, res) => {
+    const { id } = req.params;
+    await storage.deletePublicEvidence(id);
+    res.json({ success: true });
+  }));
 
   // Apply notFoundHandler ONLY to API routes
   app.use('/api', notFoundHandler);

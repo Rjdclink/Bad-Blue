@@ -64,13 +64,14 @@ import {
   type InsertDeviceFingerprint,
 } from "@shared/schema";
 
-// Define types for PublicEvidence
+// Define types for PublicEvidence (Corrupt Law Enforcement & Snitch Evidence Hub)
 type PublicEvidence = {
   id: string;
   userId: string;
   fileUrl: string;
   fileName: string;
   fileType: string;
+  evidenceCategory: string | null;
   officerName: string | null;
   department: string | null;
   location: string | null;
@@ -84,6 +85,7 @@ type InsertPublicEvidence = {
   fileUrl: string;
   fileName: string;
   fileType: string;
+  evidenceCategory?: string | null;
   officerName?: string | null;
   department?: string | null;
   location?: string | null;
@@ -153,9 +155,12 @@ export interface IStorage {
   findVerifiedJurisdiction(city: string | null, county: string | null, state: string, agencyType: 'police' | 'sheriff' | 'trooper'): Promise<Jurisdiction | undefined>;
   getAllJurisdictions(): Promise<Jurisdiction[]>;
 
-  // Public evidence operations
-  getPublicEvidence(fileType?: string | null): Promise<PublicEvidence[]>;
+  // Public evidence operations (Corrupt Law Enforcement & Snitch Evidence Hub)
+  getPublicEvidence(fileType?: string | null, category?: string | null): Promise<PublicEvidence[]>;
   sharePublicEvidence(data: InsertPublicEvidence): Promise<PublicEvidence>;
+  updatePublicEvidence(id: string, data: Partial<InsertPublicEvidence>): Promise<PublicEvidence | undefined>;
+  deletePublicEvidence(id: string): Promise<void>;
+  bulkDeletePublicEvidence(ids: string[]): Promise<void>;
 
   // AI Learning System operations
   storeComplaintPattern(pattern: InsertComplaintPattern): Promise<ComplaintPattern | undefined>;
@@ -731,7 +736,7 @@ export class DatabaseStorage implements IStorage {
   // PUBLIC EVIDENCE HUB METHODS
   // ============================================
 
-  async getPublicEvidence(fileType?: string | null): Promise<PublicEvidence[]> {
+  async getPublicEvidence(fileType?: string | null, category?: string | null): Promise<PublicEvidence[]> {
     try {
       const query = db.select({
         id: publicEvidence.id,
@@ -739,6 +744,7 @@ export class DatabaseStorage implements IStorage {
         fileName: publicEvidence.fileName,
         fileType: publicEvidence.fileType,
         fileUrl: publicEvidence.fileUrl,
+        evidenceCategory: publicEvidence.evidenceCategory,
         officerName: publicEvidence.officerName,
         department: publicEvidence.department,
         location: publicEvidence.location,
@@ -749,9 +755,16 @@ export class DatabaseStorage implements IStorage {
       .from(publicEvidence)
       .orderBy(desc(publicEvidence.uploadedAt));
 
-      if (fileType) {
-        // Use LIKE for partial matching if fileType is intended to be a prefix
-        return await query.where(sql`${publicEvidence.fileType} LIKE ${fileType}%`);
+      const conditions: any[] = [];
+      if (fileType && fileType !== 'all') {
+        conditions.push(sql`${publicEvidence.fileType} LIKE ${fileType}%`);
+      }
+      if (category && category !== 'all') {
+        conditions.push(sql`${publicEvidence.evidenceCategory} = ${category}`);
+      }
+
+      if (conditions.length > 0) {
+        return await query.where(and(...conditions));
       }
 
       return await query;

@@ -1,116 +1,260 @@
 [
   {
-    "timestamp": "2025-11-30T01:06:08.169Z",
+    "timestamp": "2025-11-30T01:24:53.300Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/SupportEmailFooter.tsx"
+    "path": "/src/lib/utils.ts"
   },
   {
-    "timestamp": "2025-11-30T01:06:08.175Z",
+    "timestamp": "2025-11-30T01:24:53.335Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/badge.tsx"
+    "path": "/src/components/ui/toast.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:06:08.181Z",
+    "timestamp": "2025-11-30T01:24:53.349Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/LanguageSelectorLight.tsx"
+    "path": "/src/lib/performance.ts"
   },
   {
-    "timestamp": "2025-11-30T01:06:08.187Z",
+    "timestamp": "2025-11-30T01:24:53.352Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+    "path": "/src/lib/translation.ts"
   },
   {
-    "timestamp": "2025-11-30T01:06:08.223Z",
+    "timestamp": "2025-11-30T01:24:53.409Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/card.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:53.421Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/stock_images/cartoon_mechanic_wor_678db703.jpg"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:53.433Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:53.902Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:54.017Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:54.101Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon.ico"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:54.314Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/landing.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:54.439Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/landing.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:54.629Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/button.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:54.633Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/SEOHead.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:06:08.233Z",
+    "timestamp": "2025-11-30T01:24:54.689Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/SupportEmailFooter.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:06:08.253Z",
+    "timestamp": "2025-11-30T01:24:54.696Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/dropdown-menu.tsx"
+    "path": "/src/components/ui/badge.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:06:08.330Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/dropdown-menu.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:06:08.594Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
-  },
-  {
-    "timestamp": "2025-11-30T01:06:08.637Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T01:06:08.696Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T01:06:08.777Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T01:06:09.041Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T01:06:09.086Z",
+    "timestamp": "2025-11-30T01:24:54.705Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-30T01:06:09.102Z",
+    "timestamp": "2025-11-30T01:24:54.740Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/support-email"
+    "path": "/src/components/SEOHead.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:06:09.155Z",
+    "timestamp": "2025-11-30T01:24:54.754Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SupportEmailFooter.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:55.177Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/lib/bundleAnalyzer.ts"
   },
   {
-    "timestamp": "2025-11-30T01:06:10.999Z",
+    "timestamp": "2025-11-30T01:24:55.185Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:55.246Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:55.672Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:55.773Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:55.858Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:56.336Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T01:06:11.440Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T01:06:14.220Z",
+    "timestamp": "2025-11-30T01:24:56.387Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:56.396Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:57.651Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T01:24:58.337Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T01:25:16.990Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T01:25:24.302Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:25:25.086Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:25:54.787Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:25:56.119Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:26:24.952Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:26:27.072Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:26:55.320Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:26:58.155Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:27:25.692Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:27:30.078Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:27:41.963Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon.ico"
+  },
+  {
+    "timestamp": "2025-11-30T01:27:42.695Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
   }
 ]

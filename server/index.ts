@@ -159,6 +159,7 @@ async function runMigrations(): Promise<void> {
     { name: 'Token Metrics tables', module: './migrations/createTokenMetrics', fn: 'createTokenMetricsTables' },
     { name: 'Device Rate Limit tables', module: './migrations/createDeviceRateLimitTables', fn: 'createDeviceRateLimitTables' },
     { name: 'Petition tables', module: './migrations/createPetitionTables', fn: 'createPetitionTables' },
+    { name: 'Public Evidence tables', module: './migrations/createPublicEvidenceTables', fn: 'createPublicEvidenceTables' },
   ];
 
   for (const migration of migrations) {

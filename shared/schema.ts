@@ -736,14 +736,16 @@ export const petitionSignatures = pgTable("petition_signatures", {
   signedAt: timestamp("signed_at").notNull().defaultNow(),
 });
 
-// Public Evidence Hub - community-shared evidence
+// Corrupt Law Enforcement & Snitch Evidence Hub - community-shared evidence
 export const publicEvidence = pgTable("public_evidence", {
   id: text("id").primaryKey().notNull().default(sql`gen_random_uuid()`),
   userId: text("user_id").notNull().references(() => users.id),
   fileUrl: text("file_url").notNull(),
   fileName: text("file_name").notNull(),
-  fileType: text("file_type").notNull(), // image/video/document
-  officerName: text("officer_name"),
+  fileType: text("file_type").notNull(), // image/video/audio/document/archive
+  // Evidence category: 'corruption' for law enforcement wrongdoing, 'informant' for snitch documents, 'misconduct' for general
+  evidenceCategory: text("evidence_category").default('misconduct'), // corruption, informant, misconduct
+  officerName: text("officer_name"), // Subject of evidence (officer or informant name)
   department: text("department"),
   location: text("location"),
   incidentDate: timestamp("incident_date"),

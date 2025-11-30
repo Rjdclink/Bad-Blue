@@ -21,7 +21,7 @@ interface ObjectUploaderProps {
   ) => void;
   buttonClassName?: string;
   children: ReactNode;
-  variant?: "default" | "outline" | "secondary" | "ghost" | "link" | "destructive";
+  variant?: "default" | "outline" | "secondary" | "ghost" | "destructive";
 }
 
 /**
@@ -41,7 +41,7 @@ interface ObjectUploaderProps {
  */
 export function ObjectUploader({
   maxNumberOfFiles = 1,
-  maxFileSize = 10485760, // 10MB default
+  maxFileSize = 52428800, // 50MB default for evidence files
   onGetUploadParameters,
   onComplete,
   buttonClassName,
@@ -54,7 +54,36 @@ export function ObjectUploader({
       restrictions: {
         maxNumberOfFiles,
         maxFileSize,
-        allowedFileTypes: ['image/*', 'video/*', '.pdf', '.doc', '.docx', '.txt'],
+        // Accept all media types for evidence hub: images, videos, audio, documents, archives
+        allowedFileTypes: [
+          'image/*', 
+          'video/*', 
+          'audio/*',
+          'application/pdf',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'text/plain',
+          'text/rtf',
+          'application/vnd.oasis.opendocument.text',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'text/csv',
+          'application/vnd.ms-powerpoint',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'application/zip',
+          'application/x-rar-compressed',
+          'application/x-7z-compressed',
+          'application/json',
+          'application/xml',
+          'text/xml',
+          '.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt',
+          '.xls', '.xlsx', '.csv',
+          '.ppt', '.pptx',
+          '.zip', '.rar', '.7z',
+          '.json', '.xml',
+          '.mp3', '.wav', '.m4a', '.ogg', '.flac',
+          '.mp4', '.mov', '.avi', '.mkv', '.webm'
+        ],
       },
       autoProceed: false,
     })
