@@ -374,19 +374,20 @@ class AITokenGovernorEnhanced {
    * 3. Always check quota availability before selecting
    */
   private async selectProvider(task: AITaskMetadata, quotaStatus: QuotaStatus): Promise<AIProvider | null> {
-    // RULE 1: Autonomous functions prefer Groq, fallback to Mistral/Claude
+    // RULE 1: Autonomous functions prefer Groq - NO QUOTA LIMIT (unlimited capacity)
     if (task.context === UsageContext.AUTONOMOUS) {
       const canUseGroq = await this.canAutonomousUseGroq();
-      if (canUseGroq && quotaStatus.groq.percentUsed < 95 && this.isProviderAvailable(AIProvider.GROQ)) {
+      // GROQ POLICY: No quota check for Groq - only API key availability matters
+      if (canUseGroq && this.isProviderAvailable(AIProvider.GROQ)) {
         return AIProvider.GROQ;
       }
       
-      // Fallback to Mistral for autonomous if Groq unavailable (check API key)
+      // Fallback to Mistral for autonomous if Groq API key unavailable
       if (quotaStatus.mistral.percentUsed < 95 && this.isProviderAvailable(AIProvider.MISTRAL)) {
         return AIProvider.MISTRAL;
       }
       
-      // Last resort: Claude for autonomous (check API key)
+      // Last resort: Claude for autonomous
       if (quotaStatus.claude.percentUsed < 95 && this.isProviderAvailable(AIProvider.CLAUDE)) {
         return AIProvider.CLAUDE;
       }
@@ -457,10 +458,10 @@ class AITokenGovernorEnhanced {
       return 0; // Completely ineligible - prevents any allocation
     }
     
-    // GROQ POLICY: Groq is exclusively for autonomous. For USER tasks, return very low efficiency
-    // so Groq is only selected as absolute last resort when all other providers fail
+    // GROQ POLICY: Groq is exclusively for autonomous - hard block for USER tasks
+    // User searches use selectProvider which handles last-resort Groq fallback separately
     if (provider === AIProvider.GROQ && task.context === UsageContext.USER) {
-      return 0.01; // Near-zero efficiency - only use if no other option
+      return 0; // Completely ineligible - orchestrateProviders won't select Groq for USER
     }
 
     // Base capability multipliers by provider and complexity
@@ -498,13 +499,13 @@ class AITokenGovernorEnhanced {
           percentUsed = quotaStatus.mistral.percentUsed ?? 0;
           break;
         case AIProvider.GROQ:
-          // GROQ POLICY: Groq reserved for autonomous - no limit for autonomous
-          // For USER tasks, Groq should return 0 efficiency (excluded from selection)
-          if (task.context === UsageContext.USER) {
-            return 0; // Exclude Groq from user task selection
+          // GROQ POLICY: For autonomous tasks, Groq has NO limit (always 0% used)
+          // Note: USER tasks already return 0 at function start
+          if (task.context === UsageContext.AUTONOMOUS) {
+            percentUsed = 0; // Unlimited capacity for autonomous
+          } else {
+            percentUsed = quotaStatus.groq.percentUsed ?? 0;
           }
-          // For autonomous: use overall percent used (no separate limit)
-          percentUsed = quotaStatus.groq.percentUsed ?? 0;
           break;
         case AIProvider.GEMINI:
           // Gemini uses request-based quota - convert to percentage
@@ -581,20 +582,21 @@ class AITokenGovernorEnhanced {
     quotaStatus: QuotaStatus
   ): Promise<Array<{ provider: AIProvider; maxTokens: number; proportion?: number }>> {
     // Build list of available providers (both API key and quota checks)
+    // GROQ POLICY: Groq has NO quota check for autonomous - only API key matters
     const availability: Record<AIProvider, boolean> = {
       [AIProvider.MISTRAL]: this.isProviderAvailable(AIProvider.MISTRAL) && quotaStatus.mistral.percentUsed < 99,
-      [AIProvider.GROQ]: this.isProviderAvailable(AIProvider.GROQ) && quotaStatus.groq.percentUsed < 99,
+      [AIProvider.GROQ]: this.isProviderAvailable(AIProvider.GROQ), // No quota check - unlimited for autonomous
       [AIProvider.GEMINI]: this.isProviderAvailable(AIProvider.GEMINI) && quotaStatus.gemini.percentUsed < 99,
       [AIProvider.CLAUDE]: this.isProviderAvailable(AIProvider.CLAUDE) && quotaStatus.claude.percentUsed < 99
     };
 
-    // For autonomous tasks, explicitly block Gemini and check Groq cap
+    // GROQ POLICY: Context-specific provider blocking
     if (task.context === UsageContext.AUTONOMOUS) {
       availability[AIProvider.GEMINI] = false; // Hard block Gemini for autonomous
-      const canUseGroq = await this.canAutonomousUseGroq();
-      if (!canUseGroq) {
-        availability[AIProvider.GROQ] = false;
-      }
+      // Groq is always available for autonomous if API key exists (no quota check)
+    } else if (task.context === UsageContext.USER) {
+      // GROQ POLICY: Hard block Groq for USER tasks - only selectProvider handles last-resort
+      availability[AIProvider.GROQ] = false;
     }
 
     // Build candidate list from available providers
@@ -613,8 +615,10 @@ class AITokenGovernorEnhanced {
       const efficiency = this.computeProviderEfficiency(p, task, quotaStatus);
       let capacity = this.getAvailableTokenLikeCapacity(p, quotaStatus);
       
-      // GROQ POLICY: No autonomous limit - Groq has unlimited capacity for autonomous
-      // No special capacity capping needed for autonomous Groq
+      // GROQ POLICY: For autonomous tasks, Groq has unlimited capacity
+      if (p === AIProvider.GROQ && task.context === UsageContext.AUTONOMOUS) {
+        capacity = Number.MAX_SAFE_INTEGER; // Effectively unlimited
+      }
       
       capacityRemaining.set(p, capacity);
       return { provider: p, efficiency, capacity };
@@ -800,13 +804,17 @@ class AITokenGovernorEnhanced {
 
     let baseTokens = task.expectedTokens || complexityBudgets[task.complexity];
 
+    // GROQ POLICY: For autonomous Groq, skip quota-based scaling - unlimited capacity
+    if (provider === AIProvider.GROQ && task.context === UsageContext.AUTONOMOUS) {
+      return baseTokens; // Full allocation, no downscaling
+    }
+
     // Reduce tokens if running low on quota for any provider
     const getPercentUsed = () => {
       switch (provider) {
         case AIProvider.MISTRAL:
           return quotaStatus.mistral.percentUsed;
         case AIProvider.GROQ:
-          // GROQ POLICY: No autonomous limit - use overall percent
           return quotaStatus.groq.percentUsed;
         case AIProvider.GEMINI:
           return quotaStatus.gemini.percentUsed;
