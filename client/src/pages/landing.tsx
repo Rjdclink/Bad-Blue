@@ -10,10 +10,46 @@ import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
+import { useFaqSchema, useWebsiteSchema } from "@/hooks/useFaqSchema";
 
 export default function Landing() {
   const [, setLocation] = useLocation();
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+  
+  const baseUrl = import.meta.env.VITE_BASE_URL || "https://bad-blue.com";
+  
+  useFaqSchema("landing-page", [
+    {
+      question: "What is BadBlue and what does it do?",
+      answer: "BadBlue is a police accountability platform that helps citizens search police officer public records, file official complaints against law enforcement, submit FOIA (Freedom of Information Act) requests, and prepare Section 1983 civil rights lawsuit documentation. All services are AI-assisted and designed to be affordable and accessible."
+    },
+    {
+      question: "How do I search for a police officer's public records?",
+      answer: "Use BadBlue's Officer Search feature by entering the officer's full name and selecting their state. The system searches public records, department rosters, news articles, court filings, and POST certification databases to compile a comprehensive background report."
+    },
+    {
+      question: "Can BadBlue help me file a police complaint?",
+      answer: "Yes. BadBlue provides AI-assisted complaint drafting that generates professionally formatted complaints. The system automatically routes complaints to the appropriate Internal Affairs division, civilian oversight board, or command staff based on your jurisdiction."
+    },
+    {
+      question: "What is a Section 1983 civil rights lawsuit?",
+      answer: "Section 1983 is a federal law that allows citizens to sue state and local officials, including police officers, for civil rights violations. BadBlue helps prepare Section 1983 lawsuit documentation with proper U.S. District Court formatting requirements."
+    },
+    {
+      question: "Is BadBlue a law firm or does it provide legal advice?",
+      answer: "No. BadBlue is a legal information and document preparation platform, not a law firm. The platform provides tools and information to help you understand your rights and prepare documents, but this is not legal advice. Always consult a licensed attorney for legal counsel."
+    },
+    {
+      question: "How much does BadBlue cost?",
+      answer: "BadBlue offers free officer search and legal consultation for registered users. Additional services like complaint filing, FOIA requests, and lawsuit document preparation have individual pricing. Visit the platform for current pricing details."
+    }
+  ]);
+  
+  useWebsiteSchema(
+    baseUrl,
+    "BadBlue - Police Accountability Platform",
+    `${baseUrl}/officer?search={search_term_string}`
+  );
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioAttempted, setAudioAttempted] = useState(false); // Added state for tracking audio attempt
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -88,8 +124,6 @@ export default function Landing() {
     return () => clearTimeout(timer);
   }, [audioAttempted, audioPlaying]); // Dependencies include new state
 
-  const baseUrl = import.meta.env.VITE_BASE_URL || window.location.origin;
-  
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "WebApplication",

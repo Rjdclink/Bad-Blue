@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useFaqSchema } from "@/hooks/useFaqSchema";
 import {
   Scale,
   Sparkles,
@@ -91,6 +92,30 @@ interface LegalConsultationProps {
 
 export default function LegalConsultation({ onBack }: LegalConsultationProps) {
   const { toast } = useToast();
+  
+  useFaqSchema("legal-consultation", [
+    {
+      question: "What is the BadBlue LegalAI Consultation?",
+      answer: "BadBlue's LegalAI Consultation is an AI-powered tool that analyzes your police encounter situation and provides information about your legal options, including whether you may have grounds for a complaint, FOIA request, or civil rights lawsuit. It provides state-specific guidance based on your jurisdiction."
+    },
+    {
+      question: "How does the legal analysis work?",
+      answer: "You describe your encounter with law enforcement, select your state, and the AI analyzes your situation against applicable state and federal laws. It identifies potential violations, suggests appropriate legal actions, and provides information about filing deadlines and required documentation."
+    },
+    {
+      question: "What types of police misconduct can be analyzed?",
+      answer: "The system can analyze various types of misconduct including excessive force, false arrest, unlawful search and seizure, civil rights violations, harassment, racial profiling, retaliation, and failure to intervene. Each analysis considers your specific state's laws and standards."
+    },
+    {
+      question: "Is this legal advice from an attorney?",
+      answer: "No. BadBlue's LegalAI Consultation provides legal information and analysis tools, not legal advice. The platform is not a law firm and does not create an attorney-client relationship. For legal advice specific to your situation, consult with a licensed attorney in your jurisdiction."
+    },
+    {
+      question: "What happens after I receive my legal analysis?",
+      answer: "After receiving your analysis, you can use BadBlue's additional tools to take action: file a formal complaint, submit a FOIA request for records, start a petition for officer accountability, or begin preparing Section 1983 civil rights lawsuit documentation."
+    }
+  ]);
+
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const [state, setState] = useState("");
