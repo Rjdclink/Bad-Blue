@@ -92,7 +92,6 @@ type InsertPublicEvidence = {
 };
 import { db } from "./db";
 import { eq, desc, and, gte, sql } from "drizzle-orm";
-import { supabaseAdapter, getSupabaseDb, dualWrite } from "./supabaseAdapter";
 
 // Validate database connection on module load
 if (!db) {
@@ -281,17 +280,6 @@ export class DatabaseStorage implements IStorage {
     `;
     
     const result = await db.execute(query);
-    
-    // Dual-write to Supabase if enabled (async, non-blocking)
-    if (supabaseAdapter.useSupabaseDb()) {
-      const supabaseDb = getSupabaseDb();
-      if (supabaseDb) {
-        supabaseDb.execute(query).catch((error: any) => {
-          console.error('[DualWrite] Failed to upsert user to Supabase:', error);
-        });
-      }
-    }
-    
     return result.rows[0] as User;
   }
 

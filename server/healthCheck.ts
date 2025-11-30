@@ -2,21 +2,19 @@
 import { Request, Response } from 'express';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
-import { supabaseAdapter } from './supabaseAdapter';
 
 interface HealthStatus {
   status: 'healthy' | 'degraded' | 'unhealthy';
   timestamp: string;
   services: {
     database: boolean;
-    supabase?: boolean;
     auth: boolean;
     storage: boolean;
   };
   environment: {
     isRailway: boolean;
     isProduction: boolean;
-    migratingToSupabase: boolean;
+    usingSupabase: boolean;
   };
 }
 
@@ -32,11 +30,11 @@ export async function healthCheck(req: Request, res: Response) {
     environment: {
       isRailway: !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID),
       isProduction: process.env.NODE_ENV === 'production',
-      migratingToSupabase: supabaseAdapter.isEnabled()
+      usingSupabase: !!process.env.SUPABASE_DATABASE_URL
     }
   };
   
-  // Check database connection
+  // Check database connection (works with Supabase or regular PostgreSQL)
   try {
     await db.execute(sql`SELECT 1`);
     health.services.database = true;
@@ -45,41 +43,18 @@ export async function healthCheck(req: Request, res: Response) {
     health.status = 'unhealthy';
   }
   
-  // Check Supabase if enabled
-  if (supabaseAdapter.isEnabled()) {
-    try {
-      const supabaseDb = supabaseAdapter.getDb();
-      if (supabaseDb) {
-        await supabaseDb.execute(sql`SELECT 1`);
-        health.services.supabase = true;
-      }
-    } catch (error) {
-      console.error('[Health] Supabase check failed:', error);
-      health.status = 'degraded';
-    }
-  }
-  
   // Check auth configuration
-  health.services.auth = !!(
-    process.env.SESSION_SECRET || 
-    supabaseAdapter.useSupabaseAuth()
-  );
+  health.services.auth = !!process.env.SESSION_SECRET;
   
   // Check storage configuration
   health.services.storage = !!(
     process.env.EVIDENCE_STORAGE_DIR || 
-    process.env.PRIVATE_OBJECT_DIR ||
-    supabaseAdapter.useSupabaseStorage()
+    process.env.PRIVATE_OBJECT_DIR
   );
   
   // Determine overall health
   if (!health.services.database || !health.services.auth) {
     health.status = 'unhealthy';
-  } else if (
-    supabaseAdapter.isEnabled() && 
-    (!health.services.supabase || !health.services.storage)
-  ) {
-    health.status = 'degraded';
   }
   
   // Return appropriate status code
