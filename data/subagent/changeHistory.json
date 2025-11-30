@@ -52,5 +52,14 @@
       "response": "Web search completed, found 0 results",
       "success": true
     }
+  },
+  {
+    "timestamp": "2025-11-30T17:54:37.340Z",
+    "command": "search officer \"John Smith\" state=IL city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Web search completed, found 2 results",
+      "success": true
+    }
   }
 ]
