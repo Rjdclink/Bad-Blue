@@ -1,5 +1,10 @@
 import { useEffect } from "react";
 
+interface BreadcrumbItem {
+  name: string;
+  url: string;
+}
+
 interface SEOHeadProps {
   title: string;
   description: string;
@@ -10,7 +15,11 @@ interface SEOHeadProps {
   ogImage?: string;
   canonicalUrl?: string;
   structuredData?: object;
+  breadcrumbs?: BreadcrumbItem[];
+  pageType?: "website" | "article" | "service" | "faq";
 }
+
+const BASE_URL = "https://bad-blue.com";
 
 export function SEOHead({
   title,
@@ -22,6 +31,8 @@ export function SEOHead({
   ogImage,
   canonicalUrl,
   structuredData,
+  breadcrumbs,
+  pageType = "website",
 }: SEOHeadProps) {
   const defaultOgImage = `${import.meta.env.VITE_BASE_URL || window.location.origin}/preview.png`;
   const finalOgImage = ogImage || defaultOgImage;
@@ -96,7 +107,7 @@ export function SEOHead({
       link.setAttribute("href", canonicalUrl);
     }
 
-    // Add sitemap link reference
+    // Add sitemap link reference (always point to root sitemap)
     let sitemapLink = document.querySelector('link[rel="sitemap"]');
     if (!sitemapLink) {
       sitemapLink = document.createElement("link");
@@ -104,16 +115,16 @@ export function SEOHead({
       sitemapLink.setAttribute("type", "application/xml");
       document.head.appendChild(sitemapLink);
     }
-    sitemapLink.setAttribute("href", `${canonicalUrl || 'https://badblue.com'}/sitemap.xml`);
+    sitemapLink.setAttribute("href", `${BASE_URL}/sitemap.xml`);
 
-    // Add robots.txt link reference
+    // Add robots.txt link reference (always point to root robots.txt)
     let robotsLink = document.querySelector('link[rel="robots"]');
     if (!robotsLink) {
       robotsLink = document.createElement("link");
       robotsLink.setAttribute("rel", "robots");
       document.head.appendChild(robotsLink);
     }
-    robotsLink.setAttribute("href", `${canonicalUrl || 'https://badblue.com'}/robots.txt`);
+    robotsLink.setAttribute("href", `${BASE_URL}/robots.txt`);
 
     // Add structured data (Schema.org)
     if (structuredData) {
@@ -127,17 +138,23 @@ export function SEOHead({
     }
 
     // Add BreadcrumbList structured data for site navigation
+    const defaultBreadcrumbs: BreadcrumbItem[] = [
+      { name: "Home", url: BASE_URL }
+    ];
+    
+    const finalBreadcrumbs = breadcrumbs && breadcrumbs.length > 0 
+      ? [{ name: "Home", url: BASE_URL }, ...breadcrumbs]
+      : defaultBreadcrumbs;
+    
     const breadcrumbData = {
       "@context": "https://schema.org",
       "@type": "BreadcrumbList",
-      "itemListElement": [
-        {
-          "@type": "ListItem",
-          "position": 1,
-          "name": "Home",
-          "item": canonicalUrl || "https://badblue.com"
-        }
-      ]
+      "itemListElement": finalBreadcrumbs.map((crumb, index) => ({
+        "@type": "ListItem",
+        "position": index + 1,
+        "name": crumb.name,
+        "item": crumb.url
+      }))
     };
 
     let breadcrumbScript = document.querySelector('script#breadcrumb-schema');
@@ -155,12 +172,12 @@ export function SEOHead({
       "@type": ["Organization", "LegalService"],
       "name": "BadBlue - Professional Police Accountability Platform",
       "alternateName": "BadBlue Legal Rights Protection Service",
-      "url": canonicalUrl || "https://badblue.com",
-      "logo": `${canonicalUrl || 'https://badblue.com'}/preview.png`,
+      "url": BASE_URL,
+      "logo": `${BASE_URL}/preview.png`,
       "description": "Professional legal empowerment platform providing transparent complaint filing systems, civil rights protection services, and justice accessibility tools for citizens seeking police accountability",
       "slogan": "Empowering Citizens Through Legal Rights Protection",
       "sameAs": [
-        canonicalUrl || "https://badblue.com"
+        BASE_URL
       ],
       "contactPoint": {
         "@type": "ContactPoint",
@@ -212,10 +229,10 @@ export function SEOHead({
       "@context": "https://schema.org",
       "@type": "WebSite",
       "name": "BadBlue - Police Accountability Platform",
-      "url": canonicalUrl || "https://badblue.com",
+      "url": BASE_URL,
       "potentialAction": {
         "@type": "SearchAction",
-        "target": `${canonicalUrl || 'https://badblue.com'}/officer?search={search_term_string}`,
+        "target": `${BASE_URL}/officer?search={search_term_string}`,
         "query-input": "required name=search_term_string"
       }
     };
@@ -237,7 +254,7 @@ export function SEOHead({
       hreflangEn.setAttribute("hreflang", "en");
       document.head.appendChild(hreflangEn);
     }
-    hreflangEn.setAttribute("href", canonicalUrl || "https://badblue.com");
+    hreflangEn.setAttribute("href", canonicalUrl || BASE_URL);
 
     let hreflangXDefault = document.querySelector('link[hreflang="x-default"]');
     if (!hreflangXDefault) {
@@ -246,8 +263,8 @@ export function SEOHead({
       hreflangXDefault.setAttribute("hreflang", "x-default");
       document.head.appendChild(hreflangXDefault);
     }
-    hreflangXDefault.setAttribute("href", canonicalUrl || "https://badblue.com");
-  }, [title, description, enhancedKeywords, ogTitle, ogDescription, ogType, finalOgImage, canonicalUrl, structuredData]);
+    hreflangXDefault.setAttribute("href", canonicalUrl || BASE_URL);
+  }, [title, description, enhancedKeywords, ogTitle, ogDescription, ogType, finalOgImage, canonicalUrl, structuredData, breadcrumbs, pageType]);
 
   return null;
 }

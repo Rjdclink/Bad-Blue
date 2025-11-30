@@ -10,6 +10,9 @@ export default function Privacy() {
         title="Bad Blue — Privacy Policy | Data Protection & User Rights"
         description="BadBlue privacy policy: how we protect your data during police misconduct complaints, §1983 civil rights lawsuits, FOIA requests, and officer resignation petitions. Your privacy matters."
         canonicalUrl="https://bad-blue.com/privacy"
+        breadcrumbs={[
+          { name: "Privacy Policy", url: "https://bad-blue.com/privacy" }
+        ]}
       />
       
       {/* Header */}

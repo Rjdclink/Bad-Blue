@@ -115,6 +115,9 @@ export default function Contact() {
         title="Bad Blue — Contact + Support + Misconduct Filing Help"
         description="Contact BadBlue at contact.badblue@gmail.com for help with police misconduct complaints, §1983 civil rights lawsuits, FOIA requests, and petitions demanding officer resignation. Affordable alternative to attorneys, fully online — never leave home."
         canonicalUrl="https://bad-blue.com/contact"
+        breadcrumbs={[
+          { name: "Contact & Support", url: "https://bad-blue.com/contact" }
+        ]}
       />
       
       {/* Header with Navigation */}
