@@ -8,7 +8,7 @@ import { Shield, FileText, DollarSign, CheckCircle2, ArrowLeft, Upload, Image, V
 import { useAuth } from "@/hooks/useAuth";
 import { useClientSession } from "@/contexts/ClientSessionContext";
 import { apiRequest } from "@/lib/queryClient";
-import { PRICING } from "@shared/schema";
+import { COMPLAINT_PRICING } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { UploadResult } from "@uppy/core";
 import { FormAssistant } from "@/components/FormAssistant";
@@ -481,10 +481,10 @@ export default function ComplaintForm() {
                     <p className="font-medium">Police Complaint Filing Fee</p>
                     <p className="text-sm text-muted-foreground">Service payment</p>
                   </div>
-                  <div className="text-2xl font-bold">${PRICING.COMPLAINT.toFixed(2)}</div>
+                  <div className="text-2xl font-bold">${COMPLAINT_PRICING.toFixed(2)}</div>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  By proceeding, you agree to file this complaint and authorize payment of ${PRICING.COMPLAINT.toFixed(2)} for document generation and processing. Your complaint will be automatically routed to the appropriate authority.
+                  By proceeding, you agree to file this complaint and authorize payment of ${COMPLAINT_PRICING.toFixed(2)} for document generation and processing. Your complaint will be automatically routed to the appropriate authority.
                 </p>
               </CardContent>
             </Card>
@@ -516,7 +516,7 @@ export default function ComplaintForm() {
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Confirm & Pay ${PRICING.COMPLAINT.toFixed(2)}
+                    Confirm & Pay ${COMPLAINT_PRICING.toFixed(2)}
                   </>
                 )}
               </Button>
@@ -544,10 +544,6 @@ export default function ComplaintForm() {
       <SEOHead
         title="File Police Complaint Online | Report Bad Cops & Police Misconduct | BadBlue"
         description="Professional platform to file police complaints online for bad cops, police brutality, excessive force & civil rights violations. Justice accessibility tools."
-        extraMeta={[
-  { name: "robots", content: "index, follow" },
-  { name: "googlebot", content: "index, follow" }
-]}
         keywords="file police complaint online, file officer complaint online, police misconduct complaint form, officer misconduct grievance form, report police brutality, report officer assault, file complaint against police officer, file grievance against officer, excessive force police complaint, excessive force officer grievance, police harassment complaint, officer harassment grievance, false arrest police complaint, wrongful arrest officer complaint, police discrimination report, officer discrimination complaint, internal affairs complaint police, internal affairs grievance officer, file complaint police department, file grievance officer department, civilian complaint review board police, civilian complaint officer, report law enforcement misconduct, report officer misconduct, police accountability complaint, officer accountability grievance, police brutality complaint online, officer brutality grievance online, police assault complaint form, officer assault complaint form, police violence complaint, officer violence grievance, department misconduct complaint, department brutality grievance, complaint police excessive force, complaint officer assault, grievance police harassment, grievance officer discrimination, police complaint process online, officer grievance process online, submit police complaint online, submit officer grievance online, file formal police complaint, file formal officer grievance, police misconduct documentation, officer misconduct evidence, complaint against police online, complaint against officer online, police brutality report online, officer assault report online, police harassment grievance, officer harassment complaint, false arrest police report, wrongful detention officer complaint, police rights violation complaint, officer constitutional violation grievance, police abuse complaint online, officer abuse grievance online, police corruption complaint, officer corruption grievance, department accountability complaint, department misconduct grievance, how to file police complaint, how to file officer grievance, how to report police brutality, how to report officer assault, how to complain about police, how to complain about officer, police complaint help online, officer grievance help online, assistance filing police complaint, assistance filing officer grievance, guidance police complaint process, guidance officer grievance process, police complaint legal help, officer grievance legal advice, police misconduct complaint assistance, officer misconduct grievance support, file police brutality complaint, file officer assault grievance, submit police harassment complaint, submit officer discrimination grievance, police excessive force complaint form, officer assault complaint form online, police department complaint online, officer department grievance online"
         ogTitle="File Police Misconduct Complaint Online | BadBlue"
         ogDescription="Report police brutality, excessive force, and civil rights violations. File formal complaints with automated routing to proper authorities."

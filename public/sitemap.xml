@@ -4,7 +4,7 @@
   <!-- Main Pages - Professional Police Accountability Platform -->
   <url>
     <loc>https://bad-blue.com/</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
     <image:image>
@@ -16,13 +16,25 @@
 
   <url>
     <loc>https://bad-blue.com/landing</loc>
-    <lastmod>2025-11-15</lastmod>
+    <lastmod>2025-11-30</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
     <image:image>
       <image:loc>https://bad-blue.com/preview.png</image:loc>
       <image:title>File Police Complaint Online | Sue Police Officer | BadBlue</image:title>
       <image:caption>Professional platform for reporting police misconduct, law enforcement abuse, bad cops, and civil rights violations. Legal rights protection service.</image:caption>
+    </image:image>
+  </url>
+
+  <url>
+    <loc>https://bad-blue.com/officer</loc>
+    <lastmod>2025-11-30</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.95</priority>
+    <image:image>
+      <image:loc>https://bad-blue.com/preview.png</image:loc>
+      <image:title>Police Officer Search | Find Officer Background Records | BadBlue</image:title>
+      <image:caption>Search police officer public records, department rosters, disciplinary history, and POST certifications. Free officer background search tool.</image:caption>
     </image:image>
   </url>
 
