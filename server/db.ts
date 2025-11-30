@@ -95,45 +95,52 @@ if (!databaseUrl) {
   );
 }
 
-// IPv4-forcing DNS lookup hook for Railway compatibility
-// Supabase direct connections resolve to IPv6 but Railway doesn't support IPv6 egress
+// IPv4-forcing DNS lookup hook for Supabase compatibility
+// Supabase direct connections resolve to IPv6 but many platforms (Railway, etc.) don't support IPv6 egress
+// Apply IPv4 forcing for ALL Supabase connections, not just Railway
 const ipv4Lookup = (hostname: string, options: dns.LookupOptions, callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void) => {
   dns.lookup(hostname, { family: 4, all: false }, (err, address, family) => {
+    if (!err) {
+      console.log(`[DATABASE] DNS resolved ${hostname} to IPv4: ${address}`);
+    }
     callback(err, address, family);
   });
 };
 
-// Railway-specific connection configuration
+// Determine if we should force IPv4 - apply to ALL Supabase connections
+// This ensures compatibility with Railway and any other IPv4-only platforms
+const shouldForceIPv4 = isUsingSupabase || isRailway || isProduction;
+
+// Connection configuration - applies IPv4 forcing for Supabase connections
 const getPoolConfig = () => {
   const baseConfig: any = {
     connectionString: databaseUrl,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: isRailway ? 30000 : 10000, // Longer timeout for Railway
+    connectionTimeoutMillis: (isRailway || isProduction) ? 30000 : 10000,
   };
 
-  // Railway production needs more conservative pool settings AND IPv4 forcing
-  if (isRailway) {
-    console.log('[DATABASE] Railway detected - forcing IPv4 DNS resolution for Supabase compatibility');
+  // Apply IPv4 forcing for ALL Supabase connections (not just Railway)
+  // This prevents ENETUNREACH errors on IPv4-only platforms
+  if (shouldForceIPv4) {
+    console.log('[DATABASE] Forcing IPv4 DNS resolution for Supabase compatibility');
     return {
       ...baseConfig,
-      max: 20,  // Reduced from 100 for Railway's proxy
-      min: 2,   // Reduced from 10
+      max: isRailway ? 20 : 100,  // Conservative for Railway, generous for others
+      min: isRailway ? 2 : 10,
       ssl: process.env.PGSSLMODE !== 'disable' ? { 
         rejectUnauthorized: false,
-        // Railway might need additional SSL config
         ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {})
       } : false,
-      // Railway-specific: handle connection through their proxy
       statement_timeout: 30000,
       query_timeout: 30000,
-      application_name: 'badblue-railway',
-      // CRITICAL: Force IPv4 DNS resolution - Railway doesn't support IPv6 egress
-      // Without this, Supabase hostnames resolve to IPv6 and get ENETUNREACH errors
+      application_name: isRailway ? 'badblue-railway' : 'badblue',
+      // CRITICAL: Force IPv4 DNS resolution for ALL Supabase connections
+      // Without this, Supabase hostnames may resolve to IPv6 and get ENETUNREACH errors
       lookup: ipv4Lookup,
     };
   }
 
-  // Default configuration for local/development
+  // Default configuration for local development with non-Supabase database
   return {
     ...baseConfig,
     max: 100,
