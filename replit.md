@@ -20,7 +20,8 @@ The platform utilizes a modern web stack featuring a React 18 frontend with Type
 -   **Dual-URL Architecture**: `drizzle.config.ts` uses `DATABASE_URL` (Replit internal DB, ~13 tables), while runtime uses `SUPABASE_DATABASE_URL` (production DB, 69 tables). This is by design as `drizzle.config.ts` is a protected file.
 -   **Schema Verification**: `/api/schema-verify` endpoint is the CANONICAL SOURCE OF TRUTH for database table counts
 -   **Startup Verification**: Server runs automatic schema verification at startup with prominent logging
--   **Production Guard**: Production environment REQUIRES `SUPABASE_DATABASE_URL` - will fail fast if missing
+-   **Production Guard**: Production requires Supabase database - accepts SUPABASE_DATABASE_URL, SUPABASE_DB_URL, or DATABASE_URL if it points to Supabase (detected by hostname)
+-   **Railway.com Compatibility**: Smart Supabase detection allows Railway deployments using DATABASE_URL if it contains 'supabase.co' in the connection string
 -   **Migration Pattern**: All migrations use `db.execute(sql`...`)` from Drizzle ORM for consistency
 -   **Connection Logging**: `server/db.ts` logs database connection source with warnings for fallback usage
 -   **Worker Metrics Tables**: `worker_health_metrics` and `worker_repair_metrics` tables for comprehensive worker monitoring

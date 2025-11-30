@@ -16,26 +16,48 @@ import * as schema from "@shared/schema";
 const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || !!process.env.RAILWAY_PROJECT_ID;
 const isProduction = process.env.NODE_ENV === 'production';
 
-// CRITICAL: REQUIRE SUPABASE_DATABASE_URL in production to prevent accidental fallback
-const isSupabaseUrl = !!process.env.SUPABASE_DATABASE_URL;
-const databaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL;
+// Check for Supabase connection from multiple possible environment variable names
+// Railway and other platforms may use different variable names
+const supabaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_DB_URL;
 
-// STARTUP GUARD: Fail fast if production uses wrong database
-if (isProduction && !isSupabaseUrl) {
-  console.error('[DATABASE] ❌ CRITICAL: Production environment MUST use SUPABASE_DATABASE_URL');
-  console.error('[DATABASE] ❌ DATABASE_URL fallback is NOT allowed in production');
-  console.error('[DATABASE] ❌ Set SUPABASE_DATABASE_URL environment variable to continue');
-  throw new Error('SUPABASE_DATABASE_URL is required in production. DATABASE_URL fallback is disabled.');
+// Helper to detect if a connection string is a Supabase database
+const isSupabaseConnectionString = (url: string | undefined): boolean => {
+  if (!url) return false;
+  // Supabase connection strings can use various domains:
+  // - supabase.co (main dashboard and direct connections)
+  // - supabase.com (alternative domain)
+  // - supabase.net (pooled/pgBouncer connections via pooler.supabase.net)
+  // - pooler.supabase.* (connection pooling endpoints)
+  return url.includes('supabase.co') || 
+         url.includes('supabase.com') || 
+         url.includes('supabase.net') ||
+         url.includes('.supabase.');  // Catches any subdomain pattern
+};
+
+// Determine the database URL to use, with smart detection
+const databaseUrl = supabaseUrl || process.env.DATABASE_URL;
+const isExplicitSupabaseEnv = !!supabaseUrl;
+const isDatabaseUrlSupabase = isSupabaseConnectionString(process.env.DATABASE_URL);
+const isUsingSupabase = isExplicitSupabaseEnv || isDatabaseUrlSupabase;
+
+// STARTUP GUARD: Fail fast if production doesn't have a Supabase connection
+if (isProduction && !isUsingSupabase) {
+  console.error('[DATABASE] ❌ CRITICAL: Production environment requires Supabase database');
+  console.error('[DATABASE] ❌ No Supabase connection string detected');
+  console.error('[DATABASE] ❌ Set SUPABASE_DATABASE_URL environment variable, or use a DATABASE_URL pointing to Supabase');
+  console.error('[DATABASE] ❌ Detected DATABASE_URL does not appear to be a Supabase connection');
+  throw new Error('Supabase database connection required in production. Set SUPABASE_DATABASE_URL or ensure DATABASE_URL points to Supabase.');
 }
 
 // Log which database connection is being used with prominent warning for fallback
-if (!isSupabaseUrl) {
+if (!isUsingSupabase) {
   console.warn('[DATABASE] ⚠️ WARNING: Using DATABASE_URL fallback (development only)');
   console.warn('[DATABASE] ⚠️ This connects to Replit internal DB (~13 tables), NOT production Supabase (69 tables)');
   console.warn('[DATABASE] ⚠️ Use /api/schema-verify endpoint for accurate table counts');
   console.warn('[DATABASE] ⚠️ execute_sql_tool is DEPRECATED - it connects to wrong database');
 } else {
-  console.log('[DATABASE] ✓ Using SUPABASE_DATABASE_URL (production database)');
+  const source = isExplicitSupabaseEnv ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL (Supabase detected)';
+  console.log(`[DATABASE] ✓ Using ${source} (production database)`);
 }
 console.log(`[DATABASE] Environment: ${isProduction ? 'production' : 'development'}, Platform: ${isRailway ? 'Railway' : 'Replit/local'}`);
 
@@ -186,8 +208,15 @@ export async function verifyDatabaseSchema(): Promise<{
   allTables?: string[];
   isProductionDatabase: boolean;
 }> {
-  const connectionSource = process.env.SUPABASE_DATABASE_URL ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL';
-  const isProductionDatabase = !!process.env.SUPABASE_DATABASE_URL;
+  // Use the same detection logic as startup
+  const explicitSupabaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_DB_URL;
+  const dbUrl = process.env.DATABASE_URL;
+  const isDbUrlSupabase = dbUrl && (dbUrl.includes('supabase.co') || dbUrl.includes('supabase.com') || dbUrl.includes('pooler.supabase'));
+  
+  const connectionSource = explicitSupabaseUrl 
+    ? 'SUPABASE_DATABASE_URL' 
+    : (isDbUrlSupabase ? 'DATABASE_URL (Supabase)' : 'DATABASE_URL');
+  const isProductionDatabase = !!explicitSupabaseUrl || !!isDbUrlSupabase;
   
   // Critical tables that must exist for core BadBlue functionality
   // These match the actual table names from shared/schema.ts and migrations
