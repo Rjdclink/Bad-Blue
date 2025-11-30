@@ -1152,29 +1152,6 @@ class BadBlueWorker {
     try { await pruneFile(this.ALERTS_LOG); } catch {}
   }
 
-  // Internal autonomous improvement loop
-  private startAutonomousImprovements() {
-    if (this.autonomousInterval) return;
-    const TWO_HOURS = 2 * 60 * 60 * 1000;
-    const run = async () => {
-      if (this.isMaintenanceMode || this.isRepairInProgress || this.isDiagnosticInProgress) return;
-      try {
-        await this.runDiagnostics();
-        const failures = (await this.readFailureLog()).filter((f) => !f.resolved);
-        if (failures.length) {
-          await this.executeParallelRepairs(failures.slice(0, 5));
-        }
-        await this.saveMetrics();
-        console.log('[BadBlue Worker] Autonomous improvement cycle complete');
-      } catch (e: any) {
-        console.warn('[BadBlue Worker] Autonomous improvement cycle error:', e.message);
-      }
-    };
-    this.autonomousInterval = setInterval(run, TWO_HOURS);
-    setTimeout(run, 10_000);
-    console.log('[BadBlue Worker] Autonomous improvements loop started');
-  }
-
   // SAFETY CONSTRAINTS - Protected files that must NEVER be edited
   private static readonly PROTECTED_FILES = [
     'server/auth.ts',
@@ -1469,7 +1446,6 @@ class BadBlueWorker {
     if (this.databaseHeartbeatInterval) clearInterval(this.databaseHeartbeatInterval);
     if (this.criticalMonitoringInterval) clearInterval(this.criticalMonitoringInterval);
     if (this.pruneLogsInterval) clearInterval(this.pruneLogsInterval);
-    if (this.autonomousInterval) clearInterval(this.autonomousInterval);
     console.log('[BadBlue Worker] Shutdown complete');
   }
 }
