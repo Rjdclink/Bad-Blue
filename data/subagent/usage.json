@@ -436,5 +436,29 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T01:31:46.696Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:31:48.323Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:31:49.802Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T01:32:10.701Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
   }
 ]
