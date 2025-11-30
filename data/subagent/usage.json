@@ -76,5 +76,17 @@
     "action": "GET",
     "tokens": 0,
     "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
+  },
+  {
+    "timestamp": "2025-11-30T09:27:30.059Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:27:30.767Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]
