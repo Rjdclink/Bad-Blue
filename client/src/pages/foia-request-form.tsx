@@ -62,43 +62,7 @@ export default function FOIARequestForm() {
   const [showPreview, setShowPreview] = useState(false);
   const [generatingLetter, setGeneratingLetter] = useState(false);
 
-  const seoKeywords = [
-    "police brutality", "police assault", "police lawsuit", "police complaint", "police grievance",
-    "FOIA police", "police search", "police information", "police legal", "officer brutality",
-    "officer assault", "officer lawsuit", "officer complaint", "officer grievance", "FOIA officer",
-    "officer search", "officer information", "officer legal", "police department lawsuit",
-    "police department complaint", "police department documents", "police department FOIA",
-    "police department grievance", "police department legal advice", "police department assault",
-    "police department brutality", "police department search", "police department help",
-    "law enforcement complaint", "law enforcement lawsuit", "law enforcement documents", "law enforcement FOIA",
-    "law enforcement grievance", "law enforcement legal advice", "law enforcement assault",
-    "law enforcement brutality", "law enforcement search", "law enforcement help",
-    "find police complaint", "locate police lawsuit", "petition for police misconduct",
-    "police resignation documents", "officer fired complaint", "legal help police brutality",
-    "information police assault", "legal documents police lawsuit", "document search police complaint",
-    "FOIA request police brutality", "police misconduct lawsuit", "police excessive force",
-    "civil rights violation police", "police accountability", "justice for police misconduct",
-    "officer misconduct", "police brutality lawyer", "police assault lawyer", "police lawsuit lawyer",
-    "police complaint lawyer", "police grievance lawyer", "FOIA lawyer police", "police search lawyer",
-    "police information lawyer", "police legal lawyer", "find police information", "locate police records",
-    "petition for police records", "resignation of officer", "officer fired for misconduct",
-    "legal assistance police", "help with police complaint", "help with police brutality",
-    "help with police assault", "help with police lawsuit", "help with police grievance",
-    "help FOIA police", "help police search", "help police information", "help police legal",
-    "departmental complaint", "departmental grievance", "departmental lawsuit", "departmental FOIA",
-    "departmental documents", "departmental records", "departmental information", "departmental legal",
-    "state police complaint", "state police lawsuit", "state police FOIA", "state police records",
-    "sheriff office complaint", "sheriff office lawsuit", "sheriff office FOIA", "sheriff office records",
-    "municipal police complaint", "municipal police lawsuit", "municipal police FOIA", "municipal police records",
-    "county sheriff complaint", "county sheriff lawsuit", "county sheriff FOIA", "county sheriff records",
-    "highway patrol complaint", "highway patrol lawsuit", "highway patrol FOIA", "highway patrol records",
-    "officer resignation", "police fired", "police brutality documents", "police assault documents",
-    "police lawsuit documents", "police complaint documents", "police grievance documents",
-    "FOIA police documents", "police search documents", "police information documents", "police legal documents",
-    "officer brutality documents", "officer assault documents", "officer lawsuit documents",
-    "officer complaint documents", "officer grievance documents", "FOIA officer documents",
-    "officer search documents", "officer information documents", "officer legal documents"
-  ];
+  const seoKeywords = "FOIA request police records, freedom of information act police, public records request police, police records FOIA, officer records request, body camera footage FOIA, disciplinary records police, use of force reports, internal investigation files, police department records, FOIA request online, state FOIA laws police, public records law enforcement, police transparency request, officer misconduct records, police brutality documentation, excessive force records, false arrest records, civil rights records request, police accountability documents";
 
   if (!user) {
     window.location.href = "/api/login";
@@ -292,9 +256,10 @@ export default function FOIARequestForm() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead 
-        title="FOIA Request Form - Police Accountability & Records"
-        description="Submit a FOIA request to obtain police records related to brutality, assault, lawsuits, and complaints. Find information and legal help."
+        title="Bad Blue — File FOIA Requests for Police Records Online"
+        description="Generate state-specific FOIA requests for body camera footage, disciplinary records, use-of-force reports, and police investigation files. Automatic routing to records custodians. Affordable, fully online."
         keywords={seoKeywords}
+        canonicalUrl="https://bad-blue.com/foia-request"
       />
       <header className="border-b">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
