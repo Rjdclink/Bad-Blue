@@ -1,0 +1,196 @@
+1️⃣ Add hidden FAQ JSON-LD support (global)
+
+> Command to Replit Agent:
+“Create a small reusable helper (a hook or utility) that can inject FAQPage JSON-LD into the <head> for any page.
+
+Requirements:
+
+It must NOT render anything visible in the UI.
+
+It should take a list of question/answer pairs and an ID string.
+
+It should create or replace a <script type="application/ld+json"> tag in <head> with that ID.
+
+The JSON must use Schema.org FAQPage with mainEntity as an array of Question objects that each contain an acceptedAnswer.
+
+Make this helper live in a shared location (for example src/hooks/useFaqSchema.ts or similar) so I can reuse it on multiple pages.”
+
+
+
+
+
+---
+
+2️⃣ Wire FAQ SEO into the Officer Search page
+
+> Command:
+“Open the Officer Search React component.
+After my existing React hooks are set up (after the useToast line is fine), call the new FAQ JSON-LD helper to inject an FAQ for this page.
+
+Use around 4–6 questions that describe:
+
+What the Officer Search does.
+
+What jurisdictions it covers.
+
+Where the data comes from (public records, rosters, news, court filings, certification databases).
+
+That it is NOT legal advice.
+
+What inputs give the best results (full name, state, optionally city/agency).
+
+
+This FAQ must be invisible to users (no new UI components), only JSON-LD in <head>.”
+
+
+
+
+---
+
+3️⃣ Add FAQ JSON-LD to other key pages
+
+Repeat the same idea for your other high-value routes.
+
+> Command:
+“For each of these pages:
+
+Home / landing page
+
+Legal AI / complaint builder page
+
+Any ‘how it works’ or documentation page
+
+
+Add a small call to the FAQ JSON-LD helper with 3–6 very targeted Q&A items that match that page’s content.
+
+Do NOT render visible FAQ components — just inject JSON-LD into <head> so search engines can read it but users don’t see anything extra.”
+
+
+
+
+---
+
+4️⃣ Upgrade global SEO metadata (title / description / OpenGraph)
+
+> Command:
+“Find the central metadata definition for my app (for example Vite index.html, root layout, or a shared SEO config file).
+
+Set a strong, keyword-rich <title> that includes ‘Bad Blue’, ‘police officer search’, ‘public records’, and ‘accountability tools’.
+
+Add a meta description that clearly explains what the app does in one or two sentences and includes ‘search police officers’, ‘public records’, and ‘complaints or lawsuits’.
+
+Add Open Graph tags (og:title, og:description, og:url, og:type=website, og:image) and Twitter Card tags (twitter:card=summary_large_image, twitter:title, twitter:description).
+
+Reuse the best title and description for both Open Graph and Twitter.
+
+Make sure the canonical URL points at my production domain for Bad Blue.”
+
+
+
+
+
+---
+
+5️⃣ Add per-page SEO metadata for main routes
+
+> Command:
+“For the main feature pages (Officer Search, Legal AI / complaint tools, etc.), add page-level SEO metadata:
+
+A page-specific title that includes both the feature and the main keyword (for example ‘Officer Search | Bad Blue Public Records’).
+
+A meta description that describes that specific feature.
+
+
+If the framework supports route-level metadata (like Next.js, Remix, or a layout system), use that; otherwise, add logic in the router or main layout to set the correct title and description based on the current route.”
+
+
+
+
+---
+
+6️⃣ Add structured data for the whole site (WebSite + SearchAction)
+
+> Command:
+“In my global layout or index.html, add another JSON-LD <script> in <head> that describes the whole site as a WebSite with a SearchAction.
+
+@type: WebSite with the site name, URL, and description for Bad Blue.
+
+potentialAction should be a SearchAction that points to my officer search URL and describes the search_term_string parameter (the officer name or query).
+
+Keep this JSON-LD invisible (no UI, only a <script type="application/ld+json">).”
+
+
+
+
+
+---
+
+7️⃣ Make sure robots and sitemap are correct
+
+> Command:
+“Check if I have:
+
+robots.txt at the root
+
+sitemap.xml reachable at /sitemap.xml
+
+
+If they’re missing, create them.
+
+robots.txt should:
+
+Allow all major search bots to crawl the public site.
+
+Disallow only obviously private or internal routes (admin endpoints, background jobs, or API paths that shouldn’t be indexed).
+
+
+sitemap.xml should list at least:
+
+The home page
+
+Officer Search
+
+Complaint / lawsuit tools
+
+Any major informational or help pages
+
+
+Use proper <url> entries with <loc>, <lastmod>, and <changefreq> where appropriate.”
+
+
+
+
+---
+
+8️⃣ Make sure content is crawl-friendly (links, headings, copy)
+
+> Command:
+“Review the core pages (home, Officer Search, legal tools) and make sure:
+
+Each has a single clear <h1> that includes real keywords, not just a logo name.
+
+Important sections have <h2> or <h3> headings with meaningful text like ‘Search police officer records’, ‘File a complaint’, etc.
+
+Key internal links use descriptive anchor text (for example ‘Search officer records’ instead of ‘click here’).
+
+Important copy is server-rendered or visible without client-side JS (or at least renders fast enough that search engines can see it).
+
+
+Don’t touch any AI logic, APIs, or database code — only content, headings, and links.”
+
+
+
+
+---
+
+9️⃣ Confirm no visual changes from FAQ SEO
+
+> Command:
+“After all FAQ JSON-LD additions are done, run the app and visually check:
+
+There are no new visible FAQ sections unless I explicitly added them.
+
+All FAQ pieces are ONLY present as <script type="application/ld+json"> in <head>.
+
+
+If you see any FAQ content rendered in the main page body that I did not ask for, remove that rendering and keep only the JSON-LD injection.”
