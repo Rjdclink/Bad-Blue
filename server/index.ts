@@ -155,6 +155,7 @@ async function runMigrations(): Promise<void> {
   console.log('[STARTUP] Stage 2: Running migrations...');
   
   const migrations = [
+    { name: 'Core tables', module: './migrations/createCoreTables', fn: 'createCoreTables' },
     { name: 'Sub-Agent tables', module: './migrations/createSubAgentTables', fn: 'createSubAgentTables' },
     { name: 'Token Metrics tables', module: './migrations/createTokenMetrics', fn: 'createTokenMetricsTables' },
     { name: 'Device Rate Limit tables', module: './migrations/createDeviceRateLimitTables', fn: 'createDeviceRateLimitTables' },
