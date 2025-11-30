@@ -1,50 +1,110 @@
 [
   {
-    "timestamp": "2025-11-30T01:56:45.218Z",
+    "timestamp": "2025-11-30T02:19:03.407Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/lib/utils.ts"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/react.js"
   },
   {
-    "timestamp": "2025-11-30T01:56:45.223Z",
+    "timestamp": "2025-11-30T02:19:03.414Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/page-skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:03.487Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-CQ7JXR62.js"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:03.535Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/skeleton.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:56:45.819Z",
+    "timestamp": "2025-11-30T02:19:03.569Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/clsx.js"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:03.581Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-KCFVMCIE.js"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:03.609Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-JDYSANEB.js"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:03.624Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-U7P2NEEE.js"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:03.627Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-O2LWC6XU.js"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:03.765Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T01:56:45.919Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/favicon.ico"
-  },
-  {
-    "timestamp": "2025-11-30T01:56:46.255Z",
+    "timestamp": "2025-11-30T02:19:03.822Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/pages/landing.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:56:46.766Z",
+    "timestamp": "2025-11-30T02:19:03.961Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/button.tsx"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-43G6IMPT.js"
   },
   {
-    "timestamp": "2025-11-30T01:56:46.895Z",
+    "timestamp": "2025-11-30T02:19:03.986Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-dropdown-menu.js"
   },
   {
-    "timestamp": "2025-11-30T01:56:47.348Z",
+    "timestamp": "2025-11-30T02:19:03.995Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-4RO2SXZU.js"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:04.053Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:04.068Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:04.075Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T02:19:04.764Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
   }
 ]

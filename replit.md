@@ -30,6 +30,7 @@ Key architectural decisions and features include:
 
 ## External Dependencies
 *   **Payment Processing**: Stripe
+*   **Email Service**: Resend API (transactional emails)
 *   **AI/ML Services**: Google Gemini API, Groq API
 *   **Authentication Service**: Replit OAuth
 *   **File Upload Libraries**: `react-dropzone`, Uppy

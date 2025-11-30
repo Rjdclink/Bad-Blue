@@ -16,56 +16,19 @@ interface EmailOptions {
   }>;
 }
 
-// Connection settings cache (short-lived, refreshed each call)
-let connectionSettings: any;
-
 /**
- * Get Resend credentials - tries Replit connector first, then env variable
+ * Get Resend credentials from environment variable
  */
 async function getCredentials(): Promise<{ apiKey: string; fromEmail: string }> {
-  // First try Replit connector
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY 
-    ? 'repl ' + process.env.REPL_IDENTITY 
-    : process.env.WEB_REPL_RENEWAL 
-    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-    : null;
-
-  if (xReplitToken && hostname) {
-    try {
-      connectionSettings = await fetch(
-        'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=resend',
-        {
-          headers: {
-            'Accept': 'application/json',
-            'X_REPLIT_TOKEN': xReplitToken
-          }
-        }
-      ).then(res => res.json()).then(data => data.items?.[0]);
-
-      // Only use connector if we got a valid API key (starts with re_)
-      if (connectionSettings?.settings?.api_key?.startsWith('re_')) {
-        console.log('[RESEND] Using Replit connector credentials');
-        return {
-          apiKey: connectionSettings.settings.api_key,
-          fromEmail: connectionSettings.settings.from_email || 'onboarding@resend.dev'
-        };
-      }
-    } catch (e) {
-      console.log('[RESEND] Connector fetch failed, trying env variable');
-    }
-  }
-
-  // Fallback to environment variable
+  // Use RESEND_API_KEY environment variable
   if (process.env.RESEND_API_KEY?.startsWith('re_')) {
-    console.log('[RESEND] Using RESEND_API_KEY environment variable');
     return {
       apiKey: process.env.RESEND_API_KEY,
       fromEmail: process.env.DEFAULT_FROM_EMAIL || 'onboarding@resend.dev'
     };
   }
 
-  throw new Error('Resend not configured - please set a valid RESEND_API_KEY (must start with re_)');
+  throw new Error('Resend not configured - please set RESEND_API_KEY in secrets (must start with re_)');
 }
 
 /**
