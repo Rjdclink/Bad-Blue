@@ -82,5 +82,17 @@
     "action": "POST",
     "tokens": 0,
     "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2025-11-30T17:30:09.662Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T17:30:10.065Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]
