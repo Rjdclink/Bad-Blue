@@ -36,8 +36,9 @@ export function PageBreadcrumbs({
   const parentBreadcrumbs = breadcrumbs.slice(0, -1);
 
   return (
-    <Breadcrumb className={`mb-4 ${className}`} data-testid="nav-breadcrumbs">
-      <BreadcrumbList>
+    <nav aria-label="Breadcrumb navigation" role="navigation" className={`mb-4 ${className}`} data-testid="nav-breadcrumbs">
+      <Breadcrumb>
+        <BreadcrumbList>
         <BreadcrumbItem>
           <BreadcrumbLink asChild>
             <Link href="/" data-testid="breadcrumb-home">
@@ -73,8 +74,9 @@ export function PageBreadcrumbs({
             </BreadcrumbItem>
           </>
         )}
-      </BreadcrumbList>
-    </Breadcrumb>
+        </BreadcrumbList>
+      </Breadcrumb>
+    </nav>
   );
 }
 
