@@ -75,5 +75,16 @@
       },
       "content": "Insufficient verified data to generate a comprehensive report about Officer Andrew Pollard. Additional research and official records review required to substantiate any claims."
     }
+  },
+  {
+    "receivedAt": "2025-11-30T20:15:34.772Z",
+    "payload": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "IA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable data collected for Officer Nathan Ewalt from Iowa. Additional research and official records review required to substantiate accountability profile."
+    }
   }
 ]

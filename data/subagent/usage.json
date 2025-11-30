@@ -1,224 +1,116 @@
 [
   {
-    "timestamp": "2025-11-30T20:08:36.996Z",
+    "timestamp": "2025-11-30T20:15:07.196Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/select-BCZxAyUc.js"
+    "path": "/assets/external-link-ByCvNBaf.js"
   },
   {
-    "timestamp": "2025-11-30T20:08:37.008Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/loader-circle-Dhu3ITQp.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.010Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/sparkles-B6HyZdYK.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.012Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-BDFWxcSk.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.014Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-x-BaY5SahM.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.086Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.094Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-alert-DXslWFLw.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.103Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/input-DQfs2i3p.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.113Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.115Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/progress-DDYmeNGR.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.116Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.142Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/map-pin-l9-xidT_.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.158Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.173Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.180Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/dollar-sign-CvgOWdSx.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.184Z",
+    "timestamp": "2025-11-30T20:15:07.201Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/scroll-area-BSFrzjFF.js"
   },
   {
-    "timestamp": "2025-11-30T20:08:37.204Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/brain-3CMxcxOD.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.220Z",
+    "timestamp": "2025-11-30T20:15:07.238Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/send-Dyuf-Q1L.js"
   },
   {
-    "timestamp": "2025-11-30T20:08:37.277Z",
+    "timestamp": "2025-11-30T20:15:07.280Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/circle-check-big-IucwP7W7.js"
   },
   {
-    "timestamp": "2025-11-30T20:08:37.279Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.280Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/mail-B5XkwkcA.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.282Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SEOHead-b0nf3qYO.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.283Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/image-D3s3Sulp.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.286Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/users-CFAHCUDf.js"
-  },
-  {
-    "timestamp": "2025-11-30T20:08:37.406Z",
+    "timestamp": "2025-11-30T20:15:07.284Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/credit-card-B8MKwAhy.js"
   },
   {
-    "timestamp": "2025-11-30T20:08:37.409Z",
+    "timestamp": "2025-11-30T20:15:07.293Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+    "path": "/assets/image-D3s3Sulp.js"
   },
   {
-    "timestamp": "2025-11-30T20:08:40.012Z",
+    "timestamp": "2025-11-30T20:15:07.334Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/users-CFAHCUDf.js"
+  },
+  {
+    "timestamp": "2025-11-30T20:15:08.847Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T20:08:40.148Z",
+    "timestamp": "2025-11-30T20:15:08.980Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T20:09:16.570Z",
+    "timestamp": "2025-11-30T20:15:28.768Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/officer-search/progress/search-1764533727763-dzskhdp4n"
+  },
+  {
+    "timestamp": "2025-11-30T20:15:34.511Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:09:49.463Z",
+    "timestamp": "2025-11-30T20:15:34.770Z",
+    "action": "learning_event",
+    "provider": "internal",
+    "tokens": 43,
+    "category": "officer_search",
+    "state": "IA"
+  },
+  {
+    "timestamp": "2025-11-30T20:15:36.503Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:10:12.476Z",
-    "action": "training_queue_consumption",
-    "provider": "self_improvement",
-    "processed": 0,
-    "successful": 0,
-    "failed": 0,
-    "skipped": 0,
-    "durationMs": 3
-  },
-  {
-    "timestamp": "2025-11-30T20:10:32.280Z",
+    "timestamp": "2025-11-30T20:16:04.754Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:11:34.998Z",
+    "timestamp": "2025-11-30T20:16:06.839Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:12:05.929Z",
+    "timestamp": "2025-11-30T20:16:35.186Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:12:19.172Z",
-    "action": "training_queue_consumption",
-    "provider": "self_improvement",
-    "processed": 0,
-    "successful": 0,
-    "failed": 0,
-    "skipped": 0,
-    "durationMs": 2
+    "timestamp": "2025-11-30T20:16:37.826Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T20:12:40.940Z",
+    "timestamp": "2025-11-30T20:17:05.463Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T20:17:08.826Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
