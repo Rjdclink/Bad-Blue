@@ -154,15 +154,17 @@ async function initializeDatabase(): Promise<void> {
 async function runMigrations(): Promise<void> {
   console.log('[STARTUP] Stage 2: Running migrations...');
   
+  // IMPORTANT: Use .js extension for Node.js ESM compatibility in production builds
+  // In development, tsx handles extensionless imports, but compiled JS requires explicit extensions
   const migrations = [
-    { name: 'Core tables', module: './migrations/createCoreTables', fn: 'createCoreTables' },
-    { name: 'Sub-Agent tables', module: './migrations/createSubAgentTables', fn: 'createSubAgentTables' },
-    { name: 'Token Metrics tables', module: './migrations/createTokenMetrics', fn: 'createTokenMetricsTables' },
-    { name: 'Device Rate Limit tables', module: './migrations/createDeviceRateLimitTables', fn: 'createDeviceRateLimitTables' },
-    { name: 'Petition tables', module: './migrations/createPetitionTables', fn: 'createPetitionTables' },
-    { name: 'Public Evidence tables', module: './migrations/createPublicEvidenceTables', fn: 'createPublicEvidenceTables' },
-    { name: 'Complaint Routing tables', module: './migrations/createComplaintRoutingTables', fn: 'createComplaintRoutingTables' },
-    { name: 'FOIA Routing tables', module: './migrations/createFOIARoutingTables', fn: 'createFOIARoutingTables' },
+    { name: 'Core tables', module: './migrations/createCoreTables.js', fn: 'createCoreTables' },
+    { name: 'Sub-Agent tables', module: './migrations/createSubAgentTables.js', fn: 'createSubAgentTables' },
+    { name: 'Token Metrics tables', module: './migrations/createTokenMetrics.js', fn: 'createTokenMetricsTables' },
+    { name: 'Device Rate Limit tables', module: './migrations/createDeviceRateLimitTables.js', fn: 'createDeviceRateLimitTables' },
+    { name: 'Petition tables', module: './migrations/createPetitionTables.js', fn: 'createPetitionTables' },
+    { name: 'Public Evidence tables', module: './migrations/createPublicEvidenceTables.js', fn: 'createPublicEvidenceTables' },
+    { name: 'Complaint Routing tables', module: './migrations/createComplaintRoutingTables.js', fn: 'createComplaintRoutingTables' },
+    { name: 'FOIA Routing tables', module: './migrations/createFOIARoutingTables.js', fn: 'createFOIARoutingTables' },
   ];
 
   for (const migration of migrations) {

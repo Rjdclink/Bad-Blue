@@ -232,5 +232,107 @@
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/stock_images/cartoon_mechanic_wor_678db703.jpg"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:12.995Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:20.977Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:21.003Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:21.136Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/queryClient.ts"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:21.171Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/react.js"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:21.265Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/use-toast.ts"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:21.274Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/utils.ts"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:21.356Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/stock_images/cartoon_mechanic_wor_678db703.jpg"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:21.439Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-E6PNPDKY.js"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:21.576Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-CVIRTCS4.js"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:21.851Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:22.017Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/landing.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:22.616Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-43G6IMPT.js"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:22.719Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-4RO2SXZU.js"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:22.760Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:22.843Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T08:16:23.003Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
   }
 ]
