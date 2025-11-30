@@ -88,7 +88,6 @@ class BadBlueWorker {
   private databaseHeartbeatInterval: NodeJS.Timeout | null = null;
   private criticalMonitoringInterval: NodeJS.Timeout | null = null;
   private pruneLogsInterval: NodeJS.Timeout | null = null;
-  private autonomousInterval: NodeJS.Timeout | null = null;
 
   private isRepairInProgress = false;
   private isDiagnosticInProgress = false;
@@ -199,7 +198,6 @@ class BadBlueWorker {
     }
 
     if (dataDirOk) this.schedulePruneLogs();
-    this.startAutonomousImprovements(); // Internal autonomous loop
 
     console.log('[BadBlue Worker] ✓ Active');
     console.log(`[BadBlue Worker] Gemini model: ${this.getPreferredGeminiModel()}`);
@@ -215,7 +213,6 @@ class BadBlueWorker {
       if (this.databaseHeartbeatInterval) clearInterval(this.databaseHeartbeatInterval);
       if (this.criticalMonitoringInterval) clearInterval(this.criticalMonitoringInterval);
       if (this.pruneLogsInterval) clearInterval(this.pruneLogsInterval);
-      if (this.autonomousInterval) clearInterval(this.autonomousInterval);
 
       const start = Date.now();
       while ((this.isDiagnosticInProgress || this.isRepairInProgress) && Date.now() - start < 5000) {
