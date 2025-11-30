@@ -1,0 +1,1001 @@
+2025-11-30T18:55:20.712176025Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T18:55:20.712180802Z [err]    params: [ 'gemini', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T18:55:20.712186302Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T18:55:20.713954579Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T18:55:20.713963293Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T18:55:20.713966435Z [err]      where: undefined,
+2025-11-30T18:55:20.713970284Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T18:55:20.713979853Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T18:55:20.713981050Z [err]      schema: undefined,
+2025-11-30T18:55:20.713986731Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T18:55:20.713989735Z [err]      table: undefined,
+2025-11-30T18:55:20.713994023Z [err]        at async Promise.all (index 0)
+2025-11-30T18:55:20.713998375Z [err]      column: undefined,
+2025-11-30T18:55:20.714005249Z [err]      dataType: undefined,
+2025-11-30T18:55:20.714005770Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T18:55:20.714013928Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T18:55:20.714015159Z [err]      constraint: undefined,
+2025-11-30T18:55:20.714019798Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T18:55:20.714025073Z [err]      length: 127,
+2025-11-30T18:55:20.714031465Z [err]      severity: 'FATAL',
+2025-11-30T18:55:20.714039378Z [err]      code: 'XX000',
+2025-11-30T18:55:20.714059089Z [err]      detail: undefined,
+2025-11-30T18:55:20.714068087Z [err]      hint: undefined,
+2025-11-30T18:55:20.714073779Z [err]      position: undefined,
+2025-11-30T18:55:20.714079379Z [err]      internalPosition: undefined,
+2025-11-30T18:55:20.714084501Z [err]      internalQuery: undefined,
+2025-11-30T18:55:20.715979210Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T18:55:20.715986104Z [err]      file: undefined,
+2025-11-30T18:55:20.715995781Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T18:55:20.716000284Z [err]      line: undefined,
+2025-11-30T18:55:20.716008731Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T18:55:20.716011004Z [err]      routine: undefined
+2025-11-30T18:55:20.716022738Z [err]    }
+2025-11-30T18:55:20.716023292Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T18:55:20.716032453Z [err]  }
+2025-11-30T18:55:20.716036438Z [err]    params: [ 'claude', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T18:55:20.716044081Z [err]  [Token Metrics] Error getting today usage: DrizzleQueryError: Failed query: select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)
+2025-11-30T18:55:20.716052317Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T18:55:20.716054793Z [err]  params: claude,2025-11-30T00:00:00.000Z
+2025-11-30T18:55:20.716063289Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T18:55:20.716067178Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T18:55:20.716075230Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T18:55:20.716083549Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T18:55:20.716090015Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T18:55:20.717777814Z [err]      code: 'XX000',
+2025-11-30T18:55:20.717786349Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T18:55:20.717786714Z [err]      detail: undefined,
+2025-11-30T18:55:20.717794828Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T18:55:20.717797517Z [err]      hint: undefined,
+2025-11-30T18:55:20.717801973Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T18:55:20.717805720Z [err]      position: undefined,
+2025-11-30T18:55:20.717808641Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T18:55:20.717813592Z [err]      internalPosition: undefined,
+2025-11-30T18:55:20.717814981Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T18:55:20.717822511Z [err]      internalQuery: undefined,
+2025-11-30T18:55:20.717823038Z [err]        at async Promise.all (index 3)
+2025-11-30T18:55:20.717830734Z [err]      where: undefined,
+2025-11-30T18:55:20.717833014Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T18:55:20.717840349Z [err]      schema: undefined,
+2025-11-30T18:55:20.717840987Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T18:55:20.717847751Z [err]      table: undefined,
+2025-11-30T18:55:20.717850794Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T18:55:20.717856149Z [err]      column: undefined,
+2025-11-30T18:55:20.717859322Z [err]      length: 127,
+2025-11-30T18:55:20.717864060Z [err]      dataType: undefined,
+2025-11-30T18:55:20.717867169Z [err]      severity: 'FATAL',
+2025-11-30T18:55:20.717871478Z [err]      constraint: undefined,
+2025-11-30T18:55:20.719313642Z [err]      file: undefined,
+2025-11-30T18:55:20.719321087Z [err]      line: undefined,
+2025-11-30T18:55:20.719325087Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T18:55:20.719326188Z [err]      routine: undefined
+2025-11-30T18:55:20.719330864Z [err]    }
+2025-11-30T18:55:20.719335179Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T18:55:20.719337004Z [err]  }
+2025-11-30T18:55:20.719343251Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T18:55:20.719344311Z [err]    params: [ 'mistral', 'worker', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T18:55:20.719350510Z [err]  params: mistral,worker,2025-11-30T00:00:00.000Z
+2025-11-30T18:55:20.719352931Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T18:55:20.719356784Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T18:55:20.719361935Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T18:55:20.719366991Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T18:55:20.719372392Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T18:55:20.719377098Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T18:55:20.719382069Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T18:55:20.721941887Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T18:55:20.721954492Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T18:55:20.721960682Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T18:55:20.721979543Z [err]      detail: undefined,
+2025-11-30T18:55:20.721996210Z [err]      hint: undefined,
+2025-11-30T18:55:20.722003995Z [err]      position: undefined,
+2025-11-30T18:55:20.722010892Z [err]      internalPosition: undefined,
+2025-11-30T18:55:20.722014820Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T18:55:20.722022976Z [err]      internalQuery: undefined,
+2025-11-30T18:55:20.722035165Z [err]      where: undefined,
+2025-11-30T18:55:20.722035735Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T18:55:20.722047373Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T18:55:20.722053485Z [err]        at async Promise.all (index 9)
+2025-11-30T18:55:20.722059690Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T18:55:20.722066470Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T18:55:20.722068158Z [err]      schema: undefined,
+2025-11-30T18:55:20.722075916Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T18:55:20.722081355Z [err]      table: undefined,
+2025-11-30T18:55:20.722086806Z [err]      length: 127,
+2025-11-30T18:55:20.722091451Z [err]      column: undefined,
+2025-11-30T18:55:20.722098440Z [err]      severity: 'FATAL',
+2025-11-30T18:55:20.722105180Z [err]      code: 'XX000',
+2025-11-30T18:55:20.725131866Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T18:55:20.725146756Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T18:55:20.725151694Z [err]      dataType: undefined,
+2025-11-30T18:55:20.725154514Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T18:55:20.725161473Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T18:55:20.725167057Z [err]      constraint: undefined,
+2025-11-30T18:55:20.725168843Z [err]    params: [ 'mistral', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T18:55:20.725175389Z [err]      file: undefined,
+2025-11-30T18:55:20.725182617Z [err]      line: undefined,
+2025-11-30T18:55:20.725199850Z [err]      routine: undefined
+2025-11-30T18:55:20.725207151Z [err]    }
+2025-11-30T18:55:20.725213913Z [err]  }
+2025-11-30T18:55:20.725221417Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T18:55:20.725228649Z [err]  params: mistral,user,2025-11-30T00:00:00.000Z
+2025-11-30T18:55:20.725237419Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T18:55:20.725243491Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T18:55:20.725249336Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T18:55:20.725255792Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T18:55:20.727603194Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T18:55:20.727610492Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T18:55:20.727617366Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T18:55:20.727625383Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T18:55:20.727633382Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T18:55:20.727640752Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T18:55:20.727647567Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T18:55:20.727652913Z [err]        at async Promise.all (index 6)
+2025-11-30T18:55:20.727658736Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T18:55:20.727663805Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T18:55:20.727669721Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T18:55:20.727676505Z [err]      length: 127,
+2025-11-30T18:55:20.727683628Z [err]      severity: 'FATAL',
+2025-11-30T18:55:20.727688956Z [err]      code: 'XX000',
+2025-11-30T18:55:20.727694349Z [err]      detail: undefined,
+2025-11-30T18:55:20.727699737Z [err]      hint: undefined,
+2025-11-30T18:55:20.727706901Z [err]      position: undefined,
+2025-11-30T18:55:20.727712167Z [err]      internalPosition: undefined,
+2025-11-30T18:55:20.727717707Z [err]      internalQuery: undefined,
+2025-11-30T18:55:20.727735463Z [err]      where: undefined,
+2025-11-30T18:55:20.727742240Z [err]      schema: undefined,
+2025-11-30T18:55:20.728994324Z [err]      table: undefined,
+2025-11-30T18:55:20.728997293Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T18:55:20.729002315Z [err]      column: undefined,
+2025-11-30T18:55:20.729006984Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T18:55:20.729009462Z [err]      dataType: undefined,
+2025-11-30T18:55:20.729015959Z [err]      constraint: undefined,
+2025-11-30T18:55:20.729020025Z [err]      file: undefined,
+2025-11-30T18:55:20.729024081Z [err]      line: undefined,
+2025-11-30T18:55:20.729028521Z [err]      routine: undefined
+2025-11-30T18:55:20.729030981Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T18:55:20.729034675Z [err]    }
+2025-11-30T18:55:20.729040639Z [err]  }
+2025-11-30T18:55:20.729042939Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T18:55:20.729045854Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T18:55:20.729052644Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T18:55:20.729052954Z [err]  params: groq,user,2025-11-30T00:00:00.000Z
+2025-11-30T18:55:20.729061748Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T18:55:20.729062733Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T18:55:20.729067664Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T18:55:20.730960513Z [err]      detail: undefined,
+2025-11-30T18:55:20.730967612Z [err]    params: [ 'groq', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T18:55:20.730974613Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T18:55:20.730976714Z [err]      hint: undefined,
+2025-11-30T18:55:20.730981036Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T18:55:20.730984255Z [err]      position: undefined,
+2025-11-30T18:55:20.730990037Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T18:55:20.730992588Z [err]      internalPosition: undefined,
+2025-11-30T18:55:20.731002015Z [err]      internalQuery: undefined,
+2025-11-30T18:55:20.731003267Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T18:55:20.731003483Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T18:55:20.731010263Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T18:55:20.731019162Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T18:55:20.731022102Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T18:55:20.731027883Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T18:55:20.731037914Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T18:55:20.731038055Z [err]        at async Promise.all (index 5)
+2025-11-30T18:55:20.731048007Z [err]      length: 127,
+2025-11-30T18:55:20.731056694Z [err]      severity: 'FATAL',
+2025-11-30T18:55:20.731066079Z [err]      code: 'XX000',
+2025-11-30T18:55:20.732797348Z [err]      where: undefined,
+2025-11-30T18:55:20.732803432Z [err]      schema: undefined,
+2025-11-30T18:55:20.732809982Z [err]      table: undefined,
+2025-11-30T18:55:20.732816176Z [err]      column: undefined,
+2025-11-30T18:55:20.732821720Z [err]      dataType: undefined,
+2025-11-30T18:55:20.732826911Z [err]      constraint: undefined,
+2025-11-30T18:55:20.732832652Z [err]      file: undefined,
+2025-11-30T18:55:20.732838339Z [err]      line: undefined,
+2025-11-30T18:55:20.732843466Z [err]      routine: undefined
+2025-11-30T18:55:20.732849145Z [err]    }
+2025-11-30T18:55:20.732854617Z [err]  }
+2025-11-30T19:14:24.658711124Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:14:24.658719379Z [err]  params: gemini,user,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.658726626Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.658733736Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.658738957Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.658744871Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.658750668Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.658756852Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.658762835Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.658768233Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:14:24.658773440Z [err]    params: [ 'gemini', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.658778463Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.658784717Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.658790739Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.662479684Z [err]      schema: undefined,
+2025-11-30T19:14:24.662487736Z [err]      table: undefined,
+2025-11-30T19:14:24.662493565Z [err]      column: undefined,
+2025-11-30T19:14:24.662498687Z [err]      dataType: undefined,
+2025-11-30T19:14:24.662505950Z [err]      constraint: undefined,
+2025-11-30T19:14:24.662510995Z [err]      file: undefined,
+2025-11-30T19:14:24.662528463Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.662544467Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.662553660Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.662585394Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:14:24.662593163Z [err]        at async Promise.all (index 4)
+2025-11-30T19:14:24.662602101Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.662610083Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.662618506Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.662626860Z [err]      length: 127,
+2025-11-30T19:14:24.662634933Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.662644064Z [err]      code: 'XX000',
+2025-11-30T19:14:24.662652473Z [err]      detail: undefined,
+2025-11-30T19:14:24.662660778Z [err]      hint: undefined,
+2025-11-30T19:14:24.662668100Z [err]      position: undefined,
+2025-11-30T19:14:24.662675906Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.662683262Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.662690608Z [err]      where: undefined,
+2025-11-30T19:14:24.664374174Z [err]      line: undefined,
+2025-11-30T19:14:24.664380375Z [err]      routine: undefined
+2025-11-30T19:14:24.664386507Z [err]    }
+2025-11-30T19:14:24.664392855Z [err]  }
+2025-11-30T19:14:24.664398638Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:14:24.664404303Z [err]  params: claude,worker,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.664409693Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.664415329Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.664422092Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.664428196Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.664434686Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.664441764Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.664447795Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.664453670Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:14:24.664459719Z [err]    params: [ 'claude', 'worker', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.664465546Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.675591759Z [err]      hint: undefined,
+2025-11-30T19:14:24.675603888Z [err]      position: undefined,
+2025-11-30T19:14:24.675610231Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.675614914Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.675620154Z [err]      where: undefined,
+2025-11-30T19:14:24.675626051Z [err]      schema: undefined,
+2025-11-30T19:14:24.675631531Z [err]      table: undefined,
+2025-11-30T19:14:24.675636074Z [err]      column: undefined,
+2025-11-30T19:14:24.675645311Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.675661703Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.675671724Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.675680020Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.675686616Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.675693618Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:14:24.675700795Z [err]        at async Promise.all (index 10)
+2025-11-30T19:14:24.675707553Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.675718272Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.675730081Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.675735919Z [err]      length: 127,
+2025-11-30T19:14:24.675741019Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.675746151Z [err]      code: 'XX000',
+2025-11-30T19:14:24.675752620Z [err]      detail: undefined,
+2025-11-30T19:14:24.679700658Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.679711529Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.679718346Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.679720981Z [err]      dataType: undefined,
+2025-11-30T19:14:24.679724390Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:14:24.679729709Z [err]    params: [ 'groq', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.679736476Z [err]      constraint: undefined,
+2025-11-30T19:14:24.679745074Z [err]      file: undefined,
+2025-11-30T19:14:24.679752560Z [err]      line: undefined,
+2025-11-30T19:14:24.679759935Z [err]      routine: undefined
+2025-11-30T19:14:24.679767575Z [err]    }
+2025-11-30T19:14:24.679775365Z [err]  }
+2025-11-30T19:14:24.679782226Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:14:24.679798260Z [err]  params: groq,user,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.679805225Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.679812096Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.679819112Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.679826477Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.683155067Z [err]      schema: undefined,
+2025-11-30T19:14:24.683162034Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.683173427Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.683182233Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.683188758Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.683194617Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.683200750Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.683207369Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:14:24.683213316Z [err]        at async Promise.all (index 5)
+2025-11-30T19:14:24.683218996Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.683228490Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.683236239Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.683242547Z [err]      length: 127,
+2025-11-30T19:14:24.683248321Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.683275381Z [err]      code: 'XX000',
+2025-11-30T19:14:24.683281997Z [err]      detail: undefined,
+2025-11-30T19:14:24.683288116Z [err]      hint: undefined,
+2025-11-30T19:14:24.683296503Z [err]      position: undefined,
+2025-11-30T19:14:24.683302488Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.683308031Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.683316457Z [err]      where: undefined,
+2025-11-30T19:14:24.686290372Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.686301307Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.686308364Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.686309650Z [err]      table: undefined,
+2025-11-30T19:14:24.686316436Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.686321230Z [err]      column: undefined,
+2025-11-30T19:14:24.686325408Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:14:24.686328560Z [err]      dataType: undefined,
+2025-11-30T19:14:24.686334597Z [err]      constraint: undefined,
+2025-11-30T19:14:24.686340451Z [err]      file: undefined,
+2025-11-30T19:14:24.686346188Z [err]      line: undefined,
+2025-11-30T19:14:24.686351524Z [err]      routine: undefined
+2025-11-30T19:14:24.686357803Z [err]    }
+2025-11-30T19:14:24.686366320Z [err]  }
+2025-11-30T19:14:24.686372061Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:14:24.686377289Z [err]  params: claude,user,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.686382889Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.686388291Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.686393516Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.689945983Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.689947729Z [err]    params: [ 'claude', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.689957498Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.689963169Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.689968613Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.689973591Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.689978849Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.689983523Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.689988216Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:14:24.689993974Z [err]        at async Promise.all (index 7)
+2025-11-30T19:14:24.690000396Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.690005577Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.690010480Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.690015073Z [err]      length: 127,
+2025-11-30T19:14:24.690019134Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.690024113Z [err]      code: 'XX000',
+2025-11-30T19:14:24.690028602Z [err]      detail: undefined,
+2025-11-30T19:14:24.690033337Z [err]      hint: undefined,
+2025-11-30T19:14:24.690038001Z [err]      position: undefined,
+2025-11-30T19:14:24.690043786Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.692982266Z [err]      where: undefined,
+2025-11-30T19:14:24.692987471Z [err]      schema: undefined,
+2025-11-30T19:14:24.692991829Z [err]      table: undefined,
+2025-11-30T19:14:24.692996098Z [err]      column: undefined,
+2025-11-30T19:14:24.693002452Z [err]      dataType: undefined,
+2025-11-30T19:14:24.693007920Z [err]      constraint: undefined,
+2025-11-30T19:14:24.693012167Z [err]      file: undefined,
+2025-11-30T19:14:24.693016377Z [err]      line: undefined,
+2025-11-30T19:14:24.693020824Z [err]      routine: undefined
+2025-11-30T19:14:24.693024898Z [err]    }
+2025-11-30T19:14:24.693029663Z [err]  }
+2025-11-30T19:14:24.693034056Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:14:24.693038502Z [err]  params: groq,worker,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.693044064Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.693048068Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.693052596Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.693057172Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.693061186Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.693068632Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.693073142Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.693077892Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:14:24.695902702Z [err]    params: [ 'groq', 'worker', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.695909012Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.695913913Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.695919118Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.695924514Z [err]      length: 127,
+2025-11-30T19:14:24.695926568Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.695931699Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.695936903Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.695938508Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.695942043Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:14:24.695947702Z [err]      code: 'XX000',
+2025-11-30T19:14:24.695949524Z [err]        at async Promise.all (index 8)
+2025-11-30T19:14:24.695954808Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.695959376Z [err]      detail: undefined,
+2025-11-30T19:14:24.695960526Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.695965808Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.695966513Z [err]      hint: undefined,
+2025-11-30T19:14:24.695972117Z [err]      position: undefined,
+2025-11-30T19:14:24.695977126Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.695982099Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.698483861Z [err]      routine: undefined
+2025-11-30T19:14:24.698494362Z [err]    }
+2025-11-30T19:14:24.698501574Z [err]  }
+2025-11-30T19:14:24.698508255Z [err]  [Token Metrics] Error getting today usage: DrizzleQueryError: Failed query: select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)
+2025-11-30T19:14:24.698515744Z [err]  params: groq,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.698522592Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.698534820Z [err]      where: undefined,
+2025-11-30T19:14:24.698536015Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.698543699Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.698545065Z [err]      schema: undefined,
+2025-11-30T19:14:24.698551588Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.698552448Z [err]      table: undefined,
+2025-11-30T19:14:24.698583948Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.698586044Z [err]      column: undefined,
+2025-11-30T19:14:24.698591663Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.698594013Z [err]      dataType: undefined,
+2025-11-30T19:14:24.698598368Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.698601293Z [err]      constraint: undefined,
+2025-11-30T19:14:24.698605086Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T19:14:24.698608700Z [err]      file: undefined,
+2025-11-30T19:14:24.698615982Z [err]      line: undefined,
+2025-11-30T19:14:24.701594989Z [err]    params: [ 'groq', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.701604067Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.701606152Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T19:14:24.701611279Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.701617663Z [err]        at async Promise.all (index 1)
+2025-11-30T19:14:24.701619337Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.701625029Z [err]      hint: undefined,
+2025-11-30T19:14:24.701626360Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.701627994Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.701635885Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.701639299Z [err]      position: undefined,
+2025-11-30T19:14:24.701639911Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.701644006Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.701647801Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.701648676Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.701653047Z [err]      length: 127,
+2025-11-30T19:14:24.701655006Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.701660138Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.701680208Z [err]      code: 'XX000',
+2025-11-30T19:14:24.701687251Z [err]      detail: undefined,
+2025-11-30T19:14:24.704815927Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.704824316Z [err]      where: undefined,
+2025-11-30T19:14:24.704826123Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.704834276Z [err]      schema: undefined,
+2025-11-30T19:14:24.704834472Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.704842543Z [err]      table: undefined,
+2025-11-30T19:14:24.704843007Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.704850232Z [err]      column: undefined,
+2025-11-30T19:14:24.704850760Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.704858631Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.704861098Z [err]      dataType: undefined,
+2025-11-30T19:14:24.704866531Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:14:24.704869089Z [err]      constraint: undefined,
+2025-11-30T19:14:24.704875227Z [err]      file: undefined,
+2025-11-30T19:14:24.704881368Z [err]      line: undefined,
+2025-11-30T19:14:24.704887124Z [err]      routine: undefined
+2025-11-30T19:14:24.704893064Z [err]    }
+2025-11-30T19:14:24.704898743Z [err]  }
+2025-11-30T19:14:24.704903678Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:14:24.704909893Z [err]  params: mistral,user,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.704916231Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.708175328Z [err]    params: [ 'mistral', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.708188356Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.708196657Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.708204075Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.708211050Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.708218530Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.708227469Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.708234819Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:14:24.708241521Z [err]        at async Promise.all (index 6)
+2025-11-30T19:14:24.708248400Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.708254064Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.708258996Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.708264402Z [err]      length: 127,
+2025-11-30T19:14:24.708270087Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.708276676Z [err]      code: 'XX000',
+2025-11-30T19:14:24.708282054Z [err]      detail: undefined,
+2025-11-30T19:14:24.708288048Z [err]      hint: undefined,
+2025-11-30T19:14:24.708294564Z [err]      position: undefined,
+2025-11-30T19:14:24.708300585Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.708322018Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.712338692Z [err]      where: undefined,
+2025-11-30T19:14:24.712351353Z [err]      schema: undefined,
+2025-11-30T19:14:24.712362445Z [err]      table: undefined,
+2025-11-30T19:14:24.712369485Z [err]      column: undefined,
+2025-11-30T19:14:24.712377064Z [err]      dataType: undefined,
+2025-11-30T19:14:24.712384822Z [err]      constraint: undefined,
+2025-11-30T19:14:24.712391604Z [err]      file: undefined,
+2025-11-30T19:14:24.712399079Z [err]      line: undefined,
+2025-11-30T19:14:24.712406506Z [err]      routine: undefined
+2025-11-30T19:14:24.712414679Z [err]    }
+2025-11-30T19:14:24.712422038Z [err]  }
+2025-11-30T19:14:24.712428541Z [err]  [Token Metrics] Error getting today usage: DrizzleQueryError: Failed query: select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)
+2025-11-30T19:14:24.712434983Z [err]  params: claude,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.712441282Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.712447936Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.712454522Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.712460198Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.712465498Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.712470899Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.712475808Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.712481191Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T19:14:24.716144619Z [err]    params: [ 'claude', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.716175880Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.716183894Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.716190322Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.716196379Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.716202727Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.716209328Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.716215246Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T19:14:24.716221165Z [err]        at async Promise.all (index 3)
+2025-11-30T19:14:24.716227031Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.716233208Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.716239582Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.716245419Z [err]      length: 127,
+2025-11-30T19:14:24.716250887Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.716256416Z [err]      code: 'XX000',
+2025-11-30T19:14:24.716262166Z [err]      detail: undefined,
+2025-11-30T19:14:24.716269582Z [err]      hint: undefined,
+2025-11-30T19:14:24.716276577Z [err]      position: undefined,
+2025-11-30T19:14:24.716299819Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.716308328Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.720207563Z [err]      line: undefined,
+2025-11-30T19:14:24.720224750Z [err]      routine: undefined
+2025-11-30T19:14:24.720235024Z [err]    }
+2025-11-30T19:14:24.720243668Z [err]  }
+2025-11-30T19:14:24.720251445Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:14:24.720259146Z [err]  params: mistral,worker,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.720267302Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.720276920Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.720283374Z [err]      where: undefined,
+2025-11-30T19:14:24.720289658Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.720295544Z [err]      schema: undefined,
+2025-11-30T19:14:24.720300733Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.720308048Z [err]      table: undefined,
+2025-11-30T19:14:24.720312552Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.720321220Z [err]      column: undefined,
+2025-11-30T19:14:24.720325082Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.720333496Z [err]      dataType: undefined,
+2025-11-30T19:14:24.720334877Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.720346320Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:14:24.720347231Z [err]      constraint: undefined,
+2025-11-30T19:14:24.720355460Z [err]      file: undefined,
+2025-11-30T19:14:24.723282746Z [err]    params: [ 'mistral', 'worker', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.723289364Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.723294189Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.723301378Z [err]      code: 'XX000',
+2025-11-30T19:14:24.723304188Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.723309657Z [err]      detail: undefined,
+2025-11-30T19:14:24.723316965Z [err]      hint: undefined,
+2025-11-30T19:14:24.723317852Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.723325146Z [err]      position: undefined,
+2025-11-30T19:14:24.723327291Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.723332648Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.723335401Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.723340613Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.723342045Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.723346898Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:14:24.723351384Z [err]        at async Promise.all (index 9)
+2025-11-30T19:14:24.723358098Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.723370505Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.723374803Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.723378992Z [err]      length: 127,
+2025-11-30T19:14:24.726666557Z [err]      where: undefined,
+2025-11-30T19:14:24.726679339Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.726680111Z [err]      schema: undefined,
+2025-11-30T19:14:24.726689644Z [err]      table: undefined,
+2025-11-30T19:14:24.726700340Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.726701983Z [err]      column: undefined,
+2025-11-30T19:14:24.726714238Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.726714583Z [err]      dataType: undefined,
+2025-11-30T19:14:24.726728127Z [err]      constraint: undefined,
+2025-11-30T19:14:24.726728201Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.726740033Z [err]      file: undefined,
+2025-11-30T19:14:24.726749666Z [err]      line: undefined,
+2025-11-30T19:14:24.726751284Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T19:14:24.726757369Z [err]      routine: undefined
+2025-11-30T19:14:24.726764578Z [err]    }
+2025-11-30T19:14:24.726771519Z [err]  }
+2025-11-30T19:14:24.726777584Z [err]  [Token Metrics] Error getting today usage: DrizzleQueryError: Failed query: select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)
+2025-11-30T19:14:24.726784056Z [err]  params: mistral,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.726790524Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.726796789Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.726803493Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.730493951Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.730506769Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.730509790Z [err]      detail: undefined,
+2025-11-30T19:14:24.730517537Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.730525022Z [err]      hint: undefined,
+2025-11-30T19:14:24.730528576Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.730533307Z [err]      position: undefined,
+2025-11-30T19:14:24.730541223Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.730543627Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.730549998Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.730581192Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.730589673Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T19:14:24.730596871Z [err]        at async Promise.all (index 2)
+2025-11-30T19:14:24.730603418Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.730610155Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.730617304Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.730625074Z [err]      length: 127,
+2025-11-30T19:14:24.730632591Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.730642745Z [err]      code: 'XX000',
+2025-11-30T19:14:24.730745681Z [err]    params: [ 'mistral', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.734084709Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:14:24.734096501Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:14:24.734105354Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:14:24.734113640Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T19:14:24.734186360Z [err]      where: undefined,
+2025-11-30T19:14:24.734192826Z [err]      schema: undefined,
+2025-11-30T19:14:24.734198680Z [err]      table: undefined,
+2025-11-30T19:14:24.734204083Z [err]      column: undefined,
+2025-11-30T19:14:24.734209677Z [err]      dataType: undefined,
+2025-11-30T19:14:24.734215863Z [err]      constraint: undefined,
+2025-11-30T19:14:24.734222171Z [err]      file: undefined,
+2025-11-30T19:14:24.734228133Z [err]      line: undefined,
+2025-11-30T19:14:24.734234043Z [err]      routine: undefined
+2025-11-30T19:14:24.734240986Z [err]    }
+2025-11-30T19:14:24.734247844Z [err]  }
+2025-11-30T19:14:24.734253590Z [err]  [Token Metrics] Error getting today usage: DrizzleQueryError: Failed query: select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)
+2025-11-30T19:14:24.734258173Z [err]  params: gemini,2025-11-30T00:00:00.000Z
+2025-11-30T19:14:24.734262570Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:14:24.734267397Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.734271159Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.734275739Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:14:24.736784904Z [err]    params: [ 'gemini', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:14:24.736795048Z [err]    cause: error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size
+2025-11-30T19:14:24.736801332Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:14:24.736811630Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:14:24.736817015Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:14:24.736823117Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:14:24.736828655Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:14:24.736834280Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T19:14:24.736839741Z [err]        at async Promise.all (index 0)
+2025-11-30T19:14:24.736846428Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:14:24.736852737Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:14:24.736858996Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:14:24.736865479Z [err]      length: 127,
+2025-11-30T19:14:24.736870845Z [err]      severity: 'FATAL',
+2025-11-30T19:14:24.736876145Z [err]      code: 'XX000',
+2025-11-30T19:14:24.736881164Z [err]      detail: undefined,
+2025-11-30T19:14:24.736886869Z [err]      hint: undefined,
+2025-11-30T19:14:24.736942588Z [err]      position: undefined,
+2025-11-30T19:14:24.736947931Z [err]      internalPosition: undefined,
+2025-11-30T19:14:24.736953712Z [err]      internalQuery: undefined,
+2025-11-30T19:14:24.740957767Z [err]      where: undefined,
+2025-11-30T19:14:24.740967164Z [err]      schema: undefined,
+2025-11-30T19:14:24.740973064Z [err]      table: undefined,
+2025-11-30T19:14:24.740978198Z [err]      column: undefined,
+2025-11-30T19:14:24.740982521Z [err]      dataType: undefined,
+2025-11-30T19:14:24.740988061Z [err]      constraint: undefined,
+2025-11-30T19:14:24.740993223Z [err]      file: undefined,
+2025-11-30T19:14:24.740999480Z [err]      line: undefined,
+2025-11-30T19:14:24.741006132Z [err]      routine: undefined
+2025-11-30T19:14:24.741012918Z [err]    }
+2025-11-30T19:14:24.741019472Z [err]  }
+2025-11-30T19:15:14.936166389Z [err]    "userId": null,
+2025-11-30T19:15:14.936174672Z [err]    "error": {
+2025-11-30T19:15:14.936181372Z [err]      "message": "MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size",
+2025-11-30T19:15:14.936191981Z [err]      "stack": "error: MaxClientsInSessionMode: max clients reached - in Session mode max clients are limited to pool_size\n    at /app/node_modules/pg-pool/index.js:45:11\n    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)\n    at async PGStore._asyncQuery (/app/node_modules/connect-pg-simple/index.js:322:21)",
+2025-11-30T19:15:14.936198513Z [err]  [ERROR] {
+2025-11-30T19:15:14.936202317Z [err]      "statusCode": 500,
+2025-11-30T19:15:14.936209574Z [err]    "timestamp": "2025-11-30T19:15:11.649Z",
+2025-11-30T19:15:14.936218200Z [err]    "method": "GET",
+2025-11-30T19:15:14.936223106Z [err]      "isOperational": false
+2025-11-30T19:15:14.936225342Z [err]    "path": "/",
+2025-11-30T19:15:14.936231263Z [err]    "ip": "172.68.88.226",
+2025-11-30T19:15:14.936237029Z [err]    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+2025-11-30T19:15:14.941426232Z [err]    }
+2025-11-30T19:15:14.941435793Z [err]  }
+2025-11-30T19:15:34.927854656Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:15:34.927874635Z [err]  params: mistral,worker,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.927882516Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.927889366Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.927896657Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.927899913Z [err]    params: [ 'mistral', 'worker', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.927905177Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.927914945Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.927922046Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.927931066Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.927937655Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:15:34.927959340Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.927965272Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.927971061Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.927976470Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.932438479Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.932445015Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.932451782Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:15:34.932458498Z [err]        at async Promise.all (index 9)
+2025-11-30T19:15:34.932464879Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.932470943Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.932477226Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.932484306Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.932491066Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.932496882Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.932502940Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.932509429Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.932516231Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.932522792Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.932529305Z [err]    }
+2025-11-30T19:15:34.932539481Z [err]  }
+2025-11-30T19:15:34.932547129Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:15:34.932551868Z [err]  params: groq,worker,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.935930017Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.935940810Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.935947195Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.935953598Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.935959924Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.935968131Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.935976793Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.935983023Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:15:34.935990015Z [err]    params: [ 'groq', 'worker', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.935996478Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.936002869Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.936009199Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.936015263Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.936022892Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.936028759Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.936034884Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:15:34.938340902Z [err]        at async Promise.all (index 8)
+2025-11-30T19:15:34.938350764Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.938357777Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.938364669Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.938371113Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.938378631Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.938384960Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.938391001Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.938396629Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.938403269Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.938409618Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.938417938Z [err]    }
+2025-11-30T19:15:34.938758866Z [err]  }
+2025-11-30T19:15:34.938766238Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:15:34.938771269Z [err]  params: claude,user,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.938775758Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.938780361Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.938785387Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.940714049Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.940722361Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.940727385Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.940732287Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.940736951Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:15:34.940742516Z [err]    params: [ 'claude', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.940747381Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.940751529Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.940759323Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.940764018Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.940769662Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.940776083Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.940782205Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:15:34.940788125Z [err]        at async Promise.all (index 7)
+2025-11-30T19:15:34.940794055Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.940802038Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.942716029Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.942726842Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.942733362Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.942740865Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.942747960Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.942755735Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.942762279Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.942769297Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.942776404Z [err]    }
+2025-11-30T19:15:34.942784105Z [err]  }
+2025-11-30T19:15:34.942791382Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:15:34.942798221Z [err]  params: mistral,user,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.942807722Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.942817962Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.942824742Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.942831745Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.942838515Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.942845493Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.945196790Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.945199586Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.945205859Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:15:34.945209225Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:15:34.945213975Z [err]    params: [ 'mistral', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.945218055Z [err]        at async Promise.all (index 6)
+2025-11-30T19:15:34.945222441Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.945226304Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.945230934Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.945238202Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.945239837Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.945247382Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.945247902Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.945256486Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.945256797Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.945263689Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.947108312Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.947116286Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.947121719Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.947130474Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.947136584Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.947142277Z [err]    }
+2025-11-30T19:15:34.947147285Z [err]  }
+2025-11-30T19:15:34.947152355Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:15:34.947157068Z [err]  params: groq,user,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.947162632Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.947167366Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.947196120Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.947201163Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.947205698Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.947210570Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.947215778Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.947222039Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:15:34.950160330Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.950170732Z [err]        at async Promise.all (index 5)
+2025-11-30T19:15:34.950171993Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.950183481Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.950184542Z [err]    params: [ 'groq', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.950193210Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.950193312Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.950200828Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.950202888Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.950208787Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.950211517Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.950217516Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.950220535Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.950225434Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.950229256Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.950233624Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.950237549Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.950243082Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:15:34.952368230Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.952370015Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:15:34.952378478Z [err]    }
+2025-11-30T19:15:34.952378515Z [err]    params: [ 'gemini', 'user', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.952384379Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.952387231Z [err]  }
+2025-11-30T19:15:34.952389956Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.952394362Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:15:34.952402181Z [err]  params: gemini,user,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.952408744Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.952415060Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.952421510Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.952427382Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.952434010Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.952440118Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.952446381Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.955037672Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.955045300Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.955049114Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.955052947Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.955058978Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.955060813Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.955064899Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:15:34.955069561Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.955070928Z [err]        at async Promise.all (index 4)
+2025-11-30T19:15:34.955076800Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.955078390Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.955081760Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.955086621Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.955087535Z [err]    }
+2025-11-30T19:15:34.955096503Z [err]  }
+2025-11-30T19:15:34.955096701Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.955104765Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.955105362Z [err]  [Token Metrics] Error getting today usage: DrizzleQueryError: Failed query: select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)
+2025-11-30T19:15:34.955111143Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.957942395Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.957947911Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.957953115Z [err]  params: claude,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.957955285Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.957962118Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.957962620Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.957969960Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.957970427Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T19:15:34.957975053Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.957979363Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.957984138Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.957988847Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.957993354Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.957997359Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T19:15:34.958003491Z [err]    params: [ 'claude', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.958008458Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.958014326Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.960346667Z [err]        at async Promise.all (index 3)
+2025-11-30T19:15:34.960356393Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.960363285Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.960368632Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.960372947Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.960377502Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.960382054Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.960390297Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.960397205Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.960404573Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.960410612Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.960416581Z [err]    }
+2025-11-30T19:15:34.960422521Z [err]  }
+2025-11-30T19:15:34.960430540Z [err]  [Token Metrics] Error getting today usage: DrizzleQueryError: Failed query: select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)
+2025-11-30T19:15:34.960436776Z [err]  params: mistral,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.960443996Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.960449767Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.960456374Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.962459674Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.962460278Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.962469083Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T19:15:34.962471366Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.962475676Z [err]        at async Promise.all (index 2)
+2025-11-30T19:15:34.962480705Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.962484685Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.962490244Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.962493418Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.962499655Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T19:15:34.962500210Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.962508510Z [err]    params: [ 'mistral', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.962515329Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.962521618Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.962527653Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.962534320Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.962540876Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.964136160Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.964142315Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.964145183Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.964150728Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.964151151Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.964157429Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.964157493Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.964163990Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.964164063Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.964169933Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.964173275Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.964176732Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.964182149Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.964185176Z [err]    }
+2025-11-30T19:15:34.964190330Z [err]  }
+2025-11-30T19:15:34.964190734Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.964195097Z [err]  [Token Metrics] Error getting today usage: DrizzleQueryError: Failed query: select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)
+2025-11-30T19:15:34.964199533Z [err]  params: groq,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.966308734Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.966310238Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T19:15:34.966316500Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.966320783Z [err]    params: [ 'groq', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.966322148Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.966328480Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.966330983Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T19:15:34.966337446Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.966337618Z [err]        at async Promise.all (index 1)
+2025-11-30T19:15:34.966346488Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.966347782Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.966353635Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.966355142Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.966359941Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.966363103Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.966365731Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.966370371Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.969102002Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.969109796Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.969114945Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.969119818Z [err]    }
+2025-11-30T19:15:34.969124211Z [err]  }
+2025-11-30T19:15:34.969129787Z [err]  [Token Metrics] Error getting today usage: DrizzleQueryError: Failed query: select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)
+2025-11-30T19:15:34.969134034Z [err]  params: gemini,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.969138710Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.969143225Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.969148046Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.969156193Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.969161381Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.969166074Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.969171364Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.969176206Z [err]    query: 'select SUM("tokens_used")::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."timestamp" >= $2)',
+2025-11-30T19:15:34.969181505Z [err]    params: [ 'gemini', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.969186412Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.971477217Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.971479039Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.971487562Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.971488410Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.971496666Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.971498006Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.971503919Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.971506190Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.971511744Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.971513701Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.971521011Z [err]        at async getTodayUsage (file:///app/dist/index.js:4033:21)
+2025-11-30T19:15:34.971522368Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.971528638Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.971534062Z [err]        at async Promise.all (index 0)
+2025-11-30T19:15:34.971536589Z [err]    }
+2025-11-30T19:15:34.971541298Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.971544824Z [err]  }
+2025-11-30T19:15:34.971548425Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.971554064Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.974041560Z [err]    params: [ 'claude', 'worker', '2025-11-30T00:00:00.000Z' ],
+2025-11-30T19:15:34.974049478Z [err]  [Token Metrics] Error getting today usage by source: DrizzleQueryError: Failed query: select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)
+2025-11-30T19:15:34.974050948Z [err]    cause: Error: Connection terminated due to connection timeout
+2025-11-30T19:15:34.974056883Z [err]        at /app/node_modules/pg-pool/index.js:45:11
+2025-11-30T19:15:34.974061756Z [err]  params: claude,worker,2025-11-30T00:00:00.000Z
+2025-11-30T19:15:34.974062694Z [err]        at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.974068304Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:124:18
+2025-11-30T19:15:34.974070763Z [err]      at NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:41:15)
+2025-11-30T19:15:34.974087149Z [err]      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2025-11-30T19:15:34.974093424Z [err]      at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.974101858Z [err]      ... 4 lines matching cause stack trace ...
+2025-11-30T19:15:34.974107733Z [err]      at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28)
+2025-11-30T19:15:34.974113339Z [err]      at async _SearchSessionManager.computeCurrentDelay (file:///app/dist/index.js:9068:26)
+2025-11-30T19:15:34.974119881Z [err]      at async _SearchSessionManager.checkAndUpdateSession (file:///app/dist/index.js:9101:23) {
+2025-11-30T19:15:34.974126011Z [err]    query: 'select COALESCE(SUM("tokens_used"), 0)::int, COUNT(*)::int from "ai_usage_metrics" where ("ai_usage_metrics"."provider" = $1 and "ai_usage_metrics"."source" = $2 and "ai_usage_metrics"."timestamp" >= $3)',
+2025-11-30T19:15:34.976549760Z [err]        at async NodePgPreparedQuery.queryWithCache (file:///app/node_modules/drizzle-orm/pg-core/session.js:39:16)
+2025-11-30T19:15:34.976560467Z [err]        at async file:///app/node_modules/drizzle-orm/node-postgres/session.js:117:22
+2025-11-30T19:15:34.976563764Z [err]  }
+2025-11-30T19:15:34.976568967Z [err]        at async getTodayUsageBySource (file:///app/dist/index.js:4056:21)
+2025-11-30T19:15:34.976576341Z [err]        at async Promise.all (index 10)
+2025-11-30T19:15:34.976579032Z [err]      [cause]: Error: Connection terminated unexpectedly
+2025-11-30T19:15:34.976584475Z [err]        at async _AITokenGovernorEnhanced.getQuotaStatus (file:///app/dist/index.js:4208:15)
+2025-11-30T19:15:34.976589252Z [err]          at Connection.<anonymous> (/app/node_modules/pg/lib/client.js:136:73)
+2025-11-30T19:15:34.976593021Z [err]        at async _AITokenGovernorEnhanced.getProviderRateProfiles (file:///app/dist/index.js:4723:31)
+2025-11-30T19:15:34.976596234Z [err]          at Object.onceWrapper (node:events:631:28)
+2025-11-30T19:15:34.976601121Z [err]        at async _AITokenGovernorEnhanced.computeAdaptiveSearchDelay (file:///app/dist/index.js:4817:28) {
+2025-11-30T19:15:34.976602649Z [err]          at Connection.emit (node:events:517:28)
+2025-11-30T19:15:34.976607659Z [err]          at Socket.<anonymous> (/app/node_modules/pg/lib/connection.js:62:12)
+2025-11-30T19:15:34.976613193Z [err]          at Socket.emit (node:events:529:35)
+2025-11-30T19:15:34.976620548Z [err]          at TCP.<anonymous> (node:net:350:12)
+2025-11-30T19:15:34.976625464Z [err]    }

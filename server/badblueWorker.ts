@@ -3,6 +3,7 @@ import path from 'path';
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 import { searchTechnicalGuidance, isWebSearchAvailable } from './webSearchService';
+import { callAIWithGovernor, processSubAgentCommand, searchTechnicalFix } from './aiSubAgent';
 const exec = promisify(execCb);
 // Severity levels
 export enum Severity {
@@ -63,6 +64,21 @@ export interface FunctionErrorLogEntry {
   notes?: string;
 }
 
+interface CategorySuccessRate {
+  total: number;
+  successful: number;
+  rate: number;
+}
+
+interface MttrReport {
+  overallMttrMs: number;
+  mttrByCategory: { [key: string]: number };
+  successRateByCategory: { [key: string]: CategorySuccessRate };
+  mttrTrendDirection: 'improving' | 'worsening' | 'stable';
+  trendPercentChange: number;
+  lastUpdated: string;
+}
+
 interface RepairMetrics {
   queueLatency: number[];
   meanTimeToResolution: number[];
@@ -71,6 +87,9 @@ interface RepairMetrics {
   repairSuccessRate: number;
   totalRepairs: number;
   successfulRepairs: number;
+  mttrByCategory: { [key: string]: number[] };
+  successRateByCategory: { [key: string]: CategorySuccessRate };
+  mttrTrend: number[];
 }
 
 interface ConcurrencyBudget {
@@ -118,7 +137,12 @@ class BadBlueWorker {
     repairSuccessRate: 0,
     totalRepairs: 0,
     successfulRepairs: 0,
+    mttrByCategory: {},
+    successRateByCategory: {},
+    mttrTrend: [],
   };
+
+  private readonly MTTR_TREND_LIMIT = 50;
 
   private readonly DATA_DIR = path.join(process.cwd(), 'data');
   private readonly FAILURE_LOG = path.join(this.DATA_DIR, 'system_failures.log');
@@ -420,6 +444,9 @@ class BadBlueWorker {
         this.repairMetrics.queueLatency.reduce((a, b) => a + b, 0) / Math.max(1, this.repairMetrics.queueLatency.length);
       const avgResolution =
         this.repairMetrics.meanTimeToResolution.reduce((a, b) => a + b, 0) / Math.max(1, this.repairMetrics.meanTimeToResolution.length);
+      
+      const mttrReport = this.getMttrReport();
+      
       const metrics = {
         timestamp: new Date().toISOString(),
         averageQueueLatencyMs: avgLatency || 0,
@@ -430,6 +457,12 @@ class BadBlueWorker {
         concurrentTaskCount: this.repairMetrics.concurrentTaskCount,
         resourceUtilization: await this.getSystemResources(),
         queueLength: this.repairQueue.length,
+        mttrByCategory: this.repairMetrics.mttrByCategory,
+        successRateByCategory: this.repairMetrics.successRateByCategory,
+        mttrTrend: this.repairMetrics.mttrTrend,
+        overallMttrMs: mttrReport.overallMttrMs,
+        mttrTrendDirection: mttrReport.mttrTrendDirection,
+        mttrTrendPercentChange: mttrReport.trendPercentChange,
       };
       await fs.writeFile(this.METRICS_LOG, JSON.stringify(metrics, null, 2));
     } catch (e) {
@@ -445,7 +478,25 @@ class BadBlueWorker {
         this.repairMetrics.totalRepairs = data.totalRepairs;
         this.repairMetrics.successfulRepairs = data.successfulRepairs || 0;
         this.repairMetrics.repairSuccessRate = data.successRate || 0;
+        
+        if (data.mttrByCategory && typeof data.mttrByCategory === 'object') {
+          this.repairMetrics.mttrByCategory = data.mttrByCategory;
+        }
+        if (data.successRateByCategory && typeof data.successRateByCategory === 'object') {
+          this.repairMetrics.successRateByCategory = data.successRateByCategory;
+        }
+        if (Array.isArray(data.mttrTrend)) {
+          this.repairMetrics.mttrTrend = data.mttrTrend.slice(-this.MTTR_TREND_LIMIT);
+        }
+        
+        const categoriesTracked = Object.keys(this.repairMetrics.mttrByCategory).length;
+        const trendSamples = this.repairMetrics.mttrTrend.length;
+        
         console.log(`[BadBlue Worker] Restored metrics: ${data.totalRepairs} total repairs, ${data.successRate?.toFixed(1) || 0}% success rate`);
+        console.log(`[MTTR] Restored ${categoriesTracked} category metrics, ${trendSamples} trend samples`);
+        if (data.mttrTrendDirection) {
+          console.log(`[MTTR] Last trend direction: ${data.mttrTrendDirection} (${data.mttrTrendPercentChange?.toFixed(1) || 0}% change)`);
+        }
       }
     } catch (e: any) {
       if (e.code !== 'ENOENT') {
@@ -848,60 +899,239 @@ class BadBlueWorker {
   }
 
   private async executeRepair(issue: FailureLogEntry) {
+    const repairStartTime = Date.now();
     const _analysis = this.performLocalAnalysis(issue);
     let success = false;
+    let aiRemediationAttempted = false;
+    let aiRemediationResult: { success: boolean; plan?: string; error?: string } = { success: false };
 
     const fn = issue.functionAffected.toLowerCase();
+    const category = issue.category || IssueCategory.INFRASTRUCTURE;
+
     try {
-      if (fn.includes('database') && issue.systemState === 'not_working') {
-        const guidance = await this.lookupTechnicalGuidance(
-          issue.cause || 'database connection failed',
-          'postgresql nodejs'
-        );
-        if (guidance.hasGuidance) {
-          console.log('[BadBlue Worker] Database repair guidance found:', guidance.suggestions[0]);
+      aiRemediationResult = await this.attemptAIRemediation(issue, fn, category);
+      aiRemediationAttempted = true;
+      
+      if (aiRemediationResult.success && aiRemediationResult.plan) {
+        console.log(`[AI Remediation] AI analysis successful for: ${issue.functionAffected}`);
+        console.log(`[AI Remediation] Suggested plan: ${aiRemediationResult.plan.substring(0, 200)}...`);
+        
+        success = await this.executeAIRemediationPlan(issue, aiRemediationResult.plan);
+        
+        if (success) {
+          console.log(`[AI Remediation] Successfully remediated: ${issue.functionAffected}`);
+        } else {
+          console.log(`[AI Remediation] AI plan execution failed, falling back to manual repair`);
         }
-        success = await this.repairDatabaseConnection();
-      } else if (fn.includes('code quality')) {
-        const hasTsc = await this.commandExists('tsc');
-        if (hasTsc) {
-          const guidance = await this.lookupTechnicalGuidance(
-            issue.cause || 'typescript compilation error',
-            'typescript tsc'
-          );
-          if (guidance.hasGuidance) {
-            console.log('[BadBlue Worker] TypeScript fix guidance:', guidance.suggestions[0]);
-          }
-          await exec('npx tsc --noEmit --pretty false 2>&1 || true');
-        }
-        success = false;
-      } else if (fn.includes('env') || fn.includes('secret')) {
-        success = false;
-      } else if (issue.cause) {
-        const guidance = await this.lookupTechnicalGuidance(
-          issue.cause,
-          'nodejs express'
-        );
-        if (guidance.hasGuidance) {
-          console.log('[BadBlue Worker] General fix guidance:', guidance.suggestions[0]);
-        }
-        success = false;
-      } else {
-        success = false;
+      } else if (aiRemediationResult.error) {
+        console.log(`[AI Remediation] AI analysis failed: ${aiRemediationResult.error}, falling back to manual repair`);
       }
-    } catch {
-      success = false;
+    } catch (aiError: any) {
+      console.warn(`[AI Remediation] AI remediation error (will not break repair): ${aiError?.message || aiError}`);
     }
 
+    if (!success) {
+      try {
+        if (fn.includes('database') && issue.systemState === 'not_working') {
+          const guidance = await this.lookupTechnicalGuidance(
+            issue.cause || 'database connection failed',
+            'postgresql nodejs'
+          );
+          if (guidance.hasGuidance) {
+            console.log('[BadBlue Worker] Database repair guidance found:', guidance.suggestions[0]);
+          }
+          success = await this.repairDatabaseConnection();
+        } else if (fn.includes('code quality')) {
+          const hasTsc = await this.commandExists('tsc');
+          if (hasTsc) {
+            const guidance = await this.lookupTechnicalGuidance(
+              issue.cause || 'typescript compilation error',
+              'typescript tsc'
+            );
+            if (guidance.hasGuidance) {
+              console.log('[BadBlue Worker] TypeScript fix guidance:', guidance.suggestions[0]);
+            }
+            await exec('npx tsc --noEmit --pretty false 2>&1 || true');
+          }
+          success = false;
+        } else if (fn.includes('env') || fn.includes('secret')) {
+          success = false;
+        } else if (issue.cause) {
+          const guidance = await this.lookupTechnicalGuidance(
+            issue.cause,
+            'nodejs express'
+          );
+          if (guidance.hasGuidance) {
+            console.log('[BadBlue Worker] General fix guidance:', guidance.suggestions[0]);
+          }
+          success = false;
+        } else {
+          success = false;
+        }
+      } catch {
+        success = false;
+      }
+    }
+
+    const resolutionTimeMs = Date.now() - repairStartTime;
+    
     this.repairMetrics.totalRepairs++;
     if (success) {
       await this.markFailureResolved(issue);
       this.repairMetrics.successfulRepairs++;
-      // Remove resolved item from repair queue and persist
       await this.removeFromRepairQueue(issue);
     }
     this.repairMetrics.repairSuccessRate =
       (this.repairMetrics.successfulRepairs / Math.max(1, this.repairMetrics.totalRepairs)) * 100;
+    
+    this.updateMttrMetrics(category, resolutionTimeMs, success);
+
+    await this.logAIRemediationAttempt({
+      timestamp: new Date().toISOString(),
+      functionAffected: issue.functionAffected,
+      cause: issue.cause,
+      category: category,
+      aiAttempted: aiRemediationAttempted,
+      aiSuccess: aiRemediationResult.success,
+      overallSuccess: success,
+      aiPlan: aiRemediationResult.plan?.substring(0, 500),
+      aiError: aiRemediationResult.error,
+    });
+  }
+
+  private async attemptAIRemediation(
+    issue: FailureLogEntry,
+    functionName: string,
+    category: IssueCategory
+  ): Promise<{ success: boolean; plan?: string; error?: string }> {
+    try {
+      console.log(`[AI Remediation] Analyzing issue: ${issue.functionAffected} - ${issue.cause || 'No cause specified'}`);
+
+      const analysisPrompt = `Analyze this system issue and provide a remediation plan:
+Issue: ${issue.functionAffected}
+Cause: ${issue.cause || 'Unknown'}
+Category: ${category}
+Severity: ${Severity[issue.severity]}
+System State: ${issue.systemState}
+
+Context: Node.js/TypeScript backend, PostgreSQL/Supabase database, Express server, React frontend.
+
+Provide:
+1. Root cause analysis
+2. Step-by-step remediation plan
+3. Verification steps
+4. Risk assessment
+
+Be specific and actionable. Focus on automated fixes that can be executed programmatically.`;
+
+      const aiResponse = await callAIWithGovernor(
+        'worker-remediation-analysis',
+        analysisPrompt,
+        { temperature: 0.3 }
+      );
+
+      if (!aiResponse.success) {
+        return { success: false, error: aiResponse.error || 'AI analysis failed' };
+      }
+
+      if (aiResponse.content && aiResponse.content.length > 50) {
+        return { success: true, plan: aiResponse.content };
+      }
+
+      const subAgentResult = await processSubAgentCommand({
+        command: `fix issue: ${issue.functionAffected} - ${issue.cause || 'system error'}`,
+        category: 'repair',
+      });
+
+      if (subAgentResult.success && subAgentResult.response) {
+        return { success: true, plan: subAgentResult.response };
+      }
+
+      return { success: false, error: 'AI did not provide a valid remediation plan' };
+
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'AI remediation analysis failed' };
+    }
+  }
+
+  private async executeAIRemediationPlan(issue: FailureLogEntry, plan: string): Promise<boolean> {
+    const fn = issue.functionAffected.toLowerCase();
+    
+    try {
+      console.log(`[AI Remediation] Executing plan for: ${issue.functionAffected}`);
+
+      if (fn.includes('database') && issue.systemState === 'not_working') {
+        console.log('[AI Remediation] AI-guided database repair initiated');
+        const dbRepairSuccess = await this.repairDatabaseConnection();
+        if (dbRepairSuccess) {
+          console.log('[AI Remediation] Database connection restored successfully');
+          return true;
+        }
+      }
+
+      if (fn.includes('package') || fn.includes('dependency')) {
+        console.log('[AI Remediation] AI-guided package repair initiated');
+        const packageMatch = plan.match(/npm install ([a-zA-Z0-9@/-]+)/i);
+        if (packageMatch) {
+          try {
+            await exec(`npm install ${packageMatch[1]} --no-audit --no-fund`, { timeout: 60000 });
+            console.log(`[AI Remediation] Successfully installed package: ${packageMatch[1]}`);
+            return true;
+          } catch (e: any) {
+            console.warn(`[AI Remediation] Package installation failed: ${e.message}`);
+          }
+        }
+      }
+
+      if (fn.includes('configuration') || fn.includes('config')) {
+        console.log('[AI Remediation] Configuration issue detected - AI guidance logged for manual review');
+        return false;
+      }
+
+      if (fn.includes('code quality') || fn.includes('typescript') || fn.includes('lsp')) {
+        console.log('[AI Remediation] Code quality issue - running TypeScript check');
+        const hasTsc = await this.commandExists('tsc');
+        if (hasTsc) {
+          await exec('npx tsc --noEmit --pretty false 2>&1 || true');
+        }
+        return false;
+      }
+
+      console.log('[AI Remediation] No automated action available - AI guidance logged for manual review');
+      return false;
+
+    } catch (e: any) {
+      console.warn(`[AI Remediation] Plan execution error: ${e?.message || e}`);
+      return false;
+    }
+  }
+
+  private async logAIRemediationAttempt(entry: {
+    timestamp: string;
+    functionAffected: string;
+    cause: string | undefined;
+    category: IssueCategory;
+    aiAttempted: boolean;
+    aiSuccess: boolean;
+    overallSuccess: boolean;
+    aiPlan?: string;
+    aiError?: string;
+  }): Promise<void> {
+    try {
+      const logPath = path.join(this.DATA_DIR, 'ai_remediation_log.json');
+      let logs: any[] = [];
+      try {
+        const content = await fs.readFile(logPath, 'utf-8');
+        logs = JSON.parse(content);
+      } catch {
+        logs = [];
+      }
+      logs.push(entry);
+      if (logs.length > 500) logs = logs.slice(-500);
+      await fs.writeFile(logPath, JSON.stringify(logs, null, 2));
+    } catch (e) {
+      console.warn('[AI Remediation] Failed to log remediation attempt:', (e as any)?.message || e);
+    }
   }
 
   private async removeFromRepairQueue(issue: FailureLogEntry): Promise<void> {
@@ -912,6 +1142,97 @@ class BadBlueWorker {
       this.repairQueue.splice(idx, 1);
       await this.persistRepairQueue();
     }
+  }
+
+  private updateMttrMetrics(category: IssueCategory, resolutionTimeMs: number, wasSuccessful: boolean): void {
+    const categoryKey = category.toString();
+    
+    if (!this.repairMetrics.mttrByCategory[categoryKey]) {
+      this.repairMetrics.mttrByCategory[categoryKey] = [];
+    }
+    this.repairMetrics.mttrByCategory[categoryKey].push(resolutionTimeMs);
+    if (this.repairMetrics.mttrByCategory[categoryKey].length > this.MTTR_TREND_LIMIT) {
+      this.repairMetrics.mttrByCategory[categoryKey] = 
+        this.repairMetrics.mttrByCategory[categoryKey].slice(-this.MTTR_TREND_LIMIT);
+    }
+    
+    if (!this.repairMetrics.successRateByCategory[categoryKey]) {
+      this.repairMetrics.successRateByCategory[categoryKey] = { total: 0, successful: 0, rate: 0 };
+    }
+    this.repairMetrics.successRateByCategory[categoryKey].total++;
+    if (wasSuccessful) {
+      this.repairMetrics.successRateByCategory[categoryKey].successful++;
+    }
+    this.repairMetrics.successRateByCategory[categoryKey].rate = 
+      (this.repairMetrics.successRateByCategory[categoryKey].successful / 
+       Math.max(1, this.repairMetrics.successRateByCategory[categoryKey].total)) * 100;
+    
+    this.repairMetrics.mttrTrend.push(resolutionTimeMs);
+    if (this.repairMetrics.mttrTrend.length > this.MTTR_TREND_LIMIT) {
+      this.repairMetrics.mttrTrend = this.repairMetrics.mttrTrend.slice(-this.MTTR_TREND_LIMIT);
+    }
+    
+    const avgMttr = this.repairMetrics.mttrTrend.reduce((a, b) => a + b, 0) / 
+      Math.max(1, this.repairMetrics.mttrTrend.length);
+    const categoryAvgMttr = this.repairMetrics.mttrByCategory[categoryKey].reduce((a, b) => a + b, 0) / 
+      Math.max(1, this.repairMetrics.mttrByCategory[categoryKey].length);
+    const successRate = this.repairMetrics.successRateByCategory[categoryKey].rate;
+    
+    console.log(`[MTTR] Updated metrics for category ${categoryKey}:`);
+    console.log(`[MTTR]   Resolution time: ${resolutionTimeMs}ms, Success: ${wasSuccessful}`);
+    console.log(`[MTTR]   Category MTTR avg: ${categoryAvgMttr.toFixed(0)}ms, Category success rate: ${successRate.toFixed(1)}%`);
+    console.log(`[MTTR]   Overall MTTR avg: ${avgMttr.toFixed(0)}ms, Trend samples: ${this.repairMetrics.mttrTrend.length}`);
+  }
+
+  getMttrReport(): MttrReport {
+    const overallMttr = this.repairMetrics.mttrTrend.length > 0
+      ? this.repairMetrics.mttrTrend.reduce((a, b) => a + b, 0) / this.repairMetrics.mttrTrend.length
+      : 0;
+    
+    const mttrByCategory: { [key: string]: number } = {};
+    for (const [category, times] of Object.entries(this.repairMetrics.mttrByCategory)) {
+      if (times.length > 0) {
+        mttrByCategory[category] = times.reduce((a, b) => a + b, 0) / times.length;
+      }
+    }
+    
+    let trendDirection: 'improving' | 'worsening' | 'stable' = 'stable';
+    let trendPercentChange = 0;
+    
+    if (this.repairMetrics.mttrTrend.length >= 10) {
+      const halfPoint = Math.floor(this.repairMetrics.mttrTrend.length / 2);
+      const firstHalf = this.repairMetrics.mttrTrend.slice(0, halfPoint);
+      const secondHalf = this.repairMetrics.mttrTrend.slice(halfPoint);
+      
+      const firstHalfAvg = firstHalf.reduce((a, b) => a + b, 0) / Math.max(1, firstHalf.length);
+      const secondHalfAvg = secondHalf.reduce((a, b) => a + b, 0) / Math.max(1, secondHalf.length);
+      
+      if (firstHalfAvg > 0) {
+        trendPercentChange = ((secondHalfAvg - firstHalfAvg) / firstHalfAvg) * 100;
+        
+        if (trendPercentChange < -10) {
+          trendDirection = 'improving';
+        } else if (trendPercentChange > 10) {
+          trendDirection = 'worsening';
+        }
+      }
+    }
+    
+    const report: MttrReport = {
+      overallMttrMs: overallMttr,
+      mttrByCategory,
+      successRateByCategory: { ...this.repairMetrics.successRateByCategory },
+      mttrTrendDirection: trendDirection,
+      trendPercentChange,
+      lastUpdated: new Date().toISOString(),
+    };
+    
+    console.log(`[MTTR] Report generated:`);
+    console.log(`[MTTR]   Overall MTTR: ${overallMttr.toFixed(0)}ms`);
+    console.log(`[MTTR]   Trend: ${trendDirection} (${trendPercentChange.toFixed(1)}% change)`);
+    console.log(`[MTTR]   Categories tracked: ${Object.keys(mttrByCategory).length}`);
+    
+    return report;
   }
 
   private async saveMetrics() {

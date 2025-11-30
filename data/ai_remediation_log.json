@@ -1,0 +1,392 @@
+[
+  {
+    "timestamp": "2025-11-30T19:14:05.481Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:14:05.486Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:14:15.081Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:14:15.345Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:14:15.593Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:14:16.160Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:14:26.161Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:14:50.948Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:14:51.070Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:01.617Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:01.651Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:11.064Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:11.168Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:11.696Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:12.311Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:22.255Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:22.291Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:46.248Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:46.412Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:56.925Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:15:56.934Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:06.577Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:06.607Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:06.723Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:17.313Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:17.379Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:17.613Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:24.242Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:24.502Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:35.035Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:35.233Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:44.858Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:44.947Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:45.044Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:45.616Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:55.555Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:16:55.733Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:17:19.727Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  },
+  {
+    "timestamp": "2025-11-30T19:17:20.088Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+  }
+]

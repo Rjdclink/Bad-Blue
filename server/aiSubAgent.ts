@@ -25,6 +25,9 @@ import {
 } from './aiProvider';
 import { unifiedSearch, searchOfficerRecords, searchTechnicalGuidance, isWebSearchAvailable } from './webSearchService';
 import { searchOfficerInformation } from './officerSearch';
+import { callGemini as callGeminiService, isGeminiAvailable, isGeminiRateLimited, GeminiRateLimitError } from './gemini';
+import { callMistral, isMistralAvailable } from './mistral';
+import { isGroqAvailable, generateGroqStructuredResponse } from './groq';
 
 const SUBAGENT_DATA_DIR = path.join(process.cwd(), 'data', 'subagent');
 const COMMAND_LOG = path.join(SUBAGENT_DATA_DIR, 'commands.log');
@@ -157,6 +160,276 @@ async function fetchWithFallback(url: string, options?: any): Promise<any> {
     if (typeof f === 'function') return f(url, options);
   } catch {}
   throw new Error('No fetch implementation available');
+}
+
+/**
+ * AI Provider Fallback Result
+ */
+export interface AIFallbackResult {
+  success: boolean;
+  content?: string;
+  provider?: 'gemini' | 'groq' | 'mistral';
+  error?: string;
+  fallbackChain?: string[];
+}
+
+/**
+ * Options for AI fallback calls
+ */
+export interface AIFallbackOptions {
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+  preferredProvider?: 'gemini' | 'groq' | 'mistral';
+  useJSON?: boolean;
+  taskName?: string;
+}
+
+/**
+ * Check if an error indicates a rate limit or server error that should trigger fallback
+ */
+function shouldFallbackOnError(error: any): boolean {
+  const msg = (error?.message || String(error)).toLowerCase();
+  return (
+    error instanceof GeminiRateLimitError ||
+    msg.includes('429') ||
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('too many requests') ||
+    msg.includes('500') ||
+    msg.includes('502') ||
+    msg.includes('503') ||
+    msg.includes('504') ||
+    msg.includes('internal server error') ||
+    msg.includes('service unavailable') ||
+    msg.includes('bad gateway') ||
+    msg.includes('timeout')
+  );
+}
+
+/**
+ * Call Groq API for fallback
+ */
+async function callGroqFallback(
+  prompt: string,
+  options: AIFallbackOptions
+): Promise<string> {
+  const systemPrompt = options.systemPrompt || '';
+  const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
+  
+  const jsonInstruction = options.useJSON 
+    ? '\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations, just raw JSON.'
+    : '';
+  
+  const response = await generateGroqStructuredResponse(
+    fullPrompt + jsonInstruction,
+    'You are a helpful AI assistant.'
+  );
+  
+  return response;
+}
+
+/**
+ * Call Mistral API for fallback
+ */
+async function callMistralFallback(
+  prompt: string,
+  options: AIFallbackOptions
+): Promise<string> {
+  const result = await callMistral(prompt, {
+    systemPrompt: options.systemPrompt,
+    temperature: options.temperature ?? 0.7,
+    maxTokens: options.maxTokens ?? 4096,
+    useJSON: options.useJSON,
+  });
+  
+  return result.content;
+}
+
+/**
+ * Primary fallback chain: Gemini → Groq → Mistral
+ * 
+ * This function implements a robust fallback strategy that:
+ * 1. Attempts Gemini first (if available and not rate-limited)
+ * 2. On 429 (rate limit) or 5xx error, switches to Groq
+ * 3. On Groq failure, switches to Mistral
+ * 4. Logs each fallback attempt with [AI Fallback] prefix
+ * 5. Returns the successful response or null only if all providers fail
+ */
+export async function callAIWithFallback(
+  prompt: string,
+  options: AIFallbackOptions = {}
+): Promise<AIFallbackResult> {
+  const fallbackChain: string[] = [];
+  const taskName = options.taskName || 'ai-fallback';
+  
+  await appendLog({ 
+    type: 'aiFallbackStart', 
+    taskName,
+    promptLength: prompt.length,
+    preferredProvider: options.preferredProvider || 'gemini'
+  });
+
+  const providers: Array<{
+    name: 'gemini' | 'groq' | 'mistral';
+    isAvailable: () => boolean;
+    call: () => Promise<string>;
+  }> = [
+    {
+      name: 'gemini',
+      isAvailable: () => isGeminiAvailable() && !isGeminiRateLimited(),
+      call: async () => {
+        return await callGeminiService(prompt, {
+          systemPrompt: options.systemPrompt,
+          temperature: options.temperature ?? 0.7,
+          maxTokens: options.maxTokens,
+          useJSON: options.useJSON,
+        }, options.maxTokens || 8192);
+      }
+    },
+    {
+      name: 'groq',
+      isAvailable: () => isGroqAvailable(),
+      call: async () => callGroqFallback(prompt, options)
+    },
+    {
+      name: 'mistral',
+      isAvailable: () => isMistralAvailable(),
+      call: async () => callMistralFallback(prompt, options)
+    }
+  ];
+
+  // Reorder based on preferred provider
+  if (options.preferredProvider && options.preferredProvider !== 'gemini') {
+    const preferredIdx = providers.findIndex(p => p.name === options.preferredProvider);
+    if (preferredIdx > 0) {
+      const preferred = providers.splice(preferredIdx, 1)[0];
+      providers.unshift(preferred);
+    }
+  }
+
+  let lastError: Error | null = null;
+
+  for (const provider of providers) {
+    // Check if provider is available
+    if (!provider.isAvailable()) {
+      const reason = provider.name === 'gemini' 
+        ? (isGeminiRateLimited() ? 'rate-limited' : 'not configured')
+        : 'not configured';
+      console.log(`[AI Fallback] Skipping ${provider.name}: ${reason}`);
+      fallbackChain.push(`${provider.name}:skipped(${reason})`);
+      continue;
+    }
+
+    try {
+      console.log(`[AI Fallback] Attempting ${provider.name}...`);
+      const startTime = Date.now();
+      const content = await provider.call();
+      const latencyMs = Date.now() - startTime;
+
+      console.log(`[AI Fallback] Success with ${provider.name} (${latencyMs}ms)`);
+      fallbackChain.push(`${provider.name}:success`);
+
+      await appendLog({
+        type: 'aiFallbackSuccess',
+        taskName,
+        provider: provider.name,
+        latencyMs,
+        fallbackChain
+      });
+
+      await trackUsage({
+        action: 'ai_fallback_call',
+        provider: provider.name,
+        success: true,
+        latencyMs,
+        tokens: Math.floor((prompt.length + (content?.length || 0)) / 4)
+      });
+
+      return {
+        success: true,
+        content,
+        provider: provider.name,
+        fallbackChain
+      };
+    } catch (error: any) {
+      const errorMsg = error?.message || String(error);
+      console.warn(`[AI Fallback] ${provider.name} failed: ${errorMsg}`);
+      fallbackChain.push(`${provider.name}:failed(${errorMsg.substring(0, 50)})`);
+      lastError = error;
+
+      await appendLog({
+        type: 'aiFallbackProviderError',
+        taskName,
+        provider: provider.name,
+        error: errorMsg.substring(0, 200),
+        shouldRetryWithNextProvider: shouldFallbackOnError(error)
+      });
+
+      // If it's not a fallback-worthy error (e.g., bad request), we might still want to try next provider
+      // For now, we always continue to the next provider
+      continue;
+    }
+  }
+
+  // All providers failed
+  const errorMsg = lastError?.message || 'All AI providers failed';
+  console.error(`[AI Fallback] All providers exhausted: ${errorMsg}`);
+
+  await appendLog({
+    type: 'aiFallbackAllFailed',
+    taskName,
+    fallbackChain,
+    finalError: errorMsg.substring(0, 200)
+  });
+
+  return {
+    success: false,
+    error: errorMsg,
+    fallbackChain
+  };
+}
+
+/**
+ * Generate structured JSON with fallback chain
+ */
+export async function callAIWithFallbackJSON<T = any>(
+  prompt: string,
+  options: AIFallbackOptions = {}
+): Promise<{ success: boolean; data?: T; error?: string; provider?: string }> {
+  const result = await callAIWithFallback(prompt, { ...options, useJSON: true });
+  
+  if (!result.success || !result.content) {
+    return { success: false, error: result.error };
+  }
+
+  try {
+    let cleanJson = result.content.trim();
+    // Clean up markdown code blocks if present
+    if (cleanJson.includes('```json')) {
+      cleanJson = cleanJson.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    } else if (cleanJson.includes('```')) {
+      cleanJson = cleanJson.replace(/```\n?/g, '').trim();
+    }
+    
+    // Find JSON object boundaries
+    const firstBrace = cleanJson.indexOf('{');
+    const lastBrace = cleanJson.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
+    }
+
+    const data = JSON.parse(cleanJson) as T;
+    return { success: true, data, provider: result.provider };
+  } catch (parseError: any) {
+    console.error('[AI Fallback] JSON parse error:', parseError.message);
+    return { 
+      success: false, 
+      error: `JSON parse error: ${parseError.message}`,
+      provider: result.provider 
+    };
+  }
 }
 
 /**
@@ -587,15 +860,48 @@ export function getConfiguredGeminiModel(): string {
   return GEMINI_MODEL_CANDIDATES[0] || DEFAULT_GEMINI_MODEL;
 }
 
+/**
+ * Enhanced callGeminiAPI with automatic fallback to Groq and Mistral
+ * 
+ * This function now uses the full fallback chain when:
+ * 1. Gemini API key is not configured
+ * 2. All Gemini model candidates fail
+ * 3. Rate limits (429) or server errors (5xx) are encountered
+ */
 async function callGeminiAPI(
   prompt: string,
-  options: { maxTokens?: number; temperature?: number; allowFallback?: boolean } = {}
-) {
+  options: { maxTokens?: number; temperature?: number; allowFallback?: boolean; useFallbackChain?: boolean } = {}
+): Promise<{ success: boolean; response?: string; error?: string; modelTried?: string[]; provider?: string }> {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return { success:false, error:'GEMINI_API_KEY not configured' };
-  const { maxTokens=8192, temperature=0.7, allowFallback=true } = options;
+  const { maxTokens=8192, temperature=0.7, allowFallback=true, useFallbackChain=true } = options;
+  
+  // If Gemini is not configured or rate limited, use fallback chain immediately
+  if (!apiKey || isGeminiRateLimited()) {
+    if (!useFallbackChain) {
+      return { success: false, error: apiKey ? 'Gemini is rate limited' : 'GEMINI_API_KEY not configured' };
+    }
+    
+    console.log(`[AI Fallback] Gemini ${!apiKey ? 'not configured' : 'rate limited'}, using fallback chain`);
+    const fallbackResult = await callAIWithFallback(prompt, {
+      maxTokens,
+      temperature,
+      taskName: 'gemini-api-fallback'
+    });
+    
+    return {
+      success: fallbackResult.success,
+      response: fallbackResult.content,
+      error: fallbackResult.error,
+      provider: fallbackResult.provider,
+      modelTried: fallbackResult.fallbackChain
+    };
+  }
+  
   const tried: string[] = [];
-  const attempt = async (model: string) => {
+  let lastError: string = '';
+  let isRateLimitError = false;
+  
+  const attempt = async (model: string): Promise<{ retry: boolean; success?: boolean; response?: string; error?: string; isRateLimit?: boolean }> => {
     tried.push(model);
     try {
       const resp = await fetchWithFallback(
@@ -618,28 +924,100 @@ async function callGeminiAPI(
           })
         }
       );
+      
       if (!resp.ok) {
         const errText = await resp.text();
-        if ((resp.status === 404 || /model/i.test(errText)) && allowFallback) return { retry:true, error:`Model ${model} not found` };
-        return { retry:false, error:`Gemini API error: ${resp.status} - ${errText}` };
+        const status = resp.status;
+        
+        // Detect rate limit or server errors
+        if (status === 429 || (status >= 500 && status < 600)) {
+          console.warn(`[AI Fallback] Gemini ${model} returned ${status}: ${errText.substring(0, 100)}`);
+          return { retry: false, error: `Gemini ${status}: ${errText}`, isRateLimit: status === 429 };
+        }
+        
+        if ((status === 404 || /model/i.test(errText)) && allowFallback) {
+          return { retry: true, error: `Model ${model} not found` };
+        }
+        
+        return { retry: false, error: `Gemini API error: ${status} - ${errText}` };
       }
+      
       const data = await resp.json() as any;
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) return { retry:false, error:'No response text from Gemini' };
+      if (!text) return { retry: false, error: 'No response text from Gemini' };
+      
       activeGeminiModel = model;
-      await trackUsage({ action:'gemini_call', model, tokens: text.length/4, provider:'gemini' });
-      return { retry:false, success:true, response:text };
-    } catch (e:any) {
-      if (/model/i.test(e.message) && allowFallback) return { retry:true, error:e.message };
-      return { retry:false, error:e.message };
+      await trackUsage({ action: 'gemini_call', model, tokens: text.length/4, provider: 'gemini' });
+      return { retry: false, success: true, response: text };
+    } catch (e: any) {
+      const errorMsg = e?.message || String(e);
+      
+      // Check for rate limit indicators in error message
+      if (
+        errorMsg.includes('429') ||
+        errorMsg.toLowerCase().includes('rate limit') ||
+        errorMsg.toLowerCase().includes('quota') ||
+        errorMsg.toLowerCase().includes('resource_exhausted')
+      ) {
+        console.warn(`[AI Fallback] Gemini ${model} rate limited: ${errorMsg.substring(0, 100)}`);
+        return { retry: false, error: errorMsg, isRateLimit: true };
+      }
+      
+      if (/model/i.test(errorMsg) && allowFallback) {
+        return { retry: true, error: errorMsg };
+      }
+      
+      return { retry: false, error: errorMsg };
     }
   };
+  
+  // Try all Gemini model candidates
   for (const model of GEMINI_MODEL_CANDIDATES) {
     const r = await attempt(model);
-    if (r.success) return { success:true, response:r.response, modelTried:tried };
-    if (!r.retry) return { success:false, error:r.error, modelTried:tried };
+    if (r.success) {
+      return { success: true, response: r.response, modelTried: tried, provider: 'gemini' };
+    }
+    
+    lastError = r.error || 'Unknown error';
+    if (r.isRateLimit) isRateLimitError = true;
+    
+    if (!r.retry) break;
   }
-  return { success:false, error:`All Gemini model candidates failed: ${tried.join(', ')}`, modelTried:tried };
+  
+  // All Gemini attempts failed - use fallback chain if enabled
+  if (useFallbackChain) {
+    console.log(`[AI Fallback] All Gemini models failed (${tried.join(', ')}), trying fallback providers...`);
+    
+    const fallbackResult = await callAIWithFallback(prompt, {
+      maxTokens,
+      temperature,
+      preferredProvider: 'groq', // Skip Gemini since we already tried it
+      taskName: 'gemini-api-fallback'
+    });
+    
+    if (fallbackResult.success) {
+      return {
+        success: true,
+        response: fallbackResult.content,
+        provider: fallbackResult.provider,
+        modelTried: [...tried, ...(fallbackResult.fallbackChain || [])]
+      };
+    }
+    
+    return {
+      success: false,
+      error: `All providers failed. Gemini: ${lastError}. ${fallbackResult.error}`,
+      modelTried: [...tried, ...(fallbackResult.fallbackChain || [])]
+    };
+  }
+  
+  return { 
+    success: false, 
+    error: isRateLimitError 
+      ? `Gemini rate limited: ${lastError}` 
+      : `All Gemini model candidates failed: ${tried.join(', ')}. Error: ${lastError}`, 
+    modelTried: tried 
+  };
 }
 
 interface CommandIntent {
