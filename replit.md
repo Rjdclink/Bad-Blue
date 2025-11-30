@@ -9,6 +9,13 @@ Preferred communication style: Simple, everyday language.
 ## System Architecture
 The platform utilizes a modern web stack featuring a React 18 frontend with TypeScript, Vite, Wouter for routing, and Radix UI/shadcn/ui with Tailwind CSS for styling, adhering to Material Design and civic technology UI patterns. State management is handled by TanStack Query, and form validation uses React Hook Form with Zod. The backend is a Node.js/Express.js application providing a RESTful API, with authentication via Replit OAuth and PostgreSQL for session storage. PostgreSQL (Neon serverless) with Drizzle ORM serves as the primary database, while Replit App Storage is used for private evidence files.
 
+**PACKAGE UPDATES (Nov 30, 2025)**:
+-   **Drizzle ORM**: Updated from 0.39.3 to 0.44.7 - latest stable version with improved PostgreSQL support
+-   **Drizzle Kit**: Updated from 0.20.18 to 0.31.7 - latest schema migration tools  
+-   **Drizzle Zod**: Kept at 0.7.1 (0.8.x requires Zod v4 which would be a breaking change)
+-   **Email System**: Reconfigured to use Resend API exclusively (replaced Google Workspace SMTP)
+-   All database operations verified working with the updated packages
+
 **CRITICAL BUG FIXES (Nov 14, 2025)**:
 -   **Groq Quota Exhaustion Prevention**: Disabled autonomous data collection system that was consuming 100% of daily Groq quotas (100,000 tokens), violating the 35% limit requirement. System now prevents quota exhaustion with autonomous functions temporarily disabled pending proper token budget implementation.
 -   **Frontend Serving Fix**: Fixed critical issue where notFoundHandler middleware was catching all routes before Vite could serve the frontend, causing JSON 404 errors for all UI routes. Implemented scoped notFoundHandler only for /api routes.

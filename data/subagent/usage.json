@@ -106,5 +106,17 @@
     "action": "GET",
     "tokens": 0,
     "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T02:23:25.488Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-11-30T02:27:44.972Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
   }
 ]
