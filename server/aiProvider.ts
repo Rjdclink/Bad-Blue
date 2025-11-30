@@ -365,6 +365,48 @@ export async function searchOfficerData(
 }
 
 /**
+ * Get the correct model for a provider, validating and falling back to defaults.
+ * This ensures that if an incompatible model is passed (e.g., "gpt-4o-mini" to Mistral),
+ * the provider's default model is used instead.
+ */
+function getProviderModel(provider: AIProvider, requestedModel?: string): string {
+  const validModels: Record<AIProvider, { prefixes: string[]; default: string }> = {
+    [AIProvider.GEMINI]: {
+      prefixes: ['gemini'],
+      default: 'gemini-2.5-flash'
+    },
+    [AIProvider.GROQ]: {
+      prefixes: ['llama', 'mixtral', 'gemma'],
+      default: 'llama-3.3-70b-versatile'
+    },
+    [AIProvider.MISTRAL]: {
+      prefixes: ['mistral', 'codestral', 'pixtral', 'open-'],
+      default: 'mistral-large-latest'
+    },
+    [AIProvider.CLAUDE]: {
+      prefixes: ['claude'],
+      default: 'claude-3-5-haiku-20241022'
+    }
+  };
+
+  const providerConfig = validModels[provider];
+  if (!providerConfig) return requestedModel || '';
+
+  // If no model requested, use default
+  if (!requestedModel) return providerConfig.default;
+
+  // Check if the requested model is valid for this provider
+  const lowerModel = requestedModel.toLowerCase();
+  const isValid = providerConfig.prefixes.some(prefix => lowerModel.startsWith(prefix));
+
+  if (isValid) return requestedModel;
+
+  // Invalid model for this provider - use default and log warning
+  console.log(`[AI Provider] Model "${requestedModel}" invalid for ${provider}, using ${providerConfig.default}`);
+  return providerConfig.default;
+}
+
+/**
  * Run a single provider with provider-specific model selection.
  */
 async function runProvider(
@@ -386,19 +428,22 @@ async function runProvider(
 
   switch (provider) {
     case AIProvider.GEMINI: {
-      const text = await callGemini(prompt, { ...options, model: options.model || 'gemini-2.5-flash' }, maxTokens);
+      const model = getProviderModel(AIProvider.GEMINI, options.model);
+      const text = await callGemini(prompt, { ...options, model }, maxTokens);
       content = text;
       tokensUsed = Math.floor((prompt.length + content.length) / 4);
       break;
     }
     case AIProvider.GROQ: {
-      const text = await callGroq(prompt, { ...options, model: options.model || 'llama-3.3-70b-versatile' }, maxTokens);
+      const model = getProviderModel(AIProvider.GROQ, options.model);
+      const text = await callGroq(prompt, { ...options, model }, maxTokens);
       content = text;
       tokensUsed = Math.floor((prompt.length + content.length) / 4);
       break;
     }
     case AIProvider.MISTRAL: {
-      const mistralResult = await callMistral(prompt, { ...options, model: options.model || 'mistral-large-latest', maxTokens });
+      const model = getProviderModel(AIProvider.MISTRAL, options.model);
+      const mistralResult = await callMistral(prompt, { ...options, model, maxTokens });
       content = mistralResult.content;
       tokensUsed = mistralResult.tokensUsed ?? Math.floor((prompt.length + content.length) / 4);
       break;
@@ -406,7 +451,8 @@ async function runProvider(
     case AIProvider.CLAUDE: {
       // Choose Haiku for speed unless verbosity is detailed, then Sonnet
       const useSonnet = options.model?.includes('sonnet') || (getVerbosityInstruction('detailed') === getVerbosityInstruction(budgetVerbosity(options)));
-      const model = options.model || (useSonnet ? 'claude-3-5-sonnet-20241022' : 'claude-3-5-haiku-20241022');
+      const defaultModel = useSonnet ? 'claude-3-5-sonnet-20241022' : 'claude-3-5-haiku-20241022';
+      const model = getProviderModel(AIProvider.CLAUDE, options.model) || defaultModel;
       const claudeResult = await callClaude(prompt, { ...options, model, maxTokens });
       content = claudeResult.content;
       tokensUsed = claudeResult.tokensUsed ?? Math.floor((prompt.length + content.length) / 4);

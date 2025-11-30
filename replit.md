@@ -13,9 +13,25 @@ The platform features a React 18 frontend with TypeScript, Vite, Wouter for rout
 *   **Platform Independence**: Designed for agnostic deployment (e.g., Railway.com) using environment variables for configurations, with Railway.com as the primary deployment target.
 *   **Railway-Compatible Health Checks**: The `/api/health` endpoint returns HTTP 200 immediately when the HTTP server starts listening, allowing Railway's 30-second health check window to pass while database migrations and service initialization continue in the background. The `isReady` flag tracks HTTP availability; `isFullyInitialized` tracks complete service startup. Use `/api/ready` for strict readiness probes.
 *   **Database Configuration**: Uses Supabase PostgreSQL. `drizzle.config.ts` uses `DATABASE_URL` (for local development/testing), while runtime uses the Supabase URL for production. Schema verification is performed at startup, and `/api/schema-verify` is the canonical source of truth for table counts. All migrations use `db.execute(sql`...`)` from Drizzle ORM.
-*   **Intelligent AI Architecture**: A coordinated Gemini (primary) to Groq (fallback) system is implemented across all AI services for resilience and cost-efficiency. Smart rate limiting ensures proactive switching to Groq before user disruption.
-*   **AI Sub-Agent**: An admin-only AI Sub-Agent provides autonomous capabilities for system management, error recovery, and learning, with full application control including file, database, and service manipulation. It features an intelligent auto-repair system and a self-modification system.
-*   **BadBlue Worker System**: A robust background diagnostics and maintenance system runs continuously, performing aggressive diagnostics and repair cycles. It has architect-level analysis capabilities, web access for bug fixing, and collaborates with the Sub-Agent for critical repairs, with comprehensive security measures.
+*   **Intelligent AI Architecture**: A coordinated multi-provider AI system (Gemini → Groq → Mistral → Claude) with intelligent fallback chains. Features provider-specific model validation (`getProviderModel()`) that automatically maps invalid models to provider defaults (e.g., "gpt-4o-mini" → "mistral-large-latest" for Mistral). Smart rate limiting ensures proactive switching before user disruption.
+*   **AI Sub-Agent**: An admin-only AI Sub-Agent provides autonomous capabilities for system management, error recovery, and learning, with full application control including file, database, and service manipulation. Features:
+    - **Self-Improvement Engine Integration**: Consumes training queue from `learningData.json` every 30 minutes via `consumeTrainingQueue()` and `processLearningPattern()` methods
+    - **4-Way AI Collaboration**: Gemini → Groq → Mistral → Claude fallback with `callAIWithFallback()` function
+    - **Intelligent Auto-Repair System**: AI-assisted remediation via `attemptAIRemediation()` before manual repair fallback
+*   **BadBlue Worker System**: A robust background diagnostics and maintenance system runs continuously. Enhanced features:
+    - **Repair Queue Persistence**: Saves to `data/repair_queue.json` and restores on startup
+    - **AI-Assisted Remediation Flow**: Uses `attemptAIRemediation()` → `executeAIRemediationPlan()` before manual repairs
+    - **MTTR Segmentation**: Tracks Mean Time To Resolution per category via `updateMttrMetrics()` and `getMttrReport()`
+    - **Per-Category Success Rates**: Detailed success tracking by issue category (infrastructure, application_code, ai_service, etc.)
+    - **Metrics Persistence**: Saves every 15 minutes and on shutdown
+*   **Sub-Agent Harvester Module** (`server/subAgentHarvester.ts`): Dedicated officer data collection system with:
+    - **Daily Scheduled Harvests**: Configurable UTC time scheduling (default 3:00 UTC)
+    - **Population Priority Integration**: High (100k+) searched every 24h, Medium (25k-100k) every 72h, Low (<25k) every 168h
+    - **Failover Logging**: Structured logs to `data/subagent/harvest.log` with JSON entries
+    - **Search Session Management**: Integration with `searchSessionManager.ts` for adaptive delays
+*   **Security Hardening**:
+    - **Admin Bypass Email**: Configured via `ADMIN_BYPASS_EMAIL` environment variable (default: admin@badblue.internal)
+    - **Security Alerting**: `[SECURITY ALERT]` logging when admin bypass is used
 *   **Sub-Agent Web Harvester**: Daily automated officer data collection with web search integration, officer profile compilation, and database storage, with strict command execution limitations to read-only operations and multi-layer security.
 *   **Automated Data Cleanup System**: A privacy-focused system automatically deletes user data after 14 days post-payment and error logs after 30 days, preserving essential user information and evidence files.
 *   **Security Firewall**: A 4-layer protection system mitigates RCE vulnerabilities while preserving autonomous execution.
