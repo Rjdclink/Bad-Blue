@@ -1,18 +1,19 @@
 /**
  * Migration: Create Complaint Routing Tables
  * Creates authority_contacts_cache, complaint_routing_history, and section_1983_filings tables
+ * Uses db.execute for consistency with Drizzle ORM and SUPABASE_DATABASE_URL
  */
 
-import { pool } from '../db';
+import { sql } from 'drizzle-orm';
+import { db } from '../db';
 
 export async function createComplaintRoutingTables(): Promise<void> {
-  const client = await pool.connect();
-  
   try {
     console.log('[Migration] Starting Complaint Routing tables creation...');
+    console.log('[Migration] Using SUPABASE database connection');
 
     // Authority Contacts Cache table
-    await client.query(`
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS authority_contacts_cache (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         department_name TEXT NOT NULL,
@@ -38,13 +39,13 @@ export async function createComplaintRoutingTables(): Promise<void> {
     console.log('[Migration] ✓ Created authority_contacts_cache table');
 
     // Indexes for authority_contacts_cache
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_authority_dept_city_state ON authority_contacts_cache(department_name, city, state)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_authority_contact_type ON authority_contacts_cache(contact_type)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_authority_active ON authority_contacts_cache(is_active)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_authority_dept_city_state ON authority_contacts_cache(department_name, city, state)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_authority_contact_type ON authority_contacts_cache(contact_type)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_authority_active ON authority_contacts_cache(is_active)`);
     console.log('[Migration] ✓ Created indexes for authority_contacts_cache');
 
     // Complaint Routing History table
-    await client.query(`
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS complaint_routing_history (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         complaint_id VARCHAR REFERENCES complaints(id) ON DELETE CASCADE,
@@ -66,13 +67,13 @@ export async function createComplaintRoutingTables(): Promise<void> {
     console.log('[Migration] ✓ Created complaint_routing_history table');
 
     // Indexes for complaint_routing_history
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_routing_complaint ON complaint_routing_history(complaint_id)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_routing_status ON complaint_routing_history(status)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_routing_fallback ON complaint_routing_history(is_fallback)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_routing_complaint ON complaint_routing_history(complaint_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_routing_status ON complaint_routing_history(status)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_routing_fallback ON complaint_routing_history(is_fallback)`);
     console.log('[Migration] ✓ Created indexes for complaint_routing_history');
 
     // Section 1983 Filings table
-    await client.query(`
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS section_1983_filings (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -140,10 +141,10 @@ export async function createComplaintRoutingTables(): Promise<void> {
     console.log('[Migration] ✓ Created section_1983_filings table');
 
     // Indexes for section_1983_filings
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_1983_user ON section_1983_filings(user_id)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_1983_status ON section_1983_filings(status)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_1983_district ON section_1983_filings(district_court)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_1983_incident_date ON section_1983_filings(incident_date)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_1983_user ON section_1983_filings(user_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_1983_status ON section_1983_filings(status)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_1983_district ON section_1983_filings(district_court)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_1983_incident_date ON section_1983_filings(incident_date)`);
     console.log('[Migration] ✓ Created indexes for section_1983_filings');
 
     console.log('[Migration] ✅ Successfully created all Complaint Routing tables and indexes');
@@ -154,7 +155,5 @@ export async function createComplaintRoutingTables(): Promise<void> {
   } catch (error: any) {
     console.error('[Migration] Error creating Complaint Routing tables:', error);
     throw error;
-  } finally {
-    client.release();
   }
 }
