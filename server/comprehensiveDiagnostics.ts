@@ -58,7 +58,7 @@ interface DiagnosticReport {
   environment: {
     nodeVersion: string;
     platform: string;
-    replId?: string;
+    deploymentPlatform: string;
   };
 }
 
@@ -391,19 +391,13 @@ class ComprehensiveDiagnostics {
 
       try {
         const { GoogleGenerativeAI } = await import("@google/generative-ai");
-        const genAI = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-        // Simple test prompt
-        const result = await genAI.models.generateContent({
-          model: 'gemini-1.5-flash-latest',
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: 'Respond with OK if working' }]
-            }
-          ]
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: 'Respond with OK if working' }] }]
         });
-        const text = result.text;
+        const text = result.response?.text() ?? '';
 
         if (text && text.length > 0) {
           return { 
@@ -414,7 +408,7 @@ class ComprehensiveDiagnostics {
         }
         return { status: 'WARN', message: 'Gemini API connected but no response' };
       } catch (error: any) {
-        if (error.message?.includes('quota') || error.message?.includes('limit')) {
+        if (error.message?.includes('quota') || error.message?.includes('limit') || error.message?.includes('429')) {
           return { status: 'WARN', message: 'Gemini API quota/rate limited' };
         }
         return { status: 'FAIL', message: 'Gemini API test failed', error: error.message };
@@ -528,7 +522,7 @@ class ComprehensiveDiagnostics {
 
         // Note: We're just testing the module exists and loads
         // Not actually uploading to avoid side effects
-        if (evidenceStorage && typeof evidenceStorage.store === 'function') {
+        if (evidenceStorage && typeof evidenceStorage.saveFile === 'function') {
           return { 
             status: 'PASS', 
             message: 'File upload/download modules loaded'
@@ -553,19 +547,14 @@ class ComprehensiveDiagnostics {
 
       try {
         const { GoogleGenerativeAI } = await import("@google/generative-ai");
-        const genAI = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
         const startTime = Date.now();
-        const result = await genAI.models.generateContent({
-          model: 'gemini-1.5-flash-latest',
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: 'What is 2+2? Answer with just the number.' }]
-            }
-          ]
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: 'What is 2+2? Answer with just the number.' }] }]
         });
-        const text = result.text;
+        const text = result.response?.text() ?? '';
         const responseTime = Date.now() - startTime;
 
         if (text && text.includes('4')) {
@@ -580,7 +569,7 @@ class ComprehensiveDiagnostics {
         }
         return { status: 'WARN', message: 'Gemini API responded but unexpected output', details: { response: text } };
       } catch (error: any) {
-        if (error.message?.includes('quota')) {
+        if (error.message?.includes('quota') || error.message?.includes('limit') || error.message?.includes('429')) {
           return { status: 'WARN', message: 'Gemini API quota exceeded' };
         }
         return { status: 'FAIL', message: 'Gemini API test failed', error: error.message };
@@ -942,7 +931,7 @@ class ComprehensiveDiagnostics {
       environment: {
         nodeVersion: process.version,
         platform: process.platform,
-        replId: process.env.REPL_ID,
+        deploymentPlatform: process.env.RAILWAY_ENVIRONMENT ? 'railway' : 'development',
       },
     };
   }

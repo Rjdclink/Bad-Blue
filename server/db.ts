@@ -44,7 +44,7 @@ const getPoolConfig = () => {
     };
   }
 
-  // Default configuration for Replit/local
+  // Default configuration for local/development
   return {
     ...baseConfig,
     max: 100,

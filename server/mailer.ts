@@ -1,5 +1,5 @@
-// Email Service using Resend API via Replit Integration
-// Uses Replit's secure connector for API key management
+// Email Service using Resend API
+// Platform-agnostic - uses RESEND_API_KEY environment variable
 
 import { Resend } from 'resend';
 

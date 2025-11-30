@@ -7,7 +7,14 @@ BadBlue is a privacy-focused police accountability platform designed to empower 
 Preferred communication style: Simple, everyday language.
 
 ## System Architecture
-The platform utilizes a modern web stack featuring a React 18 frontend with TypeScript, Vite, Wouter for routing, and Radix UI/shadcn/ui with Tailwind CSS for styling, adhering to Material Design and civic technology UI patterns. State management is handled by TanStack Query, and form validation uses React Hook Form with Zod. The backend is a Node.js/Express.js application providing a RESTful API, with authentication via Replit OAuth and PostgreSQL for session storage. PostgreSQL (Neon serverless) with Drizzle ORM serves as the primary database, while Replit App Storage is used for private evidence files.
+The platform utilizes a modern web stack featuring a React 18 frontend with TypeScript, Vite, Wouter for routing, and Radix UI/shadcn/ui with Tailwind CSS for styling, adhering to Material Design and civic technology UI patterns. State management is handled by TanStack Query, and form validation uses React Hook Form with Zod. The backend is a Node.js/Express.js application providing a RESTful API, with local username/password authentication and PostgreSQL for session storage. **Supabase PostgreSQL** with Drizzle ORM serves as the primary database, with filesystem storage for private evidence files (cloud storage optional).
+
+**PLATFORM INDEPENDENCE (Nov 30, 2025)**:
+-   **Database**: Uses Supabase PostgreSQL via `SUPABASE_DATABASE_URL` environment variable
+-   **Deployment Target**: Railway.com (fully compatible, `railway.toml` configured)
+-   **Authentication**: Local username/password (platform-agnostic, no OAuth dependencies)
+-   **File Storage**: Filesystem-based with optional Google Cloud Storage fallback
+-   **All Replit-specific code has been removed** - app is 100% platform-agnostic
 
 **PACKAGE UPDATES (Nov 30, 2025)**:
 -   **Drizzle ORM**: Updated from 0.39.3 to 0.44.7 - latest stable version with improved PostgreSQL support
@@ -36,10 +43,17 @@ Key architectural decisions and features include:
 -   **Admin Management**: An admin panel is provided for managing community-shared evidence submissions with full CRUD capabilities, bulk operations, and user attribution.
 
 ## External Dependencies
+*   **Database**: Supabase PostgreSQL
 *   **Payment Processing**: Stripe
 *   **Email Service**: Resend API (transactional emails)
-*   **AI/ML Services**: Google Gemini API, Groq API
-*   **Authentication Service**: Replit OAuth
+*   **AI/ML Services**: Mistral AI (50%), Groq (30-35%), Google Gemini (10%), Anthropic Claude (5-10%)
+*   **Authentication**: Local username/password (platform-agnostic)
 *   **File Upload Libraries**: `react-dropzone`, Uppy
 *   **Date Formatting**: `date-fns`
 *   **CSV Processing**: `csv-parse`, `csv-stringify`
+
+## Deployment
+*   **Target Platform**: Railway.com
+*   **Database**: Supabase PostgreSQL (SUPABASE_DATABASE_URL)
+*   **Configuration**: `railway.toml` for Railway deployment
+*   **Health Check**: `/api/health` endpoint
