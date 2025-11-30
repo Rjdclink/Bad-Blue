@@ -346,5 +346,611 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T09:10:50.996Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:07.264Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:07.624Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:08.278Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:08.302Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:09.114Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:11.135Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:11.305Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:11.703Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:12.667Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:12.745Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:15.575Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:15.725Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/button-D4bqKO-K.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:15.787Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/check-CdrMYR9S.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:15.838Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/dropdown-menu-DuH9md59.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:15.848Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Combination-BxgkiBe1.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:15.863Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-C2h2qaJP.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.019Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/useFaqSchema--GUw8NK0.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.049Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/file-text-CBNIfD09.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.118Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.189Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/check-CdrMYR9S.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.208Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-Qxa7_5PZ.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.225Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Combination-BxgkiBe1.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.245Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-C2h2qaJP.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.346Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/shield-7faESzar.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.389Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/scale-OSfZKrf3.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:16.393Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/file-text-CBNIfD09.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:18.461Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon.ico"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:18.692Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:20.618Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:45.114Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:11:45.841Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:51.649Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:51.725Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:52.712Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:52.763Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:52.862Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:54.677Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:55.461Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:58.260Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:58.852Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:59.677Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:59.877Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/checkbox-B6rcMTgW.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:59.910Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/check-CdrMYR9S.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:59.926Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-C2h2qaJP.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:15:59.990Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/shield-7faESzar.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.027Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/search-k8SGdotS.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.035Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/file-text-CBNIfD09.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.039Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/landing-B9UToTVM.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.051Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-CksQyhPZ.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.086Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/badge-DLo5fkoO.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.164Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-C2h2qaJP.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.196Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.207Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/mail-B5XkwkcA.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.225Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/shield-7faESzar.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.261Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/file-text-CBNIfD09.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.706Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:00.969Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:01.026Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:01.579Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:01.654Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:02.456Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:29.721Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:16:30.500Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:17:00.444Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:17:01.461Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:17:31.455Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:17:32.435Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:02.053Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:04.330Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:28.359Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:28.427Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:28.561Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:28.618Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:28.678Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DQjPlvzS.css"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:28.685Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:28.711Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:28.850Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-DWMKUhML.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:29.200Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.284Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.331Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.494Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/check-CdrMYR9S.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.538Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/dropdown-menu-DuH9md59.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.541Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Combination-BxgkiBe1.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.549Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SEOHead-b0nf3qYO.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.593Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.599Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/mail-B5XkwkcA.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.606Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/search-k8SGdotS.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.647Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/file-text-CBNIfD09.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.773Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/landing-B9UToTVM.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.781Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/button-D4bqKO-K.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.787Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/check-CdrMYR9S.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.830Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/dropdown-menu-DuH9md59.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.853Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-BAZECk9-.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.885Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:30.951Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/search-k8SGdotS.js"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:31.023Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:31.785Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
+  },
+  {
+    "timestamp": "2025-11-30T09:18:33.362Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
+  },
+  {
+    "timestamp": "2025-11-30T09:19:00.422Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T09:19:01.540Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]

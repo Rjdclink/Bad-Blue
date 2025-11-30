@@ -204,54 +204,8 @@ export function SEOHead({
     }
     orgScript.textContent = JSON.stringify(organizationData);
 
-    // Add FAQ structured data for better SEO
-    const faqData = {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "How do I file a police complaint online?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "BadBlue provides professional assistance for filing official complaints against law enforcement officers. Our transparent complaint filing system guides you through documenting misconduct, excessive force, or civil rights violations with proper legal formatting."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Can I sue a police officer for misconduct?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes, citizens have legal rights to pursue civil litigation against law enforcement officers who violate civil rights. BadBlue offers legal empowerment tools and professional document preparation services for police accountability cases."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "What constitutes police brutality or excessive force?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Police brutality includes unnecessary physical force, false arrest, assault by officers, and civil rights violations. Our justice accessibility platform helps document and report law enforcement abuse through proper legal channels."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "How can I report bad cops or officer abuse?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "BadBlue provides civil rights advocacy tools for reporting police misconduct, cop abuse, and officer assault. Our professional platform ensures your complaint reaches the appropriate oversight agencies and legal authorities."
-          }
-        }
-      ]
-    };
-
-    let faqScript = document.querySelector('script#faq-schema');
-    if (!faqScript) {
-      faqScript = document.createElement("script");
-      faqScript.setAttribute("type", "application/ld+json");
-      faqScript.setAttribute("id", "faq-schema");
-      document.head.appendChild(faqScript);
-    }
-    faqScript.textContent = JSON.stringify(faqData);
+    // NOTE: FAQ structured data is handled by useFaqSchema hook on individual pages
+    // to prevent duplicate FAQPage schemas that cause Google Search Console errors
 
     // Add WebSite structured data for search engine optimization
     const websiteData = {
