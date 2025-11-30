@@ -1,248 +1,26 @@
 [
   {
-    "timestamp": "2025-11-30T18:47:04.190Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/checkbox-B6rcMTgW.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.208Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-CksQyhPZ.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.212Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/select-BCZxAyUc.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.218Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/chevron-up-b1PxxVfD.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.244Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scale-OSfZKrf3.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.263Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/loader-circle-Dhu3ITQp.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.272Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/sparkles-B6HyZdYK.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.273Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-BDFWxcSk.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.277Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-alert-DXslWFLw.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.297Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.317Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/input-DQfs2i3p.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.333Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/progress-DDYmeNGR.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.335Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/map-pin-l9-xidT_.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.350Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.371Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.393Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/dollar-sign-CvgOWdSx.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.396Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/external-link-ByCvNBaf.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.401Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/brain-3CMxcxOD.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.406Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/send-Dyuf-Q1L.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.426Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-big-IucwP7W7.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.448Z",
+    "timestamp": "2025-11-30T18:51:56.181Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
   },
   {
-    "timestamp": "2025-11-30T18:47:04.462Z",
+    "timestamp": "2025-11-30T18:51:56.221Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/SEOHead-b0nf3qYO.js"
   },
   {
-    "timestamp": "2025-11-30T18:47:04.464Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/image-D3s3Sulp.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.466Z",
+    "timestamp": "2025-11-30T18:51:56.224Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/users-CFAHCUDf.js"
   },
   {
-    "timestamp": "2025-11-30T18:47:04.482Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/credit-card-B8MKwAhy.js"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.547Z",
+    "timestamp": "2025-11-30T18:52:00.264Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:04.916Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:31.377Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:47:32.804Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:48:01.677Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:48:03.807Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:48:31.968Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:48:34.804Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:49:03.415Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:49:05.796Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:49:33.699Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:49:36.799Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:50:04.241Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:50:07.860Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:50:34.561Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T18:50:38.817Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
   }
 ]
