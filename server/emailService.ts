@@ -1,5 +1,5 @@
-// Email service for BadBlue - Resend API only
-// Requires RESEND_API_KEY and EMAIL_FROM environment variables
+// Email service for BadBlue - Resend API
+// Requires RESEND_API_KEY environment variable
 
 import { Resend } from "resend";
 import { db } from "./db";
@@ -7,13 +7,14 @@ import { eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getBaseURL } from "./platformConfig";
 
+// Initialize Resend client
 const resend = new Resend(process.env.RESEND_API_KEY!);
 
-// Default from email for Resend (must be verified domain or onboarding@resend.dev for testing)
-// Production: Use verified domain like contact@bad-blue.com or noreply@trenuxae.resend.app
-// User requested: contact.badblue@gmail.com - if Resend doesn't accept this, fall back to verified domain
-const DEFAULT_FROM =
-  process.env.EMAIL_FROM || "BadBlue <onboarding@resend.dev>";
+// Default from email for Resend (must be verified domain)
+// Use DEFAULT_FROM_EMAIL env var if set, otherwise use Resend's test domain
+const DEFAULT_FROM = process.env.DEFAULT_FROM_EMAIL 
+  ? `${process.env.DEFAULT_FROM_NAME || 'BadBlue'} <${process.env.DEFAULT_FROM_EMAIL}>`
+  : "BadBlue <onboarding@resend.dev>";
 
 export const emailTransporter = {
   verify: async () => {
@@ -76,15 +77,15 @@ async function getFromAddress(): Promise<string> {
   // Priority:
   // 1. Environment variable DEFAULT_FROM_EMAIL if set
   // 2. Database settings if available
-  // 3. Fall back to Resend verified sender
+  // 3. Fall back to Resend test sender (onboarding@resend.dev)
   if (process.env.DEFAULT_FROM_EMAIL) {
     const fromName = process.env.DEFAULT_FROM_NAME || "BadBlue";
     return `${fromName} <${process.env.DEFAULT_FROM_EMAIL}>`;
   }
 
   const settings = await getEmailSettings();
-  // Use contact.badblue@gmail.com as requested by user
-  return `${settings.fromName} <contact.badblue@gmail.com>`;
+  // Use Resend verified domain or test domain
+  return `${settings.fromName} <${settings.fromEmail}>`;
 }
 
 async function sendWithResend(

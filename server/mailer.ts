@@ -1,13 +1,12 @@
-// SMTP Email Service using Nodemailer with Google Workspace SMTP Relay
-// Alternative to Resend API - uses only SMTP credentials (no API keys)
+// Email Service using Resend API
+// Requires RESEND_API_KEY environment variable
 
-import nodemailer from 'nodemailer';
-import type { Transporter } from 'nodemailer';
+import { Resend } from 'resend';
 
 interface EmailOptions {
   to: string;
   subject: string;
-  html: string;
+  html?: string;
   text?: string;
   from?: string;
   attachments?: Array<{
@@ -17,51 +16,39 @@ interface EmailOptions {
   }>;
 }
 
-// Create SMTP transporter (lazily initialized)
-let transporter: Transporter | null = null;
+// Initialize Resend client (lazily)
+let resendClient: Resend | null = null;
 
-/**
- * Get or create SMTP transporter configured for Google Workspace SMTP relay
- */
-function getTransporter(): Transporter {
-  if (!transporter) {
-    const smtpUser = process.env.GWSMTP_USER;
-    // Use App Password (GWSMTP_PASSWORD) if available, removing spaces
-    // Fall back to regular password (GWSMTP_PASS) if App Password not set
-    const smtpPass = process.env.GWSMTP_PASSWORD 
-      ? process.env.GWSMTP_PASSWORD.replace(/\s/g, '') // Remove spaces from App Password
-      : process.env.GWSMTP_PASS;
-
-    if (!smtpUser || !smtpPass) {
-      console.error('[SMTP] ✗ Missing credentials - GWSMTP_USER:', !!smtpUser, 'GWSMTP_PASSWORD:', !!process.env.GWSMTP_PASSWORD, 'GWSMTP_PASS:', !!process.env.GWSMTP_PASS);
-      throw new Error('GWSMTP_USER and either GWSMTP_PASSWORD or GWSMTP_PASS environment variables must be set');
+function getResendClient(): Resend {
+  if (!resendClient) {
+    if (!process.env.RESEND_API_KEY) {
+      throw new Error('RESEND_API_KEY environment variable must be set');
     }
-
-    transporter = nodemailer.createTransport({
-      host: process.env.GWSMTP_HOST || 'smtp.gmail.com',
-      port: 465,
-      secure: true, // Use SSL
-      auth: {
-        user: smtpUser,
-        pass: smtpPass,
-      },
-    });
-
-    console.log('[SMTP] ✓ Transporter initialized for smtp.gmail.com:465');
-    console.log('[SMTP] ✓ Using credentials for user:', smtpUser);
+    resendClient = new Resend(process.env.RESEND_API_KEY);
+    console.log('[RESEND] ✓ Client initialized');
   }
+  return resendClient;
+}
 
-  return transporter;
+// Get the from address - use verified Resend domain or env variable
+function getDefaultFromAddress(): string {
+  // Priority: DEFAULT_FROM_EMAIL env var > Resend verified domain
+  if (process.env.DEFAULT_FROM_EMAIL) {
+    const fromName = process.env.DEFAULT_FROM_NAME || 'BadBlue';
+    return `${fromName} <${process.env.DEFAULT_FROM_EMAIL}>`;
+  }
+  // Use Resend verified domain (update this to your verified domain)
+  return 'BadBlue <onboarding@resend.dev>';
 }
 
 /**
- * Send email via SMTP using Google Workspace SMTP relay
+ * Send email via Resend API
  * 
  * @param to - Recipient email address
  * @param subject - Email subject line
- * @param html - HTML body content
- * @param text - Optional plain text content (fallback)
- * @param from - Optional from address (defaults to "BadBlue <contact.badblue@gmail.com>")
+ * @param html - HTML body content (optional)
+ * @param text - Plain text content (optional, recommended as fallback)
+ * @param from - From address (defaults to Resend verified domain)
  * @param attachments - Optional email attachments
  * @returns Promise<boolean> - true if sent successfully, false otherwise
  */
@@ -78,45 +65,42 @@ export async function sendMail(
   }>
 ): Promise<boolean> {
   try {
-    const transporter = getTransporter();
+    const resend = getResendClient();
+    const fromAddress = from || getDefaultFromAddress();
 
-    const mailOptions: any = {
-      from: from || 'BadBlue <contact.badblue@gmail.com>',
+    const emailPayload: any = {
+      from: fromAddress,
       to,
       subject,
-      text: text || undefined,
     };
 
-    // Only add HTML if provided
-    if (html) {
-      mailOptions.html = html;
-    }
+    if (html) emailPayload.html = html;
+    if (text) emailPayload.text = text;
 
     // Add attachments if provided
     if (attachments && attachments.length > 0) {
-      mailOptions.attachments = attachments.map(att => ({
+      emailPayload.attachments = attachments.map(att => ({
         filename: att.filename,
         content: Buffer.from(att.content, 'base64'),
-        contentType: att.contentType,
       }));
     }
 
-    const info = await transporter.sendMail(mailOptions);
-    
-    console.log(`[SMTP] Email sent to ${to} - MessageID: ${info.messageId}`);
+    const { data, error } = await resend.emails.send(emailPayload);
+
+    if (error) {
+      console.error(`[RESEND] Failed to send email to ${to}:`, error);
+      return false;
+    }
+
+    console.log(`[RESEND] ✓ Email sent to ${to} - ID: ${data?.id}`);
     return true;
   } catch (error: any) {
-    console.error(`[SMTP] Failed to send email to ${to}:`, error.message);
+    console.error(`[RESEND] Failed to send email to ${to}:`, error.message);
     
-    // Log detailed error information for debugging
-    if (error.code === 'EAUTH') {
-      console.error('[SMTP] Authentication failed - check GWSMTP_USER and GWSMTP_PASS credentials');
-    } else if (error.code === 'ECONNECTION') {
-      console.error('[SMTP] Connection failed - check network or SMTP server availability');
-    } else if (error.code === 'ETIMEDOUT') {
-      console.error('[SMTP] Connection timeout - SMTP server not responding');
-    } else {
-      console.error('[SMTP] Error details:', error);
+    if (error.message?.includes('API key')) {
+      console.error('[RESEND] Invalid or missing API key - check RESEND_API_KEY');
+    } else if (error.message?.includes('domain')) {
+      console.error('[RESEND] Domain not verified - use a verified Resend domain');
     }
     
     return false;
@@ -124,17 +108,38 @@ export async function sendMail(
 }
 
 /**
- * Verify SMTP connection is working
- * Useful for testing configuration
+ * Verify Resend API connection is working
  */
 export async function verifySMTPConnection(): Promise<boolean> {
   try {
-    const transporter = getTransporter();
-    await transporter.verify();
-    console.log('[SMTP] Connection verified successfully');
+    const resend = getResendClient();
+    // Test API by listing domains (lightweight API call)
+    const { data, error } = await resend.domains.list();
+    
+    if (error) {
+      console.error('[RESEND] API verification failed:', error);
+      return false;
+    }
+    
+    console.log('[RESEND] ✓ API connection verified');
+    console.log('[RESEND] ✓ Available domains:', data?.data?.length || 0);
     return true;
   } catch (error: any) {
-    console.error('[SMTP] Connection verification failed:', error.message);
+    console.error('[RESEND] API verification failed:', error.message);
     return false;
   }
+}
+
+/**
+ * Send email with full options object
+ */
+export async function sendMailWithOptions(options: EmailOptions): Promise<boolean> {
+  return sendMail(
+    options.to,
+    options.subject,
+    options.html,
+    options.text,
+    options.from,
+    options.attachments
+  );
 }
