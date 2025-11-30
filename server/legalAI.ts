@@ -922,50 +922,7 @@ export async function generateLegalDocument(
     data.subsequentEvents || null
   );
 
-  // LEARNING SYSTEM: Enhance with learned patterns from top law firms
-  console.log('[Learning System] Enhancing document generation with learned patterns...');
-  let learningEnhancement = '';
-  try {
-    const { enhanceLawsuitWithLearning, learnFromCase } = await import('./learningSystem');
-    const claimTypes = data.lawsuitType ? [data.lawsuitType] : ['civil rights'];
-    const enhancement = await enhanceLawsuitWithLearning(
-      data.lawsuitType || 'excessive force',
-      data.state || '',
-      data.description || '',
-      claimTypes
-    );
-
-    if (enhancement.enhancementGuidance) {
-      learningEnhancement = `\n\nLEARNED PATTERNS FROM TOP LAW FIRMS:
-${enhancement.enhancementGuidance}
-
-TOP FIRM EXAMPLES (${enhancement.topFirmPatterns.length} analyzed):
-${enhancement.topFirmPatterns.slice(0, 2).map(p => `
-- ${p.sourceFirm}: Effectiveness ${p.effectivenessScore}/10
-  Structure: ${JSON.stringify(p.documentStructure)}
-  Style: ${JSON.stringify(p.writingStyle)}
-`).join('\n')}
-
-SIMILAR SUCCESSFUL CASES (${enhancement.similarCases.length} found):
-${enhancement.similarCases.slice(0, 2).map(c => `
-- Strength: ${c.strengthRating}/10, Outcome: ${c.outcome}
-  Pattern: ${c.factPattern?.substring(0, 150)}...
-`).join('\n')}
-
-PROVEN LEGAL STRATEGIES (${enhancement.applicableStrategies.length} applicable):
-${enhancement.applicableStrategies.slice(0, 3).map((s: any) => `
-- ${s.strategyName} (${s.successRate}% success rate)
-  Implementation: ${s.implementation}
-`).join('\n')}`;
-
-      console.log(`[Learning System] Enhanced with ${enhancement.topFirmPatterns.length} top firm patterns`);
-    }
-  } catch (error) {
-    console.error('[Learning System] Error enhancing with learned patterns:', error);
-    // Continue without learning enhancements if error occurs
-  }
-
-  const systemPrompt = `You are an ELITE civil rights attorney with expertise in 42 USC § 1983 litigation, with access to analysis of TOP LAW FIRM complaints and proven successful strategies.
+  const systemPrompt = `You are an ELITE civil rights attorney with expertise in 42 USC § 1983 litigation.
 
 Your task is to draft a comprehensive, court-ready ${documentType} that:
 1. Follows ALL local district rules and formatting requirements
@@ -975,27 +932,24 @@ Your task is to draft a comprehensive, court-ready ${documentType} that:
 5. Includes persuasive legal arguments based on precedent
 6. Anticipates and addresses potential defenses
 7. Complies with all procedural requirements
-8. MIMICS THE STYLE AND STRUCTURE of successful complaints filed by top civil rights law firms
-9. APPLIES PROVEN LEGAL STRATEGIES from similar successful cases
 
 CRITICAL REQUIREMENTS:
 - Use exact legal citations in Bluebook format
-- Follow proper court document structure modeled after top firm filings
+- Follow proper court document structure
 - Include all required elements for the document type
-- Make arguments clear, compelling, and legally sound using techniques from successful cases
+- Make arguments clear, compelling, and legally sound
 - Ensure all facts are properly alleged with persuasive narrative structure
 - Include proper signature blocks and verification
 - Follow the local district's formatting rules precisely
 - Incorporate binding precedents from Supreme Court and relevant Circuit
 - Use persuasive precedents from state courts
 - Include specific legal arguments backed by case law
-- Draft professional, compelling language that matches the quality of top-tier civil rights firms
+- Draft professional, compelling language
 - Ensure all required sections are present
-- Apply learned document structure and writing style from analyzed top firm complaints
 
 STRICT RULE: ONLY use information explicitly provided in the case data. DO NOT fabricate or assume any information that is not provided. If information is missing, do not include placeholder text - simply omit that section or use language like "Information to be provided" only where absolutely necessary for form structure.
 
-Generate a document that would be filed by a top-tier civil rights law firm like ACLU or NAACP Legal Defense Fund.`;
+Generate a professional court-ready document.`;
 
   const userPrompt = `Generate a comprehensive ${documentType} document with the following information:
 
@@ -1014,7 +968,6 @@ ${monellDetection.hasMonellClaim
 
 COMPREHENSIVE LEGAL RESEARCH:
 ${researchSection}
-${learningEnhancement}
 
 INSTRUCTIONS:
 1. Use the statute research to cite ALL applicable laws
@@ -1028,11 +981,8 @@ INSTRUCTIONS:
 9. DO NOT invent or assume information not explicitly provided (e.g., do not add "Officer Number Two" or any other fictional parties/facts)
 10. If optional information is missing, simply omit those sections rather than using placeholders
 11. ${monellDetection.hasMonellClaim ? 'Include Monell municipal liability count with specific allegations of policy/custom/supervisory failure' : 'File ONLY individual-capacity claims - no municipal defendants or Monell theories'}
-12. APPLY THE LEARNED PATTERNS: Use the document structures, writing styles, and legal strategies from the top firm examples provided above
-13. MIMIC SUCCESSFUL FORMATTING: Structure your document similarly to the analyzed top firm complaints
-14. USE PROVEN STRATEGIES: Incorporate the legal strategies that have demonstrated high success rates in similar cases
 
-Generate a complete, court-ready document that demonstrates sophisticated legal analysis using ONLY the provided information, elevated to the quality of top-tier civil rights law firms through learned patterns and proven strategies.`;
+Generate a complete, court-ready document that demonstrates sophisticated legal analysis using ONLY the provided information.`;
 
   // Use unified AI provider
   try {
@@ -1283,94 +1233,6 @@ NOTE: Generate realistic, plausible data based on typical patterns in ${city}, $
       throw new Error('Service temporarily unavailable due to high demand. Please try again in a few moments.');
     }
     throw new Error('Unable to search public records at this time. Please try again later.');
-  }
-}
-
-/**
- * LEARNING SYSTEM - Analyzes patterns from past cases
- */
-
-interface LearningInsight {
-  pattern: string;
-  frequency: number;
-  successRate: number;
-  recommendation: string;
-}
-
-export async function analyzePatternsAndLearn(
-  newCase: any,
-  similarCases: any[]
-): Promise<LearningInsight[]> {
-  const systemPrompt = `You are a machine learning legal analyst that identifies patterns and learns from past cases.
-
-🧠 LEARNING CAPABILITIES:
-- Pattern recognition across cases
-- Success prediction modeling
-- Strategy optimization
-- Best practice identification
-- Continuous improvement
-
-📈 ANALYSIS METHODS:
-- Compare current case to historical data
-- Identify winning strategies
-- Flag risk factors
-- Suggest improvements
-- Predict outcomes
-
-Your task: Learn from past cases and provide insights for this new case.`;
-
-  const userPrompt = `ANALYZE PATTERNS AND PROVIDE LEARNING INSIGHTS:
-
-NEW CASE:
-${JSON.stringify(newCase, null, 2)}
-
-SIMILAR HISTORICAL CASES:
-${JSON.stringify(similarCases, null, 2)}
-
-LEARNING OBJECTIVES:
-1. What patterns exist in successful cases?
-2. What strategies work best?
-3. What pitfalls to avoid?
-4. How to optimize this case?
-5. What's the predicted outcome?
-
-RESPONSE FORMAT:
-{
-  "insights": [
-    {
-      "pattern": "Pattern description",
-      "frequency": 75,
-      "successRate": 0.82,
-      "recommendation": "Specific recommendation for this case"
-    }
-  ]
-}`;
-
-  // Use unified AI provider with JSON parsing
-  try {
-    console.log('[Legal AI] Starting pattern analysis');
-    
-    const response = await generateUserText(
-      'legal-pattern-analysis',
-      userPrompt,
-      {
-        systemPrompt,
-        temperature: 0.6,
-        useJSON: true
-      },
-      TaskPriority.CRITICAL_USER
-    );
-
-    const result = safeJsonParse<{ insights: LearningInsight[] }>(response.content, "Pattern analysis failed");
-    return result.insights || [];
-  } catch (error: any) {
-    console.error('[Legal AI] Error in pattern analysis:', error);
-
-    // Final fallback: error handling
-    if (error.message?.includes('quota') || error.message?.includes('rate limit')) {
-      throw new Error('Service temporarily unavailable due to high demand. Please try again in a few moments.');
-    }
-    throw new Error('Unable to analyze patterns at this time. Please try again later.');
   }
 }
 
