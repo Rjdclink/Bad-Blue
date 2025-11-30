@@ -141,10 +141,6 @@ class BadBlueWorker {
     return process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   }
 
-  private async safeImport(modulePath: string): Promise<any | null> {
-    try { return await import(modulePath); } catch { return null; }
-  }
-
   // Platform helpers
   private isWindows(): boolean { return process.platform === 'win32'; }
   private async commandExists(cmd: string): Promise<boolean> {
@@ -174,15 +170,6 @@ class BadBlueWorker {
     this.registerShutdownHandlers();
     const dataDirOk = await this.initializeDataDirSafe();
     if (dataDirOk) await this.ensureDataDirectory();
-
-    // Skip optional controllers on Railway minimal environments
-    if (!isRailway) {
-      const module = await this.safeImport('./autonomousSearchController');
-      if (module?.searchController?.initialize) {
-        try { await module.searchController.initialize(); }
-        catch (e: any) { console.warn('[BadBlue Worker] autonomousSearch init failed:', e.message); }
-      }
-    }
 
     this.scheduleCriticalMonitoring();
     this.scheduleDatabaseHeartbeat();
