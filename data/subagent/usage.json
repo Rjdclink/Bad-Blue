@@ -1,36 +1,24 @@
 [
   {
-    "timestamp": "2025-11-30T21:46:02.179Z",
+    "timestamp": "2025-11-30T21:54:52.770Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-dropdown-menu.js"
   },
   {
-    "timestamp": "2025-11-30T21:46:02.208Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-KZSZPJZR.js"
-  },
-  {
-    "timestamp": "2025-11-30T21:46:02.234Z",
+    "timestamp": "2025-11-30T21:54:52.801Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-4RO2SXZU.js"
   },
   {
-    "timestamp": "2025-11-30T21:46:02.400Z",
+    "timestamp": "2025-11-30T21:54:52.838Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/support-email"
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-30T21:46:07.577Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T21:46:10.005Z",
+    "timestamp": "2025-11-30T21:54:58.923Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
