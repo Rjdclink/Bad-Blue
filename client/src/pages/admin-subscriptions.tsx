@@ -44,12 +44,29 @@ import {
   Mail,
   Clock,
   UserCheck,
+  FileText,
+  Scale,
+  Megaphone,
+  FileSearch,
+  ShoppingBag,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { SEOHead } from "@/components/SEOHead";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { User } from "@shared/schema";
+
+interface PaidServices {
+  complaints: number;
+  lawsuits: number;
+  petitions: number;
+  foiaRequests: number;
+  total: number;
+}
+
+interface UserWithServices extends User {
+  paidServices: PaidServices;
+}
 
 interface SubscriptionTier {
   id: string;
@@ -125,9 +142,9 @@ export default function AdminSubscriptions() {
     }
   }, [user, isLoadingUser, setLocation, toast]);
 
-  // Fetch all registered users (Bad Blue Users)
+  // Fetch all registered users (Bad Blue Users) with paid services
   const { data: usersData, isLoading: isLoadingUsers } = useQuery<{
-    users: User[];
+    users: UserWithServices[];
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }>({
     queryKey: ['/api/admin/users', usersPage],
@@ -392,6 +409,7 @@ export default function AdminSubscriptions() {
                           <TableHead>Email</TableHead>
                           <TableHead>Signed Up</TableHead>
                           <TableHead>Last Login</TableHead>
+                          <TableHead>Paid Services</TableHead>
                           <TableHead>Status</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -431,6 +449,38 @@ export default function AdminSubscriptions() {
                                   ? formatDistanceToNow(new Date(u.lastLoginAt), { addSuffix: true })
                                   : "Never"}
                               </div>
+                            </TableCell>
+                            <TableCell>
+                              {u.paidServices && u.paidServices.total > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {u.paidServices.complaints > 0 && (
+                                    <Badge variant="outline" className="text-xs" title="Complaints filed">
+                                      <FileText className="h-3 w-3 mr-1" />
+                                      {u.paidServices.complaints}
+                                    </Badge>
+                                  )}
+                                  {u.paidServices.lawsuits > 0 && (
+                                    <Badge variant="outline" className="text-xs" title="Lawsuits filed">
+                                      <Scale className="h-3 w-3 mr-1" />
+                                      {u.paidServices.lawsuits}
+                                    </Badge>
+                                  )}
+                                  {u.paidServices.petitions > 0 && (
+                                    <Badge variant="outline" className="text-xs" title="Petitions created">
+                                      <Megaphone className="h-3 w-3 mr-1" />
+                                      {u.paidServices.petitions}
+                                    </Badge>
+                                  )}
+                                  {u.paidServices.foiaRequests > 0 && (
+                                    <Badge variant="outline" className="text-xs" title="FOIA requests">
+                                      <FileSearch className="h-3 w-3 mr-1" />
+                                      {u.paidServices.foiaRequests}
+                                    </Badge>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">None</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               <Badge variant={u.hasPaidForAccess ? "default" : "secondary"}>

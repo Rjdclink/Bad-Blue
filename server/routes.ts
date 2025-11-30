@@ -22,7 +22,7 @@ import multer from "multer";
 import { z } from "zod";
 import passport from "passport";
 import { storage } from "./storage";
-import { sendAdminEmail } from "./emailService";
+import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -922,6 +922,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { user } = await registerLocalUser(email, password, firstName, lastName);
       
       console.log(`[SECURITY] New user registered: ${email} from IP: ${clientIp}`);
+
+      // Send welcome email immediately after successful registration
+      sendWelcomeEmail({
+        firstName,
+        email,
+      }).then(success => {
+        if (success) {
+          console.log(`[EMAIL] Welcome email sent to new user: ${email}`);
+        } else {
+          console.error(`[EMAIL] Failed to send welcome email to: ${email}`);
+        }
+      }).catch(err => {
+        console.error(`[EMAIL] Error sending welcome email to ${email}:`, err);
+      });
 
       res.json({
         success: true,
@@ -2761,7 +2775,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ADMIN USER MANAGEMENT ROUTES (Bad Blue Users)
   // ============================================
   
-  // Get all registered users with pagination
+  // Get all registered users with pagination and paid services
   app.get("/api/admin/users", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
     if (userId !== 'admin-bypass') {
@@ -2773,8 +2787,39 @@ Contact: ${foiaRequest.userEmail || userEmail}
     
     const { users: allUsers, total } = await storage.getAllUsers(page, limit);
     
+    // Fetch paid services for each user
+    const usersWithServices = await Promise.all(allUsers.map(async (user) => {
+      // Get counts of paid services for this user
+      const [complaintsResult, lawsuitsResult, petitionsResult, foiaResult] = await Promise.all([
+        db.select({ count: sql<number>`count(*)::int` })
+          .from(schema.complaints)
+          .where(eq(schema.complaints.userId, user.id)),
+        db.select({ count: sql<number>`count(*)::int` })
+          .from(schema.lawsuitFilings)
+          .where(eq(schema.lawsuitFilings.userId, user.id)),
+        db.select({ count: sql<number>`count(*)::int` })
+          .from(schema.petitions)
+          .where(eq(schema.petitions.userId, user.id)),
+        db.select({ count: sql<number>`count(*)::int` })
+          .from(schema.foiaRequests)
+          .where(eq(schema.foiaRequests.userId, user.id)),
+      ]);
+      
+      return {
+        ...user,
+        paidServices: {
+          complaints: complaintsResult[0]?.count || 0,
+          lawsuits: lawsuitsResult[0]?.count || 0,
+          petitions: petitionsResult[0]?.count || 0,
+          foiaRequests: foiaResult[0]?.count || 0,
+          total: (complaintsResult[0]?.count || 0) + (lawsuitsResult[0]?.count || 0) + 
+                 (petitionsResult[0]?.count || 0) + (foiaResult[0]?.count || 0)
+        }
+      };
+    }));
+    
     res.json({
-      users: allUsers,
+      users: usersWithServices,
       pagination: {
         page,
         limit,
