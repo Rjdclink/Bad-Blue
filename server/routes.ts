@@ -57,7 +57,6 @@ import {
   getLastSubAgentChange,
   setAutonomousExecution,
   getAutonomousExecutionStatus,
-  resetRateLimiter,
   applyTrainingToSubAgent,
   executeStructuredCommand,
   learnFromLegalConsultation,

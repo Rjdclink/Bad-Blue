@@ -55,9 +55,6 @@ const GEMINI_MODEL_CANDIDATES = [
   () => 'gemini-1.5-pro-002'
 ].map(fn => fn()).filter(Boolean) as string[];
 
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const MAX_COMMANDS_PER_MINUTE = 30;
-let commandTimestamps: number[] = [];
 let autonomousExecutionEnabled = false;
 let stateLoaded = false;
 let officerSearchTimeout: NodeJS.Timeout | null = null;
@@ -92,18 +89,9 @@ const NETWORK_ATTACK_PATTERNS = [
   /curl\s+.*\|\s*bash/i,
   /wget\s+.*\|\s*bash/i,
 ];
-const SAFE_COMMAND_PREFIXES = [
-  'npm','npx','node','tsc','tsx',
-  'ls','cat','head','tail','grep','find','wc',
-  'echo','pwd','whoami','date','uptime',
-  'ps','top','df','du','free',
-  'git status','git log','git diff','git branch',
-  'which','type','file','stat'
-];
 const SYSTEM_DIRECTORIES = [/^\/etc\//, /^\/proc\//, /^\/sys\//];
 
 export function isCommandSafe(command: string): { safe: boolean; reason?: string } {
-  const cmd = command.trim().toLowerCase();
   const trimmed = command.trim();
   
   for (const pattern of BLOCKED_NETWORK_PATTERNS) if (pattern.test(command)) return { safe: false, reason: 'Blocked: Network exfiltration attempt detected' };
@@ -111,9 +99,6 @@ export function isCommandSafe(command: string): { safe: boolean; reason?: string
   for (const pat of APP_DELETION_PATTERNS) if (pat.test(trimmed)) return { safe: false, reason: 'Blocked catastrophic deletion pattern' };
   for (const pat of NETWORK_ATTACK_PATTERNS) if (pat.test(trimmed)) return { safe: false, reason: 'Blocked network attack pattern' };
   
-  const isSafePrefix = SAFE_COMMAND_PREFIXES.some(prefix => cmd.startsWith(prefix));
-  if (cmd.startsWith('npm ') || cmd.startsWith('npx ') || cmd.startsWith('cat ') || cmd.startsWith('ls ') || cmd.startsWith('find ')) return { safe: true };
-  if (!isSafePrefix && !autonomousExecutionEnabled) return { safe: false, reason: 'Command requires autonomous execution mode to be enabled' };
   return { safe: true };
 }
 
@@ -131,16 +116,6 @@ export async function isFilePathSafe(filePath: string, adminOverride: boolean = 
         return { safe: false, reason: 'Admin files protected' };
       }
     }
-  }
-
-  const projectRoot = process.cwd();
-  try {
-    const absolute = path.isAbsolute(filePath) ? path.normalize(filePath) : path.resolve(projectRoot, filePath);
-    if (!absolute.startsWith(projectRoot)) {
-      return { safe: false, reason: 'Path outside project root' };
-    }
-  } catch {
-    return { safe: false, reason: 'Path resolution failed' };
   }
 
   return { safe: true };
@@ -172,13 +147,6 @@ async function loadState() {
   stateLoaded = true;
 }
 async function saveState() { await atomicWriteJson(STATE_FILE, { autonomousExecutionEnabled }); }
-function checkRateLimit(): { allowed: boolean; remaining: number } {
-  const now = Date.now();
-  commandTimestamps = commandTimestamps.filter(ts => now - ts < RATE_LIMIT_WINDOW_MS);
-  if (commandTimestamps.length >= MAX_COMMANDS_PER_MINUTE) return { allowed: false, remaining: 0 };
-  commandTimestamps.push(now);
-  return { allowed: true, remaining: MAX_COMMANDS_PER_MINUTE - commandTimestamps.length };
-}
 
 async function fetchWithFallback(url: string, options?: any): Promise<any> {
   if (typeof (globalThis as any).fetch === 'function') return (globalThis as any).fetch(url, options);
@@ -926,10 +894,6 @@ export async function processSubAgentCommand(opts: {
 }) {
   await ensureDataDir();
   await loadState();
-  const rateCheck = checkRateLimit();
-  if (!rateCheck.allowed) {
-    return { success:false, response:'Rate limit exceeded. Please wait.', packagesToInstall:[], fixedCount:0 };
-  }
   await appendLog({ type:'processCommand', command: opts.command, category: opts.category || 'general', userId: opts.userId });
   const command = opts.command || '';
   const intent = await interpretAdminCommand(command);
@@ -1159,11 +1123,6 @@ export async function getAutonomousExecutionStatus() {
   return { enabled: autonomousExecutionEnabled };
 }
 
-export async function resetRateLimiter(reason?: string) {
-  commandTimestamps = [];
-  await appendLog({ type:'resetRateLimiter', reason:reason || 'Manual reset' });
-  return true;
-}
 
 export async function applyTrainingToSubAgent(trainingPayload: any) {
   try {
