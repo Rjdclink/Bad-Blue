@@ -233,6 +233,8 @@
         "category": "officer_search"
       },
       "content": "Insufficient verifiable data collected for Officer Smith to generate a comprehensive accountability report."
-    }
+    },
+    "processed": true,
+    "processedAt": "2025-11-30T23:26:00.860Z"
   }
 ]

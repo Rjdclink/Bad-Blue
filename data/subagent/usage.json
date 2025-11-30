@@ -1,112 +1,116 @@
 [
   {
-    "timestamp": "2025-11-30T23:24:27.428Z",
+    "timestamp": "2025-11-30T23:47:33.158Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/hooks/use-toast.ts"
+    "path": "/assets/chevron-up-b1PxxVfD.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:27.434Z",
+    "timestamp": "2025-11-30T23:47:33.175Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/toast.tsx"
+    "path": "/assets/useFaqSchema--GUw8NK0.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:27.451Z",
+    "timestamp": "2025-11-30T23:47:33.226Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/lib/translation.ts"
+    "path": "/assets/scale-OSfZKrf3.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:27.465Z",
+    "timestamp": "2025-11-30T23:47:33.233Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/skeleton.tsx"
+    "path": "/assets/sparkles-B6HyZdYK.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:27.575Z",
+    "timestamp": "2025-11-30T23:47:33.240Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/favicon.ico"
+    "path": "/assets/circle-check-BDFWxcSk.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:27.598Z",
+    "timestamp": "2025-11-30T23:47:33.249Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/assets/file-text-CBNIfD09.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:27.604Z",
+    "timestamp": "2025-11-30T23:47:33.305Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/auth/user"
+    "path": "/assets/badge-DLo5fkoO.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:27.734Z",
+    "timestamp": "2025-11-30T23:47:33.311Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/pages/officer-search.tsx"
+    "path": "/assets/progress-DDYmeNGR.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:28.039Z",
+    "timestamp": "2025-11-30T23:47:33.327Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/button.tsx"
+    "path": "/assets/map-pin-l9-xidT_.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:28.154Z",
+    "timestamp": "2025-11-30T23:47:33.334Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/label.tsx"
+    "path": "/assets/shield-7faESzar.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:28.197Z",
+    "timestamp": "2025-11-30T23:47:33.405Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-select.js"
+    "path": "/assets/scroll-area-BSFrzjFF.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:28.204Z",
+    "timestamp": "2025-11-30T23:47:33.412Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-progress.js"
+    "path": "/assets/brain-3CMxcxOD.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:28.235Z",
+    "timestamp": "2025-11-30T23:47:33.475Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-6ZMM2PAV.js"
+    "path": "/assets/send-Dyuf-Q1L.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:28.536Z",
+    "timestamp": "2025-11-30T23:47:33.488Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
+    "path": "/assets/mail-B5XkwkcA.js"
   },
   {
-    "timestamp": "2025-11-30T23:24:57.756Z",
+    "timestamp": "2025-11-30T23:47:33.496Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/assets/image-D3s3Sulp.js"
   },
   {
-    "timestamp": "2025-11-30T23:25:27.930Z",
+    "timestamp": "2025-11-30T23:47:33.507Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/assets/users-CFAHCUDf.js"
   },
   {
-    "timestamp": "2025-11-30T23:25:33.412Z",
+    "timestamp": "2025-11-30T23:47:33.547Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/officer-search/progress/search-1764545133312-8wt2psn12"
+    "path": "/assets/credit-card-B8MKwAhy.js"
   },
   {
-    "timestamp": "2025-11-30T23:25:36.004Z",
-    "action": "learning_event",
-    "provider": "internal",
-    "tokens": 27,
-    "category": "officer_search",
-    "state": "CA"
+    "timestamp": "2025-11-30T23:47:33.559Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+  },
+  {
+    "timestamp": "2025-11-30T23:47:33.881Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
   }
 ]
