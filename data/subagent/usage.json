@@ -1150,5 +1150,17 @@
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T06:00:51.197Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T06:00:52.026Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
   }
 ]
