@@ -1,1992 +1,692 @@
 [
   {
-    "timestamp": "2025-11-30T19:14:05.481Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:14:05.486Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:14:15.081Z",
+    "timestamp": "2025-11-30T20:04:49.960Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:14:15.345Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "100 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:14:15.593Z",
+    "timestamp": "2025-11-30T20:04:49.991Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:14:16.160Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "111 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:14:26.161Z",
+    "timestamp": "2025-11-30T20:04:50.005Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:14:50.948Z",
+    "timestamp": "2025-11-30T20:04:56.819Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "77 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:14:51.070Z",
+    "timestamp": "2025-11-30T20:04:56.879Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:15:01.617Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "100 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:15:01.651Z",
+    "timestamp": "2025-11-30T20:04:56.895Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:15:11.064Z",
+    "timestamp": "2025-11-30T20:05:06.778Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "65 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:15:11.168Z",
+    "timestamp": "2025-11-30T20:05:06.843Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "63 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:15:11.696Z",
+    "timestamp": "2025-11-30T20:05:06.849Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:15:12.311Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:15:22.255Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "63 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:15:22.291Z",
+    "timestamp": "2025-11-30T20:05:06.901Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:15:46.248Z",
+    "timestamp": "2025-11-30T20:05:13.817Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "63 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:15:46.412Z",
+    "timestamp": "2025-11-30T20:05:13.893Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:15:56.925Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "63 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:15:56.934Z",
+    "timestamp": "2025-11-30T20:05:13.910Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:06.577Z",
+    "timestamp": "2025-11-30T20:05:23.575Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "63 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:06.607Z",
+    "timestamp": "2025-11-30T20:05:23.656Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "59 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:06.723Z",
+    "timestamp": "2025-11-30T20:05:23.702Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:16:17.313Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:16:17.379Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "63 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:17.613Z",
+    "timestamp": "2025-11-30T20:05:23.716Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:24.242Z",
+    "timestamp": "2025-11-30T20:05:30.562Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "59 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:24.502Z",
+    "timestamp": "2025-11-30T20:05:30.639Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:16:35.035Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "59 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 235 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:35.233Z",
+    "timestamp": "2025-11-30T20:05:30.656Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:44.858Z",
+    "timestamp": "2025-11-30T20:05:40.100Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:44.947Z",
+    "timestamp": "2025-11-30T20:05:40.203Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "58 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:45.044Z",
+    "timestamp": "2025-11-30T20:05:40.348Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:16:45.616Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:16:55.555Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:16:55.733Z",
+    "timestamp": "2025-11-30T20:05:40.398Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:17:19.727Z",
+    "timestamp": "2025-11-30T20:05:47.292Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:17:20.088Z",
+    "timestamp": "2025-11-30T20:05:47.312Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:18:45.547Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:18:45.639Z",
+    "timestamp": "2025-11-30T20:05:47.331Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:18:55.473Z",
+    "timestamp": "2025-11-30T20:05:56.637Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:18:55.503Z",
+    "timestamp": "2025-11-30T20:05:56.797Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:18:55.506Z",
+    "timestamp": "2025-11-30T20:05:56.871Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:18:56.092Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:19:06.047Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:06.058Z",
+    "timestamp": "2025-11-30T20:05:56.886Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:19:14.769Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:14.866Z",
+    "timestamp": "2025-11-30T20:06:03.926Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:20.836Z",
+    "timestamp": "2025-11-30T20:06:03.997Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:25.437Z",
+    "timestamp": "2025-11-30T20:06:04.019Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:25.473Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:19:32.366Z",
+    "timestamp": "2025-11-30T20:06:14.376Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:32.543Z",
+    "timestamp": "2025-11-30T20:06:14.536Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:19:33.142Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:43.083Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "timestamp": "2025-11-30T20:06:15.009Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:43.194Z",
+    "timestamp": "2025-11-30T20:06:15.081Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:50.061Z",
+    "timestamp": "2025-11-30T20:06:23.156Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:19:50.090Z",
+    "timestamp": "2025-11-30T20:06:23.199Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:19:50.731Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:00.640Z",
+    "timestamp": "2025-11-30T20:06:23.217Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:17.351Z",
+    "timestamp": "2025-11-30T20:06:32.989Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:17.526Z",
+    "timestamp": "2025-11-30T20:06:33.069Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:20:18.083Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:28.039Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "timestamp": "2025-11-30T20:06:33.097Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 234 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:28.092Z",
+    "timestamp": "2025-11-30T20:06:33.111Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:20:35.031Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 233 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:35.073Z",
+    "timestamp": "2025-11-30T20:06:40.351Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 233 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:41.026Z",
+    "timestamp": "2025-11-30T20:06:40.389Z",
     "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "cause": "57 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 233 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:45.599Z",
+    "timestamp": "2025-11-30T20:06:40.415Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 233 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:45.693Z",
+    "timestamp": "2025-11-30T20:07:54.666Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:52.760Z",
+    "timestamp": "2025-11-30T20:08:04.857Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:20:52.810Z",
+    "timestamp": "2025-11-30T20:08:05.014Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:20:53.355Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:21:03.437Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "timestamp": "2025-11-30T20:08:05.159Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:21:03.476Z",
+    "timestamp": "2025-11-30T20:08:05.178Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:21:30.631Z",
+    "timestamp": "2025-11-30T20:08:14.864Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:21:30.652Z",
+    "timestamp": "2025-11-30T20:08:14.926Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:21:41.181Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:21:41.184Z",
+    "timestamp": "2025-11-30T20:08:14.955Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:21:56.233Z",
+    "timestamp": "2025-11-30T20:08:25.483Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:21:56.389Z",
+    "timestamp": "2025-11-30T20:08:25.577Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:21:56.544Z",
+    "timestamp": "2025-11-30T20:08:25.631Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:24.051Z",
+    "timestamp": "2025-11-30T20:08:25.688Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 232 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:31.724Z",
+    "timestamp": "2025-11-30T20:09:41.406Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 230 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:33.589Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "timestamp": "2025-11-30T20:09:41.527Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 230 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:33.822Z",
+    "timestamp": "2025-11-30T20:09:51.995Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 230 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:33.931Z",
+    "timestamp": "2025-11-30T20:09:52.067Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:23:34.497Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 230 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:44.478Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
+    "timestamp": "2025-11-30T20:09:52.101Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 230 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:44.498Z",
+    "timestamp": "2025-11-30T20:09:52.115Z",
     "functionAffected": "LSP Auto-Fix",
     "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 230 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:51.339Z",
+    "timestamp": "2025-11-30T20:09:59.399Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 230 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:51.429Z",
+    "timestamp": "2025-11-30T20:09:59.464Z",
     "functionAffected": "Code Quality (LSP)",
     "cause": "2 TypeScript errors",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
     "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 230 minutes."
   },
   {
-    "timestamp": "2025-11-30T19:23:57.588Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
+    "timestamp": "2025-11-30T20:09:59.602Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
     "category": "application_code",
     "aiAttempted": true,
     "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:01.933Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:02.222Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:09.014Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:09.088Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:15.441Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:19.646Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:19.681Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:19.846Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:25.021Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:25.624Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:35.579Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:45.035Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:45.079Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:45.170Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:45.746Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:55.729Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:24:55.776Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:25:07.284Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:25:07.434Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:25:13.596Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:25:18.035Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:25:18.068Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:27:01.337Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:27:01.396Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:27:11.307Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:27:11.553Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:27:11.876Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:27:12.468Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:27:22.402Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:27:22.473Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:28:51.494Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:28:51.601Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:01.420Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:01.575Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:01.642Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:12.204Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:12.216Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:12.225Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:19.623Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:19.660Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:30.321Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:31.049Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:40.238Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:40.322Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:40.380Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:50.928Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:50.960Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:50.981Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:59.714Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:29:59.859Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:30:05.968Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:30:10.397Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:30:10.424Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:30:19.249Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:30:19.570Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:30:20.174Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:30:30.187Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": false,
-    "overallSuccess": false,
-    "aiError": "Mistral API error: API error occurred: Status 400\nBody: {\"object\":\"error\",\"message\":\"Invalid model: gpt-4o-mini\",\"type\":\"invalid_model\",\"param\":null,\"code\":\"1500\"}"
-  },
-  {
-    "timestamp": "2025-11-30T19:32:32.446Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  * Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomicity\n  3. Update Express server to handle partial failures\n  4. Modify React frontend to display informative error messages\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify database consistency\n  3. Check fron"
-  },
-  {
-    "timestamp": "2025-11-30T19:32:36.263Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for rollback on failure\n  3. Update Express server to retry failed requests\n  4. Add React frontend error handling for user notification\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify database consistency after faile"
-  },
-  {
-    "timestamp": "2025-11-30T19:32:36.938Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to auto-fix errors\n  3. Implement automated code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm error resolution\n  2. Verify code formatting with `prettier`\n* **Risk Assessment:**\n  + Low risk: automated fixes, no expected downtime"
-  },
-  {
-    "timestamp": "2025-11-30T19:32:37.082Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to automatically fix errors\n  3. Implement code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm error resolution\n  2. Verify code formatting with `prettier`\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal impact on system state"
-  },
-  {
-    "timestamp": "2025-11-30T19:32:38.772Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run TypeScript compiler with `--noEmit` flag to identify errors\n  2. Use automated code fixers (e.g., `tslint --fix`)\n  3. Implement TypeScript linting in CI/CD pipeline\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to verify error resolution\n  2. Check code quality metrics (e.g., code coverage, complexity)\n* **Risk Assessment:**\n  + Low risk: automated fixes, minor code changes\n  "
-  },
-  {
-    "timestamp": "2025-11-30T19:33:12.720Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomic operations\n  3. Configure Express server for retry mechanisms\n* **Verification Steps:**\n  1. Test automated fix with simulated errors\n  2. Verify fix completion and system stability\n* **Risk Assessment:**\n  + Low risk: automated fixes, minima"
-  },
-  {
-    "timestamp": "2025-11-30T19:33:13.651Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomic operations\n  3. Configure Express server for retry mechanisms\n* **Verification Steps:**\n  1. Test automated fix with simulated errors\n  2. Verify fix completeness in logs and database\n* **Risk Assessment:**\n  + Low risk: automated fix with mi"
-  },
-  {
-    "timestamp": "2025-11-30T19:33:13.794Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomicity\n  3. Update Express server to handle partial failures\n  4. Deploy automated tests for React frontend\n* **Verification Steps:**\n  1. Run automated tests\n  2. Verify error logs\n  3. Check database consistency\n* **Risk Assessment:**\n  + Low r"
-  },
-  {
-    "timestamp": "2025-11-30T19:33:19.082Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to automatically fix errors\n  3. Implement code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm error resolution\n  2. Verify code formatting with `prettier`\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal downtime expected"
-  },
-  {
-    "timestamp": "2025-11-30T19:33:20.644Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` with TypeScript plugin for automated fixes\n  3. Implement automated code formatting with `prettier`\n* **Verification Steps:**\n  1. Re-run `tsc --noEmit` to verify error resolution\n  2. Use code linters to check for remaining issues\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal impact on system state"
-  },
-  {
-    "timestamp": "2025-11-30T19:35:21.394Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  * Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomicity\n  3. Update Express server to handle partial failures\n  4. Deploy changes to React frontend to reflect updated backend behavior\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify database consistency\n  3. C"
-  },
-  {
-    "timestamp": "2025-11-30T19:35:22.994Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomicity\n  3. Update Express server to handle partial failures\n  4. Deploy changes to React frontend to reflect updated backend behavior\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify database consistency using "
-  },
-  {
-    "timestamp": "2025-11-30T19:35:32.148Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to automate fixes\n  3. Implement automated code formatting with `prettier`\n* **Verification Steps:**\n  1. Re-run `tsc --noEmit` to confirm error resolution\n  2. Verify code formatting with `prettier`\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal downtime expected"
-  },
-  {
-    "timestamp": "2025-11-30T19:35:33.751Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to automatically fix errors\n  3. Implement code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm error resolution\n  2. Verify code formatting with `prettier`\n* **Risk Assessment:**\n  + Low risk: automated fixes, no downtime expected"
-  },
-  {
-    "timestamp": "2025-11-30T19:35:34.666Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors in application code\n* **Remediation Plan:**\n  1. Run TypeScript linter to identify errors\n  2. Apply automated fixes using TypeScript compiler options\n  3. Use code formatter (e.g., Prettier) to standardize code\n* **Verification Steps:**\n  1. Re-run TypeScript linter to confirm error resolution\n  2. Verify application functionality\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal impact on system state"
-  },
-  {
-    "timestamp": "2025-11-30T19:36:24.649Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement retry mechanism with exponential backoff\n  2. Add comprehensive error handling and logging\n  3. Update Express server to handle incomplete auto-fix requests\n* **Verification Steps:**\n  1. Test auto-fix functionality with simulated errors\n  2. Verify error logs and handling\n* **Risk Assessment:**\n  + Low risk: existing system state is work"
-  },
-  {
-    "timestamp": "2025-11-30T19:38:58.690Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement retry mechanism with exponential backoff\n  2. Add comprehensive error handling and logging\n  3. Update database connection pooling for PostgreSQL/Supabase\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify logs for complete error handling\n* **Risk Assessment:**\n  + Low risk: automated fixes and error handl"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:35.656Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement retry mechanism with exponential backoff\n  2. Add comprehensive error handling and logging\n  3. Update Express server to handle incomplete auto-fix requests\n* **Verification Steps:**\n  1. Test auto-fix functionality with simulated errors\n  2. Verify error logs and handling\n* **Risk Assessment:**\n  + Low risk: existing system state is work"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:46.801Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomic operations\n  3. Configure Express server for retry mechanisms\n* **Verification Steps:**\n  1. Test automated fixes with simulated errors\n  2. Validate database consistency\n  3. Monitor system logs for errors\n* **Risk Assessment:**\n  + Low risk"
-  },
-  {
-    "timestamp": "2025-11-30T19:40:51.443Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors in application code\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to fix errors programmatically\n  3. Implement automated code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm error resolution\n  2. Verify code formatting with `prettier`\n* **Risk Assessment:**\n  + Low risk: system is working, errors are warnings"
-  },
-  {
-    "timestamp": "2025-11-30T19:42:20.391Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomic operations\n  3. Configure Express server for retry mechanisms\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify database consistency\n  3. Monitor Express server logs\n* **Risk Assessment:**\n  + Low risk: autom"
-  },
-  {
-    "timestamp": "2025-11-30T19:42:28.408Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomic operations\n  3. Configure Express server for retry mechanisms\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify fix completion and system stability\n* **Risk Assessment:**\n  + Low risk: automated fixes, minima"
-  },
-  {
-    "timestamp": "2025-11-30T19:42:33.582Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors in application code\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to auto-fix errors\n  3. Implement automated code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm no errors\n  2. Verify code formatting with `prettier`\n* **Risk Assessment:**\n  + Low risk: system is working, errors are warnings"
-  },
-  {
-    "timestamp": "2025-11-30T19:42:38.381Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  * 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  * Run `tsc --noEmit` to identify errors\n  * Use `tslint` or `eslint` to automatically fix errors\n  * Implement code formatting with `prettier`\n* **Verification Steps:**\n  * Run `tsc --noEmit` to confirm error resolution\n  * Use `tslint` or `eslint` to verify code quality\n* **Risk Assessment:**\n  * Low risk: automated fixes, minimal downtime expected"
-  },
-  {
-    "timestamp": "2025-11-30T19:42:40.446Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run TypeScript compiler with `--strict` flag\n  2. Use automated code fixers (e.g., `tslint --fix`)\n  3. Implement code formatting (e.g., Prettier)\n* **Verification Steps:**\n  1. Re-run TypeScript compiler\n  2. Check code quality metrics\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal downtime expected"
-  },
-  {
-    "timestamp": "2025-11-30T19:43:03.859Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in application code\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use logging to track and identify incomplete fixes\n  3. Develop automated scripts to retry or complete fixes\n* **Verification Steps:**\n  1. Test automated fix scripts\n  2. Verify error logs for completeness\n  3. Monitor system state for stability\n* **Risk Assessment:**\n  + Low risk: automated fixes can be ex"
-  },
-  {
-    "timestamp": "2025-11-30T19:43:10.602Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in application code\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase error codes for specific error handling\n  3. Update Express server to retry failed operations\n  4. Deploy updated code to production\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify error handling and logging\n  3. Monitor system for NOTICE severity i"
-  },
-  {
-    "timestamp": "2025-11-30T19:43:11.321Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  * Incomplete automatic fix due to missing dependencies or incorrect configuration\n* **Remediation Plan:**\n  1. Run `npm install` to ensure dependencies are up-to-date\n  2. Execute `npx ts-node node_modules/.bin/lsp-fix` to reapply auto-fix\n  3. Verify and update `tsconfig.json` and `lsp.config.json` for correct settings\n* **Verification Steps:**\n  1. Check logs for successful auto-fix completion\n  2. Run `npm test` to ensure code integrity\n* **Risk Assessment:**\n  * "
-  },
-  {
-    "timestamp": "2025-11-30T19:43:15.958Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  * 2 TypeScript errors in application code\n* **Remediation Plan:**\n  * Run TypeScript linter to identify errors\n  * Use automated code fixers (e.g., `tslint --fix`)\n  * Implement code formatting (e.g., Prettier)\n* **Verification Steps:**\n  * Run `tsc` to verify TypeScript errors resolved\n  * Use code analysis tools (e.g., SonarQube) to verify code quality\n* **Risk Assessment:**\n  * Low risk: system is working, errors are warnings\n  * Automated fixes minimize manual er"
-  },
-  {
-    "timestamp": "2025-11-30T19:43:17.268Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run TypeScript linter to identify errors\n  2. Apply automated fixes using TypeScript compiler options\n  3. Use code formatting tools (e.g., Prettier) for consistency\n* **Verification Steps:**\n  1. Re-run TypeScript linter to confirm error resolution\n  2. Verify code formatting consistency\n* **Risk Assessment:**\n  + Low risk: automated fixes, minor code changes"
-  },
-  {
-    "timestamp": "2025-11-30T19:43:38.559Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in application code\n* **Remediation Plan:**\n  1. Implement retry mechanism with exponential backoff\n  2. Add comprehensive error handling and logging\n  3. Update LSP Auto-Fix to handle edge cases\n* **Verification Steps:**\n  1. Test LSP Auto-Fix with various input scenarios\n  2. Verify error logs for completeness\n* **Risk Assessment:**\n  + Low risk: existing system state is working, changes are incremental "
-  },
-  {
-    "timestamp": "2025-11-30T19:43:41.525Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomic operations\n  3. Update Express server to handle partial failures\n  4. Integrate automated testing for React frontend\n* **Verification Steps:**\n  1. Run automated tests for backend and frontend\n  2. Verify database consistency\n  3. Check serve"
-  },
-  {
-    "timestamp": "2025-11-30T19:43:54.784Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to automatically fix errors\n  3. Implement TypeScript compiler options to enforce code quality\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to verify error resolution\n  2. Use code linters to check for remaining issues\n* **Risk Assessment:**\n  + Low risk: system is working, errors are warnings\n  + Automated fixes "
-  },
-  {
-    "timestamp": "2025-11-30T19:43:55.231Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `eslint --fix` to automatically fix linting issues\n  3. Implement automated code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc` to verify error resolution\n  2. Use `eslint` to check for remaining linting issues\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal potential for introducing new errors"
-  },
-  {
-    "timestamp": "2025-11-30T19:43:56.803Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to automatically fix errors\n  3. Implement code formatting with `prettier`\n* **Verification Steps:**\n  1. Re-run `tsc --noEmit`\n  2. Check code quality with `tslint` or `eslint`\n* **Risk Assessment:**\n  + Low risk: automated fixes, no downtime expected"
-  },
-  {
-    "timestamp": "2025-11-30T19:46:17.897Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  * Incomplete automatic fix due to insufficient error handling in application code\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase error codes for specific error handling\n  3. Update Express server to handle and log errors\n  4. Deploy automated fix using Node.js/TypeScript\n* **Verification Steps:**\n  1. Test automated fix with simulated errors\n  2. Verify error logs and handling\n  3. Confirm system state is worki"
-  },
-  {
-    "timestamp": "2025-11-30T19:46:30.314Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in application code\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase error codes for specific error handling\n  3. Update Express server to handle and log errors\n  4. Use React error boundaries for frontend error handling\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify error logs and handling\n  3. Validate system stat"
-  },
-  {
-    "timestamp": "2025-11-30T19:46:35.705Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors in application code\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to automatically fix errors\n  3. Implement code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm error resolution\n  2. Verify code formatting with `prettier`\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal impact on system state"
-  },
-  {
-    "timestamp": "2025-11-30T19:46:35.775Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP (Language Server Protocol) issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Fix errors using automated tools (e.g., `tslint --fix`)\n  3. Run `npm run build` to recompile code\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm no errors\n  2. Verify application functionality\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal downtime expected"
-  },
-  {
-    "timestamp": "2025-11-30T19:46:36.592Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to auto-fix errors\n  3. Implement automated code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm error resolution\n  2. Verify code formatting with `prettier --check`\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal downtime expected"
-  },
-  {
-    "timestamp": "2025-11-30T19:46:53.348Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient application code handling\n* **Remediation Plan:**\n  1. Update Express server to handle auto-fix errors\n  2. Implement retry logic in Node.js/TypeScript backend\n  3. Validate database transactions with PostgreSQL/Supabase\n* **Verification Steps:**\n  1. Test auto-fix functionality\n  2. Verify database consistency\n  3. Monitor system logs for errors\n* **Risk Assessment:**\n  + Low risk: automated fixes can be executed progra"
-  },
-  {
-    "timestamp": "2025-11-30T19:46:54.354Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomic operations\n  3. Configure Express server for retry mechanisms\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify database consistency\n  3. Monitor server logs for errors\n* **Risk Assessment:**\n  + Low risk: au"
-  },
-  {
-    "timestamp": "2025-11-30T19:47:04.225Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors in application code\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to auto-fix errors\n  3. Implement automated code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm error resolution\n  2. Verify code formatting with `prettier`\n* **Risk Assessment:**\n  + Low risk: system is working, WARNING severity\n  + Automated fixes minimize manual error risk"
-  },
-  {
-    "timestamp": "2025-11-30T19:47:04.583Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to automatically fix errors\n  3. Implement code formatting with `prettier`\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to confirm error resolution\n  2. Use code linters to verify code quality\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal downtime expected"
-  },
-  {
-    "timestamp": "2025-11-30T19:47:09.063Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in application code\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase error codes for specific error handling\n  3. Update Express server to retry failed operations\n  4. Add logging for failed automatic fixes\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify logs for successful fixes and error handling\n* **Risk Assessmen"
-  },
-  {
-    "timestamp": "2025-11-30T19:47:33.823Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in Node.js/TypeScript backend\n* **Remediation Plan:**\n  1. Implement try-catch blocks for error handling\n  2. Use PostgreSQL/Supabase database transactions for atomicity\n  3. Update Express server to handle partial failures\n  4. Modify React frontend to display error messages\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify error handling and logging\n  3. Check database c"
-  },
-  {
-    "timestamp": "2025-11-30T19:47:37.785Z",
-    "functionAffected": "LSP Auto-Fix",
-    "cause": "Automatic fix incomplete",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
-    "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + Incomplete automatic fix due to insufficient error handling in application code\n* **Remediation Plan:**\n  1. Implement try-catch blocks in affected code\n  2. Use PostgreSQL/Supabase error codes for specific error handling\n  3. Update Express server to handle and log errors\n  4. Deploy changes to production\n* **Verification Steps:**\n  1. Test automatic fix with simulated errors\n  2. Verify error handling and logging\n  3. Monitor system for NOTICE severity issues\n* *"
-  },
-  {
-    "timestamp": "2025-11-30T19:47:42.106Z",
-    "functionAffected": "Code Quality (LSP)",
-    "cause": "2 TypeScript errors",
-    "category": "application_code",
-    "aiAttempted": true,
-    "aiSuccess": true,
     "overallSuccess": false,
-    "aiPlan": "* **Root Cause Analysis:**\n  + 2 TypeScript errors causing LSP code quality issues\n* **Remediation Plan:**\n  1. Run `tsc --noEmit` to identify errors\n  2. Use `tslint` or `eslint` to automate fixes\n  3. Implement type checking and interfaces\n* **Verification Steps:**\n  1. Run `tsc --noEmit` to verify error resolution\n  2. Use code linters for automated checks\n* **Risk Assessment:**\n  + Low risk: automated fixes, minimal downtime"
+    "aiError": "AUTONOMOUS_LIMIT_REACHED: Autonomous Groq 35% limit reached. Will resume at 2025-12-01T00:00:00.000Z. Resume in 230 minutes."
   }
 ]

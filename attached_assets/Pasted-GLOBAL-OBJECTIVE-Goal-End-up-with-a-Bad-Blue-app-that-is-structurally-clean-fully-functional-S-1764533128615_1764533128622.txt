@@ -1,0 +1,700 @@
+GLOBAL OBJECTIVE
+
+> Goal: End up with a Bad Blue app that is structurally clean, fully functional, SEO-optimized, AI-accurate, database-healthy, syntactically flawless, and correctly wired end-to-end — with no missed bugs, no missed syntax errors, and no unexamined feature or connection.
+
+
+
+Everything is covered:
+
+Officer search
+
+AI-powered legal consultation → routes user input to petition / complaint / §1983 lawsuit
+
+FOIA request drafting → routes to correct department email or falls back to contact.badblue@gmail.com
+
+Petition drafting → name gathering → city council routing or fallback to contact.badblue@gmail.com
+
+Complaint drafting → appropriate department routing or fallback to contact.badblue@gmail.com
+
+Lawsuit drafting → including “Bad Blue option” routing to contact.badblue@gmail.com
+
+Welcome emails on sign-in and confirmation emails with draft copies to user email
+
+SEO, routing, AI provider usage, caching, error handling
+
+Database migrations, tables, availability, and correctness
+
+Syntax correctness, import/export correctness, and file-to-file connection correctness
+
+
+The agent performs the work and reports findings.
+The architect reviews every finding meticulously and tells the agent exactly what to fix.
+
+
+---
+
+PHASE A — INTENSIVE ANALYSIS & SYSTEM-WIDE INSPECTION
+
+Agent inspects. After each section, it reports findings to the architect, and the architect double-checks and recommends corrections.
+
+
+---
+
+A.0 – Exhaustive Syntax Error Hunt (Every Single Line)
+
+Agent:
+
+Goes through every single line of code in the entire app, extremely meticulously:
+
+All TypeScript/JavaScript files in /server, /client, /providers, /hooks, /components, /lib, etc.
+
+Any config files that contain executable or parsed code (where syntax matters).
+
+Looks for:
+
+Missing commas, semicolons where required by the code style/tooling.
+
+Unbalanced parentheses, brackets, braces.
+
+Misplaced or unmatched quotes and template strings.
+
+Invalid function signatures.
+
+Wrongly ordered async / await / export / default keywords.
+
+Typo’d keywords (retun, funtion, etc.).
+
+Any line that would cause a parser, TS compiler, or bundler to fail.
+
+
+
+For every syntax issue found:
+
+Immediately logs it as a specific finding (file, line, problem description).
+
+Reports it directly to the architect in detail.
+
+
+
+Architect:
+
+For each reported syntax issue:
+
+Meticulously reviews the exact line and surrounding context.
+
+Confirms whether the agent’s diagnosis is correct.
+
+If the diagnosis is correct, provides an exact, explicit fix for that line (and any nearby lines if needed).
+
+If the agent misread something, corrects the agent’s understanding so the agent doesn’t misclassify similar lines later.
+
+
+
+The agent then applies the architect’s fix and, if needed, re-checks that file.
+
+
+---
+
+A.1 – Repository & Structural Mapping
+
+Agent:
+
+Maps the entire repo:
+
+/server – API routes, SSE streams, officer search logic, AI-backed document generation (complaints, FOIA, petitions, lawsuits), email sending.
+
+/client – React pages, routing, navigation, forms for officer search, legal consult, FOIA, complaints, petitions, lawsuits, contact, etc.
+
+/providers – AI integration modules for Gemini, Groq, Mistral, Claude.
+
+aiTokenGovernor – load balancing, provider selection, usage tracking.
+
+DB layer – ORM/repository modules for officer data, documents, email logs, AI usage logs, etc.
+
+Utilities – caching, logging, rate limiting, event emitters.
+
+public/ – robots.txt, sitemap.xml, static assets.
+
+package.json – dependencies, scripts.
+
+Build / deploy config for Railway / Node runtime.
+
+
+Confirms:
+
+No obviously orphaned code files.
+
+No circular dependencies.
+
+No clearly dead modules that might still accidentally be imported.
+
+
+
+Architect:
+
+Reviews the structural map and findings.
+
+Points out any area that looks suspicious or incomplete and instructs the agent to re-inspect or clarify.
+
+
+
+---
+
+A.2 – Officer Search System Breakdown
+
+Agent:
+
+Traces the entire officer search flow:
+
+Frontend OfficerSearch component: state, validation, toasts, SSE connection to /api/officer-search/progress/:searchId.
+
+API POST /api/officer-search: payload shape, field usage.
+
+Backend search logic: roster lookup, URL selection, AI orchestration, cache read/write.
+
+Event emitter → SSE → frontend progress display.
+
+
+Confirms:
+
+Inputs: officer name + state, and any context used to support city/county/state/government/corrections queries.
+
+How progress events are structured and emitted.
+
+How SSE connections are opened and closed.
+
+How errors are propagated to the frontend.
+
+
+
+Architect:
+
+Reviews officer-search findings.
+
+Identifies race conditions, brittle assumptions, or poor error handling.
+
+Provides explicit correction instructions for Phase B.
+
+
+
+---
+
+A.3 – AI Systems & Legal Flows Analysis
+
+Agent:
+
+Analyzes the centralized AI provider and all AI modules:
+
+How tasks are named and categorized (context, priority, complexity).
+
+How prompts are constructed and how JSON vs text output is processed.
+
+How provider choice and fallback are handled.
+
+
+For each feature, agent inspects:
+
+1. AI-powered legal consultation
+
+How user input is captured and structured.
+
+How it decides whether to route the user into:
+
+Petition drafting
+
+Complaint drafting
+
+§1983 lawsuit drafting
+
+
+
+
+2. FOIA request drafting
+
+How prompts are built from user input.
+
+What the draft output format looks like.
+
+How the draft is passed into the email-send layer.
+
+
+
+3. Petition drafting (officer resignation)
+
+How supporter names and details are captured and stored.
+
+How those names are merged into the petition text.
+
+How the city council email is resolved.
+
+
+
+4. Complaint drafting
+
+How incident data is structured.
+
+How AI is prompted.
+
+How the department destination is determined.
+
+
+
+5. Lawsuit drafting (including §1983 and Bad Blue option)
+
+How the selected lawsuit type is recorded.
+
+How the “Bad Blue option” ensures drafts and data are routed to contact.badblue@gmail.com.
+
+
+
+
+The agent records all fragile spots: improper validation, loose output parsing, missing guards, etc.
+
+
+Architect:
+
+Reviews these findings line by line for correctness.
+
+Identifies where:
+
+Stronger validation is needed.
+
+Routing rules must be clarified or tightened.
+
+Prompts need restructuring.
+
+
+Provides precise fix instructions for Phase B.
+
+
+
+---
+
+A.4 – Email & Notification Pipeline Analysis
+
+Agent:
+
+Traces all email flows:
+
+FOIA drafting → correct department email or fallback to contact.badblue@gmail.com.
+
+Petitions → city council email or fallback.
+
+Complaints → appropriate department or fallback.
+
+Lawsuits → normal routing or forced routing to contact.badblue@gmail.com for Bad Blue option.
+
+Welcome emails for new sign-ins.
+
+Confirmation emails to user email addresses with attached or linked drafts.
+
+
+Checks:
+
+How addresses are derived or looked up.
+
+How failures are handled.
+
+If and how logs or records for sent emails are stored.
+
+
+
+Architect:
+
+Reviews email findings and flags:
+
+Misrouted paths.
+
+Weak error handling.
+
+Poor logging.
+
+
+Gives targeted routing and error-handling corrections.
+
+
+
+---
+
+A.5 – SEO & Routing Analysis
+
+Agent:
+
+Confirms:
+
+sitemap.xml is reachable and includes all major routes: home, officer search, FOIA tools, complaints, petitions, lawsuits, contact, privacy, terms.
+
+robots.txt allows main routes and disallows backend paths like /api/**.
+
+JSON-LD exists on:
+
+Home: Organization/LegalService “Bad Blue” (URL + contact.badblue@gmail.com).
+
+Contact: ContactPage referencing the same organization and email.
+
+
+
+Verifies each main route:
+
+Home, officer search, FOIA, complaint, petition, lawsuit, contact, privacy, terms.
+
+Each has unique <title> and <meta description>.
+
+No route renders blank content.
+
+
+Verifies hidden FAQ on /contact:
+
+FAQs are in headings + paragraphs.
+
+Content is present in the DOM and crawlable but visually hidden.
+
+
+
+Architect:
+
+Reviews SEO and routing findings.
+
+Suggests improvements where indexing, relevance, or clarity could be improved.
+
+
+
+---
+
+A.6 – Node Runtime & Build/Deploy Behavior
+
+Agent:
+
+Confirms:
+
+The Node version used by Railway matches expectations.
+
+No runtime features cause breakage (imports, ESM/CJS, etc.).
+
+Builds and deployments complete without unexplained errors.
+
+
+
+Architect:
+
+Reviews these runtime findings and decides if any adjustments are needed.
+
+
+
+---
+
+A.7 – Database Schema & Migration Readiness
+
+Agent:
+
+Reviews:
+
+Tables/models for officer data, rosters, and department URLs.
+
+Tables/models for FOIA, complaints, petitions, lawsuits.
+
+Tables/models for email logs, AI usage logs, and relevant user/session data.
+
+
+Checks:
+
+That migrations align with code models.
+
+That schema supports all documented flows.
+
+
+
+Architect:
+
+Reviews DB findings for drift or design issues.
+
+Suggests exact migration or schema changes if needed.
+
+
+
+---
+
+A.8 – Comprehensive Import/Export Audit
+
+Agent:
+
+Performs a full import/export audit across the entire codebase:
+
+Every import and export statement in /server, /client, /providers, /components, /hooks, /lib, etc.
+
+Validates:
+
+Default vs named imports match the actual exports.
+
+File paths are correct and use consistent extensions/resolution rules.
+
+There are no imports from non-existent files.
+
+There are no “imported but not exported anywhere” mismatches.
+
+There are no circular imports causing subtle bugs.
+
+
+
+For each suspect import/export:
+
+Records file, symbol name, and what appears to be wrong.
+
+Reports all findings to the architect.
+
+
+
+Architect:
+
+Reviews each import/export finding:
+
+Confirms whether the agent is correct.
+
+Identifies which imports are broken, unused, or mis-typed.
+
+Provides precise fixes (e.g., change to named export, rename symbol, adjust path, remove import).
+
+
+
+The agent then corrects these issues in Phase B according to architect guidance.
+
+
+---
+
+A.9 – Comprehensive File Connection & System Wiring Audit
+
+Agent:
+
+Performs a file-to-file connection audit to ensure every system is wired correctly:
+
+Frontend:
+
+Routes → Page components → Shared layout → Nav/footer → Buttons/links → API calls.
+
+Forms → validation → API requests → UI success/failure states.
+
+
+Backend:
+
+Routes → controllers/handlers → services → providers → database → email.
+
+Officer search flow: route → search logic → AI → cache → SSE → frontend.
+
+Legal flows: consult → chosen downstream (petition/complaint/§1983) → document generator → email sender → DB logs.
+
+
+AI integration:
+
+Task creation → aiTokenGovernor → provider call → response parsing → downstream usage (drafts, responses, logs).
+
+
+Email integration:
+
+Trigger events → email templates/body generation → mail provider → log storage.
+
+
+
+For each connection:
+
+Confirms that inputs and outputs match on both sides of the boundary.
+
+Verifies there are no “half-connected” paths (e.g., UI calling a route that doesn’t exist, or a backend handler that is never used).
+
+
+Compiles all misalignments, dead paths, and fragile connections and reports them to the architect.
+
+
+Architect:
+
+Reviews the wiring findings and confirms:
+
+Which connections are correct as-is.
+
+Which are broken, unused, or inconsistent.
+
+
+Provides specific correction directions for the agent to apply in Phase B.
+
+
+
+---
+
+PHASE B — COMPLETE REMEDIATION & REINFORCEMENT
+
+Agent implements fixes according to architect instructions. After each cluster, the agent reports back; the architect double-checks.
+
+B.1 – Syntax & Import/Export Fix Application
+
+Agent:
+
+Applies all syntax fixes the architect approved:
+
+Corrects every flagged line.
+
+Ensures each file parses cleanly.
+
+
+Applies all import/export fixes:
+
+Adjusts named vs default imports/exports.
+
+Fixes paths and extensions.
+
+Removes or corrects unused or broken imports.
+
+Resolves any circular scenarios per architect recommendations.
+
+
+
+Architect:
+
+Re-checks:
+
+That the corrected files are syntactically sound.
+
+That imports/exports now line up correctly.
+
+
+If anything remains off, gives another round of precise corrections.
+
+
+
+---
+
+B.2 – Officer Search Remediation
+
+(As previously defined; now applied on top of the clean syntax/import baseline.)
+
+Agent applies architect’s corrections to the officer search UI, backend, SSE, and error handling.
+
+Architect reviews and confirms the fixes.
+
+
+
+---
+
+B.3 – AI Flow & Routing Remediation
+
+Agent strengthens prompts, validations, and routing for:
+
+Legal consult → petition / complaint / §1983.
+
+FOIA → email + fallback logic.
+
+Complaint / petition / lawsuit drafting and routing.
+
+
+Architect reviews and confirms each AI flow behaves predictably and correctly.
+
+
+
+---
+
+B.4 – Email Pipeline & Confirmation Remediation
+
+Agent refines routing rules and error handling for all email flows as directed.
+
+Architect reviews destinations, fallback behavior, and logs.
+
+
+
+---
+
+B.5 – SEO & Content Remediation
+
+Agent adjusts sitemap, robots, JSON-LD, content, and link graph as instructed.
+
+Architect reviews and signs off on SEO structure and content.
+
+
+
+---
+
+B.6 – Database & Schema Remediation
+
+Agent implements schema/migration fixes.
+
+Architect confirms code ↔ schema alignment and normal operation safety.
+
+
+
+---
+
+B.7 – Build / Runtime / Error Handling Tightening
+
+Agent addresses build/runtime issues and improves error logging/handling.
+
+Architect reviews the updated behavior and logs for clarity, correctness, and signal-to-noise balance.
+
+
+
+---
+
+PHASE C — METICULOUS FUNCTIONAL, AUTOMATION & DATABASE TESTING
+
+No stress testing. Focus is complete coverage of normal and edge cases, now on top of a syntactically correct and properly wired codebase.
+
+C.1 – User Flows & Features
+
+Agent exercises each major flow end-to-end (search, consult→draft, FOIA, complaints, petitions, lawsuits, welcome emails, confirmation emails).
+
+Records successes and anomalies.
+
+Architect reviews every reported behavior and orders targeted fixes if needed.
+
+
+
+---
+
+C.2 – Automation, Caching, SSE & Background Behavior
+
+Agent validates normal operation of caching, scheduled work, SSE lifecycle, AI usage logging.
+
+Reports any oddities.
+
+Architect examines and orders corrections if needed.
+
+
+
+---
+
+C.3 – Database Testing (Correctness & Availability)
+
+Agent verifies migrations and normal CRUD operations across all core entities.
+
+Reports migration issues or mismatches.
+
+Architect reviews and orders last adjustments if necessary.
+
+
+
+---
+
+C.4 – Final Full-Stack Sign-Off
+
+Agent provides a final aggregated report across:
+
+Syntax status
+
+Imports/exports
+
+File connections
+
+Officer search
+
+AI flows
+
+FOIA/complaint/petition/lawsuit pipelines
+
+Emails
+
+SEO
+
+Database
+
+Runtime/build
+
+
+Architect performs a last meticulous review of all findings.
+
+Only once there are no unresolved findings and no untested major flows does the architect recommend the system as ready.
