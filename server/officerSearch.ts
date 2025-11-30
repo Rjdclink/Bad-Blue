@@ -210,7 +210,7 @@ async function geminiDataHarvest(
   priorityUrls: string[]
 ): Promise<GeminiRawData> {
   const webSupplemental = await webSearchSupplementalData(officerName, state);
-  const allUrls = [...new Set([...priorityUrls, ...webSupplemental.additionalSources])];
+  const allUrls = Array.from(new Set([...priorityUrls, ...webSupplemental.additionalSources]));
   
   const urlContext = allUrls.length > 0 
     ? `Priority URLs to check:\n${allUrls.slice(0, 15).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
@@ -243,7 +243,7 @@ Return ONLY facts with sources. Omit empty fields. No speculation.`;
   try {
     const result = await generateGeminiStructuredResponse<GeminiRawData>(prompt, { useJSON: true });
     if (result && webSupplemental.additionalSources.length > 0) {
-      result.sources = [...new Set([...(result.sources || []), ...webSupplemental.additionalSources])];
+      result.sources = Array.from(new Set([...(result.sources || []), ...webSupplemental.additionalSources]));
     }
     return result || {};
   } catch (error) {

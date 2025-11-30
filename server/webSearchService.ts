@@ -15,6 +15,69 @@ const BING_API_KEY = process.env.BING_API_KEY || process.env.BING_SEARCH_KEY || 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 const WEB_SEARCH_ENABLED = process.env.WEB_SEARCH_ENABLED !== 'false';
 
+// Circuit breaker state to prevent constant retries on failing APIs
+interface CircuitBreakerState {
+  failures: number;
+  lastFailure: number;
+  disabled: boolean;
+  errorMessage?: string;
+}
+
+const circuitBreaker: Record<string, CircuitBreakerState> = {
+  bing: { failures: 0, lastFailure: 0, disabled: false },
+  gemini: { failures: 0, lastFailure: 0, disabled: false },
+};
+
+const MAX_FAILURES = 3;
+const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown after max failures
+
+function isCircuitOpen(service: 'bing' | 'gemini'): boolean {
+  const state = circuitBreaker[service];
+  if (!state.disabled) return false;
+  
+  // Check if cooldown has passed
+  if (Date.now() - state.lastFailure > COOLDOWN_MS) {
+    state.disabled = false;
+    state.failures = 0;
+    console.log(`[${service.toUpperCase()} Search] Circuit breaker reset after cooldown`);
+    return false;
+  }
+  
+  return true;
+}
+
+function recordFailure(service: 'bing' | 'gemini', errorMessage: string) {
+  const state = circuitBreaker[service];
+  state.failures++;
+  state.lastFailure = Date.now();
+  state.errorMessage = errorMessage;
+  
+  if (state.failures >= MAX_FAILURES && !state.disabled) {
+    state.disabled = true;
+    console.warn(`[${service.toUpperCase()} Search] Circuit breaker OPEN - API failing consistently: ${errorMessage}. Will retry in ${COOLDOWN_MS / 60000} minutes.`);
+  }
+}
+
+function recordSuccess(service: 'bing' | 'gemini') {
+  const state = circuitBreaker[service];
+  state.failures = 0;
+  state.disabled = false;
+  state.errorMessage = undefined;
+}
+
+export function getSearchStatus(): Record<string, { available: boolean; error?: string }> {
+  return {
+    bing: {
+      available: !!BING_API_KEY && !isCircuitOpen('bing'),
+      error: circuitBreaker.bing.errorMessage,
+    },
+    gemini: {
+      available: !!GEMINI_API_KEY && !isCircuitOpen('gemini'),
+      error: circuitBreaker.gemini.errorMessage,
+    },
+  };
+}
+
 export interface SearchResult {
   title: string;
   url: string;
@@ -81,7 +144,11 @@ export async function bingSearch(
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
   if (!BING_API_KEY) {
-    console.log('[Bing Search] API key not configured');
+    return [];
+  }
+
+  // Check circuit breaker before attempting
+  if (isCircuitOpen('bing')) {
     return [];
   }
 
@@ -112,7 +179,8 @@ export async function bingSearch(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[Bing Search] API error ${response.status}:`, errorText);
+      const errorMsg = `API error ${response.status}`;
+      recordFailure('bing', errorMsg);
       return [];
     }
 
@@ -133,10 +201,12 @@ export async function bingSearch(
       });
     }
 
-    console.log(`[Bing Search] Found ${results.length} results for: ${query.substring(0, 50)}...`);
+    if (results.length > 0) {
+      recordSuccess('bing');
+    }
     return results;
   } catch (error: any) {
-    console.error('[Bing Search] Error:', error?.message || error);
+    recordFailure('bing', error?.message || 'Unknown error');
     return [];
   }
 }
@@ -149,6 +219,11 @@ export async function bingNewsSearch(
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
   if (!BING_API_KEY) {
+    return [];
+  }
+
+  // Check circuit breaker before attempting (shares state with regular Bing search)
+  if (isCircuitOpen('bing')) {
     return [];
   }
 
@@ -168,7 +243,10 @@ export async function bingNewsSearch(
       },
     });
 
-    if (!response.ok) return [];
+    if (!response.ok) {
+      recordFailure('bing', `News API error ${response.status}`);
+      return [];
+    }
 
     const data = await response.json();
     const results: SearchResult[] = [];
@@ -188,9 +266,12 @@ export async function bingNewsSearch(
       });
     }
 
+    if (results.length > 0) {
+      recordSuccess('bing');
+    }
     return results;
   } catch (error: any) {
-    console.error('[Bing News] Error:', error?.message);
+    recordFailure('bing', error?.message || 'Unknown error');
     return [];
   }
 }
@@ -204,7 +285,11 @@ export async function geminiSearch(
   options: SearchOptions = {}
 ): Promise<EnhancedSearchResult[]> {
   if (!GEMINI_API_KEY) {
-    console.log('[Gemini Search] API key not configured');
+    return [];
+  }
+
+  // Check circuit breaker before attempting
+  if (isCircuitOpen('gemini')) {
     return [];
   }
 
@@ -220,8 +305,6 @@ Provide comprehensive, accurate information with sources. Focus on:
 - Academic or professional sources
 
 Return detailed findings with specific URLs and facts.`;
-
-    console.log(`[Gemini Search] Searching: ${query.substring(0, 50)}...`);
     
     const response = await client.models.generateContent({
       model: "gemini-2.5-flash",
@@ -236,10 +319,6 @@ Return detailed findings with specific URLs and facts.`;
     const text = response.text || "";
     const sources: string[] = [];
 
-    if (!text) {
-      console.log('[Gemini Search] Empty response from API');
-    }
-
     try {
       const candidate = response.candidates?.[0];
       if (candidate?.groundingMetadata?.groundingChunks) {
@@ -248,12 +327,9 @@ Return detailed findings with specific URLs and facts.`;
             sources.push((chunk as any).web.uri);
           }
         }
-        console.log(`[Gemini Search] Extracted ${sources.length} grounded sources`);
-      } else {
-        console.log('[Gemini Search] No grounding metadata found in response');
       }
     } catch (e) {
-      console.log('[Gemini Search] Could not extract grounding sources:', e);
+      // Silently handle grounding extraction errors
     }
 
     const results: EnhancedSearchResult[] = [];
@@ -282,10 +358,12 @@ Return detailed findings with specific URLs and facts.`;
       });
     }
 
-    console.log(`[Gemini Search] Found ${results.length} results with ${sources.length} sources`);
+    if (results.length > 0) {
+      recordSuccess('gemini');
+    }
     return results;
   } catch (error: any) {
-    console.error('[Gemini Search] Error:', error?.message || error);
+    recordFailure('gemini', error?.message || 'Unknown error');
     return [];
   }
 }

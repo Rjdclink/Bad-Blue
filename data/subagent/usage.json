@@ -1,200 +1,74 @@
 [
   {
-    "timestamp": "2025-11-30T03:54:25.633Z",
+    "timestamp": "2025-11-30T04:28:31.647Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-3R3LPCWV.js"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/lucide-react.js"
   },
   {
-    "timestamp": "2025-11-30T03:54:25.663Z",
+    "timestamp": "2025-11-30T04:28:31.671Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-GLBLW2AM.js"
+  },
+  {
+    "timestamp": "2025-11-30T04:28:31.694Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-O2LWC6XU.js"
   },
   {
-    "timestamp": "2025-11-30T03:54:25.807Z",
+    "timestamp": "2025-11-30T04:28:31.793Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/auth/user"
+    "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T03:54:25.811Z",
+    "timestamp": "2025-11-30T04:28:31.797Z",
     "action": "GET",
     "tokens": 0,
     "path": "/favicon.ico"
   },
   {
-    "timestamp": "2025-11-30T03:54:25.867Z",
+    "timestamp": "2025-11-30T04:28:31.839Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/pages/landing.tsx"
   },
   {
-    "timestamp": "2025-11-30T03:54:26.081Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
-  },
-  {
-    "timestamp": "2025-11-30T03:54:26.112Z",
+    "timestamp": "2025-11-30T04:28:32.040Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-43G6IMPT.js"
   },
   {
-    "timestamp": "2025-11-30T03:54:26.120Z",
+    "timestamp": "2025-11-30T04:28:32.092Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-4RO2SXZU.js"
   },
   {
-    "timestamp": "2025-11-30T03:54:26.144Z",
+    "timestamp": "2025-11-30T04:28:32.133Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T03:54:26.175Z",
+    "timestamp": "2025-11-30T04:28:32.165Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T03:54:26.189Z",
+    "timestamp": "2025-11-30T04:28:32.179Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-30T03:54:26.813Z",
+    "timestamp": "2025-11-30T04:28:32.794Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/lib/bundleAnalyzer.ts"
-  },
-  {
-    "timestamp": "2025-11-30T03:58:00.682Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/foia/state-info/CA"
-  },
-  {
-    "timestamp": "2025-11-30T03:58:07.507Z",
-    "action": "POST",
-    "tokens": 0,
-    "path": "/api/foia/lookup-authorities"
-  },
-  {
-    "timestamp": "2025-11-30T03:58:14.710Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/foia/all-states"
-  },
-  {
-    "timestamp": "2025-11-30T03:59:56.831Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/foia/state-info/CA"
-  },
-  {
-    "timestamp": "2025-11-30T04:00:05.228Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/foia/state-info/ZZ"
-  },
-  {
-    "timestamp": "2025-11-30T04:01:42.885Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/foia/all-states"
-  },
-  {
-    "timestamp": "2025-11-30T04:08:46.117Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/foia/state-info/CA"
-  },
-  {
-    "timestamp": "2025-11-30T04:08:46.966Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/section-1983/district-courts"
-  },
-  {
-    "timestamp": "2025-11-30T04:09:03.183Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/section-1983/district-courts/CA"
-  },
-  {
-    "timestamp": "2025-11-30T04:09:04.452Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/section-1983/local-rules/cdca"
-  },
-  {
-    "timestamp": "2025-11-30T04:09:05.894Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/complaint-drafting/authority-lookup"
-  },
-  {
-    "timestamp": "2025-11-30T04:09:20.501Z",
-    "action": "POST",
-    "tokens": 0,
-    "path": "/api/complaint-drafting/lookup-authorities"
-  },
-  {
-    "timestamp": "2025-11-30T04:09:21.850Z",
-    "action": "POST",
-    "tokens": 0,
-    "path": "/api/foia/lookup-authorities"
-  },
-  {
-    "timestamp": "2025-11-30T04:09:38.636Z",
-    "action": "POST",
-    "tokens": 0,
-    "path": "/api/section-1983/preview"
-  },
-  {
-    "timestamp": "2025-11-30T04:09:57.255Z",
-    "action": "POST",
-    "tokens": 0,
-    "path": "/api/section-1983/preview"
-  },
-  {
-    "timestamp": "2025-11-30T04:17:08.064Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/admin/database/status"
-  },
-  {
-    "timestamp": "2025-11-30T04:18:38.829Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/foia/state-info/CA"
-  },
-  {
-    "timestamp": "2025-11-30T04:18:38.874Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/complaint-drafting/status"
-  },
-  {
-    "timestamp": "2025-11-30T04:18:38.908Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/section-1983/status"
-  },
-  {
-    "timestamp": "2025-11-30T04:19:07.733Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/section-1983/district-courts/CA"
-  },
-  {
-    "timestamp": "2025-11-30T04:19:07.778Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/foia/all-states"
   }
 ]
