@@ -29,6 +29,7 @@ const Privacy = lazy(() => import("@/pages/privacy"));
 const Terms = lazy(() => import("@/pages/terms"));
 
 // Feature pages - loaded on demand
+const OfficerSearchPage = lazy(() => import("@/pages/officer-search"));
 const OfficerInfo = lazy(() => import("@/pages/officer"));
 const ComplaintForm = lazy(() => import("@/pages/complaint-form"));
 const ComplaintDetail = lazy(() => import("@/pages/complaint-detail"));
@@ -106,6 +107,7 @@ function Router() {
             <Route path="/" component={Home} />
             <Route path="/home" component={Home} />
             <Route path="/dashboard" component={Home} />
+            <Route path="/officer-search" component={OfficerSearchPage} />
             <Route path="/officer/:id" component={OfficerInfo} />
             <Route path="/complaints" component={Complaints} />
             <Route path="/complaint-form" component={ComplaintForm} />

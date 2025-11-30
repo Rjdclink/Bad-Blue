@@ -222,5 +222,17 @@
     },
     "processed": true,
     "processedAt": "2025-11-30T23:04:59.299Z"
+  },
+  {
+    "timestamp": "2025-11-30T23:25:36.012Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "CA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable data collected for Officer Smith to generate a comprehensive accountability report."
+    }
   }
 ]

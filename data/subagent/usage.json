@@ -1,70 +1,112 @@
 [
   {
-    "timestamp": "2025-11-30T23:05:34.008Z",
+    "timestamp": "2025-11-30T23:24:27.428Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/SEOHead-b0nf3qYO.js"
+    "path": "/src/hooks/use-toast.ts"
   },
   {
-    "timestamp": "2025-11-30T23:05:34.014Z",
+    "timestamp": "2025-11-30T23:24:27.434Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
+    "path": "/src/components/ui/toast.tsx"
   },
   {
-    "timestamp": "2025-11-30T23:05:34.061Z",
+    "timestamp": "2025-11-30T23:24:27.451Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
+    "path": "/src/lib/translation.ts"
   },
   {
-    "timestamp": "2025-11-30T23:05:34.110Z",
+    "timestamp": "2025-11-30T23:24:27.465Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
+    "path": "/src/components/ui/skeleton.tsx"
   },
   {
-    "timestamp": "2025-11-30T23:05:34.131Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T23:05:34.145Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
-  },
-  {
-    "timestamp": "2025-11-30T23:05:34.205Z",
+    "timestamp": "2025-11-30T23:24:27.575Z",
     "action": "GET",
     "tokens": 0,
     "path": "/favicon.ico"
   },
   {
-    "timestamp": "2025-11-30T23:05:36.392Z",
+    "timestamp": "2025-11-30T23:24:27.598Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
+    "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T23:05:38.117Z",
-    "action": "training_queue_consumption",
-    "provider": "self_improvement",
-    "processed": 0,
-    "successful": 0,
-    "failed": 0,
-    "skipped": 0,
-    "durationMs": 3
+    "timestamp": "2025-11-30T23:24:27.604Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
   },
   {
-    "timestamp": "2025-11-30T23:05:50.058Z",
-    "action": "training_queue_consumption",
-    "provider": "self_improvement",
-    "processed": 0,
-    "successful": 0,
-    "failed": 0,
-    "skipped": 0,
-    "durationMs": 3
+    "timestamp": "2025-11-30T23:24:27.734Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/officer-search.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T23:24:28.039Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/button.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T23:24:28.154Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/label.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T23:24:28.197Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-select.js"
+  },
+  {
+    "timestamp": "2025-11-30T23:24:28.204Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-progress.js"
+  },
+  {
+    "timestamp": "2025-11-30T23:24:28.235Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-6ZMM2PAV.js"
+  },
+  {
+    "timestamp": "2025-11-30T23:24:28.536Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T23:24:57.756Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T23:25:27.930Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T23:25:33.412Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/officer-search/progress/search-1764545133312-8wt2psn12"
+  },
+  {
+    "timestamp": "2025-11-30T23:25:36.004Z",
+    "action": "learning_event",
+    "provider": "internal",
+    "tokens": 27,
+    "category": "officer_search",
+    "state": "CA"
   }
 ]

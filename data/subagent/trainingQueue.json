@@ -174,5 +174,16 @@
       },
       "content": "Insufficient verifiable information available to generate a comprehensive report on Officer John Smith from California."
     }
+  },
+  {
+    "receivedAt": "2025-11-30T23:25:36.008Z",
+    "payload": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "CA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable data collected for Officer Smith to generate a comprehensive accountability report."
+    }
   }
 ]

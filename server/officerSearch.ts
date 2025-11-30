@@ -594,10 +594,10 @@ export async function searchOfficerInformation(
       console.log('[Officer Search] Could not load department URLs:', err);
     }
 
-    // Check local roster for existing data
+    // Check local roster for existing data - pass city for more specific matching
     let rosterData: any = null;
     try {
-      rosterData = await findOfficerInRoster(normalizedName, undefined, state);
+      rosterData = await findOfficerInRoster(normalizedName, city || county, state);
     } catch (err) {
       console.log('[Officer Search] Roster lookup failed:', err);
     }
@@ -731,11 +731,12 @@ export async function searchOfficerInformation(
       department: verifiedReport.agency,
     };
 
-    // Update roster for future searches
+    // Update roster for future searches - preserve city/county context
     try {
+      const locationForRoster = city || county || undefined;
       await addOfficerToRoster({
         name: normalizedName,
-        city: undefined,
+        city: locationForRoster,
         state,
         badgeNumber: result.badgeNumber !== 'Not found' ? result.badgeNumber : undefined,
         department: result.agency,
@@ -746,13 +747,32 @@ export async function searchOfficerInformation(
       if (result.agency && result.agency !== 'Unknown') {
         await addDepartmentToRoster({
           state,
-          city: undefined,
+          city: locationForRoster,
           department: result.agency,
           url: priorityUrls[0] || undefined,
         } as any);
       }
     } catch (err) {
       console.log('[Officer Search] Could not update roster:', err);
+    }
+
+    // Validate results before caching - only cache if we have meaningful data
+    const hasSubstantiveData = (
+      (result.agency && result.agency !== 'Unknown' && result.agency.length > 3) ||
+      (result.rank && result.rank !== 'Unknown') ||
+      (result.disciplinaryReports && result.disciplinaryReports !== 'None found') ||
+      (result.lawsuits && result.lawsuits !== 'None found') ||
+      (result.newsArticles && result.newsArticles !== 'None found') ||
+      (result.sanctions && result.sanctions !== 'None found') ||
+      (result.training && result.training !== 'None found')
+    );
+
+    if (!hasSubstantiveData) {
+      console.log('[Officer Search] Results not meaningful enough to cache - skipping cache');
+      emitProgress(totalStages, 'Complete', 'Search completed - limited data found', totalStages);
+      rateLimitTracker.recordSuccess();
+      console.log(`[Officer Search] Search complete with limited results - Total stages: ${totalStages}`);
+      return result;
     }
 
     // Final stage: Complete (ensure stage matches totalStages for proper UI progress)

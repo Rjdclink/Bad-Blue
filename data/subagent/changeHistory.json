@@ -223,5 +223,14 @@
       "response": "Officer search completed for \"John Smith\". Found: None found",
       "success": true
     }
+  },
+  {
+    "timestamp": "2025-11-30T23:25:35.993Z",
+    "command": "search officer \"Smith\" state=CA city= county=Los Angeles badge= type= includeGovernment=true includeCorrections=true limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"Smith\". Found: None found",
+      "success": true
+    }
   }
 ]
