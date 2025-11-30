@@ -49,10 +49,21 @@ setInterval(() => {
   }
 }, CLEANUP_INTERVAL);
 
-function getCacheKey(officerName: string, state?: string): string {
+function getCacheKey(
+  officerName: string, 
+  state?: string,
+  city?: string,
+  county?: string,
+  includeGovernment?: boolean,
+  includeCorrections?: boolean
+): string {
   const safeName = (officerName || '').toLowerCase().trim();
   const safeState = state ? state.toUpperCase().trim() : '';
-  return `${safeName}|${safeState}`;
+  const safeCity = city ? city.toLowerCase().trim() : '';
+  const safeCounty = county ? county.toLowerCase().trim() : '';
+  const govFlag = includeGovernment ? 'g' : '';
+  const corrFlag = includeCorrections ? 'c' : '';
+  return `${safeName}|${safeState}|${safeCity}|${safeCounty}|${govFlag}${corrFlag}`;
 }
 
 function getCachedResult(cacheKey: string): OfficerSearchResult | null {
@@ -84,10 +95,12 @@ function setCachedResult(cacheKey: string, result: OfficerSearchResult): void {
 
 export interface OfficerSearchParams {
   officerName: string;
-  state?: string;
-  departmentType?: 'city' | 'state' | 'county' | 'government' | 'corrections';
+  state: string;
   city?: string;
   county?: string;
+  includeGovernment?: boolean;
+  includeCorrections?: boolean;
+  departmentType?: 'city' | 'state' | 'county' | 'government' | 'corrections'; // Legacy
   badgeData?: any;
   bypassCache?: boolean;
 }
@@ -235,7 +248,9 @@ async function geminiDataHarvest(
   departmentType: string | undefined,
   priorityUrls: string[],
   city?: string,
-  county?: string
+  county?: string,
+  includeGovernment?: boolean,
+  includeCorrections?: boolean
 ): Promise<GeminiRawData> {
   const webSupplemental = await webSearchSupplementalData(officerName, state);
   const allUrls = Array.from(new Set([...priorityUrls, ...webSupplemental.additionalSources]));
@@ -257,11 +272,18 @@ async function geminiDataHarvest(
     : county 
       ? `County: ${county} County\n`
       : '';
+  
+  const categoryFilters: string[] = [];
+  if (includeGovernment) categoryFilters.push('Federal/Government agencies (FBI, DEA, ICE, etc.)');
+  if (includeCorrections) categoryFilters.push('Corrections facilities (prisons, jails, detention centers)');
+  const categoryContext = categoryFilters.length > 0 
+    ? `Also search in: ${categoryFilters.join(', ')}\n`
+    : '';
 
   const prompt = `Search for police officer information:
 Name: ${officerName}
 State: ${state || 'Unknown'}
-${locationContext}${deptTypeContext}${urlContext}${snippetContext}
+${locationContext}${deptTypeContext}${categoryContext}${urlContext}${snippetContext}
 
 Extract ONLY factual, verifiable information. Return JSON with:
 {
@@ -300,7 +322,9 @@ async function groqDataHarvest(
   state: string | undefined,
   departmentType: string | undefined,
   city?: string,
-  county?: string
+  county?: string,
+  includeGovernment?: boolean,
+  includeCorrections?: boolean
 ): Promise<GeminiRawData> {
   const deptTypeContext = departmentType 
     ? `Department Type: ${getDepartmentTypeLabel(departmentType)}\n` 
@@ -311,12 +335,19 @@ async function groqDataHarvest(
     : county 
       ? `County: ${county} County\n`
       : '';
+  
+  const categoryFilters: string[] = [];
+  if (includeGovernment) categoryFilters.push('Federal/Government agencies (FBI, DEA, ICE, etc.)');
+  if (includeCorrections) categoryFilters.push('Corrections facilities (prisons, jails, detention centers)');
+  const categoryContext = categoryFilters.length > 0 
+    ? `Also search in: ${categoryFilters.join(', ')}\n`
+    : '';
 
   const prompt = `Search for police officer information and return structured JSON data.
 
 Officer Name: ${officerName}
 State: ${state || 'Unknown'}
-${locationContext}${deptTypeContext}
+${locationContext}${deptTypeContext}${categoryContext}
 
 Based on your knowledge, provide any factual information about this officer. Return ONLY valid JSON with this exact structure:
 {
@@ -362,7 +393,9 @@ async function claudeVerifyAndSynthesize(
   officerName: string,
   state: string | undefined,
   rawData: GeminiRawData,
-  rosterData: any
+  rosterData: any,
+  includeGovernment?: boolean,
+  includeCorrections?: boolean
 ): Promise<ClaudeVerifiedReport> {
   const existingData = JSON.stringify({
     geminiFindings: rawData,
@@ -373,10 +406,18 @@ async function claudeVerifyAndSynthesize(
     } : null
   }, null, 2);
 
+  const categoryFilters: string[] = [];
+  if (includeGovernment) categoryFilters.push('Federal/Government agencies (FBI, DEA, ICE, etc.)');
+  if (includeCorrections) categoryFilters.push('Corrections facilities (prisons, jails, detention centers)');
+  const categoryContext = categoryFilters.length > 0 
+    ? `Search scope: Also included ${categoryFilters.join(' and ')}\n`
+    : '';
+
   const prompt = `Verify and synthesize officer information into a BRIEF report.
 
 Officer: ${officerName}
 State: ${state || 'Unknown'}
+${categoryContext}
 
 Raw data collected:
 ${existingData}
@@ -429,12 +470,21 @@ Rules:
  */
 async function geminiDataHarvestBroadened(
   officerName: string,
-  state: string | undefined
+  state: string | undefined,
+  includeGovernment?: boolean,
+  includeCorrections?: boolean
 ): Promise<GeminiRawData> {
+  const categoryFilters: string[] = [];
+  if (includeGovernment) categoryFilters.push('Federal/Government agencies (FBI, DEA, ICE, etc.)');
+  if (includeCorrections) categoryFilters.push('Corrections facilities (prisons, jails, detention centers)');
+  const categoryContext = categoryFilters.length > 0 
+    ? `Also search in: ${categoryFilters.join(', ')}\n`
+    : '';
+
   const prompt = `BROADENED SEARCH for police officer - try alternative sources:
 Name: ${officerName}
 State: ${state || 'Any US State'}
-
+${categoryContext}
 Search EXTENSIVELY across:
 1. State POST/peace officer standards databases
 2. News archives (local papers, crime reports)
@@ -487,7 +537,7 @@ export async function searchOfficerInformation(
   params: OfficerSearchParams,
   searchId?: string
 ): Promise<OfficerSearchResult> {
-  const { officerName, state, departmentType, city, county, badgeData, bypassCache } = params;
+  const { officerName, state, city, county, includeGovernment, includeCorrections, departmentType, badgeData, bypassCache } = params;
 
   if (!officerName || !officerName.trim()) {
     throw new Error('Officer name is required');
@@ -519,7 +569,7 @@ export async function searchOfficerInformation(
   // Stage 1: Initialization & Cache Check
   emitProgress(1, 'Initializing', `Searching for ${normalizedName}${state ? ` in ${state}` : ''}`);
 
-  const cacheKey = getCacheKey(normalizedName, state);
+  const cacheKey = getCacheKey(normalizedName, state, city, county, includeGovernment, includeCorrections);
   if (!bypassCache) {
     const cached = getCachedResult(cacheKey);
     if (cached) {
@@ -558,18 +608,18 @@ export async function searchOfficerInformation(
     let geminiData: GeminiRawData = {};
     if (canUseGemini()) {
       try {
-        geminiData = await geminiDataHarvest(normalizedName, state, departmentType, priorityUrls, city, county);
+        geminiData = await geminiDataHarvest(normalizedName, state, departmentType, priorityUrls, city, county, includeGovernment, includeCorrections);
       } catch (geminiError: any) {
         console.error('[Officer Search] Gemini harvest failed, trying Groq fallback:', geminiError?.message || geminiError);
         if (isGroqAvailable()) {
           console.log('[Officer Search] Switching to Groq fallback...');
-          geminiData = await groqDataHarvest(normalizedName, state, departmentType, city, county);
+          geminiData = await groqDataHarvest(normalizedName, state, departmentType, city, county, includeGovernment, includeCorrections);
         }
       }
     } else if (isGroqAvailable()) {
       const reason = isGeminiRateLimited() ? 'rate limited' : 'not configured';
       console.log(`[Officer Search] Gemini ${reason}, using Groq fallback`);
-      geminiData = await groqDataHarvest(normalizedName, state, departmentType, city, county);
+      geminiData = await groqDataHarvest(normalizedName, state, departmentType, city, county, includeGovernment, includeCorrections);
     } else {
       console.log('[Officer Search] No AI providers available for officer search');
     }
@@ -579,7 +629,7 @@ export async function searchOfficerInformation(
     
     let verifiedReport: ClaudeVerifiedReport;
     if (isClaudeAvailable()) {
-      verifiedReport = await claudeVerifyAndSynthesize(normalizedName, state, geminiData, rosterData);
+      verifiedReport = await claudeVerifyAndSynthesize(normalizedName, state, geminiData, rosterData, includeGovernment, includeCorrections);
     } else {
       // Fallback if Claude unavailable
       console.log('[Officer Search] Claude not available, using raw Gemini data');
@@ -609,18 +659,18 @@ export async function searchOfficerInformation(
       let broadenedData: GeminiRawData = {};
       if (canUseGemini()) {
         try {
-          broadenedData = await geminiDataHarvestBroadened(normalizedName, state);
+          broadenedData = await geminiDataHarvestBroadened(normalizedName, state, includeGovernment, includeCorrections);
         } catch (error: any) {
           console.error('[Officer Search] Broadened Gemini search failed, trying Groq:', error?.message || error);
           if (isGroqAvailable()) {
             console.log('[Officer Search] Switching to Groq for broadened search...');
-            broadenedData = await groqDataHarvest(normalizedName, state, departmentType, city, county);
+            broadenedData = await groqDataHarvest(normalizedName, state, departmentType, city, county, includeGovernment, includeCorrections);
           }
         }
       } else if (isGroqAvailable()) {
         const reason = isGeminiRateLimited() ? 'rate limited' : 'not configured';
         console.log(`[Officer Search] Gemini ${reason} for broadened search, using Groq`);
-        broadenedData = await groqDataHarvest(normalizedName, state, departmentType, city, county);
+        broadenedData = await groqDataHarvest(normalizedName, state, departmentType, city, county, includeGovernment, includeCorrections);
       }
       
       // Merge broadened data with original
@@ -640,7 +690,7 @@ export async function searchOfficerInformation(
       emitProgress(4, 'Claude Synthesis', 'Re-analyzing expanded results...', 5);
       
       if (isClaudeAvailable()) {
-        verifiedReport = await claudeVerifyAndSynthesize(normalizedName, state, mergedData, rosterData);
+        verifiedReport = await claudeVerifyAndSynthesize(normalizedName, state, mergedData, rosterData, includeGovernment, includeCorrections);
       } else {
         verifiedReport = {
           rank: mergedData.rank || 'Unknown',

@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import {
   Search,
@@ -33,14 +34,6 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import OfficerSearchProgress from "./OfficerSearchProgress";
-
-const DEPARTMENT_TYPES = [
-  { value: "city", label: "City Police" },
-  { value: "state", label: "State Police" },
-  { value: "county", label: "County Sheriff" },
-  { value: "government", label: "Government (Federal)" },
-  { value: "corrections", label: "Corrections" },
-];
 
 const US_STATES = [
   { code: "AL", name: "Alabama" },
@@ -107,9 +100,10 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
 
   const [officerName, setOfficerName] = useState("");
   const [state, setState] = useState("");
-  const [departmentType, setDepartmentType] = useState("");
-  const [city, setCity] = useState("");
   const [county, setCounty] = useState("");
+  const [city, setCity] = useState("");
+  const [includeGovernment, setIncludeGovernment] = useState(false);
+  const [includeCorrections, setIncludeCorrections] = useState(false);
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searchId, setSearchId] = useState<string | null>(null);
   const [progress, setProgress] = useState<{
@@ -156,10 +150,11 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   const searchMutation = useMutation({
     mutationFn: async (data: { 
       officerName: string; 
-      state?: string; 
-      departmentType?: string; 
-      city?: string;
+      state: string; 
       county?: string;
+      city?: string;
+      includeGovernment?: boolean;
+      includeCorrections?: boolean;
       searchId: string 
     }) => {
       const response = await apiRequest("/api/officer-search", "POST", data);
@@ -229,40 +224,10 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       return;
     }
 
-    if (!departmentType) {
+    if (!state) {
       toast({
-        title: "Department Type required",
-        description: "Select the type of law enforcement agency.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate state for city, state, and county departments
-    if ((departmentType === "city" || departmentType === "state" || departmentType === "county") && !state) {
-      toast({
-        title: "State required",
-        description: "Select a state for this type of department.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate city for city police
-    if (departmentType === "city" && !city.trim()) {
-      toast({
-        title: "City required",
-        description: "Enter the city name for city police search.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate county for county sheriff
-    if (departmentType === "county" && !county.trim()) {
-      toast({
-        title: "County required",
-        description: "Enter the county name for county sheriff search.",
+        title: "State Required",
+        description: "Please select a state to search",
         variant: "destructive",
       });
       return;
@@ -274,11 +239,12 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
     setProgress(null);
 
     searchMutation.mutate({ 
-      officerName, 
-      state: state || undefined,
-      departmentType: departmentType || undefined,
-      city: city.trim() || undefined,
+      officerName: officerName.trim(), 
+      state,
       county: county.trim() || undefined,
+      city: city.trim() || undefined,
+      includeGovernment: includeGovernment || undefined,
+      includeCorrections: includeCorrections || undefined,
       searchId: newSearchId,
     });
   };
@@ -329,73 +295,84 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="select-department-type">Department Type</Label>
-                  <Select value={departmentType} onValueChange={(value) => {
-                    setDepartmentType(value);
-                    setCity("");
+                  <Label htmlFor="select-state">State <span className="text-destructive">*</span></Label>
+                  <Select value={state} onValueChange={(value) => {
+                    setState(value);
                     setCounty("");
-                    if (value === "government" || value === "corrections") {
-                      setState("");
-                    }
+                    setCity("");
                   }}>
-                    <SelectTrigger id="select-department-type" data-testid="select-department-type">
-                      <SelectValue placeholder="Select department type" />
+                    <SelectTrigger id="select-state" data-testid="select-state">
+                      <SelectValue placeholder="Select state" />
                     </SelectTrigger>
                     <SelectContent>
-                      {DEPARTMENT_TYPES.map((dept) => (
-                        <SelectItem key={dept.value} value={dept.value}>
-                          {dept.label}
+                      {US_STATES.map((s) => (
+                        <SelectItem key={s.code} value={s.code}>
+                          {s.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
 
-                {(departmentType === "city" || departmentType === "state" || departmentType === "county") && (
-                  <div className="space-y-2">
-                    <Label htmlFor="select-state">State</Label>
-                    <Select value={state} onValueChange={setState}>
-                      <SelectTrigger id="select-state" data-testid="select-state">
-                        <SelectValue placeholder="Select state" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {US_STATES.map((s) => (
-                          <SelectItem key={s.code} value={s.code}>
-                            {s.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                {state && (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="input-county">County <span className="text-muted-foreground text-sm">(optional)</span></Label>
+                        <Input
+                          id="input-county"
+                          data-testid="input-county"
+                          placeholder="e.g., Cook, Los Angeles"
+                          value={county}
+                          onChange={(e) => setCounty(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="input-city">City <span className="text-muted-foreground text-sm">(optional)</span></Label>
+                        <Input
+                          id="input-city"
+                          data-testid="input-city"
+                          placeholder="e.g., Chicago, Los Angeles"
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Leave both County and City blank to search for State-level officers
+                    </p>
+                  </>
                 )}
 
-                {departmentType === "city" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="input-city">City</Label>
-                    <Input
-                      id="input-city"
-                      data-testid="input-city"
-                      placeholder="Enter city name (e.g., Chicago, Los Angeles)"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                    />
+                <div className="space-y-3 pt-2">
+                  <Label className="text-base">Officer Categories</Label>
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="checkbox-government"
+                        data-testid="checkbox-government"
+                        checked={includeGovernment}
+                        onCheckedChange={(checked) => setIncludeGovernment(checked === true)}
+                      />
+                      <Label htmlFor="checkbox-government" className="font-normal cursor-pointer">
+                        Government Officers
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="checkbox-corrections"
+                        data-testid="checkbox-corrections"
+                        checked={includeCorrections}
+                        onCheckedChange={(checked) => setIncludeCorrections(checked === true)}
+                      />
+                      <Label htmlFor="checkbox-corrections" className="font-normal cursor-pointer">
+                        Corrections Officers
+                      </Label>
+                    </div>
                   </div>
-                )}
+                </div>
 
-                {departmentType === "county" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="input-county">County</Label>
-                    <Input
-                      id="input-county"
-                      data-testid="input-county"
-                      placeholder="Enter county name (e.g., Cook, Los Angeles)"
-                      value={county}
-                      onChange={(e) => setCounty(e.target.value)}
-                    />
-                  </div>
-                )}
-
-                <div className="flex gap-4">
+                <div className="flex gap-4 pt-2">
                   <Button
                     onClick={handleSubmit}
                     disabled={searchMutation.isPending}
@@ -589,9 +566,10 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                         setSearchResults(null);
                         setOfficerName("");
                         setState("");
-                        setDepartmentType("");
-                        setCity("");
                         setCounty("");
+                        setCity("");
+                        setIncludeGovernment(false);
+                        setIncludeCorrections(false);
                         setProgress(null);
                         setSearchId(null);
                         if (eventSourceRef.current) {

@@ -169,5 +169,14 @@
       "response": "Officer search completed for \"Derek Chauvin\". Found: Minneapolis Police Department, Hennepin County, Minnesota",
       "success": true
     }
+  },
+  {
+    "timestamp": "2025-11-30T21:25:26.741Z",
+    "command": "search officer \"John Smith\" state=CA city= county= badge= type= limit=10",
+    "action": "search",
+    "result": {
+      "response": "Officer search completed for \"John Smith\". Found: None found",
+      "success": true
+    }
   }
 ]

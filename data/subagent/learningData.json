@@ -138,5 +138,19 @@
     },
     "processed": true,
     "processedAt": "2025-11-30T20:39:39.808Z"
+  },
+  {
+    "timestamp": "2025-11-30T21:25:26.753Z",
+    "type": "training",
+    "data": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "CA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable data collected for Officer John Smith from California. No substantive accountability information could be confirmed."
+    },
+    "processed": true,
+    "processedAt": "2025-11-30T21:27:40.529Z"
   }
 ]

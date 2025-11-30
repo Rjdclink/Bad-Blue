@@ -108,5 +108,16 @@
       },
       "content": "Derek Chauvin was a Minneapolis police officer convicted of murdering George Floyd in 2020, resulting in significant legal and professional consequences. His actions sparked nationwide protests and discussions about police accountability and systemic racism in law enforcement."
     }
+  },
+  {
+    "receivedAt": "2025-11-30T21:25:26.751Z",
+    "payload": {
+      "type": "legal_consultation",
+      "context": {
+        "state": "CA",
+        "category": "officer_search"
+      },
+      "content": "Insufficient verifiable data collected for Officer John Smith from California. No substantive accountability information could be confirmed."
+    }
   }
 ]

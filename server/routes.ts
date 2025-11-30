@@ -750,10 +750,14 @@ const DepartmentTypeEnum = z.enum([
 const OfficerSearchSchema = z.object({
   officerName: z.string().min(2, "officerName must be at least 2 characters"),
   officerType: z.string().optional(),
-  departmentType: DepartmentTypeEnum.optional(), // New: Type of law enforcement agency
-  state: z.string().optional(),
+  departmentType: DepartmentTypeEnum.optional(), // Legacy: Type of law enforcement agency (optional)
+  state: z.string().min(2, "state is required").refine(val => val.trim().length >= 2, {
+    message: "state must be a valid non-empty state code"
+  }), // Required state field
   city: z.string().optional(),
   county: z.string().optional(),
+  includeGovernment: z.boolean().optional(), // Include government officers
+  includeCorrections: z.boolean().optional(), // Include corrections officers
   badgeData: z.object({ badgeNumber: z.string().min(1).optional() }).optional(),
   searchId: z.string().optional(),
   includeTraining: z.boolean().optional(),
@@ -2424,6 +2428,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
     try {
       const preppedBody = {
         ...req.body,
+        includeGovernment: coerceBoolean(req.body.includeGovernment),
+        includeCorrections: coerceBoolean(req.body.includeCorrections),
         includeTraining: coerceBoolean(req.body.includeTraining),
         includeIncidents: coerceBoolean(req.body.includeIncidents),
         includeHistory: coerceBoolean(req.body.includeHistory),
@@ -2449,6 +2455,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         state,
         city,
         county,
+        includeGovernment = false,
+        includeCorrections = false,
         badgeData,
         searchId,
         includeTraining = true,
@@ -2456,16 +2464,6 @@ Contact: ${foiaRequest.userEmail || userEmail}
         includeHistory = true,
         maxResults = 10,
       }: OfficerSearchInput = parseResult.data;
-
-      if (!state && !city && !county) {
-        return res.status(400).json({
-          success: false,
-          error: {
-            code: "VALIDATION_ERROR",
-            message: "Provide at least one location filter (state, city, or county) for officer search.",
-          },
-        });
-      }
 
       if (isCommonOfficerName(officerName) && !city && !county && !badgeData?.badgeNumber) {
         return res.status(400).json({
@@ -2484,6 +2482,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         state: normalizeStateInput(state),
         city: city?.trim() || undefined,
         county: county?.trim() || undefined,
+        includeGovernment,
+        includeCorrections,
         badgeNumber: badgeData?.badgeNumber?.trim() || undefined,
         includeTraining,
         includeIncidents,
@@ -2545,6 +2545,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
           state: normalizedParams.state,
           city: normalizedParams.city,
           county: normalizedParams.county,
+          includeGovernment: normalizedParams.includeGovernment,
+          includeCorrections: normalizedParams.includeCorrections,
           badgeNumber: normalizedParams.badgeNumber,
           officerType: normalizedParams.officerType,
           departmentType: normalizedParams.departmentType,
