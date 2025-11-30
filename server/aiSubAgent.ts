@@ -28,6 +28,7 @@ import { searchOfficerInformation } from './officerSearch';
 import { callGemini as callGeminiService, isGeminiAvailable, isGeminiRateLimited, GeminiRateLimitError } from './gemini';
 import { callMistral, isMistralAvailable } from './mistral';
 import { isGroqAvailable, generateGroqStructuredResponse } from './groq';
+import selfImprovementEngine, { type AIProviderName, type OutcomeContext } from './selfImprovementEngine';
 
 const SUBAGENT_DATA_DIR = path.join(process.cwd(), 'data', 'subagent');
 const COMMAND_LOG = path.join(SUBAGENT_DATA_DIR, 'commands.log');
@@ -63,7 +64,27 @@ let autonomousExecutionEnabled = true;
 let stateLoaded = false;
 let officerSearchTimeout: NodeJS.Timeout | null = null;
 let dailyScrapeTimeout: NodeJS.Timeout | null = null;
+let trainingQueueInterval: NodeJS.Timeout | null = null;
 let activeGeminiModel: string | null = null;
+
+const TRAINING_QUEUE_INTERVAL_MS = Number(process.env.TRAINING_QUEUE_INTERVAL_MS || 30 * 60 * 1000);
+const TRAINING_QUEUE_BATCH_SIZE = Number(process.env.TRAINING_QUEUE_BATCH_SIZE || 10);
+
+interface SelfImprovementMetrics {
+  patternsProcessed: number;
+  successfulImprovements: number;
+  failedImprovements: number;
+  lastProcessedAt: Date | null;
+  improvementTypes: Record<string, number>;
+}
+
+const selfImprovementMetrics: SelfImprovementMetrics = {
+  patternsProcessed: 0,
+  successfulImprovements: 0,
+  failedImprovements: 0,
+  lastProcessedAt: null,
+  improvementTypes: {}
+};
 
 const BLOCKED_NETWORK_PATTERNS = [
   /^(curl|wget|nc|ncat|socat)\s+.*\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/i,
@@ -1465,6 +1486,344 @@ export async function trackUsage(event: { action: string; tokens?: number; provi
   await atomicWriteJson(USAGE_LOG, usage);
 }
 
+/**
+ * Learning pattern structure from learningData.json
+ */
+interface LearningPattern {
+  timestamp: string;
+  type: string;
+  processed?: boolean;
+  processedAt?: string;
+  data: {
+    type?: string;
+    context?: {
+      state?: string;
+      category?: string;
+      [key: string]: any;
+    };
+    content?: string;
+    [key: string]: any;
+  };
+}
+
+/**
+ * Process a single learning pattern to improve sub-agent behavior
+ * Analyzes the pattern (success/failure, what worked, what didn't)
+ * Updates internal decision-making weights or preferences
+ */
+export async function processLearningPattern(pattern: LearningPattern): Promise<{
+  success: boolean;
+  improvementType?: string;
+  confidence?: number;
+  details?: string;
+}> {
+  const startTime = Date.now();
+  
+  try {
+    await appendLog({ 
+      type: 'processLearningPatternStart',
+      patternType: pattern.type,
+      dataType: pattern.data?.type,
+      category: pattern.data?.context?.category
+    });
+
+    let improvementType = 'general';
+    let confidence = 0.5;
+    let details = '';
+
+    const patternType = pattern.data?.type || pattern.type || 'unknown';
+    const category = pattern.data?.context?.category || 'general';
+    const state = pattern.data?.context?.state;
+    const content = pattern.data?.content || '';
+
+    if (patternType === 'legal_consultation' || category === 'officer_search') {
+      improvementType = 'search_strategy';
+      
+      const isSuccessful = content.length > 100 && 
+        !content.toLowerCase().includes('insufficient') &&
+        !content.toLowerCase().includes('no data') &&
+        !content.toLowerCase().includes('not found');
+      
+      confidence = isSuccessful ? 0.7 : 0.3;
+      
+      await selfImprovementEngine.initialize();
+      
+      if (isSuccessful) {
+        const strategy = await selfImprovementEngine.getNextStrategy();
+        await selfImprovementEngine.recordSuccess(
+          `learning_${Date.now()}`,
+          1,
+          'gemini' as AIProviderName,
+          Date.now() - startTime,
+          Math.floor(content.length / 4),
+          strategy.id,
+          { state, category, queryType: patternType } as OutcomeContext
+        );
+        details = `[Self-Improvement] Enhanced search strategy for ${state || 'unknown state'}: ${strategy.name} (score: ${strategy.score})`;
+      } else {
+        await selfImprovementEngine.recordFailure(
+          `learning_${Date.now()}`,
+          'insufficient_data',
+          'gemini' as AIProviderName,
+          { state, category, queryType: patternType, strategyId: 'direct_name_search' } as OutcomeContext
+        );
+        details = `[Self-Improvement] Marked search pattern as low-quality for ${state || 'unknown state'}: needs alternative strategy`;
+      }
+    } else if (patternType === 'command_execution' || category === 'command') {
+      improvementType = 'command_interpretation';
+      confidence = 0.6;
+      details = `[Self-Improvement] Recorded command pattern for future interpretation improvement`;
+    } else if (patternType === 'error_recovery' || category === 'error') {
+      improvementType = 'error_handling';
+      confidence = 0.8;
+      details = `[Self-Improvement] Learned from error pattern to prevent future occurrences`;
+    } else {
+      improvementType = 'general';
+      confidence = 0.4;
+      details = `[Self-Improvement] Stored general learning pattern for context: ${category}`;
+    }
+
+    selfImprovementMetrics.patternsProcessed++;
+    selfImprovementMetrics.successfulImprovements++;
+    selfImprovementMetrics.lastProcessedAt = new Date();
+    selfImprovementMetrics.improvementTypes[improvementType] = 
+      (selfImprovementMetrics.improvementTypes[improvementType] || 0) + 1;
+
+    console.log(details);
+
+    await appendLog({
+      type: 'processLearningPatternSuccess',
+      improvementType,
+      confidence,
+      durationMs: Date.now() - startTime
+    });
+
+    return { success: true, improvementType, confidence, details };
+
+  } catch (error: any) {
+    selfImprovementMetrics.failedImprovements++;
+    
+    console.error(`[Self-Improvement] Failed to process learning pattern: ${error.message}`);
+    
+    await appendLog({
+      type: 'processLearningPatternError',
+      error: error.message,
+      durationMs: Date.now() - startTime
+    });
+
+    return { 
+      success: false, 
+      improvementType: 'error',
+      details: `[Self-Improvement] Processing failed: ${error.message}`
+    };
+  }
+}
+
+/**
+ * Consume training queue from learningData.json
+ * Reads queued learning items, processes each to improve behavior,
+ * and marks processed items as consumed
+ */
+export async function consumeTrainingQueue(): Promise<{
+  processed: number;
+  successful: number;
+  failed: number;
+  skipped: number;
+}> {
+  const startTime = Date.now();
+  let processed = 0;
+  let successful = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  console.log('[Self-Improvement] Starting training queue consumption...');
+
+  await appendLog({ 
+    type: 'consumeTrainingQueueStart',
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    await ensureDataDir();
+
+    let learningData: LearningPattern[];
+    try {
+      learningData = await safeReadJson<LearningPattern[]>(LEARNING_DATA, []);
+    } catch (error: any) {
+      console.warn('[Self-Improvement] Could not read learningData.json, creating empty array');
+      learningData = [];
+    }
+
+    if (!Array.isArray(learningData) || learningData.length === 0) {
+      console.log('[Self-Improvement] No learning data to process');
+      await appendLog({ 
+        type: 'consumeTrainingQueueEmpty',
+        timestamp: new Date().toISOString()
+      });
+      return { processed: 0, successful: 0, failed: 0, skipped: 0 };
+    }
+
+    const unprocessedItems = learningData.filter(item => !item.processed);
+    const batchSize = Math.min(TRAINING_QUEUE_BATCH_SIZE, unprocessedItems.length);
+    
+    console.log(`[Self-Improvement] Found ${unprocessedItems.length} unprocessed items, processing batch of ${batchSize}`);
+
+    for (let i = 0; i < batchSize; i++) {
+      const itemIndex = learningData.findIndex(item => !item.processed);
+      if (itemIndex === -1) break;
+
+      const pattern = learningData[itemIndex];
+
+      if (!pattern || !pattern.data) {
+        skipped++;
+        learningData[itemIndex].processed = true;
+        learningData[itemIndex].processedAt = new Date().toISOString();
+        continue;
+      }
+
+      const result = await processLearningPattern(pattern);
+      processed++;
+
+      if (result.success) {
+        successful++;
+      } else {
+        failed++;
+      }
+
+      learningData[itemIndex].processed = true;
+      learningData[itemIndex].processedAt = new Date().toISOString();
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    const processedCount = learningData.filter(item => item.processed).length;
+    if (processedCount > 500) {
+      const cutoffTime = Date.now() - (7 * 24 * 60 * 60 * 1000);
+      learningData = learningData.filter(item => {
+        if (!item.processed) return true;
+        const processedTime = item.processedAt ? new Date(item.processedAt).getTime() : 0;
+        return processedTime > cutoffTime;
+      });
+    }
+
+    await atomicWriteJson(LEARNING_DATA, learningData);
+
+    const durationMs = Date.now() - startTime;
+
+    console.log(`[Self-Improvement] Training queue consumption complete: ${processed} processed, ${successful} successful, ${failed} failed, ${skipped} skipped (${durationMs}ms)`);
+
+    await appendLog({
+      type: 'consumeTrainingQueueComplete',
+      processed,
+      successful,
+      failed,
+      skipped,
+      durationMs,
+      remainingUnprocessed: learningData.filter(item => !item.processed).length
+    });
+
+    await trackUsage({
+      action: 'training_queue_consumption',
+      provider: 'self_improvement',
+      processed,
+      successful,
+      failed,
+      skipped,
+      durationMs
+    });
+
+    return { processed, successful, failed, skipped };
+
+  } catch (error: any) {
+    console.error(`[Self-Improvement] Training queue consumption error: ${error.message}`);
+    
+    await appendLog({
+      type: 'consumeTrainingQueueError',
+      error: error.message,
+      durationMs: Date.now() - startTime
+    });
+
+    return { processed, successful, failed, skipped };
+  }
+}
+
+/**
+ * Schedule periodic training queue consumption
+ */
+export function scheduleTrainingQueueConsumption(intervalMs: number = TRAINING_QUEUE_INTERVAL_MS): void {
+  if (trainingQueueInterval) {
+    clearInterval(trainingQueueInterval);
+  }
+
+  console.log(`[Self-Improvement] Scheduling training queue consumption every ${intervalMs / 1000 / 60} minutes`);
+
+  trainingQueueInterval = setInterval(async () => {
+    try {
+      const canProceed = await canAutonomousProceed();
+      if (!canProceed) {
+        console.log('[Self-Improvement] Skipping training queue consumption: autonomous limit reached');
+        return;
+      }
+
+      await consumeTrainingQueue();
+    } catch (error: any) {
+      console.error('[Self-Improvement] Scheduled consumption error:', error.message);
+    }
+  }, intervalMs);
+
+  setTimeout(async () => {
+    try {
+      console.log('[Self-Improvement] Running initial training queue consumption...');
+      await consumeTrainingQueue();
+    } catch (error: any) {
+      console.error('[Self-Improvement] Initial consumption error:', error.message);
+    }
+  }, 5000);
+}
+
+/**
+ * Get current self-improvement metrics
+ */
+export function getSelfImprovementMetrics(): SelfImprovementMetrics & { 
+  uptime: number;
+  queueIntervalMinutes: number;
+} {
+  return {
+    ...selfImprovementMetrics,
+    uptime: process.uptime(),
+    queueIntervalMinutes: TRAINING_QUEUE_INTERVAL_MS / 1000 / 60
+  };
+}
+
+/**
+ * Trigger a manual evaluation and improvement cycle via self-improvement engine
+ */
+export async function triggerSelfImprovement(): Promise<{
+  success: boolean;
+  evaluationResult?: any;
+  error?: string;
+}> {
+  try {
+    console.log('[Self-Improvement] Triggering manual improvement cycle...');
+    
+    await selfImprovementEngine.initialize();
+    
+    const evaluationResult = await selfImprovementEngine.evaluateAndImprove();
+    
+    await appendLog({
+      type: 'manualImprovementTriggered',
+      result: evaluationResult
+    });
+
+    console.log(`[Self-Improvement] Manual improvement complete: ${evaluationResult.actionsApplied.length} actions, ${evaluationResult.rollbacksPerformed.length} rollbacks`);
+
+    return { success: true, evaluationResult };
+  } catch (error: any) {
+    console.error('[Self-Improvement] Manual improvement failed:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
 export async function runComprehensiveDiagnostic() {
   await appendLog({ type:'runComprehensiveDiagnostic' });
   const checks:any[] = [];
@@ -1569,6 +1928,18 @@ export function initializeAutomatedSystems(): void {
       scheduleDailyOfficerScrape(DAILY_SCRAPE_HOUR_UTC, DAILY_SCRAPE_DURATION_MS);
       console.log('[AI Sub-Agent] Daily scrape window scheduled');
     }
+    
+    if (process.env.SUBAGENT_ENABLE_SELF_IMPROVEMENT !== 'false') {
+      scheduleTrainingQueueConsumption(TRAINING_QUEUE_INTERVAL_MS);
+      console.log('[AI Sub-Agent] Self-improvement training queue consumption scheduled');
+      
+      selfImprovementEngine.initialize().then(() => {
+        console.log('[AI Sub-Agent] Self-improvement engine initialized');
+      }).catch((error: any) => {
+        console.warn('[AI Sub-Agent] Self-improvement engine initialization warning:', error.message);
+      });
+    }
+    
     console.log('[AI Sub-Agent] Automated systems initialized');
   } catch (error) {
     console.error('[AI Sub-Agent] Failed to initialize automated systems:', (error as any)?.message || error);
@@ -1588,6 +1959,7 @@ export function initializeAutomatedSystems(): void {
     const cleanup = () => {
       if (officerSearchTimeout) clearTimeout(officerSearchTimeout);
       if (dailyScrapeTimeout) clearTimeout(dailyScrapeTimeout);
+      if (trainingQueueInterval) clearInterval(trainingQueueInterval);
     };
     process.on('exit', cleanup);
     process.on('SIGINT', () => { cleanup(); process.exit(0); });
