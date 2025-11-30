@@ -10,7 +10,7 @@ import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
-import { useFaqSchema, useWebsiteSchema } from "@/hooks/useFaqSchema";
+import { useFaqSchema } from "@/hooks/useFaqSchema";
 
 export default function Landing() {
   const [, setLocation] = useLocation();
@@ -45,10 +45,8 @@ export default function Landing() {
     }
   ]);
   
-  useWebsiteSchema(
-    baseUrl,
-    "BadBlue - Police Accountability Platform"
-  );
+  // NOTE: WebSite schema is already defined in index.html - removed duplicate useWebsiteSchema call
+  
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioAttempted, setAudioAttempted] = useState(false); // Added state for tracking audio attempt
   const audioRef = useRef<HTMLAudioElement>(null);

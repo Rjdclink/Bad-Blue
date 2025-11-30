@@ -200,85 +200,9 @@ export function SEOHead({
     }
     breadcrumbScript.textContent = JSON.stringify(breadcrumbData);
 
-    // Enhanced Organization structured data with LegalService schema
-    const organizationData = {
-      "@context": "https://schema.org",
-      "@type": ["Organization", "LegalService"],
-      "name": "BadBlue - Professional Police Accountability Platform",
-      "alternateName": "BadBlue Legal Rights Protection Service",
-      "url": BASE_URL,
-      "logo": `${BASE_URL}/preview.png`,
-      "description": "Professional legal empowerment platform providing transparent complaint filing systems, civil rights protection services, and justice accessibility tools for citizens seeking police accountability",
-      "slogan": "Empowering Citizens Through Legal Rights Protection",
-      "sameAs": [
-        BASE_URL
-      ],
-      "contactPoint": {
-        "@type": "ContactPoint",
-        "contactType": "Customer Support",
-        "email": "contact.badblue@gmail.com",
-        "availableLanguage": ["English", "Spanish"]
-      },
-      "areaServed": {
-        "@type": "Country",
-        "name": "United States"
-      },
-      "hasOfferCatalog": {
-        "@type": "OfferCatalog",
-        "name": "Legal Services",
-        "itemListElement": [
-          {
-            "@type": "LegalService",
-            "name": "Police Complaint Filing",
-            "description": "Professional assistance filing official complaints against law enforcement officers for misconduct, excessive force, or civil rights violations"
-          },
-          {
-            "@type": "LegalService",
-            "name": "Civil Rights Lawsuit Preparation",
-            "description": "Legal document preparation for civil rights lawsuits against police officers and departments"
-          },
-          {
-            "@type": "LegalService",
-            "name": "FOIA Request Services",
-            "description": "Freedom of Information Act request preparation and filing assistance"
-          }
-        ]
-      }
-    };
-
-    let orgScript = document.querySelector('script#organization-schema');
-    if (!orgScript) {
-      orgScript = document.createElement("script");
-      orgScript.setAttribute("type", "application/ld+json");
-      orgScript.setAttribute("id", "organization-schema");
-      document.head.appendChild(orgScript);
-    }
-    orgScript.textContent = JSON.stringify(organizationData);
-
-    // NOTE: FAQ structured data is handled by useFaqSchema hook on individual pages
-    // to prevent duplicate FAQPage schemas that cause Google Search Console errors
-
-    // Add WebSite structured data for search engine optimization
-    const websiteData = {
-      "@context": "https://schema.org",
-      "@type": "WebSite",
-      "name": "BadBlue - Police Accountability Platform",
-      "url": BASE_URL,
-      "potentialAction": {
-        "@type": "SearchAction",
-        "target": `${BASE_URL}/officer?search={search_term_string}`,
-        "query-input": "required name=search_term_string"
-      }
-    };
-
-    let websiteScript = document.querySelector('script#website-schema');
-    if (!websiteScript) {
-      websiteScript = document.createElement("script");
-      websiteScript.setAttribute("type", "application/ld+json");
-      websiteScript.setAttribute("id", "website-schema");
-      document.head.appendChild(websiteScript);
-    }
-    websiteScript.textContent = JSON.stringify(websiteData);
+    // NOTE: Organization and WebSite structured data are defined in index.html
+    // DO NOT duplicate them here - causes Google Search Console "duplicate field" errors
+    // FAQ structured data is handled by useFaqSchema hook on individual pages
 
     // Add hreflang tags for language support
     let hreflangEn = document.querySelector('link[hreflang="en"]');

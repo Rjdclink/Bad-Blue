@@ -18,7 +18,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { useFaqSchema } from "@/hooks/useFaqSchema";
 import {
   Search,
   Loader2,
@@ -95,32 +94,8 @@ interface OfficerSearchProps {
 export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   const { toast } = useToast();
   
-  useFaqSchema("officer-search", [
-    {
-      question: "What does BadBlue Officer Search do?",
-      answer: "BadBlue Officer Search searches public records, department rosters, news articles, court filings, and law enforcement certification databases to compile comprehensive background information on police officers across all 50 U.S. states."
-    },
-    {
-      question: "What jurisdictions does the Officer Search cover?",
-      answer: "The Officer Search covers all 50 U.S. states and territories, including local police departments, county sheriff offices, state troopers, and federal law enforcement agencies. Search results include jurisdiction-specific information when available."
-    },
-    {
-      question: "Where does the officer data come from?",
-      answer: "Officer data is compiled from multiple public sources including: official department rosters and press releases, POST (Peace Officer Standards and Training) certification databases, court records and legal filings, news articles and media reports, and public records requests. All data comes from publicly accessible sources."
-    },
-    {
-      question: "Is the Officer Search considered legal advice?",
-      answer: "No. BadBlue Officer Search provides publicly available information for research purposes only. It is NOT legal advice and should not be used as a substitute for consulting with a licensed attorney. Always seek professional legal counsel for legal matters."
-    },
-    {
-      question: "What inputs give the best search results?",
-      answer: "For best results, provide the officer's full legal name (first and last name), select the state where the officer works, and optionally include the city or specific agency name. Partial names or nicknames may return less accurate results."
-    },
-    {
-      question: "How current is the officer information?",
-      answer: "Officer data is regularly updated from public sources, but may not reflect the most recent changes. For critical matters, verify current employment status directly with the relevant department or through official channels."
-    }
-  ]);
+  // NOTE: FAQ schema moved to page level to prevent duplicate FAQPage errors in Google Search Console
+  // Each page should have only ONE FAQPage schema - components should not add their own
 
   const [officerName, setOfficerName] = useState("");
   const [state, setState] = useState("");
