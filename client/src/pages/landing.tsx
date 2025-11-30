@@ -47,8 +47,7 @@ export default function Landing() {
   
   useWebsiteSchema(
     baseUrl,
-    "BadBlue - Police Accountability Platform",
-    `${baseUrl}/officer?search={search_term_string}`
+    "BadBlue - Police Accountability Platform"
   );
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioAttempted, setAudioAttempted] = useState(false); // Added state for tracking audio attempt
