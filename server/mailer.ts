@@ -20,9 +20,10 @@ interface EmailOptions {
 let connectionSettings: any;
 
 /**
- * Get Resend credentials from Replit connector
+ * Get Resend credentials - tries Replit connector first, then env variable
  */
 async function getCredentials(): Promise<{ apiKey: string; fromEmail: string }> {
+  // First try Replit connector
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY 
     ? 'repl ' + process.env.REPL_IDENTITY 
@@ -30,42 +31,41 @@ async function getCredentials(): Promise<{ apiKey: string; fromEmail: string }> 
     ? 'depl ' + process.env.WEB_REPL_RENEWAL 
     : null;
 
-  if (!xReplitToken || !hostname) {
-    // Fallback to environment variable if connector not available
-    if (process.env.RESEND_API_KEY) {
-      return {
-        apiKey: process.env.RESEND_API_KEY,
-        fromEmail: process.env.DEFAULT_FROM_EMAIL || 'onboarding@resend.dev'
-      };
-    }
-    throw new Error('Resend credentials not available - configure Replit connector or RESEND_API_KEY');
-  }
+  if (xReplitToken && hostname) {
+    try {
+      connectionSettings = await fetch(
+        'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=resend',
+        {
+          headers: {
+            'Accept': 'application/json',
+            'X_REPLIT_TOKEN': xReplitToken
+          }
+        }
+      ).then(res => res.json()).then(data => data.items?.[0]);
 
-  connectionSettings = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=resend',
-    {
-      headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
+      // Only use connector if we got a valid API key (starts with re_)
+      if (connectionSettings?.settings?.api_key?.startsWith('re_')) {
+        console.log('[RESEND] Using Replit connector credentials');
+        return {
+          apiKey: connectionSettings.settings.api_key,
+          fromEmail: connectionSettings.settings.from_email || 'onboarding@resend.dev'
+        };
       }
+    } catch (e) {
+      console.log('[RESEND] Connector fetch failed, trying env variable');
     }
-  ).then(res => res.json()).then(data => data.items?.[0]);
-
-  if (!connectionSettings || !connectionSettings.settings?.api_key) {
-    // Fallback to environment variable
-    if (process.env.RESEND_API_KEY) {
-      return {
-        apiKey: process.env.RESEND_API_KEY,
-        fromEmail: process.env.DEFAULT_FROM_EMAIL || 'onboarding@resend.dev'
-      };
-    }
-    throw new Error('Resend not connected - set up the Resend integration');
   }
 
-  return {
-    apiKey: connectionSettings.settings.api_key,
-    fromEmail: connectionSettings.settings.from_email || 'onboarding@resend.dev'
-  };
+  // Fallback to environment variable
+  if (process.env.RESEND_API_KEY?.startsWith('re_')) {
+    console.log('[RESEND] Using RESEND_API_KEY environment variable');
+    return {
+      apiKey: process.env.RESEND_API_KEY,
+      fromEmail: process.env.DEFAULT_FROM_EMAIL || 'onboarding@resend.dev'
+    };
+  }
+
+  throw new Error('Resend not configured - please set a valid RESEND_API_KEY (must start with re_)');
 }
 
 /**
