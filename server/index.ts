@@ -301,6 +301,20 @@ app.get("/api/ready", (_req, res) => {
   }
 });
 
+app.get("/api/schema-verify", async (_req, res) => {
+  try {
+    const { verifyDatabaseSchema } = await import('./db');
+    const result = await verifyDatabaseSchema();
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      connectionSource: process.env.SUPABASE_DATABASE_URL ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL'
+    });
+  }
+});
+
 (async () => {
   console.log('[STARTUP] BadBlue Server starting...');
   console.log('[STARTUP] Node.js version:', process.version);

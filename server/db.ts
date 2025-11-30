@@ -9,8 +9,14 @@ import * as schema from "@shared/schema";
 const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || !!process.env.RAILWAY_PROJECT_ID;
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Use Supabase database URL if available, otherwise fall back to DATABASE_URL
+// CRITICAL: Prioritize SUPABASE_DATABASE_URL to avoid dual-database configuration drift
+// drizzle.config.ts uses DATABASE_URL, so ensure runtime always uses SUPABASE_DATABASE_URL
 const databaseUrl = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL;
+
+// Log which database connection is being used (helps diagnose configuration issues)
+const isSupabaseUrl = !!process.env.SUPABASE_DATABASE_URL;
+console.log(`[DATABASE] Using ${isSupabaseUrl ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL (fallback)'}`);
+console.log(`[DATABASE] Environment: ${isProduction ? 'production' : 'development'}, Platform: ${isRailway ? 'Railway' : 'Replit/local'}`);
 
 if (!databaseUrl) {
   throw new Error(
@@ -70,7 +76,7 @@ pool.on('error', (err, client) => {
   }
 });
 
-console.log(`[DATABASE] Connection pool created - ready for queries (${isRailway ? 'Railway' : 'Production'} mode)`);
+console.log(`[DATABASE] Connection pool created - ready for queries (${isRailway ? 'Railway' : 'Replit/local'} mode)`);
 
 export let db = drizzle(pool, { schema });
 
@@ -130,4 +136,58 @@ export async function resetPool(): Promise<void> {
   })();
 
   await resetInProgress;
+}
+
+/**
+ * Verify database schema by checking table count and comparing expected tables
+ * Helps detect configuration drift between drizzle.config.ts and runtime
+ */
+export async function verifyDatabaseSchema(): Promise<{
+  success: boolean;
+  tableCount: number;
+  missingTables: string[];
+  connectionSource: string;
+  details: string;
+}> {
+  const connectionSource = process.env.SUPABASE_DATABASE_URL ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL';
+  
+  // Expected core tables for BadBlue application
+  const expectedTables = [
+    'users', 'complaints', 'officers', 'evidence_files', 'lawsuit_filings',
+    'foia_requests', 'session', 'audit_logs', 'user_preferences', 'email_notifications',
+    'authority_contacts_cache', 'complaint_routing_history', 'section_1983_filings',
+    'foia_routing_history', 'community_shared_evidence'
+  ];
+
+  try {
+    const result = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+      AND table_type = 'BASE TABLE'
+    `);
+    
+    const existingTables = result.rows.map((row: any) => row.table_name);
+    const tableCount = existingTables.length;
+    const missingTables = expectedTables.filter(t => !existingTables.includes(t));
+    
+    const success = missingTables.length === 0;
+    const details = success 
+      ? `All ${expectedTables.length} expected tables found (${tableCount} total tables in database)`
+      : `Missing ${missingTables.length} tables: ${missingTables.join(', ')}`;
+
+    console.log(`[DATABASE] Schema verification: ${success ? '✓' : '❌'} ${details}`);
+    console.log(`[DATABASE] Connection source: ${connectionSource}`);
+    
+    return { success, tableCount, missingTables, connectionSource, details };
+  } catch (error: any) {
+    console.error('[DATABASE] Schema verification failed:', error.message);
+    return {
+      success: false,
+      tableCount: 0,
+      missingTables: expectedTables,
+      connectionSource,
+      details: `Error querying tables: ${error.message}`
+    };
+  }
 }
