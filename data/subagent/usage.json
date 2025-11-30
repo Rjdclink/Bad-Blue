@@ -1,464 +1,800 @@
 [
   {
-    "timestamp": "2025-11-30T01:30:26.513Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/SupportEmailFooter.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:30:26.515Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/pages/landing.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:30:26.594Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/dropdown-menu.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:30:26.638Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/button.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:30:26.643Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/badge.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:30:26.644Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/LanguageSelectorLight.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:30:26.646Z",
+    "timestamp": "2025-11-30T01:32:17.320Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-30T01:30:26.651Z",
+    "timestamp": "2025-11-30T01:32:17.339Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/SEOHead.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:30:26.691Z",
+    "timestamp": "2025-11-30T01:32:17.372Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/SupportEmailFooter.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:30:26.800Z",
+    "timestamp": "2025-11-30T01:32:17.476Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/LanguageSelectorLight.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:32:17.480Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T01:32:17.541Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SupportEmailFooter.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:32:17.607Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/dropdown-menu.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:30:27.065Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T01:30:27.146Z",
+    "timestamp": "2025-11-30T01:32:17.913Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/lib/bundleAnalyzer.ts"
   },
   {
-    "timestamp": "2025-11-30T01:30:27.298Z",
+    "timestamp": "2025-11-30T01:32:18.094Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:32:18.123Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T01:30:27.382Z",
+    "timestamp": "2025-11-30T01:32:18.180Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T01:30:27.710Z",
+    "timestamp": "2025-11-30T01:32:18.349Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T01:30:27.766Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T01:30:27.785Z",
+    "timestamp": "2025-11-30T01:32:18.365Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-30T01:30:29.046Z",
+    "timestamp": "2025-11-30T01:32:18.406Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T01:30:29.152Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T01:30:55.608Z",
+    "timestamp": "2025-11-30T01:32:18.548Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-30T01:30:56.088Z",
+    "timestamp": "2025-11-30T01:32:47.121Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T01:30:57.073Z",
+    "timestamp": "2025-11-30T01:32:48.078Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T01:31:12.143Z",
+    "timestamp": "2025-11-30T01:33:17.582Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:33:19.076Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:33:48.033Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:33:50.129Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:33:56.326Z",
     "action": "GET",
     "tokens": 0,
     "path": "/"
   },
   {
-    "timestamp": "2025-11-30T01:31:13.019Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@react-refresh"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:14.960Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.031Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/tooltip.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.055Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.079Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@vite/client"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.121Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/main.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.127Z",
+    "timestamp": "2025-11-30T01:33:57.233Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@replit/vite-plugin-dev-banner/banner-script.js"
   },
   {
-    "timestamp": "2025-11-30T01:31:15.135Z",
+    "timestamp": "2025-11-30T01:33:59.216Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/main.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:15.176Z",
+    "timestamp": "2025-11-30T01:33:59.716Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/lib/queryClient.ts"
+    "path": "/src/lib/performance.ts"
   },
   {
-    "timestamp": "2025-11-30T01:31:15.181Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/toaster.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.196Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/hooks/useAuth.ts"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.206Z",
+    "timestamp": "2025-11-30T01:33:59.759Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/tooltip.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:15.211Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/contexts/ClientSessionContext.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.214Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/contexts/LanguageContext.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.239Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/MaintenanceMode.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.242Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/page-skeleton.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.272Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@react-refresh"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.556Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/performance.ts"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.574Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/hooks/use-toast.ts"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.576Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/toast.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.579Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/performance.ts"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.614Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/utils.ts"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.659Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/card.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.663Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/translation.ts"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.828Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/toaster.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.836Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/contexts/ClientSessionContext.tsx"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:15.841Z",
+    "timestamp": "2025-11-30T01:33:59.764Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/hooks/useAuth.ts"
   },
   {
-    "timestamp": "2025-11-30T01:31:15.892Z",
+    "timestamp": "2025-11-30T01:33:59.808Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/MaintenanceMode.tsx"
+    "path": "/@vite/client"
   },
   {
-    "timestamp": "2025-11-30T01:31:15.903Z",
+    "timestamp": "2025-11-30T01:33:59.841Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:33:59.907Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@replit/vite-plugin-dev-banner/banner-script.js"
+  },
+  {
+    "timestamp": "2025-11-30T01:33:59.911Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:33:59.921Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/toaster.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:33:59.992Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/page-skeleton.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:16.057Z",
+    "timestamp": "2025-11-30T01:34:00.078Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/hooks/use-toast.ts"
+    "path": "/@react-refresh"
   },
   {
-    "timestamp": "2025-11-30T01:31:16.062Z",
+    "timestamp": "2025-11-30T01:34:00.111Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/toast.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:00.382Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:00.462Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/lib/translation.ts"
   },
   {
-    "timestamp": "2025-11-30T01:31:16.076Z",
+    "timestamp": "2025-11-30T01:34:00.490Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/card.tsx"
+    "path": "/@fs/home/runner/workspace/attached_assets/stock_images/cartoon_mechanic_wor_678db703.jpg"
   },
   {
-    "timestamp": "2025-11-30T01:31:16.128Z",
+    "timestamp": "2025-11-30T01:34:00.509Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/skeleton.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:16.283Z",
+    "timestamp": "2025-11-30T01:34:00.693Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/queryClient.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:00.703Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/contexts/LanguageContext.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:00.756Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/MaintenanceMode.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:00.767Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/page-skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:01.613Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/utils.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:01.617Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/use-toast.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:01.630Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/translation.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:01.685Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:01.707Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/auth/user"
   },
   {
-    "timestamp": "2025-11-30T01:31:16.346Z",
+    "timestamp": "2025-11-30T01:34:01.844Z",
     "action": "GET",
     "tokens": 0,
     "path": "/favicon.ico"
   },
   {
-    "timestamp": "2025-11-30T01:31:16.608Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/auth/user"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:16.716Z",
+    "timestamp": "2025-11-30T01:34:02.385Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/pages/landing.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:17.359Z",
+    "timestamp": "2025-11-30T01:34:02.576Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+    "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T01:31:17.410Z",
+    "timestamp": "2025-11-30T01:34:02.628Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/button.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:02.633Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/badge.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:02.642Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SEOHead.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:02.705Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/SupportEmailFooter.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:17.446Z",
+    "timestamp": "2025-11-30T01:34:02.778Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/lib/bundleAnalyzer.ts"
   },
   {
-    "timestamp": "2025-11-30T01:31:17.578Z",
+    "timestamp": "2025-11-30T01:34:02.843Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:02.855Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/pages/landing.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:17.649Z",
+    "timestamp": "2025-11-30T01:34:03.060Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/dropdown-menu.tsx"
+    "path": "/src/components/LanguageSelectorLight.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:17.778Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:17.841Z",
+    "timestamp": "2025-11-30T01:34:03.105Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/SupportEmailFooter.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:17.900Z",
+    "timestamp": "2025-11-30T01:34:03.208Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/dropdown-menu.tsx"
   },
   {
-    "timestamp": "2025-11-30T01:31:18.082Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:18.252Z",
+    "timestamp": "2025-11-30T01:34:03.319Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T01:31:18.475Z",
+    "timestamp": "2025-11-30T01:34:03.549Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:03.632Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:03.825Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T01:31:18.522Z",
+    "timestamp": "2025-11-30T01:34:03.876Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-30T01:31:18.688Z",
+    "timestamp": "2025-11-30T01:34:04.104Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:04.165Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T01:31:46.696Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:48.323Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T01:31:49.802Z",
+    "timestamp": "2025-11-30T01:34:05.872Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
   },
   {
-    "timestamp": "2025-11-30T01:32:10.701Z",
+    "timestamp": "2025-11-30T01:34:32.359Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:34:33.121Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:02.794Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:04.164Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:23.967Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:25.056Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:26.094Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:33.440Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:35.137Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:45.675Z",
     "action": "GET",
     "tokens": 0,
     "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:46.450Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:47.912Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.229Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.289Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.339Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@vite/client"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.378Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@replit/vite-plugin-dev-banner/banner-script.js"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.397Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.454Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/queryClient.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.460Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/useAuth.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.462Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/contexts/ClientSessionContext.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.511Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/MaintenanceMode.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.515Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/page-skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.552Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.582Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/App.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.586Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/index.css"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.909Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:48.921Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/utils.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:49.078Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/card.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:49.094Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/translation.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:49.936Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/queryClient.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:49.978Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/tooltip.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:49.986Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/contexts/LanguageContext.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:49.991Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/MaintenanceMode.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:50.041Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/page-skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:52.115Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/translation.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:52.183Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:53.742Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:53.905Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon.ico"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:53.991Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.315Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/landing.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.457Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/landing.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.561Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/LanguageSelectorLight.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.610Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SupportEmailFooter.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.647Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/badge.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.653Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.665Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SEOHead.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.701Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SupportEmailFooter.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.707Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.797Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:54.816Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:55.117Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:55.250Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:55.310Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:55.396Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/audio/badblue-audio.mp3"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:55.925Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:55.982Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-11-30T01:35:56.010Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T01:36:05.139Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/generated_images/Civic_accountability_hero_image_a13a823c.png"
+  },
+  {
+    "timestamp": "2025-11-30T01:36:24.276Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:36:25.136Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:36:54.642Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:36:56.250Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:37:25.256Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-11-30T01:37:27.088Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]
