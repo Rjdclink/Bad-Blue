@@ -1,182 +1,86 @@
 [
   {
-    "timestamp": "2025-11-30T17:22:24.946Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/input-DQfs2i3p.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:22:24.985Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:22:24.988Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:22:25.019Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:22:25.037Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/dollar-sign-CvgOWdSx.js"
-  },
-  {
-    "timestamp": "2025-11-30T17:22:25.045Z",
+    "timestamp": "2025-11-30T17:29:42.132Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/external-link-ByCvNBaf.js"
   },
   {
-    "timestamp": "2025-11-30T17:22:25.047Z",
+    "timestamp": "2025-11-30T17:29:42.140Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/circle-check-big-IucwP7W7.js"
+    "path": "/assets/scroll-area-BSFrzjFF.js"
   },
   {
-    "timestamp": "2025-11-30T17:22:25.078Z",
+    "timestamp": "2025-11-30T17:29:42.152Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/brain-3CMxcxOD.js"
+  },
+  {
+    "timestamp": "2025-11-30T17:29:42.180Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/send-Dyuf-Q1L.js"
   },
   {
-    "timestamp": "2025-11-30T17:22:25.091Z",
+    "timestamp": "2025-11-30T17:29:42.186Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
+    "path": "/assets/mail-B5XkwkcA.js"
   },
   {
-    "timestamp": "2025-11-30T17:22:25.102Z",
+    "timestamp": "2025-11-30T17:29:42.189Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/SEOHead-b0nf3qYO.js"
   },
   {
-    "timestamp": "2025-11-30T17:22:25.108Z",
+    "timestamp": "2025-11-30T17:29:42.195Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/users-CFAHCUDf.js"
   },
   {
-    "timestamp": "2025-11-30T17:22:25.199Z",
+    "timestamp": "2025-11-30T17:29:42.207Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/credit-card-B8MKwAhy.js"
+  },
+  {
+    "timestamp": "2025-11-30T17:29:42.234Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/image-D3s3Sulp.js"
+  },
+  {
+    "timestamp": "2025-11-30T17:29:42.249Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/bundleAnalyzer-C1yhvntE.js"
   },
   {
-    "timestamp": "2025-11-30T17:22:26.477Z",
+    "timestamp": "2025-11-30T17:29:42.977Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T17:22:26.596Z",
+    "timestamp": "2025-11-30T17:29:43.107Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T17:22:48.371Z",
-    "action": "GET",
+    "timestamp": "2025-11-30T17:29:48.562Z",
+    "action": "POST",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/api/login/local"
   },
   {
-    "timestamp": "2025-11-30T17:22:49.044Z",
-    "action": "GET",
+    "timestamp": "2025-11-30T17:29:50.067Z",
+    "action": "POST",
     "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:23:18.997Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:23:20.027Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:23:49.475Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:23:51.046Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:24:20.840Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:24:22.313Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:24:52.479Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:24:54.026Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:25:22.787Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:25:25.013Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:25:53.262Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:25:57.037Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:26:23.692Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T17:26:28.032Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/api/login/local"
   }
 ]
