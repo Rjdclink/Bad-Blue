@@ -15,11 +15,13 @@ interface SessionState {
   timeUntilNextInterval: number;
   minutesRemaining: number;
   dailyBudget: number;
+  elapsedMinutes: number;
 }
 
 interface IntervalPlan {
   searchDuration: number;
   restDuration: number;
+  sessionStartedAt: string;
   intervals: Array<{
     type: 'search' | 'rest';
     startMinute: number;
@@ -31,9 +33,7 @@ class SearchSessionManager {
   private static instance: SearchSessionManager;
   private sessionCheckInterval: NodeJS.Timeout | null = null;
   private currentSessionDate: string | null = null;
-  private sessionStartTime: Date | null = null;
-  private totalSearchMinutes = 0;
-  private isSearchingActive = false;
+  private sessionStartedAt: Date | null = null;
 
   private readonly DAILY_BUDGET_MINUTES = 180;
   private readonly SEARCH_INTERVAL_MINUTES = 10;
@@ -52,7 +52,13 @@ class SearchSessionManager {
     console.log('[SearchSessionManager] Initializing...');
     
     try {
-      await this.ensureTodaySession();
+      const session = await this.ensureTodaySession();
+      const intervalPlan = session.intervalPlan as IntervalPlan | null;
+      if (intervalPlan?.sessionStartedAt) {
+        this.sessionStartedAt = new Date(intervalPlan.sessionStartedAt);
+      } else {
+        this.sessionStartedAt = new Date();
+      }
       this.startIntervalMonitor();
       console.log('[SearchSessionManager] ✓ Initialized with 3-hour daily budget');
     } catch (error: any) {
@@ -75,10 +81,16 @@ class SearchSessionManager {
 
     if (existingSession.length > 0) {
       this.currentSessionDate = today;
+      const intervalPlan = existingSession[0].intervalPlan as IntervalPlan | null;
+      if (intervalPlan?.sessionStartedAt) {
+        this.sessionStartedAt = new Date(intervalPlan.sessionStartedAt);
+      }
       return existingSession[0];
     }
 
-    const intervalPlan = this.generateIntervalPlan();
+    const now = new Date();
+    this.sessionStartedAt = now;
+    const intervalPlan = this.generateIntervalPlan(now);
     
     const [newSession] = await db.insert(subagentSearchSessions).values({
       sessionDate: today,
@@ -97,33 +109,32 @@ class SearchSessionManager {
     return newSession;
   }
 
-  private generateIntervalPlan(): IntervalPlan {
+  private generateIntervalPlan(startTime: Date): IntervalPlan {
     const intervals: IntervalPlan['intervals'] = [];
-    let currentMinute = 0;
+    const cycleLength = this.SEARCH_INTERVAL_MINUTES + this.REST_INTERVAL_MINUTES;
+    const totalCycles = Math.ceil(this.DAILY_BUDGET_MINUTES / this.SEARCH_INTERVAL_MINUTES);
     
-    while (currentMinute < this.DAILY_BUDGET_MINUTES) {
-      const searchEnd = Math.min(currentMinute + this.SEARCH_INTERVAL_MINUTES, this.DAILY_BUDGET_MINUTES);
+    let currentMinute = 0;
+    for (let i = 0; i < totalCycles && currentMinute < this.DAILY_BUDGET_MINUTES * 2; i++) {
       intervals.push({
         type: 'search',
         startMinute: currentMinute,
-        endMinute: searchEnd
+        endMinute: currentMinute + this.SEARCH_INTERVAL_MINUTES
       });
-      currentMinute = searchEnd;
+      currentMinute += this.SEARCH_INTERVAL_MINUTES;
       
-      if (currentMinute < this.DAILY_BUDGET_MINUTES) {
-        const restEnd = currentMinute + this.REST_INTERVAL_MINUTES;
-        intervals.push({
-          type: 'rest',
-          startMinute: currentMinute,
-          endMinute: restEnd
-        });
-        currentMinute = restEnd;
-      }
+      intervals.push({
+        type: 'rest',
+        startMinute: currentMinute,
+        endMinute: currentMinute + this.REST_INTERVAL_MINUTES
+      });
+      currentMinute += this.REST_INTERVAL_MINUTES;
     }
 
     return {
       searchDuration: this.SEARCH_INTERVAL_MINUTES,
       restDuration: this.REST_INTERVAL_MINUTES,
+      sessionStartedAt: startTime.toISOString(),
       intervals
     };
   }
@@ -146,40 +157,50 @@ class SearchSessionManager {
     }
   }
 
+  private getElapsedMinutes(): number {
+    if (!this.sessionStartedAt) {
+      return 0;
+    }
+    const now = new Date();
+    const elapsedMs = now.getTime() - this.sessionStartedAt.getTime();
+    return Math.floor(elapsedMs / 60000);
+  }
+
+  private calculateCurrentInterval(): { type: 'search' | 'rest'; minutesIntoInterval: number; minutesUntilEnd: number } {
+    const elapsedMinutes = this.getElapsedMinutes();
+    const cycleLength = this.SEARCH_INTERVAL_MINUTES + this.REST_INTERVAL_MINUTES;
+    const positionInCycle = elapsedMinutes % cycleLength;
+    
+    if (positionInCycle < this.SEARCH_INTERVAL_MINUTES) {
+      return {
+        type: 'search',
+        minutesIntoInterval: positionInCycle,
+        minutesUntilEnd: this.SEARCH_INTERVAL_MINUTES - positionInCycle
+      };
+    } else {
+      const restPosition = positionInCycle - this.SEARCH_INTERVAL_MINUTES;
+      return {
+        type: 'rest',
+        minutesIntoInterval: restPosition,
+        minutesUntilEnd: this.REST_INTERVAL_MINUTES - restPosition
+      };
+    }
+  }
+
   async getSessionState(): Promise<SessionState> {
     const session = await this.ensureTodaySession();
-    
-    const isInSearchInterval = this.calculateIsSearchInterval(session);
-    const timeUntilNextInterval = this.calculateTimeUntilNextInterval(session);
+    const interval = this.calculateCurrentInterval();
+    const elapsedMinutes = this.getElapsedMinutes();
     
     return {
       isActive: session.status === 'active',
       currentSession: session,
-      isInSearchInterval,
-      timeUntilNextInterval,
+      isInSearchInterval: interval.type === 'search',
+      timeUntilNextInterval: interval.minutesUntilEnd,
       minutesRemaining: session.minutesRemaining ?? 0,
-      dailyBudget: session.totalBudgetMinutes ?? this.DAILY_BUDGET_MINUTES
+      dailyBudget: session.totalBudgetMinutes ?? this.DAILY_BUDGET_MINUTES,
+      elapsedMinutes
     };
-  }
-
-  private calculateIsSearchInterval(session: typeof subagentSearchSessions.$inferSelect): boolean {
-    const minutesUsed = session.minutesUsed ?? 0;
-    const cycleLength = this.SEARCH_INTERVAL_MINUTES + this.REST_INTERVAL_MINUTES;
-    const positionInCycle = minutesUsed % cycleLength;
-    
-    return positionInCycle < this.SEARCH_INTERVAL_MINUTES;
-  }
-
-  private calculateTimeUntilNextInterval(session: typeof subagentSearchSessions.$inferSelect): number {
-    const minutesUsed = session.minutesUsed ?? 0;
-    const cycleLength = this.SEARCH_INTERVAL_MINUTES + this.REST_INTERVAL_MINUTES;
-    const positionInCycle = minutesUsed % cycleLength;
-    
-    if (positionInCycle < this.SEARCH_INTERVAL_MINUTES) {
-      return this.SEARCH_INTERVAL_MINUTES - positionInCycle;
-    } else {
-      return cycleLength - positionInCycle;
-    }
   }
 
   async canStartSearch(): Promise<{ allowed: boolean; reason: string; waitMinutes?: number }> {
@@ -211,12 +232,10 @@ class SearchSessionManager {
       UPDATE subagent_search_sessions 
       SET 
         minutes_used = minutes_used + ${durationMinutes},
-        minutes_remaining = minutes_remaining - ${durationMinutes},
+        minutes_remaining = GREATEST(0, minutes_remaining - ${durationMinutes}),
         updated_at = NOW()
       WHERE session_date = ${today}
     `);
-    
-    this.totalSearchMinutes += durationMinutes;
   }
 
   async recordSearchCompletion(officersFound: number): Promise<void> {
@@ -244,7 +263,6 @@ class SearchSessionManager {
       WHERE session_date = ${today}
     `);
     
-    this.isSearchingActive = false;
     console.log(`[SearchSessionManager] Session paused${reason ? `: ${reason}` : ''}`);
   }
 
@@ -274,13 +292,13 @@ class SearchSessionManager {
       WHERE session_date = ${today}
     `);
     
-    this.isSearchingActive = false;
     console.log('[SearchSessionManager] Daily session budget exhausted');
   }
 
   async getSessionStats(): Promise<{
     today: typeof subagentSearchSessions.$inferSelect | null;
     weekTotal: { searches: number; officers: number; minutes: number };
+    currentInterval: { type: 'search' | 'rest'; minutesIntoInterval: number; minutesUntilEnd: number };
   }> {
     const today = this.getTodayDateString();
     const weekAgo = new Date();
@@ -303,6 +321,7 @@ class SearchSessionManager {
     `);
 
     const stats = weekStats.rows[0] as any;
+    const currentInterval = this.calculateCurrentInterval();
 
     return {
       today: todaySession[0] ?? null,
@@ -310,7 +329,8 @@ class SearchSessionManager {
         searches: parseInt(stats.total_searches) || 0,
         officers: parseInt(stats.total_officers) || 0,
         minutes: parseInt(stats.total_minutes) || 0
-      }
+      },
+      currentInterval
     };
   }
 
