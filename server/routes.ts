@@ -739,9 +739,18 @@ function coerceBoolean(v: any): boolean | undefined {
   return undefined;
 }
 
+const DepartmentTypeEnum = z.enum([
+  "city",      // City Police
+  "state",     // State Police
+  "county",    // County Sheriff
+  "government", // Government (federal, etc.)
+  "corrections" // Corrections (prisons, jails)
+]);
+
 const OfficerSearchSchema = z.object({
   officerName: z.string().min(2, "officerName must be at least 2 characters"),
   officerType: z.string().optional(),
+  departmentType: DepartmentTypeEnum.optional(), // New: Type of law enforcement agency
   state: z.string().optional(),
   city: z.string().optional(),
   county: z.string().optional(),
@@ -2436,6 +2445,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
       const {
         officerName,
         officerType,
+        departmentType,
         state,
         city,
         county,
@@ -2470,6 +2480,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
       const normalizedParams = {
         officerName: officerName.trim(),
         officerType: officerType?.trim() || undefined,
+        departmentType: departmentType || undefined,
         state: normalizeStateInput(state),
         city: city?.trim() || undefined,
         county: county?.trim() || undefined,
@@ -2536,6 +2547,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
           county: normalizedParams.county,
           badgeNumber: normalizedParams.badgeNumber,
           officerType: normalizedParams.officerType,
+          departmentType: normalizedParams.departmentType,
           searchId,
           includeTraining,
           includeIncidents,

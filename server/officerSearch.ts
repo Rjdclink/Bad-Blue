@@ -4,6 +4,7 @@ import { findDepartmentUrlsByState, getAllDepartmentUrls } from "./policeUrls";
 import { rateLimitTracker } from "./rateLimitTracker";
 import { generateGeminiStructuredResponse, isGeminiAvailable } from './gemini';
 import { isClaudeAvailable, generateClaudeJSON, callClaude } from "./claude";
+import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 import { searchOfficerRecords as webSearchOfficerRecords, unifiedSearch, isWebSearchAvailable } from './webSearchService';
 
 // In-memory cache for officer search results
@@ -79,6 +80,7 @@ function setCachedResult(cacheKey: string, result: OfficerSearchResult): void {
 export interface OfficerSearchParams {
   officerName: string;
   state?: string;
+  departmentType?: 'city' | 'state' | 'county' | 'government' | 'corrections';
   badgeData?: any;
   bypassCache?: boolean;
 }
@@ -199,6 +201,18 @@ async function webSearchSupplementalData(
   return { additionalSources, snippets };
 }
 
+// Helper to get department type label
+function getDepartmentTypeLabel(departmentType?: string): string {
+  const labels: Record<string, string> = {
+    'city': 'City Police Department',
+    'state': 'State Police / Highway Patrol',
+    'county': 'County Sheriff\'s Office',
+    'government': 'Federal/Government Agency',
+    'corrections': 'Corrections / Prison / Jail'
+  };
+  return departmentType ? labels[departmentType] || departmentType : '';
+}
+
 /**
  * Gemini data harvesting - fast multimodal search
  * Leverages Gemini's strength in real-time data retrieval and web grounding
@@ -207,6 +221,7 @@ async function webSearchSupplementalData(
 async function geminiDataHarvest(
   officerName: string,
   state: string | undefined,
+  departmentType: string | undefined,
   priorityUrls: string[]
 ): Promise<GeminiRawData> {
   const webSupplemental = await webSearchSupplementalData(officerName, state);
@@ -220,10 +235,14 @@ async function geminiDataHarvest(
     ? `\n\nWeb search findings:\n${webSupplemental.snippets.slice(0, 5).join('\n')}`
     : '';
 
+  const deptTypeContext = departmentType 
+    ? `Department Type: ${getDepartmentTypeLabel(departmentType)}\n` 
+    : '';
+
   const prompt = `Search for police officer information:
 Name: ${officerName}
 State: ${state || 'Unknown'}
-${urlContext}${snippetContext}
+${deptTypeContext}${urlContext}${snippetContext}
 
 Extract ONLY factual, verifiable information. Return JSON with:
 {
@@ -246,8 +265,64 @@ Return ONLY facts with sources. Omit empty fields. No speculation.`;
       result.sources = Array.from(new Set([...(result.sources || []), ...webSupplemental.additionalSources]));
     }
     return result || {};
-  } catch (error) {
+  } catch (error: any) {
     console.error('[Officer Search] Gemini harvest failed:', error);
+    // Propagate error so fallback can be triggered
+    throw new Error(`Gemini harvest failed: ${error.message || 'Unknown error'}`);
+  }
+}
+
+/**
+ * Groq fallback data harvesting - used when Gemini is unavailable
+ * Groq is faster but has less web grounding capability than Gemini
+ */
+async function groqDataHarvest(
+  officerName: string,
+  state: string | undefined,
+  departmentType: string | undefined
+): Promise<GeminiRawData> {
+  const deptTypeContext = departmentType 
+    ? `Department Type: ${getDepartmentTypeLabel(departmentType)}\n` 
+    : '';
+
+  const prompt = `Search for police officer information and return structured JSON data.
+
+Officer Name: ${officerName}
+State: ${state || 'Unknown'}
+${deptTypeContext}
+
+Based on your knowledge, provide any factual information about this officer. Return ONLY valid JSON with this exact structure:
+{
+  "rank": "officer's current rank if known",
+  "agency": "department name with city/county",
+  "badgeNumber": "badge number if known",
+  "disciplinary": ["list of any known disciplinary actions"],
+  "news": ["any relevant news or incidents"],
+  "sanctions": ["any known sanctions"],
+  "lawsuits": ["any known lawsuits or legal actions"],
+  "training": ["any known training or certifications"],
+  "sources": []
+}
+
+If you don't have information for a field, use an empty array for arrays or null for strings.
+Return ONLY the JSON object, no additional text.`;
+
+  try {
+    const systemPrompt = 'You are a police accountability researcher. Return only valid JSON with factual, verifiable information about law enforcement officers. Be concise and factual.';
+    const result = await generateGroqStructuredResponse(prompt, systemPrompt);
+    if (typeof result === 'string') {
+      try {
+        const jsonMatch = result.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[0]) as GeminiRawData;
+        }
+      } catch (parseError) {
+        console.error('[Officer Search] Groq JSON parse error:', parseError);
+      }
+    }
+    return {};
+  } catch (error) {
+    console.error('[Officer Search] Groq harvest failed:', error);
     return {};
   }
 }
@@ -366,9 +441,10 @@ Be thorough - this is a retry after initial search failed. Include ANY relevant 
       temperature: 0.8 // Higher temperature for more creative search
     });
     return result || {};
-  } catch (error) {
+  } catch (error: any) {
     console.error('[Officer Search] Broadened Gemini search failed:', error);
-    return {};
+    // Propagate error so fallback can be triggered
+    throw new Error(`Broadened Gemini search failed: ${error.message || 'Unknown error'}`);
   }
 }
 
@@ -384,7 +460,7 @@ export async function searchOfficerInformation(
   params: OfficerSearchParams,
   searchId?: string
 ): Promise<OfficerSearchResult> {
-  const { officerName, state, badgeData, bypassCache } = params;
+  const { officerName, state, departmentType, badgeData, bypassCache } = params;
 
   if (!officerName || !officerName.trim()) {
     throw new Error('Officer name is required');
@@ -449,14 +525,24 @@ export async function searchOfficerInformation(
       console.log('[Officer Search] Roster lookup failed:', err);
     }
 
-    // Stage 2: Gemini Data Harvesting
-    emitProgress(2, 'Gemini Retrieval', 'Searching databases and public records...');
+    // Stage 2: AI Data Harvesting (Gemini primary, Groq fallback)
+    emitProgress(2, 'AI Retrieval', 'Searching databases and public records...');
     
     let geminiData: GeminiRawData = {};
     if (isGeminiAvailable()) {
-      geminiData = await geminiDataHarvest(normalizedName, state, priorityUrls);
+      try {
+        geminiData = await geminiDataHarvest(normalizedName, state, departmentType, priorityUrls);
+      } catch (geminiError) {
+        console.error('[Officer Search] Gemini harvest failed, trying Groq fallback:', geminiError);
+        if (isGroqAvailable()) {
+          geminiData = await groqDataHarvest(normalizedName, state, departmentType);
+        }
+      }
+    } else if (isGroqAvailable()) {
+      console.log('[Officer Search] Gemini not available, using Groq fallback');
+      geminiData = await groqDataHarvest(normalizedName, state, departmentType);
     } else {
-      console.log('[Officer Search] Gemini not available, skipping harvest');
+      console.log('[Officer Search] No AI providers available for officer search');
     }
 
     // Stage 3: Claude Verification & Synthesis
@@ -490,8 +576,21 @@ export async function searchOfficerInformation(
       totalStages = 5; // Add extra stage for retry
       emitProgress(3, 'Looking Harder...', 'Expanding search to additional databases...', 5);
       
-      // Perform broadened search
-      const broadenedData = await geminiDataHarvestBroadened(normalizedName, state);
+      // Perform broadened search with fallback
+      let broadenedData: GeminiRawData = {};
+      if (isGeminiAvailable()) {
+        try {
+          broadenedData = await geminiDataHarvestBroadened(normalizedName, state);
+        } catch (error) {
+          console.error('[Officer Search] Broadened Gemini search failed, trying Groq:', error);
+          if (isGroqAvailable()) {
+            broadenedData = await groqDataHarvest(normalizedName, state, departmentType);
+          }
+        }
+      } else if (isGroqAvailable()) {
+        console.log('[Officer Search] Gemini unavailable for broadened search, using Groq');
+        broadenedData = await groqDataHarvest(normalizedName, state, departmentType);
+      }
       
       // Merge broadened data with original
       const mergedData: GeminiRawData = {

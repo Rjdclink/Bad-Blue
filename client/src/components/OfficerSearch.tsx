@@ -34,6 +34,14 @@ import { apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import OfficerSearchProgress from "./OfficerSearchProgress";
 
+const DEPARTMENT_TYPES = [
+  { value: "city", label: "City Police" },
+  { value: "state", label: "State Police" },
+  { value: "county", label: "County Sheriff" },
+  { value: "government", label: "Government (Federal)" },
+  { value: "corrections", label: "Corrections" },
+];
+
 const US_STATES = [
   { code: "AL", name: "Alabama" },
   { code: "AK", name: "Alaska" },
@@ -99,6 +107,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
 
   const [officerName, setOfficerName] = useState("");
   const [state, setState] = useState("");
+  const [departmentType, setDepartmentType] = useState("");
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searchId, setSearchId] = useState<string | null>(null);
   const [progress, setProgress] = useState<{
@@ -143,7 +152,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   }, [searchId]);
 
   const searchMutation = useMutation({
-    mutationFn: async (data: { officerName: string; state?: string; searchId: string }) => {
+    mutationFn: async (data: { officerName: string; state?: string; departmentType?: string; searchId: string }) => {
       const response = await apiRequest("/api/officer-search", "POST", data);
 
       if (!response.ok) {
@@ -207,12 +216,21 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
     }
 
     if (!state) {
-  toast({
-    title: "State required",
-    description: "Select a state for search.",
-    variant: "destructive",
-  });
-  return;
+      toast({
+        title: "State required",
+        description: "Select a state for search.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!departmentType) {
+      toast({
+        title: "Department Type required",
+        description: "Select the type of law enforcement agency.",
+        variant: "destructive",
+      });
+      return;
     }
     
     // Generate unique search ID
@@ -223,6 +241,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
     searchMutation.mutate({ 
       officerName, 
       state: state || undefined,
+      departmentType: departmentType || undefined,
       searchId: newSearchId,
     });
   };
@@ -273,20 +292,36 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                 </div>
 
                 <div className="space-y-2">
-  <Label htmlFor="select-state">State</Label>
-  <Select value={state} onValueChange={setState}>
-    <SelectTrigger id="select-state" data-testid="select-state">
-      <SelectValue placeholder="Select state" />
-    </SelectTrigger>
-    <SelectContent>
-      {US_STATES.map((s) => (
-        <SelectItem key={s.code} value={s.code}>
-          {s.name}
-        </SelectItem>
-      ))}
-    </SelectContent>
-  </Select>
-</div>
+                  <Label htmlFor="select-state">State</Label>
+                  <Select value={state} onValueChange={setState}>
+                    <SelectTrigger id="select-state" data-testid="select-state">
+                      <SelectValue placeholder="Select state" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {US_STATES.map((s) => (
+                        <SelectItem key={s.code} value={s.code}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="select-department-type">Department Type</Label>
+                  <Select value={departmentType} onValueChange={setDepartmentType}>
+                    <SelectTrigger id="select-department-type" data-testid="select-department-type">
+                      <SelectValue placeholder="Select department type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DEPARTMENT_TYPES.map((dept) => (
+                        <SelectItem key={dept.value} value={dept.value}>
+                          {dept.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
                 <div className="flex gap-4">
                   <Button
@@ -482,6 +517,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                         setSearchResults(null);
                         setOfficerName("");
                         setState("");
+                        setDepartmentType("");
                         setProgress(null);
                         setSearchId(null);
                         if (eventSourceRef.current) {
