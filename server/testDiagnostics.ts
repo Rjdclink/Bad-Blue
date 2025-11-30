@@ -1,11 +1,12 @@
 // BadBlue - Comprehensive Service Diagnostics
 // Tests all external services with actual API calls
+// MIGRATED to @google/genai SDK (Nov 30, 2025) - @google/generative-ai is deprecated
 
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import Stripe from 'stripe';
 import nodemailer from 'nodemailer';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
 interface TestResult {
   service: string;
@@ -156,7 +157,7 @@ export async function runComprehensiveDiagnostics(): Promise<{
     }
   }
 
-  // 4. GOOGLE GEMINI API TEST
+  // 4. GOOGLE GEMINI API TEST (using new @google/genai SDK)
   console.log('[DIAGNOSTICS] Testing Google Gemini API...');
   if (!process.env.GEMINI_API_KEY) {
     results.push({
@@ -169,21 +170,14 @@ export async function runComprehensiveDiagnostics(): Promise<{
   } else {
     try {
       const geminiStart = Date.now();
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-      const model = genAI.getGenerativeModel({ 
-        model: 'gemini-2.5-flash',
-        generationConfig: { temperature: 0.0 }
-      });
+      const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
-      const result = await model.generateContent({
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: 'Respond with just "OK" if working' }]
-          }
-        ]
+      const result = await genAI.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{ role: 'user', parts: [{ text: 'Respond with just "OK" if working' }] }],
+        config: { temperature: 0.0 }
       });
-      const text = result.response?.text() ?? '';
+      const text = result.text || '';
       const geminiTime = Date.now() - geminiStart;
 
       if (text && text.length > 0) {

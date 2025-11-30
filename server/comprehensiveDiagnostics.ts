@@ -383,21 +383,21 @@ class ComprehensiveDiagnostics {
       }
     });
 
-    // Test Google Gemini API
+    // Test Google Gemini API (using new @google/genai SDK)
     await this.runTest(category, 'Google Gemini API', async () => {
       if (!process.env.GEMINI_API_KEY) {
         return { status: 'FAIL', message: 'GEMINI_API_KEY not configured' };
       }
 
       try {
-        const { GoogleGenerativeAI } = await import("@google/generative-ai");
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const { GoogleGenAI } = await import("@google/genai");
+        const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-        const result = await model.generateContent({
+        const result = await genAI.models.generateContent({
+          model: 'gemini-2.5-flash',
           contents: [{ role: 'user', parts: [{ text: 'Respond with OK if working' }] }]
         });
-        const text = result.response?.text() ?? '';
+        const text = result.text || '';
 
         if (text && text.length > 0) {
           return { 
@@ -539,22 +539,22 @@ class ComprehensiveDiagnostics {
   async testAIServices() {
     const category = 'AI_SERVICES';
 
-    // Test Gemini with actual prompt
+    // Test Gemini with actual prompt (using new @google/genai SDK)
     await this.runTest(category, 'Gemini Generation', async () => {
       if (!process.env.GEMINI_API_KEY) {
         return { status: 'SKIP', message: 'Gemini API key not configured' };
       }
 
       try {
-        const { GoogleGenerativeAI } = await import("@google/generative-ai");
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const { GoogleGenAI } = await import("@google/genai");
+        const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
         const startTime = Date.now();
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-        const result = await model.generateContent({
+        const result = await genAI.models.generateContent({
+          model: 'gemini-2.5-flash',
           contents: [{ role: 'user', parts: [{ text: 'What is 2+2? Answer with just the number.' }] }]
         });
-        const text = result.response?.text() ?? '';
+        const text = result.text || '';
         const responseTime = Date.now() - startTime;
 
         if (text && text.includes('4')) {

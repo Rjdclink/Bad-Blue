@@ -1,112 +1,88 @@
 // server/gemini.ts
 
 /**
- * Gemini (Google) AI Service
+ * Gemini (Google) AI Service - MIGRATED to @google/genai SDK (Nov 30, 2025)
  * - Shared low-level client for entire application
  * - Supports text + JSON structured output
  * - Defaults to Gemini-2.5-flash (LATEST + FAST)
+ * 
+ * NOTE: @google/generative-ai is DEPRECATED (EOL Nov 30, 2025)
+ * This file now uses the new unified @google/genai SDK
  */
 
-import { GoogleGenerativeAI, type GenerativeModel } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 
 export interface GeminiOptions {
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
-  model?: string;       // override if necessary
+  model?: string;
   useJSON?: boolean;
 }
 
-/* -------------------- API KEY LOAD -------------------- */
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 
-/**
- * Check if Gemini is available
- */
 export function isGeminiAvailable(): boolean {
-  return !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+  return !!GEMINI_API_KEY;
 }
 
 function getGeminiApiKey(): string {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("❌ GEMINI_API_KEY (or GOOGLE_API_KEY) is not set");
-  return apiKey;
+  if (!GEMINI_API_KEY) throw new Error("❌ GEMINI_API_KEY (or GOOGLE_API_KEY) is not set");
+  return GEMINI_API_KEY;
 }
 
-/* -------------------- CLIENT + MODEL CACHE -------------------- */
+let geminiClient: GoogleGenAI | null = null;
 
-let geminiClient: GoogleGenerativeAI | null = null;
-const modelCache = new Map<string, GenerativeModel>();
-
-function getGeminiClient(): GoogleGenerativeAI {
-  if (!geminiClient) geminiClient = new GoogleGenerativeAI(getGeminiApiKey());
+function getGeminiClient(): GoogleGenAI {
+  if (!geminiClient) {
+    geminiClient = new GoogleGenAI({ apiKey: getGeminiApiKey() });
+  }
   return geminiClient;
 }
-
-function getGeminiModel(
-  modelName: string,
-  useJSON: boolean,
-  temperature: number,
-  maxTokens: number
-): GenerativeModel {
-  
-  const key = `${modelName}|json=${useJSON}|temp=${temperature}|max=${maxTokens}`;
-  const cached = modelCache.get(key);
-  if (cached) return cached;
-
-  const model = getGeminiClient().getGenerativeModel({
-    model: modelName,
-    generationConfig: {
-      temperature,
-      maxOutputTokens: maxTokens,
-      responseMimeType: useJSON ? "application/json" : "text/plain",
-    } as any
-  });
-
-  modelCache.set(key, model);
-  return model;
-}
-
-/* -------------------- PRIMARY CALL (used by aiProvider) -------------------- */
 
 export async function callGemini(
   prompt: string,
   options: GeminiOptions = {},
   maxTokens: number
 ): Promise<string> {
+  const modelName = options.model || "gemini-2.5-flash";
+  const client = getGeminiClient();
 
-  const modelName = options.model || "gemini-2.5-flash";   // <<<<< 🔥 DEFAULT MODEL SET HERE
+  const systemPrompt = options.systemPrompt || '';
+  const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
 
-  const system = options.systemPrompt ? `${options.systemPrompt}\n\n${prompt}` : prompt;
+  const config: any = {
+    temperature: options.temperature ?? 0.7,
+    maxOutputTokens: maxTokens,
+  };
 
-  const model = getGeminiModel(
-    modelName,
-    options.useJSON ?? false,
-    options.temperature ?? 0.7,
-    maxTokens
-  );
+  if (options.useJSON) {
+    config.responseMimeType = "application/json";
+  }
 
-  const result = await model.generateContent(system);
-  const text = result.response?.text() ?? "";
+  const response = await client.models.generateContent({
+    model: modelName,
+    contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+    config,
+  });
+
+  const text = response.text || "";
 
   if (!text) throw new Error("❌ Empty response from Gemini");
 
   return text;
 }
 
-/* -------------------- STRUCTURED JSON HELPER -------------------- */
-
 export async function generateGeminiStructuredResponse<T = any>(
   prompt: string,
   options: GeminiOptions = {}
 ): Promise<T> {
-
   const maxTokens = options.maxTokens ?? 2000;
   const raw = await callGemini(prompt, { ...options, useJSON: true }, maxTokens);
 
-  // Handle ```json output
   let clean = raw.trim();
   if (clean.startsWith("```")) {
-    clean = clean.replace(/```json\s*/i,"").replace(/```/g,"").trim();
+    clean = clean.replace(/```json\s*/i, "").replace(/```/g, "").trim();
   }
 
   try {
@@ -115,11 +91,8 @@ export async function generateGeminiStructuredResponse<T = any>(
     console.error("❌ Gemini JSON parsing failed:", clean);
     throw new Error("Gemini returned non-JSON output when JSON was expected");
   }
-}   
-      
-/**
- * AI Form Assistant - Helps users fill out complaint/lawsuit forms through conversation
- */
+}
+
 interface FormAssistantMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -143,8 +116,7 @@ export async function chatWithFormAssistant(
 ): Promise<FormAssistantResponse> {
   try {
     const client = getGeminiClient();
-    
-    // Build system prompt based on form type and context
+
     const systemPrompt = `You are an expert legal assistant helping citizens file ${formType === 'complaint' ? 'police complaints' : 'civil rights lawsuits'}. Your role is to:
 
 1. Ask clear, conversational questions to gather necessary information
@@ -174,38 +146,38 @@ RESPONSE FORMAT:
 Respond with a JSON object containing:
 {
   "message": "Your conversational response/question",
-  "suggestedFields": { "fieldName": "value" }, // Only include if you can infer field values from conversation
-  "needsMoreInfo": ["field1", "field2"], // Fields still missing
-  "readyToSubmit": false // true only when ALL required fields are populated
+  "suggestedFields": { "fieldName": "value" },
+  "needsMoreInfo": ["field1", "field2"],
+  "readyToSubmit": false
 }`;
 
-    // Build conversation context for Gemini
     const conversationText = conversationHistory
       .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
       .join('\n\n');
 
-    const fullPrompt = conversationHistory.length > 0 
+    const fullPrompt = conversationHistory.length > 0
       ? `${conversationText}\n\nUser: ${userMessage}`
       : `User: ${userMessage}`;
 
-    // Using Gemini 2.5 Flash for fast conversational responses
-    const model = client.getGenerativeModel({
+    const response = await client.models.generateContent({
       model: "gemini-2.5-flash",
-      generationConfig: {
+      contents: [
+        { role: "user", parts: [{ text: `${systemPrompt}\n\n${fullPrompt}` }] }
+      ],
+      config: {
         responseMimeType: "application/json",
         temperature: 0.7,
-      } as any
+      },
     });
-    
-    const response = await model.generateContent(`${systemPrompt}\n\n${fullPrompt}`);
-    const content = response.response?.text() ?? '';
+
+    const content = response.text || '';
     if (!content) {
       throw new Error('No response from Gemini');
     }
 
     const parsed = JSON.parse(content);
     return parsed as FormAssistantResponse;
-    
+
   } catch (error) {
     console.error('AI form assistant error:', error);
     throw error;

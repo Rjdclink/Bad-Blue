@@ -62,13 +62,22 @@ The platform utilizes a modern web stack featuring a React 18 frontend with Type
 -   **Drizzle Kit**: Updated from 0.20.18 to 0.31.7 - latest schema migration tools  
 -   **Drizzle Zod**: Kept at 0.7.1 (0.8.x requires Zod v4 which would be a breaking change)
 -   **Email System**: Reconfigured to use Resend API exclusively (replaced Google Workspace SMTP)
--   **Google AI SDKs**: Uses both `@google/genai` (for web-grounded searches) and `@google/generative-ai` (for standard AI calls)
+-   **Google AI SDK**: Now uses `@google/genai` exclusively (deprecated `@google/generative-ai` removed)
 -   All database operations verified working with the updated packages
 
 **RAILWAY DEPLOYMENT FIXES (Nov 30, 2025)**:
 -   **IPv6/IPv4 Connectivity**: Railway's shared network doesn't support IPv6 egress. Fix: Set `NODE_OPTIONS="--dns-result-order=ipv4first"` in Railway env vars
 -   **Migration Bundling**: Changed from dynamic imports to static imports for all 8 migration modules. Dynamic imports (`await import(path)`) can't be analyzed by esbuild bundler, causing `ENOENT` errors in production. Static imports are now at top of `server/index.ts` and bundled into single `dist/index.js` (~686KB)
 -   **Documentation**: See `RAILWAY_DEPLOYMENT.md` for full Railway-specific configuration
+
+**GEMINI SDK MIGRATION (Nov 30, 2025)**:
+-   **CRITICAL**: Migrated from deprecated `@google/generative-ai` SDK (EOL Nov 30, 2025) to new unified `@google/genai` SDK
+-   **Files migrated**: `server/gemini.ts`, `server/testDiagnostics.ts`, `server/emailVerification.ts`, `server/comprehensiveDiagnostics.ts`
+-   **Already using new SDK**: `server/webSearchService.ts`, `server/officerDataCollector.ts`
+-   **Model**: Using `gemini-2.5-flash` consistently across all files
+-   **New SDK pattern**: `GoogleGenAI({ apiKey })` → `client.models.generateContent({ model, contents, config })`
+-   **Response access**: `response.text` (new) vs `result.response?.text()` (old)
+-   **Package removed**: `@google/generative-ai` uninstalled from dependencies
 
 **CRITICAL BUG FIXES (Nov 14, 2025)**:
 -   **Groq Quota Exhaustion Prevention**: Disabled autonomous data collection system that was consuming 100% of daily Groq quotas (100,000 tokens), violating the 35% limit requirement. System now prevents quota exhaustion with autonomous functions temporarily disabled pending proper token budget implementation.
