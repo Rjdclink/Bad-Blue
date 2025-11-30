@@ -2062,8 +2062,230 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
       switch (event.type) {
         case "checkout.session.completed": {
           const session = event.data.object as any;
-          const metadata = session.metadata;
-          // (Original handling logic retained – omitted for brevity)
+          const metadata = session.metadata || {};
+          const paymentType = metadata.type;
+          const userId = metadata.userId;
+
+          console.log(`[Webhook] Payment completed: type=${paymentType}, userId=${userId}`);
+
+          if (!userId) {
+            console.error("[Webhook] No userId in session metadata");
+            break;
+          }
+
+          const user = await storage.getUser(userId);
+          if (!user) {
+            console.error(`[Webhook] User not found: ${userId}`);
+            break;
+          }
+
+          const userEmail = user.email;
+          const firstName = user.firstName || "User";
+
+          if (!userEmail) {
+            console.error(`[Webhook] No email for user: ${userId}`);
+            break;
+          }
+
+          try {
+            switch (paymentType) {
+              case "complaint": {
+                const complaintId = metadata.complaintId;
+                if (!complaintId) {
+                  console.error("[Webhook] No complaintId in metadata");
+                  break;
+                }
+
+                const complaint = await storage.getComplaint(complaintId);
+                if (!complaint) {
+                  console.error(`[Webhook] Complaint not found: ${complaintId}`);
+                  break;
+                }
+
+                await storage.updateComplaintStatus(complaintId, "paid");
+
+                await sendPurchaseConfirmationEmail({
+                  firstName,
+                  email: userEmail,
+                  type: "complaint",
+                  amount: session.amount_total || COMPLAINT_PRICING_CENTS,
+                  officerName: complaint.officerName,
+                  incidentDate: complaint.incidentDate?.toString(),
+                  state: complaint.state,
+                  submissionVenue: complaint.submissionVenue || undefined,
+                  submissionEmail: complaint.submissionEmail || undefined,
+                  submissionAddress: complaint.submissionAddress || undefined,
+                });
+
+                console.log(`[Webhook] Complaint confirmation email sent for ${complaintId}`);
+                break;
+              }
+
+              case "lawsuit": {
+                const lawsuitId = metadata.lawsuitId;
+                const tier = metadata.tier || "diy";
+                if (!lawsuitId) {
+                  console.error("[Webhook] No lawsuitId in metadata");
+                  break;
+                }
+
+                const lawsuit = await storage.getLawsuitFiling(lawsuitId);
+                if (!lawsuit) {
+                  console.error(`[Webhook] Lawsuit not found: ${lawsuitId}`);
+                  break;
+                }
+
+                await storage.updateLawsuitStatus(lawsuitId, "paid");
+
+                const isDIY = tier === "diy";
+                const filingInstructions = isDIY
+                  ? `
+FILING INSTRUCTIONS FOR ${(lawsuit.state || "YOUR STATE").toUpperCase()}:
+
+1. Print the attached lawsuit document
+2. Make 3 copies of all documents
+3. File the original with the U.S. District Court clerk
+4. Pay the court filing fee (approximately $402)
+5. Serve the defendants via U.S. Marshal or certified mail
+6. Keep all copies and receipts for your records
+
+Filing Deadline: Generally 2 years from the incident date for Section 1983 claims
+
+Court Address: Check pacer.uscourts.gov for your local U.S. District Court
+                  `.trim()
+                  : undefined;
+
+                await sendPurchaseConfirmationEmail({
+                  firstName,
+                  email: userEmail,
+                  type: "lawsuit",
+                  amount: session.amount_total || (isDIY ? LAWSUIT_DIY_PRICING_CENTS : LAWSUIT_FULL_SERVICE_PRICING_CENTS),
+                  officerName: lawsuit.officerName,
+                  incidentDate: lawsuit.incidentDate?.toString(),
+                  state: lawsuit.state,
+                  document: lawsuit.generatedDocument || undefined,
+                  filingInstructions,
+                  submissionVenue: lawsuit.filingCourt || undefined,
+                  serviceName: isDIY ? "DIY Lawsuit Assistance" : "Full-Service Lawsuit Filing",
+                });
+
+                console.log(`[Webhook] Lawsuit (${tier}) confirmation email sent for ${lawsuitId}`);
+                break;
+              }
+
+              case "petition": {
+                const petitionId = metadata.petitionId;
+                if (!petitionId) {
+                  console.error("[Webhook] No petitionId in metadata");
+                  break;
+                }
+
+                const [petition] = await db.select().from(petitions).where(eq(petitions.id, petitionId));
+                if (!petition) {
+                  console.error(`[Webhook] Petition not found: ${petitionId}`);
+                  break;
+                }
+
+                await db.update(petitions)
+                  .set({ paymentId: session.payment_intent || session.id, updatedAt: new Date() })
+                  .where(eq(petitions.id, petitionId));
+
+                const petitionText = `
+PETITION FOR OFFICER ACCOUNTABILITY
+
+To: ${petition.department || "Police Department"}
+Re: Officer ${petition.officerName}
+
+STATEMENT OF FACTS:
+${petition.offenseDescriptionRedrafted || petition.offenseDescriptionOriginal || "Details on file"}
+
+REQUESTED ACTION:
+Officer accountability and policy review
+
+This petition represents the voice of concerned citizens demanding transparency and accountability in law enforcement.
+
+Petition URL: ${petition.shareableUrl || "Available upon request"}
+                `.trim();
+
+                await sendPurchaseConfirmationEmail({
+                  firstName,
+                  email: userEmail,
+                  type: "petition",
+                  amount: session.amount_total || PETITION_PRICING_CENTS,
+                  officerName: petition.officerName,
+                  state: petition.state,
+                  document: petitionText,
+                });
+
+                console.log(`[Webhook] Petition confirmation email sent for ${petitionId}`);
+                break;
+              }
+
+              case "foia": {
+                const foiaRequestId = metadata.foiaRequestId;
+                if (!foiaRequestId) {
+                  console.error("[Webhook] No foiaRequestId in metadata");
+                  break;
+                }
+
+                const foiaRequest = await db.query.foiaRequests.findFirst({
+                  where: eq(foiaRequests.id, foiaRequestId),
+                });
+                if (!foiaRequest) {
+                  console.error(`[Webhook] FOIA request not found: ${foiaRequestId}`);
+                  break;
+                }
+
+                await db.update(foiaRequests)
+                  .set({ 
+                    status: "paid", 
+                    paymentId: session.payment_intent || session.id,
+                    paymentStatus: "completed",
+                    amountPaid: session.amount_total || FOIA_REQUEST_PRICING_CENTS,
+                    updatedAt: new Date() 
+                  })
+                  .where(eq(foiaRequests.id, foiaRequestId));
+
+                const foiaDocument = foiaRequest.generatedLetter || `
+FREEDOM OF INFORMATION ACT REQUEST
+
+To: ${foiaRequest.departmentName || "Records Custodian"}
+    ${foiaRequest.state || ""}
+
+REQUEST FOR PUBLIC RECORDS
+
+Pursuant to the Freedom of Information Act and applicable state open records laws, I hereby request the following records:
+
+Officer Information: ${foiaRequest.officerName || "See details on file"}
+Records Requested: ${foiaRequest.recordsDescription || "All public records related to the above officer"}
+Date Range: ${foiaRequest.incidentDate ? `Records from ${foiaRequest.incidentDate}` : "All available dates"}
+
+Please provide these records in electronic format if available.
+
+Requester: ${foiaRequest.userFullName || firstName}
+Contact: ${foiaRequest.userEmail || userEmail}
+                `.trim();
+
+                await sendPurchaseConfirmationEmail({
+                  firstName,
+                  email: userEmail,
+                  type: "foia",
+                  amount: session.amount_total || FOIA_REQUEST_PRICING_CENTS,
+                  officerName: foiaRequest.officerName || undefined,
+                  state: foiaRequest.state,
+                  document: foiaDocument,
+                });
+
+                console.log(`[Webhook] FOIA confirmation email sent for ${foiaRequestId}`);
+                break;
+              }
+
+              default:
+                console.log(`[Webhook] Unknown payment type: ${paymentType}`);
+            }
+          } catch (emailError: any) {
+            console.error(`[Webhook] Failed to send confirmation email:`, emailError.message);
+          }
           break;
         }
         default:
