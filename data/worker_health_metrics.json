@@ -4438,5 +4438,17 @@
     "timestamp": "2025-11-30T06:41:53.728Z",
     "check": "database_heartbeat",
     "status": "success"
+  },
+  {
+    "timestamp": "2025-11-30T06:56:43.727Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: ",
+    "consecutiveFailures": 1
+  },
+  {
+    "timestamp": "2025-11-30T06:59:14.176Z",
+    "check": "database_heartbeat",
+    "status": "success"
   }
 ]

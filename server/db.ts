@@ -7,6 +7,12 @@
 // - execute_sql_tool is DEPRECATED - use /api/schema-verify endpoint instead
 // - Table verification runs at startup to catch configuration drift early
 
+// CRITICAL: Load environment variables FIRST before any other code runs
+// This must happen before db.ts is imported by other modules (index.ts, storage.ts)
+// because ES module imports execute at module load time, before the importing file's body runs
+import dotenv from 'dotenv';
+dotenv.config();
+
 import pg from 'pg';
 const { Pool } = pg;
 import { drizzle } from 'drizzle-orm/node-postgres';
