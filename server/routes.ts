@@ -2758,6 +2758,261 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
 
   // ============================================
+  // ADMIN USER MANAGEMENT ROUTES (Bad Blue Users)
+  // ============================================
+  
+  // Get all registered users with pagination
+  app.get("/api/admin/users", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (userId !== 'admin-bypass') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    
+    const { users: allUsers, total } = await storage.getAllUsers(page, limit);
+    
+    res.json({
+      users: allUsers,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  }));
+  
+  // Get total user count for dashboard
+  app.get("/api/admin/users/count", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (userId !== 'admin-bypass') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const count = await storage.getTotalUserCount();
+    res.json({ count });
+  }));
+
+  // ============================================
+  // ADMIN SUBSCRIPTION TIER MANAGEMENT ROUTES
+  // ============================================
+  
+  // Get all subscription tiers
+  app.get("/api/admin/subscription-tiers", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (userId !== 'admin-bypass') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const tiers = await db
+      .select()
+      .from(subscriptionTiers)
+      .orderBy(asc(subscriptionTiers.sortOrder));
+    
+    res.json({ tiers });
+  }));
+  
+  // Create subscription tier
+  app.post("/api/admin/subscription-tiers", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (userId !== 'admin-bypass') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const { name, description, priceInCents, durationDays, features, isActive, isDefault, sortOrder } = req.body;
+    
+    if (!name || priceInCents === undefined || !durationDays) {
+      return res.status(400).json({ error: "Missing required fields: name, priceInCents, durationDays" });
+    }
+    
+    const [tier] = await db
+      .insert(subscriptionTiers)
+      .values({
+        name,
+        description: description || null,
+        priceInCents: parseInt(priceInCents),
+        durationDays: parseInt(durationDays),
+        features: features || null,
+        isActive: isActive ?? true,
+        isDefault: isDefault ?? false,
+        sortOrder: sortOrder ?? 0,
+      })
+      .returning();
+    
+    res.status(201).json(tier);
+  }));
+  
+  // Update subscription tier
+  app.patch("/api/admin/subscription-tiers/:id", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (userId !== 'admin-bypass') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const { id } = req.params;
+    const { name, description, priceInCents, durationDays, features, isActive, isDefault, sortOrder } = req.body;
+    
+    const [updated] = await db
+      .update(subscriptionTiers)
+      .set({
+        ...(name && { name }),
+        ...(description !== undefined && { description }),
+        ...(priceInCents !== undefined && { priceInCents: parseInt(priceInCents) }),
+        ...(durationDays !== undefined && { durationDays: parseInt(durationDays) }),
+        ...(features !== undefined && { features }),
+        ...(isActive !== undefined && { isActive }),
+        ...(isDefault !== undefined && { isDefault }),
+        ...(sortOrder !== undefined && { sortOrder }),
+        updatedAt: new Date(),
+      })
+      .where(eq(subscriptionTiers.id, id))
+      .returning();
+    
+    if (!updated) {
+      return res.status(404).json({ error: "Subscription tier not found" });
+    }
+    
+    res.json(updated);
+  }));
+  
+  // Delete subscription tier
+  app.delete("/api/admin/subscription-tiers/:id", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (userId !== 'admin-bypass') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const { id } = req.params;
+    
+    await db
+      .delete(subscriptionTiers)
+      .where(eq(subscriptionTiers.id, id));
+    
+    res.json({ success: true });
+  }));
+
+  // ============================================
+  // ADMIN USER SUBSCRIPTION MANAGEMENT ROUTES
+  // ============================================
+  
+  // Get all user subscriptions with pagination
+  app.get("/api/admin/user-subscriptions", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (userId !== 'admin-bypass') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const offset = (page - 1) * limit;
+    
+    const subscriptionsWithUsers = await db
+      .select({
+        id: userSubscriptions.id,
+        user_id: userSubscriptions.userId,
+        tier_id: userSubscriptions.tierId,
+        start_date: userSubscriptions.startDate,
+        end_date: userSubscriptions.endDate,
+        is_active: userSubscriptions.isActive,
+        payment_id: userSubscriptions.paymentId,
+        created_at: userSubscriptions.createdAt,
+        email: users.email,
+        first_name: users.firstName,
+        last_name: users.lastName,
+        tier_name: subscriptionTiers.name,
+        price_in_cents: subscriptionTiers.priceInCents,
+      })
+      .from(userSubscriptions)
+      .leftJoin(users, eq(userSubscriptions.userId, users.id))
+      .leftJoin(subscriptionTiers, eq(userSubscriptions.tierId, subscriptionTiers.id))
+      .orderBy(desc(userSubscriptions.createdAt))
+      .limit(limit)
+      .offset(offset);
+    
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(userSubscriptions);
+    
+    res.json({
+      subscriptions: subscriptionsWithUsers,
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages: Math.ceil(count / limit)
+      }
+    });
+  }));
+  
+  // Assign subscription to user
+  app.post("/api/admin/user-subscriptions", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const adminId = req.user?.id || req.user?.claims?.sub;
+    if (adminId !== 'admin-bypass') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const { userId, tierId } = req.body;
+    
+    if (!userId || !tierId) {
+      return res.status(400).json({ error: "Missing required fields: userId, tierId" });
+    }
+    
+    // Get tier details for duration
+    const [tier] = await db
+      .select()
+      .from(subscriptionTiers)
+      .where(eq(subscriptionTiers.id, tierId));
+    
+    if (!tier) {
+      return res.status(404).json({ error: "Subscription tier not found" });
+    }
+    
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + tier.durationDays);
+    
+    const [subscription] = await db
+      .insert(userSubscriptions)
+      .values({
+        userId,
+        tierId,
+        startDate,
+        endDate,
+        isActive: true,
+      })
+      .returning();
+    
+    res.status(201).json(subscription);
+  }));
+  
+  // Cancel user subscription
+  app.patch("/api/admin/user-subscriptions/:id/cancel", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const adminId = req.user?.id || req.user?.claims?.sub;
+    if (adminId !== 'admin-bypass') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const { id } = req.params;
+    
+    const [updated] = await db
+      .update(userSubscriptions)
+      .set({
+        isActive: false,
+        updatedAt: new Date(),
+      })
+      .where(eq(userSubscriptions.id, id))
+      .returning();
+    
+    if (!updated) {
+      return res.status(404).json({ error: "Subscription not found" });
+    }
+    
+    res.json(updated);
+  }));
+
+  // ============================================
   // ENHANCED COMPLAINT DRAFTING SYSTEM ROUTES
   // ============================================
   

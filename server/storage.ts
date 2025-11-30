@@ -220,6 +220,10 @@ export interface IStorage {
   createDeviceFingerprint(fingerprint: InsertDeviceFingerprint): Promise<DeviceFingerprint>;
   getDeviceFingerprint(deviceId: string): Promise<DeviceFingerprint | undefined>;
   hasDeviceUsedSample(deviceId: string): Promise<boolean>;
+
+  // Admin User Management operations
+  getAllUsers(page?: number, limit?: number): Promise<{ users: User[]; total: number }>;
+  getTotalUserCount(): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1356,6 +1360,35 @@ export class DatabaseStorage implements IStorage {
   async hasDeviceUsedSample(deviceId: string): Promise<boolean> {
     const fingerprint = await this.getDeviceFingerprint(deviceId);
     return !!fingerprint;
+  }
+
+  // Admin User Management operations
+  async getAllUsers(page: number = 1, limit: number = 20): Promise<{ users: User[]; total: number }> {
+    const offset = (page - 1) * limit;
+    
+    const [allUsers, countResult] = await Promise.all([
+      db
+        .select(this.getUserReturningColumns())
+        .from(users)
+        .orderBy(desc(users.createdAt))
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(users)
+    ]);
+    
+    return {
+      users: allUsers as User[],
+      total: countResult[0]?.count || 0
+    };
+  }
+
+  async getTotalUserCount(): Promise<number> {
+    const result = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(users);
+    return result[0]?.count || 0;
   }
 }
 

@@ -1,740 +1,152 @@
 [
   {
-    "timestamp": "2025-11-30T14:35:28.315Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:28.324Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/auth/user"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:28.353Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:29.183Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:29.190Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/check-CdrMYR9S.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:29.277Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Combination-BxgkiBe1.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:29.319Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:29.328Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:29.344Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:29.377Z",
+    "timestamp": "2025-11-30T14:59:38.485Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/file-text-CBNIfD09.js"
   },
   {
-    "timestamp": "2025-11-30T14:35:29.682Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:30.132Z",
+    "timestamp": "2025-11-30T14:59:38.542Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T14:35:30.754Z",
+    "timestamp": "2025-11-30T14:59:38.554Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T14:35:30.792Z",
+    "timestamp": "2025-11-30T14:59:38.569Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
   },
   {
-    "timestamp": "2025-11-30T14:35:30.883Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:48.767Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:58.489Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:35:59.719Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:36:30.389Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:36:30.523Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:37:01.792Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:37:02.529Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:37:32.663Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:37:40.532Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:38:03.574Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:38:11.546Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:38:34.550Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:38:42.534Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:39:05.568Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:39:13.519Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:39:36.548Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:39:44.488Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:40:07.737Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:40:15.548Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:40:38.225Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T14:40:38.634Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T14:40:38.702Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:40:47.677Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:41:13.233Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:41:18.590Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:41:43.546Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:41:49.664Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:12.823Z",
+    "timestamp": "2025-11-30T14:59:38.644Z",
     "action": "GET",
     "tokens": 0,
     "path": "/"
   },
   {
-    "timestamp": "2025-11-30T14:43:14.549Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:14.841Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DQjPlvzS.css"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:14.900Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DWMKUhML.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:14.982Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DWMKUhML.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:18.203Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:19.050Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DQjPlvzS.css"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:22.702Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:23.190Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:23.689Z",
+    "timestamp": "2025-11-30T14:59:38.769Z",
     "action": "GET",
     "tokens": 0,
     "path": "/favicon.ico"
   },
   {
-    "timestamp": "2025-11-30T14:43:23.803Z",
+    "timestamp": "2025-11-30T14:59:39.560Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/bundleAnalyzer-C1yhvntE.js"
   },
   {
-    "timestamp": "2025-11-30T14:43:23.904Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/button-D4bqKO-K.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:23.963Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.028Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-CksQyhPZ.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.240Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-C2h2qaJP.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.302Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/mail-B5XkwkcA.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.374Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useFaqSchema--GUw8NK0.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.446Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/checkbox-B6rcMTgW.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.515Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-BAZECk9-.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.573Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/shield-7faESzar.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.578Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.621Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/file-text-CBNIfD09.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:24.626Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:25.028Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:25.678Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:25.738Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:26.263Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:26.409Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:53.821Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:43:54.828Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:44:23.972Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:44:25.720Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:44:50.615Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
-  },
-  {
-    "timestamp": "2025-11-30T14:44:54.911Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:44:57.631Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:45:32.516Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:44.297Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:44.995Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:45.506Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DQjPlvzS.css"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:45.810Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DWMKUhML.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:46.660Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:48.739Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/index-DWMKUhML.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:50.668Z",
+    "timestamp": "2025-11-30T14:59:42.246Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/auth/user"
   },
   {
-    "timestamp": "2025-11-30T14:50:52.168Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:52.975Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/checkbox-B6rcMTgW.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:53.100Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/dropdown-menu-DuH9md59.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:53.147Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Combination-BxgkiBe1.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:53.193Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SupportEmailFooter-BQ0196Ea.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:53.205Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/useFaqSchema--GUw8NK0.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:53.356Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/scale-OSfZKrf3.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:53.860Z",
+    "timestamp": "2025-11-30T14:59:42.459Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/landing-B9UToTVM.js"
   },
   {
-    "timestamp": "2025-11-30T14:50:53.955Z",
+    "timestamp": "2025-11-30T14:59:42.544Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/index-BAZECk9-.js"
+    "path": "/assets/checkbox-B6rcMTgW.js"
   },
   {
-    "timestamp": "2025-11-30T14:50:53.995Z",
+    "timestamp": "2025-11-30T14:59:42.724Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/check-CdrMYR9S.js"
+  },
+  {
+    "timestamp": "2025-11-30T14:59:43.079Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/dropdown-menu-DuH9md59.js"
+  },
+  {
+    "timestamp": "2025-11-30T14:59:43.082Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-Qxa7_5PZ.js"
+  },
+  {
+    "timestamp": "2025-11-30T14:59:43.274Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/Combination-BxgkiBe1.js"
+  },
+  {
+    "timestamp": "2025-11-30T14:59:43.522Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/SEOHead-b0nf3qYO.js"
+  },
+  {
+    "timestamp": "2025-11-30T14:59:43.651Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/mail-B5XkwkcA.js"
   },
   {
-    "timestamp": "2025-11-30T14:50:54.029Z",
+    "timestamp": "2025-11-30T14:59:43.754Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/search-k8SGdotS.js"
+    "path": "/assets/useFaqSchema--GUw8NK0.js"
   },
   {
-    "timestamp": "2025-11-30T14:50:54.056Z",
+    "timestamp": "2025-11-30T14:59:43.864Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/scale-OSfZKrf3.js"
+  },
+  {
+    "timestamp": "2025-11-30T14:59:43.992Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/file-text-CBNIfD09.js"
   },
   {
-    "timestamp": "2025-11-30T14:50:54.418Z",
+    "timestamp": "2025-11-30T14:59:44.462Z",
     "action": "GET",
     "tokens": 0,
     "path": "/audio/badblue-audio.mp3"
   },
   {
-    "timestamp": "2025-11-30T14:50:54.610Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/bundleAnalyzer-C1yhvntE.js"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:54.862Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-11-30T14:50:55.082Z",
+    "timestamp": "2025-11-30T14:59:44.628Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-11-30T14:50:55.246Z",
+    "timestamp": "2025-11-30T15:00:09.680Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
+    "path": "/"
   },
   {
-    "timestamp": "2025-11-30T14:50:55.315Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-11-30T14:51:02.004Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/Civic_accountability_hero_image_a13a823c-BVWY-5kn.png"
-  },
-  {
-    "timestamp": "2025-11-30T14:51:22.874Z",
+    "timestamp": "2025-11-30T15:00:09.724Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
   },
   {
-    "timestamp": "2025-11-30T14:51:24.593Z",
+    "timestamp": "2025-11-30T15:00:11.804Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/assets/index-DQjPlvzS.css"
   },
   {
-    "timestamp": "2025-11-30T14:51:52.986Z",
+    "timestamp": "2025-11-30T15:00:11.809Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:51:55.515Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:52:23.137Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:52:26.540Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:52:53.619Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:52:57.551Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:53:23.816Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:53:28.499Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:53:54.098Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:53:59.539Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:54:24.273Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:54:30.867Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:54:54.508Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:55:01.513Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:55:25.591Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:55:33.832Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-11-30T14:55:55.745Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
+    "path": "/assets/index-DWMKUhML.js"
   }
 ]

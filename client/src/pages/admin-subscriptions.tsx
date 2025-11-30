@@ -41,6 +41,9 @@ import {
   Users,
   Check,
   X,
+  Mail,
+  Clock,
+  UserCheck,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { SEOHead } from "@/components/SEOHead";
@@ -83,7 +86,7 @@ interface UserSubscription {
 export default function AdminSubscriptions() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [activeTab, setActiveTab] = useState("tiers");
+  const [activeTab, setActiveTab] = useState("users");
   
   // Tier Management State
   const [showTierDialog, setShowTierDialog] = useState(false);
@@ -101,6 +104,7 @@ export default function AdminSubscriptions() {
 
   // User Subscription State
   const [page, setPage] = useState(1);
+  const [usersPage, setUsersPage] = useState(1);
   const [showAssignDialog, setShowAssignDialog] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedTierId, setSelectedTierId] = useState("");
@@ -120,6 +124,15 @@ export default function AdminSubscriptions() {
       setLocation('/');
     }
   }, [user, isLoadingUser, setLocation, toast]);
+
+  // Fetch all registered users (Bad Blue Users)
+  const { data: usersData, isLoading: isLoadingUsers } = useQuery<{
+    users: User[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }>({
+    queryKey: ['/api/admin/users', usersPage],
+    enabled: !!user && user.id === 'admin-bypass',
+  });
 
   // Fetch subscription tiers
   const { data: tiersData, isLoading: isLoadingTiers } = useQuery<{ tiers: SubscriptionTier[] }>({
@@ -311,8 +324,8 @@ export default function AdminSubscriptions() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead 
-        title="Subscription Management - Admin - BadBlue"
-        description="Manage subscription tiers and user accounts"
+        title="Bad Blue Users - Admin - BadBlue"
+        description="View and manage all registered Bad Blue users"
         noIndex={true}
       />
 
@@ -328,14 +341,18 @@ export default function AdminSubscriptions() {
             Back to Home
           </Button>
 
-          <h1 className="text-3xl font-bold mb-2">Subscription Management</h1>
+          <h1 className="text-3xl font-bold mb-2">Bad Blue Users</h1>
           <p className="text-muted-foreground">
-            Manage subscription tiers and user accounts
+            View all registered users and manage subscriptions
           </p>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6">
+          <TabsList className="mb-6 flex-wrap gap-1">
+            <TabsTrigger value="users" data-testid="tab-users">
+              <UserCheck className="h-4 w-4 mr-2" />
+              All Users ({usersData?.pagination?.total || 0})
+            </TabsTrigger>
             <TabsTrigger value="tiers" data-testid="tab-tiers">
               <CreditCard className="h-4 w-4 mr-2" />
               Subscription Tiers
@@ -345,6 +362,125 @@ export default function AdminSubscriptions() {
               User Subscriptions
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="users">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <CardTitle>All Registered Users</CardTitle>
+                    <CardDescription>
+                      View all users who have signed up for Bad Blue accounts
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="text-lg px-3 py-1">
+                    {usersData?.pagination?.total || 0} Total Users
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isLoadingUsers ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : usersData?.users && usersData.users.length > 0 ? (
+                  <>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>User</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Signed Up</TableHead>
+                          <TableHead>Last Login</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {usersData.users.map((u) => (
+                          <TableRow key={u.id} data-testid={`user-row-${u.id}`}>
+                            <TableCell className="font-medium">
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                  <UserCheck className="h-4 w-4 text-primary" />
+                                </div>
+                                <div>
+                                  {u.firstName || u.lastName 
+                                    ? `${u.firstName || ''} ${u.lastName || ''}`.trim()
+                                    : "Unknown User"}
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Mail className="h-4 w-4 text-muted-foreground" />
+                                {u.email || "No email"}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Calendar className="h-4 w-4 text-muted-foreground" />
+                                {u.createdAt 
+                                  ? format(new Date(u.createdAt), "MMM d, yyyy")
+                                  : "Unknown"}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Clock className="h-4 w-4 text-muted-foreground" />
+                                {u.lastLoginAt 
+                                  ? formatDistanceToNow(new Date(u.lastLoginAt), { addSuffix: true })
+                                  : "Never"}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={u.hasPaidForAccess ? "default" : "secondary"}>
+                                {u.hasPaidForAccess ? "Active" : "Free"}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+
+                    {usersData.pagination && usersData.pagination.totalPages > 1 && (
+                      <div className="flex items-center justify-between mt-4">
+                        <p className="text-sm text-muted-foreground">
+                          Page {usersData.pagination.page} of {usersData.pagination.totalPages}
+                          {" "}({usersData.pagination.total} total users)
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={usersPage === 1}
+                            onClick={() => setUsersPage(p => p - 1)}
+                            data-testid="button-prev-users-page"
+                          >
+                            Previous
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={usersPage >= usersData.pagination.totalPages}
+                            onClick={() => setUsersPage(p => p + 1)}
+                            data-testid="button-next-users-page"
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No registered users yet</p>
+                    <p className="text-sm">Users will appear here when they sign up</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="tiers">
             <Card>
