@@ -140,6 +140,13 @@ export default function PetitionDetail() {
     window.open(facebookUrl, '_blank', 'width=600,height=400');
   };
 
+  const createOnChangeOrg = () => {
+    const title = encodeURIComponent(`Demand Resignation: Officer ${petition.officerName}`);
+    const description = encodeURIComponent(petition.offenseDescriptionRedrafted || petition.offenseDescriptionOriginal);
+    const changeOrgUrl = `https://www.change.org/start-a-petition?title=${title}&description=${description}`;
+    window.open(changeOrgUrl, '_blank');
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
@@ -273,15 +280,26 @@ export default function PetitionDetail() {
                       Share this petition to amplify the call for accountability
                     </p>
                   </div>
-                  <Button
-                    onClick={shareOnFacebook}
-                    size="lg"
-                    className="bg-[#1877f2] hover:bg-[#166fe5]"
-                    data-testid="button-facebook-share"
-                  >
-                    <Share2 className="h-5 w-5 mr-2" />
-                    End law-force corruption: share on Facebook
-                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <Button
+                      onClick={shareOnFacebook}
+                      size="lg"
+                      className="bg-[#1877f2] hover:bg-[#166fe5]"
+                      data-testid="button-facebook-share"
+                    >
+                      <Share2 className="h-5 w-5 mr-2" />
+                      Share on Facebook
+                    </Button>
+                    <Button
+                      onClick={createOnChangeOrg}
+                      size="lg"
+                      variant="outline"
+                      data-testid="button-change-org"
+                    >
+                      <Share2 className="h-5 w-5 mr-2" />
+                      Create on Change.org
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ) : (
