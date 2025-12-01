@@ -54,7 +54,7 @@ const AdminFOIA = lazy(() => import("@/pages/admin-foia"));
 const AdminSubAgent = lazy(() => import("@/pages/admin-subagent"));
 const AdminEmail = lazy(() => import("@/pages/admin-email"));
 const AdminWorkerLogs = lazy(() => import("@/pages/admin-worker-logs"));
-const AdminSubscriptions = lazy(() => import("@/pages/admin-subscriptions"));
+const AdminUsers = lazy(() => import("@/pages/admin-users"));
 const AdminEvidenceHub = lazy(() => import("@/pages/admin-evidence-hub"));
 
 // Loading fallback component with better UX
@@ -130,7 +130,7 @@ function Router() {
             <Route path="/admin-worker-logs" component={AdminWorkerLogs} />
             <Route path="/admin-subagent" component={AdminSubAgent} />
             <Route path="/ai-subagent" component={AdminSubAgent} />
-            <Route path="/admin-subscriptions" component={AdminSubscriptions} />
+            <Route path="/admin-users" component={AdminUsers} />
             <Route path="/admin-evidence-hub" component={AdminEvidenceHub} />
             <Route path="/petition-edit/:id" component={PetitionEdit} />
             <Route path="/confirmation/:type/:id" component={Confirmation} />

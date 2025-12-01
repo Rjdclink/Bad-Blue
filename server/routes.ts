@@ -2791,7 +2791,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ADMIN USER MANAGEMENT ROUTES (Bad Blue Users)
   // ============================================
   
-  // Get all registered users with pagination and paid services
+  // Get all registered users with pagination, paid services, and credentials status
   app.get("/api/admin/users", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
     if (userId !== 'admin-bypass') {
@@ -2803,10 +2803,10 @@ Contact: ${foiaRequest.userEmail || userEmail}
     
     const { users: allUsers, total } = await storage.getAllUsers(page, limit);
     
-    // Fetch paid services for each user
+    // Fetch paid services and credentials status for each user
     const usersWithServices = await Promise.all(allUsers.map(async (user) => {
-      // Get counts of paid services for this user
-      const [complaintsResult, lawsuitsResult, petitionsResult, foiaResult] = await Promise.all([
+      // Get counts of paid services and check for local credentials
+      const [complaintsResult, lawsuitsResult, petitionsResult, foiaResult, authAccountResult] = await Promise.all([
         db.select({ count: sql<number>`count(*)::int` })
           .from(schema.complaints)
           .where(eq(schema.complaints.userId, user.id)),
@@ -2819,10 +2819,15 @@ Contact: ${foiaRequest.userEmail || userEmail}
         db.select({ count: sql<number>`count(*)::int` })
           .from(schema.foiaRequests)
           .where(eq(schema.foiaRequests.userId, user.id)),
+        db.select({ hasPassword: sql<boolean>`password_hash IS NOT NULL` })
+          .from(schema.authAccounts)
+          .where(eq(schema.authAccounts.userId, user.id))
+          .limit(1),
       ]);
       
       return {
         ...user,
+        hasLocalCredentials: authAccountResult.length > 0 && authAccountResult[0]?.hasPassword === true,
         paidServices: {
           complaints: complaintsResult[0]?.count || 0,
           lawsuits: lawsuitsResult[0]?.count || 0,
