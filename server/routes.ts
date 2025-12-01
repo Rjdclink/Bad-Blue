@@ -2455,7 +2455,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
       // City Police: Requires state + city
       if (officerTypeVal === 'city') {
-        if (!parseResult.data.state || !parseResult.data.city) {
+        if (!parseResult.data.state?.trim() || !parseResult.data.city?.trim()) {
           return res.status(400).json({
             success: false,
             error: {
@@ -2472,7 +2472,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
       // County Sheriff: Requires state + county
       if (officerTypeVal === 'county') {
-        if (!parseResult.data.state || !parseResult.data.county) {
+        if (!parseResult.data.state?.trim() || !parseResult.data.county?.trim()) {
           return res.status(400).json({
             success: false,
             error: {
@@ -2489,7 +2489,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
       // State Police/Highway Patrol: Requires state only
       if (officerTypeVal === 'state') {
-        if (!parseResult.data.state) {
+        if (!parseResult.data.state?.trim()) {
           return res.status(400).json({
             success: false,
             error: {
@@ -2503,7 +2503,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
       // Federal/Government Officers: Requires governmentAgency (NO STATE NEEDED)
       if (officerTypeVal === 'government') {
-        if (!parseResult.data.governmentAgency) {
+        if (!parseResult.data.governmentAgency?.trim()) {
           return res.status(400).json({
             success: false,
             error: {
@@ -2517,7 +2517,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
       // Corrections Officers: Requires correctionalFacility
       if (officerTypeVal === 'corrections') {
-        if (!parseResult.data.correctionalFacility) {
+        if (!parseResult.data.correctionalFacility?.trim()) {
           return res.status(400).json({
             success: false,
             error: {
@@ -2536,6 +2536,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         state,
         city,
         county,
+        governmentAgency,
+        correctionalFacility,
         includeGovernment = false,
         includeCorrections = false,
         badgeData,
@@ -2563,6 +2565,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         state: normalizeStateInput(state),
         city: city?.trim() || undefined,
         county: county?.trim() || undefined,
+        governmentAgency: governmentAgency?.trim() || undefined,
+        correctionalFacility: correctionalFacility?.trim() || undefined,
         includeGovernment,
         includeCorrections,
         badgeNumber: badgeData?.badgeNumber?.trim() || undefined,
