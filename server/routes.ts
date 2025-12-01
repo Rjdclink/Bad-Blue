@@ -751,11 +751,11 @@ const OfficerSearchSchema = z.object({
   officerName: z.string().min(2, "officerName must be at least 2 characters"),
   officerType: z.string().optional(),
   departmentType: DepartmentTypeEnum.optional(), // Legacy: Type of law enforcement agency (optional)
-  state: z.string().min(2, "state is required").refine(val => val.trim().length >= 2, {
-    message: "state must be a valid non-empty state code"
-  }), // Required state field
+  state: z.string().optional(), // Optional - validated conditionally based on officer type
   city: z.string().optional(),
   county: z.string().optional(),
+  governmentAgency: z.string().optional(), // For federal/government officer searches (FBI, DEA, US Marshals, etc.)
+  correctionalFacility: z.string().optional(), // For corrections officer searches (federal and state prisons)
   includeGovernment: z.boolean().optional(), // Include government officers
   includeCorrections: z.boolean().optional(), // Include corrections officers
   badgeData: z.object({ badgeNumber: z.string().min(1).optional() }).optional(),
@@ -2450,6 +2450,85 @@ Contact: ${foiaRequest.userEmail || userEmail}
         });
       }
 
+      // Conditional validation based on officer type
+      const officerTypeVal = parseResult.data.officerType || parseResult.data.departmentType;
+
+      // City Police: Requires state + city
+      if (officerTypeVal === 'city') {
+        if (!parseResult.data.state?.trim() || !parseResult.data.city?.trim()) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "City police searches require both state and city",
+              details: [
+                { field: "state", message: "State is required for city police searches" },
+                { field: "city", message: "City is required for city police searches" }
+              ],
+            },
+          });
+        }
+      }
+
+      // County Sheriff: Requires state + county
+      if (officerTypeVal === 'county') {
+        if (!parseResult.data.state?.trim() || !parseResult.data.county?.trim()) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "County sheriff searches require both state and county",
+              details: [
+                { field: "state", message: "State is required for county sheriff searches" },
+                { field: "county", message: "County is required for county sheriff searches" }
+              ],
+            },
+          });
+        }
+      }
+
+      // State Police/Highway Patrol: Requires state only
+      if (officerTypeVal === 'state') {
+        if (!parseResult.data.state?.trim()) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "State police searches require state",
+              details: [{ field: "state", message: "State is required for state police/highway patrol searches" }],
+            },
+          });
+        }
+      }
+
+      // Federal/Government Officers: Requires governmentAgency (NO STATE NEEDED)
+      if (officerTypeVal === 'government') {
+        if (!parseResult.data.governmentAgency?.trim()) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Federal/government officer searches require agency name (e.g., FBI, DEA, US Marshals, ATF, Secret Service)",
+              details: [{ field: "governmentAgency", message: "Agency name is required for federal/government officer searches" }],
+            },
+          });
+        }
+      }
+
+      // Corrections Officers: Requires correctionalFacility
+      if (officerTypeVal === 'corrections') {
+        if (!parseResult.data.correctionalFacility?.trim()) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Corrections officer searches require facility name (federal or state prison/jail)",
+              details: [{ field: "correctionalFacility", message: "Facility name is required for corrections officer searches. Searches both federal Bureau of Prisons and state correctional systems." }],
+            },
+          });
+        }
+      }
+
       const {
         officerName,
         officerType,
@@ -2457,6 +2536,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         state,
         city,
         county,
+        governmentAgency,
+        correctionalFacility,
         includeGovernment = false,
         includeCorrections = false,
         badgeData,
@@ -2484,6 +2565,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         state: normalizeStateInput(state),
         city: city?.trim() || undefined,
         county: county?.trim() || undefined,
+        governmentAgency: governmentAgency?.trim() || undefined,
+        correctionalFacility: correctionalFacility?.trim() || undefined,
         includeGovernment,
         includeCorrections,
         badgeNumber: badgeData?.badgeNumber?.trim() || undefined,
