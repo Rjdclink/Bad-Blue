@@ -116,7 +116,7 @@ async function generateWithMistral(request: LegalDocumentRequest): Promise<AIRes
     const prompt = createLegalDocumentPrompt(request, 'mistral');
     
     const response = await client.chat.complete({
-      model: 'mistral-small-latest',
+      model: 'mistral-small-2409', // Use specific version for stability
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3
     });

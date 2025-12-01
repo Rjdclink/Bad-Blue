@@ -281,11 +281,12 @@ export default function LegalDocumentCreate() {
                   onPaste={handlePreventCopyPaste}
                   onContextMenu={handlePreventContextMenu}
                   placeholder="Describe the situation that requires this legal document. Be specific about what happened, when, and what you want as an outcome."
-                  className="min-h-[150px] select-none"
+                  className="min-h-[150px]"
                   required
+                  aria-describedby="context-description"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Copy/paste is disabled for security. Please type your information directly.
+                <p id="context-description" className="text-xs text-muted-foreground">
+                  Copy/paste is disabled for content integrity. Please type your information directly.
                 </p>
               </div>
 
@@ -326,7 +327,7 @@ export default function LegalDocumentCreate() {
                   onPaste={handlePreventCopyPaste}
                   onContextMenu={handlePreventContextMenu}
                   placeholder="Any additional information that should be included in the document"
-                  className="min-h-[100px] select-none"
+                  className="min-h-[100px]"
                 />
               </div>
 
