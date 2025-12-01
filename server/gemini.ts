@@ -212,7 +212,7 @@ const geminiResponse = await model.generateContent({
   },
 });
 
-    const rawJson = geminiResponse.response.text;
+    const rawJson = geminiResponse.response.text();
     if (!rawJson) {
       throw new Error("Empty response from Gemini");
     }
@@ -398,7 +398,7 @@ Respond with a JSON object containing:
       }
     });
 
-    const content = response.text;
+    const content = response.text();
     if (!content) {
       throw new Error('No response from Gemini');
     }

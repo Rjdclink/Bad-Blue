@@ -180,7 +180,7 @@ export async function runComprehensiveDiagnostics(): Promise<{
           }
         ]
       });
-      const text = result.text;
+      const text = result.text();
       const geminiTime = Date.now() - geminiStart;
 
       if (text && text.length > 0) {

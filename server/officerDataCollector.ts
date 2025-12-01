@@ -164,7 +164,7 @@ Provide detailed information with specific sources. Be thorough and accurate.`;
     },
   });
 
-  const text = response.text || "";
+  const text = response.text() || "";
   const sources: string[] = [];
   
   try {
@@ -373,7 +373,7 @@ Provide accurate roster information with official sources.`;
     },
   });
 
-  const text = response.text || "";
+  const text = response.text() || "";
   const sources: string[] = [];
   
   try {
@@ -516,7 +516,7 @@ Be critical and prioritize accuracy over comprehensiveness.`;
     },
   });
 
-  const text = response.text || "";
+  const text = response.text() || "";
 
   // Extract verified information
   const badgeMatch = text.match(/badge\s*(?:number|#|no\.?)?\s*[:\-]?\s*(\d+)/i);

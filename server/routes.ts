@@ -3128,6 +3128,11 @@ For questions or support, contact: support@badblue.com
               const paymentIntentId = session.payment_intent as string;
 
               try {
+                // Track user purchase
+                if (userId) {
+                  await storage.updateUserPurchase(userId, 'petition', paymentIntentId, session.amount_total || PETITION_PRICING_CENTS);
+                }
+
                 // Update petition with payment info
                 await db.update(petitions)
                   .set({
@@ -3180,6 +3185,11 @@ For questions or support, contact: support@badblue.com
               const paymentIntentId = session.payment_intent as string;
 
               try {
+                // Track user purchase
+                if (userId) {
+                  await storage.updateUserPurchase(userId, 'foia', paymentIntentId, session.amount_total || FOIA_REQUEST_PRICING_CENTS);
+                }
+
                 // Update FOIA request with payment info
                 await db.update(foiaRequests)
                   .set({
@@ -3244,6 +3254,11 @@ For questions or support, contact: support@badblue.com
                 (type === "lawsuit"
                   ? LAWSUIT_PRICING_CENTS
                   : COMPLAINT_PRICING_CENTS);
+
+              // Track user purchase
+              if (userId) {
+                await storage.updateUserPurchase(userId, 'complaint', paymentIntentId, amountPaid);
+              }
 
               // Update complaint with payment info
               await storage.updateComplaintPayment(
@@ -3399,6 +3414,11 @@ For questions or support, contact: support@badblue.com
                 (type === "lawsuit"
                   ? LAWSUIT_PRICING_CENTS
                   : COMPLAINT_PRICING_CENTS);
+
+              // Track user purchase
+              if (userId) {
+                await storage.updateUserPurchase(userId, 'lawsuit', paymentIntentId, amountPaid);
+              }
 
               // Update lawsuit with payment info
               await storage.updateLawsuitPayment(
@@ -3620,6 +3640,55 @@ For questions or support, contact: support@badblue.com
             // DEPRECATED: Full access payments are no longer needed
             // Officer search and legal consultation are now FREE for all signed-in users
             console.log(`Received deprecated full_access payment webhook - ignoring as these features are now free`);
+          } else if (type === "legal_document") {
+            // Legal document payment successful
+            if (session.payment_status === "paid") {
+              const paymentIntentId = session.payment_intent as string;
+              
+              try {
+                // Track user purchase
+                if (userId) {
+                  const { LEGAL_DOCUMENT_PRICING_CENTS } = await import('./legalDocumentService');
+                  await storage.updateUserPurchase(userId, 'legal_document', paymentIntentId, session.amount_total || LEGAL_DOCUMENT_PRICING_CENTS);
+                }
+                
+                // Extract document request from metadata
+                const { generateLegalDocument: genLegalDoc } = await import('./legalDocumentService');
+                const { sendUserEmail } = await import('./emailService');
+                
+                const documentRequest = {
+                  documentType: metadata.documentType as any,
+                  recipientName: metadata.recipientName || '',
+                  recipientAddress: metadata.recipientAddress,
+                  context: metadata.context || '',
+                  senderName: metadata.senderName || '',
+                  senderAddress: metadata.senderAddress,
+                  incidentDate: metadata.incidentDate,
+                  damagesAmount: metadata.damagesAmount ? parseInt(metadata.damagesAmount) : undefined,
+                };
+                
+                // Generate the document using 3-way AI
+                console.log(`[Legal Document] Generating document for user ${userId}`);
+                const result = await genLegalDoc(documentRequest);
+                
+                // Email the document to user
+                if (userId) {
+                  const user = await storage.getUser(userId);
+                  if (user && user.email) {
+                    await sendUserEmail(
+                      user.email,
+                      `Your Legal Document - ${documentRequest.documentType.replace(/_/g, ' ')}`,
+                      `Dear ${user.firstName || 'Customer'},\n\nYour professional legal document has been generated successfully. Please find it attached below.\n\n---\n\n${result.document}\n\n---\n\nThis document was generated using AI assistance from ${Object.entries(result.aiContributions).filter(([_, v]) => v).map(([k]) => k).join(', ')}.\n\nConfidence Level: ${result.confidence}\n\nThank you for using BadBlue.\n\nBest regards,\nBadBlue Team`
+                    );
+                    console.log(`[Legal Document] Document sent to ${user.email}`);
+                  }
+                }
+                
+                console.log(`[Legal Document] Successfully generated and delivered`);
+              } catch (error) {
+                console.error('[Legal Document] Generation failed:', error);
+              }
+            }
           }
           break;
         }
@@ -4057,6 +4126,41 @@ For questions or support, contact: support@badblue.com
       }
     },
   );
+
+  // Enhanced officer search using database + parallel AI (Claude + Gemini)
+  app.post("/api/officer-search/enhanced", isAuthenticated, async (req: any, res) => {
+    try {
+      const { firstName, lastName, officerType, city, county, state } = req.body;
+      
+      if (!firstName || !lastName) {
+        return res.status(400).json({
+          success: false,
+          error: "First name and last name are required",
+          code: "MISSING_NAME"
+        });
+      }
+      
+      if (!state && !city && !county) {
+        return res.status(400).json({
+          success: false,
+          error: "At least one location field (state, city, or county) is required",
+          code: "MISSING_LOCATION"
+        });
+      }
+      
+      const { searchOfficerEnhanced } = await import('./officerSearchEnhanced');
+      const result = await searchOfficerEnhanced(firstName, lastName, officerType || 'Police Officer', { city, county, state });
+      
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error('[Enhanced Officer Search] Error:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message || "Enhanced search failed",
+        code: "SEARCH_ERROR"
+      });
+    }
+  });
 
   // ============================================
   // JURISDICTION VALIDATION ROUTES
@@ -5157,6 +5261,93 @@ For questions or support, contact: support@badblue.com
     } catch (error: any) {
       console.error("Error updating tracking number:", error);
       res.status(500).json({ error: "Failed to update tracking number" });
+    }
+  });
+
+  // ============================================
+  // LEGAL DOCUMENT SERVICE ($3)
+  // ============================================
+
+  // Create Stripe Checkout Session for legal document
+  app.post("/api/legal-document/create", isAuthenticated, async (req: any, res) => {
+    try {
+      const stripe = getStripeClient();
+      const userId = req.user.claims.sub;
+      const { documentType, recipientName, recipientAddress, context, senderName, senderAddress, incidentDate, damagesAmount, additionalDetails } = req.body;
+
+      // Validate required fields
+      if (!documentType || !recipientName || !context || !senderName) {
+        return res.status(400).json({ error: "Missing required fields: documentType, recipientName, context, senderName" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Store document request data temporarily in session metadata
+      const documentRequestId = crypto.randomBytes(16).toString('hex');
+
+      // Create or get Stripe customer
+      let customerId = user.stripeCustomerId;
+      if (!customerId) {
+        const customer = await stripe.customers.create({
+          email: user.email || undefined,
+          metadata: { userId: user.id },
+        });
+        customerId = customer.id;
+        await storage.updateUserStripeCustomerId(user.id, customerId);
+      }
+
+      // Get the base URL for redirects (platform-agnostic)
+      const baseUrl = getBaseURL();
+
+      // Import pricing
+      const { LEGAL_DOCUMENT_PRICING_CENTS } = await import('./legalDocumentService');
+
+      // Create Checkout Session for legal document payment
+      const session = await stripe.checkout.sessions.create({
+        customer: customerId,
+        mode: "payment",
+        payment_method_types: ["card"],
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              unit_amount: LEGAL_DOCUMENT_PRICING_CENTS,
+              product_data: {
+                name: "Professional Legal Document",
+                description: `${documentType.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())} - AI-Generated`,
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        success_url: `${baseUrl}/home?payment=success&type=legal-document`,
+        cancel_url: `${baseUrl}/home`,
+        metadata: {
+          userId: user.id,
+          type: "legal_document",
+          documentRequestId,
+          documentType,
+          recipientName,
+          recipientAddress: recipientAddress || '',
+          context: context.substring(0, 500), // Truncate for metadata limits
+          senderName,
+          senderAddress: senderAddress || '',
+          incidentDate: incidentDate || '',
+          damagesAmount: damagesAmount ? String(damagesAmount) : '',
+        },
+      });
+
+      res.json({
+        sessionId: session.id,
+        url: session.url,
+        documentRequestId,
+      });
+    } catch (error: any) {
+      console.error("Error creating legal document payment:", error);
+      res.status(500).json({ error: "Error creating payment: " + error.message });
     }
   });
 

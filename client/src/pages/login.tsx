@@ -154,33 +154,25 @@ export default function Login() {
     registerMutation.mutate({ firstName, lastName, email: signupEmail, password: signupPassword });
   };
 
-  // Unmute video on first user interaction (click, keypress, or scroll)
+  // Unmute video on scroll (after 50px scroll)
   useEffect(() => {
-    const unmuteVideo = () => {
-      if (videoRef.current && videoRef.current.muted) {
+    const handleScroll = () => {
+      const scrollY = window.scrollY || document.documentElement.scrollTop;
+      if (scrollY >= 50 && videoRef.current && videoRef.current.muted) {
         videoRef.current.muted = false;
         videoRef.current.currentTime = 0;
         videoRef.current.play().catch(() => {
           // Silently handle play rejection
         });
-        // Remove all listeners after first interaction
-        document.removeEventListener('pointerdown', unmuteVideo);
-        document.removeEventListener('keydown', unmuteVideo);
-        document.removeEventListener('wheel', unmuteVideo);
-        document.removeEventListener('scroll', unmuteVideo, true);
+        // Remove listener after unmuting
+        window.removeEventListener('scroll', handleScroll);
       }
     };
 
-    document.addEventListener('pointerdown', unmuteVideo, { once: false });
-    document.addEventListener('keydown', unmuteVideo, { once: false });
-    document.addEventListener('wheel', unmuteVideo, { once: false, passive: true });
-    document.addEventListener('scroll', unmuteVideo, { once: false, passive: true, capture: true });
+    window.addEventListener('scroll', handleScroll, { passive: true });
 
     return () => {
-      document.removeEventListener('pointerdown', unmuteVideo);
-      document.removeEventListener('keydown', unmuteVideo);
-      document.removeEventListener('wheel', unmuteVideo);
-      document.removeEventListener('scroll', unmuteVideo, true);
+      window.removeEventListener('scroll', handleScroll);
     };
   }, []);
 

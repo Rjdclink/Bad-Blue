@@ -38,10 +38,11 @@ export default function Landing() {
     }
   };
 
-  // Add scroll and wheel listeners for audio unmute
+  // Add scroll and wheel listeners for audio unmute (after 100px scroll)
   useEffect(() => {
-    const handleInteraction = () => {
-      if (audioRef.current && audioRef.current.muted) {
+    const handleScroll = () => {
+      const scrollY = window.scrollY || document.documentElement.scrollTop;
+      if (scrollY >= 100 && audioRef.current && audioRef.current.muted) {
         audioRef.current.muted = false;
         audioRef.current.currentTime = 0;
         audioRef.current.play()
@@ -53,17 +54,14 @@ export default function Landing() {
           });
         
         // Remove listeners after unmuting
-        document.removeEventListener('wheel', handleInteraction);
-        document.removeEventListener('scroll', handleInteraction, true);
+        window.removeEventListener('scroll', handleScroll);
       }
     };
     
-    document.addEventListener('wheel', handleInteraction, { passive: true });
-    document.addEventListener('scroll', handleInteraction, { passive: true, capture: true });
+    window.addEventListener('scroll', handleScroll, { passive: true });
     
     return () => {
-      document.removeEventListener('wheel', handleInteraction);
-      document.removeEventListener('scroll', handleInteraction, true);
+      window.removeEventListener('scroll', handleScroll);
     };
   }, []);
 

@@ -107,6 +107,7 @@ export interface IStorage {
   upsertUser(user: UpsertUser): Promise<User>;
   updateUserStripeCustomerId(userId: string, stripeCustomerId: string): Promise<User>;
   updateUserAccess(userId: string, paymentId: string, amountPaid: number): Promise<User>;
+  updateUserPurchase(userId: string, purchaseType: string, paymentId: string, amountPaid: number): Promise<User>;
   updateUserLastLogin(userId: string): Promise<User>;
 
   // Auth account operations (Username/Password Auth)
@@ -325,6 +326,29 @@ export class DatabaseStorage implements IStorage {
       })
       .where(eq(users.id, userId))
       .returning(this.getUserReturningColumns());
+    return user as User;
+  }
+
+  async updateUserPurchase(
+    userId: string,
+    purchaseType: string,
+    paymentId: string,
+    amountPaid: number
+  ): Promise<User> {
+    // Log the purchase for admin tracking
+    console.log(`[Purchase] User ${userId} purchased ${purchaseType} for ${amountPaid} cents (Payment: ${paymentId})`);
+    
+    // Update user's last activity and ensure access is granted
+    const [user] = await db
+      .update(users)
+      .set({
+        hasPaidForAccess: true,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning(this.getUserReturningColumns());
+    
+    if (!user) throw new Error(`User ${userId} not found`);
     return user as User;
   }
 
