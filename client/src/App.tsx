@@ -7,7 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { ClientSessionProvider } from "@/contexts/ClientSessionContext";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { MaintenanceMode } from "@/components/MaintenanceMode";
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, Component, ErrorInfo, ReactNode } from "react";
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
 
 // Performance monitoring
@@ -15,47 +15,102 @@ if (typeof window !== 'undefined') {
   console.log('[Performance] App component loading...');
 }
 
+// Error Boundary to catch lazy loading failures
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
+
+class ErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode; fallback?: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    console.error('[ErrorBoundary] Caught error:', error);
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('[ErrorBoundary] Error details:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <div className="text-center p-8">
+            <h1 className="text-2xl font-bold text-destructive mb-4">Something went wrong</h1>
+            <p className="text-muted-foreground mb-4">Please try refreshing the page</p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
+            >
+              Refresh Page
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Helper for lazy loading with error handling and retry
+function lazyWithRetry<T extends { default: React.ComponentType<any> }>(
+  importFn: () => Promise<T>,
+  chunkName?: string
+) {
+  return lazy(() =>
+    importFn().catch((error) => {
+      console.error(`[LazyLoad] Failed to load ${chunkName || 'chunk'}:`, error);
+      return { default: () => <div className="p-4 text-center text-destructive">Failed to load page. <button onClick={() => window.location.reload()} className="underline">Refresh</button></div> } as T;
+    })
+  );
+}
+
 // Lazy load all pages for better performance
 // Critical pages loaded with higher priority
-const Landing = lazy(() => {
+const Landing = lazyWithRetry(() => {
   console.log('[Performance] Loading Landing page chunk...');
   return import("@/pages/landing");
-});
-const Login = lazy(() => import("@/pages/login"));
-const NotFound = lazy(() => import("@/pages/not-found"))
-const Home = lazy(() => import("@/pages/home"));
-const Contact = lazy(() => import("@/pages/contact"));
-const Privacy = lazy(() => import("@/pages/privacy"));
-const Terms = lazy(() => import("@/pages/terms"));
+}, 'Landing');
+const Login = lazyWithRetry(() => import("@/pages/login"), 'Login');
+const NotFound = lazyWithRetry(() => import("@/pages/not-found"), 'NotFound')
+const Home = lazyWithRetry(() => import("@/pages/home"), 'Home');
+const Contact = lazyWithRetry(() => import("@/pages/contact"), 'Contact');
+const Privacy = lazyWithRetry(() => import("@/pages/privacy"), 'Privacy');
+const Terms = lazyWithRetry(() => import("@/pages/terms"), 'Terms');
 
 // Feature pages - loaded on demand
-const OfficerSearchPage = lazy(() => import("@/pages/officer-search"));
-const OfficerInfo = lazy(() => import("@/pages/officer"));
-const ComplaintForm = lazy(() => import("@/pages/complaint-form"));
-const ComplaintDetail = lazy(() => import("@/pages/complaint-detail"));
-const LawsuitForm = lazy(() => import("@/pages/lawsuit-form"));
-const LawsuitDetail = lazy(() => import("@/pages/lawsuit-detail"));
-const PetitionForm = lazy(() => import("@/pages/petition-form"));
-const PetitionDetail = lazy(() => import("@/pages/petition-detail"));
-const Petitions = lazy(() => import("@/pages/petitions"));
-const PetitionWorkflow = lazy(() => import("@/pages/petition-workflow"));
-const FOIARequestForm = lazy(() => import("@/pages/foia-request-form"));
-const Complaints = lazy(() => import("@/pages/complaints"));
-const History = lazy(() => import("@/pages/history"));
-const Confirmation = lazy(() => import("@/pages/confirmation"));
-const EvidenceHub = lazy(() => import("@/pages/evidence-hub"));
-const PetitionEdit = lazy(() => import("@/pages/petition-edit"));
+const OfficerSearchPage = lazyWithRetry(() => import("@/pages/officer-search"), 'OfficerSearch');
+const OfficerInfo = lazyWithRetry(() => import("@/pages/officer"), 'OfficerInfo');
+const ComplaintForm = lazyWithRetry(() => import("@/pages/complaint-form"), 'ComplaintForm');
+const ComplaintDetail = lazyWithRetry(() => import("@/pages/complaint-detail"), 'ComplaintDetail');
+const LawsuitForm = lazyWithRetry(() => import("@/pages/lawsuit-form"), 'LawsuitForm');
+const LawsuitDetail = lazyWithRetry(() => import("@/pages/lawsuit-detail"), 'LawsuitDetail');
+const PetitionForm = lazyWithRetry(() => import("@/pages/petition-form"), 'PetitionForm');
+const PetitionDetail = lazyWithRetry(() => import("@/pages/petition-detail"), 'PetitionDetail');
+const Petitions = lazyWithRetry(() => import("@/pages/petitions"), 'Petitions');
+const PetitionWorkflow = lazyWithRetry(() => import("@/pages/petition-workflow"), 'PetitionWorkflow');
+const FOIARequestForm = lazyWithRetry(() => import("@/pages/foia-request-form"), 'FOIARequestForm');
+const Complaints = lazyWithRetry(() => import("@/pages/complaints"), 'Complaints');
+const History = lazyWithRetry(() => import("@/pages/history"), 'History');
+const Confirmation = lazyWithRetry(() => import("@/pages/confirmation"), 'Confirmation');
+const EvidenceHub = lazyWithRetry(() => import("@/pages/evidence-hub"), 'EvidenceHub');
+const PetitionEdit = lazyWithRetry(() => import("@/pages/petition-edit"), 'PetitionEdit');
 
 // Admin pages - lowest priority
-const AdminPetitions = lazy(() => import("@/pages/admin-petitions"));
-const AdminLawsuits = lazy(() => import("@/pages/admin-lawsuits"));
-const AdminComplaints = lazy(() => import("@/pages/admin-complaints"));
-const AdminFOIA = lazy(() => import("@/pages/admin-foia"));
-const AdminSubAgent = lazy(() => import("@/pages/admin-subagent"));
-const AdminEmail = lazy(() => import("@/pages/admin-email"));
-const AdminWorkerLogs = lazy(() => import("@/pages/admin-worker-logs"));
-const AdminUsers = lazy(() => import("@/pages/admin-users"));
-const AdminEvidenceHub = lazy(() => import("@/pages/admin-evidence-hub"));
+const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
+const AdminLawsuits = lazyWithRetry(() => import("@/pages/admin-lawsuits"), 'AdminLawsuits');
+const AdminComplaints = lazyWithRetry(() => import("@/pages/admin-complaints"), 'AdminComplaints');
+const AdminFOIA = lazyWithRetry(() => import("@/pages/admin-foia"), 'AdminFOIA');
+const AdminSubAgent = lazyWithRetry(() => import("@/pages/admin-subagent"), 'AdminSubAgent');
+const AdminEmail = lazyWithRetry(() => import("@/pages/admin-email"), 'AdminEmail');
+const AdminWorkerLogs = lazyWithRetry(() => import("@/pages/admin-worker-logs"), 'AdminWorkerLogs');
+const AdminUsers = lazyWithRetry(() => import("@/pages/admin-users"), 'AdminUsers');
+const AdminEvidenceHub = lazyWithRetry(() => import("@/pages/admin-evidence-hub"), 'AdminEvidenceHub');
 
 // Loading fallback component with better UX
 const PageLoader = () => <PageSkeleton />;
@@ -149,15 +204,17 @@ function Router() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <LanguageProvider>
-        <ClientSessionProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Router />
-          </TooltipProvider>
-        </ClientSessionProvider>
-      </LanguageProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <LanguageProvider>
+          <ClientSessionProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Router />
+            </TooltipProvider>
+          </ClientSessionProvider>
+        </LanguageProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

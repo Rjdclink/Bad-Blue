@@ -1,29 +1,5 @@
 [
   {
-    "timestamp": "2025-11-08T06:27:22.684Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T06:39:25.552Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T06:42:23.277Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T06:46:16.493Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
     "timestamp": "2025-11-08T06:55:08.200Z",
     "check": "database_heartbeat",
     "status": "success",
@@ -5777,6 +5753,46 @@
   },
   {
     "timestamp": "2025-12-01T01:28:51.396Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T01:30:25.143Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T01:32:43.427Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T01:33:23.125Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T01:33:56.643Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T01:34:30.346Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T01:35:09.307Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T01:37:02.624Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T01:38:18.237Z",
     "check": "database_heartbeat",
     "status": "success"
   }
