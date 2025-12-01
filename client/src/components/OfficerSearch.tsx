@@ -333,68 +333,88 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                   </Select>
                 </div>
 
-                {state && (
-                  <div className="space-y-4 p-4 border rounded-lg bg-card/50" data-testid="location-refinement-section">
-                    <div className="flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-muted-foreground" />
-                      <Label className="text-base font-semibold">Refine Location <span className="text-muted-foreground font-normal text-sm">(optional)</span></Label>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="input-county">County</Label>
-                        <Input
-                          id="input-county"
-                          data-testid="input-county"
-                          placeholder="e.g., Cook, Los Angeles"
-                          value={county}
-                          onChange={(e) => setCounty(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="input-city">City</Label>
-                        <Input
-                          id="input-city"
-                          data-testid="input-city"
-                          placeholder="e.g., Chicago, Los Angeles"
-                          value={city}
-                          onChange={(e) => setCity(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground italic">
-                      Leave both County and City blank to search for State-level officers
-                    </p>
+                {/* Officer Type Selection - 5 Independent Types */}
+                <div className="space-y-4 p-4 border rounded-lg bg-muted/30" data-testid="officer-types-section">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-muted-foreground" />
+                    <Label className="text-base font-semibold">Officer Type Selection</Label>
                   </div>
-                )}
+                  <p className="text-sm text-muted-foreground">
+                    Select which type(s) of officers to search for:
+                  </p>
 
-                {/* CHECKBOXES SECTION - v2 */}
-                <div className="space-y-3 pt-4 border-t bg-yellow-100 dark:bg-yellow-900 p-3 rounded-lg" data-testid="officer-categories-section">
-                  <Label className="text-base font-semibold">Officer Categories <span className="text-muted-foreground font-normal text-sm">(optional)</span></Label>
-                  <p className="text-sm text-muted-foreground">Include additional officer types in your search:</p>
-                  <div className="flex flex-col sm:flex-row gap-4">
-                    <div className="flex items-center space-x-3 p-2 rounded-md border bg-card hover-elevate cursor-pointer" onClick={() => setIncludeGovernment(!includeGovernment)} data-testid="checkbox-government-container">
-                      <Checkbox
-                        id="checkbox-government"
-                        data-testid="checkbox-government"
-                        checked={includeGovernment}
-                        onCheckedChange={(checked) => setIncludeGovernment(checked === true)}
-                        className="border-2"
-                      />
-                      <Label htmlFor="checkbox-government" className="font-normal cursor-pointer flex-1">
-                        Government Officers
-                      </Label>
+                  {/* City, County, State - Only show when state is selected */}
+                  {state && (
+                    <div className="space-y-3 p-3 border rounded-md bg-card">
+                      <Label className="text-sm font-semibold">Local & State Officers</Label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="input-city" className="flex items-center gap-2">
+                            <MapPin className="w-3 h-3" />
+                            City Police Department
+                          </Label>
+                          <Input
+                            id="input-city"
+                            data-testid="input-city"
+                            placeholder="e.g., Chicago, Los Angeles"
+                            value={city}
+                            onChange={(e) => setCity(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="input-county" className="flex items-center gap-2">
+                            <MapPin className="w-3 h-3" />
+                            County Sheriff's Office
+                          </Label>
+                          <Input
+                            id="input-county"
+                            data-testid="input-county"
+                            placeholder="e.g., Cook County, LA County"
+                            value={county}
+                            onChange={(e) => setCounty(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground italic">
+                        Leave both blank to search State Police / Highway Patrol only
+                      </p>
                     </div>
-                    <div className="flex items-center space-x-3 p-2 rounded-md border bg-card hover-elevate cursor-pointer" onClick={() => setIncludeCorrections(!includeCorrections)} data-testid="checkbox-corrections-container">
-                      <Checkbox
-                        id="checkbox-corrections"
-                        data-testid="checkbox-corrections"
-                        checked={includeCorrections}
-                        onCheckedChange={(checked) => setIncludeCorrections(checked === true)}
-                        className="border-2"
-                      />
-                      <Label htmlFor="checkbox-corrections" className="font-normal cursor-pointer flex-1">
-                        Corrections Officers
-                      </Label>
+                  )}
+
+                  {/* Government and Corrections - Independent checkboxes */}
+                  <div className="space-y-3 p-3 border rounded-md bg-card">
+                    <Label className="text-sm font-semibold">Additional Officer Types</Label>
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      <div className="flex items-center space-x-3 p-2 rounded-md border bg-background hover:bg-accent cursor-pointer" onClick={() => setIncludeGovernment(!includeGovernment)} data-testid="checkbox-government-container">
+                        <Checkbox
+                          id="checkbox-government"
+                          data-testid="checkbox-government"
+                          checked={includeGovernment}
+                          onCheckedChange={(checked) => setIncludeGovernment(checked === true)}
+                          className="border-2"
+                        />
+                        <div className="flex-1">
+                          <Label htmlFor="checkbox-government" className="font-normal cursor-pointer">
+                            Federal/Government Officers
+                          </Label>
+                          <p className="text-xs text-muted-foreground">FBI, DEA, ICE, Marshals, etc.</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-3 p-2 rounded-md border bg-background hover:bg-accent cursor-pointer" onClick={() => setIncludeCorrections(!includeCorrections)} data-testid="checkbox-corrections-container">
+                        <Checkbox
+                          id="checkbox-corrections"
+                          data-testid="checkbox-corrections"
+                          checked={includeCorrections}
+                          onCheckedChange={(checked) => setIncludeCorrections(checked === true)}
+                          className="border-2"
+                        />
+                        <div className="flex-1">
+                          <Label htmlFor="checkbox-corrections" className="font-normal cursor-pointer">
+                            Corrections Officers
+                          </Label>
+                          <p className="text-xs text-muted-foreground">Prison, jail, detention staff</p>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
