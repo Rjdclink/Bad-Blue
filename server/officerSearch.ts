@@ -370,6 +370,9 @@ export async function searchOfficerInformation(
     } else if (officerType === 'city') {
       locationContext = `${city}, ${state}`;
       officerTypeDescription = 'city law enforcement officer';
+    } else if (officerType === 'corrections') {
+      locationContext = state ? `${state} correctional facilities` : 'correctional facilities';
+      officerTypeDescription = 'corrections officer';
     } else {
       // Custom search - build from available fields
       locationContext = [city, county, state].filter(Boolean).join(', ') || 'location unknown';
@@ -424,11 +427,19 @@ IMPORTANT: This person is a SPECIAL AGENT. Focus on:
 - Federal investigations and operations
 - Federal training facilities (FBI Academy, FLETC, etc.)
 - Federal task forces and joint operations
+` : ''}${officerType === 'corrections' ? `
+IMPORTANT: This person is a CORRECTIONS OFFICER. Focus on:
+- State prisons, county jails, federal correctional facilities
+- Bureau of Prisons (BOP) records if federal
+- State Department of Corrections employment records
+- Correctional officer certifications and training
+- Prison and jail facility assignments
+- Inmate incident reports and disciplinary actions involving this officer
 ` : ''}
 Focus on these areas with SPECIFIC DETAILS:
 
 RANK AND CAREER HISTORY:
-- Current rank/title (Chief of Police, Captain, Lieutenant, Sergeant, Officer, Detective)
+- Current rank/title (${officerType === 'corrections' ? 'Warden, Deputy Warden, Captain, Lieutenant, Sergeant, Correctional Officer' : 'Chief of Police, Captain, Lieutenant, Sergeant, Officer, Detective'})
 - Career timeline with specific dates
 - Promotions and appointments with years
 - Total years of service
@@ -437,8 +448,8 @@ RANK AND CAREER HISTORY:
 - Department organizational context
 
 TRAINING AND CERTIFICATIONS:
-- POST (Peace Officer Standards and Training) certifications
-- Specialized training (K9, SWAT, narcotics, tactical, crisis negotiation, etc.)
+- ${officerType === 'corrections' ? 'Correctional officer training and certifications' : 'POST (Peace Officer Standards and Training) certifications'}
+- Specialized training (${officerType === 'corrections' ? 'use of force, crisis intervention, emergency response, inmate transport' : 'K9, SWAT, narcotics, tactical, crisis negotiation, etc.'})
 - Instructor certifications
 - Professional development courses
 - Areas of specialized expertise
@@ -458,6 +469,12 @@ ${officerType === 'special_agent' ? '- Federal Special Agent directories and cre
 - ${county} Sheriff's Office website
 - County government websites
 - County law enforcement directories
+` : officerType === 'corrections' ? `
+- ${state} Department of Corrections website
+- Federal Bureau of Prisons (BOP) website
+- Correctional facility staff directories
+- State prison and jail employee rosters
+- County jail websites
 ` : `
 - Official ${city || 'local'} police department websites
 - City/county government websites
@@ -485,6 +502,14 @@ IMPORTANT: This person is a SPECIAL AGENT. Focus on:
 - Federal agency press releases
 - Multi-agency task forces
 - High-profile federal operations
+` : ''}${officerType === 'corrections' ? `
+IMPORTANT: This person is a CORRECTIONS OFFICER. Focus on:
+- Inmate lawsuits and civil rights complaints
+- Use of force incidents in correctional facilities
+- Prison/jail misconduct investigations
+- Inmate death investigations
+- Facility inspection reports
+- Union grievances and labor disputes
 ` : ''}
 
 Focus on these areas with SPECIFIC DETAILS:
@@ -545,6 +570,8 @@ Cite at least 6 distinct sources with URLs. Write a comprehensive narrative (450
       departmentName = `${state} State Police`;
     } else if (officerType === 'county') {
       departmentName = `${county || 'County'} Sheriff's Office`;
+    } else if (officerType === 'corrections') {
+      departmentName = state ? `${state} Department of Corrections` : 'Correctional Facility';
     } else if (city) {
       departmentName = `${city} Police Department`;
     } else {
@@ -557,6 +584,8 @@ Cite at least 6 distinct sources with URLs. Write a comprehensive narrative (450
       summaryIntro = `${officerName} serves as ${resolvedRank} with ${departmentName}${city ? ` in ${city}` : ''}.\n\n`;
     } else if (officerType === 'federal') {
       summaryIntro = `${officerName} serves as ${resolvedRank} with ${departmentName}${city ? ` in ${city}` : ''}.\n\n`;
+    } else if (officerType === 'corrections') {
+      summaryIntro = `${officerName} serves as ${resolvedRank} with ${departmentName}${state ? ` in ${state}` : ''}.\n\n`;
     } else if (city && state) {
       summaryIntro = `${officerName} serves as ${resolvedRank} with ${departmentName} in ${city}, ${state}.\n\n`;
     } else {

@@ -91,7 +91,7 @@ interface OfficerSearchProps {
   onBack?: () => void;
 }
 
-type OfficerType = "city" | "county" | "state" | "federal" | "special_agent" | "custom";
+type OfficerType = "city" | "county" | "state" | "federal" | "special_agent" | "corrections" | "custom";
 
 export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   const { toast } = useToast();
@@ -306,6 +306,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                       <SelectItem value="state">State Trooper/Agent</SelectItem>
                       <SelectItem value="federal">Federal Agent (FBI, DEA, ATF, Marshal)</SelectItem>
                       <SelectItem value="special_agent">Special Agent</SelectItem>
+                      <SelectItem value="corrections">Corrections Officer</SelectItem>
                       <SelectItem value="custom">Custom Search</SelectItem>
                     </SelectContent>
                   </Select>
@@ -332,6 +333,11 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                   {officerType === "custom" && (
                     <p className="text-sm text-muted-foreground">
                       Requires: At least one location field (state, city, or county)
+                    </p>
+                  )}
+                  {officerType === "corrections" && (
+                    <p className="text-sm text-muted-foreground">
+                      Requires: State (searches prisons, jails, and correctional facilities)
                     </p>
                   )}
                 </div>
