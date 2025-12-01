@@ -146,5 +146,17 @@
     "failed": 0,
     "skipped": 0,
     "durationMs": 2
+  },
+  {
+    "timestamp": "2025-12-01T00:02:05.860Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T00:02:36.203Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]
