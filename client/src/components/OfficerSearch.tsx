@@ -333,18 +333,19 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                   </Select>
                 </div>
 
-                {/* Officer Type Selection - 5 Independent Types */}
-                <div className="space-y-4 p-4 border rounded-lg bg-muted/30" data-testid="officer-types-section">
-                  <div className="flex items-center gap-2">
-                    <Shield className="w-4 h-4 text-muted-foreground" />
-                    <Label className="text-base font-semibold">Officer Type Selection</Label>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Select which type(s) of officers to search for:
-                  </p>
+                {/* Officer Type Selection - 5 Independent Types - Only show when state is selected */}
+                {state && (
+                  <div className="space-y-4 p-4 border rounded-lg bg-muted/30" data-testid="officer-types-section">
+                    <div className="flex items-center gap-2">
+                      <Shield className="w-4 h-4 text-muted-foreground" />
+                      <Label className="text-base font-semibold">Officer Type Selection</Label>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Select which type(s) of officers to search for:
+                    </p>
 
-                  {/* City, County, State - Only show when state is selected */}
-                  {state && (
+                    {/* City, County, State */}
+                    {(
                     <div className="space-y-3 p-3 border rounded-md bg-card">
                       <Label className="text-sm font-semibold">Local & State Officers</Label>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -417,7 +418,8 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                       </div>
                     </div>
                   </div>
-                </div>
+                  </div>
+                )}
 
                 <div className="flex gap-4 pt-2">
                   <Button
