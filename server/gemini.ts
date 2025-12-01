@@ -1,22 +1,19 @@
 // Google Gemini AI service for badge analysis and form assistance
-// Using free Gemini API instead of OpenAI
+// Using free Gemini API with correct SDK v0.7.1 syntax
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
-
 // Lazy initialization to avoid startup errors when API key is not configured
-let gemini: GoogleGenerativeAI | null = null;
+let geminiClient: GoogleGenerativeAI | null = null;
 
 function getGeminiClient(): GoogleGenerativeAI {
-  if (!gemini) {
+  if (!geminiClient) {
     if (!process.env.GEMINI_API_KEY) {
       throw new Error('GEMINI_API_KEY environment variable is not set');
     }
-    
-    gemini = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+    // CORRECT: Constructor takes a string, not an object
+    geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   }
-  return gemini;
+  return geminiClient;
 }
 
 export interface EnhancedBadgeAnalysisResult {
@@ -56,6 +53,8 @@ export async function analyzeBadgeImage(base64Image: string): Promise<EnhancedBa
       : base64Image;
 
     const client = getGeminiClient();
+    // CORRECT: Get model instance first, then call generateContent
+    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const systemPrompt = `You are an ELITE forensic image analyst with 20+ years of experience in law enforcement badge identification. Your expertise includes analyzing badges from all 50 US states, federal agencies, and specialty units. You excel at extracting information from poor-quality, blurry, or partially obscured images.
 
@@ -187,8 +186,7 @@ Results Format:
 
 Apply your expert analysis even if image quality is poor. Extract whatever information IS visible and clearly state what is NOT visible.`;
 
-    // Using Gemini 2.5 Flash for vision capabilities  
-    // Using Gemini 2.5 Flash for vision capabilities  
+    // Using Gemini 1.5 Flash for vision capabilities  
 const geminiResponse = await model.generateContent({
   contents: [
     {
@@ -212,7 +210,7 @@ const geminiResponse = await model.generateContent({
   },
 });
 
-    const rawJson = geminiResponse.response.text;
+    const rawJson = geminiResponse.response.text();
     if (!rawJson) {
       throw new Error("Empty response from Gemini");
     }
@@ -334,6 +332,8 @@ export async function chatWithFormAssistant(
 ): Promise<FormAssistantResponse> {
   try {
     const client = getGeminiClient();
+    // CORRECT: Get model instance first, then call generateContent
+    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     // Build system prompt based on form type and context
     const systemPrompt = `You are an expert legal assistant helping citizens file ${formType === 'complaint' ? 'police complaints' : 'civil rights lawsuits'}. Your role is to:
@@ -365,12 +365,12 @@ RESPONSE FORMAT:
 Respond with a JSON object containing:
 {
   "message": "Your conversational response/question",
-  "suggestedFields": { "fieldName": "value" }, // Only include if you can infer field values from conversation
-  "needsMoreInfo": ["field1", "field2"], // Fields still missing
-  "readyToSubmit": false // true only when ALL required fields are populated
+  "suggestedFields": { "fieldName": "value" },
+  "needsMoreInfo": ["field1", "field2"],
+  "readyToSubmit": false
 }`;
 
-    // Build conversation context for Gemini
+    // Build conversation context
     const conversationText = conversationHistory
       .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
       .join('\n\n');
@@ -379,9 +379,8 @@ Respond with a JSON object containing:
       ? `${conversationText}\n\nUser: ${userMessage}`
       : `User: ${userMessage}`;
 
-    // Using Gemini 2.5 Flash for fast conversational responses
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+    // CORRECT: Use model.generateContent with generationConfig
+    const response = await model.generateContent({
       contents: [
         {
           role: "user",
@@ -392,13 +391,15 @@ Respond with a JSON object containing:
           ]
         }
       ],
-      config: {
+      generationConfig: {
         responseMimeType: "application/json",
         temperature: 0.7,
       }
     });
 
-    const content = response.text;
+    const result = response.response;
+    const content = result.text();
+    
     if (!content) {
       throw new Error('No response from Gemini');
     }
