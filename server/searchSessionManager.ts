@@ -164,7 +164,7 @@ class SearchSessionManager {
 
     this.sessionCheckInterval = setInterval(async () => {
       await this.checkAndUpdateSession();
-    }, 180000);
+    }, 360000);  // Doubled from 180s (3 min) to 360s (6 min) for 50% reduction
   }
 
   private async checkAndUpdateSession(): Promise<void> {

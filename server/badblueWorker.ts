@@ -304,8 +304,8 @@ class BadBlueWorker {
   }
 
   private scheduleCriticalMonitoring() {
-    const THIRTY_MINUTES = 30 * 60 * 1000;
-    this.criticalMonitoringInterval = setInterval(() => this.runCriticalMonitoring().catch(() => {}), THIRTY_MINUTES);
+    const SIXTY_MINUTES = 60 * 60 * 1000;  // Doubled from 30 min for 50% Groq reduction
+    this.criticalMonitoringInterval = setInterval(() => this.runCriticalMonitoring().catch(() => {}), SIXTY_MINUTES);
     setTimeout(() => this.runCriticalMonitoring().catch(() => {}), 60_000);
   }
 
@@ -329,7 +329,7 @@ class BadBlueWorker {
 
   private scheduleDatabaseHeartbeat() {
     const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || !!process.env.RAILWAY_PROJECT_ID;
-    const interval = isRailway ? 5 * 60 * 1000 : 15 * 60 * 1000;
+    const interval = isRailway ? 10 * 60 * 1000 : 30 * 60 * 1000;  // Doubled for 50% Groq reduction
 
     const run = async () => {
       try {
@@ -506,11 +506,11 @@ class BadBlueWorker {
   }
 
   private scheduleMetricsPersistence(): void {
-    const FIFTEEN_MINUTES = 15 * 60 * 1000;
+    const THIRTY_MINUTES = 30 * 60 * 1000;  // Doubled from 15 min for 50% reduction
     this.metricsInterval = setInterval(() => {
       this.persistRepairMetrics().catch(() => {});
       this.persistRepairQueue().catch(() => {});
-    }, FIFTEEN_MINUTES);
+    }, THIRTY_MINUTES);
   }
 
   private async addToRepairQueue(issue: FailureLogEntry) {

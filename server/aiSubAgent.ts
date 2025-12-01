@@ -67,8 +67,8 @@ let dailyScrapeTimeout: NodeJS.Timeout | null = null;
 let trainingQueueInterval: NodeJS.Timeout | null = null;
 let activeGeminiModel: string | null = null;
 
-const TRAINING_QUEUE_INTERVAL_MS = Number(process.env.TRAINING_QUEUE_INTERVAL_MS || 30 * 60 * 1000);
-const TRAINING_QUEUE_BATCH_SIZE = Number(process.env.TRAINING_QUEUE_BATCH_SIZE || 10);
+const TRAINING_QUEUE_INTERVAL_MS = Number(process.env.TRAINING_QUEUE_INTERVAL_MS || 60 * 60 * 1000);  // Doubled from 30 min for 50% Groq reduction
+const TRAINING_QUEUE_BATCH_SIZE = Number(process.env.TRAINING_QUEUE_BATCH_SIZE || 5);  // Halved from 10 for 50% Groq reduction
 
 interface SelfImprovementMetrics {
   patternsProcessed: number;

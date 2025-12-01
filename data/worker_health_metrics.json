@@ -1,23 +1,5 @@
 [
   {
-    "timestamp": "2025-11-08T07:23:12.024Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:25:04.425Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:38:08.452Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
     "timestamp": "2025-11-08T07:38:13.861Z",
     "check": "database_heartbeat",
     "status": "success",
@@ -5789,6 +5771,21 @@
   },
   {
     "timestamp": "2025-12-01T01:58:08.280Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T02:00:58.761Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T02:02:29.095Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T02:03:16.555Z",
     "check": "database_heartbeat",
     "status": "success"
   }

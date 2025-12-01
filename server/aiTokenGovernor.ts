@@ -31,7 +31,7 @@ interface QuotaCache {
   inFlightPromise: Promise<QuotaStatus> | null;
 }
 
-const QUOTA_CACHE_TTL_MS = 30000; // 30 second cache TTL
+const QUOTA_CACHE_TTL_MS = 60000; // 60 second cache TTL (doubled from 30s for 50% reduction)
 
 /**
  * Task classification for AI operations

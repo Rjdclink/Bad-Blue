@@ -70,8 +70,8 @@ interface PrioritizedJurisdiction {
 const DEFAULT_CONFIG: HarvesterConfig = {
   dailyHarvestHourUTC: 3,
   dailyHarvestMinuteUTC: 0,
-  maxSearchesPerCycle: 15,
-  minDelayBetweenSearchesMs: 3000,
+  maxSearchesPerCycle: 7,  // Reduced from 15 for 50% Groq reduction
+  minDelayBetweenSearchesMs: 6000,  // Doubled from 3000 for 50% Groq reduction
   highPopulationThreshold: 100000,
   mediumPopulationThreshold: 25000,
 };
@@ -146,7 +146,7 @@ class SubAgentHarvester {
     this.initialized = true;
 
     console.log('[SubAgentHarvester] ✓ Harvester initialized successfully');
-    console.log(`[SubAgentHarvester] Daily harvest scheduled at ${this.config.dailyHarvestHourUTC}:${String(this.config.dailyHarvestMinuteUTC).padStart(2, '0')} UTC`);
+    console.log(`[SubAgentHarvester] Harvest scheduled every 36 hours (50% reduction from daily)`);
   }
 
   private async ensureDataDirectory(): Promise<void> {
@@ -172,23 +172,21 @@ class SubAgentHarvester {
       clearTimeout(this.dailyScheduleTimer);
     }
 
+    const HARVEST_INTERVAL_HOURS = 36;  // Changed from 24h to 36h for 50% Groq reduction
+
     const scheduleNext = () => {
       const now = new Date();
-      const nextHarvest = new Date(now);
-      nextHarvest.setUTCHours(this.config.dailyHarvestHourUTC, this.config.dailyHarvestMinuteUTC, 0, 0);
-
-      if (now >= nextHarvest) {
-        nextHarvest.setDate(nextHarvest.getDate() + 1);
-      }
+      // Calculate next harvest as 36 hours from last harvest or startup
+      const nextHarvest = new Date(now.getTime() + (HARVEST_INTERVAL_HOURS * 60 * 60 * 1000));
 
       const delayMs = nextHarvest.getTime() - now.getTime();
 
       this.dailyScheduleTimer = setTimeout(async () => {
-        console.log('[SubAgentHarvester] Starting scheduled daily harvest...');
+        console.log('[SubAgentHarvester] Starting scheduled harvest (36h interval)...');
         await this.logToHarvestLog({
           timestamp: new Date().toISOString(),
           type: 'info',
-          error: 'Daily harvest triggered by schedule'
+          error: 'Harvest triggered by 36h schedule'
         });
 
         try {
