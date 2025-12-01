@@ -3,16 +3,11 @@ import { tokenMetricsRepository } from './repositories/tokenMetricsRepository';
 /**
  * Worker Token Budget Manager
  * 
- * Enforces strict 15% Groq daily quota limit for Worker operations
- * Ensures user requests always have ≥85% of quota available
+ * Worker/autonomous operations use Groq exclusively with no limits.
+ * All Groq capacity is available for both user and worker operations.
  */
 export class WorkerTokenBudget {
-  // Groq API daily limits
-  private readonly DAILY_GROQ_QUOTA = 100000; // tokens/day
-  private readonly WORKER_PERCENTAGE = 0.15;  // 15% cap
-  private readonly WORKER_DAILY_BUDGET = 15000; // 15% of 100k tokens
-  
-  // Token estimation ceilings (conservative)
+  // Token estimation ceilings (conservative) - kept for reference/logging only
   private readonly TOKEN_ESTIMATES = {
     'precedent_search': 5000,
     'filing_info_search': 3000,
@@ -27,40 +22,18 @@ export class WorkerTokenBudget {
    * Get remaining Worker budget for today (UTC)
    */
   async getRemainingBudget(): Promise<number> {
-    const today = new Date().toISOString().split('T')[0];
-    
-    try {
-      // Query total worker usage for today
-      const usageToday = await tokenMetricsRepository.getUsageBySource('worker', today);
-      const used = usageToday.totalTokens || 0;
-      
-      const remaining = Math.max(0, this.WORKER_DAILY_BUDGET - used);
-      
-      console.log(`[Worker Budget] Today: ${used}/${this.WORKER_DAILY_BUDGET} tokens used (${remaining} remaining)`);
-      
-      return remaining;
-    } catch (error) {
-      console.warn('[Worker Budget] Error fetching usage, assuming 0 budget:', error);
-      return 0; // Fail-safe: deny budget if can't verify usage
-    }
+    // No limits - workers can use unlimited Groq tokens
+    console.log(`[Worker Budget] Unlimited Groq access for worker operations`);
+    return Infinity;
   }
 
   /**
    * Check if Worker can run an operation
    */
   async canRunOperation(operationName: string, estimatedTokens?: number): Promise<boolean> {
-    const remaining = await this.getRemainingBudget();
-    
-    // Use provided estimate or lookup default
-    const estimate = estimatedTokens || this.TOKEN_ESTIMATES[operationName as keyof typeof this.TOKEN_ESTIMATES] || 5000;
-    
-    const allowed = remaining >= estimate;
-    
-    if (!allowed) {
-      console.log(`[Worker Budget] ⛔ Operation '${operationName}' denied (needs ${estimate} tokens, only ${remaining} remaining)`);
-    }
-    
-    return allowed;
+    // No limits - all operations allowed
+    console.log(`[Worker Budget] ✓ Operation '${operationName}' allowed (no limits)`);
+    return true;
   }
 
   /**
@@ -68,17 +41,8 @@ export class WorkerTokenBudget {
    * Returns reservation ID if successful, null if budget exhausted
    */
   async reserveBudget(operationName: string, estimatedTokens?: number): Promise<string | null> {
-    const allowed = await this.canRunOperation(operationName, estimatedTokens);
-    
-    if (!allowed) {
-      return null;
-    }
-    
-    // Generate reservation ID
     const reservationId = `worker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
     console.log(`[Worker Budget] ✓ Reserved budget for '${operationName}' (reservation: ${reservationId})`);
-    
     return reservationId;
   }
 
@@ -118,14 +82,12 @@ export class WorkerTokenBudget {
     const today = new Date().toISOString().split('T')[0];
     const usageToday = await tokenMetricsRepository.getUsageBySource('worker', today);
     const used = usageToday.totalTokens || 0;
-    const remaining = Math.max(0, this.WORKER_DAILY_BUDGET - used);
-    const percentUsed = (used / this.WORKER_DAILY_BUDGET) * 100;
     
     return {
       used,
-      budget: this.WORKER_DAILY_BUDGET,
-      remaining,
-      percentUsed,
+      budget: Infinity,
+      remaining: Infinity,
+      percentUsed: 0, // Always 0% since unlimited
     };
   }
 

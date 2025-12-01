@@ -3,7 +3,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
+const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // Lazy initialization to avoid startup errors when API key is not configured
 let gemini: GoogleGenerativeAI | null = null;
@@ -14,7 +14,7 @@ function getGeminiClient(): GoogleGenerativeAI {
       throw new Error('GEMINI_API_KEY environment variable is not set');
     }
     
-    gemini = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+    gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   }
   return gemini;
 }
@@ -379,9 +379,9 @@ Respond with a JSON object containing:
       ? `${conversationText}\n\nUser: ${userMessage}`
       : `User: ${userMessage}`;
 
-    // Using Gemini 2.5 Flash for fast conversational responses
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+    // Using Gemini 1.5 Flash for fast conversational responses
+    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const response = await model.generateContent({
       contents: [
         {
           role: "user",
@@ -392,13 +392,13 @@ Respond with a JSON object containing:
           ]
         }
       ],
-      config: {
+      generationConfig: {
         responseMimeType: "application/json",
         temperature: 0.7,
       }
     });
 
-    const content = response.text;
+    const content = response.response.text();
     if (!content) {
       throw new Error('No response from Gemini');
     }
