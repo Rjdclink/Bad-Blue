@@ -1,324 +1,224 @@
 [
   {
-    "timestamp": "2025-12-01T01:38:36.604Z",
+    "timestamp": "2025-12-01T01:42:54.364Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/index.css"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-GTF7DNNX.js"
   },
   {
-    "timestamp": "2025-12-01T01:38:36.610Z",
+    "timestamp": "2025-12-01T01:42:54.408Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/lib/performance.ts"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-dropdown-menu.js"
   },
   {
-    "timestamp": "2025-12-01T01:38:36.669Z",
+    "timestamp": "2025-12-01T01:42:54.438Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/api/auth/user"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-scroll-area.js"
   },
   {
-    "timestamp": "2025-12-01T01:38:36.681Z",
+    "timestamp": "2025-12-01T01:42:59.566Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/favicon-32x32.png"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-select.js"
   },
   {
-    "timestamp": "2025-12-01T01:38:36.750Z",
+    "timestamp": "2025-12-01T01:42:59.581Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/favicon-16x16.png"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-ZNOUIVXC.js"
   },
   {
-    "timestamp": "2025-12-01T01:38:36.777Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/favicon-48x48.png"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:36.973Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/shared/seoConfig.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:36.989Z",
+    "timestamp": "2025-12-01T01:42:59.646Z",
     "action": "GET",
     "tokens": 0,
     "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-O5NM2W4X.js"
   },
   {
-    "timestamp": "2025-12-01T01:38:37.003Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/audio/badblue-audio.mp3"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.025Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/support-email"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.030Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/hooks/useAuth.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.044Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/performance.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.058Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/contexts/LanguageContext.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.094Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/translation.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.101Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/MaintenanceMode.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.117Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/page-skeleton.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.126Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/stock_images/cartoon_mechanic_wor_678db703.jpg"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.133Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/skeleton.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.174Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/hooks/use-toast.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.181Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/toast.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.190Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/utils.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.206Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/performance.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.224Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/card.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.257Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/@fs/home/runner/workspace/attached_assets/stock_images/cartoon_mechanic_wor_678db703.jpg"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.262Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/skeleton.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.605Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.673Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.721Z",
-    "action": "training_queue_consumption",
-    "provider": "self_improvement",
-    "processed": 0,
-    "successful": 0,
-    "failed": 0,
-    "skipped": 0,
-    "durationMs": 2
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.836Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/auth/user"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:37.874Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/pages/home.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.216Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/LegalConsultation.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.238Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/SEOHead.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.247Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/LanguageSelector.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.265Z",
+    "timestamp": "2025-12-01T01:42:59.652Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/dropdown-menu.tsx"
   },
   {
-    "timestamp": "2025-12-01T01:38:38.295Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/LegalConsultation.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.305Z",
+    "timestamp": "2025-12-01T01:42:59.675Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/textarea.tsx"
   },
   {
-    "timestamp": "2025-12-01T01:38:38.326Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/badge.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.328Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/OfficerSearch.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.335Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/label.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.386Z",
+    "timestamp": "2025-12-01T01:42:59.697Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/checkbox.tsx"
   },
   {
-    "timestamp": "2025-12-01T01:38:38.389Z",
+    "timestamp": "2025-12-01T01:42:59.740Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/select.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:42:59.747Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/input.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:42:59.758Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/OfficerSearchProgress.tsx"
   },
   {
-    "timestamp": "2025-12-01T01:38:38.408Z",
+    "timestamp": "2025-12-01T01:42:59.790Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/input.tsx"
+    "path": "/src/components/ui/scroll-area.tsx"
   },
   {
-    "timestamp": "2025-12-01T01:38:38.419Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/SEOHead.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.472Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/textarea.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.482Z",
+    "timestamp": "2025-12-01T01:42:59.794Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/badge.tsx"
   },
   {
-    "timestamp": "2025-12-01T01:38:38.499Z",
+    "timestamp": "2025-12-01T01:42:59.877Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/src/components/ui/label.tsx"
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-progress.js"
   },
   {
-    "timestamp": "2025-12-01T01:38:38.556Z",
+    "timestamp": "2025-12-01T01:43:04.019Z",
     "action": "GET",
     "tokens": 0,
     "path": "/src/components/ui/progress.tsx"
   },
   {
-    "timestamp": "2025-12-01T01:38:38.561Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/input.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.606Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.664Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/components/ui/progress.tsx"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:38.847Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/src/lib/bundleAnalyzer.ts"
-  },
-  {
-    "timestamp": "2025-12-01T01:38:39.183Z",
+    "timestamp": "2025-12-01T01:43:04.630Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-12-01T01:38:39.334Z",
+    "timestamp": "2025-12-01T01:43:04.777Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-12-01T01:43:18.326Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:43:24.896Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:43:48.634Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:43:56.701Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:44:19.725Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:44:27.679Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:44:50.728Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:44:58.743Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:45:20.992Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:45:29.715Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:45:51.212Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:46:02.722Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:46:21.424Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:46:33.683Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:46:51.707Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:47:04.681Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:47:21.924Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:47:35.690Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:47:52.227Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]
