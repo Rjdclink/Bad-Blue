@@ -1,144 +1,114 @@
 [
   {
-    "timestamp": "2025-12-01T00:01:35.665Z",
+    "timestamp": "2025-12-01T00:06:47.364Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/useFaqSchema--GUw8NK0.js"
+    "path": "/assets/textarea-BJLBH-8F.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.703Z",
+    "timestamp": "2025-12-01T00:06:47.375Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/label-CJGrPGCK.js"
+  },
+  {
+    "timestamp": "2025-12-01T00:06:47.379Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/checkbox-B6rcMTgW.js"
+  },
+  {
+    "timestamp": "2025-12-01T00:06:47.395Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/index-CksQyhPZ.js"
+  },
+  {
+    "timestamp": "2025-12-01T00:06:47.484Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/loader-circle-Dhu3ITQp.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.729Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/sparkles-B6HyZdYK.js"
-  },
-  {
-    "timestamp": "2025-12-01T00:01:35.736Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-BDFWxcSk.js"
-  },
-  {
-    "timestamp": "2025-12-01T00:01:35.744Z",
+    "timestamp": "2025-12-01T00:06:47.551Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/circle-x-BaY5SahM.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.753Z",
+    "timestamp": "2025-12-01T00:06:47.561Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/assets/circle-alert-DXslWFLw.js"
+  },
+  {
+    "timestamp": "2025-12-01T00:06:47.578Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/file-text-CBNIfD09.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.784Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/input-DQfs2i3p.js"
-  },
-  {
-    "timestamp": "2025-12-01T00:01:35.804Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/badge-DLo5fkoO.js"
-  },
-  {
-    "timestamp": "2025-12-01T00:01:35.810Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/progress-DDYmeNGR.js"
-  },
-  {
-    "timestamp": "2025-12-01T00:01:35.817Z",
+    "timestamp": "2025-12-01T00:06:47.623Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/search-k8SGdotS.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.825Z",
+    "timestamp": "2025-12-01T00:06:47.638Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/map-pin-l9-xidT_.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.826Z",
+    "timestamp": "2025-12-01T00:06:47.647Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/shield-7faESzar.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.864Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/triangle-alert-SGGehtzG.js"
-  },
-  {
-    "timestamp": "2025-12-01T00:01:35.891Z",
+    "timestamp": "2025-12-01T00:06:47.656Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/external-link-ByCvNBaf.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.898Z",
+    "timestamp": "2025-12-01T00:06:47.721Z",
     "action": "GET",
     "tokens": 0,
-    "path": "/assets/brain-3CMxcxOD.js"
+    "path": "/assets/scroll-area-BSFrzjFF.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.906Z",
+    "timestamp": "2025-12-01T00:06:47.731Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/send-Dyuf-Q1L.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.962Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/circle-check-big-IucwP7W7.js"
-  },
-  {
-    "timestamp": "2025-12-01T00:01:35.971Z",
+    "timestamp": "2025-12-01T00:06:47.738Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/mail-B5XkwkcA.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:35.977Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/SEOHead-b0nf3qYO.js"
-  },
-  {
-    "timestamp": "2025-12-01T00:01:35.981Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/assets/users-CFAHCUDf.js"
-  },
-  {
-    "timestamp": "2025-12-01T00:01:36.043Z",
+    "timestamp": "2025-12-01T00:06:47.817Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/credit-card-B8MKwAhy.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:36.064Z",
+    "timestamp": "2025-12-01T00:06:47.894Z",
     "action": "GET",
     "tokens": 0,
     "path": "/assets/bundleAnalyzer-C1yhvntE.js"
   },
   {
-    "timestamp": "2025-12-01T00:01:36.322Z",
+    "timestamp": "2025-12-01T00:06:48.011Z",
     "action": "GET",
     "tokens": 0,
     "path": "/api/support-email"
   },
   {
-    "timestamp": "2025-12-01T00:01:38.248Z",
+    "timestamp": "2025-12-01T00:06:50.372Z",
     "action": "training_queue_consumption",
     "provider": "self_improvement",
     "processed": 0,
@@ -146,29 +116,5 @@
     "failed": 0,
     "skipped": 0,
     "durationMs": 2
-  },
-  {
-    "timestamp": "2025-12-01T00:02:05.860Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-12-01T00:02:36.203Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-12-01T00:03:06.433Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
-  },
-  {
-    "timestamp": "2025-12-01T00:03:36.673Z",
-    "action": "GET",
-    "tokens": 0,
-    "path": "/api/maintenance-status"
   }
 ]
