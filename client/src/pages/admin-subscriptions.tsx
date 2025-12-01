@@ -103,7 +103,7 @@ interface UserSubscription {
 export default function AdminSubscriptions() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [activeTab, setActiveTab] = useState("users");
+  const [activeTab, setActiveTab] = useState("badblue-users");
   
   // Tier Management State
   const [showTierDialog, setShowTierDialog] = useState(false);
@@ -366,9 +366,9 @@ export default function AdminSubscriptions() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6 flex-wrap gap-1">
-            <TabsTrigger value="users" data-testid="tab-users">
+            <TabsTrigger value="badblue-users" data-testid="tab-badblue-users">
               <UserCheck className="h-4 w-4 mr-2" />
-              All Users ({usersData?.pagination?.total || 0})
+              Bad Blue Users ({usersData?.pagination?.total || 0})
             </TabsTrigger>
             <TabsTrigger value="tiers" data-testid="tab-tiers">
               <CreditCard className="h-4 w-4 mr-2" />
@@ -380,14 +380,14 @@ export default function AdminSubscriptions() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="users">
+          <TabsContent value="badblue-users">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <CardTitle>All Registered Users</CardTitle>
+                    <CardTitle>Bad Blue Users</CardTitle>
                     <CardDescription>
-                      View all users who have signed up for Bad Blue accounts
+                      All registered users with their purchase information, sorted by newest first
                     </CardDescription>
                   </div>
                   <Badge variant="outline" className="text-lg px-3 py-1">

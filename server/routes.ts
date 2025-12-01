@@ -937,18 +937,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[SECURITY] New user registered: ${email} from IP: ${clientIp}`);
 
       // Send welcome email immediately after successful registration
-      sendWelcomeEmail({
-        firstName,
-        email,
-      }).then(success => {
-        if (success) {
-          console.log(`[EMAIL] Welcome email sent to new user: ${email}`);
+      try {
+        const emailSent = await sendWelcomeEmail({
+          firstName,
+          email,
+        });
+        
+        if (emailSent) {
+          console.log(`[EMAIL] ✓ Welcome email sent to new user: ${email}`);
         } else {
-          console.error(`[EMAIL] Failed to send welcome email to: ${email}`);
+          console.error(`[EMAIL] ✗ Failed to send welcome email to: ${email}`);
         }
-      }).catch(err => {
-        console.error(`[EMAIL] Error sending welcome email to ${email}:`, err);
-      });
+      } catch (emailError: any) {
+        console.error(`[EMAIL] ✗ Error sending welcome email to ${email}:`, emailError.message);
+      }
 
       res.json({
         success: true,
