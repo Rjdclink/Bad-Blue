@@ -417,6 +417,10 @@ export const PETITION_PRICING_CENTS = 2798;
 export const FOIA_REQUEST_PRICING = 24.65;
 export const FOIA_REQUEST_PRICING_CENTS = 2465;
 
+// Legal Document Creator pricing
+export const LEGAL_DOCUMENT_CREATOR_PRICING = 5.99;
+export const LEGAL_DOCUMENT_CREATOR_PRICING_CENTS = 599;
+
 // Main pricing export (for backwards compatibility - refers to app access)
 export const PRICING = APP_ACCESS_PRICING;
 export const PRICING_CENTS = APP_ACCESS_PRICING_CENTS;

@@ -13,6 +13,7 @@ import OfficerSearch from "@/components/OfficerSearch";
 import { AISubAgentPanel } from "@/components/AISubAgentPanel";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { SEOHead } from "@/components/SEOHead";
+import LegalDocumentCreatorPanel from "@/components/LegalDocumentCreatorPanel";
 
 export default function Home() {
   const { user } = useAuth();
@@ -280,7 +281,10 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {/* 3. FOIA Records Request */}
+            {/* 3. Legal Document Creator */}
+            <LegalDocumentCreatorPanel />
+
+            {/* 4. FOIA Records Request */}
             <Card className="hover-elevate cursor-pointer transition-all" onClick={() => setLocation('/foia-request')} data-testid="card-foia-request">
               <CardHeader>
                 <div className="flex items-start justify-between">

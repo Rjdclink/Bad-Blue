@@ -5161,6 +5161,137 @@ For questions or support, contact: support@badblue.com
   });
 
   // ============================================
+  // LEGAL DOCUMENT CREATOR ROUTES
+  // ============================================
+
+  // Import legal document creator functions
+  const {
+    initLegalSession,
+    continueLegalSession,
+    generateDraft,
+    finalizeDraft,
+    requestDraftEdit,
+    createCheckout,
+    handleStripeWebhook: handleLegalDocWebhook,
+    getSession: getLegalSession,
+    getDraftPreview,
+  } = await import('./legalDocumentCreator');
+
+  // Initialize a new legal document session
+  app.post("/api/legal/session", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const userId = req.user?.claims?.sub;
+    const result = initLegalSession(userId);
+    res.json(result);
+  }));
+
+  // Continue session with answers
+  app.post("/api/legal/session/:id/answer", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    const { answers } = req.body;
+
+    if (!answers || typeof answers !== 'object') {
+      throw ErrorTypes.MISSING_REQUIRED_FIELDS(['answers']);
+    }
+
+    // Sanitize answers - basic XSS prevention
+    const sanitizedAnswers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(answers)) {
+      if (typeof value === 'string') {
+        // Basic sanitization - remove script tags and HTML
+        sanitizedAnswers[key] = value
+          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+          .replace(/<[^>]*>/g, '')
+          .trim();
+      }
+    }
+
+    const result = await continueLegalSession(id, sanitizedAnswers);
+    res.json(result);
+  }));
+
+  // Generate draft document
+  app.post("/api/legal/session/:id/generate", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    const result = await generateDraft(id);
+    res.json(result);
+  }));
+
+  // Request edit to draft
+  app.post("/api/legal/session/:id/edit", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    const { editRequest } = req.body;
+
+    if (!editRequest || typeof editRequest !== 'string') {
+      throw ErrorTypes.MISSING_REQUIRED_FIELDS(['editRequest']);
+    }
+
+    // Sanitize edit request
+    const sanitizedRequest = editRequest
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/<[^>]*>/g, '')
+      .trim();
+
+    const result = await requestDraftEdit(id, sanitizedRequest);
+    res.json(result);
+  }));
+
+  // Get draft preview
+  app.get("/api/legal/session/:id/preview", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    const preview = getDraftPreview(id);
+
+    if (!preview) {
+      return res.status(404).json({ error: 'Draft not found' });
+    }
+
+    res.json(preview);
+  }));
+
+  // Create checkout session for payment
+  app.post("/api/legal/session/:id/checkout", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    const { email } = req.body;
+
+    if (!email) {
+      throw ErrorTypes.MISSING_REQUIRED_FIELDS(['email']);
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+
+    const result = await createCheckout(id, email);
+    res.json(result);
+  }));
+
+  // Get session status
+  app.get("/api/legal/session/:id", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    const session = getLegalSession(id);
+
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    // Return safe session info (no document content in status check)
+    res.json({
+      id: session.id,
+      status: session.status,
+      documentType: session.documentType,
+      jurisdiction: session.jurisdiction,
+      hasDocument: !!session.draftDocument,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    });
+  }));
+
+  // Stripe webhook for legal document payments (raw body required)
+  // Note: This needs to be registered before body parsing middleware
+  // For now, we'll handle it in the existing webhook handler
+
+  // ============================================
   // COMPLAINT ROUTES
   // ============================================
 
