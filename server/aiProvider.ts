@@ -8,11 +8,11 @@
  * - Gemini: ~10% of total AI usage
  * - Claude: ~5-10% of total AI usage (7.5% midpoint)
  * 
- * UPDATED PROVIDERS/MODELS:
- * - Gemini: gemini-2.5-flash
- * - Claude: 3.5-haiku (fast) and 3.5-sonnet (detailed)
- * - Groq: llama-3.3-70b-versatile
- * - Mistral: mistral-large
+ * UPDATED PROVIDERS/MODELS (December 2025 - FREE TIER ONLY):
+ * - Gemini: gemini-2.0-flash-lite, gemini-2.0-flash, gemini-2.5-pro (task-aware, all FREE)
+ * - Claude: claude-3-5-haiku-20241022 (fast), claude-3-5-sonnet-20241022 (detailed)
+ * - Groq: llama-3.3-70b-versatile (newer, faster), llama-3.1-70b-versatile (stable reasoning)
+ * - Mistral: mistral-small-latest (FREE tier only)
  * 
  * PARALLEL ORCHESTRATION:
  * - Providers are executed in parallel for the same task.
@@ -410,32 +410,83 @@ export async function searchOfficerData(
  * Get the correct model for a provider, validating and falling back to defaults.
  * This ensures that if an incompatible model is passed (e.g., "gpt-4o-mini" to Mistral),
  * the provider's default model is used instead.
+ * 
+ * Task-aware model selection (December 2025):
+ * - GEMINI: 3-tier selection (lite/default/pro) based on complexity
+ * - GROQ: 2-tier selection (default/comprehensive) 
+ * - MISTRAL: Single model (only free tier available)
+ * - CLAUDE: 2-tier selection (default/comprehensive)
  */
-function getProviderModel(provider: AIProvider, requestedModel?: string): string {
-  const validModels: Record<AIProvider, { prefixes: string[]; default: string }> = {
+function getProviderModel(provider: AIProvider, requestedModel?: string, complexity?: TaskComplexity): string {
+  const validModels: Record<AIProvider, { 
+    prefixes: string[]; 
+    lite?: string; 
+    default: string; 
+    pro?: string;
+    comprehensive?: string;
+  }> = {
     [AIProvider.GEMINI]: {
       prefixes: ['gemini'],
-      default: 'gemini-2.5-flash'
+      lite: 'gemini-2.0-flash-lite',      // FREE: Ultra-fast, simple queries
+      default: 'gemini-2.0-flash',        // FREE: Balanced speed/quality, 1M context
+      pro: 'gemini-2.5-pro'               // FREE: Best reasoning, 25 RPM limit
     },
     [AIProvider.GROQ]: {
       prefixes: ['llama', 'mixtral', 'gemma'],
-      default: 'llama-3.3-70b-versatile'
+      default: 'llama-3.3-70b-versatile', // FREE: Newer, faster
+      comprehensive: 'llama-3.1-70b-versatile' // FREE: Stable reasoning
     },
     [AIProvider.MISTRAL]: {
       prefixes: ['mistral', 'codestral', 'pixtral', 'open-'],
-      default: 'mistral-large-latest'
+      default: 'mistral-small-latest'     // FREE: Only free tier model available
     },
     [AIProvider.CLAUDE]: {
       prefixes: ['claude'],
-      default: 'claude-3-5-haiku-20241022'
+      default: 'claude-3-5-haiku-20241022',      // FREE: Fast responses
+      comprehensive: 'claude-3-5-sonnet-20241022' // FREE: Advanced reasoning
     }
   };
 
   const providerConfig = validModels[provider];
   if (!providerConfig) return requestedModel || '';
 
-  // If no model requested, use default
-  if (!requestedModel) return providerConfig.default;
+  /**
+   * Helper to select model based on task complexity for a given provider config.
+   * Returns undefined if no complexity-based selection applies.
+   */
+  const selectByComplexity = (): string | undefined => {
+    if (!complexity) return undefined;
+    
+    // GEMINI: 3-tier selection based on complexity
+    if (provider === AIProvider.GEMINI) {
+      if (complexity === TaskComplexity.COMPREHENSIVE && providerConfig.pro) {
+        return providerConfig.pro; // gemini-2.5-pro for complex legal analysis
+      }
+      if (complexity === TaskComplexity.LIGHTWEIGHT && providerConfig.lite) {
+        return providerConfig.lite; // gemini-2.0-flash-lite for simple queries
+      }
+    }
+
+    // GROQ: 2-tier selection (both Llama models are free)
+    if (provider === AIProvider.GROQ && complexity === TaskComplexity.COMPREHENSIVE && providerConfig.comprehensive) {
+      return providerConfig.comprehensive; // llama-3.1-70b for reasoning
+    }
+
+    // MISTRAL: Only one free model - no selection needed
+    // Always returns undefined here, will fall back to default
+
+    // CLAUDE: 2-tier selection based on complexity
+    if (provider === AIProvider.CLAUDE && complexity === TaskComplexity.COMPREHENSIVE && providerConfig.comprehensive) {
+      return providerConfig.comprehensive; // claude-3-5-sonnet for detailed reasoning
+    }
+
+    return undefined;
+  };
+
+  // If no model requested, choose based on task complexity or use default
+  if (!requestedModel) {
+    return selectByComplexity() ?? providerConfig.default;
+  }
 
   // Check if the requested model is valid for this provider
   const lowerModel = requestedModel.toLowerCase();
@@ -443,9 +494,11 @@ function getProviderModel(provider: AIProvider, requestedModel?: string): string
 
   if (isValid) return requestedModel;
 
-  // Invalid model for this provider - use default and log warning
-  console.log(`[AI Provider] Model "${requestedModel}" invalid for ${provider}, using ${providerConfig.default}`);
-  return providerConfig.default;
+  // Invalid model for this provider - use complexity-based selection or default
+  const fallbackReason = complexity ? 'complexity-based selection' : 'default model';
+  console.log(`[AI Provider] Model "${requestedModel}" invalid for ${provider}, using ${fallbackReason}`);
+
+  return selectByComplexity() ?? providerConfig.default;
 }
 
 /**
@@ -470,31 +523,34 @@ async function runProvider(
 
   switch (provider) {
     case AIProvider.GEMINI: {
-      const model = getProviderModel(AIProvider.GEMINI, options.model);
+      const model = getProviderModel(AIProvider.GEMINI, options.model, task.complexity);
       const text = await callGemini(prompt, { ...options, model }, maxTokens);
       content = text;
       tokensUsed = Math.floor((prompt.length + content.length) / 4);
       break;
     }
     case AIProvider.GROQ: {
-      const model = getProviderModel(AIProvider.GROQ, options.model);
+      const model = getProviderModel(AIProvider.GROQ, options.model, task.complexity);
       const text = await callGroq(prompt, { ...options, model }, maxTokens);
       content = text;
       tokensUsed = Math.floor((prompt.length + content.length) / 4);
       break;
     }
     case AIProvider.MISTRAL: {
-      const model = getProviderModel(AIProvider.MISTRAL, options.model);
+      const model = getProviderModel(AIProvider.MISTRAL, options.model, task.complexity);
       const mistralResult = await callMistral(prompt, { ...options, model, maxTokens });
       content = mistralResult.content;
       tokensUsed = mistralResult.tokensUsed ?? Math.floor((prompt.length + content.length) / 4);
       break;
     }
     case AIProvider.CLAUDE: {
-      // Choose Haiku for speed unless verbosity is detailed, then Sonnet
-      const useSonnet = options.model?.includes('sonnet') || (getVerbosityInstruction('detailed') === getVerbosityInstruction(budgetVerbosity(options)));
-      const defaultModel = useSonnet ? 'claude-3-5-sonnet-20241022' : 'claude-3-5-haiku-20241022';
-      const model = getProviderModel(AIProvider.CLAUDE, options.model) || defaultModel;
+      // getProviderModel handles complexity-based selection automatically
+      // Additional check: if detailed verbosity is requested and no model specified, use sonnet
+      const detailedVerbosity = getVerbosityInstruction('detailed') === getVerbosityInstruction(budgetVerbosity(options));
+      const effectiveComplexity = (detailedVerbosity && !options.model) 
+        ? TaskComplexity.COMPREHENSIVE 
+        : task.complexity;
+      const model = getProviderModel(AIProvider.CLAUDE, options.model, effectiveComplexity);
       const claudeResult = await callClaude(prompt, { ...options, model, maxTokens });
       content = claudeResult.content;
       tokensUsed = claudeResult.tokensUsed ?? Math.floor((prompt.length + content.length) / 4);
