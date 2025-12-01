@@ -604,7 +604,7 @@ export default function Home() {
                     <div>
                       <CardTitle className="text-2xl">Admin Panel: Bad Blue Users</CardTitle>
                       <CardDescription className="mt-1">
-                        View all registered users and their purchased services
+                        View all registered users with newest first and purchase information
                       </CardDescription>
                     </div>
                   </div>
@@ -613,7 +613,7 @@ export default function Home() {
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-3">
-                  View all registered users, their account details, and the paid services they have purchased.
+                  View all registered users sorted by newest first, their account details, and the paid services they have purchased.
                 </p>
                 <ul className="text-sm text-muted-foreground space-y-1">
                   <li>• View all registered user accounts</li>
