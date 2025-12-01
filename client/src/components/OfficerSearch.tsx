@@ -233,6 +233,9 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       return;
     }
     
+    // Reset previous results to ensure form stays visible during search
+    setSearchResults(null);
+    
     // Generate unique search ID
     const newSearchId = `search-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     setSearchId(newSearchId);
@@ -296,7 +299,8 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                 )}
               </div>
             )}
-            {!searchResults ? (
+            {/* Show form when no results OR during search, show report only with complete data */}
+            {!searchResults || searchMutation.isPending ? (
               <>
                 <div className="space-y-2">
                   <Label htmlFor="input-officer-name">Officer Name</Label>
