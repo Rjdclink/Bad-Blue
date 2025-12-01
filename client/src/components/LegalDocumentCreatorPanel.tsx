@@ -459,6 +459,8 @@ export default function LegalDocumentCreatorPanel() {
   );
 
   // Render preview
+  // Note: Client-side copy protection (userSelect:none, onCopy) is a UX deterrent only.
+  // The actual document protection is server-side: full document only sent via email after payment.
   const renderPreview = () => (
     <div className="space-y-6">
       <div className="p-3 bg-green-100 dark:bg-green-900/20 rounded-lg flex items-center gap-2">

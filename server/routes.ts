@@ -5193,15 +5193,19 @@ For questions or support, contact: support@badblue.com
       throw ErrorTypes.MISSING_REQUIRED_FIELDS(['answers']);
     }
 
-    // Sanitize answers - basic XSS prevention
+    // Sanitize answers - plain text only for AI prompts
+    // Since these go to AI, not HTML, we encode all potentially dangerous chars
     const sanitizedAnswers: Record<string, string> = {};
     for (const [key, value] of Object.entries(answers)) {
       if (typeof value === 'string') {
-        // Basic sanitization - remove script tags and HTML
-        sanitizedAnswers[key] = value
-          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-          .replace(/<[^>]*>/g, '')
+        // Simple approach: just strip angle brackets and limit length
+        // The AI doesn't need HTML, so we keep only plain text
+        const sanitized = value
+          .replace(/[<>]/g, '') // Remove angle brackets entirely
+          .substring(0, 10000)  // Limit length to prevent DoS
           .trim();
+        
+        sanitizedAnswers[key] = sanitized;
       }
     }
 
@@ -5225,10 +5229,10 @@ For questions or support, contact: support@badblue.com
       throw ErrorTypes.MISSING_REQUIRED_FIELDS(['editRequest']);
     }
 
-    // Sanitize edit request
+    // Sanitize edit request - plain text only for AI
     const sanitizedRequest = editRequest
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-      .replace(/<[^>]*>/g, '')
+      .replace(/[<>]/g, '') // Remove angle brackets entirely
+      .substring(0, 5000)   // Limit length
       .trim();
 
     const result = await requestDraftEdit(id, sanitizedRequest);

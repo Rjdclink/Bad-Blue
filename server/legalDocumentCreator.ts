@@ -12,17 +12,36 @@ import crypto from 'crypto';
 import Stripe from 'stripe';
 import { 
   generateUserText, 
-  TaskPriority 
-} from './aiProvider';
-import { 
+  TaskPriority,
   TaskComplexity, 
   AIProvider,
   recordUsage 
-} from './aiTokenGovernor';
+} from './aiProvider';
 import { safeJsonParse } from './jsonParser';
 import { sendUserEmail } from './emailService';
 import { getBaseURL } from './platformConfig';
 import { LEGAL_DOCUMENT_CREATOR_PRICING_CENTS } from '@shared/schema';
+
+// ============================================
+// Stripe Configuration
+// ============================================
+
+const STRIPE_API_VERSION = '2024-06-20';
+
+// Lazy-initialized Stripe client
+let stripeClient: Stripe | null = null;
+
+function getStripeClient(): Stripe {
+  if (!stripeClient) {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      throw new Error('Stripe is not configured');
+    }
+    stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: STRIPE_API_VERSION as any,
+    });
+  }
+  return stripeClient;
+}
 
 // ============================================
 // Types and Interfaces
@@ -502,14 +521,8 @@ export async function createCheckout(
   session.userEmail = userEmail;
   session.updatedAt = new Date();
   
-  // Initialize Stripe
-  if (!process.env.STRIPE_SECRET_KEY) {
-    throw new Error('Stripe is not configured');
-  }
-  
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: '2024-06-20' as any,
-  });
+  // Get shared Stripe client
+  const stripe = getStripeClient();
   
   const baseUrl = getBaseURL();
   
@@ -559,13 +572,12 @@ export async function handleStripeWebhook(
   payload: Buffer,
   signature: string
 ): Promise<{ success: boolean; message: string }> {
-  if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
-    throw new Error('Stripe is not configured');
+  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+    throw new Error('Stripe webhook secret is not configured');
   }
   
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: '2024-06-20' as any,
-  });
+  // Get shared Stripe client
+  const stripe = getStripeClient();
   
   let event: Stripe.Event;
   

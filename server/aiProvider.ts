@@ -405,5 +405,9 @@ export async function generateJSON<T>(
  */
 function estimateTokens(text: string): number {
   // Rough estimate: ~4 characters per token
+  // Note: This is an approximation. For more accurate counting, consider using
+  // a tokenization library like 'tiktoken' for OpenAI models or the native
+  // tokenizer for Gemini/Groq. The estimate is sufficient for basic quota
+  // tracking but may undercount for code or overcount for simple text.
   return Math.ceil(text.length / 4);
 }
