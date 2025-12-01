@@ -24,7 +24,7 @@ export class WorkerTokenBudget {
   async getRemainingBudget(): Promise<number> {
     // No limits - workers can use unlimited Groq tokens
     console.log(`[Worker Budget] Unlimited Groq access for worker operations`);
-    return Infinity;
+    return Number.MAX_SAFE_INTEGER;
   }
 
   /**
@@ -85,8 +85,8 @@ export class WorkerTokenBudget {
     
     return {
       used,
-      budget: Infinity,
-      remaining: Infinity,
+      budget: Number.MAX_SAFE_INTEGER,
+      remaining: Number.MAX_SAFE_INTEGER,
       percentUsed: 0, // Always 0% since unlimited
     };
   }
