@@ -367,7 +367,8 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                   </div>
                 )}
 
-                <div className="space-y-3 pt-4 border-t" data-testid="officer-categories-section">
+                {/* CHECKBOXES SECTION - v2 */}
+                <div className="space-y-3 pt-4 border-t bg-yellow-100 dark:bg-yellow-900 p-3 rounded-lg" data-testid="officer-categories-section">
                   <Label className="text-base font-semibold">Officer Categories <span className="text-muted-foreground font-normal text-sm">(optional)</span></Label>
                   <p className="text-sm text-muted-foreground">Include additional officer types in your search:</p>
                   <div className="flex flex-col sm:flex-row gap-4">
