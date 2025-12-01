@@ -99,11 +99,19 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   // Each page should have only ONE FAQPage schema - components should not add their own
 
   const [officerName, setOfficerName] = useState("");
-  const [state, setState] = useState("");
-  const [county, setCounty] = useState("");
-  const [city, setCity] = useState("");
-  const [includeGovernment, setIncludeGovernment] = useState(false);
-  const [includeCorrections, setIncludeCorrections] = useState(false);
+  
+  // 5 Checkbox filters with corresponding input values
+  const [cityEnabled, setCityEnabled] = useState(false);
+  const [cityValue, setCityValue] = useState("");
+  const [countyEnabled, setCountyEnabled] = useState(false);
+  const [countyValue, setCountyValue] = useState("");
+  const [stateEnabled, setStateEnabled] = useState(false);
+  const [stateValue, setStateValue] = useState("");
+  const [governmentEnabled, setGovernmentEnabled] = useState(false);
+  const [governmentValue, setGovernmentValue] = useState("");
+  const [correctionsEnabled, setCorrectionsEnabled] = useState(false);
+  const [correctionsValue, setCorrectionsValue] = useState("");
+  
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searchId, setSearchId] = useState<string | null>(null);
   const [progress, setProgress] = useState<{
@@ -150,9 +158,14 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
   const searchMutation = useMutation({
     mutationFn: async (data: { 
       officerName: string; 
-      state: string; 
+      state?: string; 
       county?: string;
       city?: string;
+      governmentAgency?: string;
+      correctionsFacility?: string;
+      includeCity?: boolean;
+      includeCounty?: boolean;
+      includeState?: boolean;
       includeGovernment?: boolean;
       includeCorrections?: boolean;
       searchId: string 
@@ -224,10 +237,21 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       return;
     }
 
-    if (!state) {
+    // At least one location filter must be selected
+    if (!cityEnabled && !countyEnabled && !stateEnabled && !governmentEnabled && !correctionsEnabled) {
+      toast({
+        title: "Location Required",
+        description: "Please select at least one search category (City, County, State, Government, or Corrections)",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate that enabled checkboxes have values
+    if (stateEnabled && !stateValue) {
       toast({
         title: "State Required",
-        description: "Please select a state to search",
+        description: "Please select a state for state-level search",
         variant: "destructive",
       });
       return;
@@ -243,11 +267,16 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
 
     searchMutation.mutate({ 
       officerName: officerName.trim(), 
-      state,
-      county: county.trim() || undefined,
-      city: city.trim() || undefined,
-      includeGovernment: includeGovernment || undefined,
-      includeCorrections: includeCorrections || undefined,
+      state: stateEnabled ? stateValue : undefined,
+      county: countyEnabled ? countyValue.trim() || undefined : undefined,
+      city: cityEnabled ? cityValue.trim() || undefined : undefined,
+      governmentAgency: governmentEnabled ? governmentValue.trim() || undefined : undefined,
+      correctionsFacility: correctionsEnabled ? correctionsValue.trim() || undefined : undefined,
+      includeCity: cityEnabled,
+      includeCounty: countyEnabled,
+      includeState: stateEnabled,
+      includeGovernment: governmentEnabled,
+      includeCorrections: correctionsEnabled,
       searchId: newSearchId,
     });
   };
@@ -302,8 +331,9 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
             {/* Show form when no results OR during search, show report only with complete data */}
             {!searchResults || searchMutation.isPending ? (
               <>
+                {/* Officer Name Input */}
                 <div className="space-y-2">
-                  <Label htmlFor="input-officer-name">Officer Name</Label>
+                  <Label htmlFor="input-officer-name">Officer Name <span className="text-destructive">*</span></Label>
                   <Input
                     id="input-officer-name"
                     data-testid="input-officer-name"
@@ -313,97 +343,151 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="select-state">State <span className="text-destructive">*</span></Label>
-                  <Select value={state} onValueChange={(value) => {
-                    setState(value);
-                    setCounty("");
-                    setCity("");
-                  }}>
-                    <SelectTrigger id="select-state" data-testid="select-state">
-                      <SelectValue placeholder="Select state" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {US_STATES.map((s) => (
-                        <SelectItem key={s.code} value={s.code}>
-                          {s.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* City and County inputs - show when state is selected */}
-                {state && (
-                  <div className="space-y-3 p-3 border rounded-md bg-muted/30">
-                    <Label className="text-sm font-semibold">Local Officers (Optional)</Label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="input-city" className="flex items-center gap-2">
-                          <MapPin className="w-3 h-3" />
-                          City Police Department
-                        </Label>
-                        <Input
-                          id="input-city"
-                          data-testid="input-city"
-                          placeholder="e.g., Atlanta, Savannah"
-                          value={city}
-                          onChange={(e) => setCity(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="input-county" className="flex items-center gap-2">
-                          <MapPin className="w-3 h-3" />
-                          County Sheriff's Office
-                        </Label>
-                        <Input
-                          id="input-county"
-                          data-testid="input-county"
-                          placeholder="e.g., Fulton County"
-                          value={county}
-                          onChange={(e) => setCounty(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground italic">
-                      Leave both blank to search State Police / Highway Patrol only
-                    </p>
+                {/* 5 Checkbox Search Filters */}
+                <div className="space-y-4 p-4 border rounded-lg bg-muted/30" data-testid="search-filters-section">
+                  <div className="space-y-1">
+                    <Label className="text-base font-semibold">Search Categories</Label>
+                    <p className="text-sm text-muted-foreground">Select one or more categories and provide details</p>
                   </div>
-                )}
 
-                {/* Government and Corrections - Always visible checkboxes */}
-                <div className="space-y-3 p-3 border rounded-md bg-muted/30">
-                  <Label className="text-sm font-semibold">Additional Officer Types</Label>
-                  <div className="flex flex-col sm:flex-row gap-4">
-                    <div className="flex items-center space-x-3 p-2 rounded-md border bg-background hover:bg-accent cursor-pointer" onClick={() => setIncludeGovernment(!includeGovernment)} data-testid="checkbox-government-container">
-                      <Checkbox
-                        id="checkbox-government"
-                        data-testid="checkbox-government"
-                        checked={includeGovernment}
-                        onCheckedChange={(checked) => setIncludeGovernment(checked === true)}
-                        className="border-2"
+                  {/* City Checkbox + Input */}
+                  <div className="flex items-start gap-3 p-3 rounded-md border bg-background" data-testid="filter-city">
+                    <Checkbox
+                      id="checkbox-city"
+                      data-testid="checkbox-city"
+                      checked={cityEnabled}
+                      onCheckedChange={(checked) => setCityEnabled(checked === true)}
+                      className="mt-1 border-2"
+                    />
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="checkbox-city" className="flex items-center gap-2 cursor-pointer font-medium">
+                        <MapPin className="w-4 h-4 text-blue-600" />
+                        City Police Department
+                      </Label>
+                      <Input
+                        id="input-city"
+                        data-testid="input-city"
+                        placeholder="Enter city name (e.g., Atlanta, Chicago)"
+                        value={cityValue}
+                        onChange={(e) => setCityValue(e.target.value)}
+                        disabled={!cityEnabled}
+                        className={!cityEnabled ? "opacity-50" : ""}
                       />
-                      <div className="flex-1">
-                        <Label htmlFor="checkbox-government" className="font-normal cursor-pointer">
-                          Federal/Government Officers
-                        </Label>
-                        <p className="text-xs text-muted-foreground">FBI, DEA, ICE, Marshals, etc.</p>
-                      </div>
                     </div>
-                    <div className="flex items-center space-x-3 p-2 rounded-md border bg-background hover:bg-accent cursor-pointer" onClick={() => setIncludeCorrections(!includeCorrections)} data-testid="checkbox-corrections-container">
-                      <Checkbox
-                        id="checkbox-corrections"
-                        data-testid="checkbox-corrections"
-                        checked={includeCorrections}
-                        onCheckedChange={(checked) => setIncludeCorrections(checked === true)}
-                        className="border-2"
+                  </div>
+
+                  {/* County Checkbox + Input */}
+                  <div className="flex items-start gap-3 p-3 rounded-md border bg-background" data-testid="filter-county">
+                    <Checkbox
+                      id="checkbox-county"
+                      data-testid="checkbox-county"
+                      checked={countyEnabled}
+                      onCheckedChange={(checked) => setCountyEnabled(checked === true)}
+                      className="mt-1 border-2"
+                    />
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="checkbox-county" className="flex items-center gap-2 cursor-pointer font-medium">
+                        <MapPin className="w-4 h-4 text-green-600" />
+                        County Sheriff's Office
+                      </Label>
+                      <Input
+                        id="input-county"
+                        data-testid="input-county"
+                        placeholder="Enter county name (e.g., Fulton, Cook)"
+                        value={countyValue}
+                        onChange={(e) => setCountyValue(e.target.value)}
+                        disabled={!countyEnabled}
+                        className={!countyEnabled ? "opacity-50" : ""}
                       />
-                      <div className="flex-1">
-                        <Label htmlFor="checkbox-corrections" className="font-normal cursor-pointer">
-                          Corrections Officers
-                        </Label>
-                        <p className="text-xs text-muted-foreground">Prison, jail, detention staff</p>
-                      </div>
+                    </div>
+                  </div>
+
+                  {/* State Checkbox + Dropdown */}
+                  <div className="flex items-start gap-3 p-3 rounded-md border bg-background" data-testid="filter-state">
+                    <Checkbox
+                      id="checkbox-state"
+                      data-testid="checkbox-state"
+                      checked={stateEnabled}
+                      onCheckedChange={(checked) => setStateEnabled(checked === true)}
+                      className="mt-1 border-2"
+                    />
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="checkbox-state" className="flex items-center gap-2 cursor-pointer font-medium">
+                        <Shield className="w-4 h-4 text-purple-600" />
+                        State Police / Highway Patrol
+                      </Label>
+                      <Select 
+                        value={stateValue} 
+                        onValueChange={setStateValue}
+                        disabled={!stateEnabled}
+                      >
+                        <SelectTrigger 
+                          id="select-state" 
+                          data-testid="select-state"
+                          className={!stateEnabled ? "opacity-50" : ""}
+                        >
+                          <SelectValue placeholder="Select state" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {US_STATES.map((s) => (
+                            <SelectItem key={s.code} value={s.code}>
+                              {s.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Government Checkbox + Input */}
+                  <div className="flex items-start gap-3 p-3 rounded-md border bg-background" data-testid="filter-government">
+                    <Checkbox
+                      id="checkbox-government"
+                      data-testid="checkbox-government"
+                      checked={governmentEnabled}
+                      onCheckedChange={(checked) => setGovernmentEnabled(checked === true)}
+                      className="mt-1 border-2"
+                    />
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="checkbox-government" className="flex items-center gap-2 cursor-pointer font-medium">
+                        <Briefcase className="w-4 h-4 text-orange-600" />
+                        Federal/Government Officers
+                      </Label>
+                      <Input
+                        id="input-government"
+                        data-testid="input-government"
+                        placeholder="Enter agency (e.g., FBI, DEA, ICE, US Marshals)"
+                        value={governmentValue}
+                        onChange={(e) => setGovernmentValue(e.target.value)}
+                        disabled={!governmentEnabled}
+                        className={!governmentEnabled ? "opacity-50" : ""}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Corrections Checkbox + Input */}
+                  <div className="flex items-start gap-3 p-3 rounded-md border bg-background" data-testid="filter-corrections">
+                    <Checkbox
+                      id="checkbox-corrections"
+                      data-testid="checkbox-corrections"
+                      checked={correctionsEnabled}
+                      onCheckedChange={(checked) => setCorrectionsEnabled(checked === true)}
+                      className="mt-1 border-2"
+                    />
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="checkbox-corrections" className="flex items-center gap-2 cursor-pointer font-medium">
+                        <Users className="w-4 h-4 text-red-600" />
+                        Corrections Officers
+                      </Label>
+                      <Input
+                        id="input-corrections"
+                        data-testid="input-corrections"
+                        placeholder="Enter facility (e.g., State Prison, County Jail)"
+                        value={correctionsValue}
+                        onChange={(e) => setCorrectionsValue(e.target.value)}
+                        disabled={!correctionsEnabled}
+                        className={!correctionsEnabled ? "opacity-50" : ""}
+                      />
                     </div>
                   </div>
                 </div>
@@ -462,7 +546,7 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground uppercase">Jurisdiction</p>
-                        <p className="font-medium">{state ? US_STATES.find(s => s.code === state)?.name || state : 'Unknown'}</p>
+                        <p className="font-medium">{stateValue ? US_STATES.find(s => s.code === stateValue)?.name || stateValue : 'Unknown'}</p>
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground uppercase">Rank/Title</p>
@@ -668,11 +752,16 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
                       onClick={() => {
                         setSearchResults(null);
                         setOfficerName("");
-                        setState("");
-                        setCounty("");
-                        setCity("");
-                        setIncludeGovernment(false);
-                        setIncludeCorrections(false);
+                        setCityEnabled(false);
+                        setCityValue("");
+                        setCountyEnabled(false);
+                        setCountyValue("");
+                        setStateEnabled(false);
+                        setStateValue("");
+                        setGovernmentEnabled(false);
+                        setGovernmentValue("");
+                        setCorrectionsEnabled(false);
+                        setCorrectionsValue("");
                         setProgress(null);
                         setSearchId(null);
                         if (eventSourceRef.current) {

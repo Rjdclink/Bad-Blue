@@ -49,21 +49,21 @@ setInterval(() => {
   }
 }, CLEANUP_INTERVAL);
 
-function getCacheKey(
-  officerName: string, 
-  state?: string,
-  city?: string,
-  county?: string,
-  includeGovernment?: boolean,
-  includeCorrections?: boolean
-): string {
-  const safeName = (officerName || '').toLowerCase().trim();
-  const safeState = state ? state.toUpperCase().trim() : '';
-  const safeCity = city ? city.toLowerCase().trim() : '';
-  const safeCounty = county ? county.toLowerCase().trim() : '';
-  const govFlag = includeGovernment ? 'g' : '';
-  const corrFlag = includeCorrections ? 'c' : '';
-  return `${safeName}|${safeState}|${safeCity}|${safeCounty}|${govFlag}${corrFlag}`;
+function getCacheKey(params: OfficerSearchParams): string {
+  const safeName = (params.officerName || '').toLowerCase().trim();
+  const safeState = params.state ? params.state.toUpperCase().trim() : '';
+  const safeCity = params.city ? params.city.toLowerCase().trim() : '';
+  const safeCounty = params.county ? params.county.toLowerCase().trim() : '';
+  const safeGovAgency = params.governmentAgency ? params.governmentAgency.toLowerCase().trim() : '';
+  const safeCorrFacility = params.correctionsFacility ? params.correctionsFacility.toLowerCase().trim() : '';
+  const flags = [
+    params.includeCity ? 'city' : '',
+    params.includeCounty ? 'county' : '',
+    params.includeState ? 'state' : '',
+    params.includeGovernment ? 'gov' : '',
+    params.includeCorrections ? 'corr' : ''
+  ].filter(Boolean).join('-');
+  return `${safeName}|${safeState}|${safeCity}|${safeCounty}|${safeGovAgency}|${safeCorrFacility}|${flags}`;
 }
 
 function getCachedResult(cacheKey: string): OfficerSearchResult | null {
@@ -95,9 +95,14 @@ function setCachedResult(cacheKey: string, result: OfficerSearchResult): void {
 
 export interface OfficerSearchParams {
   officerName: string;
-  state: string;
+  state?: string;
   city?: string;
   county?: string;
+  governmentAgency?: string;
+  correctionsFacility?: string;
+  includeCity?: boolean;
+  includeCounty?: boolean;
+  includeState?: boolean;
   includeGovernment?: boolean;
   includeCorrections?: boolean;
   departmentType?: 'city' | 'state' | 'county' | 'government' | 'corrections'; // Legacy
@@ -614,7 +619,7 @@ export async function searchOfficerInformation(
   // Stage 1: Initialization & Cache Check
   emitProgress(1, 'Initializing', `Searching for ${normalizedName}${state ? ` in ${state}` : ''}`);
 
-  const cacheKey = getCacheKey(normalizedName, state, city, county, includeGovernment, includeCorrections);
+  const cacheKey = getCacheKey({ ...params, officerName: normalizedName });
   if (!bypassCache) {
     const cached = getCachedResult(cacheKey);
     if (cached) {
