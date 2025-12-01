@@ -1,0 +1,45 @@
+name: CI - Build & Type Check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & Type Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: TypeScript type check
+        run: npm run check
+        env:
+          NODE_ENV: production
+      
+      - name: Build application
+        run: npm run build
+        env:
+          GEMINI_API_KEY: "build-test-key"
+          GROQ_API_KEY: "build-test-key"
+          MISTRAL_API_KEY: "build-test-key"
+          ANTHROPIC_API_KEY: "build-test-key"
+          STRIPE_SECRET_KEY: "sk_test_dummy"
+          VITE_STRIPE_PUBLIC_KEY: "pk_test_dummy"
+          DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+          SESSION_SECRET: "test-session-secret-for-build"
+      
+      - name: Build successful
+        run: echo "✅ Build and type check passed!"

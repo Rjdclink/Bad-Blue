@@ -4,6 +4,7 @@ import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcrypt";
 import { storage } from "./storage";
 import crypto from "crypto";
+import { sendWelcomeEmail } from './emailService';
 
 const BCRYPT_SALT_ROUNDS = 12; // Strong hashing cost
 
@@ -68,6 +69,14 @@ export async function registerLocalUser(email: string, password: string, firstNa
     username, // Keep for backward compatibility, but not used for login
     passwordHash: hash,
     passwordSalt: salt,
+  });
+
+  // Send welcome email to new user (non-blocking)
+  sendWelcomeEmail({
+    firstName: firstName,
+    email: email,
+  }).catch(err => {
+    console.error('[Registration] Failed to send welcome email:', err);
   });
 
   return { user, authAccount };

@@ -1,0 +1,29 @@
+{
+  "name": "Bad-Blue Development",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:20",
+  
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  
+  "forwardPorts": [5000],
+  
+  "postCreateCommand": "npm install",
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        "github.copilot"
+      ]
+    }
+  },
+  
+  "remoteEnv": {
+    "NODE_ENV": "development"
+  }
+}

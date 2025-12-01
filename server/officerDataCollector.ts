@@ -33,7 +33,7 @@ function getGeminiClient(): GoogleGenerativeAI {
     if (!process.env.GEMINI_API_KEY) {
       throw new Error('GEMINI_API_KEY environment variable is not set');
     }
-    gemini = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+    gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   }
   return gemini;
 }
@@ -155,23 +155,22 @@ Extract:
 Provide detailed information with specific sources. Be thorough and accurate.`;
 
   const client = getGeminiClient();
-  const response = await client.models.generateContent({
-    model: "gemini-2.0-flash-thinking-exp",
+  const geminiModel = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const response = await geminiModel.generateContent({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
+    generationConfig: {
       temperature: 0.0,
-      tools: [{ googleSearch: {} }]
     },
   });
 
-  const text = response.text || "";
+  const text = response.response.text() || "";
   const sources: string[] = [];
   
   try {
-    const candidate = response.candidates?.[0];
+    const candidate = response.response.candidates?.[0];
     if (candidate?.groundingMetadata?.groundingChunks) {
       for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if (chunk.web?.uri) sources.push(chunk.web.uri);
+        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
       }
     }
   } catch (e) {
@@ -364,23 +363,22 @@ Extract:
 Provide accurate roster information with official sources.`;
 
   const client = getGeminiClient();
-  const response = await client.models.generateContent({
-    model: "gemini-2.0-flash-thinking-exp",
+  const geminiModel = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const response = await geminiModel.generateContent({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
+    generationConfig: {
       temperature: 0.0,
-      tools: [{ googleSearch: {} }]
     },
   });
 
-  const text = response.text || "";
+  const text = response.response.text() || "";
   const sources: string[] = [];
   
   try {
-    const candidate = response.candidates?.[0];
+    const candidate = response.response.candidates?.[0];
     if (candidate?.groundingMetadata?.groundingChunks) {
       for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if (chunk.web?.uri) sources.push(chunk.web.uri);
+        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
       }
     }
   } catch (e) {
@@ -508,15 +506,15 @@ Provide:
 Be critical and prioritize accuracy over comprehensiveness.`;
 
   const client = getGeminiClient();
-  const response = await client.models.generateContent({
-    model: "gemini-2.0-flash-thinking-exp",
+  const geminiModel = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const response = await geminiModel.generateContent({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
+    generationConfig: {
       temperature: 0.0,
     },
   });
 
-  const text = response.text || "";
+  const text = response.response.text() || "";
 
   // Extract verified information
   const badgeMatch = text.match(/badge\s*(?:number|#|no\.?)?\s*[:\-]?\s*(\d+)/i);
