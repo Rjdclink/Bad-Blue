@@ -450,17 +450,21 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
   const providerConfig = validModels[provider];
   if (!providerConfig) return requestedModel || '';
 
-  // If no model requested, choose based on task complexity
-  if (!requestedModel) {
+  /**
+   * Helper to select model based on task complexity for a given provider config.
+   * Returns undefined if no complexity-based selection applies.
+   */
+  const selectByComplexity = (): string | undefined => {
+    if (!complexity) return undefined;
+    
     // GEMINI: 3-tier selection based on complexity
-    if (provider === AIProvider.GEMINI && complexity) {
+    if (provider === AIProvider.GEMINI) {
       if (complexity === TaskComplexity.COMPREHENSIVE && providerConfig.pro) {
         return providerConfig.pro; // gemini-2.5-pro for complex legal analysis
       }
       if (complexity === TaskComplexity.LIGHTWEIGHT && providerConfig.lite) {
         return providerConfig.lite; // gemini-2.0-flash-lite for simple queries
       }
-      return providerConfig.default; // gemini-2.0-flash for moderate tasks
     }
 
     // GROQ: 2-tier selection (both Llama models are free)
@@ -469,14 +473,19 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     }
 
     // MISTRAL: Only one free model - no selection needed
-    // Always returns default (mistral-small-latest) regardless of complexity
+    // Always returns undefined here, will fall back to default
 
     // CLAUDE: 2-tier selection based on complexity
     if (provider === AIProvider.CLAUDE && complexity === TaskComplexity.COMPREHENSIVE && providerConfig.comprehensive) {
       return providerConfig.comprehensive; // claude-3-5-sonnet for detailed reasoning
     }
 
-    return providerConfig.default;
+    return undefined;
+  };
+
+  // If no model requested, choose based on task complexity or use default
+  if (!requestedModel) {
+    return selectByComplexity() ?? providerConfig.default;
   }
 
   // Check if the requested model is valid for this provider
@@ -486,21 +495,10 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
   if (isValid) return requestedModel;
 
   // Invalid model for this provider - use complexity-based selection or default
-  console.log(`[AI Provider] Model "${requestedModel}" invalid for ${provider}, using complexity-based selection`);
+  const fallbackReason = complexity ? 'complexity-based selection' : 'default model';
+  console.log(`[AI Provider] Model "${requestedModel}" invalid for ${provider}, using ${fallbackReason}`);
 
-  // Retry with complexity-based selection
-  if (complexity) {
-    if (provider === AIProvider.GEMINI) {
-      if (complexity === TaskComplexity.COMPREHENSIVE && providerConfig.pro) return providerConfig.pro;
-      if (complexity === TaskComplexity.LIGHTWEIGHT && providerConfig.lite) return providerConfig.lite;
-    }
-    if ((provider === AIProvider.GROQ || provider === AIProvider.CLAUDE) && 
-        complexity === TaskComplexity.COMPREHENSIVE && providerConfig.comprehensive) {
-      return providerConfig.comprehensive;
-    }
-  }
-
-  return providerConfig.default;
+  return selectByComplexity() ?? providerConfig.default;
 }
 
 /**
@@ -546,12 +544,13 @@ async function runProvider(
       break;
     }
     case AIProvider.CLAUDE: {
-      // Choose comprehensive model for COMPREHENSIVE tasks, or when explicitly requesting sonnet
-      const useComprehensiveModel = task.complexity === TaskComplexity.COMPREHENSIVE || 
-        options.model?.includes('sonnet') || 
-        (getVerbosityInstruction('detailed') === getVerbosityInstruction(budgetVerbosity(options)));
-      const model = getProviderModel(AIProvider.CLAUDE, options.model, task.complexity) || 
-        (useComprehensiveModel ? 'claude-3-5-sonnet-20241022' : 'claude-3-5-haiku-20241022');
+      // getProviderModel handles complexity-based selection automatically
+      // Additional check: if detailed verbosity is requested and no model specified, use sonnet
+      const detailedVerbosity = getVerbosityInstruction('detailed') === getVerbosityInstruction(budgetVerbosity(options));
+      const effectiveComplexity = (detailedVerbosity && !options.model) 
+        ? TaskComplexity.COMPREHENSIVE 
+        : task.complexity;
+      const model = getProviderModel(AIProvider.CLAUDE, options.model, effectiveComplexity);
       const claudeResult = await callClaude(prompt, { ...options, model, maxTokens });
       content = claudeResult.content;
       tokensUsed = claudeResult.tokensUsed ?? Math.floor((prompt.length + content.length) / 4);
