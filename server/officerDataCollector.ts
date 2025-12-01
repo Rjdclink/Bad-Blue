@@ -9,6 +9,11 @@ import type { OfficerProfile, InsertOfficerProfile } from "@shared/schema";
 import { rateLimitTracker } from "./rateLimitTracker";
 import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 
+// Type for Gemini grounding metadata chunks
+interface GroundingChunk {
+  web?: { uri: string };
+}
+
 let gemini: GoogleGenerativeAI | null = null;
 
 // Event emitter for tracking collection progress
@@ -170,7 +175,8 @@ Provide detailed information with specific sources. Be thorough and accurate.`;
     const candidate = response.response.candidates?.[0];
     if (candidate?.groundingMetadata?.groundingChunks) {
       for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
+        const groundingChunk = chunk as GroundingChunk;
+        if (groundingChunk.web?.uri) sources.push(groundingChunk.web.uri);
       }
     }
   } catch (e) {
@@ -378,7 +384,8 @@ Provide accurate roster information with official sources.`;
     const candidate = response.response.candidates?.[0];
     if (candidate?.groundingMetadata?.groundingChunks) {
       for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
+        const groundingChunk = chunk as GroundingChunk;
+        if (groundingChunk.web?.uri) sources.push(groundingChunk.web.uri);
       }
     }
   } catch (e) {
