@@ -1,11 +1,5 @@
 [
   {
-    "timestamp": "2025-11-08T07:18:57.682Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
     "timestamp": "2025-11-08T07:23:12.024Z",
     "check": "database_heartbeat",
     "status": "success",
@@ -5790,6 +5784,11 @@
   },
   {
     "timestamp": "2025-12-01T01:53:43.065Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2025-12-01T01:58:08.280Z",
     "check": "database_heartbeat",
     "status": "success"
   }
