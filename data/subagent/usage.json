@@ -316,5 +316,901 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:51:43.014Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:51:56.182Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:10.437Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:12.543Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@react-refresh"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:12.646Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:12.744Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@replit/vite-plugin-dev-banner/banner-script.js"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:12.747Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:12.749Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@react-refresh"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:12.833Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:12.957Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.055Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.217Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.224Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@vite/client"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.226Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.291Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/App.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.326Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/index.css"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.548Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@react-refresh"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.553Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.588Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/App.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.768Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/tooltip.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.778Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/useAuth.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.835Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/contexts/LanguageContext.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.858Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/page-skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.864Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/toaster.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.885Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/tooltip.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.911Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/useAuth.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.940Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/page-skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.965Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/use-toast.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:13.985Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/toast.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.017Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.032Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/translation.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.070Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/card.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.079Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/stock_images/cartoon_mechanic_wor_678db703.jpg"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.108Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/use-toast.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.116Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/utils.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.155Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.164Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/translation.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.171Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.178Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/stock_images/cartoon_mechanic_wor_678db703.jpg"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.220Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/.vite/deps/lucide-react.js"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:14.557Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 2
+  },
+  {
+    "timestamp": "2025-12-01T01:52:15.944Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.136Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-32x32.png"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.144Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.175Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.230Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/icon-512x512.png"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.262Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-32x32.png"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.287Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-16x16.png"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.344Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.503Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/home.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.872Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/LegalConsultation.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.898Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/LegalConsultation.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.916Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/LanguageSelector.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.933Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/textarea.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.939Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/checkbox.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.956Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/select.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:16.971Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/OfficerSearch.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.002Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SupportEmailFooter.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.012Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/dropdown-menu.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.036Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.057Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/input.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.078Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/OfficerSearchProgress.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.100Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/textarea.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.122Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/label.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.134Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/checkbox.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.155Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/select.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.185Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/input.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.194Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/OfficerSearchProgress.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.199Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/badge.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.206Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/scroll-area.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.235Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/progress.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.328Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/progress.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:17.664Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:18.084Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:18.244Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:46.644Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:52:47.722Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:16.981Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:18.757Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:26.294Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.384Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@react-refresh"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.525Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@vite/client"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.561Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@react-refresh"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.571Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.603Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@replit/vite-plugin-dev-banner/banner-script.js"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.604Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.632Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.645Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.733Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 2
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.825Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:28.944Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/useAuth.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.168Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@replit/vite-plugin-dev-banner/banner-script.js"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.191Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.195Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/App.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.242Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/index.css"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.248Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.396Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@react-refresh"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.412Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/App.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.418Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/index.css"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.425Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.652Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/useAuth.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.735Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/contexts/LanguageContext.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.743Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/page-skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.745Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/tooltip.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.751Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/queryClient.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.801Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/toaster.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.815Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/useAuth.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.826Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/MaintenanceMode.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.830Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/page-skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:29.969Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/utils.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.047Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/translation.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.055Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/home/runner/workspace/attached_assets/stock_images/cartoon_mechanic_wor_678db703.jpg"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.062Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/hooks/use-toast.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.066Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/toast.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.129Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.132Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/card.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.156Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/skeleton.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.564Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.746Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-32x32.png"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.799Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.832Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.854Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/icon-512x512.png"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.859Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-48x48.png"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.916Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-16x16.png"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:30.961Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.060Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/home.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.415Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SupportEmailFooter.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.431Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SEOHead.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.753Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/LegalConsultation.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.761Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/OfficerSearch.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.833Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SEOHead.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.844Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.849Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/badge.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.920Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/select.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.941Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/textarea.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:31.998Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/badge.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:32.021Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/select.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:32.085Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/checkbox.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:32.109Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/progress.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:32.214Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/progress.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:32.667Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:32.872Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-12-01T01:53:33.416Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/support-email"
+  },
+  {
+    "timestamp": "2025-12-01T01:54:01.260Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:54:01.715Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-01T01:54:11.943Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/index.css"
+  },
+  {
+    "timestamp": "2025-12-01T01:54:12.430Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/OfficerSearch.tsx"
+  },
+  {
+    "timestamp": "2025-12-01T01:54:12.599Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/OfficerSearch.tsx"
   }
 ]

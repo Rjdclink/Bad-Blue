@@ -173,8 +173,10 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
       const response = await apiRequest("/api/officer-search", "POST", data);
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: "Unknown error" }));
-        throw new Error(errorData.message || `Request failed with status ${response.status}`);
+        const errorData = await response.json().catch(() => ({ error: { message: "Unknown error" } }));
+        // Backend returns { success: false, error: { code, message } }
+        const errorMessage = errorData.error?.message || errorData.message || `Request failed with status ${response.status}`;
+        throw new Error(errorMessage);
       }
 
       return await response.json();
