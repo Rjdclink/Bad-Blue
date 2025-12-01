@@ -114,18 +114,17 @@ async function findOfficialWebsite(
     return null;
   }
 
-  const client = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+  const client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const searchQuery = `${formatSearchQuery(city, state, agencyType)} official website contact email`;
   console.log(`Searching for: ${searchQuery}`);
 
   try {
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
-      config: {
-        temperature: 0.1,
-        responseMimeType: "application/json",
-      },
-      contents: `Find the official website for ${formatSearchQuery(city, state, agencyType)}. 
+    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const response = await model.generateContent({
+      contents: [{
+        role: "user",
+        parts: [{
+          text: `Find the official website for ${formatSearchQuery(city, state, agencyType)}. 
 
       Look for:
       - Official .gov website URL
@@ -136,10 +135,16 @@ async function findOfficialWebsite(
       {
         "websiteUrl": "full URL or null",
         "confidence": "high|medium|low"
-      }`,
+      }`
+        }]
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: "application/json",
+      },
     });
 
-    const result = JSON.parse(response.text());
+    const result = JSON.parse(response.response.text());
     return result.websiteUrl;
   } catch (error) {
     console.error('Error finding official website:', error);
@@ -162,17 +167,16 @@ async function extractContactEmail(
     return null;
   }
 
-  const client = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+  const client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   console.log(`Extracting contact email from: ${url}`);
 
   try {
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
-      config: {
-        temperature: 0.1,
-        responseMimeType: "application/json",
-      },
-      contents: `Extract the official contact email for ${departmentName} from their website at ${url}.
+    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const response = await model.generateContent({
+      contents: [{
+        role: "user",
+        parts: [{
+          text: `Extract the official contact email for ${departmentName} from their website at ${url}.
 
       Look for:
       - Internal Affairs email (highest priority)
@@ -185,10 +189,16 @@ async function extractContactEmail(
         "email": "email@domain.gov or null",
         "emailType": "internal_affairs|admin|general|null",
         "confidence": "high|medium|low"
-      }`,
+      }`
+        }]
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: "application/json",
+      },
     });
 
-    const result = JSON.parse(response.text());
+    const result = JSON.parse(response.response.text());
     return result.email && isValidEmail(result.email) ? result.email : null;
   } catch (error) {
     console.error('Error extracting email:', error);
