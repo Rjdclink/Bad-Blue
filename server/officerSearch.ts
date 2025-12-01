@@ -241,6 +241,7 @@ function getDepartmentTypeLabel(departmentType?: string): string {
  * Gemini data harvesting - fast multimodal search
  * Leverages Gemini's strength in real-time data retrieval and web grounding
  * Enhanced with unified web search for additional coverage
+ * Supports 5 independent officer types: City, County, State, Government, Corrections
  */
 async function geminiDataHarvest(
   officerName: string,
@@ -263,32 +264,50 @@ async function geminiDataHarvest(
     ? `\n\nWeb search findings:\n${webSupplemental.snippets.slice(0, 5).join('\n')}`
     : '';
 
-  const deptTypeContext = departmentType 
-    ? `Department Type: ${getDepartmentTypeLabel(departmentType)}\n` 
-    : '';
+  // Build search context based on 5 independent officer types
+  const searchTypes: string[] = [];
   
-  const locationContext = city 
-    ? `City: ${city}\n` 
-    : county 
-      ? `County: ${county} County\n`
-      : '';
+  // Type 1: City Police (if city specified)
+  if (city) {
+    searchTypes.push(`City Police: ${city} Police Department, ${state || 'any state'}`);
+  }
   
-  const categoryFilters: string[] = [];
-  if (includeGovernment) categoryFilters.push('Federal/Government agencies (FBI, DEA, ICE, etc.)');
-  if (includeCorrections) categoryFilters.push('Corrections facilities (prisons, jails, detention centers)');
-  const categoryContext = categoryFilters.length > 0 
-    ? `Also search in: ${categoryFilters.join(', ')}\n`
+  // Type 2: County Sheriff (if county specified)
+  if (county) {
+    searchTypes.push(`County Sheriff: ${county} County Sheriff's Office, ${state || 'any state'}`);
+  }
+  
+  // Type 3: State Police (if state specified but no city/county, OR as fallback)
+  if (state && !city && !county) {
+    searchTypes.push(`State Police: ${state} State Police / Highway Patrol`);
+  }
+  
+  // Type 4: Federal/Government Officers (if checkbox selected)
+  if (includeGovernment) {
+    searchTypes.push(`Federal/Government: FBI, DEA, ATF, ICE, US Marshals, Border Patrol, federal agencies`);
+  }
+  
+  // Type 5: Corrections Officers (if checkbox selected)
+  if (includeCorrections) {
+    searchTypes.push(`Corrections: State prisons, county jails, federal detention centers, corrections departments`);
+  }
+  
+  const searchTypeContext = searchTypes.length > 0
+    ? `SEARCH IN THESE OFFICER TYPES:\n${searchTypes.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\n`
     : '';
 
-  const prompt = `Search for police officer information:
+  const prompt = `Search for law enforcement officer information:
 Name: ${officerName}
-State: ${state || 'Unknown'}
-${locationContext}${deptTypeContext}${categoryContext}${urlContext}${snippetContext}
+State: ${state || 'Any US State'}
+
+${searchTypeContext}IMPORTANT: Search across ALL specified officer types above. Each type is INDEPENDENT.
+
+${urlContext}${snippetContext}
 
 Extract ONLY factual, verifiable information. Return JSON with:
 {
-  "rank": "officer's current rank (e.g., Officer, Sergeant, Lieutenant, Captain, Chief)",
-  "agency": "department name with city/county (e.g., 'Los Angeles Police Department', 'Cook County Sheriff')",
+  "rank": "officer's current rank (e.g., Officer, Sergeant, Lieutenant, Captain, Chief, Warden, Agent)",
+  "agency": "full department/agency name with location (e.g., 'Chicago Police Department', 'Cook County Sheriff', 'Illinois State Police', 'FBI Chicago Field Office', 'Stateville Correctional Center')",
   "badgeNumber": "badge number if found",
   "disciplinary": ["list of disciplinary actions with dates"],
   "news": ["relevant news article headlines with sources"],
@@ -317,6 +336,7 @@ Return ONLY facts with sources. Omit empty fields. No speculation.`;
  * Claude data harvesting - used when Gemini is unavailable
  * Claude provides superior analytical reasoning and verification
  * NOTE: For USER searches, we exclusively use Gemini + Claude (no Groq)
+ * Supports 5 independent officer types: City, County, State, Government, Corrections
  */
 async function claudeDataHarvest(
   officerName: string,
@@ -327,35 +347,51 @@ async function claudeDataHarvest(
   includeGovernment?: boolean,
   includeCorrections?: boolean
 ): Promise<GeminiRawData> {
-  const deptTypeContext = departmentType 
-    ? `Department Type: ${getDepartmentTypeLabel(departmentType)}\n` 
-    : '';
+  // Build search context based on 5 independent officer types
+  const searchTypes: string[] = [];
   
-  const locationContext = city 
-    ? `City: ${city}\n` 
-    : county 
-      ? `County: ${county} County\n`
-      : '';
+  // Type 1: City Police (if city specified)
+  if (city) {
+    searchTypes.push(`- City Police: ${city} Police Department, ${state || 'any state'}`);
+  }
   
-  const categoryFilters: string[] = [];
-  if (includeGovernment) categoryFilters.push('Federal/Government agencies (FBI, DEA, ICE, etc.)');
-  if (includeCorrections) categoryFilters.push('Corrections facilities (prisons, jails, detention centers)');
-  const categoryContext = categoryFilters.length > 0 
-    ? `Also search in: ${categoryFilters.join(', ')}\n`
+  // Type 2: County Sheriff (if county specified)
+  if (county) {
+    searchTypes.push(`- County Sheriff: ${county} County Sheriff's Office, ${state || 'any state'}`);
+  }
+  
+  // Type 3: State Police (if state specified but no city/county)
+  if (state && !city && !county) {
+    searchTypes.push(`- State Police: ${state} State Police / Highway Patrol`);
+  }
+  
+  // Type 4: Federal/Government Officers (if checkbox selected)
+  if (includeGovernment) {
+    searchTypes.push(`- Federal/Government: FBI, DEA, ATF, ICE, US Marshals, Border Patrol, other federal agencies`);
+  }
+  
+  // Type 5: Corrections Officers (if checkbox selected)
+  if (includeCorrections) {
+    searchTypes.push(`- Corrections: State prisons, county jails, federal detention centers, corrections departments`);
+  }
+  
+  const searchTypeContext = searchTypes.length > 0
+    ? `\nSEARCH IN THESE OFFICER TYPES (EACH IS INDEPENDENT):\n${searchTypes.join('\n')}\n`
     : '';
 
   const prompt = `Research and compile information about a law enforcement officer.
 
 Officer Name: ${officerName}
-State: ${state || 'Unknown'}
-${locationContext}${deptTypeContext}${categoryContext}
+State: ${state || 'Any US State'}
+${searchTypeContext}
+IMPORTANT: Search across ALL specified officer types above. Each type is independent - an officer could be in any of these categories.
 
 Based on your knowledge and training data, provide any factual information about this officer. Be thorough but only include verifiable facts.
 
 Return ONLY valid JSON with this exact structure:
 {
   "rank": "officer's current or most recent rank",
-  "agency": "full department name with city/county",
+  "agency": "full department/agency name with location type (e.g., 'Chicago Police Department', 'Cook County Sheriff', 'Illinois State Police', 'FBI Chicago Field Office', 'Stateville Correctional Center')",
   "badgeNumber": "badge number if known",
   "disciplinary": ["list of disciplinary actions with dates if known"],
   "news": ["relevant news headlines with sources"],
@@ -462,6 +498,7 @@ Rules:
 
 /**
  * Broadened Gemini search - used for retry when initial search yields no results
+ * Searches across all 5 officer types with expanded sources
  */
 async function geminiDataHarvestBroadened(
   officerName: string,
@@ -469,33 +506,46 @@ async function geminiDataHarvestBroadened(
   includeGovernment?: boolean,
   includeCorrections?: boolean
 ): Promise<GeminiRawData> {
-  const categoryFilters: string[] = [];
-  if (includeGovernment) categoryFilters.push('Federal/Government agencies (FBI, DEA, ICE, etc.)');
-  if (includeCorrections) categoryFilters.push('Corrections facilities (prisons, jails, detention centers)');
-  const categoryContext = categoryFilters.length > 0 
-    ? `Also search in: ${categoryFilters.join(', ')}\n`
-    : '';
+  // Build comprehensive search across all 5 officer types
+  const searchScopes: string[] = [
+    '1. CITY POLICE: All city police departments in the state, major metropolitan areas',
+    '2. COUNTY SHERIFF: All county sheriff offices, rural law enforcement',
+    '3. STATE POLICE: State police, highway patrol, state troopers',
+  ];
+  
+  if (includeGovernment) {
+    searchScopes.push('4. FEDERAL/GOVERNMENT: FBI, DEA, ATF, ICE, US Marshals, Border Patrol, Secret Service, Capitol Police');
+  }
+  
+  if (includeCorrections) {
+    searchScopes.push('5. CORRECTIONS: State prisons, county jails, federal detention, DOC officers, prison guards');
+  }
 
-  const prompt = `BROADENED SEARCH for police officer - try alternative sources:
+  const prompt = `BROADENED SEARCH for law enforcement officer - EXHAUSTIVE search across ALL officer types:
 Name: ${officerName}
 State: ${state || 'Any US State'}
-${categoryContext}
-Search EXTENSIVELY across:
-1. State POST/peace officer standards databases
-2. News archives (local papers, crime reports)
-3. Court records (PACER, state courts)
-4. Oversight board records
-5. Union newsletters and disciplinary bulletins
-6. Social media profiles and LinkedIn
-7. Training academy records
-8. State police gazette publications
 
-Try name variations: "${officerName}", possible misspellings, nickname variations.
+SEARCH ACROSS ALL THESE OFFICER TYPES:
+${searchScopes.join('\n')}
+
+SEARCH EXTENSIVELY in these sources:
+- State POST/peace officer standards databases
+- News archives (local papers, crime reports, investigative journalism)
+- Court records (PACER, state courts, civil rights cases)
+- Oversight board records and complaint databases
+- Union newsletters and disciplinary bulletins
+- Social media profiles and LinkedIn
+- Training academy records and certifications
+- State police gazette publications
+- Department rosters and personnel records
+- FOIA-disclosed documents
+
+Try name variations: "${officerName}", possible misspellings, nickname variations, abbreviated names.
 
 Return JSON with ANY information found:
 {
-  "rank": "officer's rank",
-  "agency": "department with city/county",
+  "rank": "officer's rank or position",
+  "agency": "full department/agency name with type (e.g., 'City Police', 'County Sheriff', 'State Police', 'FBI', 'State Prison')",
   "badgeNumber": "badge number if found",
   "disciplinary": ["disciplinary actions with dates"],
   "news": ["news article headlines with sources"],
@@ -505,7 +555,7 @@ Return JSON with ANY information found:
   "sources": ["source URLs"]
 }
 
-Be thorough - this is a retry after initial search failed. Include ANY relevant findings.`;
+Be thorough - this is a retry after initial search failed. Include ANY relevant findings from ANY of the 5 officer types.`;
 
   try {
     const result = await generateGeminiStructuredResponse<GeminiRawData>(prompt, { 
