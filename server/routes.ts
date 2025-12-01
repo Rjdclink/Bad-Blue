@@ -98,7 +98,7 @@ import {
 } from "@shared/schema";
 import crypto from 'crypto';
 import archiver from 'archiver';
-import { eq, and, sql, desc, asc } from 'drizzle-orm';
+import { eq, and, sql, desc, asc, inArray } from 'drizzle-orm';
 import { db } from './db';
 import * as schema from '@shared/schema';
 const {
@@ -2792,6 +2792,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
   
   // Get all registered users with pagination, paid services, and credentials status
+  // Optimized: Uses batch queries instead of N+1 queries per user
   app.get("/api/admin/users", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
     if (userId !== 'admin-bypass') {
@@ -2803,41 +2804,81 @@ Contact: ${foiaRequest.userEmail || userEmail}
     
     const { users: allUsers, total } = await storage.getAllUsers(page, limit);
     
-    // Fetch paid services and credentials status for each user
-    const usersWithServices = await Promise.all(allUsers.map(async (user) => {
-      // Get counts of paid services and check for local credentials
-      const [complaintsResult, lawsuitsResult, petitionsResult, foiaResult, authAccountResult] = await Promise.all([
-        db.select({ count: sql<number>`count(*)::int` })
-          .from(schema.complaints)
-          .where(eq(schema.complaints.userId, user.id)),
-        db.select({ count: sql<number>`count(*)::int` })
-          .from(schema.lawsuitFilings)
-          .where(eq(schema.lawsuitFilings.userId, user.id)),
-        db.select({ count: sql<number>`count(*)::int` })
-          .from(schema.petitions)
-          .where(eq(schema.petitions.userId, user.id)),
-        db.select({ count: sql<number>`count(*)::int` })
-          .from(schema.foiaRequests)
-          .where(eq(schema.foiaRequests.userId, user.id)),
-        db.select({ hasPassword: sql<boolean>`password_hash IS NOT NULL` })
-          .from(schema.authAccounts)
-          .where(eq(schema.authAccounts.userId, user.id))
-          .limit(1),
-      ]);
+    if (allUsers.length === 0) {
+      return res.json({
+        users: [],
+        pagination: { page, limit, total: 0, totalPages: 0 }
+      });
+    }
+    
+    // Extract user IDs for batch queries
+    const userIds = allUsers.map(u => u.id);
+    
+    // Batch fetch all counts in parallel with single queries per table
+    const [complaintsAgg, lawsuitsAgg, petitionsAgg, foiaAgg, authAccountsAgg] = await Promise.all([
+      db.select({ 
+        userId: schema.complaints.userId, 
+        count: sql<number>`count(*)::int` 
+      })
+        .from(schema.complaints)
+        .where(inArray(schema.complaints.userId, userIds))
+        .groupBy(schema.complaints.userId),
+      db.select({ 
+        userId: schema.lawsuitFilings.userId, 
+        count: sql<number>`count(*)::int` 
+      })
+        .from(schema.lawsuitFilings)
+        .where(inArray(schema.lawsuitFilings.userId, userIds))
+        .groupBy(schema.lawsuitFilings.userId),
+      db.select({ 
+        userId: schema.petitions.userId, 
+        count: sql<number>`count(*)::int` 
+      })
+        .from(schema.petitions)
+        .where(inArray(schema.petitions.userId, userIds))
+        .groupBy(schema.petitions.userId),
+      db.select({ 
+        userId: schema.foiaRequests.userId, 
+        count: sql<number>`count(*)::int` 
+      })
+        .from(schema.foiaRequests)
+        .where(inArray(schema.foiaRequests.userId, userIds))
+        .groupBy(schema.foiaRequests.userId),
+      db.select({ 
+        userId: schema.authAccounts.userId, 
+        hasPassword: sql<boolean>`bool_or(password_hash IS NOT NULL)` 
+      })
+        .from(schema.authAccounts)
+        .where(inArray(schema.authAccounts.userId, userIds))
+        .groupBy(schema.authAccounts.userId),
+    ]);
+    
+    // Build lookup maps for O(1) access
+    const complaintsMap = new Map(complaintsAgg.map(r => [r.userId, r.count]));
+    const lawsuitsMap = new Map(lawsuitsAgg.map(r => [r.userId, r.count]));
+    const petitionsMap = new Map(petitionsAgg.map(r => [r.userId, r.count]));
+    const foiaMap = new Map(foiaAgg.map(r => [r.userId, r.count]));
+    const authMap = new Map(authAccountsAgg.map(r => [r.userId, r.hasPassword]));
+    
+    // Merge data efficiently
+    const usersWithServices = allUsers.map(user => {
+      const complaints = complaintsMap.get(user.id) || 0;
+      const lawsuits = lawsuitsMap.get(user.id) || 0;
+      const petitions = petitionsMap.get(user.id) || 0;
+      const foiaRequests = foiaMap.get(user.id) || 0;
       
       return {
         ...user,
-        hasLocalCredentials: authAccountResult.length > 0 && authAccountResult[0]?.hasPassword === true,
+        hasLocalCredentials: authMap.get(user.id) === true,
         paidServices: {
-          complaints: complaintsResult[0]?.count || 0,
-          lawsuits: lawsuitsResult[0]?.count || 0,
-          petitions: petitionsResult[0]?.count || 0,
-          foiaRequests: foiaResult[0]?.count || 0,
-          total: (complaintsResult[0]?.count || 0) + (lawsuitsResult[0]?.count || 0) + 
-                 (petitionsResult[0]?.count || 0) + (foiaResult[0]?.count || 0)
+          complaints,
+          lawsuits,
+          petitions,
+          foiaRequests,
+          total: complaints + lawsuits + petitions + foiaRequests
         }
       };
-    }));
+    });
     
     res.json({
       users: usersWithServices,
