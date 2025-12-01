@@ -624,7 +624,7 @@ class ComprehensiveDiagnostics {
 
         const geminiPercent = (quotaStatus.gemini.percentUsed || 0);
         const groqPercent = (quotaStatus.groq.percentUsed || 0);
-        const autonomousPercent = (quotaStatus.groq.autonomousPercentUsed || 0);
+        const autonomousUsed = (quotaStatus.groq.autonomousUsed || 0);
 
         let status: 'PASS' | 'WARN' | 'FAIL' = 'PASS';
         if (geminiPercent > 80 || groqPercent > 80) {
