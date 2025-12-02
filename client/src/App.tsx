@@ -101,6 +101,7 @@ const Confirmation = lazyWithRetry(() => import("@/pages/confirmation"), 'Confir
 const EvidenceHub = lazyWithRetry(() => import("@/pages/evidence-hub"), 'EvidenceHub');
 const PetitionEdit = lazyWithRetry(() => import("@/pages/petition-edit"), 'PetitionEdit');
 const LegalConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'LegalConsultation');
+const LegalDocumentCreator = lazyWithRetry(() => import("@/pages/legal-document-creator"), 'LegalDocumentCreator');
 
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
@@ -179,6 +180,7 @@ function Router() {
             <Route path="/petitions" component={Petitions} />
             <Route path="/foia-request" component={FOIARequestForm} />
             <Route path="/foia" component={FOIARequestForm} />
+            <Route path="/legal-document-creator" component={LegalDocumentCreator} />
             <Route path="/admin-petitions" component={AdminPetitions} />
             <Route path="/admin-lawsuits" component={AdminLawsuits} />
             <Route path="/admin-complaints" component={AdminComplaints} />
