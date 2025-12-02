@@ -100,6 +100,7 @@ const History = lazyWithRetry(() => import("@/pages/history"), 'History');
 const Confirmation = lazyWithRetry(() => import("@/pages/confirmation"), 'Confirmation');
 const EvidenceHub = lazyWithRetry(() => import("@/pages/evidence-hub"), 'EvidenceHub');
 const PetitionEdit = lazyWithRetry(() => import("@/pages/petition-edit"), 'PetitionEdit');
+const LegalConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'LegalConsultation');
 
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
@@ -152,6 +153,7 @@ function Router() {
         <Route path="/support" component={Contact} />
         <Route path="/privacy" component={Privacy} />
         <Route path="/terms" component={Terms} />
+        <Route path="/legal-consultation" component={LegalConsultationPage} />
         
         {/* Public petition page - accessible without authentication */}
         <Route path="/petition/:slug" component={PetitionDetail} />

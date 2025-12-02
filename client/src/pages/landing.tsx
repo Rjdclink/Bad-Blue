@@ -9,6 +9,7 @@ import heroImage from "@assets/generated_images/Civic_accountability_hero_image_
 import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
+import SampleLegalConsultation from "@/components/SampleLegalConsultation";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
 import { useFaqSchema, usePageFaqSchema } from "@/hooks/useFaqSchema";
 
@@ -351,6 +352,19 @@ export default function Landing() {
               </CardContent>
             </Card>
           </div>
+        </div>
+      </section>
+
+      {/* Interactive Legal Consultation Sample */}
+      <section className="py-20 px-4 bg-background">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-bold mb-4">Try Legal Consultation</h2>
+            <p className="text-sm text-muted-foreground max-w-xl mx-auto">
+              Experience BadBlue's AI-powered legal analysis with a free sample consultation. No signup required.
+            </p>
+          </div>
+          <SampleLegalConsultation />
         </div>
       </section>
 
