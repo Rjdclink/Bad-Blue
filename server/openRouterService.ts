@@ -224,14 +224,34 @@ async function callOpenRouter(
       maxTokens: options.maxTokens ?? 2000,
     });
     
-    // Access response content - the SDK returns different structure
-    const content = completion.choices?.[0]?.message?.content;
+    // Safely access response content with type validation
+    let content: string | null = null;
+    
+    if (completion && typeof completion === 'object') {
+      // Handle OpenRouter SDK response structure
+      const choices = (completion as any).choices;
+      if (Array.isArray(choices) && choices.length > 0) {
+        const firstChoice = choices[0];
+        if (firstChoice && typeof firstChoice === 'object') {
+          const message = firstChoice.message;
+          if (message && typeof message === 'object') {
+            const rawContent = message.content;
+            if (typeof rawContent === 'string') {
+              content = rawContent;
+            } else if (rawContent != null) {
+              content = String(rawContent);
+            }
+          }
+        }
+      }
+    }
+    
     if (!content) {
-      throw new Error(`Empty response from OpenRouter ${model}`);
+      throw new Error(`Empty or invalid response from OpenRouter ${model}`);
     }
     
     recordSuccess(model);
-    return typeof content === 'string' ? content : String(content);
+    return content;
   } catch (error: any) {
     const errorMessage = error?.message || String(error);
     
@@ -478,12 +498,25 @@ export async function unifiedOpenRouterSearch(
 }
 
 /**
- * Extract URLs from text
+ * Extract URLs from text using a robust regex pattern
  */
 function extractUrls(text: string): string[] {
-  const urlRegex = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
+  // More robust URL regex that handles common URL patterns
+  // Matches http/https URLs and validates basic structure
+  const urlRegex = /https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}(?:[-a-zA-Z0-9()@:%_+.~#?&/=]*)/g;
   const matches = text.match(urlRegex) || [];
-  return Array.from(new Set(matches)); // Deduplicate
+  
+  // Filter and validate URLs
+  const validUrls = matches.filter(url => {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  });
+  
+  return Array.from(new Set(validUrls)); // Deduplicate
 }
 
 /**

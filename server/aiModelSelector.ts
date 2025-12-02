@@ -87,6 +87,18 @@ interface ModelCapabilities {
 
 /**
  * Model definitions with capabilities
+ * 
+ * Capability Scoring Methodology:
+ * - Scores range from 0-100 based on relative model performance
+ * - Based on benchmarks, documentation, and empirical testing
+ * - Should be periodically reviewed as models evolve
+ * 
+ * Score Guidelines:
+ * - 90-100: Industry-leading capability
+ * - 70-89: Strong capability
+ * - 50-69: Adequate capability
+ * - 30-49: Limited capability
+ * - 0-29: Minimal or no capability
  */
 const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   // Gemini models

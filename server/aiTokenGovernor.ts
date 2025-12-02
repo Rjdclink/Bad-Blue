@@ -254,7 +254,9 @@ class AITokenGovernorEnhanced {
     
     // USER providers (core)
     this.providerAvailability.set(AIProvider.GEMINI, !!process.env.GEMINI_API_KEY);
-    this.providerAvailability.set(AIProvider.CLAUDE, !!process.env.CLAUDE_API_KEY || !!process.env.ANTHROPIC_API_KEY);
+    // Claude accepts both ANTHROPIC_API_KEY (standard) and CLAUDE_API_KEY (legacy)
+    // Precedence: ANTHROPIC_API_KEY takes priority if both are set
+    this.providerAvailability.set(AIProvider.CLAUDE, !!process.env.ANTHROPIC_API_KEY || !!process.env.CLAUDE_API_KEY);
     
     // USER providers (OpenRouter)
     const openRouterAvailable = isOpenRouterAvailable();
@@ -271,7 +273,7 @@ class AITokenGovernorEnhanced {
     console.log(`    - Mistral: ${this.providerAvailability.get(AIProvider.MISTRAL) ? '✓ Available' : '✗ Missing MISTRAL_API_KEY'}`);
     console.log('  USER providers (5-way):');
     console.log(`    - Gemini: ${this.providerAvailability.get(AIProvider.GEMINI) ? '✓ Available' : '✗ Missing GEMINI_API_KEY'}`);
-    console.log(`    - Claude: ${this.providerAvailability.get(AIProvider.CLAUDE) ? '✓ Available' : '✗ Missing CLAUDE/ANTHROPIC_API_KEY'}`);
+    console.log(`    - Claude: ${this.providerAvailability.get(AIProvider.CLAUDE) ? '✓ Available' : '✗ Missing ANTHROPIC_API_KEY'}`);
     console.log(`    - DeepSeek: ${this.providerAvailability.get(AIProvider.DEEPSEEK) ? '✓ Available' : '✗ Missing OPENROUTER_API_KEY'}`);
     console.log(`    - Grok: ${this.providerAvailability.get(AIProvider.GROK) ? '✓ Available' : '✗ Missing OPENROUTER_API_KEY'}`);
     console.log(`    - Kimi: ${this.providerAvailability.get(AIProvider.KIMI) ? '✓ Available' : '✗ Missing OPENROUTER_API_KEY'}`);
