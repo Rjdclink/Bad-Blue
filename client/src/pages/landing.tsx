@@ -12,6 +12,7 @@ import { useLocation } from "wouter";
 import SampleLegalConsultation from "@/components/SampleLegalConsultation";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
 import { useFaqSchema, usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { AISystemShowcase } from "@/components/AISystemShowcase";
 
 export default function Landing() {
   const [, setLocation] = useLocation();
@@ -194,12 +195,31 @@ export default function Landing() {
 
         {/* Hero Content */}
         <div className="relative z-10 max-w-4xl mx-auto px-4 text-center">
+          {/* AI Badge */}
+          <div className="mb-6">
+            <Badge className="bg-primary/90 text-white border-white/20 px-4 py-2 text-sm backdrop-blur-sm">
+              🤖 Powered by 7 AI Models Working in Parallel
+            </Badge>
+          </div>
+          
           <h1 className="text-white text-4xl md:text-5xl font-bold leading-tight mb-8">
             Law Enforcement Accountability Service
           </h1>
-          <p className="text-white/90 text-base md:text-lg mb-10 leading-relaxed max-w-3xl mx-auto">
+          <p className="text-white/90 text-base md:text-lg mb-6 leading-relaxed max-w-3xl mx-auto">
             Convenient and affordable access to legal tools, including AI legal support, in-depth officer searches with detailed background reports, FOIA requests (auto submitted), circulation of persuasive petition for officer resignation, elaborate officer complaints (auto submitted) and efficient 1983 civil suits that include tort notice and cover sheet. All without the need to leave home.
           </p>
+          
+          {/* Trust Signals */}
+          <div className="flex flex-wrap items-center justify-center gap-4 mb-10 text-sm text-white/90">
+            <div className="flex items-center gap-2">
+              <span className="text-green-400">✓</span>
+              <span>7 AI Models Analyze Every Search</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-green-400">✓</span>
+              <span>Each AI Contributes Its Specialty</span>
+            </div>
+          </div>
 
           {/* Three-Tier Pricing - Simplified */}
           <div className="max-w-5xl mx-auto mb-10">
@@ -352,6 +372,20 @@ export default function Landing() {
               </CardContent>
             </Card>
           </div>
+        </div>
+      </section>
+
+      {/* AI System Showcase Section */}
+      <section className="py-20 px-4 bg-gradient-to-b from-background to-card">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-bold mb-4">Revolutionary 7-Provider AI Technology</h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">
+              The first police accountability platform powered by seven leading AI models 
+              working simultaneously to deliver unmatched accuracy and speed.
+            </p>
+          </div>
+          <AISystemShowcase variant="full" />
         </div>
       </section>
 

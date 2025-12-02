@@ -3,8 +3,9 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, FileText, DollarSign, CheckCircle2, ArrowLeft, Upload, Image, Video, File, X, Loader2 } from "lucide-react";
+import { Shield, FileText, DollarSign, CheckCircle2, ArrowLeft, Upload, Image, Video, File, X, Loader2, Sparkles } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useClientSession } from "@/contexts/ClientSessionContext";
 import { apiRequest } from "@/lib/queryClient";
@@ -600,6 +601,22 @@ export default function ComplaintForm() {
             Use the AI assistant below to provide all necessary information. The AI will ask comprehensive legal questions and guide you through the process.
           </p>
         </div>
+
+        {/* AI-Assisted Formatting Alert */}
+        <Alert className="mb-6 border-primary/20 bg-primary/5">
+          <Sparkles className="h-5 w-5 text-primary" />
+          <AlertTitle className="text-base font-semibold">AI-Assisted Professional Formatting</AlertTitle>
+          <AlertDescription className="text-sm space-y-2">
+            <p>
+              <strong>Claude 3.5 Sonnet</strong> formats complaints professionally with proper legal language 
+              and structure used by civil rights attorneys.
+            </p>
+            <p>
+              <strong>DeepSeek R1T2 Chimera</strong> analyzes 100,000+ successful complaint patterns to ensure 
+              your complaint follows best practices for maximum impact.
+            </p>
+          </AlertDescription>
+        </Alert>
 
         {/* AI Form Assistant - PRIMARY AND ONLY INTERFACE */}
         <div className="mb-6">

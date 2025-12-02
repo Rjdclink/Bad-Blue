@@ -14,6 +14,7 @@ import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
+import { AISystemShowcase } from "@/components/AISystemShowcase";
 
 export default function Login() {
   // Login fields
@@ -423,8 +424,11 @@ export default function Login() {
           <CardContent className="pt-10 pb-10 px-8">
             <div className="text-center mb-8">
               <h1 className="text-2xl font-bold mb-2">Welcome</h1>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground mb-3">
                 Sign in or create an account
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Our 7-provider AI system analyzes officer records 5× faster and 10× more comprehensively
               </p>
             </div>
 
@@ -542,6 +546,11 @@ export default function Login() {
             </Tabs>
           </CardContent>
         </Card>
+
+        {/* AI System Showcase */}
+        <div className="max-w-4xl mx-auto mb-16">
+          <AISystemShowcase variant="brief" />
+        </div>
       </div>
       
       <SupportEmailFooter />

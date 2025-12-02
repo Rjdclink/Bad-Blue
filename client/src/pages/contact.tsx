@@ -16,6 +16,7 @@ import { Link } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
+import { AISystemShowcase } from "@/components/AISystemShowcase";
 
 const contactFormSchema = z.object({
   type: z.enum(['support', 'contact', 'report']),
@@ -217,6 +218,16 @@ export default function Contact() {
               </p>
             </div>
           </div>
+        </div>
+
+        {/* AI Technology Card */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold mb-6 text-center">Advanced AI Technology</h2>
+          <AISystemShowcase variant="brief" />
+          <p className="text-center text-muted-foreground mt-4 max-w-2xl mx-auto">
+            Our 7-provider AI coordination system ensures every search, complaint, and legal document 
+            is analyzed by multiple specialized AI models for maximum accuracy and comprehensiveness.
+          </p>
         </div>
 
         {/* Contact Information */}

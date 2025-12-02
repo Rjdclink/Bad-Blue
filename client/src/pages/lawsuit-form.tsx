@@ -799,6 +799,56 @@ export default function LawsuitForm() {
           </p>
         </div>
 
+        {/* AI Legal Team Card */}
+        <Card className="mb-6 border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Scale className="w-5 h-5" />
+              AI Legal Team
+            </CardTitle>
+            <CardDescription>
+              Seven specialized AI models working together to build your Section 1983 lawsuit
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-start gap-3">
+              <span className="text-xl">⚖️</span>
+              <div className="flex-1">
+                <p className="text-sm font-medium">Claude 3.5 Sonnet</p>
+                <p className="text-xs text-muted-foreground">Advanced legal reasoning and proper court formatting</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-xl">🧠</span>
+              <div className="flex-1">
+                <p className="text-sm font-medium">DeepSeek R1T2 Chimera</p>
+                <p className="text-xs text-muted-foreground">Precedent analysis from 100,000+ civil rights cases</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-xl">⚡</span>
+              <div className="flex-1">
+                <p className="text-sm font-medium">Gemini 2.5 Flash</p>
+                <p className="text-xs text-muted-foreground">Legal research and case law verification</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-xl">📚</span>
+              <div className="flex-1">
+                <p className="text-sm font-medium">Grok 4.1 Fast</p>
+                <p className="text-xs text-muted-foreground">Massive case law and statute processing</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-xl">✓</span>
+              <div className="flex-1">
+                <p className="text-sm font-medium">Mistral Small</p>
+                <p className="text-xs text-muted-foreground">Accuracy verification and quality control</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* AI Form Assistant - PRIMARY AND ONLY INTERFACE */}
         <div className="mb-6">
           <FormAssistant
