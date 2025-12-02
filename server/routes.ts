@@ -1487,7 +1487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
 
   // Initialize document creator session
-  app.post("/api/document-creator/start", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+  app.post("/api/document-creator/start", apiRateLimit, isAuthenticated, asyncHandler(async (req: any, res: any) => {
     const userId = req.user.claims.sub;
     const sessionId = crypto.randomUUID();
 
@@ -1527,7 +1527,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
 
   // Process user message in document creator
-  app.post("/api/document-creator/message", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+  app.post("/api/document-creator/message", apiRateLimit, isAuthenticated, asyncHandler(async (req: any, res: any) => {
     const userId = req.user.claims.sub;
     const { sessionId, message } = req.body;
 
@@ -1594,7 +1594,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
 
   // Revise document based on user feedback
-  app.post("/api/document-creator/revise", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+  app.post("/api/document-creator/revise", apiRateLimit, isAuthenticated, asyncHandler(async (req: any, res: any) => {
     const userId = req.user.claims.sub;
     const { sessionId, revisionRequest } = req.body;
 
@@ -1649,7 +1649,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
 
   // Create payment session for document
-  app.post("/api/document-creator/payment", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+  app.post("/api/document-creator/payment", paymentRateLimit, isAuthenticated, asyncHandler(async (req: any, res: any) => {
     const stripe = getStripeClient();
     const userId = req.user.claims.sub;
     const { sessionId } = req.body;
