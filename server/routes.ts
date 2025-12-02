@@ -36,6 +36,13 @@ import {
   redraftOffenseDescription,
   generatePersuasiveContent,
 } from "./legalAI";
+import {
+  generateDocumentCreatorResponse,
+  generateDocument,
+  reviseDocument,
+  ConversationPhase,
+  type DocumentCreatorState
+} from "./documentCreatorAI";
 import { searchOfficer, searchOfficerInformation, searchProgressEmitter, type SearchProgress } from "./officerSearch";
 import { checkDeviceSearchLimit, recordDeviceSearch, getClientIp, getOrCreateDeviceId } from "./deviceRateLimit";
 import {
@@ -95,6 +102,7 @@ import {
   FOIA_REQUEST_PRICING_CENTS,
   insertSavedProgressSchema,
   insertSubscriptionTierSchema,
+  DOCUMENT_CREATOR_PRICING_CENTS,
 } from "@shared/schema";
 import crypto from 'crypto';
 import archiver from 'archiver';
@@ -117,6 +125,7 @@ const {
   publicEvidence,
   trialConsultations,
   contactMessages,
+  documentCreatorSessions,
 } = schema;
 
 // Lazy initialization for Stripe client
@@ -1473,6 +1482,263 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================
+  // DOCUMENT CREATOR ROUTES
+  // ============================================
+
+  // Initialize document creator session
+  app.post("/api/document-creator/start", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const userId = req.user.claims.sub;
+    const sessionId = crypto.randomUUID();
+
+    // Create initial session
+    await db.insert(documentCreatorSessions).values({
+      id: sessionId,
+      userId,
+      conversationState: JSON.stringify([]),
+      conversationPhase: ConversationPhase.INITIAL,
+    });
+
+    // Generate initial greeting
+    const initialState: DocumentCreatorState = {
+      phase: ConversationPhase.INITIAL,
+      messages: [],
+      extractedInfo: {}
+    };
+
+    const { response, updatedState } = await generateDocumentCreatorResponse(
+      initialState,
+      "Hello"
+    );
+
+    // Update session with initial conversation
+    await db.update(documentCreatorSessions)
+      .set({
+        conversationState: JSON.stringify(updatedState.messages),
+        conversationPhase: updatedState.phase,
+      })
+      .where(eq(documentCreatorSessions.id, sessionId));
+
+    res.json({
+      sessionId,
+      message: response,
+      phase: updatedState.phase
+    });
+  }));
+
+  // Process user message in document creator
+  app.post("/api/document-creator/message", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const userId = req.user.claims.sub;
+    const { sessionId, message } = req.body;
+
+    if (!sessionId || !message) {
+      return res.status(400).json({ error: "Session ID and message are required" });
+    }
+
+    // Get session
+    const session = await db.query.documentCreatorSessions.findFirst({
+      where: and(
+        eq(documentCreatorSessions.id, sessionId),
+        eq(documentCreatorSessions.userId, userId)
+      ),
+    });
+
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    // Parse current state
+    const currentState: DocumentCreatorState = {
+      phase: session.conversationPhase as ConversationPhase,
+      messages: JSON.parse(session.conversationState),
+      extractedInfo: session.jurisdictionData 
+        ? JSON.parse(session.jurisdictionData)
+        : {}
+    };
+
+    // Generate response
+    const { response, updatedState } = await generateDocumentCreatorResponse(
+      currentState,
+      message
+    );
+
+    // Check if we should generate the document
+    let generatedDocument = null;
+    if (updatedState.phase === ConversationPhase.GENERATING_DOCUMENT) {
+      try {
+        generatedDocument = await generateDocument(updatedState);
+        updatedState.phase = ConversationPhase.DOCUMENT_READY;
+      } catch (error: any) {
+        console.error('[Document Creator] Error generating document:', error);
+        updatedState.phase = ConversationPhase.GATHERING_INFO;
+      }
+    }
+
+    // Update session
+    await db.update(documentCreatorSessions)
+      .set({
+        conversationState: JSON.stringify(updatedState.messages),
+        conversationPhase: updatedState.phase,
+        jurisdictionData: JSON.stringify(updatedState.extractedInfo),
+        generatedDocument: generatedDocument || session.generatedDocument,
+        documentType: updatedState.extractedInfo.documentType || session.documentType,
+      })
+      .where(eq(documentCreatorSessions.id, sessionId));
+
+    res.json({
+      message: response,
+      phase: updatedState.phase,
+      documentGenerated: !!generatedDocument,
+      document: generatedDocument || undefined
+    });
+  }));
+
+  // Revise document based on user feedback
+  app.post("/api/document-creator/revise", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const userId = req.user.claims.sub;
+    const { sessionId, revisionRequest } = req.body;
+
+    if (!sessionId || !revisionRequest) {
+      return res.status(400).json({ error: "Session ID and revision request are required" });
+    }
+
+    // Get session
+    const session = await db.query.documentCreatorSessions.findFirst({
+      where: and(
+        eq(documentCreatorSessions.id, sessionId),
+        eq(documentCreatorSessions.userId, userId)
+      ),
+    });
+
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    if (!session.generatedDocument) {
+      return res.status(400).json({ error: "No document to revise" });
+    }
+
+    // Parse state
+    const currentState: DocumentCreatorState = {
+      phase: session.conversationPhase as ConversationPhase,
+      messages: JSON.parse(session.conversationState),
+      extractedInfo: session.jurisdictionData 
+        ? JSON.parse(session.jurisdictionData)
+        : {}
+    };
+
+    // Revise document
+    const revisedDocument = await reviseDocument(
+      session.generatedDocument,
+      revisionRequest,
+      currentState
+    );
+
+    // Update session
+    await db.update(documentCreatorSessions)
+      .set({
+        generatedDocument: revisedDocument,
+        conversationPhase: ConversationPhase.DOCUMENT_READY,
+      })
+      .where(eq(documentCreatorSessions.id, sessionId));
+
+    res.json({
+      document: revisedDocument,
+      message: "Document revised successfully"
+    });
+  }));
+
+  // Create payment session for document
+  app.post("/api/document-creator/payment", isAuthenticated, asyncHandler(async (req: any, res: any) => {
+    const stripe = getStripeClient();
+    const userId = req.user.claims.sub;
+    const { sessionId } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: "Session ID is required" });
+    }
+
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Get session
+    const session = await db.query.documentCreatorSessions.findFirst({
+      where: and(
+        eq(documentCreatorSessions.id, sessionId),
+        eq(documentCreatorSessions.userId, userId)
+      ),
+    });
+
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    if (!session.generatedDocument) {
+      return res.status(400).json({ error: "No document available for purchase" });
+    }
+
+    if (session.paymentStatus === 'completed') {
+      return res.status(400).json({ error: "Document already purchased" });
+    }
+
+    // Get or create Stripe customer
+    let customerId = user.stripeCustomerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email || undefined,
+        metadata: { userId: user.id },
+      });
+      customerId = customer.id;
+      await storage.updateUserStripeCustomerId(user.id, customerId);
+    }
+
+    const baseUrl = getBaseURL();
+
+    // Create Stripe checkout session
+    const stripeSession = await stripe.checkout.sessions.create({
+      customer: customerId,
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            unit_amount: DOCUMENT_CREATOR_PRICING_CENTS,
+            product_data: {
+              name: "BadBlue Legal Document",
+              description: session.documentType 
+                ? `Custom ${session.documentType}` 
+                : "Custom Legal Document",
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: `${baseUrl}/legal-document-creator?session=${sessionId}&payment=success`,
+      cancel_url: `${baseUrl}/legal-document-creator?session=${sessionId}`,
+      metadata: {
+        userId: user.id,
+        documentCreatorSessionId: sessionId,
+        type: "document_creator",
+      },
+    });
+
+    // Update session with payment info
+    await db.update(documentCreatorSessions)
+      .set({
+        stripeSessionId: stripeSession.id,
+        paymentStatus: 'pending',
+      })
+      .where(eq(documentCreatorSessions.id, sessionId));
+
+    res.json({
+      sessionId: stripeSession.id,
+      url: stripeSession.url,
+    });
+  }));
+
   // Get public petition by slug
   app.get("/api/petition-public/:slug", async (req, res) => {
     try {
@@ -2322,6 +2588,48 @@ Contact: ${foiaRequest.userEmail || userEmail}
                 });
 
                 console.log(`[Webhook] FOIA confirmation email sent for ${foiaRequestId}`);
+                break;
+              }
+
+              case "document_creator": {
+                const documentCreatorSessionId = metadata.documentCreatorSessionId;
+                if (!documentCreatorSessionId) {
+                  console.error("[Webhook] No documentCreatorSessionId in metadata");
+                  break;
+                }
+
+                const docSession = await db.query.documentCreatorSessions.findFirst({
+                  where: eq(documentCreatorSessions.id, documentCreatorSessionId),
+                });
+                if (!docSession) {
+                  console.error(`[Webhook] Document creator session not found: ${documentCreatorSessionId}`);
+                  break;
+                }
+
+                // Update session with payment completion
+                await db.update(documentCreatorSessions)
+                  .set({ 
+                    paymentStatus: "completed", 
+                    paymentId: session.payment_intent || session.id,
+                    completedAt: new Date(),
+                  })
+                  .where(eq(documentCreatorSessions.id, documentCreatorSessionId));
+
+                // Send document via email
+                if (docSession.generatedDocument) {
+                  await sendPurchaseConfirmationEmail({
+                    firstName,
+                    email: userEmail,
+                    type: "document",
+                    amount: session.amount_total || DOCUMENT_CREATOR_PRICING_CENTS,
+                    document: docSession.generatedDocument,
+                    documentType: docSession.documentType || "Legal Document",
+                  });
+
+                  console.log(`[Webhook] Document creator confirmation email sent for ${documentCreatorSessionId}`);
+                } else {
+                  console.error(`[Webhook] No document available for session ${documentCreatorSessionId}`);
+                }
                 break;
               }
 

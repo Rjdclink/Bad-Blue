@@ -2220,4 +2220,40 @@ export const insertFoiaRoutingHistorySchema = createInsertSchema(foiaRoutingHist
 });
 
 export type FoiaRoutingHistory = typeof foiaRoutingHistory.$inferSelect;
+
+// ============================================
+// DOCUMENT CREATOR SESSIONS TABLE
+// ============================================
+export const documentCreatorSessions = pgTable("document_creator_sessions", {
+  id: text("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  conversationState: text("conversation_state").notNull().default('[]'),
+  conversationPhase: text("conversation_phase").notNull().default('initial'),
+  documentType: text("document_type"),
+  jurisdictionData: text("jurisdiction_data"),
+  generatedDocument: text("generated_document"),
+  paymentStatus: text("payment_status").default('pending'),
+  paymentId: varchar("payment_id"), // Stripe payment intent ID
+  stripeSessionId: varchar("stripe_session_id"), // Stripe checkout session ID
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const documentCreatorSessionsRelations = relations(documentCreatorSessions, ({ one }) => ({
+  user: one(users, {
+    fields: [documentCreatorSessions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const insertDocumentCreatorSessionSchema = createInsertSchema(documentCreatorSessions).omit({
+  createdAt: true,
+});
+
+export type DocumentCreatorSession = typeof documentCreatorSessions.$inferSelect;
+export type InsertDocumentCreatorSession = z.infer<typeof insertDocumentCreatorSessionSchema>;
+
+// Document Creator pricing
+export const DOCUMENT_CREATOR_PRICING = 3.99;
+export const DOCUMENT_CREATOR_PRICING_CENTS = 399; // $3.99 in cents
 export type InsertFoiaRoutingHistory = z.infer<typeof insertFoiaRoutingHistorySchema>;

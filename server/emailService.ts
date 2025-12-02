@@ -160,7 +160,7 @@ interface WelcomeEmailData {
 interface PurchaseConfirmationData {
   firstName: string;
   email: string;
-  type: "complaint" | "lawsuit" | "full_access" | "petition" | "foia";
+  type: "complaint" | "lawsuit" | "full_access" | "petition" | "foia" | "document";
   amount: number;
   officerName?: string;
   incidentDate?: string;
@@ -171,6 +171,7 @@ interface PurchaseConfirmationData {
   submissionAddress?: string;
   filingInstructions?: string;
   serviceName?: string;
+  documentType?: string;
 }
 
 interface AdminEmailData {
@@ -304,6 +305,30 @@ The agency has 20 business days to respond to your request. You may receive a tr
 `;
       break;
 
+    case "document":
+      email += `SERVICE PURCHASED: Legal Document Creator ($${(
+        data.amount / 100
+      ).toFixed(2)})
+
+You have successfully created a custom ${data.documentType || "legal document"} using our AI-powered document generation system.
+
+YOUR DOCUMENT:
+${
+  data.document
+    ? "---BEGIN DOCUMENT---\n" + data.document + "\n---END DOCUMENT---\n"
+    : "Document not available"
+}
+
+IMPORTANT NOTES:
+- This document has been generated based on the information you provided
+- Review the document carefully for accuracy
+- Consider having it reviewed by a licensed attorney before use
+- Ensure all jurisdiction-specific requirements are met
+- File or submit within any applicable deadlines
+
+`;
+      break;
+
     case "lawsuit":
       if (data.filingInstructions) {
         email += `SERVICE PURCHASED: DIY Lawsuit Assistance ($${(
@@ -385,6 +410,10 @@ ${
       ? "- Wait for agency response (typically 20 business days)\n- Review provided documents carefully\n- Submit follow-up requests if needed"
       : ""
   }${
+    data.type === "document"
+      ? "- Review your document thoroughly for accuracy\n- Consider legal review if filing in court\n- Check jurisdiction-specific filing requirements\n- Keep a copy for your records"
+      : ""
+  }${
     data.type === "lawsuit" && data.filingInstructions
       ? "- Review all filing instructions carefully\n- Gather required documents and fees\n- File within applicable statute of limitations\n- Consider consulting a local attorney"
       : ""
@@ -450,11 +479,13 @@ export async function sendPurchaseConfirmationEmail(
           ? "Civil Rights Petition"
           : data.type === "foia"
             ? "FOIA Records Request"
-            : data.type === "lawsuit"
-              ? data.filingInstructions
-                ? "DIY Lawsuit Assistance"
-                : "Full-Service Lawsuit"
-              : "LegalAI Access"
+            : data.type === "document"
+              ? data.documentType || "Legal Document"
+              : data.type === "lawsuit"
+                ? data.filingInstructions
+                  ? "DIY Lawsuit Assistance"
+                  : "Full-Service Lawsuit"
+                : "LegalAI Access"
     }`;
 
     const success = await sendWithResend(

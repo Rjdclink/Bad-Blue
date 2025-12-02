@@ -231,6 +231,59 @@ export default function Home() {
       <section className="py-16 px-4">
         <div className="container max-w-5xl mx-auto">
           <div className="space-y-6">
+            {/* 0. Legal Document Creator */}
+            <Card className="hover-elevate cursor-pointer transition-all border-primary/50" onClick={() => setLocation('/legal-document-creator')} data-testid="card-legal-document-creator">
+              <CardHeader>
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 rounded-lg bg-primary/10">
+                      <FileText className="w-6 h-6 text-primary" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-2xl">Legal Document Creator</CardTitle>
+                      <CardDescription className="mt-1">
+                        Create professional legal documents through conversational AI
+                      </CardDescription>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <Badge variant="secondary">5 AI Providers • 8 Models</Badge>
+                  <Badge variant="outline" className="text-green-600 dark:text-green-400 border-green-600">
+                    $3.99 per document
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground mb-4">
+                  Create professional legal documents through conversational AI. Our system asks the right questions, researches jurisdiction-specific requirements, finds applicable forms and statutes, and generates court-ready documents.
+                </p>
+                <ul className="space-y-2 text-sm text-muted-foreground">
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-0.5">•</span>
+                    <span>AI-guided conversation to gather all necessary information</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-0.5">•</span>
+                    <span>Automatic jurisdiction detection and compliance research</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-0.5">•</span>
+                    <span>Searches official forms, statutes, and case law</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-0.5">•</span>
+                    <span>Generates court-ready documents with proper formatting</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-0.5">•</span>
+                    <span>Request unlimited revisions before purchasing</span>
+                  </li>
+                </ul>
+              </CardContent>
+            </Card>
+
             {/* 1. LegalAI Consultation */}
             <Card className="hover-elevate cursor-pointer transition-all" onClick={() => setActiveFeature('consultation')} data-testid="card-legal-consultation">
               <CardHeader>
