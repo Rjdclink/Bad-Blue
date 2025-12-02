@@ -527,6 +527,9 @@ export default function Contact() {
           </p>
         </div>
       </footer>
+
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/contact" />
     </div>
   );
 }

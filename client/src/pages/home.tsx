@@ -13,8 +13,12 @@ import OfficerSearch from "@/components/OfficerSearch";
 import { AISubAgentPanel } from "@/components/AISubAgentPanel";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { SEOHead } from "@/components/SEOHead";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function Home() {
+  usePageFaqSchema("/home");
+  
   const { user } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -800,6 +804,9 @@ export default function Home() {
         </div>
       </section>
       
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/home" />
+
       <SupportEmailFooter />
     </div>
   );

@@ -140,6 +140,9 @@ export default function History() {
           </Card>
         )}
       </main>
+
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/history" />
     </div>
   );
 }
