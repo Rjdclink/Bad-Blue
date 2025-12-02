@@ -2405,7 +2405,12 @@ Contact: ${foiaRequest.userEmail || userEmail}
         if (progress.searchId === searchId) {
           res.write(`data: ${JSON.stringify(progress)}\n\n`);
 
-          if (progress.stage === 5) {
+          // Close connection when search is complete
+          // Note: stages are 1-indexed, and 'Complete' stage is always equal to totalStages
+          const isComplete = progress.stageName === 'Complete' || 
+                            progress.percentage >= 100 || 
+                            progress.stage === progress.totalStages;
+          if (isComplete) {
             setTimeout(() => {
               res.end();
             }, 100);

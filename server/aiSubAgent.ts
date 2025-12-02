@@ -1314,6 +1314,7 @@ export async function processSubAgentCommand(opts: {
             const typeMatch = cmd.match(/type=([^\s]+)/i);
             const govMatch = cmd.match(/includeGovernment=(true|false)/i);
             const corrMatch = cmd.match(/includeCorrections=(true|false)/i);
+            const searchIdMatch = cmd.match(/searchId=([^\s]+)/i);
             return {
               officerName: nameMatch?.[1] || intent.parameters?.query || '',
               state: stateMatch?.[1] || undefined,
@@ -1323,12 +1324,15 @@ export async function processSubAgentCommand(opts: {
               departmentType: typeMatch?.[1] as 'city' | 'state' | 'county' | 'government' | 'corrections' | undefined,
               includeGovernment: govMatch?.[1]?.toLowerCase() === 'true',
               includeCorrections: corrMatch?.[1]?.toLowerCase() === 'true',
+              searchId: searchIdMatch?.[1] || undefined,
             };
           };
           const params = parseOfficerParams(command);
           
           if (params.officerName) {
             try {
+              // Use the searchId from params if available, otherwise generate one
+              const effectiveSearchId = params.searchId || `subagent_${Date.now()}`;
               const searchResult = await searchOfficerInformation({
                 officerName: params.officerName,
                 state: params.state,
@@ -1338,7 +1342,7 @@ export async function processSubAgentCommand(opts: {
                 includeCorrections: params.includeCorrections,
                 departmentType: params.departmentType,
                 bypassCache: false,
-              }, `subagent_${Date.now()}`);
+              }, effectiveSearchId);
               
               data = { result: searchResult, success: true };
               response = `Officer search completed for "${params.officerName}". Found: ${searchResult.agency || 'Agency unknown'}`;
@@ -1999,7 +2003,7 @@ export async function executeStructuredCommand(command: {
     let textCommand = '';
     if (command.type === 'search_officers') {
       const p = command.searchParams || {};
-      textCommand = `search officer "${p.name || ''}" state=${p.state || ''} city=${p.city || ''} county=${p.county || ''} badge=${p.badgeNumber || ''} type=${p.officerType || ''} includeGovernment=${p.includeGovernment || 'false'} includeCorrections=${p.includeCorrections || 'false'} limit=${command.limit ?? 10}`;
+      textCommand = `search officer "${p.name || ''}" state=${p.state || ''} city=${p.city || ''} county=${p.county || ''} badge=${p.badgeNumber || ''} type=${p.officerType || ''} includeGovernment=${p.includeGovernment || 'false'} includeCorrections=${p.includeCorrections || 'false'} searchId=${p.searchId || ''} limit=${command.limit ?? 10}`;
     } else {
       textCommand = `execute ${JSON.stringify(command)}`;
     }
