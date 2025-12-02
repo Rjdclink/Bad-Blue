@@ -304,27 +304,229 @@ export interface PageFaqConfig {
 export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   "/officer": {
     name: "Police Officer Search FAQ",
-    description: "Frequently asked questions about searching for police officers and finding misconduct records.",
+    description: "Frequently asked questions about searching for police officers with Bad Blue's 7-AI system.",
     faqs: [
       {
+        question: "How does Bad Blue's 7-provider AI search for officers?",
+        answer: "Bad Blue runs 7 AI models in parallel: Gemini 2.5 Flash searches rapidly across databases, Claude 3.5 Sonnet analyzes legal records, DeepSeek R1T2's 671B parameters identify patterns, Grok 4.1 Fast processes 2M context of news/court records, Kimi K2's 1T parameters extract structured data, Groq Llama 3.3 provides unlimited-speed background processing, and Mistral Small verifies accuracy. Each AI contributes its specialty."
+      },
+      {
+        question: "Why is 7-AI officer search better than single AI?",
+        answer: "Single AI misses details. Bad Blue's parallel system ensures comprehensive results: Gemini handles multimodal evidence quickly, Claude interprets legal implications, DeepSeek recognizes deep patterns, Grok processes massive document sets, Kimi extracts precise data, Groq maintains continuous processing, Mistral verifies everything. No detail escapes our 7-provider coordination."
+      },
+      {
+        question: "Which AI models analyze officer records?",
+        answer: "All 7 models work simultaneously: Gemini 2.5 Flash (1M context), Claude 3.5 Sonnet (200k), DeepSeek R1T2 (671B params, 163k), Grok 4.1 Fast (2M), Kimi K2 (1T params, 256k), Groq Llama 3.3 (unlimited), Mistral Small. Each provides unique insights for comprehensive officer background analysis."
+      },
+      {
         question: "How do I search for a police officer?",
-        answer: "Enter the officer's name, badge number, or department in the search box. Bad Blue's AI-powered search finds officer records, misconduct history, and department information. Search entirely from home without visiting any office."
+        answer: "Enter the officer's name, badge number, or department. Bad Blue's 7-AI system activates instantly: Gemini searches fast, Claude analyzes legal context, DeepSeek finds patterns, Grok processes comprehensive databases, Kimi extracts structured information, Groq provides speed, Mistral verifies. Results appear within seconds with complete analysis from all providers."
       },
       {
-        question: "What information can I find about a police officer?",
-        answer: "You can find officer names, badge numbers, departments, rank, misconduct complaints, disciplinary actions, lawsuits filed against them, and public records. Bad Blue compiles information from multiple sources."
+        question: "What information can the 7-AI system find?",
+        answer: "The AI coordination system compiles: officer names and badges (Kimi's data extraction), misconduct history (DeepSeek's pattern analysis), legal actions (Claude's legal reasoning), news coverage (Grok's 2M context search), photographic evidence (Gemini's multimodal analysis), verified records (Mistral's accuracy checking), all processed at unlimited speed (Groq)."
       },
       {
-        question: "Is the officer search free?",
-        answer: "Basic officer searches are free. You can search by name, badge number, or department at no cost. Advanced features and detailed reports may require a subscription."
+        question: "Is officer search free with 7-AI?",
+        answer: "Basic searches using all 7 AI providers are free. You get parallel analysis from Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral at no cost. Advanced features like detailed reports, continuous monitoring, and evidence analysis may require a subscription."
       },
       {
-        question: "How accurate is the officer search?",
-        answer: "Bad Blue uses AI to search multiple databases and public records. Results are compiled from official sources, news reports, court records, and community submissions. We verify information where possible."
+        question: "How accurate is the 7-AI officer search?",
+        answer: "Extremely accurate due to parallel verification. DeepSeek's 671B parameters catch nuances, Claude ensures legal accuracy, Grok's 2M context prevents missed records, Kimi's 1T parameters extract data precisely, Gemini provides fast multimodal verification, Groq maintains continuous processing, and Mistral cross-verifies all findings."
       },
       {
-        question: "Can I search for officers in any state?",
-        answer: "Yes, Bad Blue's officer search covers police departments across all 50 states. Enter any department name or location to find officers in that jurisdiction."
+        question: "Can I search officers in any state?",
+        answer: "Yes, all 50 states. Bad Blue's 7-AI system understands jurisdiction-specific databases: Grok processes state-specific records with 2M context, Kimi extracts data from varying state formats, Claude applies state legal frameworks, DeepSeek recognizes regional patterns, while Gemini, Groq, and Mistral ensure comprehensive nationwide coverage."
+      }
+    ]
+  },
+  "/officer-search": {
+    name: "Officer Search Page FAQ",
+    description: "Frequently asked questions about using Bad Blue's 7-AI officer search interface.",
+    faqs: [
+      {
+        question: "How does the 7-AI parallel search work?",
+        answer: "When you search, all 7 AI models activate simultaneously: Gemini 2.5 Flash provides instant results, Claude 3.5 Sonnet analyzes legal implications, DeepSeek R1T2 performs deep pattern matching, Grok 4.1 Fast searches 2M context of databases, Kimi K2 extracts structured data, Groq Llama 3.3 maintains background processing, Mistral Small verifies accuracy."
+      },
+      {
+        question: "What makes Bad Blue's AI search revolutionary?",
+        answer: "It's the world's first 7-provider parallel system for police accountability. Instead of one AI with limitations, you get Gemini's speed, Claude's legal expertise, DeepSeek's 671B parameter intelligence, Grok's massive context, Kimi's 1T parameter precision, Groq's unlimited speed, and Mistral's verification - all working together simultaneously."
+      },
+      {
+        question: "How fast does the 7-AI system return results?",
+        answer: "5× faster than traditional searches. Gemini 2.5 Flash provides initial results instantly, Groq Llama 3.3 maintains unlimited-speed background processing, while Claude, DeepSeek, Grok, Kimi, and Mistral complete comprehensive analysis in parallel. Most searches return full 7-AI analysis within seconds."
+      },
+      {
+        question: "Can I see which AI found what information?",
+        answer: "Yes, results show AI attribution: Gemini's fast multimodal findings, Claude's legal analysis, DeepSeek's pattern insights, Grok's comprehensive research, Kimi's structured extractions, Groq's processing metrics, and Mistral's verification notes. Understand exactly which AI contributed each piece of information."
+      },
+      {
+        question: "What if one AI finds something others missed?",
+        answer: "That's the power of parallel processing. If Grok's 2M context discovers a record, it's cross-verified by Mistral, analyzed legally by Claude, pattern-matched by DeepSeek, structured by Kimi, and integrated by Gemini and Groq. No single AI limitation affects your results."
+      }
+    ]
+  },
+  "/complaint-detail": {
+    name: "Complaint Tracking FAQ",
+    description: "Frequently asked questions about tracking complaints with Bad Blue's 7-AI system.",
+    faqs: [
+      {
+        question: "How does the 7-AI system track my complaint?",
+        answer: "All 7 AI models monitor your complaint: Groq Llama 3.3 provides continuous unlimited-speed monitoring, Kimi K2 extracts status updates from agency responses, Grok 4.1 Fast processes 2M context of related records, Claude 3.5 Sonnet interprets legal implications, DeepSeek recognizes patterns in similar cases, Gemini analyzes multimodal evidence, Mistral verifies accuracy."
+      },
+      {
+        question: "What AI insights are available for my complaint?",
+        answer: "Complete analysis from all 7 providers: Claude's legal strategy recommendations, DeepSeek's pattern analysis comparing to similar cases, Grok's comprehensive research on the department, Kimi's structured timeline extraction, Gemini's evidence analysis, Groq's real-time processing updates, and Mistral's verification of all information."
+      },
+      {
+        question: "Can the AI predict complaint outcomes?",
+        answer: "Yes. DeepSeek's 671B parameters analyze historical patterns, Claude evaluates legal merit, Grok's 2M context reviews similar department responses, Kimi extracts success rate data, Gemini processes multimodal evidence strength, Groq calculates likelihood scores, and Mistral verifies prediction accuracy based on verified historical data."
+      },
+      {
+        question: "How does AI help strengthen my complaint?",
+        answer: "The 7-provider system provides actionable recommendations: Claude suggests legal language improvements, DeepSeek identifies missing evidence, Gemini analyzes submitted media quality, Grok researches precedents, Kimi structures data optimally, Groq processes suggestions rapidly, and Mistral verifies all recommendations for accuracy."
+      },
+      {
+        question: "What if my complaint status changes?",
+        answer: "Groq's unlimited-speed monitoring detects changes instantly. Kimi extracts new status information, Claude interprets legal significance, DeepSeek analyzes implications, Grok researches context, Gemini processes any new evidence, and Mistral verifies updates before notifying you with complete 7-AI analysis."
+      }
+    ]
+  },
+  "/complaints": {
+    name: "All Complaints FAQ",
+    description: "Frequently asked questions about viewing and managing all complaints with 7-AI.",
+    faqs: [
+      {
+        question: "How does the 7-AI system organize my complaints?",
+        answer: "Kimi K2's 1T parameters extract and structure all complaint data, DeepSeek recognizes patterns across your cases, Claude categorizes by legal type, Grok processes comprehensive context for each case, Gemini handles multimodal evidence visualization, Groq provides instant sorting and filtering, Mistral verifies data accuracy."
+      },
+      {
+        question: "Can AI identify patterns across multiple complaints?",
+        answer: "Yes. DeepSeek's 671B parameters excel at pattern recognition across cases. Claude identifies legal themes, Grok's 2M context finds related precedents, Kimi extracts common data points, Gemini analyzes evidence patterns, Groq processes comparisons rapidly, and Mistral verifies pattern accuracy."
+      },
+      {
+        question: "What AI insights are available for all my complaints?",
+        answer: "Comprehensive dashboard analysis: success rate predictions (DeepSeek), legal strategy overview (Claude), evidence strength assessment (Gemini), related case research (Grok), structured timelines (Kimi), real-time status updates (Groq), and verification of all metrics (Mistral). All 7 AIs contribute unique perspectives."
+      },
+      {
+        question: "How does the AI prioritize which complaints need attention?",
+        answer: "The coordination system evaluates urgency: Claude identifies deadline-critical cases, DeepSeek recognizes cases needing evidence, Grok finds time-sensitive opportunities, Kimi extracts deadline data, Gemini flags incomplete uploads, Groq continuously recalculates priorities, Mistral verifies urgency assessments."
+      },
+      {
+        question: "Can I filter complaints using AI intelligence?",
+        answer: "Yes, with advanced 7-AI filtering: filter by Claude's legal assessment, DeepSeek's success prediction, Grok's research depth, Kimi's structured categories, Gemini's evidence completeness, Groq's processing speed, or Mistral's verification status. Multiple intelligent filtering options available."
+      }
+    ]
+  },
+  "/lawsuit-detail": {
+    name: "Lawsuit Tracking FAQ",  
+    description: "Frequently asked questions about tracking Section 1983 lawsuits with 7-AI analysis.",
+    faqs: [
+      {
+        question: "How does the 7-AI system track my lawsuit?",
+        answer: "Comprehensive monitoring from all 7 providers: Groq Llama 3.3 provides continuous unlimited-speed court monitoring, Kimi K2 extracts docket updates, Grok 4.1 Fast processes 2M context of case law, Claude 3.5 Sonnet analyzes legal strategy, DeepSeek R1T2 predicts outcomes with 671B parameters, Gemini processes evidence, Mistral verifies accuracy."
+      },
+      {
+        question: "What AI insights are available for my lawsuit?",
+        answer: "Complete legal analysis: Claude's strategy recommendations and precedent analysis, DeepSeek's outcome predictions based on 671B parameter reasoning, Grok's comprehensive case law research (2M context), Kimi's structured timeline, Gemini's evidence strength assessment, Groq's real-time updates, Mistral's verification of all legal assertions."
+      },
+      {
+        question: "Can the AI predict lawsuit success?",
+        answer: "Yes, with high confidence. DeepSeek's 671B parameters analyze historical outcomes, Claude evaluates legal merit and qualified immunity defenses, Grok's 2M context researches similar cases, Kimi extracts success rate statistics, Gemini assesses evidence quality, Groq calculates probabilities, Mistral verifies prediction methodology."
+      },
+      {
+        question: "How does AI help with qualified immunity challenges?",
+        answer: "Claude 3.5 Sonnet specializes in qualified immunity analysis, identifying clearly established law. Grok's 2M context finds precedents, DeepSeek's 671B parameters analyze argument strength, Kimi extracts relevant case citations, Gemini highlights evidence supporting violations, Groq processes counterarguments rapidly, Mistral verifies legal accuracy."
+      },
+      {
+        question: "What if court docket updates?",
+        answer: "Groq's unlimited-speed monitoring detects updates instantly. Kimi extracts new docket information, Claude interprets legal significance, DeepSeek analyzes strategic implications, Grok researches procedural context, Gemini processes any new filings, and Mistral verifies updates before providing you with complete 7-AI analysis and recommended actions."
+      }
+    ]
+  },
+  "/petition-detail": {
+    name: "Petition Detail FAQ",
+    description: "Frequently asked questions about petition tracking with Bad Blue's 7-AI system.",
+    faqs: [
+      {
+        question: "How does the 7-AI system track petition progress?",
+        answer: "Complete monitoring from all 7 providers: Groq Llama 3.3 provides real-time signature tracking, Kimi K2 structures supporter data, DeepSeek R1T2 analyzes signature patterns, Grok 4.1 Fast researches similar petition success rates, Claude 3.5 Sonnet evaluates legal impact, Gemini processes shared media, Mistral Small verifies all metrics."
+      },
+      {
+        question: "Can AI predict petition success?",
+        answer: "Yes. DeepSeek's 671B parameters analyze historical petition outcomes, Grok's 2M context researches similar campaigns, Kimi extracts demographic data on signers, Claude evaluates legal/political landscape, Gemini analyzes engagement metrics, Groq calculates success probability, Mistral verifies prediction accuracy based on verified historical data."
+      },
+      {
+        question: "What AI insights help grow petition signatures?",
+        answer: "Strategic recommendations from all 7 AIs: DeepSeek identifies optimal sharing times, Gemini analyzes which media performs best, Grok researches target audiences, Kimi structures outreach data, Claude provides persuasive language suggestions, Groq processes engagement metrics, Mistral verifies effectiveness of recommendations."
+      },
+      {
+        question: "How does the AI help deliver petitions to officials?",
+        answer: "Claude 3.5 Sonnet drafts official delivery letters, Grok's 2M context identifies the right officials and addresses, Kimi extracts contact information, DeepSeek optimizes delivery timing, Gemini formats petition presentation, Groq tracks delivery status, and Mistral verifies all official information for accuracy."
+      },
+      {
+        question: "Can AI identify key petition supporters?",
+        answer: "Yes. Kimi's 1T parameters extract supporter patterns, DeepSeek identifies influential signers, Grok researches supporter backgrounds, Claude evaluates legal/political connections, Gemini analyzes engagement levels, Groq processes relationship networks, and Mistral verifies supporter authenticity and influence."
+      }
+    ]
+  },
+  "/petition-form": {
+    name: "Create Petition FAQ",
+    description: "Frequently asked questions about creating petitions with Bad Blue's 7-AI assistance.",
+    faqs: [
+      {
+        question: "How does the 7-AI system help create petitions?",
+        answer: "Complete petition creation assistance: Claude 3.5 Sonnet drafts persuasive legal language, Gemini 2.5 Flash provides fast multimodal formatting, DeepSeek R1T2 analyzes successful petition patterns, Grok 4.1 Fast researches similar campaigns, Kimi K2 structures petition data, Groq Llama 3.3 processes revisions instantly, Mistral Small verifies accuracy."
+      },
+      {
+        question: "Why use 7-AI for petition drafting?",
+        answer: "Single AI lacks depth. Bad Blue's parallel system ensures compelling petitions: Claude provides legal persuasion expertise, DeepSeek's 671B parameters identify winning patterns, Gemini optimizes format and media, Grok researches precedents, Kimi structures demands clearly, Groq enables rapid iteration, Mistral verifies claims. Maximum impact."
+      },
+      {
+        question: "Which AI models help write petition text?",
+        answer: "All 7 contribute: Claude 3.5 Sonnet (legal language and persuasion), DeepSeek R1T2 (pattern-based optimization), Gemini 2.5 Flash (fast drafting and media), Grok 4.1 Fast (research and context), Kimi K2 (structured formatting), Groq Llama 3.3 (instant revisions), Mistral Small (accuracy verification)."
+      },
+      {
+        question: "Can the AI suggest petition demands?",
+        answer: "Yes. Claude analyzes legal precedents for appropriate demands, DeepSeek studies successful petition outcomes, Grok's 2M context researches achievable goals, Kimi structures demands logically, Gemini ensures clarity, Groq processes multiple options, and Mistral verifies feasibility of all suggested demands."
+      },
+      {
+        question: "How does AI optimize petition for signatures?",
+        answer: "Complete optimization: DeepSeek analyzes what drives signatures, Claude crafts persuasive calls-to-action, Gemini optimizes visual presentation, Grok researches target audience preferences, Kimi structures petition for easy reading, Groq tests variations rapidly, and Mistral verifies all claims for credibility."
+      }
+    ]
+  },
+  "/legal-consultation": {
+    name: "AI Legal Consultation FAQ",
+    description: "Frequently asked questions about Bad Blue's 7-AI legal consultation service.",
+    faqs: [
+      {
+        question: "How does 7-AI legal consultation work?",
+        answer: "All 7 AI models analyze your case simultaneously: Claude 3.5 Sonnet provides legal reasoning and strategy, DeepSeek R1T2's 671B parameters perform deep case analysis, Grok 4.1 Fast researches 2M context of precedents, Kimi K2 extracts structured legal data, Gemini 2.5 Flash analyzes evidence, Groq Llama 3.3 processes questions instantly, Mistral Small verifies accuracy."
+      },
+      {
+        question: "Why is 7-provider AI consultation better than single AI?",
+        answer: "Single AI has knowledge gaps. Bad Blue's parallel system ensures comprehensive advice: Claude excels at legal reasoning, DeepSeek at complex analysis, Grok at exhaustive research, Kimi at data extraction, Gemini at multimodal evidence, Groq at speed, Mistral at verification. You get the best of all 7 models simultaneously."
+      },
+      {
+        question: "Which AI specializes in legal advice?",
+        answer: "Claude 3.5 Sonnet (Anthropic) leads legal reasoning with 200k context specialized for legal analysis. DeepSeek R1T2's 671B parameters provide deep analytical reasoning. Grok 4.1 Fast's 2M context enables comprehensive case law research. All 7 AIs contribute, but Claude and DeepSeek excel at legal strategy."
+      },
+      {
+        question: "Can the AI analyze my case evidence?",
+        answer: "Yes, comprehensively. Gemini 2.5 Flash's multimodal capabilities analyze videos, photos, and documents. DeepSeek identifies patterns in evidence, Claude evaluates legal significance, Grok researches similar cases, Kimi extracts structured information, Groq processes analysis rapidly, and Mistral verifies findings for accuracy."
+      },
+      {
+        question: "Is 7-AI consultation a replacement for lawyers?",
+        answer: "No. Bad Blue's 7-AI system provides legal information and analysis tools, not legal advice. Claude's reasoning, DeepSeek's analysis, and other AI insights are informational. For legal counsel, consult a licensed attorney. Our AI helps you understand options and prepare documents affordably."
+      },
+      {
+        question: "How accurate is the 7-AI legal analysis?",
+        answer: "Highly accurate through parallel verification. Claude ensures legal accuracy, DeepSeek's 671B parameters catch nuances, Grok's 2M context prevents missed precedents, Kimi extracts data precisely, Gemini verifies evidence, Groq maintains continuous processing, and Mistral cross-checks everything. Multiple AI validation ensures maximum accuracy."
+      },
+      {
+        question: "Can I ask the AI about Section 1983 lawsuits?",
+        answer: "Yes, Section 1983 is a specialty. Claude 3.5 Sonnet analyzes qualified immunity defenses, DeepSeek's 671B parameters evaluate case strength, Grok's 2M context researches precedents, Kimi structures legal arguments, Gemini assesses evidence quality, Groq processes multiple scenarios, and Mistral verifies all legal citations and claims."
       }
     ]
   },
@@ -471,28 +673,216 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
     ]
   },
   "/landing": {
-    name: "Bad Blue Platform FAQ",
-    description: "Frequently asked questions about the Bad Blue police accountability platform.",
+    name: "Bad Blue 7-Provider AI Platform FAQ",
+    description: "Frequently asked questions about Bad Blue's revolutionary 7-provider AI police accountability platform.",
     faqs: [
       {
+        question: "How does Bad Blue's 7-provider AI system work?",
+        answer: "Bad Blue runs 7 AI models simultaneously: Gemini 2.5 Flash (Google) for fast multimodal analysis, Claude 3.5 Sonnet (Anthropic) for legal reasoning, DeepSeek R1T2 (671B parameters) for deep analysis, Grok 4.1 Fast (xAI) for 2M context processing, Kimi K2 (1T parameters) for data extraction, Groq Llama 3.3 for unlimited speed, and Mistral Small for verification. Each AI contributes its specialty for maximum accuracy."
+      },
+      {
+        question: "Why is 7-provider AI better than single AI for police accountability?",
+        answer: "Single AI systems have limitations. Bad Blue's 7-provider parallel system leverages each AI's strengths: Gemini excels at speed, Claude at legal analysis, DeepSeek at reasoning, Grok at massive context, Kimi at structured data, Groq at speed, Mistral at accuracy. No detail is missed, providing 5× faster and 10× more comprehensive results."
+      },
+      {
+        question: "Which specific AI models power Bad Blue?",
+        answer: "Gemini 2.5 Flash (1M context), Claude 3.5 Sonnet (200k), DeepSeek R1T2 (671B params, 163k), Grok 4.1 Fast (2M), Kimi K2 (1T params, 256k), Groq Llama 3.3 (unlimited), Mistral Small. All execute simultaneously for parallel processing."
+      },
+      {
         question: "What is Bad Blue?",
-        answer: "Bad Blue is an AI-powered police accountability platform that helps citizens file complaints, generate Section 1983 lawsuits, submit FOIA requests, and search for officer records. Do everything from home - Bad Blue does all the work."
+        answer: "Bad Blue is the world's first 7-provider AI police accountability platform. Using parallel AI processing with Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral, Bad Blue helps citizens file complaints, generate Section 1983 lawsuits, submit FOIA requests, and search for officer records. Do everything from home with unprecedented AI assistance."
       },
       {
         question: "How much does Bad Blue cost?",
-        answer: "Many features are free, including officer search and basic complaint filing. Premium features like lawsuit generation and advanced FOIA requests are available at affordable prices - a fraction of what lawyers charge."
+        answer: "Many features are free, including 7-AI powered officer search and basic complaint filing. Premium features like lawsuit generation and advanced FOIA requests are available at affordable prices - a fraction of what lawyers charge. Our 7-AI system provides professional-grade analysis at accessible prices."
       },
       {
-        question: "Do I need legal experience?",
-        answer: "No legal experience needed. Bad Blue guides you through every step and generates professional legal documents automatically. Our platform is designed for regular citizens, not lawyers."
+        question: "Do I need legal experience to use Bad Blue?",
+        answer: "No legal experience needed. Bad Blue's 7-provider AI system guides you through every step. Claude handles legal reasoning, DeepSeek performs deep analysis, and Gemini provides fast multimodal processing to generate professional legal documents automatically. Our platform is designed for regular citizens."
       },
       {
         question: "Is Bad Blue available nationwide?",
-        answer: "Yes, Bad Blue covers all 50 states. We have jurisdiction-specific rules for complaints, FOIA requests, and lawsuits. Our system automatically applies the correct requirements for your location."
+        answer: "Yes, Bad Blue covers all 50 states. Our 7-AI system has jurisdiction-specific rules for complaints, FOIA requests, and lawsuits. The AI models automatically apply the correct requirements for your location using Grok's 2M context window for comprehensive legal database processing."
       },
       {
-        question: "How does the AI officer search work?",
-        answer: "Bad Blue's AI searches multiple databases, public records, news sources, and court records to compile officer information. Enter a name, badge number, or department to find misconduct history and officer details."
+        question: "How fast is the 7-AI coordination system?",
+        answer: "With Groq Llama 3.3 providing unlimited-speed background processing, Gemini 2.5 Flash for ultra-fast multimodal analysis, and parallel execution across all 7 models, Bad Blue delivers results 5× faster than traditional single-AI systems while being 10× more comprehensive."
+      },
+      {
+        question: "How accurate is Bad Blue's AI analysis?",
+        answer: "The 7-provider parallel system ensures maximum accuracy. Each model cross-checks the others: Mistral Small provides verification, Claude ensures legal accuracy, DeepSeek's 671B parameters catch nuances, Kimi's 1T parameters extract structured data precisely, while Grok's 2M context processes massive document sets without missing details."
+      },
+      {
+        question: "Can I trust AI-generated legal documents?",
+        answer: "Yes. Bad Blue's 7-AI coordination system provides enterprise-grade legal document generation. Claude 3.5 Sonnet specializes in legal reasoning, DeepSeek R1T2's 671B parameters ensure deep analysis, Gemini handles multimodal evidence, and Mistral Small verifies accuracy. All documents meet official court formatting requirements."
+      }
+    ]
+  },
+  "/login": {
+    name: "Bad Blue Login & Access FAQ",
+    description: "Frequently asked questions about logging in and accessing Bad Blue's 7-provider AI platform.",
+    faqs: [
+      {
+        question: "How do I access Bad Blue's 7-AI system?",
+        answer: "Simply create a free account or log in to access Bad Blue's revolutionary 7-provider AI coordination system. Once logged in, you can use Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral simultaneously for officer searches, complaint filing, lawsuit generation, and FOIA requests."
+      },
+      {
+        question: "What AI features are available after login?",
+        answer: "After login, you get full access to all 7 AI models working in parallel: Gemini for fast multimodal analysis, Claude for legal reasoning, DeepSeek for deep pattern recognition, Grok for massive document processing, Kimi for data extraction, Groq for unlimited speed, and Mistral for verification."
+      },
+      {
+        question: "Is my account information secure?",
+        answer: "Yes. Bad Blue uses bank-level encryption and secure authentication. Your personal information, case details, and evidence are protected with enterprise-grade security. Our 7-AI system processes your data securely without storing sensitive information unnecessarily."
+      },
+      {
+        question: "Can I use Bad Blue on mobile devices?",
+        answer: "Yes, Bad Blue's 7-AI platform is fully mobile-responsive. Access all features including officer search, complaint filing, lawsuit generation, and FOIA requests from your phone or tablet. The AI coordination system works seamlessly across all devices."
+      },
+      {
+        question: "What if I forget my password?",
+        answer: "Use the 'Forgot Password' link on the login page to reset your password securely. You'll receive an email with reset instructions. Once reset, you can immediately resume using all 7 AI models for police accountability services."
+      }
+    ]
+  },
+  "/contact": {
+    name: "Contact Bad Blue Support FAQ",
+    description: "Frequently asked questions about contacting Bad Blue support and getting help with the 7-AI platform.",
+    faqs: [
+      {
+        question: "How can I get help with Bad Blue's 7-AI system?",
+        answer: "Contact our support team via the contact form for assistance with any feature. We can help you understand how Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral work together to analyze your case, or troubleshoot any issues you're experiencing."
+      },
+      {
+        question: "What questions can Bad Blue's AI help me with?",
+        answer: "Our 7-provider AI system can help with officer searches (all 7 AIs analyzing records), complaint drafting (Claude for legal language, Gemini for speed), lawsuit generation (DeepSeek for deep analysis, Claude for legal reasoning), FOIA requests (Grok for massive document processing, Kimi for data extraction), and evidence analysis (Gemini's multimodal capabilities)."
+      },
+      {
+        question: "How quickly will I receive a response?",
+        answer: "We typically respond within 24 hours. For immediate assistance, our 7-AI system provides instant automated help for common questions. The AI models can analyze your inquiry using Claude's reasoning, Gemini's speed, and DeepSeek's deep analysis to provide comprehensive answers immediately."
+      },
+      {
+        question: "Can I get technical support for AI features?",
+        answer: "Yes, our support team can help with questions about how the 7-provider AI coordination system works, how to interpret AI-generated analysis, understanding which AI model contributed what insight, and troubleshooting any AI processing issues."
+      },
+      {
+        question: "Do you offer phone support?",
+        answer: "Currently, support is provided via email and contact form. This allows us to provide detailed responses and documentation. Our 7-AI system can also provide automated support through the platform for common questions and issues."
+      }
+    ]
+  },
+  "/terms": {
+    name: "Bad Blue Terms of Service FAQ",
+    description: "Frequently asked questions about Bad Blue's terms of service and AI usage policies.",
+    faqs: [
+      {
+        question: "What are the terms for using Bad Blue's 7-AI system?",
+        answer: "By using Bad Blue, you agree to use our 7-provider AI coordination system (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral) responsibly and lawfully. The AI-generated documents and analysis are tools to assist you, but you remain responsible for reviewing and verifying all information before submission."
+      },
+      {
+        question: "Is Bad Blue a law firm?",
+        answer: "No. Bad Blue is a legal technology platform using 7-provider AI coordination to help you prepare documents and research. We do not provide legal advice. Claude's legal reasoning, DeepSeek's analysis, and other AI contributions are informational tools, not legal counsel. Always consult a licensed attorney for legal advice."
+      },
+      {
+        question: "What is Bad Blue's AI disclaimer?",
+        answer: "Bad Blue's 7 AI models (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral) provide analysis and document generation based on training data and algorithms. While highly sophisticated, AI can make errors. You must review all AI-generated content before using it in legal proceedings. Bad Blue is not liable for AI errors or omissions."
+      },
+      {
+        question: "How does Bad Blue handle my data in the AI system?",
+        answer: "Your data is processed by our 7-provider AI system for analysis and document generation. We use secure encryption and do not sell your data. The AI models process your information to provide services but do not retain your case details for training purposes. See our Privacy Policy for complete details."
+      },
+      {
+        question: "Can I cancel my Bad Blue subscription?",
+        answer: "Yes, you can cancel your subscription at any time. You'll retain access to the 7-AI system until the end of your billing period. All your saved data, searches, and documents remain accessible during your active subscription."
+      },
+      {
+        question: "What happens if Bad Blue's AI makes an error?",
+        answer: "While our 7-provider parallel system (with Mistral Small verification and cross-checking across all models) minimizes errors, you must review all AI-generated content. Bad Blue provides tools and assistance but you are responsible for accuracy of submitted documents. We recommend having an attorney review critical legal filings."
+      }
+    ]
+  },
+  "/privacy": {
+    name: "Bad Blue Privacy Policy FAQ",
+    description: "Frequently asked questions about Bad Blue's privacy policy and AI data handling.",
+    faqs: [
+      {
+        question: "How does Bad Blue's 7-AI system handle my privacy?",
+        answer: "Your data is encrypted and processed securely by our 7 AI providers (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral) only for providing services. We use enterprise-grade security and do not sell your personal information. AI processing happens in secure environments with strict data protection protocols."
+      },
+      {
+        question: "What data does Bad Blue's AI collect?",
+        answer: "Bad Blue collects data you provide (name, case details, evidence uploads) to power the 7-AI coordination system. This data is processed by Gemini for multimodal analysis, Claude for legal reasoning, DeepSeek for deep analysis, Grok for context processing, Kimi for data extraction, Groq for speed processing, and Mistral for verification."
+      },
+      {
+        question: "Are my AI searches and case details private?",
+        answer: "Yes, your officer searches, complaint drafts, lawsuit generation, and FOIA requests processed by our 7-AI system are private. Only you can access your data unless you choose to share it. We do not share your information with law enforcement or third parties without your explicit consent."
+      },
+      {
+        question: "Do the AI providers retain my data?",
+        answer: "We work with AI providers under strict data processing agreements. Your case information is processed for analysis but not used to train AI models. Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral process your data transiently for service delivery only."
+      },
+      {
+        question: "How is my evidence stored securely?",
+        answer: "Evidence uploaded to Bad Blue is encrypted at rest and in transit. When processed by our 7-AI system (especially Gemini's multimodal capabilities for video/image analysis), encryption is maintained. Evidence is stored on secure servers with bank-level security standards."
+      },
+      {
+        question: "Can I delete my data from Bad Blue's AI system?",
+        answer: "Yes, you can request deletion of your account and all associated data at any time. We will remove your information from our systems and ensure it's no longer processed by our 7 AI providers. Some data may be retained for legal compliance as required by law."
+      },
+      {
+        question: "Does Bad Blue comply with privacy regulations?",
+        answer: "Yes, Bad Blue complies with GDPR, CCPA, and other privacy regulations. Our 7-provider AI system is designed with privacy-by-design principles. You have rights to access, correct, delete, and port your data. Contact us to exercise these rights."
+      }
+    ]
+  },
+  "/home": {
+    name: "Bad Blue Dashboard FAQ",
+    description: "Frequently asked questions about using the Bad Blue dashboard and 7-AI features.",
+    faqs: [
+      {
+        question: "What can I do from my Bad Blue dashboard?",
+        answer: "Your dashboard provides access to all 7-AI powered features: officer searches using parallel AI analysis, complaint filing with Claude's legal formatting, lawsuit generation with DeepSeek's deep reasoning, FOIA requests with Grok's massive context processing, evidence uploads with Gemini's multimodal analysis, and petition tracking."
+      },
+      {
+        question: "How do I start using the 7-AI coordination system?",
+        answer: "From your dashboard, select any service: Officer Search activates all 7 AIs to analyze records, Complaint Form uses Claude for legal language and Gemini for speed, Lawsuit Generator employs DeepSeek's 671B parameters for complex analysis, FOIA tool uses Grok's 2M context for document research."
+      },
+      {
+        question: "Can I track my cases with AI assistance?",
+        answer: "Yes, your dashboard shows all active cases. The 7-AI system continuously monitors case status, with Kimi K2's 1T parameters extracting structured updates, Mistral Small verifying accuracy, and Groq providing unlimited-speed background processing for real-time notifications."
+      },
+      {
+        question: "How does the AI help organize my evidence?",
+        answer: "Gemini 2.5 Flash's multimodal capabilities automatically analyze uploaded videos, photos, and documents. DeepSeek identifies key patterns, Kimi extracts metadata and structured information, while Claude provides legal context for how evidence supports your case."
+      },
+      {
+        question: "What AI insights are available in the dashboard?",
+        answer: "The dashboard shows AI analysis from all 7 providers: case strength assessment, similar precedents found by Grok's 2M context research, legal reasoning from Claude, pattern recognition from DeepSeek, structured data from Kimi, speed-optimized processing from Groq, and verification from Mistral."
+      }
+    ]
+  },
+  "/history": {
+    name: "Search History FAQ",
+    description: "Frequently asked questions about Bad Blue's 7-AI powered search history and tracking.",
+    faqs: [
+      {
+        question: "How does Bad Blue's 7-AI system track my search history?",
+        answer: "Every officer search you perform is saved with complete AI analysis from all 7 providers. Review which insights came from Gemini's fast analysis, Claude's legal context, DeepSeek's deep patterns, Grok's comprehensive research, Kimi's data extraction, Groq's speed processing, and Mistral's verification."
+      },
+      {
+        question: "Can I re-run searches with updated AI analysis?",
+        answer: "Yes, re-run any previous search to get updated results. The 7-AI coordination system will process new data: Grok scans recent news with its 2M context, Kimi extracts new structured records, DeepSeek identifies emerging patterns, and all models provide fresh parallel analysis."
+      },
+      {
+        question: "What information is saved in my search history?",
+        answer: "Your history saves officer names, departments, search dates, and complete AI analysis results. This includes Gemini's multimodal findings, Claude's legal assessments, DeepSeek's pattern analysis, Grok's comprehensive research, Kimi's extracted data, Groq's processing speed metrics, and Mistral's verification results."
+      },
+      {
+        question: "How far back does search history go?",
+        answer: "Search history is retained for the duration of your account. All 7-AI analyses are preserved so you can review historical insights, track changes in officer records over time, and see how our parallel AI system has evolved to provide even more comprehensive results."
+      },
+      {
+        question: "Can I export my search history and AI analysis?",
+        answer: "Yes, export your complete search history including all 7-AI provider insights. Downloads include detailed breakdowns of what each model contributed: Gemini's speed analysis, Claude's legal reasoning, DeepSeek's deep insights, Grok's research, Kimi's data, Groq's metrics, and Mistral's verification."
       }
     ]
   }
