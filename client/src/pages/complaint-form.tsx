@@ -16,6 +16,7 @@ import { FormAssistant } from "@/components/FormAssistant";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 // Component for rendering the actual complaint document preview from backend
 function ComplaintDocumentPreview({
@@ -828,6 +829,9 @@ export default function ComplaintForm() {
           </div>
         )}
       </main>
+
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/complaint-form" />
     </div>
   );
 }

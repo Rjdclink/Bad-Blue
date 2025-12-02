@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 import { 
   AlertTriangle, 
   Image as ImageIcon, 
@@ -315,6 +316,9 @@ export default function EvidenceHub() {
           </Card>
         )}
       </main>
+
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/evidence-hub" />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { FileText, Users, AlertTriangle, ArrowRight, ArrowLeft } from "lucide-re
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function Petitions() {
   const { data: petitions, isLoading } = useQuery<any[]>({
@@ -152,6 +153,9 @@ export default function Petitions() {
           </div>
         )}
       </div>
+
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/petitions" />
     </div>
   );
 }

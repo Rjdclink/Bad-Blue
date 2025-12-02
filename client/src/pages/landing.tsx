@@ -13,6 +13,7 @@ import SampleLegalConsultation from "@/components/SampleLegalConsultation";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 import { AISystemShowcase } from "@/components/AISystemShowcase";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function Landing() {
   const [, setLocation] = useLocation();
@@ -480,6 +481,9 @@ export default function Landing() {
           </div>
         </div>
       </footer>
+
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/landing" />
 
       <SupportEmailFooter />
     </div>

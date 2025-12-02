@@ -15,8 +15,13 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
 import { AISystemShowcase } from "@/components/AISystemShowcase";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function Login() {
+  // Use page-specific FAQ schema for SEO
+  usePageFaqSchema("/login");
+  
   // Login fields
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -553,6 +558,9 @@ export default function Login() {
         </div>
       </div>
       
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/login" />
+
       <SupportEmailFooter />
     </div>
   );
