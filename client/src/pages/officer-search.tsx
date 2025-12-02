@@ -5,8 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft } from "lucide-react";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function OfficerSearchPage() {
+  usePageFaqSchema("/officer-search");
+  
   const [, setLocation] = useLocation();
 
   return (
@@ -66,6 +70,9 @@ export default function OfficerSearchPage() {
           </Card>
         </div>
         <OfficerSearch onBack={() => setLocation("/")} />
+
+        {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+        <HiddenFAQ path="/officer-search" />
       </div>
     </>
   );
