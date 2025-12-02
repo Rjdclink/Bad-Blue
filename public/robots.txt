@@ -1,12 +1,13 @@
-# BadBlue - Police Accountability Platform
+# BadBlue - 7-Provider AI Police Accountability Platform
 # https://bad-blue.com
-# Last updated: 2025-11-30
+# Last updated: 2025-12-02
 
 User-agent: *
 Allow: /
 
-# Public pages - index these
+# Public pages - index these for search engine visibility
 Allow: /landing
+Allow: /officer-search
 Allow: /officer
 Allow: /complaint-form
 Allow: /lawsuit-form
@@ -14,8 +15,10 @@ Allow: /foia-request-form
 Allow: /petitions
 Allow: /evidence-hub
 Allow: /contact
-Allow: /privacy
+Allow: /login
 Allow: /terms
+Allow: /privacy
+Allow: /legal-consultation
 
 # Admin and authenticated routes - do not index
 Disallow: /home
@@ -23,7 +26,12 @@ Disallow: /admin*
 Disallow: /petition-form
 Disallow: /petition-workflow
 Disallow: /petition-edit
-Disallow: /api/
+Disallow: /complaint-detail
+Disallow: /lawsuit-detail
+Disallow: /petition-detail
+Disallow: /history
+Disallow: /complaints
+Disallow: /api*
 
 # Crawl delay for respectful crawling
 Crawl-delay: 1

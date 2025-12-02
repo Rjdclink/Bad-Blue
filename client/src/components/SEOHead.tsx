@@ -49,10 +49,20 @@ export function SEOHead({
   const finalOgImage = ogImage || defaultOgImage;
   const finalOgImageAlt = ogImageAlt || "BadBlue - AI-powered police accountability platform for filing complaints and civil rights lawsuits";
   
-  // Enhanced keywords including existing and new target keywords
+  // Default AI keywords to include on all pages
+  const aiKeywords = [
+    "7 provider AI system",
+    "parallel AI processing",
+    "Gemini Claude DeepSeek Grok Kimi Groq Mistral",
+    "AI coordination system",
+    "multi-AI analysis",
+    "AI legal team"
+  ];
+  
+  // Enhanced keywords including existing, new target keywords, and AI keywords
   const enhancedKeywords = keywords ? 
-    `${keywords}, bad cops, cop assault, officer assault, law enforcement abuse, officer abuse, cop abuse, police misconduct, police brutality, excessive force, false arrest, civil rights violations, police accountability, file police complaint online, sue police officer, legal rights protection, justice accessibility, civil rights advocacy` :
-    `police accountability, police misconduct, police brutality, bad cops, cop assault, officer assault, law enforcement abuse, officer abuse, cop abuse, excessive force, false arrest, civil rights violations, file police complaint online, sue police officer, legal rights protection service, transparent complaint filing system, civil rights advocacy tools, justice accessibility platform, legal empowerment for citizens`;
+    `${keywords}, ${aiKeywords.join(", ")}, bad cops, cop assault, officer assault, law enforcement abuse, officer abuse, cop abuse, police misconduct, police brutality, excessive force, false arrest, civil rights violations, police accountability, file police complaint online, sue police officer, legal rights protection, justice accessibility, civil rights advocacy` :
+    `${aiKeywords.join(", ")}, police accountability, police misconduct, police brutality, bad cops, cop assault, officer assault, law enforcement abuse, officer abuse, cop abuse, excessive force, false arrest, civil rights violations, file police complaint online, sue police officer, legal rights protection service, transparent complaint filing system, civil rights advocacy tools, justice accessibility platform, legal empowerment for citizens`;
   
   useEffect(() => {
     // Set page title
