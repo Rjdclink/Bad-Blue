@@ -2233,8 +2233,7 @@ export const documentCreatorSessions = pgTable("document_creator_sessions", {
   jurisdictionData: text("jurisdiction_data"),
   generatedDocument: text("generated_document"),
   paymentStatus: text("payment_status").default('pending'),
-  paymentId: varchar("payment_id"), // Stripe payment intent ID
-  stripeSessionId: varchar("stripe_session_id"), // Stripe checkout session ID
+  paymentId: varchar("payment_id"), // Payment processor reference (Square)
   createdAt: timestamp("created_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
 });

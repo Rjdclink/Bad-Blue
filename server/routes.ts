@@ -1728,7 +1728,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Update session with payment info
     await db.update(documentCreatorSessions)
       .set({
-        stripeSessionId: stripeSession.id,
         paymentStatus: 'pending',
       })
       .where(eq(documentCreatorSessions.id, sessionId));
