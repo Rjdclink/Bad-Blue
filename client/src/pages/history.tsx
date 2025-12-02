@@ -9,8 +9,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { Shield, History as HistoryIcon, Upload, ArrowLeft } from "lucide-react";
 import type { BadgeLookup } from "@shared/schema";
 import { format } from "date-fns";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function History() {
+  usePageFaqSchema("/history");
+  
   const { user, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
 
