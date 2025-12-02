@@ -17,6 +17,7 @@ import { createPublicEvidenceTables } from "./migrations/createPublicEvidenceTab
 import { createComplaintRoutingTables } from "./migrations/createComplaintRoutingTables";
 import { createFOIARoutingTables } from "./migrations/createFOIARoutingTables";
 import { createSearchPrioritizationTables } from "./migrations/createSearchPrioritizationTables";
+import { createDocumentCreatorTables } from "./migrations/createDocumentCreatorTables";
 
 const app = express();
 
@@ -178,6 +179,7 @@ async function runMigrations(): Promise<void> {
     { name: 'Complaint Routing tables', fn: createComplaintRoutingTables },
     { name: 'FOIA Routing tables', fn: createFOIARoutingTables },
     { name: 'Search Prioritization tables', fn: createSearchPrioritizationTables },
+    { name: 'Document Creator tables', fn: createDocumentCreatorTables },
   ];
 
   for (const migration of migrations) {

@@ -105,6 +105,8 @@ const getPoolConfig = () => {
     connectionTimeoutMillis: (isRailway || isProduction) ? 30000 : 10000,
     max: 8,
     min: 1,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
     ssl: process.env.PGSSLMODE !== 'disable' ? { 
       rejectUnauthorized: false,
       ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {})
