@@ -99,7 +99,9 @@ export async function callGemini(
     throw new GeminiRateLimitError('Gemini is rate limited - use fallback provider');
   }
 
-  const modelName = options.model || "gemini-2.5-flash";
+  // Primary model: gemini-2.5-flash-lite (1000 RPD)
+  // Fallback model: gemini-2.5-flash (50 RPD) for multimodal/complex tasks
+  const modelName = options.model || "gemini-2.5-flash-lite";
   const client = getGeminiClient();
 
   const systemPrompt = options.systemPrompt || '';
