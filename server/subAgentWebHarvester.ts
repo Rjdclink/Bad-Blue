@@ -395,10 +395,14 @@ class SubAgentWebHarvester {
       await searchSessionManager.recordSearchCompletion(officersFound);
 
       try {
+        // Only Groq and Mistral are valid for autonomous tasks
+        const autonomousProvider = (canSearch.nextProvider === 'groq' || canSearch.nextProvider === 'mistral') 
+          ? canSearch.nextProvider 
+          : 'mistral';
         await selfImprovementEngine.recordSuccess(
           queueItem.id,
           officersFound,
-          canSearch.nextProvider || 'mistral',
+          autonomousProvider,
           Date.now() - startTime,
           0
         );
@@ -410,11 +414,15 @@ class SubAgentWebHarvester {
       errors.push(`Priority harvest failed: ${e.message}`);
       
       try {
+        // Only Groq and Mistral are valid for autonomous tasks
+        const autonomousProvider = (canSearch.nextProvider === 'groq' || canSearch.nextProvider === 'mistral') 
+          ? canSearch.nextProvider 
+          : 'mistral';
         await selfImprovementEngine.recordFailure(
           'priority-harvest',
           e.message.includes('rate') ? 'rate_limit' : 
           e.message.includes('timeout') ? 'timeout' : 'search_failure',
-          canSearch.nextProvider || 'mistral',
+          autonomousProvider,
           { error: e.message }
         );
       } catch (selfImpErr: any) {

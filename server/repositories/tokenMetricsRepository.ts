@@ -8,9 +8,12 @@ import { db } from '../db';
 import { aiUsageMetrics, type InsertAiUsageMetric, type AiUsageMetric } from '../../shared/schema';
 import { eq, and, gte, sql } from 'drizzle-orm';
 
+// Provider type - supports all 7 providers
+export type AIProviderName = 'gemini' | 'groq' | 'mistral' | 'claude' | 'deepseek' | 'grok' | 'kimi';
+
 export interface UsageRecord {
   taskName?: string;
-  provider: 'gemini' | 'groq' | 'mistral' | 'claude';
+  provider: AIProviderName;
   model?: string;
   tokensUsed: number;
   latencyMs?: number | null;
@@ -44,7 +47,7 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
 }
 
 export async function getUsageInWindow(
-  provider: 'gemini' | 'groq' | 'mistral' | 'claude',
+  provider: AIProviderName,
   windowMinutes: number
 ): Promise<{
   totalTokens: number;
@@ -83,7 +86,7 @@ export async function getUsageInWindow(
   }
 }
 
-export async function getTodayUsage(provider: 'gemini' | 'groq' | 'mistral' | 'claude'): Promise<{
+export async function getTodayUsage(provider: AIProviderName): Promise<{
   tokens: number;
   requests: number;
 }> {
@@ -178,7 +181,7 @@ export async function getUsageBySource(
  * Get today's usage by source and provider (essential for autonomous limit tracking)
  */
 export async function getTodayUsageBySource(
-  provider: 'gemini' | 'groq' | 'mistral' | 'claude',
+  provider: AIProviderName,
   source: 'user' | 'worker'
 ): Promise<{
   tokens: number;

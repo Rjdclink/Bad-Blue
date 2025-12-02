@@ -416,6 +416,7 @@ export async function searchOfficerData(
  * - GROQ: 2-tier selection (default/comprehensive) 
  * - MISTRAL: Single model (only free tier available)
  * - CLAUDE: 2-tier selection (default/comprehensive)
+ * - DEEPSEEK/GROK/KIMI: OpenRouter models (single tier each)
  */
 function getProviderModel(provider: AIProvider, requestedModel?: string, complexity?: TaskComplexity): string {
   const validModels: Record<AIProvider, { 
@@ -427,9 +428,9 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
   }> = {
     [AIProvider.GEMINI]: {
       prefixes: ['gemini'],
-      lite: 'gemini-2.0-flash-lite',      // FREE: Ultra-fast, simple queries
-      default: 'gemini-2.0-flash',        // FREE: Balanced speed/quality, 1M context
-      pro: 'gemini-2.5-pro'               // FREE: Best reasoning, 25 RPM limit
+      lite: 'gemini-2.5-flash-lite',      // FREE: Ultra-fast, 1000 RPD
+      default: 'gemini-2.5-flash',        // FREE: Balanced, 50 RPD
+      pro: 'gemini-2.5-pro'               // FREE: Best reasoning (limited)
     },
     [AIProvider.GROQ]: {
       prefixes: ['llama', 'mixtral', 'gemma'],
@@ -444,6 +445,19 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
       prefixes: ['claude'],
       default: 'claude-3-5-haiku-20241022',      // FREE: Fast responses
       comprehensive: 'claude-3-5-sonnet-20241022' // FREE: Advanced reasoning
+    },
+    // OpenRouter models (USER context only)
+    [AIProvider.DEEPSEEK]: {
+      prefixes: ['deepseek', 'tngtech'],
+      default: 'tngtech/deepseek-r1t2-chimera:free' // 671B params, strong reasoning
+    },
+    [AIProvider.GROK]: {
+      prefixes: ['grok', 'x-ai'],
+      default: 'x-ai/grok-4.1-fast:free' // 2M context, multimodal
+    },
+    [AIProvider.KIMI]: {
+      prefixes: ['kimi', 'moonshot'],
+      default: 'moonshotai/kimi-k2:free' // 1T params, structured extraction
     }
   };
 

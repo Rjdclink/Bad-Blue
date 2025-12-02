@@ -6,6 +6,60 @@ import { generateGeminiStructuredResponse, isGeminiAvailable, isGeminiRateLimite
 import { isClaudeAvailable, generateClaudeJSON, callClaude } from "./claude";
 import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 import { searchOfficerRecords as webSearchOfficerRecords, unifiedSearch, isWebSearchAvailable } from './webSearchService';
+import { searchOfficerWithOpenRouter, isOpenRouterAvailable } from './openRouterService';
+
+// Complete US state abbreviation to full name mapping
+const STATE_ABBREVIATIONS: Record<string, string> = {
+  'AL': 'Alabama', 'AK': 'Alaska', 'AZ': 'Arizona', 'AR': 'Arkansas', 'CA': 'California',
+  'CO': 'Colorado', 'CT': 'Connecticut', 'DE': 'Delaware', 'FL': 'Florida', 'GA': 'Georgia',
+  'HI': 'Hawaii', 'ID': 'Idaho', 'IL': 'Illinois', 'IN': 'Indiana', 'IA': 'Iowa',
+  'KS': 'Kansas', 'KY': 'Kentucky', 'LA': 'Louisiana', 'ME': 'Maine', 'MD': 'Maryland',
+  'MA': 'Massachusetts', 'MI': 'Michigan', 'MN': 'Minnesota', 'MS': 'Mississippi', 'MO': 'Missouri',
+  'MT': 'Montana', 'NE': 'Nebraska', 'NV': 'Nevada', 'NH': 'New Hampshire', 'NJ': 'New Jersey',
+  'NM': 'New Mexico', 'NY': 'New York', 'NC': 'North Carolina', 'ND': 'North Dakota', 'OH': 'Ohio',
+  'OK': 'Oklahoma', 'OR': 'Oregon', 'PA': 'Pennsylvania', 'RI': 'Rhode Island', 'SC': 'South Carolina',
+  'SD': 'South Dakota', 'TN': 'Tennessee', 'TX': 'Texas', 'UT': 'Utah', 'VT': 'Vermont',
+  'VA': 'Virginia', 'WA': 'Washington', 'WV': 'West Virginia', 'WI': 'Wisconsin', 'WY': 'Wyoming',
+  'DC': 'District of Columbia', 'PR': 'Puerto Rico', 'VI': 'Virgin Islands', 'GU': 'Guam',
+  'AS': 'American Samoa', 'MP': 'Northern Mariana Islands'
+};
+
+// Reverse mapping: full name to abbreviation
+const STATE_FULL_NAMES: Record<string, string> = Object.fromEntries(
+  Object.entries(STATE_ABBREVIATIONS).map(([abbr, full]) => [full.toUpperCase(), abbr])
+);
+
+/**
+ * Normalize state input to standard abbreviation
+ * Handles both abbreviations and full names
+ */
+function normalizeState(state: string | undefined): string | undefined {
+  if (!state) return undefined;
+  
+  const trimmed = state.trim();
+  const upper = trimmed.toUpperCase();
+  
+  // Check if it's already an abbreviation
+  if (STATE_ABBREVIATIONS[upper]) {
+    return upper;
+  }
+  
+  // Check if it's a full name
+  if (STATE_FULL_NAMES[upper]) {
+    return STATE_FULL_NAMES[upper];
+  }
+  
+  // Return original if not found (might be partial or misspelled)
+  return trimmed.length === 2 ? upper : trimmed;
+}
+
+/**
+ * Get full state name from abbreviation
+ */
+function getStateName(stateAbbr: string | undefined): string | undefined {
+  if (!stateAbbr) return undefined;
+  return STATE_ABBREVIATIONS[stateAbbr.toUpperCase()] || stateAbbr;
+}
 
 // Helper to check if Gemini is truly available (has key AND not rate limited)
 function canUseGemini(): boolean {
@@ -186,7 +240,7 @@ function isResultMeaningful(report: ClaudeVerifiedReport): boolean {
 
 /**
  * Web search service supplemental data gathering
- * Uses unified search for additional coverage before AI processing
+ * Uses unified search and OpenRouter for additional coverage before AI processing
  */
 async function webSearchSupplementalData(
   officerName: string,
@@ -195,7 +249,26 @@ async function webSearchSupplementalData(
   const additionalSources: string[] = [];
   const snippets: string[] = [];
   
+  // Get full state name for better search results
+  const fullStateName = getStateName(state);
+  
   try {
+    // Try OpenRouter search first (replaces Bing)
+    if (isOpenRouterAvailable()) {
+      try {
+        const openRouterResult = await searchOfficerWithOpenRouter(officerName, fullStateName);
+        if (openRouterResult && openRouterResult.content) {
+          snippets.push(openRouterResult.content);
+          if (openRouterResult.sources && openRouterResult.sources.length > 0) {
+            additionalSources.push(...openRouterResult.sources);
+          }
+        }
+      } catch (e) {
+        console.warn('[Officer Search] OpenRouter search failed:', e);
+      }
+    }
+    
+    // Use Gemini-based unified search
     if (isWebSearchAvailable().any) {
       const searchResult = await webSearchOfficerRecords(officerName, undefined, state);
       if (searchResult.sources && searchResult.sources.length > 0) {
@@ -203,8 +276,8 @@ async function webSearchSupplementalData(
       }
       
       const supplementalQueries = [
-        `"${officerName}" police officer ${state || ''} complaint`,
-        `"${officerName}" police ${state || ''} lawsuit`,
+        `"${officerName}" police officer ${fullStateName || ''} complaint`,
+        `"${officerName}" police ${fullStateName || ''} lawsuit`,
       ];
       
       for (const query of supplementalQueries.slice(0, 2)) {

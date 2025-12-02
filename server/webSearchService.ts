@@ -138,142 +138,32 @@ function getGeminiClient(): GoogleGenAI {
 
 /**
  * Search using Bing Web Search API
+ * @deprecated Bing API has payment requirements (HTTP 402). Use OpenRouter models instead.
+ * This function now returns empty results and logs a deprecation warning.
  */
 export async function bingSearch(
   query: string, 
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  if (!BING_API_KEY) {
-    return [];
-  }
-
-  // Check circuit breaker before attempting
-  if (isCircuitOpen('bing')) {
-    return [];
-  }
-
-  const limit = options.limit || 10;
-  const freshness = options.freshness || 'all';
-
-  try {
-    let url = `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(query)}&count=${limit}`;
-    
-    if (freshness !== 'all') {
-      url += `&freshness=${freshness}`;
-    }
-    
-    if (options.safeSearch) {
-      url += `&safeSearch=${options.safeSearch}`;
-    }
-    
-    if (options.market) {
-      url += `&mkt=${options.market}`;
-    }
-
-    const response = await fetch(url, {
-      headers: {
-        'Ocp-Apim-Subscription-Key': BING_API_KEY,
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      const errorMsg = `API error ${response.status}`;
-      recordFailure('bing', errorMsg);
-      return [];
-    }
-
-    const data = await response.json();
-    const results: SearchResult[] = [];
-    
-    const webPages = data.webPages?.value || [];
-    for (const page of webPages.slice(0, limit)) {
-      results.push({
-        title: page.name || '',
-        url: page.url || '',
-        snippet: page.snippet || '',
-        source: 'bing',
-        metadata: {
-          displayUrl: page.displayUrl,
-          dateLastCrawled: page.dateLastCrawled,
-        },
-      });
-    }
-
-    if (results.length > 0) {
-      recordSuccess('bing');
-    }
-    return results;
-  } catch (error: any) {
-    recordFailure('bing', error?.message || 'Unknown error');
-    return [];
-  }
+  // DEPRECATED: Bing API requires paid subscription (HTTP 402 errors)
+  // Use OpenRouter models (DeepSeek, Grok, Kimi) for web search instead
+  console.warn('[Web Search] bingSearch is deprecated - use OpenRouter models for web search');
+  return [];
 }
 
 /**
  * Search using Bing News API (for recent events)
+ * @deprecated Bing API has payment requirements (HTTP 402). Use OpenRouter models instead.
+ * This function now returns empty results and logs a deprecation warning.
  */
 export async function bingNewsSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  if (!BING_API_KEY) {
-    return [];
-  }
-
-  // Check circuit breaker before attempting (shares state with regular Bing search)
-  if (isCircuitOpen('bing')) {
-    return [];
-  }
-
-  const limit = options.limit || 10;
-
-  try {
-    let url = `https://api.bing.microsoft.com/v7.0/news/search?q=${encodeURIComponent(query)}&count=${limit}`;
-    
-    if (options.freshness) {
-      url += `&freshness=${options.freshness}`;
-    }
-
-    const response = await fetch(url, {
-      headers: {
-        'Ocp-Apim-Subscription-Key': BING_API_KEY,
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      recordFailure('bing', `News API error ${response.status}`);
-      return [];
-    }
-
-    const data = await response.json();
-    const results: SearchResult[] = [];
-    
-    const newsArticles = data.value || [];
-    for (const article of newsArticles.slice(0, limit)) {
-      results.push({
-        title: article.name || '',
-        url: article.url || '',
-        snippet: article.description || '',
-        source: 'bing',
-        metadata: {
-          provider: article.provider?.[0]?.name,
-          datePublished: article.datePublished,
-          category: article.category,
-        },
-      });
-    }
-
-    if (results.length > 0) {
-      recordSuccess('bing');
-    }
-    return results;
-  } catch (error: any) {
-    recordFailure('bing', error?.message || 'Unknown error');
-    return [];
-  }
+  // DEPRECATED: Bing API requires paid subscription (HTTP 402 errors)
+  // Use OpenRouter models (DeepSeek, Grok, Kimi) for news search instead
+  console.warn('[Web Search] bingNewsSearch is deprecated - use OpenRouter models for news search');
+  return [];
 }
 
 /**
