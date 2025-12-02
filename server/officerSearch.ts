@@ -672,17 +672,29 @@ export async function searchOfficerInformation(
       geminiData = await claudeDataHarvest(normalizedName, state, departmentType, city, county, includeGovernment, includeCorrections);
     } else {
       console.log('[Officer Search] No AI providers available for officer search (Gemini + Claude required)');
+      // When no AI is available, we can still use web search supplemental data
+      const webSupplemental = await webSearchSupplementalData(normalizedName, state);
+      if (webSupplemental.additionalSources.length > 0) {
+        geminiData = {
+          sources: webSupplemental.additionalSources,
+        };
+      }
     }
 
     // Stage 3: Claude Verification & Synthesis
     emitProgress(3, 'Claude Synthesis', 'Verifying facts and generating report...');
     
     let verifiedReport: ClaudeVerifiedReport;
+    const noAIProviders = !canUseGemini() && !isClaudeAvailable();
+    
     if (isClaudeAvailable()) {
       verifiedReport = await claudeVerifyAndSynthesize(normalizedName, state, geminiData, rosterData, includeGovernment, includeCorrections);
     } else {
       // Fallback if Claude unavailable
       console.log('[Officer Search] Claude not available, using raw Gemini data');
+      const summaryMessage = noAIProviders 
+        ? 'Limited search - AI verification services are temporarily unavailable. Results based on cached data and web search only.'
+        : 'Report generated from raw data (verification unavailable).';
       verifiedReport = {
         rank: geminiData.rank || rosterData?.rank || 'Unknown',
         agency: geminiData.agency || rosterData?.department || 'Unknown',
@@ -691,7 +703,7 @@ export async function searchOfficerInformation(
         sanctions: geminiData.sanctions?.join('; ') || 'None found',
         lawsuits: geminiData.lawsuits?.join('; ') || 'None found',
         training: geminiData.training?.join('; ') || 'None found',
-        summary: 'Report generated from raw data (verification unavailable).'
+        summary: summaryMessage
       };
     }
 
