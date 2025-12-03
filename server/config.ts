@@ -1,15 +1,20 @@
 import { z } from 'zod';
 
-// Helper function to validate and parse port numbers
-// Note: Accepts string input (from process.env) and transforms to number for type safety
-// Validates port range 1-65535 (valid TCP/UDP port range)
-const portValidator = (fieldName: string) => z.string().transform((val) => {
+// Helper function to validate port numbers (TCP/UDP range: 1-65535)
+const validatePort = (val: string, fieldName: string): number => {
   const num = parseInt(val, 10);
   if (isNaN(num) || num <= 0 || num > 65535) {
     throw new Error(`${fieldName} must be a valid port number (1-65535)`);
   }
   return num;
-});
+};
+
+// Helper function to validate and parse port numbers
+// Note: Accepts string input (from process.env) and transforms to number for type safety
+// Default values like '5000' are strings from .env but get transformed to numbers
+const portValidator = (fieldName: string) => z.string().transform((val) => 
+  validatePort(val, fieldName)
+);
 
 const envSchema = z.object({
   // Database
@@ -45,14 +50,9 @@ const envSchema = z.object({
   GWSMTP_HOST: z.string().default('smtp.gmail.com'),
   GWSMTP_PORT: portValidator('GWSMTP_PORT').default('587'),
   SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.string().optional().transform((val) => {
-    if (!val) return undefined;
-    const num = parseInt(val, 10);
-    if (isNaN(num) || num <= 0 || num > 65535) {
-      throw new Error('SMTP_PORT must be a valid port number (1-65535)');
-    }
-    return num;
-  }),
+  SMTP_PORT: z.string().optional().transform((val) => 
+    val ? validatePort(val, 'SMTP_PORT') : undefined
+  ),
   RESEND_API_KEY: z.string().optional(),
   DEFAULT_FROM_EMAIL: z.string().email().optional(),
   DEFAULT_FROM_NAME: z.string().optional(),
