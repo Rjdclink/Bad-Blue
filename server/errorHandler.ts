@@ -37,9 +37,9 @@ export const ErrorTypes = {
   DUPLICATE_ENTRY: (field: string) => new AppError(`This ${field} is already in use. Please try a different one`, 409),
   DATABASE_ERROR: (message = 'We\'re experiencing technical difficulties. Please try again in a few moments') => new AppError(message, 500, false),
   
-  // Payment & Stripe
+  // Payment & Square
   PAYMENT_FAILED: (message = 'Payment could not be processed. Please check your card details and try again') => new AppError(message, 402),
-  STRIPE_ERROR: (message: string) => new AppError(`Payment could not be processed. Please check your card details and try again`, 402),
+  SQUARE_ERROR: (message: string) => new AppError(`Payment could not be processed: ${message}`, 402),
   INSUFFICIENT_FUNDS: () => new AppError('Your card has insufficient funds. Please try a different payment method', 402),
   
   // Rate Limiting & Security
@@ -93,13 +93,15 @@ export function errorHandler(err: Error, req: Request, res: Response, next: Next
   // Log the error
   logError(err, req);
 
-  // Handle Stripe errors specifically
-  if (err.name === 'StripeError' || (err as any).type?.includes('Stripe')) {
-    const stripeError = err as any;
+  // Handle Square API errors
+  if ((err as any).name === 'ApiError' || (err as any).errors) {
+    const squareError = err as any;
+    const errorMessage = squareError.errors?.[0]?.detail || squareError.message || 'Payment processing failed';
     return res.status(402).json({
       error: 'Payment Error',
       message: 'Payment could not be processed. Please check your card details and try again',
-      code: stripeError.code,
+      details: process.env.NODE_ENV !== 'production' ? errorMessage : undefined,
+      code: squareError.errors?.[0]?.code,
     });
   }
 
