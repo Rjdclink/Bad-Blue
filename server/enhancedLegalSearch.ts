@@ -256,7 +256,7 @@ class EntityExtractionEngine {
     }
 
     // Pattern 3: Amendment references (Fourth Amendment, 4th Amendment)
-    const amendmentPattern = /\b(First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|Eleventh|Twelfth|Thirteenth|Fourteenth|Fifteenth|\d{1,2}(?:st|nd|rd|th))\s+Amendment\b/gi;
+    const amendmentPattern = /\b(First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|Eleventh|Twelfth|Thirteenth|Fourteenth|Fifteenth|Sixteenth|Seventeenth|Eighteenth|Nineteenth|Twentieth|Twenty-First|Twenty-Second|Twenty-Third|Twenty-Fourth|Twenty-Fifth|Twenty-Sixth|Twenty-Seventh|\d{1,2}(?:st|nd|rd|th))\s+Amendment\b/gi;
     
     while ((match = amendmentPattern.exec(text)) !== null) {
       statutes.push({
@@ -306,7 +306,8 @@ class EntityExtractionEngine {
     }
 
     // Pattern 3: Case name v. case name (using Bluebook format)
-    const caseNamePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+v\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+(\d+)/gi;
+    // Requires a digit for citation but also checks for typical case law reporter patterns
+    const caseNamePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+v\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+(\d+\s+(?:U\.S\.|F\.|F\.2d|F\.3d|F\.Supp\.|P\.|N\.E\.|S\.W\.|A\.|So\.))/gi;
     
     while ((match = caseNamePattern.exec(text)) !== null) {
       citations.push({
@@ -624,6 +625,10 @@ class ConsensusSynthesisEngine {
 
   private areSimilarFacts(fact1: string, fact2: string): boolean {
     // Simple similarity check using word overlap
+    // Threshold of 0.6 (60%) provides good balance between grouping similar facts
+    // and avoiding false positives. Based on Jaccard similarity coefficient.
+    const SIMILARITY_THRESHOLD = 0.6;
+    
     const words1 = new Set(fact1.toLowerCase().split(/\s+/).filter(w => w.length > 3));
     const words2 = new Set(fact2.toLowerCase().split(/\s+/).filter(w => w.length > 3));
 
@@ -631,7 +636,7 @@ class ConsensusSynthesisEngine {
     const union = new Set([...words1, ...words2]);
 
     const similarity = intersection.size / union.size;
-    return similarity > 0.6; // 60% word overlap threshold
+    return similarity > SIMILARITY_THRESHOLD;
   }
 
   private identifyContradictions(factGroups: Array<{ facts: Array<{ fact: string; model: string; sources: string[]; entities: LegalEntity[] }>; consensus: boolean }>): Discrepancy[] {
@@ -686,10 +691,16 @@ class ConsensusSynthesisEngine {
       const validation = validator.validateFact(representativeFact.fact, allSources);
 
       if (validation.valid) {
+        // Calculate confidence with cap at 1.0
+        // Base confidence 0.80, +0.05 per additional model agreement, max 1.0
+        const baseConfidence = 0.80;
+        const agreementBonus = (group.facts.length - 1) * 0.05;
+        const confidence = Math.min(1.0, baseConfidence + agreementBonus);
+        
         deduplicatedFacts.push({
           fact: representativeFact.fact,
           sources: allSources,
-          confidence: 0.80 + (group.facts.length * 0.05), // Higher confidence with more models agreeing
+          confidence,
           extractedFrom: group.facts.map(f => f.model).join(', '),
           verified: true,
           entities: allEntities,
@@ -1108,10 +1119,13 @@ export class EnhancedLegalSearchSystem {
     const discrepancies: Discrepancy[] = [];
 
     for (const fact of facts) {
-      if (fact.sources.length === 0 || !fact.sources.some(s => this.sourceValidator['isValidSource'](s))) {
+      // Check if fact has valid sources using the validator
+      const validation = this.sourceValidator.validateFact(fact.fact, fact.sources);
+      
+      if (!validation.valid) {
         discrepancies.push({
           type: 'missing_source',
-          description: `Fact lacks proper source attribution: "${fact.fact.substring(0, 100)}..."`,
+          description: `Fact lacks proper source attribution: "${fact.fact.substring(0, 100)}..." (${validation.reason})`,
           involvedFacts: [fact.fact],
           severity: 'high',
         });
