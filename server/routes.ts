@@ -26,6 +26,7 @@ import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import { setupLegalizoRoutes } from "./legalizoRoutes";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
+import { setupUploadRoutes } from "./routes/upload.routes";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -799,10 +800,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupLegalizoRoutes(app);
 
   // ============================================
-  // AUTOSAVE & LAW TYPES ROUTES
+  // AUTOSAVE, LAW TYPES & UPLOAD ROUTES (Stage 2A)
   // ============================================
   setupAutosaveRoutes(app);
   setupLawTypesRoutes(app);
+  setupUploadRoutes(app);
 
   // ============================================
   // PREVIEW ROUTES

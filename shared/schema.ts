@@ -2412,4 +2412,39 @@ export const insertPeopleSearchReportSchema = createInsertSchema(peopleSearchRep
 });
 
 export type PeopleSearchReport = typeof peopleSearchReports.$inferSelect;
+
+// ============================================
+// EVIDENCE FILES TABLE (Stage 2A - Media Upload System)
+// ============================================
+export const evidenceFiles = pgTable("evidence_files", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  fileName: text("file_name").notNull(),
+  fileType: text("file_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  storagePath: text("storage_path").notNull(),
+  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  lawType: text("law_type"), // References law types from shared/lawTypes.ts
+  associatedWith: varchar("associated_with", { length: 20 }), // 'consultation' | 'document' | null
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_evidence_user").on(table.userId),
+  index("idx_evidence_law_type").on(table.lawType),
+]);
+
+export const evidenceFilesRelations = relations(evidenceFiles, ({ one }) => ({
+  user: one(users, {
+    fields: [evidenceFiles.userId],
+    references: [users.id],
+  }),
+}));
+
+export const insertEvidenceFileSchema = createInsertSchema(evidenceFiles).omit({
+  id: true,
+  createdAt: true,
+  uploadedAt: true,
+});
+
+export type InsertEvidenceFile = z.infer<typeof insertEvidenceFileSchema>;
+export type EvidenceFile = typeof evidenceFiles.$inferSelect;
 export type InsertPeopleSearchReport = z.infer<typeof insertPeopleSearchReportSchema>;

@@ -20,3 +20,7 @@ logs/
 
 # Backup files
 *.backup
+
+# Uploads directory (Stage 2A - Media Upload System)
+uploads/
+!uploads/.gitkeep
