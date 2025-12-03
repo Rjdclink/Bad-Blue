@@ -9,9 +9,17 @@ const ERROR_LOG_MAX_SIZE = 5 * MB;  // 5MB for error logs
 const EXCEPTION_LOG_MAX_SIZE = 5 * MB;
 const REJECTION_LOG_MAX_SIZE = 5 * MB;
 
+// Ensure logs directory exists (with error handling for race conditions)
 const logsDir = path.resolve(process.cwd(), 'logs');
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir, { recursive: true });
+try {
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+} catch (err: any) {
+  // Ignore EEXIST errors (directory already created by another process)
+  if (err.code !== 'EEXIST') {
+    console.error('Failed to create logs directory:', err);
+  }
 }
 
 // Note: Using process.env.NODE_ENV directly here instead of config system
@@ -39,9 +47,9 @@ const consoleFormat = winston.format.combine(
     if (component) msg += ` [${component}]`;
     msg += `: ${message}`;
     
-    const metaKeys = Object.keys(meta).filter(k => 
-      k !== 'timestamp' && k !== 'level' && k !== 'message' && k !== 'component'
-    );
+    // Reserved keys that should not appear in metadata output
+    const RESERVED_KEYS = ['timestamp', 'level', 'message', 'component', 'service', 'pid'];
+    const metaKeys = Object.keys(meta).filter(k => !RESERVED_KEYS.includes(k));
     
     if (metaKeys.length > 0) {
       const metaObj: Record<string, any> = {};

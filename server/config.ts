@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 // Helper function to validate and parse port numbers
+// Note: Accepts string input (from process.env) and transforms to number for type safety
 const portValidator = (fieldName: string) => z.string().transform((val) => {
   const num = parseInt(val, 10);
   if (isNaN(num) || num <= 0) {
