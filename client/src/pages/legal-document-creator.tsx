@@ -166,7 +166,7 @@ export default function LegalDocumentCreator() {
 
       const data = await response.json();
       
-      // Redirect to Stripe checkout
+      // Redirect to Square checkout
       if (data.url) {
         window.location.href = data.url;
       }

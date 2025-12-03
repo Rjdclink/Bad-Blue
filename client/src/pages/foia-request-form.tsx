@@ -191,7 +191,7 @@ export default function FOIARequestForm() {
                  error.message?.toLowerCase().includes('expired')) {
         errorMessage = "Your session has expired. Please log in again to continue";
       } else if (error.message?.toLowerCase().includes('card') || 
-                 error.message?.toLowerCase().includes('stripe')) {
+                 error.message?.toLowerCase().includes('square')) {
         errorMessage = "Payment could not be processed. Please check your card details and try again";
       } else if (error.message?.toLowerCase().includes('rate') || 
                  error.message?.toLowerCase().includes('too many')) {

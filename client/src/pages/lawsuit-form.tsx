@@ -6,11 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, Scale, DollarSign, CheckCircle2, FileText, ArrowLeft, Upload, Image, Video, File, X, Loader2 } from "lucide-react";
+import { Shield, Scale, DollarSign, CheckCircle2, FileText, ArrowLeft, Upload, Image, Video, File, X, Loader2, AlertCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useClientSession } from "@/contexts/ClientSessionContext";
 import { apiRequest } from "@/lib/queryClient";
-import { LAWSUIT_PRICING } from "@shared/schema";
+import { LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING } from "@shared/schema";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { UploadResult } from "@uppy/core";
 import { FormAssistant } from "@/components/FormAssistant";
@@ -326,7 +326,7 @@ export default function LawsuitForm() {
       let errorMessage = "We couldn't submit your lawsuit. Please check your information and try again";
       
       if (error.message?.toLowerCase().includes('payment') || 
-          error.message?.toLowerCase().includes('stripe')) {
+          error.message?.toLowerCase().includes('square')) {
         errorMessage = "Payment could not be processed. Please check your card details and try again";
       } else if (error.message?.toLowerCase().includes('network') || 
                  error.message?.toLowerCase().includes('connection')) {
@@ -664,13 +664,31 @@ export default function LawsuitForm() {
               <CardContent>
                 <div className="flex items-center justify-between py-4 mb-4 border-b">
                   <div>
-                    <p className="font-medium">Lawsuit Filing Fee</p>
+                    <p className="font-medium">
+                      {lawsuitTier === 'full-service' ? 'Full-Service' : 'DIY'} Lawsuit Filing Fee
+                    </p>
                     <p className="text-sm text-muted-foreground">Service payment</p>
                   </div>
-                  <div className="text-2xl font-bold">${LAWSUIT_PRICING.toFixed(2)}</div>
+                  <div className="text-2xl font-bold">
+                    ${lawsuitTier === 'full-service' ? LAWSUIT_FULL_SERVICE_PRICING.toFixed(2) : LAWSUIT_DIY_PRICING.toFixed(2)}
+                  </div>
                 </div>
+                
+                {/* Full-Service Disclaimer */}
+                {lawsuitTier === 'full-service' && (
+                  <div className="mb-4 p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                      <div className="text-sm text-amber-800 dark:text-amber-200">
+                        <p className="font-semibold mb-1">Additional Costs Notice</p>
+                        <p>Filing fee and official service costs not included. Depending on your jurisdiction, additional fees may apply for court filing and service of process via U.S. Marshal or private process server.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
                 <p className="text-sm text-muted-foreground">
-                  By proceeding, you agree to file this lawsuit and authorize payment of ${LAWSUIT_PRICING.toFixed(2)} for document generation and legal processing.
+                  By proceeding, you agree to file this lawsuit and authorize payment of ${lawsuitTier === 'full-service' ? LAWSUIT_FULL_SERVICE_PRICING.toFixed(2) : LAWSUIT_DIY_PRICING.toFixed(2)} for document generation and legal processing.
                 </p>
               </CardContent>
             </Card>
