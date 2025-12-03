@@ -1,7 +1,7 @@
-# BadBlue - Police Accountability Platform
+# Legalezo - AI Legal Platform
 
 ## Overview
-BadBlue is a privacy-focused police accountability platform designed to empower citizens in filing complaints and initiating civil rights lawsuits against police officers. It leverages AI for officer identification, legal analysis, intelligent form prefill, automated routing, and jurisdiction-specific legal document generation. The platform supports secure evidence uploads and offers services like LegalAI Consultation, Officer Search, and various legal document generations to enhance police accountability through accessible legal avenues.
+Legalezo is an AI-powered legal platform that empowers citizens to access legal help across 30 areas of law. The platform features Law Enforcement Accountability (formerly BadBlue) as a flagship service, providing tools for filing complaints and initiating civil rights lawsuits against police officers. It leverages AI for officer identification, legal analysis, intelligent form prefill, automated routing, and jurisdiction-specific legal document generation. The platform supports secure evidence uploads and offers services like LegalAI Consultation, Officer Search, and various legal document generations to enhance legal accessibility through affordable legal avenues.
 
 ## System Architecture
 The platform utilizes a modern web stack featuring:
