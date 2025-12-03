@@ -110,6 +110,9 @@ const LegalizoWelcome = lazyWithRetry(() => import("@/pages/legalizo-welcome"), 
 const LegalizoConsultation = lazyWithRetry(() => import("@/pages/legalizo-consultation"), 'LegalizoConsultation');
 const LegalizoPeopleSearch = lazyWithRetry(() => import("@/pages/legalizo-people-search"), 'LegalizoPeopleSearch');
 
+// New Legalezo Welcome Page - Stage 1B
+const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
+
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
 const AdminLawsuits = lazyWithRetry(() => import("@/pages/admin-lawsuits"), 'AdminLawsuits');
@@ -173,6 +176,9 @@ function Router() {
         {/* Protected routes - only accessible when authenticated */}
         {isAuthenticated ? (
           <>
+            {/* New Legalezo Welcome Page - Stage 1B/1C */}
+            <Route path="/welcome" component={WelcomePage} />
+            
             {/* Legalizo protected routes */}
             <Route path="/legalizo-welcome" component={LegalizoWelcome} />
             <Route path="/legalizo-consultation" component={LegalizoConsultation} />
