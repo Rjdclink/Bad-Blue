@@ -8,6 +8,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import type { Server } from "http";
 
 // Static imports for migrations - ensures esbuild bundles them (dynamic imports don't work with bundlers)
+import { runSquareMigration } from "./migrations/runSquareMigration";
 import { createCoreTables } from "./migrations/createCoreTables";
 import { createSubAgentTables } from "./migrations/createSubAgentTables";
 import { createTokenMetricsTables } from "./migrations/createTokenMetrics";
@@ -170,6 +171,7 @@ async function runMigrations(): Promise<void> {
   // Using static imports (defined at top of file) - ensures esbuild includes migrations in bundle
   // Dynamic imports don't work with bundlers because they can't analyze variable-based import paths
   const migrations: Array<{ name: string; fn: () => Promise<unknown> }> = [
+    { name: 'Square Payment Migration', fn: runSquareMigration },
     { name: 'Core tables', fn: createCoreTables },
     { name: 'Sub-Agent tables', fn: createSubAgentTables },
     { name: 'Token Metrics tables', fn: createTokenMetricsTables },
