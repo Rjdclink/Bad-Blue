@@ -74,7 +74,7 @@ export default function LegalToolsPage() {
   
   // Get law type from URL query parameter
   const urlParams = new URLSearchParams(window.location.search);
-  const lawTypeParam = urlParams.get('type');
+  const lawTypeParam = urlParams.get('type') || '';
   
   // Find law type info
   const lawTypeInfo = LAW_TYPE_DATA.find(t => t.id === lawTypeParam);
@@ -84,6 +84,9 @@ export default function LegalToolsPage() {
     setLocation('/welcome');
     return null;
   }
+  
+  // Validated law type (safe to use)
+  const validatedLawType = lawTypeParam;
   
   const [activeTab, setActiveTab] = useState<'consultation' | 'documents'>('consultation');
   const [state, setState] = useState("");
@@ -128,7 +131,7 @@ export default function LegalToolsPage() {
     consultationMutation.mutate({
       state,
       situation,
-      lawType: lawTypeParam!,
+      lawType: validatedLawType,
     });
   };
   
@@ -168,7 +171,7 @@ export default function LegalToolsPage() {
           </div>
           
           {/* Main Content */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents')} className="space-y-6">
             <TabsList className="grid w-full grid-cols-2 max-w-md">
               <TabsTrigger value="consultation" className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
@@ -269,7 +272,7 @@ export default function LegalToolsPage() {
                 <CardContent>
                   <FileUpload
                     associatedWith="consultation"
-                    lawType={lawTypeParam!}
+                    lawType={validatedLawType}
                   />
                 </CardContent>
               </Card>
@@ -319,7 +322,7 @@ export default function LegalToolsPage() {
                 <CardContent>
                   <FileUpload
                     associatedWith="document"
-                    lawType={lawTypeParam!}
+                    lawType={validatedLawType}
                   />
                 </CardContent>
               </Card>
