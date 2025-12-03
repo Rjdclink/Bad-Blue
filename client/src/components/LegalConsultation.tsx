@@ -118,7 +118,7 @@ export default function LegalConsultation({ onBack, lawType, onDataChange }: Leg
   }, [analysis, situation, state, lawType, onDataChange]);
 
   const analyzeMutation = useMutation({
-    mutationFn: async (data: { state: string; situation: string }) => {
+    mutationFn: async (data: { state: string; situation: string; lawType?: string }) => {
       const response = await apiRequest("/api/legal-consultation", "POST", data);
 
       if (!response.ok) {
@@ -177,7 +177,7 @@ export default function LegalConsultation({ onBack, lawType, onDataChange }: Leg
       return;
     }
 
-    analyzeMutation.mutate({ state, situation });
+    analyzeMutation.mutate({ state, situation, lawType });
   };
 
   const handleFileComplaint = () => {
