@@ -5,6 +5,11 @@ import {
   TaskPriority
 } from './aiProvider';
 import { safeJsonParse } from './jsonParser';
+import { 
+  performEnhancedLegalSearch,
+  type LegalSearchResult,
+  type AttributedFact 
+} from './enhancedLegalSearch';
 
 
 /**
@@ -2278,5 +2283,122 @@ Return ONLY the redrafted text, no explanations or meta-commentary.`;
   } catch (error: any) {
     console.error('[AI Redraft] Error redrafting offense description:', error);
     return originalDescription; // Fallback to original if error occurs
+  }
+}
+
+/**
+ * ULTRA-ENHANCED LEGAL ANALYSIS WITH INTEGRATED SEARCH
+ * Uses enhanced legal search system for comprehensive, source-verified analysis
+ */
+export async function analyzeLegalIssueWithEnhancedSearch(
+  description: string,
+  state: string,
+  additionalContext?: string
+): Promise<{
+  analysis: string;
+  searchResults: LegalSearchResult;
+  verifiedFacts: AttributedFact[];
+  timeline: any[];
+  discrepancies: any[];
+}> {
+  console.log('[Legal AI] Starting enhanced legal analysis with integrated search');
+
+  try {
+    // Step 1: Perform enhanced legal search to gather verified information
+    const searchQuery = `Legal analysis for civil rights incident in ${state}: ${description}${additionalContext ? ` Additional context: ${additionalContext}` : ''}`;
+    
+    const searchResults = await performEnhancedLegalSearch(searchQuery, {
+      jurisdiction: state,
+      context: additionalContext,
+      requireSources: true,
+    });
+
+    console.log(`[Legal AI] Enhanced search completed with ${searchResults.attributedFacts.length} verified facts`);
+
+    // Step 2: Use search results to generate comprehensive analysis
+    const analysisPrompt = `Based on the following VERIFIED legal research with source attribution, provide a comprehensive legal analysis:
+
+VERIFIED FACTS:
+${searchResults.attributedFacts.map((fact, i) => `${i + 1}. ${fact.fact}
+   Sources: ${fact.sources.join(', ')}
+   Confidence: ${(fact.confidence * 100).toFixed(0)}%`).join('\n\n')}
+
+TIMELINE OF EVENTS:
+${searchResults.timeline?.map(event => `${event.date.toLocaleDateString()}: ${event.description}`).join('\n') || 'No timeline available'}
+
+DISCREPANCIES IDENTIFIED:
+${searchResults.discrepancies.map(d => `[${d.severity.toUpperCase()}] ${d.type}: ${d.description}`).join('\n') || 'No discrepancies'}
+
+STATE: ${state}
+INCIDENT DESCRIPTION: ${description}
+${additionalContext ? `ADDITIONAL CONTEXT: ${additionalContext}` : ''}
+
+Provide a comprehensive legal analysis that:
+1. Identifies all applicable federal and state laws (with citations)
+2. Explains potential constitutional violations
+3. Outlines the legal basis for complaints or lawsuits
+4. Recommends evidence collection strategies
+5. Notes important deadlines and statutes of limitations
+6. Provides actionable next steps
+
+Use ONLY the verified facts above. Do not add information not supported by the sources provided.`;
+
+    const systemPrompt = `You are an elite civil rights attorney providing legal analysis based ONLY on verified, source-attributed facts. Your analysis must be thorough, accurate, and properly cited. Never add information not supported by the provided sources.`;
+
+    const response = await generateUserText(
+      'enhanced-legal-analysis',
+      analysisPrompt,
+      {
+        systemPrompt,
+        temperature: 0.3,
+      },
+      TaskPriority.CRITICAL_USER
+    );
+
+    console.log('[Legal AI] Enhanced legal analysis completed');
+
+    return {
+      analysis: response.content,
+      searchResults,
+      verifiedFacts: searchResults.attributedFacts,
+      timeline: searchResults.timeline || [],
+      discrepancies: searchResults.discrepancies,
+    };
+  } catch (error: any) {
+    console.error('[Legal AI] Error in enhanced legal analysis:', error);
+    
+    // Fallback to standard analysis if enhanced search fails
+    console.log('[Legal AI] Falling back to standard legal analysis');
+    const standardAnalysis = await analyzeLegalIssue(description, state, additionalContext);
+    
+    return {
+      analysis: standardAnalysis,
+      searchResults: {
+        query: '',
+        aggregatedResponse: standardAnalysis,
+        attributedFacts: [],
+        timeline: [],
+        categorization: {
+          byRelevance: [],
+          byRecency: [],
+          byAuthority: [],
+          byJurisdiction: new Map(),
+          byParty: new Map(),
+          byDocumentType: new Map(),
+        },
+        discrepancies: [],
+        modelResponses: [],
+        metadata: {
+          searchedAt: new Date(),
+          modelsUsed: ['Fallback'],
+          totalSources: 0,
+          verifiedFactsCount: 0,
+          discardedFactsCount: 0,
+        },
+      },
+      verifiedFacts: [],
+      timeline: [],
+      discrepancies: [],
+    };
   }
 }

@@ -7,6 +7,8 @@
  * - AI-powered petition content generation using 4-way AI collaboration
  * - Submission channel discovery
  * - Petition submission routing
+ * 
+ * Now integrated with ultra-enhanced legal search for verified facts and legal basis
  */
 
 import { db } from './db';
@@ -31,6 +33,7 @@ import { eq, and, sql, desc } from 'drizzle-orm';
 import { generateUserText, TaskPriority } from './aiProvider';
 import { harvestResidentsForPetition, getHarvestedSigners, verifySigner, verifyAllSigners, type HarvestResult, type HarvestedSigner } from './petitionHarvester';
 import crypto from 'crypto';
+import { performEnhancedLegalSearch, type LegalSearchResult, type AttributedFact } from './enhancedLegalSearch';
 
 // Re-export harvester functions
 export { harvestResidentsForPetition, getHarvestedSigners, verifySigner, verifyAllSigners };
@@ -525,4 +528,140 @@ export async function getPetitionSubmissions(workflowId: string): Promise<Petiti
   return await db.select()
     .from(petitionSubmissions)
     .where(eq(petitionSubmissions.workflowId, workflowId));
+}
+
+/**
+ * ENHANCED PETITION GENERATION WITH INTEGRATED LEGAL SEARCH
+ * Uses ultra-enhanced legal search for verified legal basis and precedents
+ */
+export async function generateEnhancedPetitionWithSearch(workflow: PetitionWorkflow): Promise<{
+  petitionContent: string;
+  legalResearch: LegalSearchResult;
+  verifiedFacts: AttributedFact[];
+}> {
+  console.log(`[Petition Enhanced] Generating enhanced petition with legal search for workflow ${workflow.id}`);
+
+  try {
+    // Step 1: Perform enhanced legal search for legal basis
+    const searchQuery = `Legal basis for community petition demanding ${workflow.requestedAction} against ${workflow.officerName} of ${workflow.officerDepartment} in ${workflow.city}, ${workflow.state}. Misconduct: ${workflow.misconductSummary}`;
+    
+    const legalResearch = await performEnhancedLegalSearch(searchQuery, {
+      jurisdiction: workflow.state,
+      context: `City: ${workflow.city}, Officer: ${workflow.officerName}, Department: ${workflow.officerDepartment}`,
+      requireSources: true,
+    });
+
+    console.log(`[Petition Enhanced] Legal research completed with ${legalResearch.attributedFacts.length} verified facts`);
+
+    // Step 2: Extract verified legal basis
+    const verifiedStatutes = legalResearch.attributedFacts
+      .filter(fact => fact.entities.some(e => e.type === 'statute'))
+      .map(fact => ({
+        fact: fact.fact,
+        sources: fact.sources,
+        statute: fact.entities.find(e => e.type === 'statute'),
+      }));
+
+    const verifiedPrecedents = legalResearch.attributedFacts
+      .filter(fact => fact.entities.some(e => e.type === 'citation'))
+      .map(fact => ({
+        fact: fact.fact,
+        sources: fact.sources,
+        citation: fact.entities.find(e => e.type === 'citation'),
+      }));
+
+    // Step 3: Generate standard petition content
+    const standardContent = await generatePetitionContent(workflow);
+
+    // Step 4: Enhance petition with verified legal research
+    const signerCount = await getSignerCount(workflow.id);
+
+    const enhancedContent = `${standardContent}
+
+═══════════════════════════════════════════════════════════════════════════════
+                   VERIFIED LEGAL BASIS AND PRECEDENTS
+═══════════════════════════════════════════════════════════════════════════════
+
+This petition is supported by comprehensive legal research with verified sources:
+
+APPLICABLE LAWS AND STATUTES (VERIFIED):
+${verifiedStatutes.map((s, i) => `${i + 1}. ${s.fact}
+   Citation: ${s.statute?.value}
+   Sources: ${s.sources.join(', ')}`).join('\n\n')}
+
+RELEVANT LEGAL PRECEDENTS (VERIFIED):
+${verifiedPrecedents.map((p, i) => `${i + 1}. ${p.fact}
+   Citation: ${p.citation?.value}
+   Sources: ${p.sources.join(', ')}`).join('\n\n')}
+
+TIMELINE OF EVENTS:
+${legalResearch.timeline && legalResearch.timeline.length > 0
+  ? legalResearch.timeline.map(event => `${event.date.toLocaleDateString()}: ${event.description}`).join('\n')
+  : 'See petition details above'}
+
+VERIFICATION:
+- Total Signatures Collected: ${signerCount}
+- Required Signatures: ${workflow.requiredSignatures}
+- City Population: ${workflow.cityPopulation?.toLocaleString() || 'Unknown'}
+- Verified Legal Facts: ${legalResearch.attributedFacts.length}
+- Total Legal Sources: ${legalResearch.metadata.totalSources}
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Note: This petition incorporates comprehensive legal research to ensure all
+claims are properly supported by verified sources and relevant legal authorities.
+`;
+
+    console.log('[Petition Enhanced] Enhanced petition content generated');
+
+    // Update workflow with enhanced content
+    await db.update(petitionWorkflows)
+      .set({
+        petitionContent: enhancedContent,
+        petitionContentGeneratedAt: new Date(),
+        status: 'ready_to_submit',
+        updatedAt: new Date()
+      })
+      .where(eq(petitionWorkflows.id, workflow.id));
+
+    return {
+      petitionContent: enhancedContent,
+      legalResearch,
+      verifiedFacts: legalResearch.attributedFacts,
+    };
+  } catch (error: any) {
+    console.error('[Petition Enhanced] Error in enhanced petition generation:', error);
+    
+    // Fallback to standard petition generation
+    console.log('[Petition Enhanced] Falling back to standard petition generation');
+    const standardContent = await generatePetitionContent(workflow);
+    
+    return {
+      petitionContent: standardContent,
+      legalResearch: {
+        query: '',
+        aggregatedResponse: '',
+        attributedFacts: [],
+        timeline: [],
+        categorization: {
+          byRelevance: [],
+          byRecency: [],
+          byAuthority: [],
+          byJurisdiction: new Map(),
+          byParty: new Map(),
+          byDocumentType: new Map(),
+        },
+        discrepancies: [],
+        modelResponses: [],
+        metadata: {
+          searchedAt: new Date(),
+          modelsUsed: ['Fallback'],
+          totalSources: 0,
+          verifiedFactsCount: 0,
+          discardedFactsCount: 0,
+        },
+      },
+      verifiedFacts: [],
+    };
+  }
 }
