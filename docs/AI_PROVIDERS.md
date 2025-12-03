@@ -319,6 +319,8 @@ model: 'claude-3-5-sonnet-latest'
 - **Best for**: Premium legal consultations
 - **Cost**: $3 per million input tokens
 
+**Note**: Anthropic pricing is subject to change. Check [anthropic.com/pricing](https://www.anthropic.com/pricing) for current rates.
+
 #### 5.2 Claude 3.5 Haiku (Latest)
 ```typescript
 model: 'claude-3-5-haiku-latest'

@@ -80,6 +80,9 @@ echo ""
 
 # ==================== CODE QUALITY CHECKS ====================
 echo -e "${BLUE}🔍 Code Quality Checks...${NC}"
+echo -e "${YELLOW}   Note: console.log and process.env warnings are informational${NC}"
+echo -e "${YELLOW}   These help identify potential production issues but are not blockers${NC}"
+echo ""
 
 # Check for console.log in server code (except logger.ts and config.ts bootstrap)
 echo -e "${BLUE}   Checking for console.log usage...${NC}"
