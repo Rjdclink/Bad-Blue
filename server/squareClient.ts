@@ -1,13 +1,13 @@
 // Square Payment Integration Client
-import { Client, Environment } from 'square';
+import { Client as SquareClient, Environment as SquareEnvironment, ApiError } from 'square';
 
-let squareClient: Client | null = null;
+let squareClient: SquareClient | null = null;
 
 /**
  * Get or initialize the Square API client
  * Uses environment variables for configuration
  */
-export function getSquareClient(): Client {
+export function getSquareClient(): SquareClient {
   if (!squareClient) {
     const accessToken = process.env.SQUARE_ACCESS_TOKEN;
     const environment = process.env.SQUARE_ENVIRONMENT || 'production';
@@ -18,10 +18,10 @@ export function getSquareClient(): Client {
 
     // Determine environment
     const squareEnvironment = environment === 'sandbox' 
-      ? Environment.Sandbox 
-      : Environment.Production;
+      ? SquareEnvironment.Sandbox 
+      : SquareEnvironment.Production;
 
-    squareClient = new Client({
+    squareClient = new SquareClient({
       accessToken,
       environment: squareEnvironment,
     });

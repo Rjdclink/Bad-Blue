@@ -5,7 +5,7 @@ import { db } from './db';
 import { emailTransporter } from './emailService';
 import { getGroqClient } from './groq';
 import { callGemini } from './gemini';
-import Stripe from 'stripe';
+// Stripe removed - using Square Payment Links
 import { config as dotenvConfig } from 'dotenv';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -146,7 +146,7 @@ class SystemDiagnostics {
   }
 
   // Test 5: Stripe Payment System
-  async testStripePayments() {
+  async // testSquarePayments - TODO: implement Square checks() {
     try {
       if (!process.env.STRIPE_SECRET_KEY) {
         this.addResult('Payment:Stripe', 'FAIL', 'STRIPE_SECRET_KEY not configured');
@@ -314,7 +314,7 @@ class SystemDiagnostics {
     await this.testAIServices();
     console.log('');
 
-    await this.testStripePayments();
+    await this.// testSquarePayments - TODO: implement Square checks();
     console.log('');
 
     await this.testFileStorage();

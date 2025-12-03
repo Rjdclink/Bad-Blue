@@ -17,7 +17,6 @@ declare global {
     }
   }
 }
-import { ApiError } from 'square';
 import multer from "multer";
 import { z } from "zod";
 import passport from "passport";
@@ -1221,7 +1220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (error: any) {
         console.error("Error creating payment link:", error);
-        if (error instanceof ApiError) {
+        if (error instanceof Error && (error as any).errors) {
           res.status(500).json({ 
             message: "Error creating payment: " + error.message,
             errors: error.errors 
@@ -1319,7 +1318,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (error: any) {
         console.error("Error creating payment link:", error);
-        if (error instanceof ApiError) {
+        if (error instanceof Error && (error as any).errors) {
           res.status(500).json({ 
             message: "Error creating payment: " + error.message,
             errors: error.errors 
@@ -1436,7 +1435,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (error: any) {
         console.error("Error creating petition payment:", error);
-        if (error instanceof ApiError) {
+        if (error instanceof Error && (error as any).errors) {
           res.status(500).json({ 
             message: "Error creating payment: " + error.message,
             errors: error.errors 
@@ -1529,7 +1528,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Error creating FOIA payment:", error);
-      if (error instanceof ApiError) {
+      if (error instanceof Error && (error as any).errors) {
         res.status(500).json({ 
           error: "Error creating payment: " + error.message,
           errors: error.errors 

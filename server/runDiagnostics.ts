@@ -27,8 +27,8 @@ class BadBlueDiagnostics {
 
     const envVars = {
       DATABASE_URL: 'Database connection',
-      STRIPE_SECRET_KEY: 'Stripe payments',
-      VITE_STRIPE_PUBLIC_KEY: 'Stripe frontend',
+      SQUARE_ACCESS_TOKEN: 'Stripe payments',
+      VITE_SQUARE_APPLICATION_ID: 'Stripe frontend',
       GROQ_API_KEY: 'Groq AI service',
       GEMINI_API_KEY: 'Gemini AI service',
       GWSMTP_USER: 'Email sender address',
@@ -42,7 +42,7 @@ class BadBlueDiagnostics {
           : process.env[key]!.substring(0, 20) + '...';
         this.log(key, 'PASS', `${description} configured (${masked})`);
       } else {
-        const critical = ['DATABASE_URL', 'STRIPE_SECRET_KEY', 'GROQ_API_KEY'].includes(key);
+        const critical = ['DATABASE_URL', 'SQUARE_ACCESS_TOKEN', 'GROQ_API_KEY'].includes(key);
         this.log(key, critical ? 'FAIL' : 'WARN', `${description} not configured`);
       }
     }
@@ -95,33 +95,37 @@ class BadBlueDiagnostics {
     }
   }
 
-  async testStripe() {
-    console.log('\n💳 STRIPE PAYMENT SYSTEM');
+  async testSquare() {
+    console.log('\n💳 SQUARE PAYMENT SYSTEM');
     console.log('─'.repeat(40));
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      this.log('Stripe', 'FAIL', 'STRIPE_SECRET_KEY not configured');
+    if (!process.env.SQUARE_ACCESS_TOKEN) {
+      this.log('Square', 'FAIL', 'SQUARE_ACCESS_TOKEN not configured');
+      return;
+    }
+
+    if (!process.env.SQUARE_LOCATION_ID) {
+      this.log('Square', 'FAIL', 'SQUARE_LOCATION_ID not configured');
       return;
     }
 
     try {
-      const Stripe = (await import('stripe')).default;
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-        apiVersion: '2024-06-20' as any
-      });
+      const { getSquareClient, getSquareLocationId } = await import('./squareClient');
+      const square = getSquareClient();
+      const locationId = getSquareLocationId();
 
-      const account = await stripe.accounts.retrieve();
-      this.log('Stripe', 'PASS', `Connected to account ${account.id}`);
+      const locationResponse = await square.locationsApi.retrieveLocation(locationId);
+      this.log('Square', 'PASS', `Connected to location ${locationResponse.result.location?.name}`);
 
-      // Check products
-      const products = await stripe.products.list({ limit: 3 });
-      if (products.data.length > 0) {
-        this.log('Stripe:Products', 'PASS', `${products.data.length} products configured`);
+      // Check catalog items
+      const catalogResponse = await square.catalogApi.listCatalog(undefined, 'ITEM');
+      if (catalogResponse.result.objects && catalogResponse.result.objects.length > 0) {
+        this.log('Square:Catalog', 'PASS', `${catalogResponse.result.objects.length} catalog items configured`);
       } else {
-        this.log('Stripe:Products', 'WARN', 'No products found');
+        this.log('Square:Catalog', 'WARN', 'No catalog items found');
       }
     } catch (err: any) {
-      this.log('Stripe', 'FAIL', err.message);
+      this.log('Square', 'FAIL', err.message);
     }
   }
 
@@ -273,7 +277,7 @@ class BadBlueDiagnostics {
     await this.testEnvironment();
     await this.testDatabase();
     await this.testEmailService();
-    await this.testStripe();
+    await this.testSquare();
     await this.testAIServices();
     await this.testFileSystem();
     await this.testAPIEndpoints();
