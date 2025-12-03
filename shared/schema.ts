@@ -41,12 +41,12 @@ export const users = pgTable("users", {
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
 
-  // Stripe customer tracking
-  stripeCustomerId: varchar("stripe_customer_id"),
+  // Square customer tracking
+  squareCustomerId: varchar("square_customer_id"),
 
   // Full access payment tracking (Free for signed-in users: LegalAI Consultation and Officer Search)
   hasPaidForAccess: boolean("has_paid_for_access").default(true).notNull(), // Default true since access is free for signed-in users
-  accessPaymentId: varchar("access_payment_id"), // Stripe payment intent ID for access payment (kept for backwards compatibility)
+  accessPaymentId: varchar("access_payment_id"), // Payment intent ID for access payment (kept for backwards compatibility)
   accessPaidAt: timestamp("access_paid_at"), // When user paid for access (kept for backwards compatibility)
 
   // Login tracking for admin panel
@@ -399,23 +399,23 @@ export const APP_ACCESS_PRICING = 0;
 export const APP_ACCESS_PRICING_CENTS = 0;
 
 // Per-complaint filing fee (includes certified mail service and clerical services)
-export const COMPLAINT_PRICING = 39.75;
-export const COMPLAINT_PRICING_CENTS = 3975;
+export const COMPLAINT_PRICING = 17.99;
+export const COMPLAINT_PRICING_CENTS = 1799;
 
 // Lawsuit pricing tiers
-export const LAWSUIT_DIY_PRICING = 306.75; // User files - includes completed JS-44 civil cover sheet and informa pauperis form (non-completed)
-export const LAWSUIT_DIY_PRICING_CENTS = 30675;
+export const LAWSUIT_DIY_PRICING = 289.99; // User files - includes completed JS-44 civil cover sheet and informa pauperis form (non-completed)
+export const LAWSUIT_DIY_PRICING_CENTS = 28999;
 
 export const LAWSUIT_FULL_SERVICE_PRICING = 503.75; // BadBlue files ($98.75 + $405 filing fees) - includes clerical services, civil cover sheet, informa pauperis form (non-completed)
 export const LAWSUIT_FULL_SERVICE_PRICING_CENTS = 50375;
 
 // Petition pricing
-export const PETITION_PRICING = 27.98;
-export const PETITION_PRICING_CENTS = 2798;
+export const PETITION_PRICING = 25.99;
+export const PETITION_PRICING_CENTS = 2599;
 
 // FOIA Request pricing
-export const FOIA_REQUEST_PRICING = 24.65;
-export const FOIA_REQUEST_PRICING_CENTS = 2465;
+export const FOIA_REQUEST_PRICING = 19.99;
+export const FOIA_REQUEST_PRICING_CENTS = 1999;
 
 // Main pricing export (for backwards compatibility - refers to app access)
 export const PRICING = APP_ACCESS_PRICING;

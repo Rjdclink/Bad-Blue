@@ -555,20 +555,21 @@ class BadBlueWorker {
           message: e.message,
         });
       }
-      // Stripe quick check (optional)
-      if (process.env.STRIPE_SECRET_KEY && process.env.DISABLE_STRIPE_CHECK !== 'true') {
+      // Square quick check (optional)
+      if (process.env.SQUARE_ACCESS_TOKEN && process.env.DISABLE_SQUARE_CHECK !== 'true') {
         try {
-          const Stripe = (await import('stripe')).default;
-          const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-10-29.clover' as const });
+          const { getSquareClient, getSquareLocationId } = await import('./squareClient');
+          const square = getSquareClient();
+          const locationId = getSquareLocationId();
           await Promise.race([
-            stripe.balance.retrieve(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Stripe timeout')), 5000)),
+            square.locationsApi.retrieveLocation(locationId),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Square timeout')), 5000)),
           ]);
         } catch (e: any) {
           await this.recordAlert({
-            alertType: 'stripe_failure',
+            alertType: 'square_failure',
             severity: Severity.SERIOUS,
-            title: 'Stripe API Failure',
+            title: 'Square API Failure',
             message: e.message,
           });
         }
@@ -630,7 +631,7 @@ class BadBlueWorker {
     // Secrets
     const requiredSecrets = [
       { key: 'GEMINI_API_KEY', name: 'Gemini Key', severity: Severity.CRITICAL },
-      { key: 'STRIPE_SECRET_KEY', name: 'Stripe Secret Key', severity: Severity.SERIOUS },
+      { key: 'SQUARE_ACCESS_TOKEN', name: 'Square Access Token', severity: Severity.SERIOUS },
       { key: 'SESSION_SECRET', name: 'Session Secret', severity: Severity.CRITICAL },
       { key: 'DATABASE_URL', name: 'Database URL', severity: Severity.CRITICAL },
     ];
@@ -745,7 +746,7 @@ class BadBlueWorker {
     } else if (fn.includes('gemini') || fn.includes('ai')) {
       category = IssueCategory.AI_SERVICE;
       rp.apiCallsRequired = true;
-    } else if (fn.includes('stripe') || fn.includes('email')) {
+    } else if (fn.includes('square') || fn.includes('payment') || fn.includes('email')) {
       category = IssueCategory.EXTERNAL_DEPENDENCY;
       rp.apiCallsRequired = true;
     } else if (fn.includes('secret') || fn.includes('env')) {
@@ -1414,11 +1415,11 @@ Be specific and actionable. Focus on automated fixes that can be executed progra
   }
 
   private async testPaymentProcessing(results: FunctionErrorLogEntry[]) {
-    if (process.env.STRIPE_SECRET_KEY) {
+    if (process.env.SQUARE_ACCESS_TOKEN) {
       results.push({
         timestamp: new Date().toISOString(),
-        functionTested: 'Stripe Configuration',
-        expectedBehavior: 'Secret key set',
+        functionTested: 'Square Configuration',
+        expectedBehavior: 'Access token set',
         observedBehavior: 'Present',
         severity: Severity.NOTICE,
         status: 'fixed',
@@ -1426,8 +1427,8 @@ Be specific and actionable. Focus on automated fixes that can be executed progra
     } else {
       results.push({
         timestamp: new Date().toISOString(),
-        functionTested: 'Stripe Configuration',
-        expectedBehavior: 'Secret key set',
+        functionTested: 'Square Configuration',
+        expectedBehavior: 'Access token set',
         observedBehavior: 'Missing',
         severity: Severity.SERIOUS,
         status: 'pending',
@@ -1622,7 +1623,7 @@ Be specific and actionable. Focus on automated fixes that can be executed progra
     'server/auth.ts',
     'server/adminBypass.ts',
     'server/paymentBypass.ts',
-    'server/stripeCredentials.ts',
+    'server/squareClient.ts',
     '.env',
     '.env.local',
     '.env.production',
@@ -1632,7 +1633,8 @@ Be specific and actionable. Focus on automated fixes that can be executed progra
     /admin.*bypass/i,
     /bypass.*admin/i,
     /payment.*credential/i,
-    /stripe.*secret/i,
+    /square.*secret/i,
+    /square.*token/i,
     /bypass.*payment/i,
   ];
 

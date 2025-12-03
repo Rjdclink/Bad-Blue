@@ -1388,7 +1388,7 @@ export async function processSubAgentCommand(opts: {
         const fixPrompt = `
 Analyze and provide code fixes:
 Issue: ${intent.parameters?.description || command}
-Context: Node.js/TypeScript, PostgreSQL/Supabase, Express backend, React frontend, Stripe, Gemini AI.
+Context: Node.js/TypeScript, PostgreSQL/Supabase, Express backend, React frontend, Square Payment Links, Gemini AI.
 Return root cause, specific patch, and verification steps.
 `;
         const fixResult = await callGeminiAPI(fixPrompt, { maxTokens:4096 });

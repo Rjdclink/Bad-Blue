@@ -152,7 +152,7 @@ async function cleanupUserData(userId: string, userEmail: string, username: stri
         firstName: null,
         lastName: null,
         profileImageUrl: null,
-        stripeCustomerId: null,
+        squareCustomerId: null,
         hasPaidForAccess: false,
         accessPaymentId: null,
         accessPaidAt: null,

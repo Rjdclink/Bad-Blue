@@ -7,7 +7,7 @@ import { users, complaints, lawsuitFilings, petitions, foiaRequests, badgeLookup
   aiSubAgentLogs, foiaStateStatutes, complaintPatterns, legalStrategies, casePatterns, documentFormats,
   appSettings, adminSettingsAudit, subscriptionTiers, userSubscriptions, publicEvidence } from '@shared/schema';
 import { eq, sql } from 'drizzle-orm';
-import Stripe from 'stripe';
+import { getSquareClient, getSquareLocationId } from './squareClient';
 
 interface DiagnosticResult {
   category: string;
@@ -133,43 +133,48 @@ async function testAIServices() {
   }
 }
 
-// Payment/Stripe diagnostics
-async function testStripe() {
-  const category = 'STRIPE_PAYMENT';
+// Payment/Square diagnostics
+async function testSquare() {
+  const category = 'SQUARE_PAYMENT';
   
   try {
-    const stripeKey = process.env.STRIPE_SECRET_KEY;
-    if (!stripeKey) {
-      addResult(category, 'Stripe API Key', 'FAIL', 'STRIPE_SECRET_KEY not found in environment');
+    const accessToken = process.env.SQUARE_ACCESS_TOKEN;
+    const locationId = process.env.SQUARE_LOCATION_ID;
+    
+    if (!accessToken) {
+      addResult(category, 'Square API Key', 'FAIL', 'SQUARE_ACCESS_TOKEN not found in environment');
       return;
     }
     
-    const stripe = new Stripe(stripeKey);
-    
-    // Test Stripe connection
-    try {
-      const balance = await stripe.balance.retrieve();
-      addResult(category, 'Stripe Connection', 'PASS', 'Successfully connected to Stripe', { 
-        available: balance.available,
-        pending: balance.pending
-      });
-    } catch (error: any) {
-      addResult(category, 'Stripe Connection', 'FAIL', 'Failed to connect to Stripe', undefined, error.message);
+    if (!locationId) {
+      addResult(category, 'Square Location ID', 'FAIL', 'SQUARE_LOCATION_ID not found in environment');
+      return;
     }
     
-    // Test Stripe products/prices
+    const square = getSquareClient();
+    
+    // Test Square connection
     try {
-      const products = await stripe.products.list({ limit: 5 });
-      const prices = await stripe.prices.list({ limit: 5 });
-      addResult(category, 'Stripe Products', 'PASS', `Found ${products.data.length} products and ${prices.data.length} prices`, {
-        products: products.data.length,
-        prices: prices.data.length
+      const locationResponse = await square.locations.retrieveLocation(locationId);
+      addResult(category, 'Square Connection', 'PASS', 'Successfully connected to Square', { 
+        location: locationResponse.result.location?.name,
+        locationId: locationResponse.result.location?.id
       });
     } catch (error: any) {
-      addResult(category, 'Stripe Products', 'FAIL', 'Failed to query Stripe products', undefined, error.message);
+      addResult(category, 'Square Connection', 'FAIL', 'Failed to connect to Square', undefined, error.message);
+    }
+    
+    // Test Square catalog (products)
+    try {
+      const catalogResponse = await square.catalog.listCatalog(undefined, 'ITEM');
+      addResult(category, 'Square Catalog', 'PASS', `Found ${catalogResponse.result.objects?.length || 0} catalog items`, {
+        items: catalogResponse.result.objects?.length || 0
+      });
+    } catch (error: any) {
+      addResult(category, 'Square Catalog', 'FAIL', 'Failed to query Square catalog', undefined, error.message);
     }
   } catch (error: any) {
-    addResult(category, 'Stripe Setup', 'FAIL', 'Failed to initialize Stripe', undefined, error.message);
+    addResult(category, 'Square Setup', 'FAIL', 'Failed to initialize Square', undefined, error.message);
   }
 }
 
@@ -288,7 +293,7 @@ export async function runFullDiagnostics(): Promise<{
   await testEnvironment();
   await testDatabase();
   await testAIServices();
-  await testStripe();
+  await testSquare();
   await testEmail();
   await testObjectStorage();
   await testAuthentication();

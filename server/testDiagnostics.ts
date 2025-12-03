@@ -4,7 +4,7 @@
 
 import { db } from './db';
 import { sql } from 'drizzle-orm';
-import Stripe from 'stripe';
+// Stripe removed - using Square Payment Links
 import nodemailer from 'nodemailer';
 import { GoogleGenAI } from '@google/genai';
 
