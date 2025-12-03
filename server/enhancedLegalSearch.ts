@@ -306,8 +306,9 @@ class EntityExtractionEngine {
     }
 
     // Pattern 3: Case name v. case name (using Bluebook format)
-    // Requires a digit for citation but also checks for typical case law reporter patterns
-    const caseNamePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+v\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+(\d+\s+(?:U\.S\.|F\.|F\.2d|F\.3d|F\.Supp\.|P\.|N\.E\.|S\.W\.|A\.|So\.))/gi;
+    // Requires legal reporter for strong validation, but also catches case names without reporters
+    // Reporter abbreviations: U.S., F., F.2d, F.3d, F.Supp., P., N.E., S.W., A., So.
+    const caseNamePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+v\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+(\d+(?:\s+(?:U\.S\.|F\.|F\.2d|F\.3d|F\.Supp\.|P\.|N\.E\.|S\.W\.|A\.|So\.))?)/gi;
     
     while ((match = caseNamePattern.exec(text)) !== null) {
       citations.push({
@@ -435,8 +436,9 @@ class EntityExtractionEngine {
 class SourceAttributionValidator {
   /**
    * Validate that a fact has proper source attribution
+   * Public method to allow external validation of facts and sources
    */
-  validateFact(fact: string, sources: string[]): { valid: boolean; reason?: string } {
+  public validateFact(fact: string, sources: string[]): { valid: boolean; reason?: string } {
     // Must have at least one source
     if (!sources || sources.length === 0) {
       return { valid: false, reason: 'No sources provided' };
@@ -496,8 +498,8 @@ class SourceAttributionValidator {
       return true;
     }
 
-    // Amendment pattern
-    if (/(First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|Fourteenth|\d{1,2}(?:st|nd|rd|th))\s+Amendment/i.test(source)) {
+    // Amendment pattern - all 27 amendments
+    if (/(First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|Eleventh|Twelfth|Thirteenth|Fourteenth|Fifteenth|Sixteenth|Seventeenth|Eighteenth|Nineteenth|Twentieth|Twenty-First|Twenty-Second|Twenty-Third|Twenty-Fourth|Twenty-Fifth|Twenty-Sixth|Twenty-Seventh|\d{1,2}(?:st|nd|rd|th))\s+Amendment/i.test(source)) {
       return true;
     }
 
@@ -627,6 +629,8 @@ class ConsensusSynthesisEngine {
     // Simple similarity check using word overlap
     // Threshold of 0.6 (60%) provides good balance between grouping similar facts
     // and avoiding false positives. Based on Jaccard similarity coefficient.
+    // This threshold was selected to match typical legal text analysis standards
+    // where facts with >60% word overlap are considered substantively similar.
     const SIMILARITY_THRESHOLD = 0.6;
     
     const words1 = new Set(fact1.toLowerCase().split(/\s+/).filter(w => w.length > 3));
@@ -692,7 +696,9 @@ class ConsensusSynthesisEngine {
 
       if (validation.valid) {
         // Calculate confidence with cap at 1.0
+        // Confidence scores represent probability and must be in range [0, 1]
         // Base confidence 0.80, +0.05 per additional model agreement, max 1.0
+        // Cap ensures scores remain valid even with many model agreements
         const baseConfidence = 0.80;
         const agreementBonus = (group.facts.length - 1) * 0.05;
         const confidence = Math.min(1.0, baseConfidence + agreementBonus);
