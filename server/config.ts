@@ -1,5 +1,14 @@
 import { z } from 'zod';
 
+// Helper function to validate and parse port numbers
+const portValidator = (fieldName: string) => z.string().transform((val) => {
+  const num = parseInt(val, 10);
+  if (isNaN(num) || num <= 0) {
+    throw new Error(`${fieldName} must be a positive integer`);
+  }
+  return num;
+});
+
 const envSchema = z.object({
   // Database
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
@@ -9,13 +18,7 @@ const envSchema = z.object({
   
   // Application
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.string().transform((val) => {
-    const num = parseInt(val, 10);
-    if (isNaN(num) || num <= 0) {
-      throw new Error('PORT must be a positive integer');
-    }
-    return num;
-  }).default('5000'),
+  PORT: portValidator('PORT').default('5000'),
   BASE_URL: z.string().url().optional(),
   SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
   
@@ -38,13 +41,7 @@ const envSchema = z.object({
   GWSMTP_PASSWORD: z.string().optional(),
   GWSMTP_PASS: z.string().optional(),
   GWSMTP_HOST: z.string().default('smtp.gmail.com'),
-  GWSMTP_PORT: z.string().transform((val) => {
-    const num = parseInt(val, 10);
-    if (isNaN(num) || num <= 0) {
-      throw new Error('GWSMTP_PORT must be a positive integer');
-    }
-    return num;
-  }).default('587'),
+  GWSMTP_PORT: portValidator('GWSMTP_PORT').default('587'),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),

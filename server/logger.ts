@@ -2,6 +2,13 @@ import * as winston from 'winston';
 import * as path from 'path';
 import * as fs from 'fs';
 
+// Constants for log file sizes
+const MB = 1024 * 1024;
+const LOG_FILE_MAX_SIZE = 10 * MB; // 10MB for combined logs
+const ERROR_LOG_MAX_SIZE = 5 * MB;  // 5MB for error logs
+const EXCEPTION_LOG_MAX_SIZE = 5 * MB;
+const REJECTION_LOG_MAX_SIZE = 5 * MB;
+
 const logsDir = path.resolve(process.cwd(), 'logs');
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
@@ -58,26 +65,26 @@ export const logger = winston.createLogger({
     new winston.transports.File({
       filename: path.join(logsDir, 'error.log'),
       level: 'error',
-      maxsize: 5242880,
+      maxsize: ERROR_LOG_MAX_SIZE,
       maxFiles: 5,
     }),
     new winston.transports.File({
       filename: path.join(logsDir, 'combined.log'),
-      maxsize: 10485760,
+      maxsize: LOG_FILE_MAX_SIZE,
       maxFiles: 10,
     }),
   ],
   exceptionHandlers: [
     new winston.transports.File({ 
       filename: path.join(logsDir, 'exceptions.log'),
-      maxsize: 5242880,
+      maxsize: EXCEPTION_LOG_MAX_SIZE,
       maxFiles: 3,
     }),
   ],
   rejectionHandlers: [
     new winston.transports.File({ 
       filename: path.join(logsDir, 'rejections.log'),
-      maxsize: 5242880,
+      maxsize: REJECTION_LOG_MAX_SIZE,
       maxFiles: 3,
     }),
   ],
