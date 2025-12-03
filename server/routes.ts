@@ -1168,11 +1168,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let customerId = user.squareCustomerId;
         if (!customerId && user.email) {
           try {
-            const customerResponse = await square.customersApi.createCustomer({
+            const customerResponse = await square.customers.create({
               emailAddress: user.email,
               referenceId: user.id,
             });
-            customerId = customerResponse.result.customer?.id;
+            customerId = customerResponse.customer?.id;
             if (customerId) {
               await storage.updateUserSquareCustomerId(user.id, customerId);
             }
@@ -1184,7 +1184,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseUrl = getBaseURL();
 
         // Create Square Payment Link
-        const checkoutResponse = await square.checkoutApi.createPaymentLink({
+        const checkoutResponse = await square.checkout.createPaymentLink({
           idempotencyKey: `complaint-${complaintId}-${Date.now()}`,
           order: {
             locationId,
@@ -1260,11 +1260,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let customerId = user.squareCustomerId;
         if (!customerId && user.email) {
           try {
-            const customerResponse = await square.customersApi.createCustomer({
+            const customerResponse = await square.customers.create({
               emailAddress: user.email,
               referenceId: user.id,
             });
-            customerId = customerResponse.result.customer?.id;
+            customerId = customerResponse.customer?.id;
             if (customerId) {
               await storage.updateUserSquareCustomerId(user.id, customerId);
             }
@@ -1276,7 +1276,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseUrl = getBaseURL();
 
         // Create Square Payment Link
-        const checkoutResponse = await square.checkoutApi.createPaymentLink({
+        const checkoutResponse = await square.checkout.createPaymentLink({
           idempotencyKey: `lawsuit-${lawsuitId}-${Date.now()}`,
           order: {
             locationId,
@@ -1369,11 +1369,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let customerId = user.squareCustomerId;
         if (!customerId && user.email) {
           try {
-            const customerResponse = await square.customersApi.createCustomer({
+            const customerResponse = await square.customers.create({
               emailAddress: user.email,
               referenceId: user.id,
             });
-            customerId = customerResponse.result.customer?.id;
+            customerId = customerResponse.customer?.id;
             if (customerId) {
               await storage.updateUserSquareCustomerId(user.id, customerId);
             }
@@ -1385,7 +1385,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseUrl = getBaseURL();
 
         // Create Square Payment Link
-        const checkoutResponse = await square.checkoutApi.createPaymentLink({
+        const checkoutResponse = await square.checkout.createPaymentLink({
           idempotencyKey: `petition-${petitionId}-${Date.now()}`,
           order: {
             locationId,
@@ -1457,11 +1457,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let customerId = user.squareCustomerId;
       if (!customerId && user.email) {
         try {
-          const customerResponse = await square.customersApi.createCustomer({
+          const customerResponse = await square.customers.create({
             emailAddress: user.email,
             referenceId: user.id,
           });
-          customerId = customerResponse.result.customer?.id;
+          customerId = customerResponse.customer?.id;
           if (customerId) {
             await storage.updateUserSquareCustomerId(user.id, customerId);
           }
@@ -1473,7 +1473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const baseUrl = getBaseURL();
 
       // Create Square Payment Link
-      const checkoutResponse = await square.checkoutApi.createPaymentLink({
+      const checkoutResponse = await square.checkout.createPaymentLink({
         idempotencyKey: `foia-${foiaRequestId}-${Date.now()}`,
         order: {
           locationId,
@@ -1719,11 +1719,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let customerId = user.squareCustomerId;
     if (!customerId && user.email) {
       try {
-        const customerResponse = await square.customersApi.createCustomer({
+        const customerResponse = await square.customers.create({
           emailAddress: user.email,
           referenceId: user.id,
         });
-        customerId = customerResponse.result.customer?.id;
+        customerId = customerResponse.customer?.id;
         if (customerId) {
           await storage.updateUserSquareCustomerId(user.id, customerId);
         }
@@ -1735,7 +1735,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const baseUrl = getBaseURL();
 
     // Create Square Payment Link
-    const checkoutResponse = await square.checkoutApi.createPaymentLink({
+    const checkoutResponse = await square.checkout.createPaymentLink({
       idempotencyKey: `document-${sessionId}-${Date.now()}`,
       order: {
         locationId,
@@ -2430,8 +2430,8 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
         // Get order details to extract reference ID
         try {
           const square = getSquareClient();
-          const orderResponse = await square.ordersApi.retrieveOrder(orderId);
-          const order = orderResponse.result.order;
+          const orderResponse = await square.orders.get(orderId);
+          const order = orderResponse.order;
           
           if (!order || !order.referenceId) {
             console.error("[Square Webhook] No reference ID in order");

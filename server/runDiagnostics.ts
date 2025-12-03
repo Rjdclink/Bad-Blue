@@ -27,7 +27,7 @@ class BadBlueDiagnostics {
 
     const envVars = {
       DATABASE_URL: 'Database connection',
-      STRIPE_SECRET_KEY: 'Stripe payments',
+      SQUARE_ACCESS_TOKEN: 'Square payments',
       VITE_STRIPE_PUBLIC_KEY: 'Stripe frontend',
       GROQ_API_KEY: 'Groq AI service',
       GEMINI_API_KEY: 'Gemini AI service',
@@ -105,23 +105,29 @@ class BadBlueDiagnostics {
     }
 
     try {
-      const Stripe = (await import('stripe')).default;
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-        apiVersion: '2024-06-20' as any
-      });
+      const { getSquareClient } = await import('./squareClient.js');
+      const square = getSquareClient();
 
-      const account = await stripe.accounts.retrieve();
-      this.log('Stripe', 'PASS', `Connected to account ${account.id}`);
+      const locationsResponse = await square.locations.list();
+      const locations = locationsResponse.locations || [];
+      this.log('Square', 'PASS', `Connected (${locations.length} locations)`);
 
-      // Check products
-      const products = await stripe.products.list({ limit: 3 });
-      if (products.data.length > 0) {
-        this.log('Stripe:Products', 'PASS', `${products.data.length} products configured`);
+      // Check location
+      const locationId = process.env.SQUARE_LOCATION_ID;
+      if (locationId) {
+        try {
+          const locationResponse = await square.locations.get({ locationId: locationId });
+          const location = locationResponse.location;
+          this.log('Square:Location', 'PASS', `Location configured: ${location?.name || locationId}`);
+        } catch (e) {
+          this.log('Square:Location', 'WARN', 'Location not found');
+        }
       } else {
-        this.log('Stripe:Products', 'WARN', 'No products found');
+        this.log('Square:Location', 'WARN', 'No location ID configured');
       }
     } catch (err: any) {
-      this.log('Stripe', 'FAIL', err.message);
+      const errorMsg = err.errors?.[0]?.detail || err.message || 'Unknown error';
+      this.log('Square', 'FAIL', errorMsg);
     }
   }
 

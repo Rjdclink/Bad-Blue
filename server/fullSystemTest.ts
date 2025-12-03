@@ -5,7 +5,7 @@ import { db } from './db';
 import { emailTransporter } from './emailService';
 import { getGroqClient } from './groq';
 import { callGemini } from './gemini';
-import Stripe from 'stripe';
+import { getSquareClient, getSquareLocationId } from './squareClient';
 import { config as dotenvConfig } from 'dotenv';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -33,8 +33,8 @@ class SystemDiagnostics {
       { name: 'DATABASE_URL', critical: true },
       { name: 'GWSMTP_USER', critical: false },
       { name: 'GWSMTP_PASSWORD', critical: false },
-      { name: 'STRIPE_SECRET_KEY', critical: true },
-      { name: 'VITE_STRIPE_PUBLIC_KEY', critical: false },
+      { name: 'SQUARE_ACCESS_TOKEN', critical: true },
+      { name: 'SQUARE_LOCATION_ID', critical: true },
       { name: 'GROQ_API_KEY', critical: true },
       { name: 'GEMINI_API_KEY', critical: false }
     ];
@@ -142,28 +142,36 @@ class SystemDiagnostics {
   // Test 5: Stripe Payment System
   async testStripePayments() {
     try {
-      if (!process.env.STRIPE_SECRET_KEY) {
-        this.addResult('Payment:Stripe', 'FAIL', 'STRIPE_SECRET_KEY not configured');
+      const accessToken = process.env.SQUARE_ENVIRONMENT === 'production' 
+        ? process.env.SQUARE_ACCESS_TOKEN 
+        : process.env.SQUARE_SANDBOX_ACCESS_TOKEN;
+        
+      if (!accessToken) {
+        this.addResult('Payment:Square', 'FAIL', 'Square access token not configured');
         return;
       }
 
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-        apiVersion: '2024-06-20' as any
-      });
+      const square = getSquareClient();
 
       // Test API connection
-      const account = await stripe.accounts.retrieve();
-      this.addResult('Payment:Stripe', 'PASS', `Connected to Stripe account: ${account.id}`);
+      const locationsResponse = await square.locations.list();
+      const locations = locationsResponse.locations || [];
+      this.addResult('Payment:Square', 'PASS', `Connected to Square (${locations.length} locations)`);
 
-      // Check for products
-      const products = await stripe.products.list({ limit: 1 });
-      if (products.data.length > 0) {
-        this.addResult('Payment:Products', 'PASS', 'Stripe products configured');
-      } else {
-        this.addResult('Payment:Products', 'WARN', 'No Stripe products found');
+      // Check location
+      try {
+        const locationId = getSquareLocationId();
+        const locationResponse = await square.locations.get({ locationId: locationId });
+        const location = locationResponse.location;
+        if (location) {
+          this.addResult('Payment:Location', 'PASS', `Square location configured: ${location.name}`);
+        }
+      } catch (e) {
+        this.addResult('Payment:Location', 'WARN', 'Square location not found');
       }
     } catch (err) {
-      this.addResult('Payment:Stripe', 'FAIL', `Stripe error: ${(err as Error).message}`);
+      const errorMsg = (err as any).errors?.[0]?.detail || (err as Error).message || 'Unknown error';
+      this.addResult('Payment:Square', 'FAIL', `Square error: ${errorMsg}`);
     }
   }
 

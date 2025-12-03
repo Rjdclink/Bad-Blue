@@ -555,21 +555,25 @@ class BadBlueWorker {
           message: e.message,
         });
       }
-      // Stripe quick check (optional)
-      if (process.env.STRIPE_SECRET_KEY && process.env.DISABLE_STRIPE_CHECK !== 'true') {
+      // Square quick check (optional)
+      const accessToken = process.env.SQUARE_ENVIRONMENT === 'production' 
+        ? process.env.SQUARE_ACCESS_TOKEN 
+        : process.env.SQUARE_SANDBOX_ACCESS_TOKEN;
+        
+      if (accessToken && process.env.DISABLE_SQUARE_CHECK !== 'true') {
         try {
-          const Stripe = (await import('stripe')).default;
-          const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-10-29.clover' as const });
+          const { getSquareClient } = await import('./squareClient.js');
+          const square = getSquareClient();
           await Promise.race([
-            stripe.balance.retrieve(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Stripe timeout')), 5000)),
+            square.locations.list(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Square timeout')), 5000)),
           ]);
         } catch (e: any) {
           await this.recordAlert({
-            alertType: 'stripe_failure',
+            alertType: 'square_failure',
             severity: Severity.SERIOUS,
-            title: 'Stripe API Failure',
-            message: e.message,
+            title: 'Square API Failure',
+            message: e.message || 'Unknown error',
           });
         }
       }
@@ -745,7 +749,7 @@ class BadBlueWorker {
     } else if (fn.includes('gemini') || fn.includes('ai')) {
       category = IssueCategory.AI_SERVICE;
       rp.apiCallsRequired = true;
-    } else if (fn.includes('stripe') || fn.includes('email')) {
+    } else if (fn.includes('square') || fn.includes('email')) {
       category = IssueCategory.EXTERNAL_DEPENDENCY;
       rp.apiCallsRequired = true;
     } else if (fn.includes('secret') || fn.includes('env')) {
@@ -1622,7 +1626,7 @@ Be specific and actionable. Focus on automated fixes that can be executed progra
     'server/auth.ts',
     'server/adminBypass.ts',
     'server/paymentBypass.ts',
-    'server/stripeCredentials.ts',
+    'server/squareCredentials.ts',
     '.env',
     '.env.local',
     '.env.production',
@@ -1632,7 +1636,7 @@ Be specific and actionable. Focus on automated fixes that can be executed progra
     /admin.*bypass/i,
     /bypass.*admin/i,
     /payment.*credential/i,
-    /stripe.*secret/i,
+    /square.*secret|square.*access.*token/i,
     /bypass.*payment/i,
   ];
 
