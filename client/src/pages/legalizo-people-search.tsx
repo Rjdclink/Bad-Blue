@@ -130,7 +130,7 @@ export default function LegalizoPeopleSearch() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `people-search-report-${reportId}.pdf`;
+      a.download = `legalizo-osint-report-${reportId}.txt`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);

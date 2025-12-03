@@ -2265,7 +2265,7 @@ export const legalizoSubscriptions = pgTable("legalizo_subscriptions", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
   squareSubscriptionId: varchar("square_subscription_id").unique(),
   status: varchar("status", { length: 50 }).notNull().default('pending'), // pending, active, canceled, past_due, paused
-  planAmount: integer("plan_amount").notNull().default(2599), // $25.99 in cents
+  planAmount: integer("plan_amount").notNull().default(2599), // $25.99 in cents - matches LEGALIZO_SUBSCRIPTION_PRICING_CENTS
   currentPeriodStart: timestamp("current_period_start"),
   currentPeriodEnd: timestamp("current_period_end"),
   canceledAt: timestamp("canceled_at"),
