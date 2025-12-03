@@ -744,7 +744,7 @@ export default function LawsuitForm() {
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Confirm & Pay ${LAWSUIT_PRICING.toFixed(2)}
+                    Confirm & Pay ${lawsuitTier === 'full-service' ? LAWSUIT_FULL_SERVICE_PRICING.toFixed(2) : LAWSUIT_DIY_PRICING.toFixed(2)}
                   </>
                 )}
               </Button>
