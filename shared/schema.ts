@@ -406,7 +406,7 @@ export const COMPLAINT_PRICING_CENTS = 1799;
 export const LAWSUIT_DIY_PRICING = 289.99; // User files - includes completed JS-44 civil cover sheet and informa pauperis form (non-completed)
 export const LAWSUIT_DIY_PRICING_CENTS = 28999;
 
-export const LAWSUIT_FULL_SERVICE_PRICING = 450.99; // BadBlue files - includes clerical services, civil cover sheet, informa pauperis form (non-completed)
+export const LAWSUIT_FULL_SERVICE_PRICING = 450.99; // BadBlue files - includes clerical services, document preparation, and filing service (court filing fees and service costs not included)
 export const LAWSUIT_FULL_SERVICE_PRICING_CENTS = 45099;
 
 // Petition pricing

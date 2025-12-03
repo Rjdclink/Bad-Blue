@@ -681,7 +681,12 @@ export default function LawsuitForm() {
                       <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
                       <div className="text-sm text-amber-800 dark:text-amber-200">
                         <p className="font-semibold mb-1">Additional Costs Notice</p>
-                        <p>Filing fee and official service costs not included. Depending on your jurisdiction, additional fees may apply for court filing and service of process via U.S. Marshal or private process server.</p>
+                        <p className="mb-2">This service fee covers document preparation and filing service only. The following costs are NOT included:</p>
+                        <ul className="list-disc ml-4 space-y-1">
+                          <li><strong>Court Filing Fee:</strong> Typically $350-$450 depending on jurisdiction</li>
+                          <li><strong>Service of Process:</strong> $50-$150 via U.S. Marshal or private process server</li>
+                        </ul>
+                        <p className="mt-2 text-xs">Check your local federal court's fee schedule for exact amounts.</p>
                       </div>
                     </div>
                   </div>
