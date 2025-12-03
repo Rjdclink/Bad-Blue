@@ -24,6 +24,8 @@ import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import { setupLegalizoRoutes } from "./legalizoRoutes";
+import { setupAutosaveRoutes } from "./routes/autosave.routes";
+import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -795,6 +797,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // LEGALIZO ROUTES
   // ============================================
   setupLegalizoRoutes(app);
+
+  // ============================================
+  // AUTOSAVE & LAW TYPES ROUTES
+  // ============================================
+  setupAutosaveRoutes(app);
+  setupLawTypesRoutes(app);
 
   // ============================================
   // PREVIEW ROUTES
