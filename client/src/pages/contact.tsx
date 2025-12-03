@@ -17,6 +17,8 @@ import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { AISystemShowcase } from "@/components/AISystemShowcase";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 const contactFormSchema = z.object({
   type: z.enum(['support', 'contact', 'report']),
@@ -29,6 +31,8 @@ const contactFormSchema = z.object({
 type ContactFormData = z.infer<typeof contactFormSchema>;
 
 export default function Contact() {
+  usePageFaqSchema("/contact");
+  
   const { toast } = useToast();
   const [submitted, setSubmitted] = useState(false);
 
