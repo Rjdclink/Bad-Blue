@@ -1,6 +1,20 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+import { loadConfig } from './config';
+
+// CRITICAL: Validate configuration before anything else
+try {
+  console.log('[STARTUP] Stage 0: Validating environment configuration...');
+  loadConfig();
+  console.log('[STARTUP] ✓ Configuration validated successfully\n');
+} catch (error) {
+  console.error('[STARTUP] ✗ Configuration validation failed');
+  console.error(error);
+  console.error('\n[STARTUP] Application cannot start with invalid configuration');
+  process.exit(1);
+}
+
 import express, { type Request, type Response, type NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
