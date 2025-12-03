@@ -113,6 +113,9 @@ const LegalizoPeopleSearch = lazyWithRetry(() => import("@/pages/legalizo-people
 // New Legalezo Welcome Page - Stage 1B/1C
 const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
 
+// Legal Tools Page - Stage 4
+const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'LegalTools');
+
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
 const AdminLawsuits = lazyWithRetry(() => import("@/pages/admin-lawsuits"), 'AdminLawsuits');
@@ -178,6 +181,9 @@ function Router() {
           <>
             {/* New Legalezo Welcome Page - Stage 1B/1C */}
             <Route path="/welcome" component={WelcomePage} />
+            
+            {/* Legal Tools Page - Stage 4 */}
+            <Route path="/legal-tools" component={LegalToolsPage} />
             
             {/* Legalizo protected routes */}
             <Route path="/legalizo-welcome" component={LegalizoWelcome} />
