@@ -110,7 +110,7 @@ const LegalizoWelcome = lazyWithRetry(() => import("@/pages/legalizo-welcome"), 
 const LegalizoConsultation = lazyWithRetry(() => import("@/pages/legalizo-consultation"), 'LegalizoConsultation');
 const LegalizoPeopleSearch = lazyWithRetry(() => import("@/pages/legalizo-people-search"), 'LegalizoPeopleSearch');
 
-// New Legalezo Welcome Page - Stage 1B
+// New Legalezo Welcome Page - Stage 1B/1C
 const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
 
 // Admin pages - lowest priority
