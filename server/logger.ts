@@ -7,6 +7,9 @@ if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
 
+// Note: Using process.env.NODE_ENV directly here instead of config system
+// because logger is initialized at module import time, before config validation.
+// This is intentional to ensure logger is available during bootstrap.
 const getLogLevel = (): string => {
   const env = process.env.NODE_ENV || 'development';
   if (env === 'production') return 'info';
@@ -88,6 +91,20 @@ export function createLogger(component: string) {
   return logger.child({ component });
 }
 
+/**
+ * Starts a timer for performance measurement.
+ * 
+ * Usage example:
+ * ```typescript
+ * const timer = startTimer();
+ * // ... perform operations ...
+ * timer.done({ message: 'Operation completed', operation: 'database-query' });
+ * ```
+ * 
+ * The timer will log the elapsed time along with the provided metadata.
+ * 
+ * @returns A timer object with a done() method to complete timing
+ */
 export function startTimer() {
   return logger.startTimer();
 }

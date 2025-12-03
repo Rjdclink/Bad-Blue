@@ -4,6 +4,7 @@ dotenv.config();
 import { loadConfig } from './config';
 
 // CRITICAL: Validate configuration before anything else
+// Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
 try {
   console.log('[STARTUP] Stage 0: Validating environment configuration...');
   loadConfig();

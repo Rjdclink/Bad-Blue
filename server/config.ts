@@ -9,7 +9,13 @@ const envSchema = z.object({
   
   // Application
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.string().transform(val => parseInt(val, 10)).default('5000'),
+  PORT: z.string().transform((val) => {
+    const num = parseInt(val, 10);
+    if (isNaN(num) || num <= 0) {
+      throw new Error('PORT must be a positive integer');
+    }
+    return num;
+  }).default('5000'),
   BASE_URL: z.string().url().optional(),
   SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
   
@@ -32,7 +38,13 @@ const envSchema = z.object({
   GWSMTP_PASSWORD: z.string().optional(),
   GWSMTP_PASS: z.string().optional(),
   GWSMTP_HOST: z.string().default('smtp.gmail.com'),
-  GWSMTP_PORT: z.string().transform(val => parseInt(val, 10)).default('587'),
+  GWSMTP_PORT: z.string().transform((val) => {
+    const num = parseInt(val, 10);
+    if (isNaN(num) || num <= 0) {
+      throw new Error('GWSMTP_PORT must be a positive integer');
+    }
+    return num;
+  }).default('587'),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
@@ -73,6 +85,7 @@ export function loadConfig(): Config {
   
   try {
     config = envSchema.parse(process.env);
+    // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
     console.log('[Config] ✓ Environment variables validated successfully');
     console.log(`[Config] Environment: ${config.NODE_ENV}`);
     console.log(`[Config] Port: ${config.PORT}`);
