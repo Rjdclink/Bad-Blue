@@ -23,6 +23,7 @@ import { z } from "zod";
 import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
+import { setupLegalizoRoutes } from "./legalizoRoutes";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -789,6 +790,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     trackUsage({ action: req.method, tokens: 0, path: req.path }).catch(() => {});
     next();
   });
+
+  // ============================================
+  // LEGALIZO ROUTES
+  // ============================================
+  setupLegalizoRoutes(app);
 
   // ============================================
   // PREVIEW ROUTES

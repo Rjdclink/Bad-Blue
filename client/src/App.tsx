@@ -103,6 +103,13 @@ const PetitionEdit = lazyWithRetry(() => import("@/pages/petition-edit"), 'Petit
 const LegalConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'LegalConsultation');
 const LegalDocumentCreator = lazyWithRetry(() => import("@/pages/legal-document-creator"), 'LegalDocumentCreator');
 
+// Legalizo pages
+const LegalizoLanding = lazyWithRetry(() => import("@/pages/legalizo-landing"), 'LegalizoLanding');
+const LegalizoAuth = lazyWithRetry(() => import("@/pages/legalizo-auth"), 'LegalizoAuth');
+const LegalizoWelcome = lazyWithRetry(() => import("@/pages/legalizo-welcome"), 'LegalizoWelcome');
+const LegalizoConsultation = lazyWithRetry(() => import("@/pages/legalizo-consultation"), 'LegalizoConsultation');
+const LegalizoPeopleSearch = lazyWithRetry(() => import("@/pages/legalizo-people-search"), 'LegalizoPeopleSearch');
+
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
 const AdminLawsuits = lazyWithRetry(() => import("@/pages/admin-lawsuits"), 'AdminLawsuits');
@@ -147,6 +154,10 @@ function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Switch>
+        {/* Legalizo public routes */}
+        <Route path="/legalizo" component={LegalizoLanding} />
+        <Route path="/legalizo-auth" component={LegalizoAuth} />
+        
         {/* Public routes */}
         <Route path="/landing" component={Landing} />
         <Route path="/login" component={Login} />
@@ -162,6 +173,12 @@ function Router() {
         {/* Protected routes - only accessible when authenticated */}
         {isAuthenticated ? (
           <>
+            {/* Legalizo protected routes */}
+            <Route path="/legalizo-welcome" component={LegalizoWelcome} />
+            <Route path="/legalizo-consultation" component={LegalizoConsultation} />
+            <Route path="/legalizo-people-search" component={LegalizoPeopleSearch} />
+            
+            {/* Original Bad Blue routes */}
             <Route path="/" component={Home} />
             <Route path="/home" component={Home} />
             <Route path="/dashboard" component={Home} />

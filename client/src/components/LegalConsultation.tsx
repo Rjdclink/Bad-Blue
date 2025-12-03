@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Card,
@@ -87,9 +87,11 @@ const US_STATES = [
 
 interface LegalConsultationProps {
   onBack?: () => void;
+  lawType?: string;
+  onDataChange?: (data: any) => void;
 }
 
-export default function LegalConsultation({ onBack }: LegalConsultationProps) {
+export default function LegalConsultation({ onBack, lawType, onDataChange }: LegalConsultationProps) {
   const { toast } = useToast();
   
   // NOTE: FAQ schema moved to page level to prevent duplicate FAQPage errors in Google Search Console
@@ -101,6 +103,18 @@ export default function LegalConsultation({ onBack }: LegalConsultationProps) {
   const [situation, setSituation] = useState("");
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [analysis, setAnalysis] = useState<any>(null);
+
+  // Notify parent component when consultation data changes
+  useEffect(() => {
+    if (onDataChange && analysis) {
+      onDataChange({
+        question: situation,
+        response: analysis,
+        state,
+        lawType,
+      });
+    }
+  }, [analysis, situation, state, lawType, onDataChange]);
 
   const analyzeMutation = useMutation({
     mutationFn: async (data: { state: string; situation: string }) => {

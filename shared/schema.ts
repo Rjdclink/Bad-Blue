@@ -2256,3 +2256,160 @@ export type InsertDocumentCreatorSession = z.infer<typeof insertDocumentCreatorS
 export const DOCUMENT_CREATOR_PRICING = 3.99;
 export const DOCUMENT_CREATOR_PRICING_CENTS = 399; // $3.99 in cents
 export type InsertFoiaRoutingHistory = z.infer<typeof insertFoiaRoutingHistorySchema>;
+
+// ============================================
+// LEGALIZO SUBSCRIPTIONS TABLE
+// ============================================
+export const legalizoSubscriptions = pgTable("legalizo_subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  squareSubscriptionId: varchar("square_subscription_id").unique(),
+  status: varchar("status", { length: 50 }).notNull().default('pending'), // pending, active, canceled, past_due, paused
+  planAmount: integer("plan_amount").notNull().default(2599), // $25.99 in cents - matches LEGALIZO_SUBSCRIPTION_PRICING_CENTS
+  currentPeriodStart: timestamp("current_period_start"),
+  currentPeriodEnd: timestamp("current_period_end"),
+  canceledAt: timestamp("canceled_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_legalizo_sub_user").on(table.userId),
+  index("idx_legalizo_sub_status").on(table.status),
+]);
+
+export const legalizoSubscriptionsRelations = relations(legalizoSubscriptions, ({ one }) => ({
+  user: one(users, {
+    fields: [legalizoSubscriptions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const insertLegalizoSubscriptionSchema = createInsertSchema(legalizoSubscriptions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type LegalizoSubscription = typeof legalizoSubscriptions.$inferSelect;
+export type InsertLegalizoSubscription = z.infer<typeof insertLegalizoSubscriptionSchema>;
+
+// Legalizo subscription pricing
+export const LEGALIZO_SUBSCRIPTION_PRICING = 25.99;
+export const LEGALIZO_SUBSCRIPTION_PRICING_CENTS = 2599; // $25.99 in cents
+
+// ============================================
+// LAW TYPES ENUMERATION
+// ============================================
+export const LAW_TYPES = [
+  'Family Law',
+  'Criminal Law',
+  'Civil Litigation',
+  'Employment Law',
+  'Corporate Law',
+  'Intellectual Property',
+  'Real Estate Law',
+  'Bankruptcy Law',
+  'Immigration Law',
+  'Personal Injury',
+  'Tax Law',
+  'Environmental Law',
+  'Consumer Protection',
+  'Contract Law',
+  'Elder Law',
+  'Education Law',
+  'Healthcare Law',
+  'Insurance Law',
+  'Maritime Law',
+  'Constitutional Law',
+  'Administrative Law',
+  'Entertainment Law',
+  'Sports Law',
+  'Technology Law',
+  'International Law',
+  'Human Rights Law',
+  'Probate and Estate Law',
+  'Housing and Landlord-Tenant Law',
+  'Securities Law',
+  'Transportation Law',
+  'Animal Law',
+  'Aviation Law',
+  'Military Law',
+  'Election Law',
+  'Energy Law',
+  'Insurance Defense',
+  'Workers Compensation',
+  'Social Security Law',
+  'Disability Law',
+  'Antitrust Law',
+] as const;
+
+export type LawType = typeof LAW_TYPES[number];
+
+// ============================================
+// LEGALIZO CONSULTATION SESSIONS TABLE
+// ============================================
+export const legalizoConsultationSessions = pgTable("legalizo_consultation_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  lawType: varchar("law_type", { length: 100 }).notNull(),
+  conversationState: jsonb("conversation_state").notNull().default('[]'),
+  consultationData: jsonb("consultation_data"),
+  documentData: jsonb("document_data"),
+  status: varchar("status", { length: 50 }).notNull().default('in_progress'), // in_progress, completed, abandoned
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_legalizo_consult_user").on(table.userId),
+  index("idx_legalizo_consult_law_type").on(table.lawType),
+  index("idx_legalizo_consult_status").on(table.status),
+]);
+
+export const legalizoConsultationSessionsRelations = relations(legalizoConsultationSessions, ({ one }) => ({
+  user: one(users, {
+    fields: [legalizoConsultationSessions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const insertLegalizoConsultationSessionSchema = createInsertSchema(legalizoConsultationSessions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type LegalizoConsultationSession = typeof legalizoConsultationSessions.$inferSelect;
+export type InsertLegalizoConsultationSession = z.infer<typeof insertLegalizoConsultationSessionSchema>;
+
+// ============================================
+// PEOPLE SEARCH REPORTS TABLE
+// ============================================
+export const peopleSearchReports = pgTable("people_search_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  searchQuery: text("search_query").notNull(),
+  subjectName: varchar("subject_name", { length: 255 }),
+  reportData: jsonb("report_data").notNull(),
+  status: varchar("status", { length: 50 }).notNull().default('processing'), // processing, completed, failed
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_people_search_user").on(table.userId),
+  index("idx_people_search_status").on(table.status),
+  index("idx_people_search_created").on(table.createdAt),
+]);
+
+export const peopleSearchReportsRelations = relations(peopleSearchReports, ({ one }) => ({
+  user: one(users, {
+    fields: [peopleSearchReports.userId],
+    references: [users.id],
+  }),
+}));
+
+export const insertPeopleSearchReportSchema = createInsertSchema(peopleSearchReports).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type PeopleSearchReport = typeof peopleSearchReports.$inferSelect;
+export type InsertPeopleSearchReport = z.infer<typeof insertPeopleSearchReportSchema>;
