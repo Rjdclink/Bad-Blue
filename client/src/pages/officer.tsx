@@ -12,6 +12,7 @@ import type { BadgeLookup } from "@shared/schema";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function OfficerInfo() {
   const { id } = useParams();
@@ -251,6 +252,9 @@ export default function OfficerInfo() {
           </p>
         </div>
       </main>
+
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/officer" />
     </div>
   );
 }

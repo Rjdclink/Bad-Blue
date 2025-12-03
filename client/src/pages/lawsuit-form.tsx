@@ -17,6 +17,7 @@ import { FormAssistant } from "@/components/FormAssistant";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 // Component for rendering the actual lawsuit document preview from backend
 function LawsuitDocumentPreview({
@@ -1183,6 +1184,9 @@ export default function LawsuitForm() {
           </div>
         )}
       </main>
+
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/lawsuit-form" />
     </div>
   );
 }

@@ -3,8 +3,11 @@ import { Link } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
+import { usePageFaqSchema } from "@/hooks/useFaqSchema";
+import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function Terms() {
+  usePageFaqSchema("/terms");
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
@@ -184,6 +187,9 @@ export default function Terms() {
           </p>
         </div>
       </footer>
+
+      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
+      <HiddenFAQ path="/terms" />
     </div>
   );
 }

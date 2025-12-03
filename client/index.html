@@ -195,81 +195,8 @@
     }
     </script>
 
-    <!-- Structured Data: FAQ Schema -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      "name": "Bad Blue - Police Accountability FAQ",
-      "description": "Frequently asked questions about filing police complaints, Section 1983 lawsuits, FOIA requests, and police accountability from home.",
-      "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "How do I file a police complaint from home?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "With Bad Blue, you can file a police complaint entirely from home. Simply fill out our online complaint form with details about the incident, and Bad Blue automatically generates a professional complaint document and routes it to the proper authorities. No lawyers needed, no office visits required."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "What is a Section 1983 civil rights lawsuit?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "A Section 1983 lawsuit (42 U.S.C. § 1983) allows citizens to sue police officers and government officials who violate their constitutional rights. This includes excessive force, false arrest, malicious prosecution, and other civil rights violations. Bad Blue generates court-ready Section 1983 lawsuit documents you can file from home."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "How can I get police body camera footage?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "You can request police body camera footage through a Freedom of Information Act (FOIA) request. Bad Blue's FOIA Request Generator automatically identifies the correct agency, applies state-specific rules, and generates a compliant request. File from home without visiting any government office."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Can I search for a police officer's misconduct history?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes! Bad Blue's AI-powered Officer Search lets you search for police officers by name, badge number, or department. Find misconduct history, complaint records, and officer information without visiting any office. Search from the comfort of your home."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Do I need a lawyer to file a police complaint or lawsuit?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "No lawyers needed! Bad Blue is designed to be an affordable alternative to expensive attorneys. Our platform generates professional legal documents and handles the routing automatically. You can file complaints, Section 1983 lawsuits, and FOIA requests entirely on your own from home."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "How does Bad Blue route my complaint to the right authorities?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Bad Blue uses AI-powered automated routing to identify the correct authorities for your complaint. We search for internal affairs divisions, civilian oversight boards, and other relevant agencies, then generate properly formatted documents addressed to the right recipients. Bad Blue does all the work."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "What is qualified immunity and can I overcome it?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Qualified immunity is a legal doctrine that protects government officials from lawsuits unless they violate 'clearly established' rights. Bad Blue's Section 1983 lawsuit generator helps you identify precedents and structure your case to overcome qualified immunity defenses."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Can I create a petition to demand police accountability?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes! Bad Blue's petition system lets you create community petitions calling for officer discipline, policy changes, or accountability measures. Gather signatures from your community and submit petitions to city councils and oversight boards. All done online from home."
-          }
-        }
-      ]
-    }
-    </script>
+    <!-- NOTE: FAQPage schemas are now handled per-page via usePageFaqSchema hook -->
+    <!-- This provides page-specific, contextual FAQs for better SEO targeting -->
 
     <!-- Structured Data: SoftwareApplication -->
     <script type="application/ld+json">
@@ -277,22 +204,42 @@
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       "name": "Bad-Blue 7-Provider AI Police Accountability Platform",
+      "alternateName": "Bad-Blue AI Coordination System",
       "applicationCategory": "LegalApplication",
+      "operatingSystem": "Web Browser",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "description": "Free tier with premium features available"
+      },
       "aggregateRating": {
         "@type": "AggregateRating",
         "ratingValue": "4.8",
         "ratingCount": "2847",
-        "bestRating": "5"
+        "bestRating": "5",
+        "worstRating": "1",
+        "reviewCount": "2847"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "Bad Blue"
       },
       "featureList": [
-        "7-Provider AI Coordination (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral)",
-        "Parallel AI Processing",
-        "AI Officer Background Search",
-        "Automated Complaint Filing",
-        "Section 1983 Lawsuit Generator",
-        "FOIA Request Automation"
+        "7-Provider AI Coordination System (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral)",
+        "Parallel AI Processing for Maximum Accuracy",
+        "AI-Powered Officer Background Search with Multimodal Analysis",
+        "Automated Police Complaint Filing with Professional AI Formatting",
+        "Section 1983 Civil Rights Lawsuit Generator with Legal AI Team",
+        "FOIA Request Automation with Intelligent Agency Discovery",
+        "Community Evidence Hub with AI Content Analysis",
+        "Petition Platform with Automated Delivery to Officials",
+        "24/7 AI Legal Consultation and Document Review"
       ],
-      "description": "Revolutionary 7-provider AI coordination system. Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral analyze officer records simultaneously."
+      "description": "Revolutionary 7-provider AI coordination system for police accountability. Gemini 2.5 Flash (Google), Claude 3.5 Sonnet (Anthropic), DeepSeek R1T2 (671B params), Grok 4.1 Fast (xAI 2M context), Kimi K2 (1T params), Groq Llama 3.3 (unlimited speed), and Mistral Small work in parallel to analyze officer records, generate legal documents, and automate complaint filing. File complaints, Section 1983 lawsuits, and FOIA requests entirely from home with comprehensive AI assistance.",
+      "screenshot": "https://bad-blue.com/preview.png",
+      "softwareVersion": "2.0",
+      "releaseNotes": "7-provider AI coordination system with parallel processing capabilities now live"
     }
     </script>
 
@@ -317,7 +264,7 @@
     <meta name="apple-mobile-web-app-title" content="Bad Blue" />
     
     <!-- Additional SEO Keywords -->
-    <meta name="keywords" content="7 provider AI, parallel AI processing, Gemini Claude DeepSeek Grok Kimi, AI coordination system, file police complaint online, police complaint form, report police misconduct, police brutality complaint, internal affairs complaint, Section 1983 lawsuit, sue police officer, civil rights lawsuit, 42 USC 1983, police brutality lawsuit, excessive force lawsuit, false arrest lawsuit, FOIA request, freedom of information, police records request, police body camera footage, police officer search, officer lookup, badge number search, police misconduct records, police accountability platform, file from home, no lawyers needed, affordable legal help, police accountability, qualified immunity, officer termination petition" />
+    <meta name="keywords" content="7 provider AI police accountability, 7-AI coordination system, Gemini Claude DeepSeek Grok Kimi Groq Mistral, parallel AI processing, AI officer search, multimodal AI analysis, AI legal team, AI lawsuit generator, file police complaint online, police complaint form, report police misconduct, police brutality complaint, internal affairs complaint, Section 1983 lawsuit, sue police officer, civil rights lawsuit, 42 USC 1983, police brutality lawsuit, excessive force lawsuit, false arrest lawsuit, FOIA request automation, AI FOIA generator, freedom of information, police records request, police body camera footage, police officer search, officer lookup, badge number search, police misconduct records, police accountability platform, file from home, no lawyers needed, affordable legal help, AI legal consultation, qualified immunity, officer termination petition, AI document generation, AI legal reasoning, AI evidence analysis" />
     
     <!-- Preconnect for Performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
