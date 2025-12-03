@@ -123,7 +123,7 @@ export default function Privacy() {
               We use the following third-party services:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-muted-foreground mt-2">
-              <li><strong>Stripe:</strong> Payment processing (PCI-DSS compliant)</li>
+              <li><strong>Square:</strong> Payment processing (PCI-DSS compliant)</li>
               <li><strong>Resend:</strong> Transactional email delivery</li>
               <li><strong>AI Providers:</strong> Mistral, Groq, Google Gemini, and Anthropic Claude for legal analysis</li>
               <li><strong>Supabase:</strong> Secure database hosting</li>

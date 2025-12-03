@@ -406,8 +406,8 @@ export const COMPLAINT_PRICING_CENTS = 1799;
 export const LAWSUIT_DIY_PRICING = 289.99; // User files - includes completed JS-44 civil cover sheet and informa pauperis form (non-completed)
 export const LAWSUIT_DIY_PRICING_CENTS = 28999;
 
-export const LAWSUIT_FULL_SERVICE_PRICING = 503.75; // BadBlue files ($98.75 + $405 filing fees) - includes clerical services, civil cover sheet, informa pauperis form (non-completed)
-export const LAWSUIT_FULL_SERVICE_PRICING_CENTS = 50375;
+export const LAWSUIT_FULL_SERVICE_PRICING = 450.99; // BadBlue files - includes clerical services, document preparation, and filing service (court filing fees and service costs not included)
+export const LAWSUIT_FULL_SERVICE_PRICING_CENTS = 45099;
 
 // Petition pricing
 export const PETITION_PRICING = 25.99;
@@ -2253,6 +2253,6 @@ export type DocumentCreatorSession = typeof documentCreatorSessions.$inferSelect
 export type InsertDocumentCreatorSession = z.infer<typeof insertDocumentCreatorSessionSchema>;
 
 // Document Creator pricing
-export const DOCUMENT_CREATOR_PRICING = 3.99;
-export const DOCUMENT_CREATOR_PRICING_CENTS = 399; // $3.99 in cents
+export const DOCUMENT_CREATOR_PRICING = 50.99;
+export const DOCUMENT_CREATOR_PRICING_CENTS = 5099; // $50.99 in cents
 export type InsertFoiaRoutingHistory = z.infer<typeof insertFoiaRoutingHistorySchema>;

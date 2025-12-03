@@ -291,7 +291,7 @@ export default function ComplaintForm() {
       let errorMessage = "We couldn't submit your complaint. Please check your information and try again";
       
       if (error.message?.toLowerCase().includes('payment') || 
-          error.message?.toLowerCase().includes('stripe')) {
+          error.message?.toLowerCase().includes('square')) {
         errorMessage = "Payment could not be processed. Please check your card details and try again";
       } else if (error.message?.toLowerCase().includes('network') || 
                  error.message?.toLowerCase().includes('connection')) {

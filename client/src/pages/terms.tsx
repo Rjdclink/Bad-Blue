@@ -97,7 +97,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">5. Payment & Refunds</h2>
             <p className="text-muted-foreground leading-relaxed">
-              Certain services require payment. All payments are processed securely through Stripe. 
+              Certain services require payment. All payments are processed securely through Square. 
               Refund policies:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-muted-foreground mt-2">
