@@ -4,7 +4,7 @@
 
 import { db } from './db';
 import { sql } from 'drizzle-orm';
-import Stripe from 'stripe';
+import { getSquareClient, getSquareLocationId } from './squareClient';
 import nodemailer from 'nodemailer';
 import { GoogleGenAI } from '@google/genai';
 
@@ -56,51 +56,55 @@ export async function runComprehensiveDiagnostics(): Promise<{
     recommendations.push('Check DATABASE_URL environment variable and database server status');
   }
 
-  // 2. STRIPE API TEST
-  console.log('[DIAGNOSTICS] Testing Stripe API...');
-  if (!process.env.STRIPE_SECRET_KEY) {
+  // 2. SQUARE API TEST
+  console.log('[DIAGNOSTICS] Testing Square API...');
+  const accessToken = process.env.SQUARE_ENVIRONMENT === 'production' 
+    ? process.env.SQUARE_ACCESS_TOKEN 
+    : process.env.SQUARE_SANDBOX_ACCESS_TOKEN;
+    
+  if (!accessToken) {
     results.push({
-      service: 'Stripe Payment API',
+      service: 'Square Payment API',
       status: '✗',
-      message: 'STRIPE_SECRET_KEY not configured',
+      message: 'Square access token not configured',
       error: 'Missing environment variable'
     });
-    recommendations.push('Set STRIPE_SECRET_KEY in environment variables');
+    recommendations.push('Set SQUARE_ACCESS_TOKEN or SQUARE_SANDBOX_ACCESS_TOKEN in environment variables');
   } else {
     try {
-      const stripeStart = Date.now();
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-      const balance = await stripe.balance.retrieve();
-      const stripeTime = Date.now() - stripeStart;
+      const squareStart = Date.now();
+      const square = getSquareClient();
+      const locationsResponse = await square.locations.list();
+      const locations = locationsResponse.locations || [];
+      const squareTime = Date.now() - squareStart;
 
       results.push({
-        service: 'Stripe Payment API',
+        service: 'Square Payment API',
         status: '✓',
-        message: 'Stripe API connected successfully',
-        responseTime: stripeTime,
+        message: `Square API connected successfully (${locations.length} locations)`,
+        responseTime: squareTime,
         details: {
-          available: balance.available.map(b => ({
-            amount: (b.amount / 100).toFixed(2),
-            currency: b.currency.toUpperCase()
-          }))
+          locationCount: locations.length,
+          environment: process.env.SQUARE_ENVIRONMENT || 'sandbox'
         }
       });
     } catch (error: any) {
-      if (error.message?.includes('rate limit')) {
+      const errorMsg = error.errors?.[0]?.detail || error.message || 'Unknown error';
+      if (errorMsg?.includes('rate limit')) {
         results.push({
-          service: 'Stripe Payment API',
+          service: 'Square Payment API',
           status: '⚠',
-          message: 'Stripe API rate limited',
+          message: 'Square API rate limited',
           error: 'Rate limit exceeded - wait before retrying'
         });
       } else {
         results.push({
-          service: 'Stripe Payment API',
+          service: 'Square Payment API',
           status: '✗',
-          message: 'Stripe API connection failed',
-          error: error.message
+          message: 'Square API connection failed',
+          error: errorMsg
         });
-        recommendations.push('Verify Stripe API key is valid and has proper permissions');
+        recommendations.push('Verify Square API key is valid and has proper permissions');
       }
     }
   }

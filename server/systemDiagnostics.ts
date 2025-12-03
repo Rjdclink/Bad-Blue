@@ -7,7 +7,7 @@ import { users, complaints, lawsuitFilings, petitions, foiaRequests, badgeLookup
   aiSubAgentLogs, foiaStateStatutes, complaintPatterns, legalStrategies, casePatterns, documentFormats,
   appSettings, adminSettingsAudit, subscriptionTiers, userSubscriptions, publicEvidence } from '@shared/schema';
 import { eq, sql } from 'drizzle-orm';
-import Stripe from 'stripe';
+import { getSquareClient, getSquareLocationId } from './squareClient';
 
 interface DiagnosticResult {
   category: string;
@@ -133,43 +133,51 @@ async function testAIServices() {
   }
 }
 
-// Payment/Stripe diagnostics
-async function testStripe() {
-  const category = 'STRIPE_PAYMENT';
+// Payment/Square diagnostics
+async function testSquare() {
+  const category = 'SQUARE_PAYMENT';
   
   try {
-    const stripeKey = process.env.STRIPE_SECRET_KEY;
-    if (!stripeKey) {
-      addResult(category, 'Stripe API Key', 'FAIL', 'STRIPE_SECRET_KEY not found in environment');
+    const accessToken = process.env.SQUARE_ENVIRONMENT === 'production' 
+      ? process.env.SQUARE_ACCESS_TOKEN 
+      : process.env.SQUARE_SANDBOX_ACCESS_TOKEN;
+      
+    if (!accessToken) {
+      addResult(category, 'Square API Key', 'FAIL', 'Square access token not configured');
       return;
     }
     
-    const stripe = new Stripe(stripeKey);
+    const square = getSquareClient();
     
-    // Test Stripe connection
+    // Test Square connection by listing locations
     try {
-      const balance = await stripe.balance.retrieve();
-      addResult(category, 'Stripe Connection', 'PASS', 'Successfully connected to Stripe', { 
-        available: balance.available,
-        pending: balance.pending
+      const locationsResponse = await square.locations.list();
+      const locations = locationsResponse.locations || [];
+      addResult(category, 'Square Connection', 'PASS', `Connected to Square (${locations.length} locations)`, { 
+        locationCount: locations.length,
+        locationIds: locations.map((l: any) => l.id)
       });
     } catch (error: any) {
-      addResult(category, 'Stripe Connection', 'FAIL', 'Failed to connect to Stripe', undefined, error.message);
+      const errorMsg = error.errors?.[0]?.detail || error.message || 'Unknown error';
+      addResult(category, 'Square Connection', 'FAIL', 'Failed to connect to Square', undefined, errorMsg);
     }
     
-    // Test Stripe products/prices
+    // Test Square location configuration
     try {
-      const products = await stripe.products.list({ limit: 5 });
-      const prices = await stripe.prices.list({ limit: 5 });
-      addResult(category, 'Stripe Products', 'PASS', `Found ${products.data.length} products and ${prices.data.length} prices`, {
-        products: products.data.length,
-        prices: prices.data.length
+      const locationId = getSquareLocationId();
+      const locationResponse = await square.locations.get({ locationId: locationId });
+      const location = locationResponse.location;
+      addResult(category, 'Square Location', 'PASS', `Found configured location: ${location?.name || locationId}`, {
+        locationId,
+        name: location?.name,
+        status: location?.status
       });
     } catch (error: any) {
-      addResult(category, 'Stripe Products', 'FAIL', 'Failed to query Stripe products', undefined, error.message);
+      const errorMsg = error.errors?.[0]?.detail || error.message || 'Unknown error';
+      addResult(category, 'Square Location', 'FAIL', 'Failed to retrieve Square location', undefined, errorMsg);
     }
   } catch (error: any) {
-    addResult(category, 'Stripe Setup', 'FAIL', 'Failed to initialize Stripe', undefined, error.message);
+    addResult(category, 'Square Setup', 'FAIL', 'Failed to initialize Square', undefined, error.message);
   }
 }
 
@@ -288,7 +296,7 @@ export async function runFullDiagnostics(): Promise<{
   await testEnvironment();
   await testDatabase();
   await testAIServices();
-  await testStripe();
+  await testSquare();
   await testEmail();
   await testObjectStorage();
   await testAuthentication();

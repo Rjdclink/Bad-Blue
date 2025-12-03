@@ -4,7 +4,7 @@
 import { db, pool, resetPool } from './db';
 import * as schema from '@shared/schema';
 import { eq, sql, desc } from 'drizzle-orm';
-import Stripe from 'stripe';
+import { getSquareClient, getSquareLocationId } from './squareClient';
 import nodemailer from 'nodemailer';
 import { storage } from './storage';
 import { evidenceStorage } from './evidenceStorage';
@@ -318,35 +318,35 @@ class ComprehensiveDiagnostics {
   async testExternalServices() {
     const category = 'EXTERNAL_SERVICES';
 
-    // Test Stripe API
-    await this.runTest(category, 'Stripe API', async () => {
-      if (!process.env.STRIPE_SECRET_KEY) {
-        return { status: 'FAIL', message: 'STRIPE_SECRET_KEY not configured' };
+    // Test Square API
+    await this.runTest(category, 'Square API', async () => {
+      const accessToken = process.env.SQUARE_ENVIRONMENT === 'production' 
+        ? process.env.SQUARE_ACCESS_TOKEN 
+        : process.env.SQUARE_SANDBOX_ACCESS_TOKEN;
+        
+      if (!accessToken) {
+        return { status: 'FAIL', message: 'Square access token not configured' };
       }
 
       try {
-        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-        const balance = await stripe.balance.retrieve();
+        const square = getSquareClient();
+        const locationsResponse = await square.locations.list();
+        const locations = locationsResponse.locations || [];
 
         return { 
           status: 'PASS', 
-          message: 'Stripe API connected',
+          message: `Square API connected (${locations.length} locations)`,
           details: {
-            available: balance.available.map(b => ({ 
-              amount: b.amount / 100, 
-              currency: b.currency 
-            })),
-            pending: balance.pending.map(b => ({ 
-              amount: b.amount / 100, 
-              currency: b.currency 
-            }))
+            locationCount: locations.length,
+            environment: process.env.SQUARE_ENVIRONMENT || 'sandbox'
           }
         };
       } catch (error: any) {
-        if (error.message?.includes('rate limit')) {
-          return { status: 'WARN', message: 'Stripe API rate limited' };
+        const errorMsg = error.errors?.[0]?.detail || error.message || 'Unknown error';
+        if (errorMsg?.includes('rate limit')) {
+          return { status: 'WARN', message: 'Square API rate limited' };
         }
-        return { status: 'FAIL', message: 'Stripe API connection failed', error: error.message };
+        return { status: 'FAIL', message: 'Square API connection failed', error: errorMsg };
       }
     });
 
@@ -803,32 +803,35 @@ class ComprehensiveDiagnostics {
 
     // Test Payment Processing
     await this.runTest(category, 'Payment Processing', async () => {
-      if (!process.env.STRIPE_SECRET_KEY) {
+      const accessToken = process.env.SQUARE_ENVIRONMENT === 'production' 
+        ? process.env.SQUARE_ACCESS_TOKEN 
+        : process.env.SQUARE_SANDBOX_ACCESS_TOKEN;
+        
+      if (!accessToken) {
         return { status: 'FAIL', message: 'Payment processing not configured' };
       }
 
       try {
-        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+        const square = getSquareClient();
 
-        // Check for payment methods
-        const paymentMethods = await stripe.paymentMethods.list({ 
-          type: 'card', 
-          limit: 1 
-        });
+        // Check Square locations
+        const locationsResponse = await square.locations.list();
+        const locations = locationsResponse.locations || [];
 
         return { 
           status: 'PASS', 
           message: 'Payment processing ready',
           details: { 
-            stripeConnected: true,
-            hasPaymentMethods: paymentMethods.data.length > 0 
+            squareConnected: true,
+            locationCount: locations.length
           }
         };
       } catch (error: any) {
-        if (error.message?.includes('rate limit')) {
-          return { status: 'WARN', message: 'Stripe rate limited but configured' };
+        const errorMsg = error.errors?.[0]?.detail || error.message || 'Unknown error';
+        if (errorMsg?.includes('rate limit')) {
+          return { status: 'WARN', message: 'Square rate limited but configured' };
         }
-        return { status: 'FAIL', message: 'Payment processing test failed', error: error.message };
+        return { status: 'FAIL', message: 'Payment processing test failed', error: errorMsg };
       }
     });
 
