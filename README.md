@@ -45,7 +45,7 @@ A robust background diagnostics and maintenance system runs continuously, perfor
 - Node.js 18+ 
 - PostgreSQL database
 - Google Cloud Storage account (optional, for file storage)
-- Stripe account for payment processing
+- Square account for payment processing
 - Google Gemini API key
 - Groq API key
 
@@ -65,7 +65,11 @@ GEMINI_API_KEY=your-gemini-api-key
 GROQ_API_KEY=your-groq-api-key
 
 # Payment Processing
-STRIPE_SECRET_KEY=your-stripe-secret-key
+SQUARE_ACCESS_TOKEN=your_production_access_token
+SQUARE_APPLICATION_ID=sq0idp-n5aXRG01aPrZ4KqxIh33Sw
+SQUARE_LOCATION_ID=L0DRZCZ8YRK5K
+SQUARE_ENVIRONMENT=production
+SQUARE_WEBHOOK_SIGNATURE_KEY=your_webhook_signature_key
 
 # File Storage (Optional)
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
@@ -204,7 +208,7 @@ For support inquiries, please contact support@badblue.com
 - **API Quota Management**: Implemented tiered test coverage to prevent API exhaustion
 
 ## External Dependencies
-- **Payment Processing**: Stripe
+- **Payment Processing**: Square Payment Links API
 - **AI/ML Services**: Google Gemini API, Groq API
 - **File Upload Libraries**: react-dropzone, Uppy
 - **Date Formatting**: date-fns
