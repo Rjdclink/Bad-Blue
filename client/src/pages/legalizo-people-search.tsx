@@ -75,7 +75,7 @@ export default function LegalizoPeopleSearch() {
   };
 
   const pollReportStatus = async (id: string) => {
-    const maxAttempts = 60; // 60 attempts * 2 seconds = 2 minutes max
+    const maxAttempts = 30; // 30 attempts * 4 seconds = 2 minutes max
     let attempts = 0;
 
     const poll = async () => {
@@ -99,7 +99,7 @@ export default function LegalizoPeopleSearch() {
           throw new Error(data.errorMessage || 'Report generation failed');
         } else if (attempts < maxAttempts) {
           attempts++;
-          setTimeout(poll, 2000); // Poll every 2 seconds
+          setTimeout(poll, 4000); // Poll every 4 seconds (reduced from 2 seconds)
         } else {
           throw new Error('Report generation timed out');
         }

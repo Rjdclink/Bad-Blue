@@ -2,7 +2,6 @@
 // Eight parallel AI systems working in coordinated conjunction
 
 import { analyzeLegalIssue, researchRelevantStatutes } from "./legalAI";
-import { generateDocumentCreatorResponse } from "./documentCreatorAI";
 
 /**
  * AI System 1: Law Type Classification

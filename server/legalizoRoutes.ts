@@ -267,6 +267,12 @@ export function setupLegalizoRoutes(app: Express) {
   /**
    * Create Square subscription checkout
    * POST /api/legalizo/subscription/create
+   * 
+   * NOTE: This is a PLACEHOLDER implementation for development.
+   * Production deployment requires:
+   * 1. Setting up subscription plans in Square Dashboard
+   * 2. Implementing proper Square Subscriptions API integration
+   * 3. Testing the complete payment flow
    */
   app.post("/api/legalizo/subscription/create", async (req: Request, res: Response) => {
     if (!req.user?.id) {
@@ -277,6 +283,8 @@ export function setupLegalizoRoutes(app: Express) {
       // TODO: Implement Square subscription checkout
       // Note: This requires setting up subscription plans in Square Dashboard first
       // For now, returning a placeholder
+      
+      console.warn('[LEGALIZO] Square subscription integration not yet implemented - placeholder active');
       
       res.json({
         message: "Square subscription integration pending - needs Square Dashboard setup",
@@ -294,11 +302,20 @@ export function setupLegalizoRoutes(app: Express) {
   /**
    * Square webhook handler for subscription events
    * POST /api/legalizo/subscription/webhook
+   * 
+   * SECURITY WARNING: This endpoint lacks signature verification.
+   * Production deployment MUST implement Square webhook signature verification
+   * to prevent unauthorized subscription manipulation.
+   * See: https://developer.squareup.com/docs/webhooks/step3validate
    */
   app.post("/api/legalizo/subscription/webhook", async (req: Request, res: Response) => {
     try {
-      // Verify Square webhook signature
-      // Note: Implement signature verification in production
+      // TODO: Implement Square webhook signature verification
+      // const signature = req.headers['x-square-hmacsha256-signature'];
+      // const body = req.rawBody; // Requires raw body middleware
+      // Verify signature before processing
+      
+      console.warn('[LEGALIZO] Webhook received without signature verification - NOT PRODUCTION READY');
       
       const event = req.body;
       
@@ -382,6 +399,9 @@ export function setupLegalizoRoutes(app: Express) {
       const report = newReport[0];
 
       // Start background job to generate report using real OSINT
+      // NOTE: Using setTimeout is acceptable for development/demo
+      // Production should use a proper job queue (Bull, Agenda, AWS SQS, etc.)
+      // for better error handling, persistence, and recovery
       setTimeout(async () => {
         try {
           // Conduct actual people search

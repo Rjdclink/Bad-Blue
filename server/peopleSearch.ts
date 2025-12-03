@@ -109,15 +109,20 @@ export async function conductPeopleSearch(
 
 /**
  * Search public records databases
- * Note: In production, this would integrate with actual public records APIs
+ * 
+ * PLACEHOLDER IMPLEMENTATION - NOT PRODUCTION READY
+ * 
+ * Production deployment requires integration with actual public records APIs:
+ * - State/County clerk websites
+ * - Property tax records APIs
+ * - Voter registration databases
+ * - Business registration records
+ * - Court record systems (PACER, state systems)
+ * 
+ * Many of these require paid API access or agreements with government agencies.
  */
 async function searchPublicRecords(name: string): Promise<OSINTSource> {
-  // Placeholder implementation
-  // In production, integrate with:
-  // - State/County clerk websites
-  // - Property tax records
-  // - Voter registration databases
-  // - Business registration records
+  console.warn('[PEOPLE SEARCH] Using placeholder public records search');
   
   return {
     name: 'Public Records',
@@ -134,14 +139,19 @@ async function searchPublicRecords(name: string): Promise<OSINTSource> {
 
 /**
  * Search social media platforms
- * Note: Respects platform terms of service and robots.txt
+ * 
+ * PLACEHOLDER IMPLEMENTATION - NOT PRODUCTION READY
+ * 
+ * Production deployment requires:
+ * - Official APIs where available (Twitter API, LinkedIn API, etc.)
+ * - Compliance with platform Terms of Service
+ * - Rate limiting and proper authentication
+ * - Web scraping only for public profiles with proper robots.txt respect
+ * 
+ * Note: Many platforms restrict automated data collection.
  */
 async function searchSocialMedia(name: string): Promise<OSINTSource> {
-  // Placeholder implementation
-  // In production, would use:
-  // - Official APIs where available (Twitter, LinkedIn)
-  // - Web scraping for public profiles (respecting ToS)
-  // - Search engines with site-specific queries
+  console.warn('[PEOPLE SEARCH] Using placeholder social media search');
   
   const platforms = [
     'LinkedIn',
