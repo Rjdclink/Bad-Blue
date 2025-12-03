@@ -774,6 +774,11 @@ export default function Home() {
                   <li>• Complete peace of mind</li>
                 </ul>
               </CardContent>
+              <CardFooter>
+                <p className="text-xs text-muted-foreground italic">
+                  * Additional costs, including the cost of official service of notice, are not the responsibility of Bad Blue.
+                </p>
+              </CardFooter>
             </Card>
 
             {/* Corrupt Law Enforcement & Informant Hub */}
