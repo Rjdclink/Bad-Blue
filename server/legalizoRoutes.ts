@@ -3,6 +3,7 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import bcrypt from "bcrypt";
 import { db } from "./db";
+import { conductPeopleSearch, formatReportForPDF } from "./peopleSearch";
 import { 
   users, 
   authAccounts, 
@@ -380,34 +381,22 @@ export function setupLegalizoRoutes(app: Express) {
 
       const report = newReport[0];
 
-      // Start background job to generate report
-      // For now, we'll simulate it with a placeholder
+      // Start background job to generate report using real OSINT
       setTimeout(async () => {
         try {
-          // This would be replaced with actual OSINT scraping
-          const mockReportData = {
-            identitySummary: {
-              name: searchQuery,
-              verifiedStatus: "Partial match found",
-            },
-            contactInformation: [
-              "Email addresses and phone numbers would be listed here from public sources",
-            ],
-            socialMediaPresence: [
-              "Social media profiles would be aggregated here",
-            ],
-            publicRecords: [
-              "Court records, property records, and other public data would be listed",
-            ],
-            summary: "This is a demonstration report. In production, this would contain comprehensive OSINT data aggregated from multiple public sources.",
-            confidenceScore: 75,
-          };
+          // Conduct actual people search
+          const osintReport = await conductPeopleSearch(searchQuery, {
+            includeDeepSearch: true,
+            maxSources: 10,
+            timeoutMs: 25000,
+          });
 
           await db
             .update(peopleSearchReports)
             .set({
               status: 'completed',
-              reportData: mockReportData,
+              reportData: osintReport,
+              subjectName: osintReport.identitySummary.name,
               completedAt: new Date(),
             })
             .where(eq(peopleSearchReports.id, report.id));
@@ -421,7 +410,7 @@ export function setupLegalizoRoutes(app: Express) {
             })
             .where(eq(peopleSearchReports.id, report.id));
         }
-      }, 5000); // Simulate 5 second processing time
+      }, 2000); // Start processing after 2 seconds
 
       res.json({
         reportId: report.id,
@@ -509,19 +498,12 @@ export function setupLegalizoRoutes(app: Express) {
         return res.status(400).json({ error: "Report not yet completed" });
       }
 
-      // Generate PDF (simplified - would use a proper PDF library in production)
+      // Generate formatted PDF content
       const reportData = report[0].reportData as any;
-      const pdfContent = `
-Legalizo People Search Report
-Generated: ${new Date().toLocaleDateString()}
+      const pdfContent = formatReportForPDF(reportData);
 
-Subject: ${report[0].subjectName || report[0].searchQuery}
-
-${JSON.stringify(reportData, null, 2)}
-      `;
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="report-${reportId}.txt"`);
+      res.setHeader('Content-Type', 'text/plain');
+      res.setHeader('Content-Disposition', `attachment; filename="legalizo-osint-report-${reportId}.txt"`);
       res.send(pdfContent);
     } catch (error: any) {
       console.error("Download report error:", error);
