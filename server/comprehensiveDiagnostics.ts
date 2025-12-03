@@ -331,7 +331,7 @@ class ComprehensiveDiagnostics {
       try {
         const square = getSquareClient();
         const locationId = getSquareLocationId();
-        const locationResponse = await square.locationsApi.retrieveLocation(locationId);
+        const locationResponse = await square.locations.retrieveLocation(locationId);
 
         return { 
           status: 'PASS', 
@@ -812,7 +812,7 @@ class ComprehensiveDiagnostics {
         const locationId = getSquareLocationId();
 
         // Check location is accessible
-        const locationResponse = await square.locationsApi.retrieveLocation(locationId);
+        const locationResponse = await square.locations.retrieveLocation(locationId);
 
         return { 
           status: 'PASS', 

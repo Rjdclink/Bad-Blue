@@ -114,11 +114,11 @@ class BadBlueDiagnostics {
       const square = getSquareClient();
       const locationId = getSquareLocationId();
 
-      const locationResponse = await square.locationsApi.retrieveLocation(locationId);
+      const locationResponse = await square.locations.retrieveLocation(locationId);
       this.log('Square', 'PASS', `Connected to location ${locationResponse.result.location?.name}`);
 
       // Check catalog items
-      const catalogResponse = await square.catalogApi.listCatalog(undefined, 'ITEM');
+      const catalogResponse = await square.catalog.listCatalog(undefined, 'ITEM');
       if (catalogResponse.result.objects && catalogResponse.result.objects.length > 0) {
         this.log('Square:Catalog', 'PASS', `${catalogResponse.result.objects.length} catalog items configured`);
       } else {

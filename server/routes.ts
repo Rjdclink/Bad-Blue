@@ -1168,7 +1168,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let customerId = user.squareCustomerId;
         if (!customerId) {
           try {
-            const customerResponse = await square.customersApi.createCustomer({
+            const customerResponse = await square.customers.createCustomer({
               emailAddress: user.email || undefined,
               givenName: user.firstName || undefined,
               familyName: user.lastName || undefined,
@@ -1186,7 +1186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseUrl = getBaseURL();
 
         // Create Square Payment Link
-        const paymentLinkResponse = await square.checkoutApi.createPaymentLink({
+        const paymentLinkResponse = await square.checkout.createPaymentLink({
           idempotencyKey: crypto.randomUUID(),
           order: {
             locationId,
@@ -1220,7 +1220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (error: any) {
         console.error("Error creating payment link:", error);
-        if (error instanceof Error && (error as any).errors) {
+        if ((error as any).errors) {
           res.status(500).json({ 
             message: "Error creating payment: " + error.message,
             errors: error.errors 
@@ -1266,7 +1266,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let customerId = user.squareCustomerId;
         if (!customerId) {
           try {
-            const customerResponse = await square.customersApi.createCustomer({
+            const customerResponse = await square.customers.createCustomer({
               emailAddress: user.email || undefined,
               givenName: user.firstName || undefined,
               familyName: user.lastName || undefined,
@@ -1284,7 +1284,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseUrl = getBaseURL();
 
         // Create Square Payment Link
-        const paymentLinkResponse = await square.checkoutApi.createPaymentLink({
+        const paymentLinkResponse = await square.checkout.createPaymentLink({
           idempotencyKey: crypto.randomUUID(),
           order: {
             locationId,
@@ -1318,7 +1318,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (error: any) {
         console.error("Error creating payment link:", error);
-        if (error instanceof Error && (error as any).errors) {
+        if ((error as any).errors) {
           res.status(500).json({ 
             message: "Error creating payment: " + error.message,
             errors: error.errors 
@@ -1381,7 +1381,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let customerId = user.squareCustomerId;
         if (!customerId) {
           try {
-            const customerResponse = await square.customersApi.createCustomer({
+            const customerResponse = await square.customers.createCustomer({
               emailAddress: user.email || undefined,
               givenName: user.firstName || undefined,
               familyName: user.lastName || undefined,
@@ -1399,7 +1399,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseUrl = getBaseURL();
 
         // Create Square Payment Link
-        const paymentLinkResponse = await square.checkoutApi.createPaymentLink({
+        const paymentLinkResponse = await square.checkout.createPaymentLink({
           idempotencyKey: crypto.randomUUID(),
           order: {
             locationId,
@@ -1435,7 +1435,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (error: any) {
         console.error("Error creating petition payment:", error);
-        if (error instanceof Error && (error as any).errors) {
+        if ((error as any).errors) {
           res.status(500).json({ 
             message: "Error creating payment: " + error.message,
             errors: error.errors 
@@ -1475,7 +1475,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let customerId = user.squareCustomerId;
       if (!customerId) {
         try {
-          const customerResponse = await square.customersApi.createCustomer({
+          const customerResponse = await square.customers.createCustomer({
             emailAddress: user.email || undefined,
             givenName: user.firstName || undefined,
             familyName: user.lastName || undefined,
@@ -1493,7 +1493,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const baseUrl = getBaseURL();
 
       // Create Square Payment Link
-      const paymentLinkResponse = await square.checkoutApi.createPaymentLink({
+      const paymentLinkResponse = await square.checkout.createPaymentLink({
         idempotencyKey: crypto.randomUUID(),
         order: {
           locationId,
@@ -1528,7 +1528,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Error creating FOIA payment:", error);
-      if (error instanceof Error && (error as any).errors) {
+      if ((error as any).errors) {
         res.status(500).json({ 
           error: "Error creating payment: " + error.message,
           errors: error.errors 
@@ -1745,7 +1745,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let customerId = user.squareCustomerId;
     if (!customerId) {
       try {
-        const customerResponse = await square.customersApi.createCustomer({
+        const customerResponse = await square.customers.createCustomer({
           emailAddress: user.email || undefined,
           givenName: user.firstName || undefined,
           familyName: user.lastName || undefined,
@@ -1763,7 +1763,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const baseUrl = getBaseURL();
 
     // Create Square Payment Link
-    const paymentLinkResponse = await square.checkoutApi.createPaymentLink({
+    const paymentLinkResponse = await square.checkout.createPaymentLink({
       idempotencyKey: crypto.randomUUID(),
       order: {
         locationId,
@@ -2458,7 +2458,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
           // Get the order to retrieve reference ID
           const square = getSquareClient();
-          const orderResponse = await square.ordersApi.retrieveOrder(orderId);
+          const orderResponse = await square.orders.retrieveOrder(orderId);
           const order = orderResponse.result.order;
           
           if (!order) {
@@ -2481,7 +2481,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
           // Get user from customer ID
           let user;
           if (customerId) {
-            const customerResponse = await square.customersApi.retrieveCustomer(customerId);
+            const customerResponse = await square.customers.retrieveCustomer(customerId);
             const referenceUserId = customerResponse.result.customer?.referenceId;
             if (referenceUserId) {
               user = await storage.getUser(referenceUserId);

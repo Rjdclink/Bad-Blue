@@ -155,7 +155,7 @@ async function testSquare() {
     
     // Test Square connection
     try {
-      const locationResponse = await square.locationsApi.retrieveLocation(locationId);
+      const locationResponse = await square.locations.retrieveLocation(locationId);
       addResult(category, 'Square Connection', 'PASS', 'Successfully connected to Square', { 
         location: locationResponse.result.location?.name,
         locationId: locationResponse.result.location?.id
@@ -166,7 +166,7 @@ async function testSquare() {
     
     // Test Square catalog (products)
     try {
-      const catalogResponse = await square.catalogApi.listCatalog(undefined, 'ITEM');
+      const catalogResponse = await square.catalog.listCatalog(undefined, 'ITEM');
       addResult(category, 'Square Catalog', 'PASS', `Found ${catalogResponse.result.objects?.length || 0} catalog items`, {
         items: catalogResponse.result.objects?.length || 0
       });
