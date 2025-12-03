@@ -2,10 +2,11 @@ import { z } from 'zod';
 
 // Helper function to validate and parse port numbers
 // Note: Accepts string input (from process.env) and transforms to number for type safety
+// Validates port range 1-65535 (valid TCP/UDP port range)
 const portValidator = (fieldName: string) => z.string().transform((val) => {
   const num = parseInt(val, 10);
-  if (isNaN(num) || num <= 0) {
-    throw new Error(`${fieldName} must be a positive integer`);
+  if (isNaN(num) || num <= 0 || num > 65535) {
+    throw new Error(`${fieldName} must be a valid port number (1-65535)`);
   }
   return num;
 });
@@ -44,7 +45,14 @@ const envSchema = z.object({
   GWSMTP_HOST: z.string().default('smtp.gmail.com'),
   GWSMTP_PORT: portValidator('GWSMTP_PORT').default('587'),
   SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.string().optional(),
+  SMTP_PORT: z.string().optional().transform((val) => {
+    if (!val) return undefined;
+    const num = parseInt(val, 10);
+    if (isNaN(num) || num <= 0 || num > 65535) {
+      throw new Error('SMTP_PORT must be a valid port number (1-65535)');
+    }
+    return num;
+  }),
   RESEND_API_KEY: z.string().optional(),
   DEFAULT_FROM_EMAIL: z.string().email().optional(),
   DEFAULT_FROM_NAME: z.string().optional(),

@@ -39,6 +39,9 @@ const fileFormat = winston.format.combine(
   winston.format.json()
 );
 
+// Reserved keys that should not appear in metadata output
+const RESERVED_KEYS = ['timestamp', 'level', 'message', 'component', 'service', 'pid'];
+
 const consoleFormat = winston.format.combine(
   winston.format.colorize({ all: true }),
   winston.format.timestamp({ format: 'HH:mm:ss.SSS' }),
@@ -47,8 +50,6 @@ const consoleFormat = winston.format.combine(
     if (component) msg += ` [${component}]`;
     msg += `: ${message}`;
     
-    // Reserved keys that should not appear in metadata output
-    const RESERVED_KEYS = ['timestamp', 'level', 'message', 'component', 'service', 'pid'];
     const metaKeys = Object.keys(meta).filter(k => !RESERVED_KEYS.includes(k));
     
     if (metaKeys.length > 0) {
