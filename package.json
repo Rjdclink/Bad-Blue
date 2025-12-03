@@ -3,12 +3,21 @@
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": "20.x",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "vite build && esbuild server/index.ts --platform=node --bundle --format=esm --outdir=dist --packages=external --external:pg-native --external:lightningcss --external:@babel/preset-typescript --external:@babel/core --external:bufferutil --external:utf-8-validate",
     "start": "NODE_ENV=production node dist/index.js",
     "check": "tsc",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "migrate": "tsx server/migrations/runMigrations.ts",
+    "verify": "node scripts/verify-stage-1.cjs && node scripts/verify-stage-2.cjs && node scripts/verify-stage-3.cjs && node scripts/verify-stage-4.cjs && node scripts/verify-stage-5.cjs && node scripts/verify-stage-6.cjs && node scripts/verify-stage-16.cjs && node scripts/verify-stage-19.cjs && node scripts/verify-stage-20.cjs",
+    "verify:final": "bash scripts/final-verification.sh",
+    "deploy:check": "bash scripts/prepare-deployment.sh",
+    "ai:analyze": "node scripts/analyze-ai-usage.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
@@ -111,6 +120,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tw-animate-css": "^1.2.5",
     "vaul": "^1.1.2",
+    "winston": "^3.11.0",
     "wouter": "^3.3.5",
     "ws": "^8.18.0",
     "zod": "^3.24.2",

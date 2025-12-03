@@ -13,3 +13,10 @@ test_*.ts
 .env
 .env.local
 .env.production
+
+# Application logs
+logs/
+*.log
+
+# Backup files
+*.backup

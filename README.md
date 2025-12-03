@@ -15,8 +15,45 @@ The platform utilizes a modern web stack featuring:
 
 ## Key Features
 
+### 🤖 AI Providers (5 Providers, 12 Models)
+**Multi-Provider AI System** with automatic failover for high availability:
+
+| Provider | Models | Cost | Best For |
+|----------|--------|------|----------|
+| **OpenRouter** | 4 models (Kimi K2, DeepSeek R1, Grok Fast, Qwen 72B) | FREE | Primary consultations |
+| **Gemini** | 3 models (2.5-pro, 2.5-flash, 2.5-flash-lite) | FREE | Document generation |
+| **Groq** | 2 models (Llama 3.3 70B, Llama 3.1 8B) | FREE | Fast responses |
+| **Mistral** | 1 model (mistral-large-latest) | FREE | EU compliance |
+| **Anthropic** | 2 models (Claude 3.5 series) | PAID (optional) | Premium consultations |
+
+**Total Cost**: $0/month with 4 free providers (10 free models)
+
+**Features**:
+- ✅ Automatic failover between providers
+- ✅ Smart rate limiting and quota management
+- ✅ 100+ tokens/second with Groq
+- ✅ 2M token context with Gemini 2.5 Pro
+- ✅ Cost tracking and analytics
+
+See [AI_PROVIDERS.md](docs/AI_PROVIDERS.md) for complete documentation.
+
+### 💾 Autosave System
+**Automatic Saving with 3-Second Debouncing**:
+- ✅ Auto-saves every 3 seconds after changes
+- ✅ Change detection (only saves what changed)
+- ✅ Version tracking for rollback capability
+- ✅ Session resume across devices
+- ✅ Works for all 9 law types
+- ✅ Saves consultations, drafts, and progress
+
+**Database Schema**: 5 tables with full versioning  
+**API**: 13 endpoints for complete autosave functionality  
+**Frontend**: 4 React hooks for easy integration
+
+See [AUTOSAVE_ARCHITECTURE.md](docs/AUTOSAVE_ARCHITECTURE.md) for technical details.
+
 ### Intelligent AI Architecture
-A coordinated Gemini (primary) to Groq (fallback) system is implemented across all AI services for resilience and cost-efficiency. Smart rate limiting ensures proactive detection and switching between providers before user disruption.
+A coordinated multi-provider system ensures resilience and cost-efficiency. Smart rate limiting with automatic failover prevents service disruption.
 
 ### AI Sub-Agent
 An admin-only AI Sub-Agent provides advanced autonomous capabilities for system management, error recovery, and learning. It includes:
@@ -42,27 +79,81 @@ A robust background diagnostics and maintenance system runs continuously, perfor
 ## Installation
 
 ### Prerequisites
-- Node.js 18+ 
+- **Node.js 20.x** (Required for Railway deployment - see Node Version section below)
 - PostgreSQL database
 - Google Cloud Storage account (optional, for file storage)
 - Square account for payment processing
-- Google Gemini API key
-- Groq API key
+- **AI Provider API Keys** (at least 4 free providers recommended):
+  - OpenRouter API key (FREE - 4 models)
+  - Gemini API key (FREE - 3 models)
+  - Groq API key (FREE - 2 models)
+  - Mistral API key (FREE - 1 model)
+  - Anthropic API key (PAID - optional)
+
+### Node Version Requirements
+
+**Production (Railway)**: Node 20.x  
+**Development (Local)**: Node 20.x or 24.x
+
+**Why Node 20?** Railway deployment requires Node 20.x for optimal performance and compatibility.
+
+**Setup for Development**:
+```bash
+# Using nvm (Node Version Manager)
+nvm install 20
+nvm use 20
+
+# Or using .nvmrc file
+nvm use  # Automatically uses Node 20 from .nvmrc
+
+# Verify version
+node -v  # Should show v20.x.x
+```
+
+The project includes:
+- `.nvmrc` file with Node 20
+- `package.json` engines field specifying Node 20.x
+- `railway.json` configured for Node 20 runtime
 
 ### Environment Variables
 Create a `.env` file with the following configuration:
 
 ```bash
+# Node Environment
+NODE_ENV=production
+PORT=3000
+BASE_URL=https://your-domain.com
+
 # Database
 DATABASE_URL=postgresql://user:password@host:port/database
 SUPABASE_DATABASE_URL=postgresql://... # Optional alternative
 
-# Authentication
-SESSION_SECRET=your-session-secret
+# Authentication & Security
+SESSION_SECRET=your-session-secret-64-chars
+JWT_SECRET=your-jwt-secret-64-chars
+ENCRYPTION_KEY=your-encryption-key-32-chars
 
-# AI Services
-GEMINI_API_KEY=your-gemini-api-key
-GROQ_API_KEY=your-groq-api-key
+# AI Providers (Required: 4 free providers)
+
+# 1. OpenRouter (FREE - 4 models)
+OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxx
+
+# 2. Gemini (FREE - 3 models)
+GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxx
+
+# 3. Groq (FREE - 2 models)
+GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
+
+# 4. Mistral (FREE - 1 model)
+MISTRAL_API_KEY=xxxxxxxxxxxxxxxxxxxx
+
+# 5. Anthropic (PAID - Optional)
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxx
+
+# Email Service (Resend recommended)
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
+DEFAULT_FROM_EMAIL=noreply@yourdomain.com
+DEFAULT_FROM_NAME=Legalizo
 
 # Payment Processing (Square)
 SQUARE_ACCESS_TOKEN=your-square-production-token
@@ -77,18 +168,15 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 GCS_PROJECT_ID=your-gcs-project
 PRIVATE_OBJECT_DIR=private
 PUBLIC_OBJECT_SEARCH_PATHS=public,assets
-
-# Application
-PORT=5000
-BASE_URL=https://your-domain.com
-NODE_ENV=production
-
-# Email Service
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
 ```
+
+**Get API Keys**:
+- OpenRouter: [openrouter.ai/keys](https://openrouter.ai/keys)
+- Gemini: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- Groq: [console.groq.com/keys](https://console.groq.com/keys)
+- Mistral: [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys)
+- Anthropic: [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys)
+- Resend: [resend.com/api-keys](https://resend.com/api-keys)
 
 ### Setup Instructions
 
@@ -105,15 +193,37 @@ npm install
 
 3. **Set up the database**
 ```bash
+# Run database migrations
+npm run migrate
+
+# Or push schema changes
 npm run db:push
 ```
 
-4. **Build the application**
+4. **Verify installation**
+```bash
+# Run all verification scripts
+npm run verify
+
+# Or run comprehensive verification
+npm run verify:final
+```
+
+4. **Verify installation**
+```bash
+# Run all verification scripts
+npm run verify
+
+# Or run comprehensive verification
+npm run verify:final
+```
+
+5. **Build the application**
 ```bash
 npm run build
 ```
 
-5. **Start the application**
+6. **Start the application**
 ```bash
 # Development
 npm run dev
@@ -123,6 +233,50 @@ npm start
 ```
 
 ## Deployment
+
+### Railway Deployment (Recommended)
+
+**Complete step-by-step guide**: See [DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md)
+
+**Quick Start**:
+
+1. **Prerequisites**
+   - Node 20.x installed locally
+   - All environment variables configured
+   - All verification scripts passing
+
+2. **Pre-Deployment Checks**
+   ```bash
+   # Run comprehensive verification
+   npm run verify:final
+   
+   # Check deployment readiness
+   npm run deploy:check
+   ```
+
+3. **Deploy to Railway**
+   - Create Railway project
+   - Connect GitHub repository
+   - Railway auto-detects `railway.json` configuration
+   - Add environment variables in Railway dashboard
+   - Deploy automatically on git push
+
+4. **Post-Deployment**
+   ```bash
+   # Test health endpoint
+   curl https://your-app.railway.app/health
+   
+   # Verify API
+   curl https://your-app.railway.app/api/law-types
+   ```
+
+**Railway Configuration** (`railway.json`):
+- ✅ Nixpacks builder
+- ✅ Node 20 runtime
+- ✅ Automatic build and start commands
+- ✅ Restart policy configured
+
+**Production Checklist**: See [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md)
 
 ### Docker Deployment
 ```dockerfile
@@ -177,6 +331,11 @@ badblue/
 - `npm start` - Start production server
 - `npm run check` - TypeScript type checking
 - `npm run db:push` - Push database schema changes
+- `npm run migrate` - Run database migrations
+- `npm run verify` - Run all stage verification scripts
+- `npm run verify:final` - Comprehensive verification (all stages + build + TypeScript)
+- `npm run deploy:check` - Deployment readiness check
+- `npm run ai:analyze` - Analyze AI provider usage
 
 ## API Documentation
 
@@ -191,6 +350,31 @@ badblue/
 - `POST /api/lawsuits` - Generate lawsuit documents
 - `POST /api/officer-search` - Search for officer information
 - `POST /api/evidence/upload` - Upload evidence files
+
+### Autosave API (13 endpoints)
+- `POST /api/autosave/sessions` - Create work session
+- `GET /api/autosave/sessions` - List user sessions
+- `GET /api/autosave/sessions/:id` - Get session with latest snapshot
+- `PATCH /api/autosave/sessions/:id` - Update session metadata
+- `DELETE /api/autosave/sessions/:id` - Delete session
+- `POST /api/autosave/sessions/:id/snapshot` - Create autosave snapshot
+- `POST /api/autosave/sessions/:id/consultation` - Save consultation message
+- `POST /api/autosave/sessions/:id/draft` - Save document draft
+
+### Law Types API
+- `GET /api/law-types` - Get all law types (9 types)
+- `POST /api/law-types/:type/start-session` - Smart session creation
+
+See [AUTOSAVE_ARCHITECTURE.md](docs/AUTOSAVE_ARCHITECTURE.md) for API details.
+
+## Documentation
+
+- **[DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md)** - Complete Railway deployment guide
+- **[AI_PROVIDERS.md](docs/AI_PROVIDERS.md)** - All 5 AI providers with 12 models
+- **[AUTOSAVE_ARCHITECTURE.md](docs/AUTOSAVE_ARCHITECTURE.md)** - Autosave system technical docs
+- **[PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md)** - Pre-deployment checklist
+- **[CHANGELOG.md](CHANGELOG.md)** - All 20 stages documented
+- **[IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md)** - Final sign-off
 
 ## Contributing
 Please read our contributing guidelines before submitting pull requests.
