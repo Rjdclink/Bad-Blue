@@ -17,7 +17,7 @@ declare global {
     }
   }
 }
-import Stripe from "stripe";
+import { getSquareClient, getSquareLocationId } from "./squareClient";
 import multer from "multer";
 import { z } from "zod";
 import passport from "passport";
@@ -127,19 +127,6 @@ const {
   contactMessages,
   documentCreatorSessions,
 } = schema;
-
-// Lazy initialization for Stripe client
-let stripe: Stripe | null = null;
-
-function getStripeClient(): Stripe {
-  if (!stripe) {
-    if (!process.env.STRIPE_SECRET_KEY) {
-      throw new Error("STRIPE_SECRET_KEY environment variable is not set");
-    }
-    stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-  }
-  return stripe;
-}
 
 // Multer setup for file uploads (single consolidated instance)
 const upload = multer({
@@ -1154,7 +1141,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================
-  // STRIPE PAYMENT ROUTES (Complaint, Lawsuit, Petition, FOIA)
+  // SQUARE PAYMENT ROUTES (Complaint, Lawsuit, Petition, FOIA)
   // ============================================
 
   app.post(
@@ -1162,7 +1149,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     isAuthenticated,
     async (req: any, res) => {
       try {
-        const stripe = getStripeClient();
+        const square = getSquareClient();
+        const locationId = getSquareLocationId();
         const userId = req.user.claims.sub;
         const { complaintId } = req.body;
 
@@ -1176,53 +1164,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Complaint not found" });
         }
 
-        let customerId = user.stripeCustomerId;
-        if (!customerId) {
-          const customer = await stripe.customers.create({
-            email: user.email || undefined,
-            metadata: { userId: user.id },
-          });
-          customerId = customer.id;
-          await storage.updateUserStripeCustomerId(user.id, customerId);
+        // Create or retrieve Square customer
+        let customerId = user.squareCustomerId;
+        if (!customerId && user.email) {
+          try {
+            const customerResponse = await square.customersApi.createCustomer({
+              emailAddress: user.email,
+              referenceId: user.id,
+            });
+            customerId = customerResponse.result.customer?.id;
+            if (customerId) {
+              await storage.updateUserSquareCustomerId(user.id, customerId);
+            }
+          } catch (error) {
+            console.warn('[Square] Failed to create customer, continuing without:', error);
+          }
         }
 
         const baseUrl = getBaseURL();
 
-        const session = await stripe.checkout.sessions.create({
-          customer: customerId,
-          mode: "payment",
-          payment_method_types: ["card"],
-          line_items: [
-            {
-              price_data: {
-                currency: "usd",
-                unit_amount: COMPLAINT_PRICING_CENTS,
-                product_data: {
-                  name: "BadBlue Complaint Filing",
-                  description: `Complaint against ${complaint.officerName}`,
-                },
+        // Create Square Payment Link
+        const checkoutResponse = await square.checkoutApi.createPaymentLink({
+          idempotencyKey: `complaint-${complaintId}-${Date.now()}`,
+          order: {
+            locationId,
+            lineItems: [{
+              name: 'BadBlue Complaint Filing',
+              quantity: '1',
+              basePriceMoney: {
+                amount: BigInt(COMPLAINT_PRICING_CENTS),
+                currency: 'USD',
               },
-              quantity: 1,
-            },
-          ],
-          success_url: `${baseUrl}/confirmation/complaint/${complaintId}`,
-          cancel_url: `${baseUrl}/complaint-form`,
-          metadata: {
-            userId: user.id,
-            complaintId: complaintId,
-            type: "complaint",
+            }],
+            referenceId: `complaint-${complaintId}`,
+            ...(customerId && { customerId }),
+          },
+          checkoutOptions: {
+            redirectUrl: `${baseUrl}/confirmation/complaint/${complaintId}`,
+          },
+          prePopulatedData: {
+            buyerEmail: user.email || undefined,
           },
         });
 
+        const paymentLink = checkoutResponse.result.paymentLink;
+        if (!paymentLink || !paymentLink.url) {
+          throw new Error('Failed to create payment link');
+        }
+
         res.json({
-          sessionId: session.id,
-          url: session.url,
+          url: paymentLink.url,
+          orderId: paymentLink.orderId,
         });
       } catch (error: any) {
         console.error("Error creating payment session:", error);
+        const errorMessage = error.errors?.[0]?.detail || error.message || 'Unknown error';
         res
           .status(500)
-          .json({ message: "Error creating payment: " + error.message });
+          .json({ message: "Error creating payment: " + errorMessage });
       }
     },
   );
@@ -1232,7 +1231,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     isAuthenticated,
     async (req: any, res) => {
       try {
-        const stripe = getStripeClient();
+        const square = getSquareClient();
+        const locationId = getSquareLocationId();
         const userId = req.user.claims.sub;
         const { lawsuitId } = req.body;
 
@@ -1253,60 +1253,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const serviceName = tier === 'full-service'
           ? 'BadBlue Lawsuit Filing (Full Service)'
           : 'BadBlue Lawsuit Filing (DIY)';
-        const serviceDescription = tier === 'full-service'
-          ? `Civil rights lawsuit against ${lawsuit.officerName} - Full filing service with U.S. Marshal`
-          : `Civil rights lawsuit against ${lawsuit.officerName} - Self-filing with documents`;
 
         console.log(`[Payment] Creating ${tier} lawsuit payment for ${priceCents} cents`);
 
-        let customerId = user.stripeCustomerId;
-        if (!customerId) {
-          const customer = await stripe.customers.create({
-            email: user.email || undefined,
-            metadata: { userId: user.id },
-          });
-          customerId = customer.id;
-          await storage.updateUserStripeCustomerId(user.id, customerId);
+        // Create or retrieve Square customer
+        let customerId = user.squareCustomerId;
+        if (!customerId && user.email) {
+          try {
+            const customerResponse = await square.customersApi.createCustomer({
+              emailAddress: user.email,
+              referenceId: user.id,
+            });
+            customerId = customerResponse.result.customer?.id;
+            if (customerId) {
+              await storage.updateUserSquareCustomerId(user.id, customerId);
+            }
+          } catch (error) {
+            console.warn('[Square] Failed to create customer, continuing without:', error);
+          }
         }
 
         const baseUrl = getBaseURL();
 
-        const session = await stripe.checkout.sessions.create({
-          customer: customerId,
-          mode: "payment",
-          payment_method_types: ["card"],
-          line_items: [
-            {
-              price_data: {
-                currency: "usd",
-                unit_amount: priceCents,
-                product_data: {
-                  name: serviceName,
-                  description: serviceDescription,
-                },
+        // Create Square Payment Link
+        const checkoutResponse = await square.checkoutApi.createPaymentLink({
+          idempotencyKey: `lawsuit-${lawsuitId}-${Date.now()}`,
+          order: {
+            locationId,
+            lineItems: [{
+              name: serviceName,
+              quantity: '1',
+              basePriceMoney: {
+                amount: BigInt(priceCents),
+                currency: 'USD',
               },
-              quantity: 1,
-            },
-          ],
-          success_url: `${baseUrl}/confirmation/lawsuit/${lawsuitId}`,
-          cancel_url: `${baseUrl}/lawsuit-form`,
-          metadata: {
-            userId: user.id,
-            lawsuitId: lawsuitId,
-            type: "lawsuit",
-            tier: tier,
+            }],
+            referenceId: `lawsuit-${lawsuitId}`,
+            ...(customerId && { customerId }),
+          },
+          checkoutOptions: {
+            redirectUrl: `${baseUrl}/confirmation/lawsuit/${lawsuitId}`,
+          },
+          prePopulatedData: {
+            buyerEmail: user.email || undefined,
           },
         });
 
+        const paymentLink = checkoutResponse.result.paymentLink;
+        if (!paymentLink || !paymentLink.url) {
+          throw new Error('Failed to create payment link');
+        }
+
         res.json({
-          sessionId: session.id,
-          url: session.url,
+          url: paymentLink.url,
+          orderId: paymentLink.orderId,
         });
       } catch (error: any) {
         console.error("Error creating payment session:", error);
+        const errorMessage = error.errors?.[0]?.detail || error.message || 'Unknown error';
         res
           .status(500)
-          .json({ message: "Error creating payment: " + error.message });
+          .json({ message: "Error creating payment: " + errorMessage });
       }
     },
   );
@@ -1316,7 +1323,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     isAuthenticated,
     async (req: any, res) => {
       try {
-        const stripe = getStripeClient();
+        const square = getSquareClient();
+        const locationId = getSquareLocationId();
         const userId = req.user.claims.sub;
         const { petitionData } = req.body;
 
@@ -1357,62 +1365,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error(`[Petition] Failed to redraft description for ${petitionId}:`, error);
         });
 
-        let customerId = user.stripeCustomerId;
-        if (!customerId) {
-          const customer = await stripe.customers.create({
-            email: user.email || undefined,
-            metadata: { userId: user.id },
-          });
-          customerId = customer.id;
-          await storage.updateUserStripeCustomerId(user.id, customerId);
+        // Create or retrieve Square customer
+        let customerId = user.squareCustomerId;
+        if (!customerId && user.email) {
+          try {
+            const customerResponse = await square.customersApi.createCustomer({
+              emailAddress: user.email,
+              referenceId: user.id,
+            });
+            customerId = customerResponse.result.customer?.id;
+            if (customerId) {
+              await storage.updateUserSquareCustomerId(user.id, customerId);
+            }
+          } catch (error) {
+            console.warn('[Square] Failed to create customer, continuing without:', error);
+          }
         }
 
         const baseUrl = getBaseURL();
 
-        const session = await stripe.checkout.sessions.create({
-          customer: customerId,
-          mode: "payment",
-          payment_method_types: ["card"],
-          line_items: [
-            {
-              price_data: {
-                currency: "usd",
-                unit_amount: PETITION_PRICING_CENTS,
-                product_data: {
-                  name: "BadBlue Petition",
-                  description: `Officer Resignation Petition: ${petitionData.officerName}`,
-                },
+        // Create Square Payment Link
+        const checkoutResponse = await square.checkoutApi.createPaymentLink({
+          idempotencyKey: `petition-${petitionId}-${Date.now()}`,
+          order: {
+            locationId,
+            lineItems: [{
+              name: 'BadBlue Petition',
+              quantity: '1',
+              basePriceMoney: {
+                amount: BigInt(PETITION_PRICING_CENTS),
+                currency: 'USD',
               },
-              quantity: 1,
-            },
-          ],
-          success_url: `${baseUrl}/petition/${slug}?payment=success`,
-          cancel_url: `${baseUrl}/home`,
-          metadata: {
-            userId: user.id,
-            petitionId: petitionId,
-            type: "petition",
+            }],
+            referenceId: `petition-${petitionId}`,
+            ...(customerId && { customerId }),
+          },
+          checkoutOptions: {
+            redirectUrl: `${baseUrl}/petition/${slug}?payment=success`,
+          },
+          prePopulatedData: {
+            buyerEmail: user.email || undefined,
           },
         });
 
+        const paymentLink = checkoutResponse.result.paymentLink;
+        if (!paymentLink || !paymentLink.url) {
+          throw new Error('Failed to create payment link');
+        }
+
         res.json({
-          sessionId: session.id,
-          url: session.url,
+          url: paymentLink.url,
+          orderId: paymentLink.orderId,
           petitionId: petitionId,
           slug: slug,
         });
       } catch (error: any) {
         console.error("Error creating petition payment:", error);
+        const errorMessage = error.errors?.[0]?.detail || error.message || 'Unknown error';
         res
           .status(500)
-          .json({ message: "Error creating payment: " + error.message });
+          .json({ message: "Error creating payment: " + errorMessage });
       }
     },
   );
 
   app.post("/api/create-foia-payment", isAuthenticated, async (req: any, res) => {
     try {
-      const stripe = getStripeClient();
+      const square = getSquareClient();
+      const locationId = getSquareLocationId();
       const userId = req.user.claims.sub;
       const { foiaRequestId } = req.body;
 
@@ -1433,52 +1453,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Access denied" });
       }
 
-      let customerId = user.stripeCustomerId;
-      if (!customerId) {
-        const customer = await stripe.customers.create({
-          email: user.email || undefined,
-          metadata: { userId: user.id },
-        });
-        customerId = customer.id;
-        await storage.updateUserStripeCustomerId(user.id, customerId);
+      // Create or retrieve Square customer
+      let customerId = user.squareCustomerId;
+      if (!customerId && user.email) {
+        try {
+          const customerResponse = await square.customersApi.createCustomer({
+            emailAddress: user.email,
+            referenceId: user.id,
+          });
+          customerId = customerResponse.result.customer?.id;
+          if (customerId) {
+            await storage.updateUserSquareCustomerId(user.id, customerId);
+          }
+        } catch (error) {
+          console.warn('[Square] Failed to create customer, continuing without:', error);
+        }
       }
 
       const baseUrl = getBaseURL();
 
-      const session = await stripe.checkout.sessions.create({
-        customer: customerId,
-        mode: "payment",
-        payment_method_types: ["card"],
-        line_items: [
-          {
-            price_data: {
-              currency: "usd",
-              unit_amount: FOIA_REQUEST_PRICING_CENTS,
-              product_data: {
-                name: "BadBlue FOIA Records Request",
-                description: `FOIA Request for ${foiaRequest.departmentName} - Officer: ${foiaRequest.officerName}`,
-              },
+      // Create Square Payment Link
+      const checkoutResponse = await square.checkoutApi.createPaymentLink({
+        idempotencyKey: `foia-${foiaRequestId}-${Date.now()}`,
+        order: {
+          locationId,
+          lineItems: [{
+            name: 'BadBlue FOIA Records Request',
+            quantity: '1',
+            basePriceMoney: {
+              amount: BigInt(FOIA_REQUEST_PRICING_CENTS),
+              currency: 'USD',
             },
-            quantity: 1,
-          },
-        ],
-        success_url: `${baseUrl}/home?payment=success&type=foia`,
-        cancel_url: `${baseUrl}/home`,
-        metadata: {
-          userId: user.id,
-          foiaRequestId: foiaRequestId,
-          type: "foia",
+          }],
+          referenceId: `foia-${foiaRequestId}`,
+          ...(customerId && { customerId }),
+        },
+        checkoutOptions: {
+          redirectUrl: `${baseUrl}/home?payment=success&type=foia`,
+        },
+        prePopulatedData: {
+          buyerEmail: user.email || undefined,
         },
       });
 
+      const paymentLink = checkoutResponse.result.paymentLink;
+      if (!paymentLink || !paymentLink.url) {
+        throw new Error('Failed to create payment link');
+      }
+
       res.json({
-        sessionId: session.id,
-        url: session.url,
+        url: paymentLink.url,
+        orderId: paymentLink.orderId,
         foiaRequestId: foiaRequestId,
       });
     } catch (error: any) {
       console.error("Error creating FOIA payment:", error);
-      res.status(500).json({ error: "Error creating payment: " + error.message });
+      const errorMessage = error.errors?.[0]?.detail || error.message || 'Unknown error';
+      res.status(500).json({ error: "Error creating payment: " + errorMessage });
     }
   });
 
@@ -1650,7 +1681,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Create payment session for document
   app.post("/api/document-creator/payment", paymentRateLimit, isAuthenticated, asyncHandler(async (req: any, res: any) => {
-    const stripe = getStripeClient();
+    const square = getSquareClient();
+    const locationId = getSquareLocationId();
     const userId = req.user.claims.sub;
     const { sessionId } = req.body;
 
@@ -1683,47 +1715,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ error: "Document already purchased" });
     }
 
-    // Get or create Stripe customer
-    let customerId = user.stripeCustomerId;
-    if (!customerId) {
-      const customer = await stripe.customers.create({
-        email: user.email || undefined,
-        metadata: { userId: user.id },
-      });
-      customerId = customer.id;
-      await storage.updateUserStripeCustomerId(user.id, customerId);
+    // Create or retrieve Square customer
+    let customerId = user.squareCustomerId;
+    if (!customerId && user.email) {
+      try {
+        const customerResponse = await square.customersApi.createCustomer({
+          emailAddress: user.email,
+          referenceId: user.id,
+        });
+        customerId = customerResponse.result.customer?.id;
+        if (customerId) {
+          await storage.updateUserSquareCustomerId(user.id, customerId);
+        }
+      } catch (error) {
+        console.warn('[Square] Failed to create customer, continuing without:', error);
+      }
     }
 
     const baseUrl = getBaseURL();
 
-    // Create Stripe checkout session
-    const stripeSession = await stripe.checkout.sessions.create({
-      customer: customerId,
-      mode: "payment",
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            unit_amount: DOCUMENT_CREATOR_PRICING_CENTS,
-            product_data: {
-              name: "BadBlue Legal Document",
-              description: session.documentType 
-                ? `Custom ${session.documentType}` 
-                : "Custom Legal Document",
-            },
+    // Create Square Payment Link
+    const checkoutResponse = await square.checkoutApi.createPaymentLink({
+      idempotencyKey: `document-${sessionId}-${Date.now()}`,
+      order: {
+        locationId,
+        lineItems: [{
+          name: 'BadBlue Legal Document',
+          quantity: '1',
+          basePriceMoney: {
+            amount: BigInt(DOCUMENT_CREATOR_PRICING_CENTS),
+            currency: 'USD',
           },
-          quantity: 1,
-        },
-      ],
-      success_url: `${baseUrl}/legal-document-creator?session=${sessionId}&payment=success`,
-      cancel_url: `${baseUrl}/legal-document-creator?session=${sessionId}`,
-      metadata: {
-        userId: user.id,
-        documentCreatorSessionId: sessionId,
-        type: "document_creator",
+        }],
+        referenceId: `document-${sessionId}`,
+        ...(customerId && { customerId }),
+      },
+      checkoutOptions: {
+        redirectUrl: `${baseUrl}/legal-document-creator?session=${sessionId}&payment=success`,
+      },
+      prePopulatedData: {
+        buyerEmail: user.email || undefined,
       },
     });
+
+    const paymentLink = checkoutResponse.result.paymentLink;
+    if (!paymentLink || !paymentLink.url) {
+      throw new Error('Failed to create payment link');
+    }
 
     // Update session with payment info
     await db.update(documentCreatorSessions)
@@ -1733,8 +1771,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .where(eq(documentCreatorSessions.id, sessionId));
 
     res.json({
-      sessionId: stripeSession.id,
-      url: stripeSession.url,
+      url: paymentLink.url,
+      orderId: paymentLink.orderId,
     });
   }));
 
@@ -2330,95 +2368,127 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
   // (Unchanged from original)
 
   // ============================================
-  // STRIPE WEBHOOK
+  // SQUARE WEBHOOK
   // ============================================
 
-  app.post("/api/webhooks/stripe", async (req: any, res) => {
+  app.post("/api/webhooks/square", async (req: any, res) => {
     try {
-      const stripe = getStripeClient();
-      const sig = req.headers["stripe-signature"];
-
-      if (!sig) {
-        return res.status(400).send("Missing stripe signature");
+      const signature = req.headers["x-square-hmacsha256-signature"];
+      
+      if (!signature) {
+        return res.status(400).send("Missing Square signature");
       }
 
-      if (!req.rawBody && !process.env.STRIPE_WEBHOOK_SECRET) {
-        return res.status(500).send("Webhook secret not configured");
+      if (!process.env.SQUARE_WEBHOOK_SIGNATURE_KEY) {
+        return res.status(500).send("Webhook signature key not configured");
       }
 
-      if (!process.env.STRIPE_WEBHOOK_SECRET) {
-        return res.status(500).send("Webhook secret not configured");
+      // Verify webhook signature using HMAC-SHA256
+      const crypto = require('crypto');
+      const webhookUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+      const rawBodyBuffer = req.rawBody instanceof Buffer
+        ? req.rawBody
+        : Buffer.isBuffer(req.body)
+        ? req.body
+        : Buffer.from(JSON.stringify(req.body || {}));
+      
+      const hmac = crypto.createHmac('sha256', process.env.SQUARE_WEBHOOK_SIGNATURE_KEY);
+      hmac.update(webhookUrl + rawBodyBuffer.toString());
+      const computedSignature = hmac.digest('base64');
+
+      if (computedSignature !== signature) {
+        console.error("Webhook signature verification failed");
+        return res.status(400).send("Invalid signature");
       }
 
-      const rawBodyBuffer =
-        req.rawBody instanceof Buffer
-          ? req.rawBody
-          : Buffer.isBuffer(req.body)
-          ? req.body
-          : Buffer.from(JSON.stringify(req.body || {}));
+      const event = req.body;
+      const eventType = event.type;
 
-      let event;
-      try {
-        event = stripe.webhooks.constructEvent(
-          rawBodyBuffer,
-          sig,
-          process.env.STRIPE_WEBHOOK_SECRET,
-        );
-      } catch (err: any) {
-        console.error("Webhook signature verification failed:", err.message);
-        return res.status(400).send(`Webhook Error: ${err.message}`);
-      }
+      console.log(`[Square Webhook] Received event: ${eventType}`);
 
-      switch (event.type) {
-        case "checkout.session.completed": {
-          const session = event.data.object as any;
-          const metadata = session.metadata || {};
-          const paymentType = metadata.type;
-          const userId = metadata.userId;
+      // Handle payment.created and payment.updated events
+      if (eventType === 'payment.created' || eventType === 'payment.updated') {
+        const payment = event.data?.object?.payment;
+        
+        if (!payment) {
+          console.error("[Square Webhook] No payment data in event");
+          return res.json({ received: true });
+        }
 
-          console.log(`[Webhook] Payment completed: type=${paymentType}, userId=${userId}`);
+        // Only process completed payments
+        if (payment.status !== 'COMPLETED') {
+          console.log(`[Square Webhook] Payment status is ${payment.status}, skipping`);
+          return res.json({ received: true });
+        }
 
-          if (!userId) {
-            console.error("[Webhook] No userId in session metadata");
-            break;
+        const orderId = payment.order_id;
+        if (!orderId) {
+          console.error("[Square Webhook] No order_id in payment");
+          return res.json({ received: true });
+        }
+
+        // Get order details to extract reference ID
+        try {
+          const square = getSquareClient();
+          const orderResponse = await square.ordersApi.retrieveOrder(orderId);
+          const order = orderResponse.result.order;
+          
+          if (!order || !order.referenceId) {
+            console.error("[Square Webhook] No reference ID in order");
+            return res.json({ received: true });
           }
 
-          const user = await storage.getUser(userId);
+          // Parse reference ID: format is "type-id" (e.g., "complaint-123", "lawsuit-456")
+          const [paymentType, itemId] = order.referenceId.split('-');
+          
+          if (!paymentType || !itemId) {
+            console.error(`[Square Webhook] Invalid reference ID format: ${order.referenceId}`);
+            return res.json({ received: true });
+          }
+
+          console.log(`[Square Webhook] Payment completed: type=${paymentType}, id=${itemId}`);
+
+          // Get customer ID from order
+          const customerId = order.customerId;
+          let user;
+          
+          if (customerId) {
+            // Find user by Square customer ID
+            const userResults = await db.select().from(users).where(eq(users.squareCustomerId, customerId)).limit(1);
+            user = userResults[0];
+          }
+
           if (!user) {
-            console.error(`[Webhook] User not found: ${userId}`);
-            break;
+            console.error(`[Square Webhook] User not found for customer: ${customerId}`);
+            return res.json({ received: true });
           }
 
           const userEmail = user.email;
           const firstName = user.firstName || "User";
 
           if (!userEmail) {
-            console.error(`[Webhook] No email for user: ${userId}`);
-            break;
+            console.error(`[Square Webhook] No email for user: ${user.id}`);
+            return res.json({ received: true });
           }
+
+          const amountPaid = payment.amount_money?.amount ? Number(payment.amount_money.amount) : 0;
 
           try {
             switch (paymentType) {
               case "complaint": {
-                const complaintId = metadata.complaintId;
-                if (!complaintId) {
-                  console.error("[Webhook] No complaintId in metadata");
-                  break;
-                }
-
-                const complaint = await storage.getComplaint(complaintId);
+                const complaint = await storage.getComplaint(itemId);
                 if (!complaint) {
-                  console.error(`[Webhook] Complaint not found: ${complaintId}`);
+                  console.error(`[Square Webhook] Complaint not found: ${itemId}`);
                   break;
                 }
 
-                await storage.updateComplaintStatus(complaintId, "paid");
+                await storage.updateComplaintStatus(itemId, "paid");
 
                 await sendPurchaseConfirmationEmail({
                   firstName,
                   email: userEmail,
                   type: "complaint",
-                  amount: session.amount_total || COMPLAINT_PRICING_CENTS,
+                  amount: amountPaid || COMPLAINT_PRICING_CENTS,
                   officerName: complaint.officerName,
                   incidentDate: complaint.incidentDate?.toString(),
                   state: complaint.state,
@@ -2427,26 +2497,20 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
                   submissionAddress: complaint.submissionAddress || undefined,
                 });
 
-                console.log(`[Webhook] Complaint confirmation email sent for ${complaintId}`);
+                console.log(`[Square Webhook] Complaint confirmation email sent for ${itemId}`);
                 break;
               }
 
               case "lawsuit": {
-                const lawsuitId = metadata.lawsuitId;
-                const tier = metadata.tier || "diy";
-                if (!lawsuitId) {
-                  console.error("[Webhook] No lawsuitId in metadata");
-                  break;
-                }
-
-                const lawsuit = await storage.getLawsuitFiling(lawsuitId);
+                const lawsuit = await storage.getLawsuitFiling(itemId);
                 if (!lawsuit) {
-                  console.error(`[Webhook] Lawsuit not found: ${lawsuitId}`);
+                  console.error(`[Square Webhook] Lawsuit not found: ${itemId}`);
                   break;
                 }
 
-                await storage.updateLawsuitStatus(lawsuitId, "paid");
+                await storage.updateLawsuitStatus(itemId, "paid");
 
+                const tier = lawsuit.lawsuitTier || "diy";
                 const isDIY = tier === "diy";
                 const filingInstructions = isDIY
                   ? `
@@ -2469,7 +2533,7 @@ Court Address: Check pacer.uscourts.gov for your local U.S. District Court
                   firstName,
                   email: userEmail,
                   type: "lawsuit",
-                  amount: session.amount_total || (isDIY ? LAWSUIT_DIY_PRICING_CENTS : LAWSUIT_FULL_SERVICE_PRICING_CENTS),
+                  amount: amountPaid || (isDIY ? LAWSUIT_DIY_PRICING_CENTS : LAWSUIT_FULL_SERVICE_PRICING_CENTS),
                   officerName: lawsuit.officerName,
                   incidentDate: lawsuit.incidentDate?.toString(),
                   state: lawsuit.state,
@@ -2479,26 +2543,20 @@ Court Address: Check pacer.uscourts.gov for your local U.S. District Court
                   serviceName: isDIY ? "DIY Lawsuit Assistance" : "Full-Service Lawsuit Filing",
                 });
 
-                console.log(`[Webhook] Lawsuit (${tier}) confirmation email sent for ${lawsuitId}`);
+                console.log(`[Square Webhook] Lawsuit (${tier}) confirmation email sent for ${itemId}`);
                 break;
               }
 
               case "petition": {
-                const petitionId = metadata.petitionId;
-                if (!petitionId) {
-                  console.error("[Webhook] No petitionId in metadata");
-                  break;
-                }
-
-                const [petition] = await db.select().from(petitions).where(eq(petitions.id, petitionId));
+                const [petition] = await db.select().from(petitions).where(eq(petitions.id, itemId));
                 if (!petition) {
-                  console.error(`[Webhook] Petition not found: ${petitionId}`);
+                  console.error(`[Square Webhook] Petition not found: ${itemId}`);
                   break;
                 }
 
                 await db.update(petitions)
-                  .set({ paymentId: session.payment_intent || session.id, updatedAt: new Date() })
-                  .where(eq(petitions.id, petitionId));
+                  .set({ paymentId: payment.id, updatedAt: new Date() })
+                  .where(eq(petitions.id, itemId));
 
                 const petitionText = `
 PETITION FOR OFFICER ACCOUNTABILITY
@@ -2521,40 +2579,34 @@ Petition URL: ${petition.shareableUrl || "Available upon request"}
                   firstName,
                   email: userEmail,
                   type: "petition",
-                  amount: session.amount_total || PETITION_PRICING_CENTS,
+                  amount: amountPaid || PETITION_PRICING_CENTS,
                   officerName: petition.officerName,
                   state: petition.state,
                   document: petitionText,
                 });
 
-                console.log(`[Webhook] Petition confirmation email sent for ${petitionId}`);
+                console.log(`[Square Webhook] Petition confirmation email sent for ${itemId}`);
                 break;
               }
 
               case "foia": {
-                const foiaRequestId = metadata.foiaRequestId;
-                if (!foiaRequestId) {
-                  console.error("[Webhook] No foiaRequestId in metadata");
-                  break;
-                }
-
                 const foiaRequest = await db.query.foiaRequests.findFirst({
-                  where: eq(foiaRequests.id, foiaRequestId),
+                  where: eq(foiaRequests.id, itemId),
                 });
                 if (!foiaRequest) {
-                  console.error(`[Webhook] FOIA request not found: ${foiaRequestId}`);
+                  console.error(`[Square Webhook] FOIA request not found: ${itemId}`);
                   break;
                 }
 
                 await db.update(foiaRequests)
                   .set({ 
                     status: "paid", 
-                    paymentId: session.payment_intent || session.id,
+                    paymentId: payment.id,
                     paymentStatus: "completed",
-                    amountPaid: session.amount_total || FOIA_REQUEST_PRICING_CENTS,
+                    amountPaid: amountPaid || FOIA_REQUEST_PRICING_CENTS,
                     updatedAt: new Date() 
                   })
-                  .where(eq(foiaRequests.id, foiaRequestId));
+                  .where(eq(foiaRequests.id, itemId));
 
                 const foiaDocument = foiaRequest.generatedLetter || `
 FREEDOM OF INFORMATION ACT REQUEST
@@ -2580,28 +2632,22 @@ Contact: ${foiaRequest.userEmail || userEmail}
                   firstName,
                   email: userEmail,
                   type: "foia",
-                  amount: session.amount_total || FOIA_REQUEST_PRICING_CENTS,
+                  amount: amountPaid || FOIA_REQUEST_PRICING_CENTS,
                   officerName: foiaRequest.officerName || undefined,
                   state: foiaRequest.state,
                   document: foiaDocument,
                 });
 
-                console.log(`[Webhook] FOIA confirmation email sent for ${foiaRequestId}`);
+                console.log(`[Square Webhook] FOIA confirmation email sent for ${itemId}`);
                 break;
               }
 
-              case "document_creator": {
-                const documentCreatorSessionId = metadata.documentCreatorSessionId;
-                if (!documentCreatorSessionId) {
-                  console.error("[Webhook] No documentCreatorSessionId in metadata");
-                  break;
-                }
-
+              case "document": {
                 const docSession = await db.query.documentCreatorSessions.findFirst({
-                  where: eq(documentCreatorSessions.id, documentCreatorSessionId),
+                  where: eq(documentCreatorSessions.id, itemId),
                 });
                 if (!docSession) {
-                  console.error(`[Webhook] Document creator session not found: ${documentCreatorSessionId}`);
+                  console.error(`[Square Webhook] Document creator session not found: ${itemId}`);
                   break;
                 }
 
@@ -2609,10 +2655,10 @@ Contact: ${foiaRequest.userEmail || userEmail}
                 await db.update(documentCreatorSessions)
                   .set({ 
                     paymentStatus: "completed", 
-                    paymentId: session.payment_intent || session.id,
+                    paymentId: payment.id,
                     completedAt: new Date(),
                   })
-                  .where(eq(documentCreatorSessions.id, documentCreatorSessionId));
+                  .where(eq(documentCreatorSessions.id, itemId));
 
                 // Send document via email
                 if (docSession.generatedDocument) {
@@ -2620,33 +2666,32 @@ Contact: ${foiaRequest.userEmail || userEmail}
                     firstName,
                     email: userEmail,
                     type: "document",
-                    amount: session.amount_total || DOCUMENT_CREATOR_PRICING_CENTS,
+                    amount: amountPaid || DOCUMENT_CREATOR_PRICING_CENTS,
                     document: docSession.generatedDocument,
                     documentType: docSession.documentType || "Legal Document",
                   });
 
-                  console.log(`[Webhook] Document creator confirmation email sent for ${documentCreatorSessionId}`);
+                  console.log(`[Square Webhook] Document creator confirmation email sent for ${itemId}`);
                 } else {
-                  console.error(`[Webhook] No document available for session ${documentCreatorSessionId}`);
+                  console.error(`[Square Webhook] No document available for session ${itemId}`);
                 }
                 break;
               }
 
               default:
-                console.log(`[Webhook] Unknown payment type: ${paymentType}`);
+                console.log(`[Square Webhook] Unknown payment type: ${paymentType}`);
             }
           } catch (emailError: any) {
-            console.error(`[Webhook] Failed to send confirmation email:`, emailError.message);
+            console.error(`[Square Webhook] Failed to send confirmation email:`, emailError.message);
           }
-          break;
+        } catch (orderError: any) {
+          console.error("[Square Webhook] Error retrieving order:", orderError);
         }
-        default:
-          console.log(`Unhandled event type ${event.type}`);
       }
 
       res.json({ received: true });
     } catch (error: any) {
-      console.error("Webhook error:", error);
+      console.error("Square webhook error:", error);
       res.status(400).send(`Webhook Error: ${error.message}`);
     }
   });

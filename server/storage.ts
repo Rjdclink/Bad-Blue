@@ -106,7 +106,7 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
-  updateUserStripeCustomerId(userId: string, stripeCustomerId: string): Promise<User>;
+  updateUserSquareCustomerId(userId: string, squareCustomerId: string): Promise<User>;
   updateUserAccess(userId: string, paymentId: string, amountPaid: number): Promise<User>;
   updateUserLastLogin(userId: string): Promise<User>;
 
@@ -235,7 +235,7 @@ export class DatabaseStorage implements IStorage {
       firstName: users.firstName,
       lastName: users.lastName,
       profileImageUrl: users.profileImageUrl,
-      stripeCustomerId: users.stripeCustomerId,
+      squareCustomerId: users.squareCustomerId,
       hasPaidForAccess: users.hasPaidForAccess,
       accessPaymentId: users.accessPaymentId,
       accessPaidAt: users.accessPaidAt,
@@ -279,7 +279,7 @@ export class DatabaseStorage implements IStorage {
         first_name as "firstName",
         last_name as "lastName",
         profile_image_url as "profileImageUrl",
-        stripe_customer_id as "stripeCustomerId",
+        square_customer_id as "squareCustomerId",
         has_paid_for_access as "hasPaidForAccess",
         access_payment_id as "accessPaymentId",
         access_paid_at as "accessPaidAt",
@@ -292,14 +292,14 @@ export class DatabaseStorage implements IStorage {
     return result.rows[0] as User;
   }
 
-  async updateUserStripeCustomerId(
+  async updateUserSquareCustomerId(
     userId: string,
-    stripeCustomerId: string
+    squareCustomerId: string
   ): Promise<User> {
     const [user] = await db
       .update(users)
       .set({
-        stripeCustomerId,
+        squareCustomerId,
         updatedAt: new Date(),
       })
       .where(eq(users.id, userId))
