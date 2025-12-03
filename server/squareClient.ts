@@ -19,7 +19,7 @@ export function getSquareClient(): SquareClient {
   }
 
   squareClient = new SquareClient({
-    accessToken: accessToken,
+    token: accessToken,
     environment: environment,
   });
 

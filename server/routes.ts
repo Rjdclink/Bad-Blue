@@ -1172,7 +1172,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               emailAddress: user.email,
               referenceId: user.id,
             });
-            customerId = customerResponse.customer?.id;
+            customerId = customerResponse.customer?.id || null;
             if (customerId) {
               await storage.updateUserSquareCustomerId(user.id, customerId);
             }
@@ -1184,7 +1184,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseUrl = getBaseURL();
 
         // Create Square Payment Link
-        const checkoutResponse = await square.checkout.createPaymentLink({
+        const checkoutResponse = await square.checkout.paymentLinks.create({
           idempotencyKey: `complaint-${complaintId}-${Date.now()}`,
           order: {
             locationId,
@@ -1207,7 +1207,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         });
 
-        const paymentLink = checkoutResponse.result.paymentLink;
+        const paymentLink = checkoutResponse.paymentLink;
         if (!paymentLink || !paymentLink.url) {
           throw new Error('Failed to create payment link');
         }
@@ -1264,7 +1264,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               emailAddress: user.email,
               referenceId: user.id,
             });
-            customerId = customerResponse.customer?.id;
+            customerId = customerResponse.customer?.id || null;
             if (customerId) {
               await storage.updateUserSquareCustomerId(user.id, customerId);
             }
@@ -1276,7 +1276,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseUrl = getBaseURL();
 
         // Create Square Payment Link
-        const checkoutResponse = await square.checkout.createPaymentLink({
+        const checkoutResponse = await square.checkout.paymentLinks.create({
           idempotencyKey: `lawsuit-${lawsuitId}-${Date.now()}`,
           order: {
             locationId,
@@ -1299,7 +1299,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         });
 
-        const paymentLink = checkoutResponse.result.paymentLink;
+        const paymentLink = checkoutResponse.paymentLink;
         if (!paymentLink || !paymentLink.url) {
           throw new Error('Failed to create payment link');
         }
@@ -1373,7 +1373,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               emailAddress: user.email,
               referenceId: user.id,
             });
-            customerId = customerResponse.customer?.id;
+            customerId = customerResponse.customer?.id || null;
             if (customerId) {
               await storage.updateUserSquareCustomerId(user.id, customerId);
             }
@@ -1385,7 +1385,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseUrl = getBaseURL();
 
         // Create Square Payment Link
-        const checkoutResponse = await square.checkout.createPaymentLink({
+        const checkoutResponse = await square.checkout.paymentLinks.create({
           idempotencyKey: `petition-${petitionId}-${Date.now()}`,
           order: {
             locationId,
@@ -1408,7 +1408,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         });
 
-        const paymentLink = checkoutResponse.result.paymentLink;
+        const paymentLink = checkoutResponse.paymentLink;
         if (!paymentLink || !paymentLink.url) {
           throw new Error('Failed to create payment link');
         }
@@ -1461,7 +1461,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             emailAddress: user.email,
             referenceId: user.id,
           });
-          customerId = customerResponse.customer?.id;
+          customerId = customerResponse.customer?.id || null;
           if (customerId) {
             await storage.updateUserSquareCustomerId(user.id, customerId);
           }
@@ -1473,7 +1473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const baseUrl = getBaseURL();
 
       // Create Square Payment Link
-      const checkoutResponse = await square.checkout.createPaymentLink({
+      const checkoutResponse = await square.checkout.paymentLinks.create({
         idempotencyKey: `foia-${foiaRequestId}-${Date.now()}`,
         order: {
           locationId,
@@ -1496,7 +1496,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
 
-      const paymentLink = checkoutResponse.result.paymentLink;
+      const paymentLink = checkoutResponse.paymentLink;
       if (!paymentLink || !paymentLink.url) {
         throw new Error('Failed to create payment link');
       }
@@ -1723,7 +1723,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           emailAddress: user.email,
           referenceId: user.id,
         });
-        customerId = customerResponse.customer?.id;
+        customerId = customerResponse.customer?.id || null;
         if (customerId) {
           await storage.updateUserSquareCustomerId(user.id, customerId);
         }
@@ -1735,7 +1735,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const baseUrl = getBaseURL();
 
     // Create Square Payment Link
-    const checkoutResponse = await square.checkout.createPaymentLink({
+    const checkoutResponse = await square.checkout.paymentLinks.create({
       idempotencyKey: `document-${sessionId}-${Date.now()}`,
       order: {
         locationId,
@@ -1758,7 +1758,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       },
     });
 
-    const paymentLink = checkoutResponse.result.paymentLink;
+    const paymentLink = checkoutResponse.paymentLink;
     if (!paymentLink || !paymentLink.url) {
       throw new Error('Failed to create payment link');
     }
