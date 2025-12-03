@@ -4,11 +4,14 @@
  * Modeled after the most successful and high-impact complaint formats historically produced.
  * Incorporates structural patterns, rhetorical framing, and organizational flow from
  * successful public complaint documents.
+ * 
+ * Now integrated with ultra-enhanced legal search for verified facts and source attribution.
  */
 
 import { generateUserText, TaskPriority } from './aiProvider';
 import { unifiedSearch, searchOfficerRecords, SearchResult } from './webSearchService';
 import { sendMail } from './mailer';
+import { performEnhancedLegalSearch, type LegalSearchResult, type AttributedFact } from './enhancedLegalSearch';
 
 const ADMIN_FALLBACK_EMAIL = 'contact.badblue@gmail.com';
 
@@ -776,6 +779,136 @@ Never add facts not present in the original. Focus on clarity and professional p
   } catch (error: any) {
     console.error('[Complaint Enhancement] AI enhancement failed:', error);
     return incidentDescription;
+  }
+}
+
+/**
+ * ENHANCED COMPLAINT GENERATION WITH INTEGRATED LEGAL SEARCH
+ * Uses ultra-enhanced legal search for verified legal basis and precedents
+ */
+export async function generateEnhancedComplaintWithSearch(data: ComplaintData): Promise<{
+  complaint: GeneratedComplaint;
+  legalResearch: LegalSearchResult;
+  verifiedFacts: AttributedFact[];
+}> {
+  console.log('[Complaint Enhanced] Starting enhanced complaint generation with legal search');
+
+  try {
+    // Step 1: Perform enhanced legal search for relevant laws and precedents
+    const searchQuery = `Legal basis for ${data.complaintType} complaint against ${data.officerName} of ${data.officerDepartment} in ${data.state}. Incident: ${data.incidentDescription}`;
+    
+    const legalResearch = await performEnhancedLegalSearch(searchQuery, {
+      jurisdiction: data.state,
+      context: `Officer: ${data.officerName}, Department: ${data.officerDepartment}, Type: ${data.complaintType}`,
+      requireSources: true,
+    });
+
+    console.log(`[Complaint Enhanced] Legal research completed with ${legalResearch.attributedFacts.length} verified facts`);
+
+    // Step 2: Extract verified legal basis
+    const verifiedStatutes = legalResearch.attributedFacts
+      .filter(fact => fact.entities.some(e => e.type === 'statute'))
+      .map(fact => ({
+        fact: fact.fact,
+        sources: fact.sources,
+        statute: fact.entities.find(e => e.type === 'statute'),
+      }));
+
+    const verifiedPrecedents = legalResearch.attributedFacts
+      .filter(fact => fact.entities.some(e => e.type === 'citation'))
+      .map(fact => ({
+        fact: fact.fact,
+        sources: fact.sources,
+        citation: fact.entities.find(e => e.type === 'citation'),
+      }));
+
+    // Step 3: Generate standard complaint
+    const standardComplaint = await generateEnhancedComplaint(data);
+
+    // Step 4: Enhance complaint with verified legal research
+    const enhancedDocument = `${standardComplaint.document}
+
+================================================================================
+                   VERIFIED LEGAL RESEARCH AND PRECEDENTS
+================================================================================
+
+This complaint is supported by comprehensive legal research with verified sources:
+
+APPLICABLE STATUTES (VERIFIED):
+${verifiedStatutes.map((s, i) => `${i + 1}. ${s.fact}
+   Citation: ${s.statute?.value}
+   Sources: ${s.sources.join(', ')}`).join('\n\n')}
+
+RELEVANT CASE LAW (VERIFIED):
+${verifiedPrecedents.map((p, i) => `${i + 1}. ${p.fact}
+   Citation: ${p.citation?.value}
+   Sources: ${p.sources.join(', ')}`).join('\n\n')}
+
+TIMELINE OF EVENTS:
+${legalResearch.timeline && legalResearch.timeline.length > 0
+  ? legalResearch.timeline.map(event => `${event.date.toLocaleDateString()}: ${event.description}`).join('\n')
+  : 'See incident details above'}
+
+DISCREPANCIES IDENTIFIED:
+${legalResearch.discrepancies.length > 0 
+  ? legalResearch.discrepancies.map(d => `[${d.severity.toUpperCase()}] ${d.type}: ${d.description}`).join('\n')
+  : 'No discrepancies identified'}
+
+================================================================================
+
+Note: This complaint incorporates comprehensive legal research to strengthen
+the legal basis and ensure all relevant statutes and precedents are properly
+cited with verified sources.
+`;
+
+    console.log('[Complaint Enhanced] Enhanced complaint document generated');
+
+    return {
+      complaint: {
+        ...standardComplaint,
+        document: enhancedDocument,
+        legalBasis: [
+          ...standardComplaint.legalBasis,
+          ...verifiedStatutes.map(s => s.statute?.value || '').filter(Boolean),
+        ],
+      },
+      legalResearch,
+      verifiedFacts: legalResearch.attributedFacts,
+    };
+  } catch (error: any) {
+    console.error('[Complaint Enhanced] Error in enhanced complaint generation:', error);
+    
+    // Fallback to standard complaint if enhanced search fails
+    console.log('[Complaint Enhanced] Falling back to standard complaint generation');
+    const standardComplaint = await generateEnhancedComplaint(data);
+    
+    return {
+      complaint: standardComplaint,
+      legalResearch: {
+        query: '',
+        aggregatedResponse: '',
+        attributedFacts: [],
+        timeline: [],
+        categorization: {
+          byRelevance: [],
+          byRecency: [],
+          byAuthority: [],
+          byJurisdiction: new Map(),
+          byParty: new Map(),
+          byDocumentType: new Map(),
+        },
+        discrepancies: [],
+        modelResponses: [],
+        metadata: {
+          searchedAt: new Date(),
+          modelsUsed: ['Fallback'],
+          totalSources: 0,
+          verifiedFactsCount: 0,
+          discardedFactsCount: 0,
+        },
+      },
+      verifiedFacts: [],
+    };
   }
 }
 

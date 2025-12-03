@@ -2,6 +2,7 @@ import { unifiedSearch, searchLegalStatutes } from './webSearchService';
 import { sendEmail } from './emailService';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { performEnhancedLegalSearch, type LegalSearchResult } from './enhancedLegalSearch';
 
 const ADMIN_FALLBACK_EMAIL = 'contact.badblue@gmail.com';
 
@@ -847,4 +848,120 @@ export function getStateFOIAInfo(state: string): {
     name: 'State Public Records Law',
     exemptionReference: 'applicable exemptions',
   };
+}
+
+/**
+ * ENHANCED FOIA REQUEST GENERATION WITH LEGAL SEARCH
+ * Uses ultra-enhanced legal search to find relevant statutes, precedents, and requirements
+ */
+export async function generateEnhancedFOIAWithSearch(data: FOIAData): Promise<{
+  foia: GeneratedFOIA;
+  legalResearch: LegalSearchResult;
+}> {
+  console.log('[FOIA Enhanced] Starting enhanced FOIA generation with legal search');
+
+  try {
+    // Step 1: Perform enhanced legal search for FOIA statutes and precedents
+    const searchQuery = `FOIA and public records law for ${data.state}, including state statute, deadlines, exemptions, and requirements for requesting ${data.recordsDescription}`;
+    
+    const legalResearch = await performEnhancedLegalSearch(searchQuery, {
+      jurisdiction: data.state,
+      context: `Agency: ${data.agencyName}, Agency Type: ${data.agencyType}`,
+      requireSources: true,
+    });
+
+    console.log(`[FOIA Enhanced] Legal research completed with ${legalResearch.attributedFacts.length} verified facts`);
+
+    // Step 2: Extract relevant statutes and deadlines from research
+    const statutes = legalResearch.attributedFacts
+      .filter(fact => fact.entities.some(e => e.type === 'statute'))
+      .map(fact => ({
+        fact: fact.fact,
+        sources: fact.sources,
+      }));
+
+    const deadlines = legalResearch.attributedFacts
+      .filter(fact => fact.fact.toLowerCase().includes('deadline') || fact.fact.toLowerCase().includes('days'))
+      .map(fact => ({
+        fact: fact.fact,
+        sources: fact.sources,
+      }));
+
+    // Step 3: Generate standard FOIA document
+    const standardFOIA = generateEnhancedFOIARequest(data);
+
+    // Step 4: Enhance FOIA with research findings
+    const enhancedDocument = `${standardFOIA.document}
+
+═══════════════════════════════════════════════════════════════════════════════
+                    ENHANCED LEGAL RESEARCH FINDINGS
+═══════════════════════════════════════════════════════════════════════════════
+
+VERIFIED STATUTES AND LEGAL BASIS:
+${statutes.map((s, i) => `${i + 1}. ${s.fact}
+   Sources: ${s.sources.join(', ')}`).join('\n\n')}
+
+VERIFIED DEADLINES AND TIME REQUIREMENTS:
+${deadlines.map((d, i) => `${i + 1}. ${d.fact}
+   Sources: ${d.sources.join(', ')}`).join('\n\n')}
+
+DISCREPANCIES IDENTIFIED:
+${legalResearch.discrepancies.length > 0 
+  ? legalResearch.discrepancies.map(d => `[${d.severity.toUpperCase()}] ${d.type}: ${d.description}`).join('\n')
+  : 'No discrepancies identified'}
+
+TIMELINE OF RELEVANT EVENTS:
+${legalResearch.timeline && legalResearch.timeline.length > 0
+  ? legalResearch.timeline.map(event => `${event.date.toLocaleDateString()}: ${event.description}`).join('\n')
+  : 'No timeline available'}
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Note: This enhanced FOIA request includes comprehensive legal research to support
+your request and ensure compliance with all applicable statutes and requirements.
+`;
+
+    console.log('[FOIA Enhanced] Enhanced FOIA document generated');
+
+    return {
+      foia: {
+        ...standardFOIA,
+        document: enhancedDocument,
+      },
+      legalResearch,
+    };
+  } catch (error: any) {
+    console.error('[FOIA Enhanced] Error in enhanced FOIA generation:', error);
+    
+    // Fallback to standard FOIA if enhanced search fails
+    console.log('[FOIA Enhanced] Falling back to standard FOIA generation');
+    const standardFOIA = generateEnhancedFOIARequest(data);
+    
+    return {
+      foia: standardFOIA,
+      legalResearch: {
+        query: '',
+        aggregatedResponse: '',
+        attributedFacts: [],
+        timeline: [],
+        categorization: {
+          byRelevance: [],
+          byRecency: [],
+          byAuthority: [],
+          byJurisdiction: new Map(),
+          byParty: new Map(),
+          byDocumentType: new Map(),
+        },
+        discrepancies: [],
+        modelResponses: [],
+        metadata: {
+          searchedAt: new Date(),
+          modelsUsed: ['Fallback'],
+          totalSources: 0,
+          verifiedFactsCount: 0,
+          discardedFactsCount: 0,
+        },
+      },
+    };
+  }
 }
