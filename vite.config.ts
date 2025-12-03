@@ -52,6 +52,6 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ['@google/generative-ai', '@babel/preset-typescript', 'lightningcss']
+    exclude: ['@google/genai', '@babel/preset-typescript', 'lightningcss']
   },
 });

@@ -1,40 +1,31 @@
-"@google/generative-ai": "^0.5.0"
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// Test Google Gemini API with new @google/genai SDK
+import { GoogleGenAI } from "@google/genai";
 
-const client = new GoogleGenerativeAI({
-  apiKey: process.env.GEMINI_API_KEY!,
-});
+console.log('Testing Google GenAI SDK...');
 
-const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
-console.log('Testing GoogleGenAI...');
-console.log('GoogleGenAI type:', typeof GoogleGenAI);
-
-if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
-  console.error('No API key found');
+if (!apiKey) {
+  console.error('❌ No API key found. Set GEMINI_API_KEY or GOOGLE_API_KEY');
   process.exit(1);
 }
 
-const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-console.log('Using API key:', apiKey ? 'Found' : 'Missing');
-
 try {
-  const genAI = new GoogleGenAI(apiKey);
-  console.log('GoogleGenAI instance created');
-  console.log('Instance type:', typeof genAI);
-  console.log('Available methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(genAI)));
+  console.log('Creating GoogleGenAI client...');
+  const client = new GoogleGenAI({ apiKey });
   
+  console.log('Sending test request...');
   const response = await client.models.generateContent({
-  model: "gemini-2.5-flash",  // or whatever model you want
-  contents: prompt,
-});
-const text = response.text;
+    model: "gemini-2.5-flash",
+    contents: [{ role: "user", parts: [{ text: "Respond with just 'OK' if working" }] }]
+  });
   
-  const result = await model.generateContent('Respond with just "OK" if working');
-  const response = await result.response;
-  const text = response.text();
-  console.log('Response:', text);
+  const text = response.text || '';
+  console.log('✅ Response:', text);
+  console.log('✅ Gemini API is working correctly with new SDK');
+  process.exit(0);
 } catch (error) {
-  console.error('Error:', error.message);
+  console.error('❌ Error:', error.message);
   console.error('Stack:', error.stack);
+  process.exit(1);
 }
