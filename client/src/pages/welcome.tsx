@@ -76,7 +76,15 @@ export default function WelcomePage() {
             <div className="flex items-center gap-3">
               <Shield className="h-8 w-8 text-primary" />
               <div>
-                <h1 className="text-2xl font-bold text-white">LegalWhat</h1>
+                <h1 className="text-2xl font-bold text-white flex items-center gap-1">
+                  LegalWhat
+                  <img 
+                    src="/images/Legal What Icon.png" 
+                    alt="?" 
+                    className="inline-block h-[1em] w-auto object-contain"
+                    style={{ marginBottom: '-0.05em' }}
+                  />
+                </h1>
                 <p className="text-xs text-white/70">AI Legal Platform</p>
               </div>
             </div>
@@ -93,8 +101,14 @@ export default function WelcomePage() {
       <main className="container mx-auto px-4 py-8 sm:py-12">
         {/* Welcome Section */}
         <div className="text-center mb-8 sm:mb-12">
-          <h2 className="text-3xl sm:text-4xl font-bold mb-3 text-white">
-            Choose Your Legal Area
+          <h2 className="text-3xl sm:text-4xl font-bold mb-3 text-white flex items-center justify-center flex-wrap gap-2">
+            Choose Your Legal Area with LegalWhat
+            <img 
+              src="/images/Legal What Icon.png" 
+              alt="?" 
+              className="inline-block h-[1em] w-auto object-contain"
+              style={{ marginBottom: '-0.08em' }}
+            />
           </h2>
           <p className="text-lg text-white/90 max-w-2xl mx-auto">
             Select the area of law you need help with to get started with AI-powered legal assistance
@@ -220,7 +234,15 @@ export default function WelcomePage() {
       {/* Footer */}
       <footer className="border-t mt-12 py-6 bg-muted/30">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>© 2024 LegalWhat. AI-powered legal platform.</p>
+          <p className="flex items-center justify-center gap-1 flex-wrap">
+            © 2024 LegalWhat
+            <img 
+              src="/images/Legal What Icon.png" 
+              alt="?" 
+              className="inline-block h-[0.9em] w-auto object-contain"
+            />
+            AI-powered legal platform.
+          </p>
           <p className="mt-1">Featuring Law Enforcement Accountability and 29 other legal areas.</p>
         </div>
       </footer>

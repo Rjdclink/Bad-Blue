@@ -508,7 +508,15 @@ export default function Landing() {
           </div>
 
           <div className="pt-6 border-t text-center text-sm text-muted-foreground">
-            <p>&copy; 2025 BadBlue. All rights reserved.</p>
+            <p className="flex items-center justify-center gap-1 flex-wrap">
+              &copy; 2025 LegalWhat
+              <img 
+                src="/images/Legal What Icon.png" 
+                alt="?" 
+                className="inline-block h-[1em] w-auto object-contain"
+              />
+              <span>by BadBlue. All rights reserved.</span>
+            </p>
           </div>
         </div>
       </footer>
