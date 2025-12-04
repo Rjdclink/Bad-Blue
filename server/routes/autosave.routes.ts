@@ -1,4 +1,5 @@
-import { type Express, type Response } from 'express';
+import { type Express, type Response, type Request } from 'express';
+import crypto from 'crypto';
 import { asyncHandler } from '../errorHandler';
 import { isAuthenticated } from '../auth';
 import { createLogger } from '../logger';
@@ -7,13 +8,7 @@ import { pool } from '../db';
 const log = createLogger('AutosaveRoutes');
 
 // Type definitions
-interface AuthenticatedRequest extends Express.Request {
-  user: {
-    claims: {
-      sub: string;
-      email?: string;
-    };
-  };
+interface AuthenticatedRequest extends Request {
   body: any;
   params: any;
   query: any;
@@ -23,7 +18,10 @@ export function setupAutosaveRoutes(app: Express): void {
 
   // Create new work session
   app.post('/api/autosave/sessions', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     const { lawType, sessionType, title, initialData } = req.body;
 
     log.info('Creating work session', { userId, lawType, sessionType });
@@ -52,7 +50,10 @@ export function setupAutosaveRoutes(app: Express): void {
 
   // Get all user sessions
   app.get('/api/autosave/sessions', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     const includeCompleted = req.query.includeCompleted === 'true';
     const lawTypeFilter = req.query.lawType as string | undefined;
     const limit = parseInt(req.query.limit as string) || 50;
@@ -89,7 +90,10 @@ export function setupAutosaveRoutes(app: Express): void {
 
   // Get full session state
   app.get('/api/autosave/sessions/:sessionId', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     const { sessionId } = req.params;
 
     log.info('Fetching session details', { userId, sessionId });
@@ -149,7 +153,10 @@ export function setupAutosaveRoutes(app: Express): void {
 
   // Save snapshot (autosave)
   app.post('/api/autosave/sessions/:sessionId/snapshot', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     const { sessionId } = req.params;
     const { data, currentStep, progressPercentage, fieldsChanged } = req.body;
 
@@ -215,7 +222,10 @@ export function setupAutosaveRoutes(app: Express): void {
 
   // Update session metadata
   app.patch('/api/autosave/sessions/:sessionId', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     const { sessionId } = req.params;
     const updates = req.body;
 
@@ -254,7 +264,10 @@ export function setupAutosaveRoutes(app: Express): void {
 
   // Delete session
   app.delete('/api/autosave/sessions/:sessionId', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     const { sessionId } = req.params;
 
     log.info('Deleting session', { userId, sessionId });
@@ -273,7 +286,10 @@ export function setupAutosaveRoutes(app: Express): void {
 
   // Add consultation message
   app.post('/api/autosave/sessions/:sessionId/consultation', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     const { sessionId } = req.params;
     const { role, message, extractedData } = req.body;
 
@@ -302,7 +318,10 @@ export function setupAutosaveRoutes(app: Express): void {
 
   // Save document draft
   app.post('/api/autosave/sessions/:sessionId/document-draft', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     const { sessionId } = req.params;
     const { content, documentType, generatedBy, aiProvider } = req.body;
 
