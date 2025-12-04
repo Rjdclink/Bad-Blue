@@ -4299,7 +4299,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
    * Download generated document by file ID
    * Supports complaints, lawsuits, FOIA requests, and petitions
    */
-  app.get("/api/download/:fileId", isAuthenticated, asyncHandler(async (req: any, res: Response) => {
+  app.get("/api/download/:fileId", apiRateLimit, isAuthenticated, asyncHandler(async (req: any, res: Response) => {
     const userId = req.user?.claims?.sub || req.user?.id;
     if (!userId) {
       return res.status(401).json({ message: "Unauthorized" });
