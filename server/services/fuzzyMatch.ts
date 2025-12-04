@@ -68,7 +68,7 @@ export class FuzzyMatcher {
 
     const variations = [
       name1,
-      parts1.reverse().join(' '),
+      parts1.slice().reverse().join(' '),
       parts1.length >= 2 ? `${parts1[0]} ${parts1[parts1.length - 1]}` : name1,
     ];
 
