@@ -66,7 +66,7 @@ export const logger = winston.createLogger({
   level: getLogLevel(),
   format: fileFormat,
   defaultMeta: { 
-    service: 'legalezo',
+    service: 'legalwhat',
     pid: process.pid,
   },
   transports: [

@@ -13,9 +13,9 @@ export default function Terms() {
       <SEOHead
         title="Bad Blue — Terms of Service | Legal Usage Agreement"
         description="BadBlue terms of service for police misconduct complaint filing, §1983 civil rights lawsuits, FOIA requests, and officer resignation petitions. Understand your rights and responsibilities."
-        canonicalUrl="https://bad-blue.com/terms"
+        canonicalUrl="https://example.com/terms"
         breadcrumbs={[
-          { name: "Terms of Service", url: "https://bad-blue.com/terms" }
+          { name: "Terms of Service", url: "https://example.com/terms" }
         ]}
       />
       

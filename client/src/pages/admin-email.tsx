@@ -493,7 +493,7 @@ export default function AdminEmail() {
           <CardContent className="space-y-4">
             <div className="rounded-md bg-muted p-3">
               <p className="text-sm text-muted-foreground">
-                From: BadBlue &lt;noreply@bad-blue.com&gt;
+                From: BadBlue &lt;noreply@example.com&gt;
               </p>
             </div>
 

@@ -28,7 +28,6 @@ import { z } from "zod";
 import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
-import { setupLegalizoRoutes } from "./legalizoRoutes";
 import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
 import { MASTER_PASSWORD } from "./masterPassword";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
@@ -803,11 +802,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     trackUsage({ action: req.method, tokens: 0, path: req.path }).catch(() => {});
     next();
   });
-
-  // ============================================
-  // LEGALIZO ROUTES
-  // ============================================
-  setupLegalizoRoutes(app);
 
   // ============================================
   // AUTOSAVE, LAW TYPES, UPLOAD & CONSULTATION ROUTES (Stages 2-3)
@@ -3417,15 +3411,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
         .from(schema.authAccounts)
         .where(inArray(schema.authAccounts.userId, userIds))
         .groupBy(schema.authAccounts.userId),
-      db.select({ 
-        userId: schema.legalizoSubscriptions.userId,
-        status: schema.legalizoSubscriptions.status,
-        lastPaymentDate: schema.legalizoSubscriptions.updatedAt,
-        renewalDate: schema.legalizoSubscriptions.currentPeriodEnd,
-        squareSubscriptionId: schema.legalizoSubscriptions.squareSubscriptionId,
-      })
-        .from(schema.legalizoSubscriptions)
-        .where(inArray(schema.legalizoSubscriptions.userId, userIds)),
+      // Removed legalizoSubscriptions references
     ]);
     
     // Build lookup maps for O(1) access
@@ -3434,7 +3420,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     const petitionsMap = new Map(petitionsAgg.map(r => [r.userId, r.count]));
     const foiaMap = new Map(foiaAgg.map(r => [r.userId, r.count]));
     const authMap = new Map(authAccountsAgg.map(r => [r.userId, r.hasPassword]));
-    const subscriptionsMap = new Map(subscriptionsAgg.map(r => [r.userId, r]));
+    // Removed subscriptionsMap
     
     // Merge data efficiently
     const usersWithServices = allUsers.map(user => {
@@ -3442,15 +3428,15 @@ Contact: ${foiaRequest.userEmail || userEmail}
       const lawsuits = lawsuitsMap.get(user.id) || 0;
       const petitions = petitionsMap.get(user.id) || 0;
       const foiaRequests = foiaMap.get(user.id) || 0;
-      const subscription = subscriptionsMap.get(user.id);
+      // Removed subscription lookup
       
       return {
         ...user,
         hasLocalCredentials: authMap.get(user.id) === true,
-        subscriptionStatus: subscription?.status || null,
-        lastPaymentDate: subscription?.lastPaymentDate || null,
-        renewalDate: subscription?.renewalDate || null,
-        squareSubscriptionId: subscription?.squareSubscriptionId || null,
+        subscriptionStatus: null,
+        lastPaymentDate: null,
+        renewalDate: null,
+        squareSubscriptionId: null,
         paidServices: {
           complaints,
           lawsuits,
@@ -3483,25 +3469,15 @@ Contact: ${foiaRequest.userEmail || userEmail}
     res.json({ count });
   }));
 
-  // Edit user subscription
+  // Edit user subscription - Disabled (Legalizo removed)
   app.patch("/api/admin/users/:userId/subscription", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const adminId = req.user?.id || req.user?.claims?.sub;
     if (!isAdmin(adminId)) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
-    const { userId } = req.params;
-    const { status, renewalDate } = req.body;
-    
-    await db.update(schema.legalizoSubscriptions)
-      .set({ 
-        status, 
-        currentPeriodEnd: renewalDate ? new Date(renewalDate) : undefined,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.legalizoSubscriptions.userId, userId));
-    
-    res.json({ success: true });
+    // Legalizo subscription system removed
+    res.status(404).json({ error: "Subscription system not available" });
   }));
 
   // ============================================

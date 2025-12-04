@@ -495,7 +495,7 @@ export function formatReportForPDF(report: PeopleSearchReport): string {
   const sections: string[] = [];
 
   sections.push('=' .repeat(80));
-  sections.push('LEGALIZO DEEP OSINT REPORT');
+  sections.push('DEEP OSINT REPORT');
   sections.push('=' .repeat(80));
   sections.push('');
 

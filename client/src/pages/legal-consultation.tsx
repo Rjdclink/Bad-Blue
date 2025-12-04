@@ -15,7 +15,7 @@ export default function LegalConsultationPage() {
         keywords="legal consultation, AI legal analysis, civil rights case evaluation, police misconduct analysis"
         ogTitle="Free Legal Consultation - Evaluate Your Civil Rights Case"
         ogDescription="AI-powered legal analysis to determine if you have an actionable complaint or lawsuit. Get detailed case evaluation with statute citations."
-        canonicalUrl="https://bad-blue.com/legal-consultation"
+        canonicalUrl="https://example.com/legal-consultation"
       />
       
       {/* Header */}

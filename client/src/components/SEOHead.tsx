@@ -24,7 +24,7 @@ interface SEOHeadProps {
   articleModifiedTime?: string; // For article pages
 }
 
-const BASE_URL = "https://bad-blue.com";
+const BASE_URL = "https://example.com";
 const TWITTER_SITE = "@BadBlueApp"; // Official Twitter handle
 
 export function SEOHead({

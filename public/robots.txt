@@ -1,5 +1,4 @@
 # BadBlue - Police Accountability Platform
-# https://bad-blue.com
 # Last updated: 2025-11-30
 
 # Allow all search engine crawlers
@@ -38,7 +37,7 @@ Disallow: /*.map$
 Crawl-delay: 1
 
 # Sitemap location
-Sitemap: https://bad-blue.com/sitemap.xml
+Sitemap: https://example.com/sitemap.xml
 
 # Googlebot-specific directives
 User-agent: Googlebot

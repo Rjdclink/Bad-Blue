@@ -9,7 +9,7 @@
  * - All titles under 60 chars, descriptions under 160 chars
  */
 
-export const BASE_URL = "https://bad-blue.com";
+export const BASE_URL = "https://example.com";
 export const SITE_NAME = "Bad Blue";
 export const TWITTER_HANDLE = "@BadBlueApp";
 export const DEFAULT_OG_IMAGE = `${BASE_URL}/preview.png`;
