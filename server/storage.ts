@@ -280,6 +280,7 @@ export class DatabaseStorage implements IStorage {
         first_name as "firstName",
         last_name as "lastName",
         profile_image_url as "profileImageUrl",
+        status,
         square_customer_id as "squareCustomerId",
         has_paid_for_access as "hasPaidForAccess",
         access_payment_id as "accessPaymentId",
