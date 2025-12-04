@@ -581,4 +581,126 @@ export function isWebSearchAvailable(): { bing: boolean; gemini: boolean; any: b
   };
 }
 
+// Enhanced Web Search Service with Advanced Dorking
+import { advancedSearch } from './services/advancedSearch';
+import { cacheService } from './services/redisCache';
+
+export class EnhancedWebSearchService {
+  private readonly maxRetries = 3;
+  private readonly maxDorks = 10;
+
+  async searchWithDorks(
+    name: string,
+    options?: {
+      department?: string;
+      badge?: string;
+      location?: string;
+      maxDorks?: number;
+    }
+  ): Promise<Array<{
+    query: string;
+    results: any[];
+    source: string;
+  }>> {
+    // Create deterministic cache key
+    const optionsKey = options ? JSON.stringify({
+      department: options.department || '',
+      badge: options.badge || '',
+      location: options.location || '',
+    }) : '';
+    const cacheKey = `dork-search:${name}:${optionsKey}`;
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) return cached;
+
+    const dorks = advancedSearch.generatePersonDorks(name, options);
+    const results: any[] = [];
+
+    // Execute searches sequentially with rate limiting
+    const dorkLimit = options?.maxDorks || this.maxDorks;
+    for (const dork of dorks.slice(0, dorkLimit)) {
+      try {
+        await this.delay(1000); // Rate limit: 1 query per second
+
+        const searchResults = await this.executeSearch(dork);
+        
+        if (searchResults.length > 0) {
+          results.push({
+            query: dork,
+            results: searchResults,
+            source: 'google-dork',
+          });
+        }
+      } catch (error) {
+        console.error(`Dork search failed for: ${dork}`, error);
+      }
+    }
+
+    // Cache for 6 hours
+    await cacheService.set(cacheKey, results, 'warm');
+    
+    return results;
+  }
+
+  private async executeSearch(query: string): Promise<any[]> {
+    // Integration point for actual search API
+    // When integrated with geminiSearch or other search APIs, replace this implementation
+    // Example: return await geminiSearch(query, { limit: 5 });
+    console.warn('[Enhanced Search] executeSearch is a placeholder - integrate with actual search API');
+    return [];
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Search specific databases
+   */
+  async searchPublicDatabases(name: string): Promise<{
+    transparencyUSA: any[];
+    govSalaries: any[];
+    pacer: any[];
+  }> {
+    // Create deterministic cache key
+    const cacheKey = `public-db:${name.toLowerCase().trim()}`;
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) return cached;
+
+    const results = {
+      transparencyUSA: await this.searchTransparencyUSA(name),
+      govSalaries: await this.searchGovSalaries(name),
+      pacer: await this.searchPacer(name),
+    };
+
+    await cacheService.set(cacheKey, results, 'cold'); // Cache for 7 days
+    return results;
+  }
+
+  private async searchTransparencyUSA(name: string): Promise<any[]> {
+    const query = advancedSearch.buildQuery({
+      keywords: [name],
+      site: 'transparencyusa.org',
+    });
+    return this.executeSearch(query);
+  }
+
+  private async searchGovSalaries(name: string): Promise<any[]> {
+    const query = advancedSearch.buildQuery({
+      keywords: [name],
+      site: 'govsalaries.com',
+    });
+    return this.executeSearch(query);
+  }
+
+  private async searchPacer(name: string): Promise<any[]> {
+    const query = advancedSearch.buildQuery({
+      keywords: [name],
+      site: 'pacer.gov',
+    });
+    return this.executeSearch(query);
+  }
+}
+
+export const enhancedWebSearch = new EnhancedWebSearchService();
+
 console.log('[Web Search Service] Initialized:', isWebSearchAvailable());
