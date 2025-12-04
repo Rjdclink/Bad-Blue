@@ -1,6 +1,8 @@
 // LegalWhat People Search - Deep OSINT Report Generation
 // Aggregates public data from multiple sources for comprehensive background reports
 
+import { entityResolver } from './services/entityResolver';
+
 /**
  * Interface for search results from various sources
  */
@@ -93,6 +95,27 @@ export async function conductPeopleSearch(
         aggregateSearchResults(report, result.value);
       }
     });
+
+    // Use entity resolution for fuzzy matching across sources
+    try {
+      const allRecords = report.sources.map(source => ({
+        name: searchQuery,
+        email: undefined,
+        phone: undefined,
+        badge: undefined,
+        source: source.name,
+      }));
+      
+      const resolved = await entityResolver.resolvePerson(searchQuery, allRecords);
+      
+      // Update report with resolved entity information
+      if (resolved.entity.names.length > 0) {
+        report.identitySummary.aliases = resolved.entity.names.filter(n => n !== resolved.primaryName);
+      }
+    } catch (error) {
+      console.error('Entity resolution error:', error);
+      // Continue without entity resolution if it fails
+    }
 
     // Calculate confidence score
     report.confidenceScore = calculateConfidenceScore(report);
