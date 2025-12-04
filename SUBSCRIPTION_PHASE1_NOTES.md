@@ -5,7 +5,7 @@
 ## Date: 2025-12-04
 
 ## Overview
-Set up database tables for Square subscription management, extending existing schema to support $25.99/month Legalezo subscription plan.
+Set up database tables for Square subscription management, extending existing schema to support $25.99/month LegalWhat subscription plan.
 
 ---
 
@@ -52,7 +52,7 @@ VITE_SQUARE_ENVIRONMENT=production
 **File:** `server/migrations/003_subscription_tables.sql`
 
 **Tables Created:**
-- `plans` - Subscription plans (seeded with $25.99/month Legalezo plan)
+- `plans` - Subscription plans (seeded with $25.99/month LegalWhat plan)
 - `subscriptions` - User subscriptions with Square tracking
 - `transactions` - Payment transaction history
 
@@ -145,7 +145,7 @@ SELECT * FROM plans;
 ```
 id | name                    | price | currency | interval | square_plan_id              | is_active | created_at
 ---|-------------------------|-------|----------|----------|----------------------------|-----------|------------
- 1 | Legalezo Subscription  | 2599  | USD      | monthly  | PLACEHOLDER_SQUARE_PLAN_ID | true      | 2025-12-04...
+ 1 | LegalWhat Subscription  | 2599  | USD      | monthly  | PLACEHOLDER_SQUARE_PLAN_ID | true      | 2025-12-04...
 ```
 
 ### 3. Verify Users Table Extended
@@ -207,7 +207,7 @@ AND tc.table_name IN ('subscriptions', 'transactions');
 - [x] Users table extended with status and square_customer_id
 - [ ] Migration runs without errors (run `npm run migrate`)
 - [ ] Tables created and verified via SQL queries
-- [ ] Plan seeded with $25.99/month Legalezo subscription
+- [ ] Plan seeded with $25.99/month LegalWhat subscription
 - [ ] Indexes created for performance
 - [ ] Foreign key constraints in place
 - [ ] TypeScript types compile without errors

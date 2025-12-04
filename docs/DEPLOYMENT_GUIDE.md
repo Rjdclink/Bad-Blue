@@ -1,6 +1,6 @@
 # Railway Deployment Guide
 
-Complete step-by-step guide for deploying Legalizo/Bad-Blue to Railway with Node 20.
+Complete step-by-step guide for deploying LegalWhat/Bad-Blue to Railway with Node 20.
 
 ---
 
@@ -119,7 +119,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"
 ```bash
 RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
 DEFAULT_FROM_EMAIL=noreply@yourdomain.com
-DEFAULT_FROM_NAME=Legalizo
+DEFAULT_FROM_NAME=LegalWhat
 ```
 
 Get Resend API key: [resend.com/api-keys](https://resend.com/api-keys)

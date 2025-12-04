@@ -182,7 +182,7 @@ Each law type includes:
 
 **File:** `server/routes.ts` (modified)
 - Added imports for setupAutosaveRoutes and setupLawTypesRoutes
-- Registered routes after Legalizo routes
+- Registered routes after LegalWhat routes
 - Routes section clearly marked with comments
 - Integrated with existing auth middleware (isAuthenticated)
 - Ready for rate limiting (autosaveRateLimit imported)

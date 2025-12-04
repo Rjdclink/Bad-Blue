@@ -30,7 +30,7 @@ Implementer: GitHub Copilot Agent
 ### Changes Made:
 
 #### 1. Lazy Load Import Added
-**Location**: Line 114 (after other Legalizo imports)
+**Location**: Line 114 (after other LegalWhat imports)
 ```typescript
 // New LegalWhat Welcome Page - Stage 1B
 const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
@@ -59,9 +59,9 @@ const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage'
 ### Protected Routes (Authenticated Users):
 ```
 /welcome                    → WelcomePage (NEW - Stage 1C)
-/legalizo-welcome          → LegalizoWelcome (existing)
-/legalizo-consultation     → LegalizoConsultation
-/legalizo-people-search    → LegalizoPeopleSearch
+/legalizo-welcome          → LegalWhatWelcome (existing)
+/legalizo-consultation     → LegalWhatConsultation
+/legalizo-people-search    → LegalWhatPeopleSearch
 /                          → Home (BadBlue)
 /home                      → Home (BadBlue)
 /dashboard                 → Home (BadBlue)

@@ -1,5 +1,5 @@
 /**
- * Legalezo Welcome Page - Stage 1B
+ * LegalWhat Welcome Page - Stage 1B
  * 
  * Displays 30 law types with interactive selection
  * Features Law Enforcement Accountability as highlighted option

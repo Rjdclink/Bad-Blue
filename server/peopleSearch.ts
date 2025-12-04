@@ -1,4 +1,4 @@
-// Legalizo People Search - Deep OSINT Report Generation
+// LegalWhat People Search - Deep OSINT Report Generation
 // Aggregates public data from multiple sources for comprehensive background reports
 
 /**
