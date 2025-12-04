@@ -818,6 +818,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupPlansRoutes(app); // Active subscription plans
 
   // ============================================
+  // LEGAL COUNSEL ROUTES (Phase 1A)
+  // ============================================
+  const legalCounselRoutes = await import('./routes/legalCounsel.routes');
+  app.use('/api/legal-counsel', legalCounselRoutes.default);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {
