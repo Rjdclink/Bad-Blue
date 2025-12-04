@@ -116,8 +116,8 @@ export default function LegalizoAuth() {
         
         // Check subscription status
         if (data.hasActiveSubscription) {
-          // Redirect to welcome page
-          setLocation('/legalizo-welcome');
+          // Redirect to root (Welcome Page)
+          setLocation('/');
         } else {
           // Show payment button
           setShowPayment(true);

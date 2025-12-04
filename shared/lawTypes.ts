@@ -65,7 +65,7 @@ export const LAW_TYPE_DATA: LawTypeInfo[] = [
     name: 'Law Enforcement Accountability',
     description: 'Police misconduct, excessive force, wrongful arrest, civil rights violations',
     icon: 'Shield',
-    route: '/',
+    route: '/badblue',
     featured: true,
     color: 'red',
   },

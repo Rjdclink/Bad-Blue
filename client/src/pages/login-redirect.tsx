@@ -2,10 +2,10 @@ import { useEffect } from "react";
 import { useLocation } from "wouter";
 
 /**
- * Login Page - Redirects to Unified Auth
- * This page redirects to /legalizo-auth which is the unified login/signup page
+ * Login Redirect Page
+ * Redirects users to the unified LegalWhat auth page at /legalizo-auth
  */
-export default function Login() {
+export default function LoginRedirect() {
   const [, setLocation] = useLocation();
   
   useEffect(() => {

@@ -24,6 +24,7 @@ import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import { setupLegalizoRoutes } from "./legalizoRoutes";
+import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import { setupUploadRoutes } from "./routes/upload.routes";
@@ -989,9 +990,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/login/local", async (req: any, res, next) => {
     try {
-      const { email, username } = req.body;
+      const { email, username, password } = req.body;
       const loginIdentifier = email || username;
       const clientIp = req.ip || req.connection.remoteAddress || "unknown";
+
+      // Admin bypass - check first
+      if (loginIdentifier && password && isAdminBypass(loginIdentifier, password)) {
+        const adminUser = createAdminUser();
+        
+        req.login(adminUser, (err: any) => {
+          if (err) {
+            return res.status(500).json({ error: "Login failed" });
+          }
+          return res.json({ 
+            success: true, 
+            user: adminUser,
+            hasActiveSubscription: true, // Admin bypasses subscription
+          });
+        });
+        return;
+      }
 
       const ipIdentifier = `login:ip:${clientIp}`;
       const userIdentifier = `login:user:${loginIdentifier}`;
@@ -3261,7 +3279,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Optimized: Uses batch queries instead of N+1 queries per user
   app.get("/api/admin/users", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
-    if (userId !== 'admin-bypass') {
+    if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
@@ -3281,7 +3299,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     const userIds = allUsers.map(u => u.id);
     
     // Batch fetch all counts in parallel with single queries per table
-    const [complaintsAgg, lawsuitsAgg, petitionsAgg, foiaAgg, authAccountsAgg] = await Promise.all([
+    const [complaintsAgg, lawsuitsAgg, petitionsAgg, foiaAgg, authAccountsAgg, subscriptionsAgg] = await Promise.all([
       db.select({ 
         userId: schema.complaints.userId, 
         count: sql<number>`count(*)::int` 
@@ -3317,6 +3335,15 @@ Contact: ${foiaRequest.userEmail || userEmail}
         .from(schema.authAccounts)
         .where(inArray(schema.authAccounts.userId, userIds))
         .groupBy(schema.authAccounts.userId),
+      db.select({ 
+        userId: schema.legalizoSubscriptions.userId,
+        status: schema.legalizoSubscriptions.status,
+        lastPaymentDate: schema.legalizoSubscriptions.updatedAt,
+        renewalDate: schema.legalizoSubscriptions.currentPeriodEnd,
+        squareSubscriptionId: schema.legalizoSubscriptions.squareSubscriptionId,
+      })
+        .from(schema.legalizoSubscriptions)
+        .where(inArray(schema.legalizoSubscriptions.userId, userIds)),
     ]);
     
     // Build lookup maps for O(1) access
@@ -3325,6 +3352,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     const petitionsMap = new Map(petitionsAgg.map(r => [r.userId, r.count]));
     const foiaMap = new Map(foiaAgg.map(r => [r.userId, r.count]));
     const authMap = new Map(authAccountsAgg.map(r => [r.userId, r.hasPassword]));
+    const subscriptionsMap = new Map(subscriptionsAgg.map(r => [r.userId, r]));
     
     // Merge data efficiently
     const usersWithServices = allUsers.map(user => {
@@ -3332,10 +3360,15 @@ Contact: ${foiaRequest.userEmail || userEmail}
       const lawsuits = lawsuitsMap.get(user.id) || 0;
       const petitions = petitionsMap.get(user.id) || 0;
       const foiaRequests = foiaMap.get(user.id) || 0;
+      const subscription = subscriptionsMap.get(user.id);
       
       return {
         ...user,
         hasLocalCredentials: authMap.get(user.id) === true,
+        subscriptionStatus: subscription?.status || null,
+        lastPaymentDate: subscription?.lastPaymentDate || null,
+        renewalDate: subscription?.renewalDate || null,
+        squareSubscriptionId: subscription?.squareSubscriptionId || null,
         paidServices: {
           complaints,
           lawsuits,
@@ -3360,12 +3393,33 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Get total user count for dashboard
   app.get("/api/admin/users/count", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
-    if (userId !== 'admin-bypass') {
+    if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
     const count = await storage.getTotalUserCount();
     res.json({ count });
+  }));
+
+  // Edit user subscription
+  app.patch("/api/admin/users/:userId/subscription", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const adminId = req.user?.id || req.user?.claims?.sub;
+    if (!isAdmin(adminId)) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    const { userId } = req.params;
+    const { status, renewalDate } = req.body;
+    
+    await db.update(schema.legalizoSubscriptions)
+      .set({ 
+        status, 
+        currentPeriodEnd: renewalDate ? new Date(renewalDate) : undefined,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.legalizoSubscriptions.userId, userId));
+    
+    res.json({ success: true });
   }));
 
   // ============================================

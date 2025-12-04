@@ -116,6 +116,9 @@ const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage'
 // Legal Tools Page - Stage 4
 const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'LegalTools');
 
+// Subscription Success Page
+const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
+
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
 const AdminLawsuits = lazyWithRetry(() => import("@/pages/admin-lawsuits"), 'AdminLawsuits');
@@ -163,6 +166,7 @@ function Router() {
         {/* LegalWhat public routes */}
         <Route path="/legalizo" component={LegalizoLanding} />
         <Route path="/legalizo-auth" component={LegalizoAuth} />
+        <Route path="/subscription-success" component={SubscriptionSuccess} />
         
         {/* Public routes */}
         <Route path="/landing" component={Landing} />
@@ -179,7 +183,10 @@ function Router() {
         {/* Protected routes - only accessible when authenticated */}
         {isAuthenticated ? (
           <>
-            {/* New LegalWhat Welcome Page - Stage 1B/1C */}
+            {/* Root route - LegalWhat Welcome Page for law type selection */}
+            <Route path="/" component={WelcomePage} />
+            
+            {/* New Legalezo Welcome Page - Stage 1B/1C */}
             <Route path="/welcome" component={WelcomePage} />
             
             {/* Legal Tools Page - Stage 4 */}
@@ -190,8 +197,8 @@ function Router() {
             <Route path="/legalizo-consultation" component={LegalizoConsultation} />
             <Route path="/legalizo-people-search" component={LegalizoPeopleSearch} />
             
-            {/* Original Bad Blue routes */}
-            <Route path="/" component={Home} />
+            {/* BadBlue routes - Law Enforcement Accountability */}
+            <Route path="/badblue" component={Home} />
             <Route path="/home" component={Home} />
             <Route path="/dashboard" component={Home} />
             <Route path="/officer-search" component={OfficerSearchPage} />
@@ -226,7 +233,7 @@ function Router() {
             <Route path="/evidence-hub" component={EvidenceHub} />
           </>
         ) : (
-          <Route path="/" component={Landing} />
+          <Route path="/" component={LegalizoLanding} />
         )}
 
         <Route component={NotFound} />

@@ -22,6 +22,8 @@ import {
   UserCheck,
   Key,
   ShieldCheck,
+  Edit,
+  CreditCard,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { SEOHead } from "@/components/SEOHead";
@@ -39,6 +41,10 @@ interface PaidServices {
 interface UserWithServices extends User {
   paidServices: PaidServices;
   hasLocalCredentials: boolean;
+  subscriptionStatus?: string | null;
+  lastPaymentDate?: string | null;
+  renewalDate?: string | null;
+  squareSubscriptionId?: string | null;
 }
 
 export default function AdminUsers() {
@@ -50,8 +56,10 @@ export default function AdminUsers() {
     queryKey: ['/api/auth/user'],
   });
 
+  const ADMIN_BYPASS_USER_ID = 'admin-bypass';
+
   useEffect(() => {
-    if (!isLoadingUser && (!user || user.id !== 'admin-bypass')) {
+    if (!isLoadingUser && (!user || user.id !== ADMIN_BYPASS_USER_ID)) {
       toast({
         title: "Access Denied",
         description: "Admin access required",
@@ -66,7 +74,7 @@ export default function AdminUsers() {
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }>({
     queryKey: ['/api/admin/users', usersPage],
-    enabled: !!user && user.id === 'admin-bypass',
+    enabled: !!user && user.id === ADMIN_BYPASS_USER_ID,
   });
 
   const getServiceNames = (services: PaidServices): string[] => {
@@ -78,7 +86,7 @@ export default function AdminUsers() {
     return names;
   };
 
-  if (isLoadingUser || !user || user.id !== 'admin-bypass') {
+  if (isLoadingUser || !user || user.id !== ADMIN_BYPASS_USER_ID) {
     return (
       <div className="flex items-center justify-center min-h-screen" data-testid="loading-spinner">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -148,7 +156,11 @@ export default function AdminUsers() {
                       <TableHead>Password</TableHead>
                       <TableHead>Signed Up</TableHead>
                       <TableHead>Last Login</TableHead>
+                      <TableHead>Subscription</TableHead>
+                      <TableHead>Payment Date</TableHead>
+                      <TableHead>Renewal Date</TableHead>
                       <TableHead>Purchased Services</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -195,6 +207,35 @@ export default function AdminUsers() {
                               : "Never"}
                           </div>
                         </TableCell>
+                        <TableCell data-testid={`text-subscription-${u.id}`}>
+                          {u.subscriptionStatus ? (
+                            <Badge variant={u.subscriptionStatus === 'active' ? 'default' : 'secondary'}>
+                              {u.subscriptionStatus}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">None</span>
+                          )}
+                        </TableCell>
+                        <TableCell data-testid={`text-payment-${u.id}`}>
+                          {u.lastPaymentDate ? (
+                            <div className="flex items-center gap-2">
+                              <CreditCard className="h-4 w-4 text-muted-foreground" />
+                              {format(new Date(u.lastPaymentDate), 'MMM d, yyyy')}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell data-testid={`text-renewal-${u.id}`}>
+                          {u.renewalDate ? (
+                            <div className="flex items-center gap-2">
+                              <Calendar className="h-4 w-4 text-muted-foreground" />
+                              {format(new Date(u.renewalDate), 'MMM d, yyyy')}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">-</span>
+                          )}
+                        </TableCell>
                         <TableCell data-testid={`text-services-${u.id}`}>
                           {u.paidServices && (u.paidServices.total || 0) > 0 ? (
                             <div className="flex flex-col gap-1">
@@ -205,6 +246,21 @@ export default function AdminUsers() {
                           ) : (
                             <span className="text-muted-foreground text-sm">None</span>
                           )}
+                        </TableCell>
+                        <TableCell data-testid={`actions-${u.id}`}>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => {
+                              toast({
+                                title: "Edit User",
+                                description: `Edit subscription for ${u.firstName} ${u.lastName}`,
+                              });
+                            }}
+                            title="Edit subscription"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
