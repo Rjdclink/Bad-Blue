@@ -28,6 +28,8 @@ import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import { setupUploadRoutes } from "./routes/upload.routes";
 import { setupConsultationRoutes } from "./routes/consultation.routes";
+import { setupAuthRoutes } from "./routes/auth.routes";
+import { setupPlansRoutes } from "./routes/plans.routes";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -807,6 +809,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupLawTypesRoutes(app);
   setupUploadRoutes(app);
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
+  
+  // ============================================
+  // AUTH & SUBSCRIPTION ROUTES (Phase 3)
+  // ============================================
+  setupAuthRoutes(app); // Signup and user status
+  setupPlansRoutes(app); // Active subscription plans
 
   // ============================================
   // PREVIEW ROUTES
