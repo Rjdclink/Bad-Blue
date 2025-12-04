@@ -10,18 +10,24 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Shield } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 import { LAW_TYPE_DATA, type LawTypeInfo } from "@shared/lawTypes";
 import { SEOHead } from "@/components/SEOHead";
 import { useAuth } from "@/hooks/useAuth";
+import { LawBookCheckbox } from "@/components/LawBookCheckbox";
 
 export default function WelcomePage() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const [selectedLawType, setSelectedLawType] = useState<string | null>(null);
+
+  // Image error handler
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    console.error('Image failed to load:', e.currentTarget.src);
+    e.currentTarget.style.display = 'none';
+  };
 
   // Handle law type selection (only one at a time)
   const handleSelection = (lawTypeId: string) => {
@@ -119,14 +125,7 @@ export default function WelcomePage() {
                     <CardHeader>
                       <div className="flex items-start gap-4">
                         <div className="flex items-center gap-3 flex-1">
-                          {/* Law book icon as decorative image */}
-                          <img 
-                            src="/images/Law-book.webp" 
-                            alt="" 
-                            className="w-5 h-5 object-contain mt-1"
-                            role="presentation"
-                          />
-                          <Checkbox
+                          <LawBookCheckbox
                             checked={isSelected}
                             onCheckedChange={() => handleSelection(lawType.id)}
                             className="mt-1"
@@ -172,14 +171,7 @@ export default function WelcomePage() {
                 >
                   <CardHeader className="pb-4">
                     <div className="flex items-start gap-3">
-                      {/* Law book icon as decorative image */}
-                      <img 
-                        src="/images/Law-book.webp" 
-                        alt="" 
-                        className="w-5 h-5 object-contain mt-1"
-                        role="presentation"
-                      />
-                      <Checkbox
+                      <LawBookCheckbox
                         checked={isSelected}
                         onCheckedChange={() => handleSelection(lawType.id)}
                         className="mt-1"

@@ -26,6 +26,12 @@ export default function LegalizoAuth() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Image error handler
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    console.error('Image failed to load:', e.currentTarget.src);
+    e.currentTarget.style.display = 'none';
+  };
+
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
@@ -116,8 +122,11 @@ export default function LegalizoAuth() {
         
         // Check subscription status
         if (data.hasActiveSubscription) {
-          // Redirect to root (Welcome Page)
-          setLocation('/');
+          // Add small delay to ensure session is ready
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Force page reload to ensure auth state is fresh
+          window.location.href = '/';
         } else {
           // Show payment button
           setShowPayment(true);

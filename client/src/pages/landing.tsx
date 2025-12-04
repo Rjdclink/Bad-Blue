@@ -20,6 +20,12 @@ export default function Landing() {
   const [, setLocation] = useLocation();
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   
+  // Image error handler
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    console.error('Image failed to load:', e.currentTarget.src);
+    e.currentTarget.style.display = 'none';
+  };
+  
   const baseUrl = import.meta.env.VITE_BASE_URL || "https://bad-blue.com";
   
   // Use PAGE_FAQ_CONFIG from seoConfig.ts for consistent, page-specific FAQs
@@ -172,6 +178,16 @@ export default function Landing() {
             <Badge className="bg-primary/90 text-white border-white/20 px-4 py-2 text-sm backdrop-blur-sm">
               🤖 Powered by 7 AI Models Working in Parallel
             </Badge>
+          </div>
+
+          {/* LegalWhat Icon */}
+          <div className="mb-6 flex justify-center">
+            <img 
+              src="/images/Legal What Icon.png" 
+              alt="LegalWhat" 
+              className="w-24 h-24 object-contain drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]"
+              onError={handleImageError}
+            />
           </div>
           
           <h1 className="text-white text-4xl md:text-5xl font-bold leading-tight mb-8">

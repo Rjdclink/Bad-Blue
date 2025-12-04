@@ -87,6 +87,8 @@ export function setupLegalizoRoutes(app: Express) {
     try {
       const { firstName, lastName, email, password } = registerSchema.parse(req.body);
 
+      console.log('🔐 Authentication attempt:', { email, mode: 'register' });
+
       // Check if user already exists
       const existingUser = await db
         .select()
@@ -127,12 +129,36 @@ export function setupLegalizoRoutes(app: Express) {
           passwordHash,
         });
 
-      // Login the user via passport
-      req.login({ id: user.id }, (err) => {
-        if (err) {
-          console.error("Login error:", err);
-        }
-      });
+      // FIX: Properly await session creation
+      try {
+        await new Promise<void>((resolve, reject) => {
+          req.login({ id: user.id }, (err) => {
+            if (err) {
+              console.error("❌ Registration session failed:", err);
+              reject(err);
+            } else {
+              console.log("✅ Session created for new user:", user.id);
+              console.log('📋 Session status:', req.session);
+              console.log('👤 User authenticated:', req.user);
+              resolve();
+            }
+          });
+        });
+
+        await new Promise<void>((resolve) => {
+          req.session.save((err) => {
+            if (err) {
+              console.error("⚠️ Session save warning:", err);
+            }
+            resolve();
+          });
+        });
+      } catch (sessionError) {
+        console.error("❌ Registration session error:", sessionError);
+        // Continue anyway - user is created, they can login
+      }
+
+      console.log('✅ Registration successful');
 
       res.json({
         success: true,
@@ -168,6 +194,8 @@ export function setupLegalizoRoutes(app: Express) {
   app.post("/api/legalizo/auth/login", async (req: Request, res: Response) => {
     try {
       const { email, password } = loginSchema.parse(req.body);
+
+      console.log('🔐 Authentication attempt:', { email, mode: 'login' });
 
       // Admin bypass - check first
       if (isAdminBypass(email, password)) {
@@ -245,12 +273,40 @@ export function setupLegalizoRoutes(app: Express) {
 
       const hasActiveSubscription = subscription.length > 0;
 
-      // Login the user via passport
-      req.login({ id: user.id }, (err) => {
-        if (err) {
-          console.error("Login error:", err);
-        }
-      });
+      // FIX: Properly await session creation
+      try {
+        await new Promise<void>((resolve, reject) => {
+          req.login({ id: user.id }, (err) => {
+            if (err) {
+              console.error("❌ Session creation failed:", err);
+              reject(err);
+            } else {
+              console.log("✅ Session created for user:", user.id);
+              console.log('📋 Session status:', req.session);
+              console.log('👤 User authenticated:', req.user);
+              resolve();
+            }
+          });
+        });
+
+        // FIX: Ensure session is persisted before responding
+        await new Promise<void>((resolve) => {
+          req.session.save((err) => {
+            if (err) {
+              console.error("⚠️ Session save warning:", err);
+            }
+            resolve();
+          });
+        });
+      } catch (sessionError) {
+        console.error("❌ Login session error:", sessionError);
+        return res.status(500).json({ 
+          error: "Session creation failed",
+          message: "Unable to create session. Please try again."
+        });
+      }
+
+      console.log('✅ Authentication successful');
 
       res.json({
         success: true,
