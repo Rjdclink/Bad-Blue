@@ -30,6 +30,8 @@ const optionalDirs = [
   'public/images', // Git-tracked directory, may not exist after build copy
 ];
 
+const MAX_FILES_TO_DISPLAY = 15;
+
 let hasErrors = false;
 
 // Check required directories
@@ -73,15 +75,15 @@ const publicPath = path.resolve(projectRoot, 'public');
 if (fs.existsSync(publicPath)) {
   const files = fs.readdirSync(publicPath);
   console.log(`  Found ${files.length} items:`);
-  files.slice(0, 15).forEach(file => {
+  files.slice(0, MAX_FILES_TO_DISPLAY).forEach(file => {
     const filePath = path.join(publicPath, file);
     const stats = fs.statSync(filePath);
     const type = stats.isDirectory() ? 'DIR' : 'FILE';
     const size = stats.isDirectory() ? '' : ` (${(stats.size / 1024).toFixed(2)} KB)`;
     console.log(`    - ${file} [${type}]${size}`);
   });
-  if (files.length > 15) {
-    console.log(`    ... and ${files.length - 15} more`);
+  if (files.length > MAX_FILES_TO_DISPLAY) {
+    console.log(`    ... and ${files.length - MAX_FILES_TO_DISPLAY} more`);
   }
 }
 
