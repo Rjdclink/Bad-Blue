@@ -235,6 +235,7 @@ export class DatabaseStorage implements IStorage {
       firstName: users.firstName,
       lastName: users.lastName,
       profileImageUrl: users.profileImageUrl,
+      status: users.status,
       squareCustomerId: users.squareCustomerId,
       hasPaidForAccess: users.hasPaidForAccess,
       accessPaymentId: users.accessPaymentId,
