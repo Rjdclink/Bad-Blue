@@ -168,20 +168,42 @@ export default function LegalizoAuth() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted flex items-center justify-center px-4">
+    <div className="min-h-screen relative flex items-center justify-center px-4">
       <SEOHead
         title={`${mode === 'signup' ? 'Sign Up' : 'Login'} - LegalWhat`}
         description="Join LegalWhat and access professional AI-powered legal services"
       />
 
-      <div className="w-full max-w-md">
+      {/* Background with courthouse image on both sides */}
+      <div className="fixed inset-0 -z-10 overflow-hidden">
+        {/* Left courthouse image */}
+        <div 
+          className="absolute left-0 top-0 bottom-0 w-1/3 bg-cover bg-center"
+          style={{ backgroundImage: "url(/images/courthouse-background.jpg)" }}
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-black/40 to-black/70" />
+        </div>
+        
+        {/* Center dark area for card */}
+        <div className="absolute left-1/3 right-1/3 top-0 bottom-0 bg-gradient-to-b from-slate-900 to-slate-800" />
+        
+        {/* Right courthouse image */}
+        <div 
+          className="absolute right-0 top-0 bottom-0 w-1/3 bg-cover bg-center"
+          style={{ backgroundImage: "url(/images/courthouse-background.jpg)" }}
+        >
+          <div className="absolute inset-0 bg-gradient-to-l from-black/40 to-black/70" />
+        </div>
+      </div>
+
+      <div className="w-full max-w-md relative z-10">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-2 mb-4">
             <Shield className="w-10 h-10 text-primary" />
-            <h1 className="text-3xl font-bold">LegalWhat</h1>
+            <h1 className="text-3xl font-bold text-white">LegalWhat</h1>
           </div>
-          <p className="text-muted-foreground">
+          <p className="text-white/90">
             {mode === 'signup' 
               ? 'Create your account to get started' 
               : 'Welcome back! Please login to continue'}
@@ -189,7 +211,7 @@ export default function LegalizoAuth() {
         </div>
 
         {/* Auth Form */}
-        <Card>
+        <Card className="backdrop-blur-sm bg-white/95 shadow-2xl">
           <CardHeader>
             <CardTitle>
               {mode === 'signup' ? 'Sign Up' : 'Login'}

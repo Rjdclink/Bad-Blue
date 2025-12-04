@@ -5,7 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Shield, Search, FileText, TrendingUp, Upload, Database, Bell, Check, Scale, ArrowRight, Users } from "lucide-react";
 import { LanguageSelectorLight } from "@/components/LanguageSelectorLight";
-import heroImage from "@assets/generated_images/Civic_accountability_hero_image_a13a823c.png";
+// Use istockphoto.jpg from public/images as background
+const heroImage = "/images/istockphoto.jpg";
 import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
