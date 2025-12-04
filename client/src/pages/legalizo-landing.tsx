@@ -17,6 +17,31 @@ export default function LegalWhatLanding() {
         ogDescription="Professional legal services with AI assistance for all types of law. Subscribe now for $25.99/month."
       />
 
+      {/* Multi-Agent System Description - Prominent Placement */}
+      <section className="container mx-auto px-4 py-8">
+        <div className="bg-gradient-to-r from-slate-800/80 via-slate-900/80 to-slate-800/80 rounded-2xl p-8 border border-yellow-600/30 shadow-2xl">
+          <div className="text-center space-y-4">
+            <h2 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 bg-clip-text text-transparent">
+              Thirteen-Model Multi-Agent Legal Intelligence System
+            </h2>
+            <div className="text-gray-200 text-base md:text-lg leading-relaxed space-y-4 max-w-5xl mx-auto">
+              <p>
+                This platform is a thirteen-model, cross-computational, tandem, parallel-processing, orchestrated multi-agent legal intelligence system—purpose-built for online legal consultation, structured document drafting, procedural compliance review, substantive legal analysis, and people-information retrieval.
+              </p>
+              <p>
+                Each model functions as a distinct legal practitioner—handling issue spotting, statutory parsing, precedent integration, burden-of-proof evaluation, argument stress-testing, drafting automation, jurisdictional rule enforcement, and OSINT-based fact development—operating together under a judicial-grade orchestration spine.
+              </p>
+              <p>
+                Agent outputs converge through a shared reasoning lattice, enabling parallel legal inference, rapid refinement of theory and text, cross-validating analysis sharing, and disciplined consensus formation. A meta-controller governs escalation, resolves doctrinal conflict, applies expertise weighting, and maintains persistent stateful legal context across all interactions.
+              </p>
+              <p>
+                The result is a coalition-class legal framework—a digital alliance where thirteen coordinated AI models function like a federation of law firms, executing multi-perspective legal cognition, rule-aligned drafting, adversarial review, and fact-driven optimization inside a synchronized computational ecosystem engineered explicitly for the practice of law.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Hero Section with Lady of Justice Photo */}
       <section className="container mx-auto px-4 py-16">
         <div className="grid md:grid-cols-2 gap-12 items-center">
@@ -64,7 +89,7 @@ export default function LegalWhatLanding() {
 
             <div className="space-y-4">
               <p className="text-lg leading-relaxed text-gray-300">
-                LegalWhat is a revolutionary subscription-based legal platform that democratizes access to professional legal services through cutting-edge AI technology. Our platform combines the expertise of eight coordinated AI systems with comprehensive legal knowledge to provide you with unparalleled legal assistance.
+                LegalWhat is a revolutionary subscription-based legal platform that democratizes access to professional legal services through cutting-edge AI technology. Our platform combines the expertise of thirteen coordinated AI systems with comprehensive legal knowledge to provide you with unparalleled legal assistance.
               </p>
 
               <div className="grid gap-4">
@@ -87,7 +112,7 @@ export default function LegalWhatLanding() {
                 <div className="flex items-start gap-3">
                   <CheckCircle className="w-6 h-6 text-green-500 flex-shrink-0 mt-1" />
                   <div>
-                    <p className="font-semibold text-white">Eight AI Systems Working in Harmony</p>
+                    <p className="font-semibold text-white">Thirteen AI Systems Working in Harmony</p>
                     <p className="text-sm text-gray-400">Benefit from coordinated AI for classification, drafting, optimization, validation, and more</p>
                   </div>
                 </div>
@@ -217,10 +242,10 @@ export default function LegalWhatLanding() {
       <section className="container mx-auto px-4 py-16">
         <div className="bg-slate-800/30 rounded-2xl p-8 border border-slate-700">
           <h2 className="text-3xl font-bold text-center mb-4 text-white">
-            Powered by Eight Coordinated AI Systems
+            Powered by Thirteen Coordinated AI Systems
           </h2>
           <p className="text-center text-gray-400 mb-12 max-w-2xl mx-auto">
-            Our platform leverages multiple specialized AI models working in parallel to provide you with the most accurate and comprehensive legal assistance
+            Our platform leverages thirteen specialized AI models working in parallel to provide you with the most accurate and comprehensive legal assistance
           </p>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -233,6 +258,11 @@ export default function LegalWhatLanding() {
               { title: 'Prediction AI', desc: 'Analyzes potential outcomes based on legal precedents' },
               { title: 'Auto-fill AI', desc: 'Intelligently populates repetitive legal data fields' },
               { title: 'Summary AI', desc: 'Synthesizes consultation data for document creation' },
+              { title: 'Issue Spotting AI', desc: 'Identifies critical legal issues and potential claims' },
+              { title: 'Precedent Integration AI', desc: 'Analyzes and applies relevant case law' },
+              { title: 'Compliance AI', desc: 'Ensures procedural and jurisdictional compliance' },
+              { title: 'OSINT Research AI', desc: 'Deep people and fact-based information retrieval' },
+              { title: 'Meta-Controller AI', desc: 'Orchestrates all systems and resolves conflicts' },
             ].map((system, index) => (
               <Card key={index} className="bg-slate-900/50 border-slate-600 hover:border-yellow-600/30 transition-colors">
                 <CardHeader className="pb-3">
