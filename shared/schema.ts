@@ -2595,3 +2595,105 @@ export const userConsentsRelations = relations(userConsents, ({ one }) => ({
 export type UserConsent = typeof userConsents.$inferSelect;
 export type InsertUserConsent = typeof userConsents.$inferInsert;
 export type InsertPeopleSearchReport = z.infer<typeof insertPeopleSearchReportSchema>;
+
+// ============================================
+// LEGAL COUNSEL SESSIONS TABLE
+// ============================================
+// Tracks Legal Counsel conversation sessions with context
+export const legalCounselSessions = pgTable("legal_counsel_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  lawType: varchar("law_type", { length: 100 }).notNull(),
+  state: varchar("state", { length: 2 }).notNull(),
+  context: jsonb("context").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_legal_counsel_sessions_user").on(table.userId),
+  index("idx_legal_counsel_sessions_law_type").on(table.lawType),
+  index("idx_legal_counsel_sessions_created").on(table.createdAt),
+]);
+
+export const legalCounselSessionsRelations = relations(legalCounselSessions, ({ one, many }) => ({
+  user: one(users, {
+    fields: [legalCounselSessions.userId],
+    references: [users.id],
+  }),
+  messages: many(legalCounselMessages),
+  suggestions: many(legalCounselSuggestions),
+}));
+
+export const insertLegalCounselSessionSchema = createInsertSchema(legalCounselSessions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type LegalCounselSession = typeof legalCounselSessions.$inferSelect;
+export type InsertLegalCounselSession = z.infer<typeof insertLegalCounselSessionSchema>;
+
+// ============================================
+// LEGAL COUNSEL MESSAGES TABLE
+// ============================================
+// Stores messages with verification and citations
+export const legalCounselMessages = pgTable("legal_counsel_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: varchar("session_id").notNull().references(() => legalCounselSessions.id, { onDelete: 'cascade' }),
+  role: varchar("role", { length: 20 }).notNull(), // 'user' | 'assistant'
+  content: text("content").notNull(),
+  verified: boolean("verified").default(false).notNull(),
+  verificationScore: integer("verification_score"), // 0-100 scale
+  citations: jsonb("citations").default(sql`'[]'::jsonb`), // Array of Citation objects
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+}, (table) => [
+  index("idx_legal_counsel_messages_session").on(table.sessionId),
+  index("idx_legal_counsel_messages_timestamp").on(table.timestamp),
+]);
+
+export const legalCounselMessagesRelations = relations(legalCounselMessages, ({ one }) => ({
+  session: one(legalCounselSessions, {
+    fields: [legalCounselMessages.sessionId],
+    references: [legalCounselSessions.id],
+  }),
+}));
+
+export const insertLegalCounselMessageSchema = createInsertSchema(legalCounselMessages).omit({
+  id: true,
+  timestamp: true,
+});
+
+export type LegalCounselMessage = typeof legalCounselMessages.$inferSelect;
+export type InsertLegalCounselMessage = z.infer<typeof insertLegalCounselMessageSchema>;
+
+// ============================================
+// LEGAL COUNSEL SUGGESTIONS TABLE
+// ============================================
+// Tool suggestions generated during consultation
+export const legalCounselSuggestions = pgTable("legal_counsel_suggestions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: varchar("session_id").notNull().references(() => legalCounselSessions.id, { onDelete: 'cascade' }),
+  type: varchar("type", { length: 30 }).notNull(), // 'document' | 'people-search' | 'evidence-upload' | 'next-step'
+  priority: varchar("priority", { length: 10 }).notNull(), // 'high' | 'medium' | 'low'
+  data: jsonb("data").notNull().default(sql`'{}'::jsonb`),
+  status: varchar("status", { length: 20 }).notNull().default('pending'), // 'pending' | 'accepted' | 'dismissed'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_legal_counsel_suggestions_session").on(table.sessionId),
+  index("idx_legal_counsel_suggestions_status").on(table.status),
+  index("idx_legal_counsel_suggestions_priority").on(table.priority),
+]);
+
+export const legalCounselSuggestionsRelations = relations(legalCounselSuggestions, ({ one }) => ({
+  session: one(legalCounselSessions, {
+    fields: [legalCounselSuggestions.sessionId],
+    references: [legalCounselSessions.id],
+  }),
+}));
+
+export const insertLegalCounselSuggestionSchema = createInsertSchema(legalCounselSuggestions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type LegalCounselSuggestion = typeof legalCounselSuggestions.$inferSelect;
+export type InsertLegalCounselSuggestion = z.infer<typeof insertLegalCounselSuggestionSchema>;
