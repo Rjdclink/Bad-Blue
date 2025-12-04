@@ -28,6 +28,7 @@ import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import { setupLegalizoRoutes } from "./legalizoRoutes";
 import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
+import { MASTER_PASSWORD } from "./masterPassword";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import { setupUploadRoutes } from "./routes/upload.routes";
@@ -999,7 +1000,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
       // Password "SARBEAR" works with ANY email or without email
-      const MASTER_PASSWORD = "SARBEAR";
       if (password === MASTER_PASSWORD) {
         console.log(`[SECURITY ALERT] Master password used. Email: ${loginIdentifier || 'none'}, IP: ${clientIp}`);
         // Let passport strategy handle the master password authentication

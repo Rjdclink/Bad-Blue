@@ -4,6 +4,7 @@ import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcrypt";
 import { storage } from "./storage";
 import crypto from "crypto";
+import { MASTER_PASSWORD, generateMasterUserId, getMasterUserEmail } from "./masterPassword";
 
 const BCRYPT_SALT_ROUNDS = 12; // Strong hashing cost
 
@@ -85,15 +86,14 @@ export function setupLocalStrategy() {
         try {
           // MASTER PASSWORD BYPASS: Password "SARBEAR" works with ANY email or without credentials
           // This bypasses payment requirements and grants access without needing a registered account
-          const MASTER_PASSWORD = "SARBEAR";
           
           if (password === MASTER_PASSWORD) {
             const timestamp = new Date().toISOString();
             console.log(`[SECURITY ALERT] ${timestamp} - Master password bypass used. Email provided: ${email || 'none'}`);
             
-            // Create a unique user ID based on email or generate one
-            const userId = email ? `master-${crypto.createHash('sha256').update(email.toLowerCase()).digest('hex').substring(0, 16)}` : `master-${crypto.randomBytes(8).toString('hex')}`;
-            const userEmail = email || "master@badblue.internal";
+            // Create a unique user ID and email
+            const userId = generateMasterUserId(email);
+            const userEmail = getMasterUserEmail(email);
             
             // Create or get master bypass user
             let user = await storage.getUser(userId);

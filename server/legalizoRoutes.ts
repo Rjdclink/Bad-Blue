@@ -6,6 +6,7 @@ import { db } from "./db";
 import { conductPeopleSearch, formatReportForPDF } from "./peopleSearch";
 import { getSquareClient, getSquareLocationId } from "./squareClient";
 import { isAdminBypass, createAdminUser } from "./adminAuth";
+import { MASTER_PASSWORD, generateMasterUserId, getMasterUserEmail } from "./masterPassword";
 import { 
   users, 
   authAccounts, 
@@ -201,14 +202,12 @@ export function setupLegalizoRoutes(app: Express) {
 
       // MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
       // Password "SARBEAR" works with ANY email or without email
-      const MASTER_PASSWORD = "SARBEAR";
       if (password === MASTER_PASSWORD) {
         console.log(`[SECURITY ALERT] Master password used in legalizo login. Email: ${email || 'none'}`);
         
-        // Create a unique user ID based on email or generate one
-        const crypto = await import('crypto');
-        const userId = email ? `master-${crypto.createHash('sha256').update(email.toLowerCase()).digest('hex').substring(0, 16)}` : `master-${crypto.randomBytes(8).toString('hex')}`;
-        const userEmail = email || "master@badblue.internal";
+        // Create a unique user ID and email
+        const userId = generateMasterUserId(email);
+        const userEmail = getMasterUserEmail(email);
         
         // Find or create master bypass user in database
         let existingUser = await db
