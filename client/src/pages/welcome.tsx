@@ -51,7 +51,7 @@ export default function WelcomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
       <SEOHead
-        title="Welcome to Legalezo - AI Legal Platform"
+        title="Welcome to LegalWhat - AI Legal Platform"
         description="Select your legal area to get started with AI-powered legal assistance"
       />
 
@@ -62,7 +62,7 @@ export default function WelcomePage() {
             <div className="flex items-center gap-3">
               <Shield className="h-8 w-8 text-primary" />
               <div>
-                <h1 className="text-2xl font-bold">Legalezo</h1>
+                <h1 className="text-2xl font-bold">LegalWhat</h1>
                 <p className="text-xs text-muted-foreground">AI Legal Platform</p>
               </div>
             </div>
@@ -206,7 +206,7 @@ export default function WelcomePage() {
       {/* Footer */}
       <footer className="border-t mt-12 py-6 bg-muted/30">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>© 2024 Legalezo. AI-powered legal platform.</p>
+          <p>© 2024 LegalWhat. AI-powered legal platform.</p>
           <p className="mt-1">Featuring Law Enforcement Accountability and 29 other legal areas.</p>
         </div>
       </footer>

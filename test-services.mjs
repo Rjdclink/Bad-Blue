@@ -16,7 +16,7 @@ try {
   // Check if getGenerativeModel exists
   console.log('   getGenerativeModel exists:', typeof genAI.getGenerativeModel);
   
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   console.log('   Model created');
   
   const result = await model.generateContent('Say "Hello"');
