@@ -15,6 +15,9 @@ declare global {
       id?: string;
       isAdmin?: boolean;
     }
+    interface Request {
+      rawBody?: Buffer;
+    }
   }
 }
 import { getSquareClient, getSquareLocationId } from "./squareClient";
@@ -2429,7 +2432,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
       // Verify webhook signature using HMAC-SHA256
       // Square documentation: HMAC-SHA256(notification_url + request_body, signature_key)
-      const rawBody = (req as any).rawBody;
+      const rawBody = req.rawBody;
       if (!rawBody) {
         console.error('Raw body not available for webhook signature verification');
         return res.status(500).send("Webhook configuration error");

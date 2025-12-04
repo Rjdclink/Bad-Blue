@@ -70,7 +70,7 @@ class JobQueue extends EventEmitter {
       id?: string;
     } = {}
   ): Promise<string> {
-    const id = options.id || `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const id = options.id || `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
     
     const job: Job = {
       id,
@@ -279,13 +279,14 @@ export const jobQueue = new JobQueue({
 
 // Register common job handlers
 jobQueue.registerHandler('email', async (job) => {
-  const { sendEmail } = await import('./emailService');
-  // Email sending would be implemented here
+  // Email job handler placeholder
+  // Implement actual email sending logic as needed
   console.log('Email job processed:', job.id);
 });
 
 jobQueue.registerHandler('document-generation', async (job) => {
-  // Document generation would be implemented here
+  // Document generation job handler placeholder
+  // Implement actual document generation logic as needed
   console.log('Document generation job processed:', job.id);
 });
 
