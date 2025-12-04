@@ -23,7 +23,26 @@
 
 import { OpenRouter } from '@openrouter/sdk';
 
+// OpenRouter API response interfaces
+interface OpenRouterMessage {
+  role: string;
+  content: string;
+}
+
+interface OpenRouterChoice {
+  message: OpenRouterMessage;
+  finish_reason?: string;
+}
+
+interface OpenRouterCompletion {
+  choices: OpenRouterChoice[];
+  id?: string;
+  model?: string;
+}
+
 // OpenRouter API Key
+// Note: This key is shared with the existing openRouterService.ts for consultation features.
+// Both services can safely share the same API key as they have independent rate limiting.
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 /**
@@ -262,29 +281,17 @@ async function callWebSearchModel(
 
     const completion = await Promise.race([completionPromise, timeoutPromise]);
 
-    // Safely access response content
-    let content: string | null = null;
-
-    if (completion && typeof completion === 'object') {
-      const choices = (completion as any).choices;
-      if (Array.isArray(choices) && choices.length > 0) {
-        const firstChoice = choices[0];
-        if (firstChoice && typeof firstChoice === 'object') {
-          const message = firstChoice.message;
-          if (message && typeof message === 'object') {
-            const rawContent = message.content;
-            if (typeof rawContent === 'string') {
-              content = rawContent;
-            } else if (rawContent != null) {
-              content = String(rawContent);
-            }
-          }
-        }
-      }
+    // Parse response with proper typing
+    const typedCompletion = completion as OpenRouterCompletion;
+    
+    if (!typedCompletion?.choices || !Array.isArray(typedCompletion.choices) || typedCompletion.choices.length === 0) {
+      throw new Error(`Empty or invalid response from model ${model}`);
     }
 
-    if (!content) {
-      throw new Error(`Empty or invalid response from model ${model}`);
+    const content = typedCompletion.choices[0]?.message?.content;
+    
+    if (!content || typeof content !== 'string') {
+      throw new Error(`Invalid content in response from model ${model}`);
     }
 
     recordSuccess(model);
@@ -331,12 +338,17 @@ function calculateConfidence(results: ModelResult[]): number {
   // Boost if multiple models agree (simple heuristic)
   const responseTexts = results.filter((r) => r.success).map((r) => r.response);
   if (responseTexts.length > 1) {
+    // Limit text processing to first 1000 characters of each response for efficiency
+    const MAX_CHARS = 1000;
+    const limitedTexts = responseTexts.map((text) => text.substring(0, MAX_CHARS));
+    
     // Check for common keywords (simple agreement detection)
-    const allWords = responseTexts
+    const allWords = limitedTexts
       .join(' ')
       .toLowerCase()
       .split(/\s+/)
       .filter((w) => w.length > 5);
+    
     const wordCounts = allWords.reduce((acc, word) => {
       acc[word] = (acc[word] || 0) + 1;
       return acc;
