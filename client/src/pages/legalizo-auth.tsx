@@ -26,6 +26,12 @@ export default function LegalizoAuth() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Image error handler
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    console.error('Image failed to load:', e.currentTarget.src);
+    e.currentTarget.style.display = 'none';
+  };
+
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
@@ -116,8 +122,21 @@ export default function LegalizoAuth() {
         
         // Check subscription status
         if (data.hasActiveSubscription) {
-          // Redirect to root (Welcome Page)
-          setLocation('/');
+          // Verify session is ready by checking user endpoint
+          try {
+            const verifyResponse = await fetch('/api/user');
+            if (verifyResponse.ok) {
+              // Session is ready, redirect
+              window.location.href = '/';
+            } else {
+              // Session not ready, wait briefly and try redirect anyway
+              await new Promise(resolve => setTimeout(resolve, 300));
+              window.location.href = '/';
+            }
+          } catch (error) {
+            // If verification fails, still try to redirect
+            window.location.href = '/';
+          }
         } else {
           // Show payment button
           setShowPayment(true);
@@ -176,23 +195,39 @@ export default function LegalizoAuth() {
 
       {/* Background with courthouse image on both sides */}
       <div className="fixed inset-0 -z-10 overflow-hidden">
-        {/* Left courthouse image */}
+        {/* Left courthouse image - Enhanced and formatted */}
         <div 
-          className="absolute left-0 top-0 bottom-0 w-1/3 bg-cover bg-center"
-          style={{ backgroundImage: "url(/images/courthouse-background.jpg)" }}
+          className="absolute left-0 top-0 bottom-0 w-1/3 bg-cover bg-center bg-no-repeat"
+          style={{ 
+            backgroundImage: "url(/images/courthouse-background.jpg)",
+            backgroundSize: 'cover',
+            backgroundPosition: 'center center',
+            imageRendering: 'crisp-edges'
+          }}
         >
-          <div className="absolute inset-0 bg-gradient-to-r from-black/40 to-black/70" />
+          {/* Enhanced gradient overlay for better contrast */}
+          <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-black/60 to-black/75" />
         </div>
         
-        {/* Center dark area for card */}
-        <div className="absolute left-1/3 right-1/3 top-0 bottom-0 bg-gradient-to-b from-slate-900 to-slate-800" />
+        {/* Center dark area for card - Enhanced with gradient */}
+        <div className="absolute left-1/3 right-1/3 top-0 bottom-0 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900">
+          {/* Subtle texture overlay */}
+          <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMDIpIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-30" />
+        </div>
         
-        {/* Right courthouse image */}
+        {/* Right courthouse image - Enhanced and formatted (mirrored) */}
         <div 
-          className="absolute right-0 top-0 bottom-0 w-1/3 bg-cover bg-center"
-          style={{ backgroundImage: "url(/images/courthouse-background.jpg)" }}
+          className="absolute right-0 top-0 bottom-0 w-1/3 bg-cover bg-center bg-no-repeat"
+          style={{ 
+            backgroundImage: "url(/images/courthouse-background.jpg)",
+            backgroundSize: 'cover',
+            backgroundPosition: 'center center',
+            imageRendering: 'crisp-edges',
+            transform: 'scaleX(-1)' // Mirror the image for symmetry
+          }}
         >
-          <div className="absolute inset-0 bg-gradient-to-l from-black/40 to-black/70" />
+          {/* Enhanced gradient overlay for better contrast */}
+          <div className="absolute inset-0 bg-gradient-to-l from-black/50 via-black/60 to-black/75" style={{ transform: 'scaleX(-1)' }} />
         </div>
       </div>
 

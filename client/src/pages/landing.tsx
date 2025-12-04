@@ -20,6 +20,12 @@ export default function Landing() {
   const [, setLocation] = useLocation();
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   
+  // Image error handler
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    console.error('Image failed to load:', e.currentTarget.src);
+    e.currentTarget.style.display = 'none';
+  };
+  
   const baseUrl = import.meta.env.VITE_BASE_URL || "https://bad-blue.com";
   
   // Use PAGE_FAQ_CONFIG from seoConfig.ts for consistent, page-specific FAQs
@@ -149,13 +155,20 @@ export default function Landing() {
         structuredData={structuredData}
       />
       {/* Hero Section */}
-      <section className="relative min-h-[100vh] flex items-center justify-center py-12">
-        {/* Background Image with Dark Wash */}
+      <section className="relative min-h-[100vh] flex items-center justify-center py-12 overflow-hidden">
+        {/* Background Image with Optimized Display */}
         <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{ backgroundImage: `url(${heroImage})` }}
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{ 
+            backgroundImage: `url(${heroImage})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center center'
+          }}
         >
-          <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/60 to-black/70" />
+          {/* Enhanced gradient overlay for better text readability */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/70 to-black/80" />
+          {/* Additional vignette effect */}
+          <div className="absolute inset-0 bg-radial-gradient from-transparent via-black/20 to-black/50" />
         </div>
 
         {/* Language Selector - Fixed top right */}
@@ -168,21 +181,38 @@ export default function Landing() {
         {/* Hero Content */}
         <div className="relative z-10 max-w-4xl mx-auto px-4 text-center">
           {/* AI Badge */}
-          <div className="mb-6">
-            <Badge className="bg-primary/90 text-white border-white/20 px-4 py-2 text-sm backdrop-blur-sm">
+          <div className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <Badge className="bg-primary/90 text-white border-white/20 px-6 py-2.5 text-sm font-medium backdrop-blur-md shadow-lg">
               🤖 Powered by 7 AI Models Working in Parallel
             </Badge>
           </div>
+
+          {/* LegalWhat Icon - Medium-sized Prominent Display */}
+          <div className="mb-8 flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-700 delay-150">
+            <div className="relative">
+              {/* Glow effect behind icon */}
+              <div className="absolute inset-0 bg-primary/30 blur-2xl rounded-full scale-125" />
+              {/* Icon container with enhanced styling */}
+              <div className="relative bg-white/10 backdrop-blur-md p-4 rounded-xl border-2 border-white/30 shadow-2xl hover:scale-105 transition-transform duration-300">
+                <img 
+                  src="/images/Legal What Icon.png" 
+                  alt="LegalWhat - AI Legal Platform" 
+                  className="w-20 h-20 md:w-24 md:h-24 object-contain filter drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]"
+                  onError={handleImageError}
+                />
+              </div>
+            </div>
+          </div>
           
-          <h1 className="text-white text-4xl md:text-5xl font-bold leading-tight mb-8">
+          <h1 className="text-white text-4xl md:text-5xl lg:text-6xl font-bold leading-tight mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300 drop-shadow-2xl">
             Law Enforcement Accountability Service
           </h1>
-          <p className="text-white/90 text-base md:text-lg mb-6 leading-relaxed max-w-3xl mx-auto">
+          <p className="text-white/95 text-base md:text-lg mb-8 leading-relaxed max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 delay-500 drop-shadow-lg">
             Convenient and affordable access to legal tools, including AI legal support, in-depth officer searches with detailed background reports, FOIA requests (auto submitted), circulation of persuasive petition for officer resignation, elaborate officer complaints (auto submitted) and efficient 1983 civil suits that include tort notice and cover sheet. All without the need to leave home.
           </p>
           
           {/* Trust Signals */}
-          <div className="flex flex-wrap items-center justify-center gap-4 mb-10 text-sm text-white/90">
+          <div className="flex flex-wrap items-center justify-center gap-4 mb-10 text-sm text-white/95 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-700">
             <div className="flex items-center gap-2">
               <span className="text-green-400">✓</span>
               <span>7 AI Models Analyze Every Search</span>
