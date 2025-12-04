@@ -1,4 +1,5 @@
 import { type Express, type Response, type Request } from 'express';
+import crypto from 'crypto';
 import { asyncHandler } from '../errorHandler';
 import { isAuthenticated } from '../auth';
 import { createLogger } from '../logger';
