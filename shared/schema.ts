@@ -41,8 +41,8 @@ export const users = pgTable("users", {
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
 
-  // Subscription status
-  status: varchar("status", { length: 32 }).default('pending_payment'),
+  // User subscription status (active, inactive, suspended, pending_payment, past_due, canceled)
+  status: varchar("status", { length: 50 }).notNull().default('active'),
   
   // Square customer tracking
   squareCustomerId: varchar("square_customer_id"),
@@ -57,7 +57,10 @@ export const users = pgTable("users", {
 
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_users_email").on(table.email),
+  index("idx_users_status").on(table.status),
+]);
 
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;

@@ -24,6 +24,7 @@ import type { Server } from "http";
 
 // Static imports for migrations - ensures esbuild bundles them (dynamic imports don't work with bundlers)
 import { runSquareMigration } from "./migrations/runSquareMigration";
+import { addUsersStatusColumn } from "./migrations/add_users_status_column";
 import { createCoreTables } from "./migrations/createCoreTables";
 import { createSubAgentTables } from "./migrations/createSubAgentTables";
 import { createTokenMetricsTables } from "./migrations/createTokenMetrics";
@@ -188,6 +189,7 @@ async function runMigrations(): Promise<void> {
   // Dynamic imports don't work with bundlers because they can't analyze variable-based import paths
   const migrations: Array<{ name: string; fn: () => Promise<unknown> }> = [
     { name: 'Square Payment Migration', fn: runSquareMigration },
+    { name: 'Users Status Column', fn: addUsersStatusColumn },
     { name: 'Core tables', fn: createCoreTables },
     { name: 'Sub-Agent tables', fn: createSubAgentTables },
     { name: 'Token Metrics tables', fn: createTokenMetricsTables },
