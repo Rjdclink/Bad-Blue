@@ -1,4 +1,4 @@
-// API Routes - BadBlue
+// API Routes - LegalWhat
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 
@@ -1233,7 +1233,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           order: {
             locationId,
             lineItems: [{
-              name: 'BadBlue Complaint Filing',
+              name: 'LegalWhat Complaint Filing',
               quantity: '1',
               basePriceMoney: {
                 amount: BigInt(COMPLAINT_PRICING_CENTS),
@@ -1295,8 +1295,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? LAWSUIT_FULL_SERVICE_PRICING_CENTS
           : LAWSUIT_DIY_PRICING_CENTS;
         const serviceName = tier === 'full-service'
-          ? 'BadBlue Lawsuit Filing (Full Service)'
-          : 'BadBlue Lawsuit Filing (DIY)';
+          ? 'LegalWhat Lawsuit Filing (Full Service)'
+          : 'LegalWhat Lawsuit Filing (DIY)';
 
         console.log(`[Payment] Creating ${tier} lawsuit payment for ${priceCents} cents`);
 
@@ -1434,7 +1434,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           order: {
             locationId,
             lineItems: [{
-              name: 'BadBlue Petition',
+              name: 'LegalWhat Petition',
               quantity: '1',
               basePriceMoney: {
                 amount: BigInt(PETITION_PRICING_CENTS),
@@ -1522,7 +1522,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         order: {
           locationId,
           lineItems: [{
-            name: 'BadBlue FOIA Records Request',
+            name: 'LegalWhat FOIA Records Request',
             quantity: '1',
             basePriceMoney: {
               amount: BigInt(FOIA_REQUEST_PRICING_CENTS),
@@ -1784,7 +1784,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       order: {
         locationId,
         lineItems: [{
-          name: 'BadBlue Legal Document',
+          name: 'LegalWhat Legal Document',
           quantity: '1',
           basePriceMoney: {
             amount: BigInt(DOCUMENT_CREATOR_PRICING_CENTS),

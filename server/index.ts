@@ -99,7 +99,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
       const { badblueWorker } = await import('./badblueWorker');
       if (badblueWorker.shutdown) {
         await badblueWorker.shutdown();
-        console.log('[SHUTDOWN] BadBlue Worker stopped');
+        console.log('[SHUTDOWN] LegalWhat Worker stopped');
       }
     } catch (e) {
       console.warn('[SHUTDOWN] Error stopping worker:', e);
@@ -225,9 +225,9 @@ async function initializeServices(): Promise<void> {
   try {
     const { badblueWorker } = await import('./badblueWorker');
     await badblueWorker.initialize();
-    console.log('[STARTUP] ✓ BadBlue Worker initialized');
+    console.log('[STARTUP] ✓ LegalWhat Worker initialized');
   } catch (error: any) {
-    console.warn('[STARTUP] ⚠ BadBlue Worker failed:', error?.message ?? error);
+    console.warn('[STARTUP] ⚠ LegalWhat Worker failed:', error?.message ?? error);
   }
 
   // Initialize Sub-Agent Web Harvester for daily officer data collection
@@ -381,7 +381,7 @@ app.get("/api/schema-verify", async (_req, res) => {
 });
 
 (async () => {
-  console.log('[STARTUP] BadBlue Server starting...');
+  console.log('[STARTUP] LegalWhat Server starting...');
   console.log('[STARTUP] Node.js version:', process.version);
   console.log('[STARTUP] Environment:', process.env.NODE_ENV || 'development');
 
