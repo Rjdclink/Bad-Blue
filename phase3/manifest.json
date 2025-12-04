@@ -1,0 +1,566 @@
+{
+  "phase": "3-A",
+  "created": "2025-12-04T04:11:59Z",
+  "pr": 33,
+  "totalSections": 30,
+  "sections": [
+    {
+      "sectionNumber": 1,
+      "name": "core-migrations-subscription",
+      "description": "Subscription system database migrations and schema",
+      "files": [
+        "server/migrations/003_subscription_tables.sql",
+        "server/migrations/004_add_platform_to_reconciliation_jobs.sql",
+        "server/migrations/005_add_user_consents_table.sql",
+        "db/migrations/0012_add_subscription_tables.sql",
+        "db/migrations/0013_add_platform_to_reconciliation_jobs.sql",
+        "db/migrations/0014_add_user_consents_table.sql"
+      ],
+      "primaryOwner": "backend-data",
+      "deps": []
+    },
+    {
+      "sectionNumber": 2,
+      "name": "shared-schema-types",
+      "description": "Shared TypeScript types and schema definitions",
+      "files": [
+        "shared/schema.ts",
+        "shared/lawTypes.ts",
+        "shared/seoConfig.ts"
+      ],
+      "primaryOwner": "shared",
+      "deps": []
+    },
+    {
+      "sectionNumber": 3,
+      "name": "auth-signup-api",
+      "description": "Authentication routes and signup functionality",
+      "files": [
+        "server/routes/auth.routes.ts",
+        "server/auth.ts",
+        "server/localAuth.ts",
+        "server/middleware/auth.ts"
+      ],
+      "primaryOwner": "backend-auth",
+      "deps": [2]
+    },
+    {
+      "sectionNumber": 4,
+      "name": "subscription-plans-api",
+      "description": "Plans and subscription management routes",
+      "files": [
+        "server/routes/plans.routes.ts"
+      ],
+      "primaryOwner": "backend-billing",
+      "deps": [1, 2]
+    },
+    {
+      "sectionNumber": 5,
+      "name": "square-webhook-handler",
+      "description": "Square payment webhook processing and signature verification",
+      "files": [
+        "server/routes/square.routes.ts",
+        "server/squareClient.ts",
+        "server/envValidation.ts"
+      ],
+      "primaryOwner": "backend-billing",
+      "deps": [1, 2, 3]
+    },
+    {
+      "sectionNumber": 6,
+      "name": "database-helpers",
+      "description": "Database query helpers and connection management",
+      "files": [
+        "server/lib/db.ts",
+        "server/db.ts",
+        "server/ensureSchema.ts"
+      ],
+      "primaryOwner": "backend-data",
+      "deps": [2]
+    },
+    {
+      "sectionNumber": 7,
+      "name": "law-expertise-system",
+      "description": "Law-specific AI expertise and prompts for 29 law types",
+      "files": [
+        "server/lawExpertise.ts",
+        "server/routes/consultation.routes.ts",
+        "server/legalAI.ts"
+      ],
+      "primaryOwner": "backend-ai",
+      "deps": [2]
+    },
+    {
+      "sectionNumber": 8,
+      "name": "media-upload-system",
+      "description": "Evidence file upload routes and storage",
+      "files": [
+        "server/routes/upload.routes.ts",
+        "server/evidenceStorage.ts",
+        "server/objectStorage.ts",
+        "server/storage.ts"
+      ],
+      "primaryOwner": "backend-storage",
+      "deps": [2, 6]
+    },
+    {
+      "sectionNumber": 9,
+      "name": "frontend-welcome-page",
+      "description": "Welcome page with 30 law types selection",
+      "files": [
+        "client/src/pages/welcome.tsx"
+      ],
+      "primaryOwner": "frontend",
+      "deps": [2]
+    },
+    {
+      "sectionNumber": 10,
+      "name": "frontend-legal-tools",
+      "description": "Legal tools page for 29 law types with consultation and documents",
+      "files": [
+        "client/src/pages/legal-tools.tsx"
+      ],
+      "primaryOwner": "frontend",
+      "deps": [2, 7, 8]
+    },
+    {
+      "sectionNumber": 11,
+      "name": "frontend-file-upload",
+      "description": "File upload component with drag-and-drop",
+      "files": [
+        "client/src/components/FileUpload.tsx"
+      ],
+      "primaryOwner": "frontend",
+      "deps": [8]
+    },
+    {
+      "sectionNumber": 12,
+      "name": "ai-orchestration",
+      "description": "AI model coordination and parallel processing",
+      "files": [
+        "server/aiCollaborationOrchestrator.ts",
+        "server/agentCoordination.ts",
+        "server/aiModelSelector.ts",
+        "server/aiSubAgent.ts",
+        "server/efficientAI.ts"
+      ],
+      "primaryOwner": "backend-ai",
+      "deps": [2]
+    },
+    {
+      "sectionNumber": 13,
+      "name": "ai-providers",
+      "description": "AI provider integrations (Gemini, Claude, Groq, Mistral, OpenRouter)",
+      "files": [
+        "server/aiProvider.ts",
+        "server/gemini.ts",
+        "server/claude.ts",
+        "server/groq.ts",
+        "server/mistral.ts",
+        "server/openRouterService.ts"
+      ],
+      "primaryOwner": "backend-ai",
+      "deps": []
+    },
+    {
+      "sectionNumber": 14,
+      "name": "ai-token-management",
+      "description": "Token optimization, budgets, and governance",
+      "files": [
+        "server/aiTokenGovernor.ts",
+        "server/tokenOptimizer.ts",
+        "server/workerTokenBudget.ts",
+        "server/repositories/tokenMetricsRepository.ts"
+      ],
+      "primaryOwner": "backend-ai",
+      "deps": []
+    },
+    {
+      "sectionNumber": 15,
+      "name": "ai-caching",
+      "description": "AI response caching and cache repository",
+      "files": [
+        "server/aiCache.ts",
+        "server/cache.ts",
+        "server/repositories/aiCacheRepository.ts"
+      ],
+      "primaryOwner": "backend-ai",
+      "deps": [6]
+    },
+    {
+      "sectionNumber": 16,
+      "name": "document-generation",
+      "description": "Legal document generation and creators",
+      "files": [
+        "server/documentCreatorAI.ts",
+        "server/documentGenerators.ts",
+        "server/section1983LawsuitGenerator.ts",
+        "server/tortNoticeGenerator.ts",
+        "server/tortNoticeRequirements.ts",
+        "server/complaintDraftingSystem.ts"
+      ],
+      "primaryOwner": "backend-documents",
+      "deps": [2, 13]
+    },
+    {
+      "sectionNumber": 17,
+      "name": "search-systems",
+      "description": "Legal precedent, officer, and people search functionality",
+      "files": [
+        "server/precedentSearch.ts",
+        "server/officerSearch.ts",
+        "server/peopleSearch.ts",
+        "server/enhancedLegalSearch.ts",
+        "server/filingInfoSearch.ts",
+        "server/searchSessionManager.ts",
+        "server/populationPriorityQueue.ts"
+      ],
+      "primaryOwner": "backend-search",
+      "deps": []
+    },
+    {
+      "sectionNumber": 18,
+      "name": "officer-data-collection",
+      "description": "Officer roster and data collection systems",
+      "files": [
+        "server/officerDataCollector.ts",
+        "server/officerRoster.ts",
+        "server/policeUrls.ts"
+      ],
+      "primaryOwner": "backend-data",
+      "deps": []
+    },
+    {
+      "sectionNumber": 19,
+      "name": "petition-system",
+      "description": "Petition harvesting and service",
+      "files": [
+        "server/petitionHarvester.ts",
+        "server/petitionService.ts"
+      ],
+      "primaryOwner": "backend-petitions",
+      "deps": []
+    },
+    {
+      "sectionNumber": 20,
+      "name": "foia-routing",
+      "description": "FOIA routing system and jurisdiction helpers",
+      "files": [
+        "server/foiaRoutingSystem.ts",
+        "server/jurisdictionHelpers.ts"
+      ],
+      "primaryOwner": "backend-foia",
+      "deps": []
+    },
+    {
+      "sectionNumber": 21,
+      "name": "worker-system",
+      "description": "Background worker and sub-agent systems",
+      "files": [
+        "server/badblueWorker.ts",
+        "server/subAgentHarvester.ts",
+        "server/subAgentWebHarvester.ts",
+        "server/selfImprovementEngine.ts"
+      ],
+      "primaryOwner": "backend-workers",
+      "deps": []
+    },
+    {
+      "sectionNumber": 22,
+      "name": "rate-limiting",
+      "description": "Rate limiting and device tracking",
+      "files": [
+        "server/rateLimit.ts",
+        "server/rateLimitTracker.ts",
+        "server/deviceRateLimit.ts"
+      ],
+      "primaryOwner": "backend-security",
+      "deps": []
+    },
+    {
+      "sectionNumber": 23,
+      "name": "email-system",
+      "description": "Email service and verification",
+      "files": [
+        "server/emailService.ts",
+        "server/emailVerification.ts",
+        "server/mailer.ts",
+        "emailConfig.ts"
+      ],
+      "primaryOwner": "backend-email",
+      "deps": []
+    },
+    {
+      "sectionNumber": 24,
+      "name": "storage-persistence",
+      "description": "Object storage, ACL, and persistence management",
+      "files": [
+        "server/persistenceManager.ts",
+        "server/persistentStorage.ts",
+        "server/objectAcl.ts"
+      ],
+      "primaryOwner": "backend-storage",
+      "deps": []
+    },
+    {
+      "sectionNumber": 25,
+      "name": "pdf-generation",
+      "description": "PDF generation and web search services",
+      "files": [
+        "server/pdfGenerator.ts",
+        "server/webSearchService.ts"
+      ],
+      "primaryOwner": "backend-documents",
+      "deps": []
+    },
+    {
+      "sectionNumber": 26,
+      "name": "error-handling-logging",
+      "description": "Error handling, logging, and health checks",
+      "files": [
+        "server/errorHandler.ts",
+        "server/logger.ts",
+        "logger.ts",
+        "server/healthCheck.ts"
+      ],
+      "primaryOwner": "backend-infra",
+      "deps": []
+    },
+    {
+      "sectionNumber": 27,
+      "name": "routes-configuration",
+      "description": "Main route configuration and setup",
+      "files": [
+        "server/routes.ts",
+        "server/legalizoRoutes.ts",
+        "server/routes/law-types.routes.ts",
+        "server/routes/autosave.routes.ts"
+      ],
+      "primaryOwner": "backend-routing",
+      "deps": [3, 4, 5, 7, 8]
+    },
+    {
+      "sectionNumber": 28,
+      "name": "server-config-setup",
+      "description": "Server configuration, index, and platform config",
+      "files": [
+        "server/index.ts",
+        "server/config.ts",
+        "server/platformConfig.ts",
+        "server/constants.ts",
+        "server/vite.ts",
+        "server/jsonParser.ts"
+      ],
+      "primaryOwner": "backend-infra",
+      "deps": [27]
+    },
+    {
+      "sectionNumber": 29,
+      "name": "testing-diagnostics",
+      "description": "Test suites, diagnostics, and verification scripts",
+      "files": [
+        "server/tests/capabilityTest.ts",
+        "server/tests/comprehensiveTest.ts",
+        "server/tests/finalVerification.ts",
+        "server/tests/masterTestRunner.ts",
+        "server/tests/postMigrationTest.ts",
+        "server/tests/quickDiagnostic.ts",
+        "server/tests/subAgentComprehensiveTest.ts",
+        "server/tests/subAgentTests.ts",
+        "server/tests/verifyMigration.ts",
+        "server/tests/verifySquareMigration.ts",
+        "server/tests/workerTests.ts",
+        "server/systemDiagnostics.ts",
+        "server/comprehensiveDiagnostics.ts",
+        "server/quickDiagnostic.ts",
+        "server/testDiagnostics.ts",
+        "server/fullSystemTest.ts",
+        "server/runDiagnostics.ts"
+      ],
+      "primaryOwner": "testing",
+      "deps": []
+    },
+    {
+      "sectionNumber": 30,
+      "name": "build-config-infra",
+      "description": "Build configuration, tsconfig, package.json, and infrastructure configs",
+      "files": [
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.production.json",
+        "vite.config.ts",
+        "tailwind.config.ts",
+        "postcss.config.js",
+        "railway.json",
+        "drizzle.config.ts",
+        "drizzle.push.config.ts",
+        "scripts/railway-build-patch.js",
+        "scripts/railway-build-unpatch.js"
+      ],
+      "primaryOwner": "infra-build",
+      "deps": []
+    }
+  ],
+  "passDefinitions": [
+    {
+      "passNumber": 1,
+      "passName": "Syntax & Build Validation",
+      "commands": ["npx tsc --noEmit"],
+      "requiredEnv": [],
+      "timeBudget": 60,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 2,
+      "passName": "Runtime/Transpile Sanity",
+      "commands": ["npm run build"],
+      "requiredEnv": [],
+      "timeBudget": 120,
+      "allowedEnvLimitFallback": true
+    },
+    {
+      "passNumber": 3,
+      "passName": "Test Quick Run",
+      "commands": ["npm test -- --testPathPattern=<section-files>"],
+      "requiredEnv": ["DATABASE_URL"],
+      "timeBudget": 180,
+      "allowedEnvLimitFallback": true
+    },
+    {
+      "passNumber": 4,
+      "passName": "Types & DTO Contract Consistency",
+      "commands": ["custom-script"],
+      "requiredEnv": [],
+      "timeBudget": 30,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 5,
+      "passName": "Database & Migration Inspection",
+      "commands": ["custom-migration-validator"],
+      "requiredEnv": ["DATABASE_URL"],
+      "timeBudget": 120,
+      "allowedEnvLimitFallback": true
+    },
+    {
+      "passNumber": 6,
+      "passName": "SQL/Query Safety",
+      "commands": ["custom-sql-analyzer"],
+      "requiredEnv": [],
+      "timeBudget": 60,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 7,
+      "passName": "API Endpoint & Router Checks",
+      "commands": ["custom-route-analyzer"],
+      "requiredEnv": [],
+      "timeBudget": 45,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 8,
+      "passName": "Worker/Queue Integration",
+      "commands": ["custom-worker-validator"],
+      "requiredEnv": ["REDIS_URL"],
+      "timeBudget": 90,
+      "allowedEnvLimitFallback": true
+    },
+    {
+      "passNumber": 9,
+      "passName": "Idempotency & Retry Paths",
+      "commands": ["custom-idempotency-checker"],
+      "requiredEnv": [],
+      "timeBudget": 60,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 10,
+      "passName": "Data Consistency & Transactions",
+      "commands": ["custom-transaction-analyzer"],
+      "requiredEnv": [],
+      "timeBudget": 60,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 11,
+      "passName": "File & Upload Handling",
+      "commands": ["custom-file-handler-checker"],
+      "requiredEnv": [],
+      "timeBudget": 45,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 12,
+      "passName": "Frontend Build & Route Sanity",
+      "commands": ["npm run build:client"],
+      "requiredEnv": [],
+      "timeBudget": 120,
+      "allowedEnvLimitFallback": true
+    },
+    {
+      "passNumber": 13,
+      "passName": "Form & Schema Validation",
+      "commands": ["custom-validation-checker"],
+      "requiredEnv": [],
+      "timeBudget": 45,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 14,
+      "passName": "AI Prompt & Large-Corpus Handling",
+      "commands": ["custom-ai-analyzer"],
+      "requiredEnv": [],
+      "timeBudget": 60,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 15,
+      "passName": "Performance & N+1 Detection",
+      "commands": ["custom-n-plus-one-detector"],
+      "requiredEnv": [],
+      "timeBudget": 90,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 16,
+      "passName": "Concurrency & Race Conditions",
+      "commands": ["custom-concurrency-checker"],
+      "requiredEnv": [],
+      "timeBudget": 60,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 17,
+      "passName": "Config & Environment Usage",
+      "commands": ["custom-env-validator"],
+      "requiredEnv": [],
+      "timeBudget": 30,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 18,
+      "passName": "CI/CD and Docker/Container checks",
+      "commands": ["custom-docker-validator"],
+      "requiredEnv": [],
+      "timeBudget": 45,
+      "allowedEnvLimitFallback": true
+    },
+    {
+      "passNumber": 19,
+      "passName": "Observability & Logging Sanity",
+      "commands": ["custom-logging-analyzer"],
+      "requiredEnv": [],
+      "timeBudget": 45,
+      "allowedEnvLimitFallback": false
+    },
+    {
+      "passNumber": 20,
+      "passName": "Final Integration Smoke Test",
+      "commands": ["npm run test:integration"],
+      "requiredEnv": ["DATABASE_URL", "REDIS_URL"],
+      "timeBudget": 300,
+      "allowedEnvLimitFallback": true
+    }
+  ]
+}
