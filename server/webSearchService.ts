@@ -581,4 +581,114 @@ export function isWebSearchAvailable(): { bing: boolean; gemini: boolean; any: b
   };
 }
 
+// Enhanced Web Search Service with Advanced Dorking
+import { advancedSearch } from './services/advancedSearch';
+import { cacheService } from './services/redisCache';
+
+export class EnhancedWebSearchService {
+  private readonly maxRetries = 3;
+
+  async searchWithDorks(
+    name: string,
+    options?: {
+      department?: string;
+      badge?: string;
+      location?: string;
+    }
+  ): Promise<Array<{
+    query: string;
+    results: any[];
+    source: string;
+  }>> {
+    const cacheKey = `dork-search:${name}:${JSON.stringify(options)}`;
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) return cached;
+
+    const dorks = advancedSearch.generatePersonDorks(name, options);
+    const results: any[] = [];
+
+    // Execute searches sequentially with rate limiting
+    for (const dork of dorks.slice(0, 10)) { // Limit to first 10 dorks
+      try {
+        await this.delay(1000); // Rate limit: 1 query per second
+
+        const searchResults = await this.executeSearch(dork);
+        
+        if (searchResults.length > 0) {
+          results.push({
+            query: dork,
+            results: searchResults,
+            source: 'google-dork',
+          });
+        }
+      } catch (error) {
+        console.error(`Dork search failed for: ${dork}`, error);
+      }
+    }
+
+    // Cache for 6 hours
+    await cacheService.set(cacheKey, results, 'warm');
+    
+    return results;
+  }
+
+  private async executeSearch(query: string): Promise<any[]> {
+    // This would integrate with your existing search API
+    // For now, returning structure for integration
+    return [];
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Search specific databases
+   */
+  async searchPublicDatabases(name: string): Promise<{
+    transparencyUSA: any[];
+    govSalaries: any[];
+    pacer: any[];
+  }> {
+    const cacheKey = `public-db:${name}`;
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) return cached;
+
+    const results = {
+      transparencyUSA: await this.searchTransparencyUSA(name),
+      govSalaries: await this.searchGovSalaries(name),
+      pacer: await this.searchPacer(name),
+    };
+
+    await cacheService.set(cacheKey, results, 'cold'); // Cache for 7 days
+    return results;
+  }
+
+  private async searchTransparencyUSA(name: string): Promise<any[]> {
+    const query = advancedSearch.buildQuery({
+      keywords: [name],
+      site: 'transparencyusa.org',
+    });
+    return this.executeSearch(query);
+  }
+
+  private async searchGovSalaries(name: string): Promise<any[]> {
+    const query = advancedSearch.buildQuery({
+      keywords: [name],
+      site: 'govsalaries.com',
+    });
+    return this.executeSearch(query);
+  }
+
+  private async searchPacer(name: string): Promise<any[]> {
+    const query = advancedSearch.buildQuery({
+      keywords: [name],
+      site: 'pacer.gov',
+    });
+    return this.executeSearch(query);
+  }
+}
+
+export const enhancedWebSearch = new EnhancedWebSearchService();
+
 console.log('[Web Search Service] Initialized:', isWebSearchAvailable());

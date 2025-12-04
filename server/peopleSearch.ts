@@ -2,6 +2,7 @@
 // Aggregates public data from multiple sources for comprehensive background reports
 
 import { entityResolver } from './services/entityResolver';
+import { enhancedWebSearch } from './webSearchService';
 
 /**
  * Interface for search results from various sources
@@ -127,6 +128,97 @@ export async function conductPeopleSearch(
   } catch (error) {
     console.error('People search error:', error);
     throw error;
+  }
+}
+
+/**
+ * Enhanced people search with advanced dorking
+ * Integrates Phase 3 advanced search capabilities
+ */
+export async function conductEnhancedPeopleSearch(
+  searchQuery: string,
+  options?: {
+    department?: string;
+    badge?: string;
+    location?: string;
+  },
+  config: Partial<SearchConfig> = {}
+): Promise<PeopleSearchReport & { 
+  dorkResults?: any; 
+  publicDbResults?: any;
+}> {
+  // Run standard search
+  const report = await conductPeopleSearch(searchQuery, config);
+
+  try {
+    // Add advanced dorking results
+    const dorkResults = await enhancedWebSearch.searchWithDorks(searchQuery, options);
+    
+    // Add public database results
+    const publicDbResults = await enhancedWebSearch.searchPublicDatabases(searchQuery);
+
+    // Aggregate dorking results into report
+    if (dorkResults && dorkResults.length > 0) {
+      dorkResults.forEach(result => {
+        report.sources.push({
+          name: 'Google Dork Search',
+          data: result,
+          confidence: 75,
+          timestamp: new Date(),
+        });
+        
+        // Extract any useful information from dork results
+        if (result.results && result.results.length > 0) {
+          result.results.forEach((r: any) => {
+            if (r.snippet) {
+              report.onlineMentions.push(r.snippet);
+            }
+          });
+        }
+      });
+    }
+
+    // Aggregate public database results
+    if (publicDbResults) {
+      if (publicDbResults.transparencyUSA?.length > 0) {
+        report.sources.push({
+          name: 'TransparencyUSA',
+          data: publicDbResults.transparencyUSA,
+          confidence: 85,
+          timestamp: new Date(),
+        });
+      }
+      if (publicDbResults.govSalaries?.length > 0) {
+        report.sources.push({
+          name: 'GovSalaries',
+          data: publicDbResults.govSalaries,
+          confidence: 85,
+          timestamp: new Date(),
+        });
+      }
+      if (publicDbResults.pacer?.length > 0) {
+        report.sources.push({
+          name: 'PACER',
+          data: publicDbResults.pacer,
+          confidence: 90,
+          timestamp: new Date(),
+        });
+      }
+    }
+
+    // Recalculate confidence with new data
+    report.confidenceScore = calculateConfidenceScore(report);
+    report.summary = generateReportSummary(report);
+
+    return {
+      ...report,
+      dorkResults,
+      publicDbResults,
+    };
+  } catch (error) {
+    console.error('Enhanced search error:', error);
+    // Return standard report if enhanced search fails
+    return report;
   }
 }
 
