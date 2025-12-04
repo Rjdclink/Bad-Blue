@@ -13,9 +13,9 @@ interface CacheEntry<T> {
 
 // Multi-tier caching strategy
 const CACHE_TIERS = {
-  hot: { ttl: 300, storage: 'memory' } as CacheConfig,      // 5 minutes
-  warm: { ttl: 86400, storage: 'redis' } as CacheConfig,    // 24 hours  
-  cold: { ttl: 604800, storage: 'redis' } as CacheConfig,   // 7 days
+  hot: { ttl: 300, storage: 'memory' } as CacheConfig,       // 5 minutes
+  warm: { ttl: 86400, storage: 'redis' } as CacheConfig,     // 24 hours
+  cold: { ttl: 604800, storage: 'redis' } as CacheConfig,    // 7 days
 };
 
 class RedisCacheService {
