@@ -14,6 +14,8 @@ declare global {
       };
       id?: string;
       isAdmin?: boolean;
+      isAdminBypass?: boolean;
+      isMasterBypass?: boolean;
     }
     interface Request {
       rawBody?: Buffer;

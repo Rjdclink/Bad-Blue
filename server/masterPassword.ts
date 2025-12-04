@@ -1,5 +1,6 @@
 // Master Password Configuration and Utilities
 // Centralized master password logic to avoid code duplication
+import crypto from "crypto";
 
 /**
  * The master password that bypasses payment and authentication requirements
@@ -20,10 +21,8 @@ export function isMasterPassword(password: string): boolean {
  */
 export function generateMasterUserId(email: string | null | undefined): string {
   if (email && email.trim()) {
-    const crypto = require('crypto');
     return `master-${crypto.createHash('sha256').update(email.toLowerCase()).digest('hex').substring(0, 16)}`;
   } else {
-    const crypto = require('crypto');
     return `master-${crypto.randomBytes(8).toString('hex')}`;
   }
 }
