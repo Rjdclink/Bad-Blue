@@ -32,7 +32,7 @@ export const sessions = pgTable(
 );
 
 // ============================================
-// USERS TABLE (Authentication + Stripe Payments)
+// USERS TABLE (Authentication + Square Payments)
 // ============================================
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -41,6 +41,9 @@ export const users = pgTable("users", {
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
 
+  // Subscription status
+  status: varchar("status", { length: 32 }).default('pending_payment'),
+  
   // Square customer tracking
   squareCustomerId: varchar("square_customer_id"),
 
@@ -2447,4 +2450,87 @@ export const insertEvidenceFileSchema = createInsertSchema(evidenceFiles).omit({
 
 export type InsertEvidenceFile = z.infer<typeof insertEvidenceFileSchema>;
 export type EvidenceFile = typeof evidenceFiles.$inferSelect;
+
+// ============================================
+// PLANS TABLE (Subscription Plans)
+// ============================================
+export const plans = pgTable("plans", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: text("name").notNull(),
+  price: integer("price").notNull(), // Price in cents
+  currency: varchar("currency", { length: 8 }).notNull().default('USD'),
+  interval: varchar("interval", { length: 16 }).notNull().default('monthly'),
+  squarePlanId: text("square_plan_id").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type Plan = typeof plans.$inferSelect;
+export type InsertPlan = typeof plans.$inferInsert;
+
+// ============================================
+// SUBSCRIPTIONS TABLE (User Subscriptions)
+// ============================================
+export const subscriptions = pgTable("subscriptions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  planId: integer("plan_id").notNull().references(() => plans.id, { onDelete: 'restrict' }),
+  status: varchar("status", { length: 32 }).notNull(),
+  squareSubscriptionId: text("square_subscription_id"),
+  startDate: timestamp("start_date", { mode: 'date' }),
+  renewalDate: timestamp("renewal_date", { mode: 'date' }),
+  canceledAt: timestamp("canceled_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_subscriptions_user_id").on(table.userId),
+  index("idx_subscriptions_status").on(table.status),
+]);
+
+export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
+  user: one(users, {
+    fields: [subscriptions.userId],
+    references: [users.id],
+  }),
+  plan: one(plans, {
+    fields: [subscriptions.planId],
+    references: [plans.id],
+  }),
+}));
+
+export type Subscription = typeof subscriptions.$inferSelect;
+export type InsertSubscription = typeof subscriptions.$inferInsert;
+
+// ============================================
+// TRANSACTIONS TABLE (Payment Transactions)
+// ============================================
+export const transactions = pgTable("transactions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  subscriptionId: integer("subscription_id").references(() => subscriptions.id, { onDelete: 'set null' }),
+  squarePaymentId: text("square_payment_id"),
+  amount: integer("amount").notNull(), // Amount in cents
+  currency: varchar("currency", { length: 8 }).notNull().default('USD'),
+  status: varchar("status", { length: 32 }).notNull(),
+  eventType: text("event_type"),
+  createdAt: timestamp("created_at").defaultNow(),
+  rawPayload: jsonb("raw_payload"),
+}, (table) => [
+  index("idx_transactions_user_id").on(table.userId),
+  index("idx_transactions_subscription_id").on(table.subscriptionId),
+]);
+
+export const transactionsRelations = relations(transactions, ({ one }) => ({
+  user: one(users, {
+    fields: [transactions.userId],
+    references: [users.id],
+  }),
+  subscription: one(subscriptions, {
+    fields: [transactions.subscriptionId],
+    references: [subscriptions.id],
+  }),
+}));
+
+export type Transaction = typeof transactions.$inferSelect;
+export type InsertTransaction = typeof transactions.$inferInsert;
 export type InsertPeopleSearchReport = z.infer<typeof insertPeopleSearchReportSchema>;
