@@ -49,25 +49,33 @@ export default function WelcomePage() {
   const nonFeaturedTypes = LAW_TYPE_DATA.filter(type => !type.featured);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
+    <div className="min-h-screen relative">
+      {/* Background Image with Overlay */}
+      <div 
+        className="fixed inset-0 bg-cover bg-center bg-no-repeat -z-10"
+        style={{ backgroundImage: "url(/images/premium_photo-.jpg)" }}
+      >
+        <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/60 to-black/70" />
+      </div>
+
       <SEOHead
         title="Welcome to LegalWhat - AI Legal Platform"
         description="Select your legal area to get started with AI-powered legal assistance"
       />
 
       {/* Header */}
-      <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-50">
+      <header className="border-b bg-black/50 backdrop-blur-md sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Shield className="h-8 w-8 text-primary" />
               <div>
-                <h1 className="text-2xl font-bold">LegalWhat</h1>
-                <p className="text-xs text-muted-foreground">AI Legal Platform</p>
+                <h1 className="text-2xl font-bold text-white">LegalWhat</h1>
+                <p className="text-xs text-white/70">AI Legal Platform</p>
               </div>
             </div>
             {user && (
-              <div className="text-sm text-muted-foreground">
+              <div className="text-sm text-white/90">
                 Welcome, {user.firstName}
               </div>
             )}
@@ -79,10 +87,10 @@ export default function WelcomePage() {
       <main className="container mx-auto px-4 py-8 sm:py-12">
         {/* Welcome Section */}
         <div className="text-center mb-8 sm:mb-12">
-          <h2 className="text-3xl sm:text-4xl font-bold mb-3">
+          <h2 className="text-3xl sm:text-4xl font-bold mb-3 text-white">
             Choose Your Legal Area
           </h2>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+          <p className="text-lg text-white/90 max-w-2xl mx-auto">
             Select the area of law you need help with to get started with AI-powered legal assistance
           </p>
         </div>
@@ -101,16 +109,23 @@ export default function WelcomePage() {
                 return (
                   <Card
                     key={lawType.id}
-                    className={`cursor-pointer transition-all hover:shadow-lg border-2 ${
+                    className={`cursor-pointer transition-all hover:shadow-lg border-2 bg-white/95 backdrop-blur-sm ${
                       isSelected
-                        ? 'border-red-500 bg-red-50 dark:bg-red-950/20 shadow-lg'
-                        : 'border-red-200 hover:border-red-300 dark:border-red-900 dark:hover:border-red-800'
+                        ? 'border-red-500 bg-red-50/95 shadow-lg'
+                        : 'border-red-200 hover:border-red-300'
                     }`}
                     onClick={() => handleSelection(lawType.id)}
                   >
                     <CardHeader>
                       <div className="flex items-start gap-4">
                         <div className="flex items-center gap-3 flex-1">
+                          {/* Law book icon as decorative image */}
+                          <img 
+                            src="/images/Law-book.webp" 
+                            alt="" 
+                            className="w-5 h-5 object-contain mt-1"
+                            role="presentation"
+                          />
                           <Checkbox
                             checked={isSelected}
                             onCheckedChange={() => handleSelection(lawType.id)}
@@ -139,7 +154,7 @@ export default function WelcomePage() {
 
         {/* Other Law Types */}
         <div className="mb-8">
-          <h3 className="text-xl font-semibold mb-4">All Legal Areas</h3>
+          <h3 className="text-xl font-semibold mb-4 text-white">All Legal Areas</h3>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {nonFeaturedTypes.map((lawType) => {
               const Icon = getIcon(lawType.icon);
@@ -148,15 +163,22 @@ export default function WelcomePage() {
               return (
                 <Card
                   key={lawType.id}
-                  className={`cursor-pointer transition-all hover:shadow-md ${
+                  className={`cursor-pointer transition-all hover:shadow-md bg-white/95 backdrop-blur-sm ${
                     isSelected
-                      ? 'border-2 border-primary bg-primary/5 shadow-md'
+                      ? 'border-2 border-primary shadow-md'
                       : 'hover:border-primary/50'
                   }`}
                   onClick={() => handleSelection(lawType.id)}
                 >
                   <CardHeader className="pb-4">
                     <div className="flex items-start gap-3">
+                      {/* Law book icon as decorative image */}
+                      <img 
+                        src="/images/Law-book.webp" 
+                        alt="" 
+                        className="w-5 h-5 object-contain mt-1"
+                        role="presentation"
+                      />
                       <Checkbox
                         checked={isSelected}
                         onCheckedChange={() => handleSelection(lawType.id)}

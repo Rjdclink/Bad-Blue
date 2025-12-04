@@ -15,6 +15,9 @@ declare global {
       id?: string;
       isAdmin?: boolean;
     }
+    interface Request {
+      rawBody?: Buffer;
+    }
   }
 }
 import { getSquareClient, getSquareLocationId } from "./squareClient";
@@ -2428,21 +2431,39 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
       }
 
       // Verify webhook signature using HMAC-SHA256
-      const crypto = require('crypto');
-      const webhookUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-      const rawBodyBuffer = req.rawBody instanceof Buffer
-        ? req.rawBody
-        : Buffer.isBuffer(req.body)
-        ? req.body
-        : Buffer.from(JSON.stringify(req.body || {}));
+      // Square documentation: HMAC-SHA256(notification_url + request_body, signature_key)
+      const rawBody = req.rawBody;
+      if (!rawBody) {
+        console.error('Raw body not available for webhook signature verification');
+        return res.status(500).send("Webhook configuration error");
+      }
+
+      const notificationUrl = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL || `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+      
+      // Construct string to sign: notification_url + raw_body (no separator)
+      const stringToSign = notificationUrl + rawBody.toString('utf8');
       
       const hmac = crypto.createHmac('sha256', process.env.SQUARE_WEBHOOK_SIGNATURE_KEY);
-      hmac.update(webhookUrl + rawBodyBuffer.toString());
+      hmac.update(stringToSign, 'utf8');
       const computedSignature = hmac.digest('base64');
 
-      if (computedSignature !== signature) {
-        console.error("Webhook signature verification failed");
-        return res.status(400).send("Invalid signature");
+      // Use timing-safe comparison
+      try {
+        const signatureBuffer = Buffer.from(signature, 'base64');
+        const computedBuffer = Buffer.from(computedSignature, 'base64');
+
+        if (signatureBuffer.length !== computedBuffer.length) {
+          console.error("Webhook signature length mismatch");
+          return res.status(401).send("Invalid signature");
+        }
+
+        if (!crypto.timingSafeEqual(signatureBuffer, computedBuffer)) {
+          console.error("Webhook signature verification failed");
+          return res.status(401).send("Invalid signature");
+        }
+      } catch (error) {
+        console.error('Signature comparison error:', error);
+        return res.status(401).send("Invalid signature");
       }
 
       const event = req.body;
@@ -4267,6 +4288,116 @@ Contact: ${foiaRequest.userEmail || userEmail}
           message: "Failed to process your message. Please try again later.",
         },
       });
+    }
+  }));
+
+  // ============================================
+  // FILE DOWNLOAD ENDPOINT
+  // ============================================
+  
+  /**
+   * Download generated document by file ID
+   * Supports complaints, lawsuits, FOIA requests, and petitions
+   */
+  app.get("/api/download/:fileId", apiRateLimit, isAuthenticated, asyncHandler(async (req: any, res: Response) => {
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const { fileId } = req.params;
+    
+    try {
+      // Determine file type from ID prefix
+      const [fileType, id] = fileId.split('-');
+      
+      if (!fileType || !id) {
+        return res.status(400).json({ error: "Invalid file ID format" });
+      }
+
+      let document: any = null;
+      let filename = 'document.txt';
+      let contentType = 'text/plain';
+
+      switch (fileType) {
+        case 'complaint': {
+          // Complaints don't store generated documents - they need to be generated on demand
+          return res.status(400).json({ error: "Complaint documents must be generated through the complaint workflow" });
+        }
+
+        case 'lawsuit': {
+          const lawsuits = await db.select()
+            .from(schema.lawsuitFilings)
+            .where(and(
+              eq(schema.lawsuitFilings.id, id),
+              eq(schema.lawsuitFilings.userId, userId)
+            ))
+            .limit(1);
+          
+          if (lawsuits.length === 0) {
+            return res.status(404).json({ error: "Lawsuit not found" });
+          }
+          
+          document = lawsuits[0].generatedDocument;
+          filename = `lawsuit-${id}.txt`;
+          break;
+        }
+
+        case 'foia': {
+          const foias = await db.select()
+            .from(schema.foiaRequests)
+            .where(and(
+              eq(schema.foiaRequests.id, id),
+              eq(schema.foiaRequests.userId, userId)
+            ))
+            .limit(1);
+          
+          if (foias.length === 0) {
+            return res.status(404).json({ error: "FOIA request not found" });
+          }
+          
+          document = foias[0].generatedLetter;
+          filename = `foia-${id}.txt`;
+          break;
+        }
+
+        case 'petition': {
+          // Petitions don't store the full document - return the redrafted text
+          const petitions = await db.select()
+            .from(schema.petitions)
+            .where(and(
+              eq(schema.petitions.id, id),
+              eq(schema.petitions.userId, userId)
+            ))
+            .limit(1);
+          
+          if (petitions.length === 0) {
+            return res.status(404).json({ error: "Petition not found" });
+          }
+          
+          const petition = petitions[0];
+          document = `Petition for Officer ${petition.officerName}\n\n${petition.offenseDescriptionRedrafted || petition.offenseDescriptionOriginal}\n\n${petition.additionalText || ''}`;
+          filename = `petition-${petition.slug}.txt`;
+          break;
+        }
+
+        default:
+          return res.status(400).json({ error: "Unsupported file type" });
+      }
+
+      if (!document) {
+        return res.status(404).json({ error: "Document not found or not yet generated" });
+      }
+
+      // Set headers for file download
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      
+      // Send document content
+      res.send(document);
+    } catch (error: any) {
+      console.error("[DOWNLOAD] Error downloading file:", error);
+      res.status(500).json({ error: "Failed to download file" });
     }
   }));
 
