@@ -3184,6 +3184,27 @@ Contact: ${foiaRequest.userEmail || userEmail}
   });
 
   // ============================================
+  // OSINT FULL SEARCH ROUTE (Phase 4)
+  // ============================================
+
+  app.post('/api/osint/full-search', async (req, res) => {
+    const { name, department, badge, location, domain } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Name required' });
+    }
+
+    try {
+      const { conductFullOSINT } = await import('./peopleSearch');
+      const report = await conductFullOSINT(name, { department, badge, location, domain });
+      res.json(report);
+    } catch (error: any) {
+      console.error('[OSINT API] Error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================
   // CORRUPT LAW ENFORCEMENT & SNITCH EVIDENCE HUB ROUTES
   // ============================================
   
