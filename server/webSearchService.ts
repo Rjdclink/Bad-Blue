@@ -587,6 +587,7 @@ import { cacheService } from './services/redisCache';
 
 export class EnhancedWebSearchService {
   private readonly maxRetries = 3;
+  private readonly maxDorks = 10;
 
   async searchWithDorks(
     name: string,
@@ -594,13 +595,20 @@ export class EnhancedWebSearchService {
       department?: string;
       badge?: string;
       location?: string;
+      maxDorks?: number;
     }
   ): Promise<Array<{
     query: string;
     results: any[];
     source: string;
   }>> {
-    const cacheKey = `dork-search:${name}:${JSON.stringify(options)}`;
+    // Create deterministic cache key
+    const optionsKey = options ? JSON.stringify({
+      department: options.department || '',
+      badge: options.badge || '',
+      location: options.location || '',
+    }) : '';
+    const cacheKey = `dork-search:${name}:${optionsKey}`;
     const cached = await cacheService.get<any>(cacheKey);
     if (cached) return cached;
 
@@ -608,7 +616,8 @@ export class EnhancedWebSearchService {
     const results: any[] = [];
 
     // Execute searches sequentially with rate limiting
-    for (const dork of dorks.slice(0, 10)) { // Limit to first 10 dorks
+    const dorkLimit = options?.maxDorks || this.maxDorks;
+    for (const dork of dorks.slice(0, dorkLimit)) {
       try {
         await this.delay(1000); // Rate limit: 1 query per second
 
@@ -633,8 +642,10 @@ export class EnhancedWebSearchService {
   }
 
   private async executeSearch(query: string): Promise<any[]> {
-    // This would integrate with your existing search API
-    // For now, returning structure for integration
+    // Integration point for actual search API
+    // When integrated with geminiSearch or other search APIs, replace this implementation
+    // Example: return await geminiSearch(query, { limit: 5 });
+    console.warn('[Enhanced Search] executeSearch is a placeholder - integrate with actual search API');
     return [];
   }
 
@@ -650,7 +661,8 @@ export class EnhancedWebSearchService {
     govSalaries: any[];
     pacer: any[];
   }> {
-    const cacheKey = `public-db:${name}`;
+    // Create deterministic cache key
+    const cacheKey = `public-db:${name.toLowerCase().trim()}`;
     const cached = await cacheService.get<any>(cacheKey);
     if (cached) return cached;
 

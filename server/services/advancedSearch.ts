@@ -1,9 +1,3 @@
-interface DorkQuery {
-  operator: string;
-  value: string;
-  description: string;
-}
-
 export class AdvancedSearchService {
   /**
    * Generate Google dork queries for person search
