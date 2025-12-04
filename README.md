@@ -37,6 +37,24 @@ The platform utilizes a modern web stack featuring:
 
 See [AI_PROVIDERS.md](docs/AI_PROVIDERS.md) for complete documentation.
 
+### 🔍 OpenRouter Web Search System
+**Dedicated Free-Tier Web Search Models** for information retrieval (separate from legal consultation system):
+
+| Model | Context | Best For |
+|-------|---------|----------|
+| **Meta Llama 4 Maverick** | 256K tokens | Multimodal research |
+| **xAI Grok 4.1 Fast** | 2M tokens | Real-time research |
+| **DeepSeek R1T2 Chimera** | 164K tokens | Reasoning-focused search |
+
+**Features**:
+- ✅ Orchestrated parallel search across all 3 models
+- ✅ Result aggregation with confidence scoring
+- ✅ Optional `:online` plugin for real-time web data (⚠️ may incur costs)
+- ✅ Circuit breaker pattern for resilience
+- ✅ Rate limiting (50 requests/day per model)
+
+**Note**: While model inference is FREE, the optional `:online` web search plugin may incur costs. Monitor usage carefully.
+
 ### 💾 Autosave System
 **Automatic Saving with 3-Second Debouncing**:
 - ✅ Auto-saves every 3 seconds after changes
