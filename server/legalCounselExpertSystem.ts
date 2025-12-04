@@ -228,6 +228,9 @@ export function generateExpertProfile(lawType: LawType): ExpertProfile {
   }
 
   // Generate 25-32 years of experience (25 + 0-7 random years)
+  // Note: Using Math.random() to create unique expert personas each time.
+  // This simulates real-world variation in expert experience levels.
+  // For deterministic testing, callers can set a fixed seed or use the result as-is.
   const yearsExperience = 25 + Math.floor(Math.random() * 8);
   const meticulousness = calculateMeticulousness(lawType);
 

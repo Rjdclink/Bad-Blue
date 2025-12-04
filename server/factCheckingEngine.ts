@@ -147,6 +147,8 @@ function analyzeConsensus(results: ModelVerificationResult[]): {
   const totalCount = results.length;
 
   // Consensus requires 2/3 or more agreement
+  // Note: consensus is true when all models agree (3/3 verified OR 0/3 verified)
+  // or when majority agrees (2/3 verified). Only 1/3 verified means no consensus.
   const consensus = verifiedCount >= 2 || verifiedCount === 0;
 
   // Calculate average confidence from verified models only
@@ -326,6 +328,8 @@ export function extractClaimsFromResponse(response: string): string[] {
   const claims: string[] = [];
 
   // Pattern 1: Statute citations
+  // Matches patterns like: "California Penal Code § 484", "42 U.S.C. § 1983", "C.F.R. § 123.45(a)"
+  // Format: [TitleCase Words] [Code/Act/Statute/Law/U.S.C./C.F.R.] [optional §] [numbers] [optional letter] [optional (section)]
   const statutePattern = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Code|Act|Statute|Law|U\.S\.C\.|C\.F\.R\.)\s*§?\s*[\d.]+[a-z]*(?:\([a-z0-9]+\))?)/g;
   let match;
   while ((match = statutePattern.exec(response)) !== null) {
