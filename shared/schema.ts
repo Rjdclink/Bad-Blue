@@ -41,7 +41,7 @@ export const users = pgTable("users", {
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
 
-  // User account status
+  // User subscription status (active, inactive, suspended, pending_payment, past_due, canceled)
   status: varchar("status", { length: 50 }).notNull().default('active'),
   
   // Square customer tracking

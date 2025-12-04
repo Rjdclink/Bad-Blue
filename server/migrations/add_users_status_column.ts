@@ -33,15 +33,6 @@ export async function addUsersStatusColumn() {
     
     console.log('[Migration] ✓ Created index on users.status');
     
-    // Update any existing NULL values to 'active' (safety measure)
-    await db.execute(sql`
-      UPDATE users 
-      SET status = 'active' 
-      WHERE status IS NULL
-    `);
-    
-    console.log('[Migration] ✓ Initialized status for existing users');
-    
   } catch (error) {
     console.error('[Migration] ❌ Failed to add status column:', error);
     throw error;
