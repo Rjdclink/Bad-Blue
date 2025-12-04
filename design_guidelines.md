@@ -134,12 +134,23 @@
 **Subscription Management**
 - Current plan card with:
   - Tier name and price
-  - Billing date and payment method
+  - Billing date and payment method (managed by Square)
   - Feature access summary
   - Usage stats (searches this month)
-- Upgrade/downgrade CTAs
-- Billing history table
+- Upgrade/downgrade CTAs (redirects to Square hosted checkout)
+- Billing history table (fetched from Square API)
 - Cancel subscription link (subtle, bottom)
+
+**Payment Flow (Square Hosted Checkout):**
+- User clicks "Subscribe" or "Upgrade" button
+- Backend creates Square checkout session
+- User redirects to `https://square.link/...` (Square's secure payment page)
+- Payment processed on Square's infrastructure
+- After completion, Square redirects back to app with success/failure status
+- Webhook updates subscription status in database
+- User sees confirmation and can access premium features
+
+**Note:** No embedded payment forms or SDK in the UI. All payment processing happens on Square's hosted pages for maximum security and PCI compliance.
 
 **Search History** (All Tiers)
 - Chronological list of badge lookups
