@@ -5,7 +5,15 @@
 CREATE TABLE IF NOT EXISTS legal_counsel_sessions (
   id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  law_type VARCHAR(100) NOT NULL,
+  law_type VARCHAR(100) NOT NULL CHECK (law_type IN (
+    'law-enforcement-accountability', 'criminal-law', 'family-law', 'employment-law',
+    'personal-injury', 'civil-rights', 'immigration-law', 'real-estate-law',
+    'business-law', 'bankruptcy-law', 'tax-law', 'intellectual-property',
+    'environmental-law', 'healthcare-law', 'education-law', 'elder-law',
+    'estate-planning', 'contract-law', 'tort-law', 'administrative-law',
+    'constitutional-law', 'consumer-protection', 'landlord-tenant', 'traffic-violations',
+    'dui-dwi', 'expungement', 'juvenile-law', 'military-law', 'whistleblower-protection'
+  )),
   state VARCHAR(2) NOT NULL,
   context JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMP DEFAULT NOW() NOT NULL,

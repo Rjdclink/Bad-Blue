@@ -4,8 +4,8 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { getExpertProfile, generateExpertPrompt, hasExpertProfile } from '../server/services/legalExpertSystem';
-import { LAW_TYPES } from '../shared/legalCounselTypes';
+import { getExpertProfile, generateExpertPrompt, hasExpertProfile } from '../services/legalExpertSystem';
+import { LAW_TYPES } from '../../shared/legalCounselTypes';
 
 describe('Legal Expert System', () => {
   test('should return expert profile for valid law type', () => {
@@ -84,7 +84,7 @@ describe('Legal Counsel Types', () => {
 // These are integration tests and should be run in a proper test environment
 describe('Fact Check Engine (Structure)', () => {
   test('should export fact check functions', () => {
-    const factCheckModule = require('../server/services/factCheckEngine');
+    const factCheckModule = require('../services/factCheckEngine');
     
     expect(factCheckModule.factCheckClaim).toBeDefined();
     expect(factCheckModule.quickFactCheck).toBeDefined();
@@ -94,7 +94,7 @@ describe('Fact Check Engine (Structure)', () => {
 
 describe('Session Manager (Structure)', () => {
   test('should export session management functions', () => {
-    const sessionModule = require('../server/services/legalCounselSessionManager');
+    const sessionModule = require('../services/legalCounselSessionManager');
     
     expect(sessionModule.createSession).toBeDefined();
     expect(sessionModule.getSession).toBeDefined();

@@ -28,10 +28,20 @@ import { LAW_TYPES } from '../../shared/legalCounselTypes';
 
 const router = Router();
 
+// Valid US state codes
+const US_STATE_CODES = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+  'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+  'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
+  'DC', 'PR', 'VI', 'GU', 'AS', 'MP'
+] as const;
+
 // Validation schemas
 const createSessionSchema = z.object({
   lawType: z.enum(LAW_TYPES),
-  state: z.string().length(2),
+  state: z.enum(US_STATE_CODES),
   initialContext: z.record(z.any()).optional()
 });
 
@@ -57,7 +67,7 @@ const factCheckSchema = z.object({
   claim: z.string().min(1),
   context: z.object({
     lawType: z.string(),
-    state: z.string().length(2),
+    state: z.enum(US_STATE_CODES),
     jurisdiction: z.string().optional()
   })
 });

@@ -95,7 +95,7 @@ export async function mergeSessionContext(
   if (!session) return null;
 
   const mergedContext = {
-    ...session.context,
+    ...(session.context as Record<string, any>),
     ...newContext
   };
 

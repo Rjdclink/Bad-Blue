@@ -4,7 +4,7 @@
  * Phase 1A: Backend infrastructure for intelligent legal consultation
  */
 
-import { ExpertProfile } from '../shared/legalCounselTypes';
+import { ExpertProfile } from '../../shared/legalCounselTypes';
 
 /**
  * Expert profile configurations for each law type

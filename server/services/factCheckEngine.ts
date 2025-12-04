@@ -5,9 +5,21 @@
  */
 
 import { FactCheckRequest, FactCheckResponse, Citation } from '../../shared/legalCounselTypes';
-import { callGeminiAPI } from '../gemini';
-import { callGroqAPI } from '../groq';
-import { callClaudeAPI } from '../claude';
+import { callGemini } from '../gemini';
+import { generateGroqLegalConsultation } from '../groq';
+import { callClaude } from '../claude';
+
+/**
+ * Helper to wrap a promise with a timeout
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => 
+      setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+}
 
 /**
  * Fact-check a legal claim using multiple AI models
@@ -18,11 +30,13 @@ export async function factCheckClaim(request: FactCheckRequest): Promise<FactChe
   
   const prompt = generateFactCheckPrompt(claim, context);
   
-  // Query all three models in parallel
+  // Query all three models in parallel with timeout
+  const TIMEOUT_MS = 30000; // 30 second timeout per model
+  
   const [geminiResult, groqResult, claudeResult] = await Promise.allSettled([
-    queryModelForFactCheck('gemini', prompt, context),
-    queryModelForFactCheck('groq', prompt, context),
-    queryModelForFactCheck('claude', prompt, context)
+    withTimeout(queryModelForFactCheck('gemini', prompt, context), TIMEOUT_MS),
+    withTimeout(queryModelForFactCheck('groq', prompt, context), TIMEOUT_MS),
+    withTimeout(queryModelForFactCheck('claude', prompt, context), TIMEOUT_MS)
   ]);
 
   // Extract results, handling failures gracefully
@@ -125,25 +139,18 @@ async function queryModelForFactCheck(
   try {
     switch (modelName) {
       case 'gemini':
-        responseText = await callGeminiAPI(prompt, {
-          taskName: 'legal_fact_check',
-          priority: 2,
-          verbosity: 'standard'
-        });
+        responseText = await callGemini(prompt, { useJSON: true }, 8192);
         break;
       case 'groq':
-        responseText = await callGroqAPI(prompt, {
-          taskName: 'legal_fact_check',
-          priority: 2,
-          verbosity: 'standard'
-        });
+        // Use Groq's legal consultation function with custom system prompt
+        responseText = await generateGroqLegalConsultation(
+          prompt,
+          `You are a legal fact-checker for ${context.lawType} cases in ${context.state}. Respond with JSON only.`
+        );
         break;
       case 'claude':
-        responseText = await callClaudeAPI(prompt, {
-          taskName: 'legal_fact_check',
-          priority: 2,
-          verbosity: 'standard'
-        });
+        const claudeResult = await callClaude(prompt, { useJSON: true });
+        responseText = claudeResult.content;
         break;
       default:
         throw new Error(`Unknown model: ${modelName}`);
@@ -265,7 +272,10 @@ export async function quickFactCheck(request: FactCheckRequest): Promise<{
   
   try {
     // Use Groq for speed
-    const result = await queryModelForFactCheck('groq', prompt, request.context);
+    const result = await withTimeout(
+      queryModelForFactCheck('groq', prompt, request.context),
+      10000 // 10 second timeout for quick check
+    );
     
     return {
       verified: result.verified,
