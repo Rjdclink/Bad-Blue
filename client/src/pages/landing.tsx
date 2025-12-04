@@ -26,7 +26,7 @@ export default function Landing() {
     e.currentTarget.style.display = 'none';
   };
   
-  const baseUrl = import.meta.env.VITE_BASE_URL || "https://bad-blue.com";
+  const baseUrl = import.meta.env.VITE_BASE_URL || "https://example.com";
   
   // Use PAGE_FAQ_CONFIG from seoConfig.ts for consistent, page-specific FAQs
   // Removed duplicate useFaqSchema() call that was creating two FAQ schemas

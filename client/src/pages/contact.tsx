@@ -78,12 +78,12 @@ export default function Contact() {
       "@type": "ContactPage",
       "name": "Contact BadBlue - Police Accountability Support",
       "description": "Contact BadBlue for help with police misconduct complaints, §1983 civil rights lawsuits, FOIA requests, and officer resignation petitions. Affordable legal tools, fully remote.",
-      "url": "https://bad-blue.com/contact",
+      "url": "https://example.com/contact",
       "mainEntity": {
         "@type": "Organization",
         "name": "BadBlue",
         "description": "Legal accountability platform offering police misconduct complaints, officer resignation petitions, and §1983 civil rights lawsuit filings — cheaper than a civil rights attorney consult, fully remote.",
-        "url": "https://bad-blue.com",
+        "url": "https://example.com",
         "email": "contact.badblue@gmail.com",
         "contactPoint": {
           "@type": "ContactPoint",
@@ -120,9 +120,9 @@ export default function Contact() {
       <SEOHead
         title="Bad Blue — Contact + Support + Misconduct Filing Help"
         description="Contact BadBlue at contact.badblue@gmail.com for help with police misconduct complaints, §1983 civil rights lawsuits, FOIA requests, and petitions demanding officer resignation. Affordable alternative to attorneys, fully online — never leave home."
-        canonicalUrl="https://bad-blue.com/contact"
+        canonicalUrl="https://example.com/contact"
         breadcrumbs={[
-          { name: "Contact & Support", url: "https://bad-blue.com/contact" }
+          { name: "Contact & Support", url: "https://example.com/contact" }
         ]}
       />
       

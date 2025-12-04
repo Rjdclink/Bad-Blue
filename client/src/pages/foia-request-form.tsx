@@ -275,7 +275,7 @@ export default function FOIARequestForm() {
   };
 
   const breadcrumbs = [
-    { name: "FOIA Request", url: "https://bad-blue.com/foia-request" }
+    { name: "FOIA Request", url: "https://example.com/foia-request" }
   ];
 
   return (
@@ -284,7 +284,7 @@ export default function FOIARequestForm() {
         title="Bad Blue — File FOIA Requests for Police Records Online"
         description="Generate state-specific FOIA requests for body camera footage, disciplinary records, use-of-force reports, and police investigation files. Automatic routing to records custodians. Affordable, fully online."
         keywords={seoKeywords}
-        canonicalUrl="https://bad-blue.com/foia-request"
+        canonicalUrl="https://example.com/foia-request"
         structuredData={foiaServiceSchema}
         breadcrumbs={breadcrumbs}
         pageType="service"

@@ -1,4 +1,4 @@
--- Migration: Add subscription tables for Legalezo payment system
+-- Migration: Add subscription tables for payment system
 -- Date: 2025-12-04
 -- Description: Extends users table and creates plans, subscriptions, and transactions tables
 
@@ -59,8 +59,8 @@ CREATE INDEX IF NOT EXISTS idx_transactions_subscription_id ON transactions(subs
 CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
 CREATE INDEX IF NOT EXISTS idx_users_square_customer_id ON users(square_customer_id);
 
--- Seed Legalezo plan
+-- Seed subscription plan
 -- NOTE: Replace PLACEHOLDER_SQUARE_PLAN_ID with actual Square plan ID before deployment
 INSERT INTO plans (name, price, currency, interval, square_plan_id, is_active)
-SELECT 'Legalezo Subscription', 2599, 'USD', 'monthly', 'PLACEHOLDER_SQUARE_PLAN_ID', true
+SELECT 'Subscription Plan', 2599, 'USD', 'monthly', 'PLACEHOLDER_SQUARE_PLAN_ID', true
 WHERE NOT EXISTS (SELECT 1 FROM plans WHERE square_plan_id = 'PLACEHOLDER_SQUARE_PLAN_ID');

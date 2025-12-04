@@ -24,7 +24,7 @@ Your Badge Check application is ready to be published as a live website. Follow 
 
 **How to set it up:**
 1. Go to your Stripe Dashboard: https://dashboard.stripe.com/webhooks
-2. Create a new webhook endpoint with URL: `https://bad-blue.com/api/webhooks/stripe`
+2. Create a new webhook endpoint with URL: `https://your-domain.com/api/webhooks/stripe`
 3. Select event: `checkout.session.completed`
 4. Copy the "Signing secret" (starts with `whsec_`)
 5. In Railway environment variables, add:

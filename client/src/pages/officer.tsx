@@ -88,7 +88,7 @@ export default function OfficerInfo() {
   };
 
   const breadcrumbs = [
-    { name: "Officer Search", url: "https://bad-blue.com/officer" }
+    { name: "Officer Search", url: "https://example.com/officer" }
   ];
 
   return (
@@ -97,7 +97,7 @@ export default function OfficerInfo() {
         title="Officer Information | BadBlue - Professional Police Accountability Platform"
         description="View officer information and records. Professional legal rights protection service for reporting police misconduct and civil rights violations."
         keywords="police officer information, officer badge lookup, police accountability, bad cops, officer assault, law enforcement abuse, police misconduct records"
-        canonicalUrl="https://bad-blue.com/officer"
+        canonicalUrl="https://example.com/officer"
         structuredData={officerSearchSchema}
         breadcrumbs={breadcrumbs}
         pageType="service"

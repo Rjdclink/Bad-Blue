@@ -45,7 +45,7 @@ export default function Petitions() {
   };
 
   const breadcrumbs = [
-    { name: "Petitions", url: "https://bad-blue.com/petitions" }
+    { name: "Petitions", url: "https://example.com/petitions" }
   ];
 
   return (
@@ -54,7 +54,7 @@ export default function Petitions() {
         title="Officer Resignation Petitions | BadBlue - Police Accountability Platform"
         description="View and sign community-driven officer resignation petitions. When officers receive multiple complaints, petitions are automatically created for accountability and department review."
         keywords="police officer petition, officer resignation petition, police accountability petition, community petition police, sign petition police officer, officer complaint petition, police misconduct petition, bad cop petition, officer removal petition, police department accountability"
-        canonicalUrl="https://bad-blue.com/petitions"
+        canonicalUrl="https://example.com/petitions"
         structuredData={petitionServiceSchema}
         breadcrumbs={breadcrumbs}
         pageType="service"

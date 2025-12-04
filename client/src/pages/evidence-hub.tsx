@@ -90,7 +90,7 @@ export default function EvidenceHub() {
   };
 
   const breadcrumbs = [
-    { name: "Corrupt Law Enforcement & Informant Hub", url: "https://bad-blue.com/evidence-hub" }
+    { name: "Corrupt Law Enforcement & Informant Hub", url: "https://example.com/evidence-hub" }
   ];
 
   return (
@@ -99,7 +99,7 @@ export default function EvidenceHub() {
         title="Corrupt Law Enforcement & Informant Hub | BadBlue"
         description="Community platform for uploading evidence of law enforcement corruption and informant documents. All media types accepted."
         keywords="police corruption evidence, law enforcement misconduct evidence, police brutality video, body camera footage, police abuse documentation, informant documents, snitch evidence, police misconduct photos, officer corruption proof, police accountability evidence"
-        canonicalUrl="https://bad-blue.com/evidence-hub"
+        canonicalUrl="https://example.com/evidence-hub"
         structuredData={evidenceHubSchema}
         breadcrumbs={breadcrumbs}
         pageType="service"
