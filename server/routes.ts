@@ -4318,21 +4318,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
       switch (fileType) {
         case 'complaint': {
-          const complaints = await db.select()
-            .from(schema.complaints)
-            .where(and(
-              eq(schema.complaints.id, id),
-              eq(schema.complaints.userId, userId)
-            ))
-            .limit(1);
-          
-          if (complaints.length === 0) {
-            return res.status(404).json({ error: "Complaint not found" });
-          }
-          
-          document = complaints[0].generatedDocument;
-          filename = `complaint-${id}.txt`;
-          break;
+          // Complaints don't store generated documents - they need to be generated on demand
+          return res.status(400).json({ error: "Complaint documents must be generated through the complaint workflow" });
         }
 
         case 'lawsuit': {
@@ -4366,12 +4353,13 @@ Contact: ${foiaRequest.userEmail || userEmail}
             return res.status(404).json({ error: "FOIA request not found" });
           }
           
-          document = foias[0].document;
+          document = foias[0].generatedLetter;
           filename = `foia-${id}.txt`;
           break;
         }
 
         case 'petition': {
+          // Petitions don't store the full document - return the redrafted text
           const petitions = await db.select()
             .from(schema.petitions)
             .where(and(
@@ -4384,8 +4372,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
             return res.status(404).json({ error: "Petition not found" });
           }
           
-          document = petitions[0].document;
-          filename = `petition-${id}.txt`;
+          const petition = petitions[0];
+          document = `Petition for Officer ${petition.officerName}\n\n${petition.offenseDescriptionRedrafted || petition.offenseDescriptionOriginal}\n\n${petition.additionalText || ''}`;
+          filename = `petition-${petition.slug}.txt`;
           break;
         }
 
