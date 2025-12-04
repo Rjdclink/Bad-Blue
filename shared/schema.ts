@@ -2533,4 +2533,62 @@ export const transactionsRelations = relations(transactions, ({ one }) => ({
 
 export type Transaction = typeof transactions.$inferSelect;
 export type InsertTransaction = typeof transactions.$inferInsert;
+
+// ============================================
+// RECONCILIATION_JOBS TABLE (Platform-aware job processing)
+// ============================================
+export const reconciliationJobs = pgTable("reconciliation_jobs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  platform: text("platform").notNull().default('square'), // 'square' or 'newplatform'
+  idempotencyKey: text("idempotency_key"), // UUID for deduplication
+  payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`), // Job-specific data
+  status: text("status").notNull().default('pending'), // pending, processing, done, failed, manual_review
+  attempts: integer("attempts").notNull().default(0), // Retry counter
+  lastError: text("last_error"), // Most recent error message
+  startedAt: timestamp("started_at", { withTimezone: true }), // When processing started
+  worker: text("worker"), // Worker hostname/ID
+  completedAt: timestamp("completed_at", { withTimezone: true }), // When completed
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+}, (table) => [
+  index("idx_reconciliation_platform_status").on(table.platform, table.status),
+  index("idx_reconciliation_status_created").on(table.status, table.createdAt),
+  uniqueIndex("ux_reconciliation_platform_idempotency").on(table.platform, table.idempotencyKey).where(sql`idempotency_key IS NOT NULL`),
+  index("idx_reconciliation_worker").on(table.worker).where(sql`worker IS NOT NULL`),
+]);
+
+export type ReconciliationJob = typeof reconciliationJobs.$inferSelect;
+export type InsertReconciliationJob = typeof reconciliationJobs.$inferInsert;
+
+// ============================================
+// USER_CONSENTS TABLE (Legal acknowledgment tracking)
+// ============================================
+export const userConsents = pgTable("user_consents", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  paymentId: text("payment_id").notNull(), // Square payment ID or subscription ID
+  planId: text("plan_id"), // Subscription plan ID at time of consent
+  consentVersion: text("consent_version").notNull(), // Version format: v1.0, v1.1, etc.
+  consentText: text("consent_text").notNull(), // Full legal acknowledgment text
+  ipAddress: text("ip_address"), // User IP at time of consent
+  userAgent: text("user_agent"), // Browser user agent
+  signature: text("signature"), // HMAC-SHA256 signature for verification
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+}, (table) => [
+  uniqueIndex("ux_user_payment_consent").on(table.userId, table.paymentId, table.consentVersion),
+  index("idx_user_consents_user_id").on(table.userId),
+  index("idx_user_consents_payment_id").on(table.paymentId),
+  index("idx_user_consents_created_at").on(table.createdAt),
+]);
+
+export const userConsentsRelations = relations(userConsents, ({ one }) => ({
+  user: one(users, {
+    fields: [userConsents.userId],
+    references: [users.id],
+  }),
+}));
+
+export type UserConsent = typeof userConsents.$inferSelect;
+export type InsertUserConsent = typeof userConsents.$inferInsert;
 export type InsertPeopleSearchReport = z.infer<typeof insertPeopleSearchReportSchema>;
