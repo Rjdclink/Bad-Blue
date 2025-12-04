@@ -2,6 +2,41 @@
 
 All notable changes to the LegalWhat/Bad-Blue project documented through 20 implementation stages.
 
+## Stage 21: OpenRouter Web Search & Database Migrations (2025-12-04)
+
+### Added
+- **server/openRouterWebSearch.ts**: Dedicated web search service with 3 free-tier OpenRouter models
+  - Meta Llama 4 Maverick (256K context, multimodal research)
+  - xAI Grok 4.1 Fast (2M context, real-time research)
+  - DeepSeek R1T2 Chimera (164K context, reasoning-focused)
+  - Orchestrated parallel search with result aggregation
+  - Confidence scoring and source extraction
+  - Rate limiting (50 requests/day per model)
+  - Circuit breaker pattern for resilience
+  - Optional `:online` plugin support (⚠️ may incur costs)
+- **server/migrations/006_create_officer_profiles.sql**: Database migration for officer_profiles table
+  - Creates table with comprehensive officer data schema
+  - Adds indexes for name, badge_number, department, location
+  - Adds unique constraint on (officer_name, department)
+  - Supports JSONB fields for flexible data storage
+  - Tracks data quality, sources, and search metadata
+
+### Fixed
+- **server/fullSystemTest.ts**: Verified import statement already correct (no changes needed)
+  - Uses `callGemini` function export (not non-existent `GeminiService` class)
+
+### Updated
+- **README.md**: Added OpenRouter Web Search System section with model details
+- **CHANGELOG.md**: Documented all Stage 21 changes
+
+### Notes
+- Gemini models (2.5-flash-lite, 2.5-flash, 2.5-pro) are correct and up-to-date
+- OpenRouter web search system is separate from Gemini-based legal consultation system
+- Officer profiles schema already existed in `shared/schema.ts`, migration ensures production database has table
+- ⚠️ While OpenRouter model inference is FREE, the `:online` web search plugin may incur costs
+
+---
+
 ## Stage 20: Final Verification & Documentation (2025-12-03)
 
 ### Added
