@@ -1,4 +1,4 @@
-// Legalizo API Routes - Subscription-based legal platform
+// LegalWhat API Routes - Subscription-based legal platform
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import bcrypt from "bcrypt";
@@ -35,7 +35,7 @@ const peopleSearchSchema = z.object({
   searchQuery: z.string().min(1, "Search query is required"),
 });
 
-// Middleware to check active Legalizo subscription
+// Middleware to check active LegalWhat subscription
 export async function requireLegalizoSubscription(
   req: Request,
   res: Response,
@@ -60,7 +60,7 @@ export async function requireLegalizoSubscription(
     if (!subscription || subscription.length === 0) {
       return res.status(403).json({ 
         error: "Active subscription required",
-        message: "Please subscribe to Legalizo to access this feature"
+        message: "Please subscribe to LegalWhat to access this feature"
       });
     }
 
@@ -78,7 +78,7 @@ export function setupLegalizoRoutes(app: Express) {
   // ============================================
   
   /**
-   * Register a new Legalizo user
+   * Register a new LegalWhat user
    * POST /api/legalizo/auth/register
    */
   app.post("/api/legalizo/auth/register", async (req: Request, res: Response) => {
@@ -106,7 +106,7 @@ export function setupLegalizoRoutes(app: Express) {
           email,
           firstName,
           lastName,
-          hasPaidForAccess: false, // Legalizo requires subscription
+          hasPaidForAccess: false, // LegalWhat requires subscription
         })
         .returning();
 
@@ -160,7 +160,7 @@ export function setupLegalizoRoutes(app: Express) {
   });
 
   /**
-   * Login to Legalizo
+   * Login to LegalWhat
    * POST /api/legalizo/auth/login
    */
   app.post("/api/legalizo/auth/login", async (req: Request, res: Response) => {

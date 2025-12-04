@@ -45,7 +45,7 @@ export default function LegalizoConsultation() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title={`${lawType} - Legal Consultation & Documents | Legalizo`}
+        title={`${lawType} - Legal Consultation & Documents | LegalWhat`}
         description="Complete legal consultation and document creation workflow"
       />
 
@@ -54,7 +54,7 @@ export default function LegalizoConsultation() {
         <div className="container flex h-16 items-center gap-4 px-4">
           <Link href="/legalizo-welcome" className="flex items-center gap-2">
             <Shield className="h-8 w-8 text-primary" />
-            <span className="font-bold text-xl">Legalizo</span>
+            <span className="font-bold text-xl">LegalWhat</span>
           </Link>
           
           <div className="ml-8">

@@ -1,6 +1,6 @@
 # AI Providers Documentation
 
-Complete documentation for all 5 AI providers integrated into Legalizo/Bad-Blue.
+Complete documentation for all 5 AI providers integrated into LegalWhat/Bad-Blue.
 
 ---
 

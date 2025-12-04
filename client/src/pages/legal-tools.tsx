@@ -138,7 +138,7 @@ export default function LegalToolsPage() {
   return (
     <>
       <SEOHead
-        title={`${lawTypeInfo.name} - Legalezo Legal Tools`}
+        title={`${lawTypeInfo.name} - LegalWhat Legal Tools`}
         description={`Access AI-powered legal tools for ${lawTypeInfo.name}: ${lawTypeInfo.description}`}
       />
       

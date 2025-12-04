@@ -42,7 +42,7 @@ This document reports the results of the mandatory Phase 1 gating audit performe
 - **Location 2**: `db/migrations/0012_add_subscription_tables.sql` exists (drizzle-kit backup)
 - Migration creates:
   - Extended users table (status, square_customer_id columns)
-  - plans table with seeded Legalezo plan
+  - plans table with seeded LegalWhat plan
   - subscriptions table
   - transactions table with JSONB payload storage
   - 6 performance indexes
@@ -202,9 +202,9 @@ This document reports the results of the mandatory Phase 1 gating audit performe
 
 ### 10. ✅ AI & Platform Functional Spot-Checks
 
-**Legalezo Rebrand**: ✅ VERIFIED
+**LegalWhat Rebrand**: ✅ VERIFIED
 - Package name: `legalezo` (package.json)
-- Browser title: "Legalezo - AI Legal Platform" (client/index.html)
+- Browser title: "LegalWhat - AI Legal Platform" (client/index.html)
 - Logger service: `legalezo` (server/logger.ts)
 - README updated
 

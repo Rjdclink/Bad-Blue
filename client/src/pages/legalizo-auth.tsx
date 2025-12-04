@@ -170,8 +170,8 @@ export default function LegalizoAuth() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted flex items-center justify-center px-4">
       <SEOHead
-        title={`${mode === 'signup' ? 'Sign Up' : 'Login'} - Legalizo`}
-        description="Join Legalizo and access professional AI-powered legal services"
+        title={`${mode === 'signup' ? 'Sign Up' : 'Login'} - LegalWhat`}
+        description="Join LegalWhat and access professional AI-powered legal services"
       />
 
       <div className="w-full max-w-md">
@@ -179,7 +179,7 @@ export default function LegalizoAuth() {
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-2 mb-4">
             <Shield className="w-10 h-10 text-primary" />
-            <h1 className="text-3xl font-bold">Legalizo</h1>
+            <h1 className="text-3xl font-bold">LegalWhat</h1>
           </div>
           <p className="text-muted-foreground">
             {mode === 'signup' 

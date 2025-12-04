@@ -198,7 +198,7 @@ async function runMigrations(): Promise<void> {
     { name: 'FOIA Routing tables', fn: createFOIARoutingTables },
     { name: 'Search Prioritization tables', fn: createSearchPrioritizationTables },
     { name: 'Document Creator tables', fn: createDocumentCreatorTables },
-    { name: 'Legalizo tables', fn: createLegalizoTables },
+    { name: 'LegalWhat tables', fn: createLegalizoTables },
   ];
 
   for (const migration of migrations) {
