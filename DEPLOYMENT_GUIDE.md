@@ -53,11 +53,14 @@ GEMINI_API_KEY=xxx
 GROQ_API_KEY=xxx
 ```
 
-### **Email Service** (SMTP)
+### **Email Service** (Gmail SMTP)
 ```bash
-GWSMTP_USER=your-smtp-username
-GWSMTP_PASS=your-smtp-password
+GWSMTP_USER=your-email@gmail.com
+GWSMTP_PASS=your-16-char-app-password  # See "Email Configuration Setup" section below
 ```
+
+**⚠️ IMPORTANT**: Gmail requires an **App Password**, not your regular password.
+See the "Email Configuration Setup" section below for step-by-step instructions.
 
 ### **Object Storage** (Optional - gracefully degrades if unavailable)
 ```bash
@@ -72,6 +75,116 @@ GWSMTP_PASS=your-smtp-password
 # OAuth is optional - system uses local authentication by default
 # Configure your OAuth provider if needed
 ```
+
+---
+
+## 📧 **Email Configuration Setup**
+
+BadBlue uses Gmail SMTP for sending emails. Regular Gmail passwords will NOT work due to Google's security requirements. You must use an **App Password**.
+
+### **Step-by-Step: Generate Gmail App Password**
+
+#### **Prerequisites**
+- A Gmail account
+- 2-Factor Authentication (2FA) enabled on your Google account
+
+#### **Step 1: Enable 2-Factor Authentication** (if not already enabled)
+1. Go to: https://myaccount.google.com/security
+2. Under "Signing in to Google", click "2-Step Verification"
+3. Follow the prompts to enable 2FA using your phone
+
+#### **Step 2: Generate App Password**
+1. Visit: https://myaccount.google.com/apppasswords
+2. Sign in to your Google account if prompted
+3. You should see "App passwords" page
+   - **If you see "App passwords not available":**
+     - Ensure 2FA is enabled (Step 1)
+     - If using Google Workspace, contact your admin to enable app passwords
+4. Click "Select app" dropdown → Choose "Mail"
+5. Click "Select device" dropdown → Choose "Other (Custom name)"
+6. Enter a name: `BadBlue App` (or any name you prefer)
+7. Click "Generate"
+8. Google will show a 16-character password (e.g., `abcd efgh ijkl mnop`)
+9. **Copy this password** (spaces don't matter, but you can remove them)
+
+#### **Step 3: Add to Environment Variables**
+```bash
+GWSMTP_USER=your-email@gmail.com
+GWSMTP_PASS=abcdefghijklmnop  # Remove spaces from the 16-char password
+```
+
+#### **Step 4: Test Email Configuration**
+After deployment, test email sending:
+
+**Option 1: Via API (if you have admin access):**
+```bash
+curl -X POST https://your-app.railway.app/api/admin/test-email \
+  -H "Content-Type: application/json" \
+  -d '{"to":"test@example.com","subject":"Test Email"}'
+```
+
+**Option 2: Via test script (local):**
+```bash
+# Create a test file: test-email.mjs
+node test-email.mjs
+```
+
+Example `test-email.mjs`:
+```javascript
+import nodemailer from 'nodemailer';
+import dotenv from 'dotenv';
+dotenv.config();
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GWSMTP_USER,
+    pass: process.env.GWSMTP_PASS,
+  },
+});
+
+const mailOptions = {
+  from: process.env.GWSMTP_USER,
+  to: 'test@example.com',
+  subject: 'BadBlue Email Test',
+  text: 'If you received this, email configuration is working!',
+};
+
+transporter.sendMail(mailOptions, (error, info) => {
+  if (error) {
+    console.error('❌ Email failed:', error.message);
+  } else {
+    console.log('✅ Email sent successfully:', info.response);
+  }
+});
+```
+
+#### **Troubleshooting Email Issues**
+
+**Error: "Invalid login: Username and Password not accepted"**
+- ✅ Solution: You're using your regular Gmail password instead of an App Password
+- Generate an App Password following Step 2 above
+
+**Error: "Application-specific password required"**
+- ✅ Solution: Same as above - use App Password, not regular password
+
+**Error: "Less secure app access is no longer available"**
+- ✅ Solution: Google removed "less secure apps". Use App Passwords (Step 2)
+
+**Error: "App passwords not available"**
+- ✅ Solution 1: Enable 2-Factor Authentication first
+- ✅ Solution 2: If using Google Workspace, contact your organization admin
+
+**Email sends but doesn't arrive:**
+- Check spam/junk folder
+- Verify recipient email address is correct
+- Check Gmail's "Sent" folder to confirm email was sent
+- Wait a few minutes (email delivery can be delayed)
+
+**Rate Limiting:**
+- Gmail allows ~500 emails per day for regular accounts
+- Gmail Workspace allows more (check your plan)
+- Consider using a dedicated email service (SendGrid, Mailgun) for high volume
 
 ---
 

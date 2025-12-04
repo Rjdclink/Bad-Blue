@@ -373,11 +373,21 @@ router.post('/signup', signupLimiter, async (req, res) => {
 
 2. **Signup Form**
    - POST to /api/auth/signup
-   - Redirect to subscription payment
+   - Redirect to Square hosted checkout
 
-3. **Subscription Payment**
-   - Embed Square Web Payments SDK
-   - Create subscription after payment
+3. **Subscription Payment (Square Hosted Checkout)**
+   - Backend creates checkout session via Square API
+   - User redirects to Square's secure hosted payment page (`https://square.link/...`)
+   - Payment processed on Square's infrastructure (PCI compliant)
+   - After payment, Square redirects back to application
+   - Webhook updates subscription status in database
+   
+   **Benefits of Hosted Checkout:**
+   - Full PCI compliance without certification burden
+   - Square handles all payment security and fraud detection
+   - Professional payment UX with mobile optimization
+   - Reduced codebase complexity
+   - No sensitive payment data touches application servers
 
 4. **Protected Routes**
    - Add `ensureActiveSubscription` middleware to `/welcome` and `/legal-tools`

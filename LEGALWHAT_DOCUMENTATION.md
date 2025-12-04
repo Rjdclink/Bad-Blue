@@ -166,6 +166,163 @@ CREATE TABLE people_search_reports (
 );
 ```
 
+## Square Payment Integration Architecture
+
+### Hosted Checkout Approach
+
+LegalWhat uses **Square's hosted checkout pages** for all payment processing. This provides maximum security, PCI compliance, and a professional payment experience without embedding payment forms in the application.
+
+### Payment Flow
+
+1. **User Completes Registration** at `/legalizo-auth`
+   - User creates account with email and password
+   - Account created with `pending` subscription status
+
+2. **User Clicks "Pay $25.99 Subscription" Button**
+   - Frontend sends POST request to backend API
+   - Backend creates Square checkout session via Square Checkout API
+
+3. **Redirect to Square Hosted Page**
+   - User redirects to `https://square.link/...` (Square's secure domain)
+   - All payment information entered on Square's infrastructure
+   - Square handles:
+     - Credit card processing
+     - Fraud detection
+     - 3D Secure authentication
+     - PCI compliance
+     - Payment security
+
+4. **Payment Processing**
+   - User enters payment details on Square's page
+   - Square processes payment securely
+   - No sensitive payment data touches the application servers
+
+5. **Return to Application**
+   - After successful payment, Square redirects to app callback URL
+   - Callback URL includes checkout session ID for verification
+   - User sees success confirmation
+
+6. **Webhook Updates Subscription**
+   - Square sends webhook event to application
+   - Backend verifies webhook signature
+   - Subscription status updated to `active` in database
+   - User granted access to premium features
+
+### Benefits of Hosted Checkout
+
+✅ **Full PCI Compliance** - Square handles all payment data, no PCI certification required for the application
+
+✅ **Security** - No sensitive payment information ever touches application servers or database
+
+✅ **Professional UX** - Square's optimized payment forms with mobile support and localization
+
+✅ **Simplified Codebase** - No need to embed and maintain Square Web Payments SDK
+
+✅ **Fraud Protection** - Square's built-in fraud detection and prevention
+
+✅ **Future-Proof** - Automatic updates to payment features, security patches handled by Square
+
+✅ **Compliance** - Automatic compliance with payment regulations (PSD2, SCA, etc.)
+
+### Important Notes
+
+**Square Web Payments SDK is NOT used in this application.**
+
+All payment processing occurs on Square's secure hosted infrastructure. The application never handles, stores, or processes credit card numbers, CVVs, or other sensitive payment information.
+
+### Integration Code Example
+
+**Backend - Create Checkout Session:**
+```typescript
+import { Client } from 'square';
+
+const client = new Client({
+  accessToken: process.env.SQUARE_ACCESS_TOKEN,
+  environment: 'production',
+});
+
+// Create checkout session
+const response = await client.checkoutApi.createPaymentLink({
+  order: {
+    locationId: process.env.SQUARE_LOCATION_ID,
+    lineItems: [{
+      name: 'LegalWhat Monthly Subscription',
+      quantity: '1',
+      basePriceMoney: {
+        amount: BigInt(2599), // $25.99
+        currency: 'USD',
+      },
+    }],
+  },
+  checkoutOptions: {
+    redirectUrl: `${BASE_URL}/legalizo/payment-success`,
+    askForShippingAddress: false,
+  },
+});
+
+// Redirect user to payment URL
+return response.result.paymentLink.url; // e.g., https://square.link/u/abc123
+```
+
+**Frontend - Handle Payment Button:**
+```typescript
+const handleSubscribe = async () => {
+  const response = await fetch('/api/legalizo/create-checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  
+  const { checkoutUrl } = await response.json();
+  
+  // Redirect to Square's hosted page
+  window.location.href = checkoutUrl;
+};
+```
+
+**Backend - Handle Webhook:**
+```typescript
+app.post('/api/webhooks/square', async (req, res) => {
+  // Verify Square webhook signature
+  const isValid = verifySquareSignature(
+    req.body,
+    req.headers['x-square-signature']
+  );
+  
+  if (!isValid) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+  
+  const event = req.body;
+  
+  if (event.type === 'payment.created') {
+    // Update subscription status to active
+    await db.update(legalizoSubscriptions)
+      .set({ 
+        status: 'active',
+        currentPeriodStart: new Date(),
+        currentPeriodEnd: addMonths(new Date(), 1),
+      })
+      .where(eq(legalizoSubscriptions.squarePaymentId, event.data.id));
+  }
+  
+  res.json({ received: true });
+});
+```
+
+### Testing
+
+**Sandbox Mode:**
+Set `SQUARE_ENVIRONMENT=sandbox` and use Square's sandbox credentials for testing without real payments.
+
+**Square Sandbox Cards:**
+- Visa: `4111 1111 1111 1111`
+- Mastercard: `5105 1051 0510 5100`
+- CVV: Any 3 digits
+- Expiry: Any future date
+- ZIP: Any 5 digits
+
+---
+
 ## API Endpoints
 
 ### Authentication

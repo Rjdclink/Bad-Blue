@@ -31,6 +31,13 @@
 - [ ] Test email sent successfully
 - [ ] Email templates working correctly
 
+**Note**: If using Gmail SMTP instead, ensure you're using an App Password:
+- [ ] `GWSMTP_USER` configured with Gmail address
+- [ ] `GWSMTP_PASS` configured with 16-character App Password (NOT regular password)
+- [ ] 2-Factor Authentication enabled on Gmail account
+- [ ] App Password generated from https://myaccount.google.com/apppasswords
+- [ ] Test email sent successfully via Gmail SMTP
+
 ### AI Providers (5 Separate APIs)
 
 #### 1. OpenRouter (FREE - 4 models)
@@ -85,6 +92,85 @@
 - [ ] `BASE_URL` configured (or auto-detected)
 - [ ] All required environment variables validated at startup
 - [ ] Configuration module loads successfully
+
+## ✅ Pre-Deployment Checks
+
+### Critical Database Tables Verification
+
+Before deploying to production, verify all critical tables exist in your database.
+
+**Run this SQL query to check for required tables:**
+
+```sql
+SELECT table_name 
+FROM information_schema.tables 
+WHERE table_schema = 'public' 
+AND table_name IN (
+  'users', 
+  'complaints', 
+  'lawsuits', 
+  'lawsuit_filings',
+  'petitions', 
+  'officer_profiles', 
+  'subscriptions', 
+  'plans', 
+  'transactions', 
+  'user_consents'
+)
+ORDER BY table_name;
+```
+
+**Expected Result: 10 critical tables**
+
+| Table Name | Purpose |
+|------------|---------|
+| `complaints` | User-submitted complaints |
+| `lawsuit_filings` | Lawsuit filing records |
+| `lawsuits` | Legacy lawsuit records |
+| `officer_profiles` | Compiled officer data from public records |
+| `petitions` | Community petitions |
+| `plans` | Subscription plan definitions |
+| `subscriptions` | User subscription records |
+| `transactions` | Payment transaction history |
+| `user_consents` | Legal consent tracking |
+| `users` | User accounts and authentication |
+
+**If any tables are missing:**
+
+1. Check if migrations have been run:
+   ```bash
+   npm run migrate
+   ```
+
+2. For specific missing tables, run the corresponding migration:
+   - `officer_profiles`: Run `server/migrations/006_create_officer_profiles.sql` or `db/migrations/0015_create_officer_profiles_table.sql`
+   - Subscription tables: Run `server/migrations/003_subscription_tables.sql` or `db/migrations/0012_add_subscription_tables.sql`
+   - User consents: Run `server/migrations/005_add_user_consents_table.sql` or `db/migrations/0014_add_user_consents_table.sql`
+
+3. Verify table creation:
+   ```sql
+   \dt officer_profiles
+   -- Should show the table with columns and indexes
+   ```
+
+4. Check table schema matches expected structure:
+   ```sql
+   \d+ officer_profiles
+   -- Verify columns: id, officer_name, badge_number, department, rank, location, 
+   --                 career_data, incidents, court_cases, news_mentions, 
+   --                 community_complaints, sources, data_quality_score, 
+   --                 last_updated, search_count, last_searched_at, created_at
+   ```
+
+**Post-Migration Verification:**
+- [ ] All 10 critical tables exist
+- [ ] `officer_profiles` table has correct schema
+- [ ] Indexes created on `officer_profiles` (name, badge, department, location)
+- [ ] Unique constraint on `officer_profiles(officer_name, department)`
+- [ ] Foreign key relationships intact
+- [ ] No migration errors in logs
+
+---
 
 ## ✅ Pre-Deployment Checks
 
