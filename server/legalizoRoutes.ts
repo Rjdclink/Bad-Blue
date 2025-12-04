@@ -5,6 +5,7 @@ import bcrypt from "bcrypt";
 import { db } from "./db";
 import { conductPeopleSearch, formatReportForPDF } from "./peopleSearch";
 import { getSquareClient, getSquareLocationId } from "./squareClient";
+import { isAdminBypass, createAdminUser } from "./adminAuth";
 import { 
   users, 
   authAccounts, 
@@ -168,18 +169,9 @@ export function setupLegalizoRoutes(app: Express) {
     try {
       const { email, password } = loginSchema.parse(req.body);
 
-      // Admin bypass credentials - check first
-      const ADMIN_EMAIL = 'Rjdclink@outlook.com';
-      const ADMIN_PASSWORD = 'SARBEAR';
-      
-      if (email.toLowerCase() === ADMIN_EMAIL.toLowerCase() && password === ADMIN_PASSWORD) {
-        const adminUser = {
-          id: 'admin-bypass',
-          email: ADMIN_EMAIL,
-          firstName: 'Robert',
-          lastName: 'Clink',
-          isAdmin: true,
-        };
+      // Admin bypass - check first
+      if (isAdminBypass(email, password)) {
+        const adminUser = createAdminUser();
         
         req.login(adminUser, (err) => {
           if (err) {
@@ -343,7 +335,7 @@ export function setupLegalizoRoutes(app: Express) {
             name: 'LegalWhat Monthly Subscription',
             quantity: '1',
             basePriceMoney: {
-              amount: BigInt(2599), // $25.99 in cents
+              amount: BigInt(LEGALIZO_SUBSCRIPTION_PRICING_CENTS),
               currency: 'USD',
             },
           }],

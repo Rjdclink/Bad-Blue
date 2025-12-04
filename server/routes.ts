@@ -24,6 +24,7 @@ import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import { setupLegalizoRoutes } from "./legalizoRoutes";
+import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import { setupUploadRoutes } from "./routes/upload.routes";
@@ -993,18 +994,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loginIdentifier = email || username;
       const clientIp = req.ip || req.connection.remoteAddress || "unknown";
 
-      // Admin bypass credentials - check first
-      const ADMIN_EMAIL = 'Rjdclink@outlook.com';
-      const ADMIN_PASSWORD = 'SARBEAR';
-      
-      if (loginIdentifier && loginIdentifier.toLowerCase() === ADMIN_EMAIL.toLowerCase() && password === ADMIN_PASSWORD) {
-        const adminUser = {
-          id: 'admin-bypass',
-          email: ADMIN_EMAIL,
-          firstName: 'Robert',
-          lastName: 'Clink',
-          isAdmin: true,
-        };
+      // Admin bypass - check first
+      if (loginIdentifier && password && isAdminBypass(loginIdentifier, password)) {
+        const adminUser = createAdminUser();
         
         req.login(adminUser, (err: any) => {
           if (err) {
@@ -3287,7 +3279,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Optimized: Uses batch queries instead of N+1 queries per user
   app.get("/api/admin/users", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
-    if (userId !== 'admin-bypass') {
+    if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
@@ -3401,7 +3393,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Get total user count for dashboard
   app.get("/api/admin/users/count", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
-    if (userId !== 'admin-bypass') {
+    if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
@@ -3412,7 +3404,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Edit user subscription
   app.patch("/api/admin/users/:userId/subscription", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const adminId = req.user?.id || req.user?.claims?.sub;
-    if (adminId !== 'admin-bypass') {
+    if (!isAdmin(adminId)) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
