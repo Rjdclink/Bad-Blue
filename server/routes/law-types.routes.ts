@@ -8,7 +8,7 @@ const log = createLogger('LawTypesRoutes');
 export function setupLawTypesRoutes(app: Express): void {
 
   // Get all law types
-  app.get('/api/law-types', asyncHandler(async (req, res: Response) => {
+  app.get('/api/law-types', asyncHandler(async (req: any, res: Response) => {
     log.debug('Fetching law types');
 
     const result = await pool.query(`

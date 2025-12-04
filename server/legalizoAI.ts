@@ -29,7 +29,7 @@ export async function classifyLawType(userInput: string): Promise<{
     let bestMatch = { lawType: 'General Law', confidence: 0.3 };
     
     for (const [lawType, pattern] of Object.entries(lawTypePatterns)) {
-      if (pattern.test(userInput) || pattern.test(analysis.analysis || '')) {
+      if (pattern.test(userInput) || (typeof analysis === 'string' && pattern.test(analysis))) {
         bestMatch = { lawType, confidence: 0.8 };
         break;
       }
