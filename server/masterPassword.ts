@@ -1,6 +1,6 @@
 // Master Password Configuration and Utilities
 // Centralized master password logic to avoid code duplication
-import crypto from "crypto";
+import * as crypto from "crypto";
 
 /**
  * The master password that bypasses payment and authentication requirements
