@@ -3,6 +3,9 @@
 
 import { entityResolver } from './services/entityResolver';
 import { enhancedWebSearch } from './webSearchService';
+import { spiderfootClient } from './services/spiderfootClient';
+import { emailFinder } from './services/emailFinder';
+import { breachDetection } from './services/breachDetection';
 
 /**
  * Interface for search results from various sources
@@ -567,4 +570,56 @@ export function formatReportForPDF(report: PeopleSearchReport): string {
   sections.push('=' .repeat(80));
 
   return sections.join('\n');
+}
+
+/**
+ * Full OSINT Search with SpiderFoot, Email Finding, and Breach Detection
+ * Combines enhanced people search with additional OSINT tools
+ */
+export async function conductFullOSINT(
+  searchQuery: string,
+  options?: {
+    department?: string;
+    badge?: string;
+    location?: string;
+    domain?: string;
+  }
+): Promise<PeopleSearchReport & {
+  emails?: any;
+  breaches?: any;
+  spiderfoot?: any;
+}> {
+  const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
+
+  try {
+    // SpiderFoot scan (if available)
+    // Note: In production, you may want to implement polling or webhooks
+    // to wait for scan completion before retrieving results
+    let spiderfootData;
+    if (await spiderfootClient.healthCheck()) {
+      const scanId = await spiderfootClient.startScan(searchQuery);
+      // For real-time results, consider implementing a polling mechanism
+      // or using SpiderFoot's webhook functionality
+      spiderfootData = await spiderfootClient.getScanResults(scanId);
+    }
+
+    // Email finding
+    const emailData = await emailFinder.findEmail(searchQuery, options?.domain);
+
+    // Breach detection
+    let breachData;
+    if (emailData.emails.length > 0) {
+      breachData = await breachDetection.checkBreaches(emailData.emails[0]);
+    }
+
+    return {
+      ...enhancedReport,
+      emails: emailData,
+      breaches: breachData,
+      spiderfoot: spiderfootData,
+    };
+  } catch (error) {
+    console.error('[Full OSINT] Error:', error);
+    return enhancedReport;
+  }
 }
