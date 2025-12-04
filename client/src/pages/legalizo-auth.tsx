@@ -122,11 +122,21 @@ export default function LegalizoAuth() {
         
         // Check subscription status
         if (data.hasActiveSubscription) {
-          // Add small delay to ensure session is ready
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          // Force page reload to ensure auth state is fresh
-          window.location.href = '/';
+          // Verify session is ready by checking user endpoint
+          try {
+            const verifyResponse = await fetch('/api/user');
+            if (verifyResponse.ok) {
+              // Session is ready, redirect
+              window.location.href = '/';
+            } else {
+              // Session not ready, wait briefly and try redirect anyway
+              await new Promise(resolve => setTimeout(resolve, 300));
+              window.location.href = '/';
+            }
+          } catch (error) {
+            // If verification fails, still try to redirect
+            window.location.href = '/';
+          }
         } else {
           // Show payment button
           setShowPayment(true);

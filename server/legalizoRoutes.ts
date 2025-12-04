@@ -145,12 +145,14 @@ export function setupLegalizoRoutes(app: Express) {
           });
         });
 
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
           req.session.save((err) => {
             if (err) {
-              console.error("⚠️ Session save warning:", err);
+              console.error("❌ Session save failed:", err);
+              reject(err);
+            } else {
+              resolve();
             }
-            resolve();
           });
         });
       } catch (sessionError) {
@@ -290,12 +292,14 @@ export function setupLegalizoRoutes(app: Express) {
         });
 
         // FIX: Ensure session is persisted before responding
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
           req.session.save((err) => {
             if (err) {
-              console.error("⚠️ Session save warning:", err);
+              console.error("❌ Session save failed:", err);
+              reject(err);
+            } else {
+              resolve();
             }
-            resolve();
           });
         });
       } catch (sessionError) {
