@@ -6,6 +6,11 @@
 ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'pending_payment';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS square_customer_id TEXT;
 
+-- Set existing users to 'active' status so they can log in immediately
+UPDATE users 
+SET status = 'active' 
+WHERE status IS NULL OR status = 'pending_payment';
+
 -- Create plans table
 CREATE TABLE IF NOT EXISTS plans (
   id SERIAL PRIMARY KEY,
