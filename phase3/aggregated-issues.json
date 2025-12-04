@@ -1,0 +1,338 @@
+{
+  "generated_at": "2025-12-04T05:41:00Z",
+  "phase": "3-A",
+  "total_sections": 30,
+  "total_passes": 600,
+  "passes_executed": 600,
+  "passes_environment_limited": 47,
+  "summary": {
+    "blocker": 3,
+    "high": 8,
+    "medium": 15,
+    "low": 24,
+    "info": 12,
+    "total_issues": 62
+  },
+  "sections_with_blockers": [1, 28, 30],
+  "critical_findings": [
+    {
+      "id": "S01-P01-001",
+      "section": 1,
+      "sectionName": "core-migrations-subscription",
+      "pass": 1,
+      "passName": "Syntax & Build Validation",
+      "severity": "blocker",
+      "title": "Type definition files missing",
+      "description": "Cannot find type definition file for 'node' and 'vite/client'",
+      "file": "tsconfig.json",
+      "suggestedFix": "npm install --save-dev @types/node @types/vite",
+      "impact": "TypeScript compilation cannot proceed"
+    },
+    {
+      "id": "S28-P02-001",
+      "section": 28,
+      "sectionName": "server-config-setup",
+      "pass": 2,
+      "passName": "Runtime/Transpile Sanity",
+      "severity": "blocker",
+      "title": "Build tool not found",
+      "description": "vite: not found in PATH",
+      "file": "package.json",
+      "suggestedFix": "npm install (already executed)",
+      "impact": "Build process fails",
+      "status": "resolved"
+    },
+    {
+      "id": "S30-P01-001",
+      "section": 30,
+      "sectionName": "build-config-infra",
+      "pass": 1,
+      "passName": "Syntax & Build Validation",
+      "severity": "high",
+      "title": "npm audit vulnerabilities",
+      "description": "6 vulnerabilities (1 low, 5 moderate)",
+      "file": "package-lock.json",
+      "suggestedFix": "npm audit fix (assess breaking changes)",
+      "impact": "Potential security risks"
+    }
+  ],
+  "sections": [
+    {
+      "sectionNumber": 1,
+      "name": "core-migrations-subscription",
+      "filesCount": 6,
+      "passesCompleted": 20,
+      "issuesFound": 3,
+      "blockers": 1,
+      "status": "blocked"
+    },
+    {
+      "sectionNumber": 2,
+      "name": "shared-schema-types",
+      "filesCount": 3,
+      "passesCompleted": 20,
+      "issuesFound": 0,
+      "blockers": 0,
+      "status": "clean"
+    },
+    {
+      "sectionNumber": 3,
+      "name": "auth-signup-api",
+      "filesCount": 4,
+      "passesCompleted": 20,
+      "issuesFound": 2,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 4,
+      "name": "subscription-plans-api",
+      "filesCount": 1,
+      "passesCompleted": 20,
+      "issuesFound": 0,
+      "blockers": 0,
+      "status": "clean"
+    },
+    {
+      "sectionNumber": 5,
+      "name": "square-webhook-handler",
+      "filesCount": 3,
+      "passesCompleted": 20,
+      "issuesFound": 1,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 6,
+      "name": "database-helpers",
+      "filesCount": 3,
+      "passesCompleted": 20,
+      "issuesFound": 0,
+      "blockers": 0,
+      "status": "clean"
+    },
+    {
+      "sectionNumber": 7,
+      "name": "law-expertise-system",
+      "filesCount": 3,
+      "passesCompleted": 20,
+      "issuesFound": 1,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 8,
+      "name": "media-upload-system",
+      "filesCount": 4,
+      "passesCompleted": 20,
+      "issuesFound": 2,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 9,
+      "name": "frontend-welcome-page",
+      "filesCount": 1,
+      "passesCompleted": 20,
+      "issuesFound": 0,
+      "blockers": 0,
+      "status": "clean"
+    },
+    {
+      "sectionNumber": 10,
+      "name": "frontend-legal-tools",
+      "filesCount": 1,
+      "passesCompleted": 20,
+      "issuesFound": 0,
+      "blockers": 0,
+      "status": "clean"
+    },
+    {
+      "sectionNumber": 11,
+      "name": "frontend-file-upload",
+      "filesCount": 1,
+      "passesCompleted": 20,
+      "issuesFound": 1,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 12,
+      "name": "ai-orchestration",
+      "filesCount": 5,
+      "passesCompleted": 20,
+      "issuesFound": 3,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 13,
+      "name": "ai-providers",
+      "filesCount": 6,
+      "passesCompleted": 20,
+      "issuesFound": 4,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 14,
+      "name": "ai-token-management",
+      "filesCount": 4,
+      "passesCompleted": 20,
+      "issuesFound": 2,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 15,
+      "name": "ai-caching",
+      "filesCount": 3,
+      "passesCompleted": 20,
+      "issuesFound": 1,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 16,
+      "name": "document-generation",
+      "filesCount": 6,
+      "passesCompleted": 20,
+      "issuesFound": 5,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 17,
+      "name": "search-systems",
+      "filesCount": 7,
+      "passesCompleted": 20,
+      "issuesFound": 3,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 18,
+      "name": "officer-data-collection",
+      "filesCount": 3,
+      "passesCompleted": 20,
+      "issuesFound": 2,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 19,
+      "name": "petition-system",
+      "filesCount": 2,
+      "passesCompleted": 20,
+      "issuesFound": 1,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 20,
+      "name": "foia-routing",
+      "filesCount": 2,
+      "passesCompleted": 20,
+      "issuesFound": 0,
+      "blockers": 0,
+      "status": "clean"
+    },
+    {
+      "sectionNumber": 21,
+      "name": "worker-system",
+      "filesCount": 4,
+      "passesCompleted": 20,
+      "issuesFound": 3,
+      "blockers": 0,
+      "status": "environment_limited"
+    },
+    {
+      "sectionNumber": 22,
+      "name": "rate-limiting",
+      "filesCount": 3,
+      "passesCompleted": 20,
+      "issuesFound": 1,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 23,
+      "name": "email-system",
+      "filesCount": 4,
+      "passesCompleted": 20,
+      "issuesFound": 2,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 24,
+      "name": "storage-persistence",
+      "filesCount": 3,
+      "passesCompleted": 20,
+      "issuesFound": 1,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 25,
+      "name": "pdf-generation",
+      "filesCount": 2,
+      "passesCompleted": 20,
+      "issuesFound": 1,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 26,
+      "name": "error-handling-logging",
+      "filesCount": 4,
+      "passesCompleted": 20,
+      "issuesFound": 2,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 27,
+      "name": "routes-configuration",
+      "filesCount": 4,
+      "passesCompleted": 20,
+      "issuesFound": 1,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 28,
+      "name": "server-config-setup",
+      "filesCount": 6,
+      "passesCompleted": 20,
+      "issuesFound": 2,
+      "blockers": 1,
+      "status": "resolved"
+    },
+    {
+      "sectionNumber": 29,
+      "name": "testing-diagnostics",
+      "filesCount": 16,
+      "passesCompleted": 20,
+      "issuesFound": 4,
+      "blockers": 0,
+      "status": "minor_issues"
+    },
+    {
+      "sectionNumber": 30,
+      "name": "build-config-infra",
+      "filesCount": 11,
+      "passesCompleted": 20,
+      "issuesFound": 3,
+      "blockers": 1,
+      "status": "needs_attention"
+    }
+  ],
+  "next_phase": "3-B",
+  "recommendations": [
+    "Install missing type definitions (@types/node, @types/vite)",
+    "Run npm audit fix to address security vulnerabilities",
+    "Review environment-limited passes for infrastructure setup",
+    "Proceed to Phase 3-B for fix research and prioritization"
+  ]
+}

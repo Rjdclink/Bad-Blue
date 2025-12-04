@@ -32,7 +32,7 @@ export const sessions = pgTable(
 );
 
 // ============================================
-// USERS TABLE (Authentication + Stripe Payments)
+// USERS TABLE (Authentication + Square Payments)
 // ============================================
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -41,6 +41,9 @@ export const users = pgTable("users", {
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
 
+  // Subscription status
+  status: varchar("status", { length: 32 }).default('pending_payment'),
+  
   // Square customer tracking
   squareCustomerId: varchar("square_customer_id"),
 
@@ -2412,4 +2415,180 @@ export const insertPeopleSearchReportSchema = createInsertSchema(peopleSearchRep
 });
 
 export type PeopleSearchReport = typeof peopleSearchReports.$inferSelect;
+
+// ============================================
+// EVIDENCE FILES TABLE (Stage 2A - Media Upload System)
+// ============================================
+export const evidenceFiles = pgTable("evidence_files", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  fileName: text("file_name").notNull(),
+  fileType: text("file_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  storagePath: text("storage_path").notNull(),
+  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  lawType: text("law_type"), // References law types from shared/lawTypes.ts
+  associatedWith: varchar("associated_with", { length: 20 }), // 'consultation' | 'document' | null
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_evidence_user").on(table.userId),
+  index("idx_evidence_law_type").on(table.lawType),
+]);
+
+export const evidenceFilesRelations = relations(evidenceFiles, ({ one }) => ({
+  user: one(users, {
+    fields: [evidenceFiles.userId],
+    references: [users.id],
+  }),
+}));
+
+export const insertEvidenceFileSchema = createInsertSchema(evidenceFiles).omit({
+  id: true,
+  createdAt: true,
+  uploadedAt: true,
+});
+
+export type InsertEvidenceFile = z.infer<typeof insertEvidenceFileSchema>;
+export type EvidenceFile = typeof evidenceFiles.$inferSelect;
+
+// ============================================
+// PLANS TABLE (Subscription Plans)
+// ============================================
+export const plans = pgTable("plans", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: text("name").notNull(),
+  price: integer("price").notNull(), // Price in cents
+  currency: varchar("currency", { length: 8 }).notNull().default('USD'),
+  interval: varchar("interval", { length: 16 }).notNull().default('monthly'),
+  squarePlanId: text("square_plan_id").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type Plan = typeof plans.$inferSelect;
+export type InsertPlan = typeof plans.$inferInsert;
+
+// ============================================
+// SUBSCRIPTIONS TABLE (User Subscriptions)
+// ============================================
+export const subscriptions = pgTable("subscriptions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  planId: integer("plan_id").notNull().references(() => plans.id, { onDelete: 'restrict' }),
+  status: varchar("status", { length: 32 }).notNull(),
+  squareSubscriptionId: text("square_subscription_id"),
+  startDate: timestamp("start_date", { mode: 'date' }),
+  renewalDate: timestamp("renewal_date", { mode: 'date' }),
+  canceledAt: timestamp("canceled_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_subscriptions_user_id").on(table.userId),
+  index("idx_subscriptions_status").on(table.status),
+]);
+
+export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
+  user: one(users, {
+    fields: [subscriptions.userId],
+    references: [users.id],
+  }),
+  plan: one(plans, {
+    fields: [subscriptions.planId],
+    references: [plans.id],
+  }),
+}));
+
+export type Subscription = typeof subscriptions.$inferSelect;
+export type InsertSubscription = typeof subscriptions.$inferInsert;
+
+// ============================================
+// TRANSACTIONS TABLE (Payment Transactions)
+// ============================================
+export const transactions = pgTable("transactions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  subscriptionId: integer("subscription_id").references(() => subscriptions.id, { onDelete: 'set null' }),
+  squarePaymentId: text("square_payment_id"),
+  amount: integer("amount").notNull(), // Amount in cents
+  currency: varchar("currency", { length: 8 }).notNull().default('USD'),
+  status: varchar("status", { length: 32 }).notNull(),
+  eventType: text("event_type"),
+  createdAt: timestamp("created_at").defaultNow(),
+  rawPayload: jsonb("raw_payload"),
+}, (table) => [
+  index("idx_transactions_user_id").on(table.userId),
+  index("idx_transactions_subscription_id").on(table.subscriptionId),
+]);
+
+export const transactionsRelations = relations(transactions, ({ one }) => ({
+  user: one(users, {
+    fields: [transactions.userId],
+    references: [users.id],
+  }),
+  subscription: one(subscriptions, {
+    fields: [transactions.subscriptionId],
+    references: [subscriptions.id],
+  }),
+}));
+
+export type Transaction = typeof transactions.$inferSelect;
+export type InsertTransaction = typeof transactions.$inferInsert;
+
+// ============================================
+// RECONCILIATION_JOBS TABLE (Platform-aware job processing)
+// ============================================
+export const reconciliationJobs = pgTable("reconciliation_jobs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  platform: text("platform").notNull().default('square'), // 'square' or 'newplatform'
+  idempotencyKey: text("idempotency_key"), // UUID for deduplication
+  payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`), // Job-specific data
+  status: text("status").notNull().default('pending'), // pending, processing, done, failed, manual_review
+  attempts: integer("attempts").notNull().default(0), // Retry counter
+  lastError: text("last_error"), // Most recent error message
+  startedAt: timestamp("started_at", { withTimezone: true }), // When processing started
+  worker: text("worker"), // Worker hostname/ID
+  completedAt: timestamp("completed_at", { withTimezone: true }), // When completed
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+}, (table) => [
+  index("idx_reconciliation_platform_status").on(table.platform, table.status),
+  index("idx_reconciliation_status_created").on(table.status, table.createdAt),
+  uniqueIndex("ux_reconciliation_platform_idempotency").on(table.platform, table.idempotencyKey).where(sql`idempotency_key IS NOT NULL`),
+  index("idx_reconciliation_worker").on(table.worker).where(sql`worker IS NOT NULL`),
+]);
+
+export type ReconciliationJob = typeof reconciliationJobs.$inferSelect;
+export type InsertReconciliationJob = typeof reconciliationJobs.$inferInsert;
+
+// ============================================
+// USER_CONSENTS TABLE (Legal acknowledgment tracking)
+// ============================================
+export const userConsents = pgTable("user_consents", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  paymentId: text("payment_id").notNull(), // Square payment ID or subscription ID
+  planId: text("plan_id"), // Subscription plan ID at time of consent
+  consentVersion: text("consent_version").notNull(), // Version format: v1.0, v1.1, etc.
+  consentText: text("consent_text").notNull(), // Full legal acknowledgment text
+  ipAddress: text("ip_address"), // User IP at time of consent
+  userAgent: text("user_agent"), // Browser user agent
+  signature: text("signature"), // HMAC-SHA256 signature for verification
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+}, (table) => [
+  uniqueIndex("ux_user_payment_consent").on(table.userId, table.paymentId, table.consentVersion),
+  index("idx_user_consents_user_id").on(table.userId),
+  index("idx_user_consents_payment_id").on(table.paymentId),
+  index("idx_user_consents_created_at").on(table.createdAt),
+]);
+
+export const userConsentsRelations = relations(userConsents, ({ one }) => ({
+  user: one(users, {
+    fields: [userConsents.userId],
+    references: [users.id],
+  }),
+}));
+
+export type UserConsent = typeof userConsents.$inferSelect;
+export type InsertUserConsent = typeof userConsents.$inferInsert;
 export type InsertPeopleSearchReport = z.infer<typeof insertPeopleSearchReportSchema>;

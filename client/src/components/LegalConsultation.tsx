@@ -31,6 +31,7 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import { FileUpload } from "@/components/FileUpload";
 
 const US_STATES = [
   { code: "AL", name: "Alabama" },
@@ -117,7 +118,7 @@ export default function LegalConsultation({ onBack, lawType, onDataChange }: Leg
   }, [analysis, situation, state, lawType, onDataChange]);
 
   const analyzeMutation = useMutation({
-    mutationFn: async (data: { state: string; situation: string }) => {
+    mutationFn: async (data: { state: string; situation: string; lawType?: string }) => {
       const response = await apiRequest("/api/legal-consultation", "POST", data);
 
       if (!response.ok) {
@@ -176,7 +177,7 @@ export default function LegalConsultation({ onBack, lawType, onDataChange }: Leg
       return;
     }
 
-    analyzeMutation.mutate({ state, situation });
+    analyzeMutation.mutate({ state, situation, lawType });
   };
 
   const handleFileComplaint = () => {
@@ -267,6 +268,20 @@ export default function LegalConsultation({ onBack, lawType, onDataChange }: Leg
                   <p className="text-sm text-muted-foreground">
                     Tip: Include officer names, badge numbers, dates, locations,
                     and specific actions
+                  </p>
+                </div>
+
+                {/* Evidence Upload - Stage 2B */}
+                <div className="space-y-2">
+                  <Label>Upload Evidence (Optional)</Label>
+                  <FileUpload 
+                    associatedWith="consultation"
+                    lawType={lawType}
+                    maxFiles={10}
+                    maxSizeMB={50}
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Upload photos, videos, or documents related to your case
                   </p>
                 </div>
 

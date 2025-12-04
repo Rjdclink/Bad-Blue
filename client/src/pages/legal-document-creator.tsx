@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Shield, FileText, Send, Loader2, Copy, CheckCircle, Edit } from "lucide-react";
 import { Link } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
+import { FileUpload } from "@/components/FileUpload";
 
 interface Message {
   role: 'assistant' | 'user';
@@ -368,6 +369,23 @@ export default function LegalDocumentCreator() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Evidence Upload Section - Stage 2B */}
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>Upload Supporting Documents</CardTitle>
+              <CardDescription>
+                Upload any evidence or documents related to your case (optional)
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <FileUpload 
+                associatedWith="document"
+                maxFiles={10}
+                maxSizeMB={50}
+              />
+            </CardContent>
+          </Card>
         </div>
       </div>
     </>

@@ -45,16 +45,59 @@ async function generateLegalContent(
 
 /**
  * Analyzes a legal issue based on provided description and context.
+ * 
+ * Stage 3: Now supports law-specific expertise for 29 law types.
+ * Law Enforcement Accountability continues to use the existing specialized prompts.
+ * 
  * @param description - The description of the legal issue.
  * @param state - The state where the issue occurred.
  * @param additionalContext - Optional additional context for the analysis.
+ * @param lawType - Optional law type for specialized expertise (Stage 3)
  * @returns A string containing the legal guidance.
  */
 export async function analyzeLegalIssue(
   description: string,
   state: string,
-  additionalContext?: string
+  additionalContext?: string,
+  lawType?: string
 ): Promise<string> {
+  // Stage 3: Check if law-specific expertise should be used
+  if (lawType && lawType !== 'law-enforcement-accountability') {
+    const { getLawExpertise } = await import('./lawExpertise');
+    const expertise = getLawExpertise(lawType);
+    
+    if (expertise) {
+      // Use law-specific expertise system
+      const consultationPrompt = expertise.consultationPrompt
+        .replace('{{state}}', state)
+        .replace('{{situation}}', description);
+      
+      try {
+        const response = await generateUserText(
+          `legal-consultation-${lawType}`,
+          consultationPrompt,
+          {
+            systemPrompt: expertise.systemPrompt,
+            temperature: 0.3
+          },
+          TaskPriority.CRITICAL_USER
+        );
+
+        if (!response.content || response.content.trim().length === 0) {
+          throw new Error('Empty response from AI provider');
+        }
+
+        return response.content;
+      } catch (error: any) {
+        console.error(`[Legal AI] Error in ${lawType} consultation:`, error);
+        
+        // Fallback to general consultation if law-specific fails
+        console.log('[Legal AI] Falling back to general consultation');
+      }
+    }
+  }
+  
+  // Original consultation logic for Law Enforcement Accountability or fallback
   // Check if this is a brief trial consultation
   const isBriefTrial = additionalContext?.includes('BRIEF TRIAL CONSULTATION');
   
