@@ -160,14 +160,17 @@ export async function generateGeminiStructuredResponse<T = any>(
   const raw = await callGemini(prompt, { ...options, useJSON: true }, maxTokens);
 
   let clean = raw.trim();
+  
+  // Remove markdown code blocks if present
   if (clean.startsWith("```")) {
     clean = clean.replace(/```json\s*/i, "").replace(/```/g, "").trim();
   }
 
   try {
     return JSON.parse(clean);
-  } catch {
+  } catch (parseError) {
     console.error("❌ Gemini JSON parsing failed:", clean);
+    console.error("Parse error:", parseError);
     throw new Error("Gemini returned non-JSON output when JSON was expected");
   }
 }

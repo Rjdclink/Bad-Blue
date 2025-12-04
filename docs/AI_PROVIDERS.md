@@ -163,14 +163,15 @@ GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxx
 
 ### Usage Example
 ```typescript
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI } from '@google/genai';
 import { getConfig } from './config';
 
 const genAI = new GoogleGenerativeAI(getConfig().GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 const result = await model.generateContent('Draft a demand letter...');
-console.log(result.response.text());
+const response = await result.response;
+console.log(response.text());
 ```
 
 ### Rate Limits & Quotas
