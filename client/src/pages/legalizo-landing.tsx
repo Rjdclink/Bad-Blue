@@ -11,7 +11,7 @@ export default function LegalWhatLanding() {
     <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900">
       <SEOHead
         title="LegalWhat - AI-Powered Legal Platform | Professional Legal Services"
-        description="Access comprehensive legal services with AI-assisted guidance.  Get legal consultation, document creation, and support for all types of law.  Subscribe for $25. 99/month."
+        description="Access comprehensive legal services with AI-assisted guidance. Get legal consultation, document creation, and support for all types of law. Subscribe for $25.99/month."
         keywords="legal platform, AI legal services, legal consultation, document creation, legal assistance, LegalWhat"
         ogTitle="LegalWhat - Your AI-Powered Legal Partner"
         ogDescription="Professional legal services with AI assistance for all types of law. Subscribe now for $25.99/month."
@@ -32,7 +32,7 @@ export default function LegalWhatLanding() {
                 alt="Lady Justice statue with scales and gavel representing fair legal proceedings, American flag in background"
                 className="relative w-full h-auto rounded-xl shadow-2xl object-cover border border-yellow-600/20"
                 style={{
-                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(212, 175, 55, 0. 1)',
+                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(212, 175, 55, 0.1)',
                 }}
               />
               
@@ -64,7 +64,7 @@ export default function LegalWhatLanding() {
 
             <div className="space-y-4">
               <p className="text-lg leading-relaxed text-gray-300">
-                LegalWhat is a revolutionary subscription-based legal platform that democratizes access to professional legal services through cutting-edge AI technology.  Our platform combines the expertise of eight coordinated AI systems with comprehensive legal knowledge to provide you with unparalleled legal assistance.
+                LegalWhat is a revolutionary subscription-based legal platform that democratizes access to professional legal services through cutting-edge AI technology. Our platform combines the expertise of eight coordinated AI systems with comprehensive legal knowledge to provide you with unparalleled legal assistance.
               </p>
 
               <div className="grid gap-4">
@@ -119,7 +119,7 @@ export default function LegalWhatLanding() {
                 Login or Sign Up
               </Button>
               <p className="text-xs text-center text-gray-500 mt-3">
-                Start your legal journey today.  Cancel anytime.
+                Start your legal journey today. Cancel anytime.
               </p>
             </div>
           </div>
@@ -251,7 +251,7 @@ export default function LegalWhatLanding() {
       {/* Footer */}
       <footer className="container mx-auto px-4 py-8 text-center border-t border-slate-800">
         <p className="text-sm text-gray-500">
-          © 2024 LegalWhat. All rights reserved.  Professional legal services powered by AI.
+          © 2024 LegalWhat. All rights reserved. Professional legal services powered by AI.
         </p>
         <p className="text-xs mt-2 text-gray-600">
           LegalWhat provides AI-assisted legal services but does not replace the advice of a licensed attorney.
