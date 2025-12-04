@@ -240,6 +240,7 @@ export default function WelcomePage() {
               src="/images/Legal What Icon.png" 
               alt="?" 
               className="inline-block h-[0.9em] w-auto object-contain"
+              style={{ marginBottom: '-0.05em' }}
             />
             AI-powered legal platform.
           </p>
