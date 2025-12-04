@@ -70,18 +70,43 @@ export async function setupVite(app: Express, server: Server) {
 }
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "..", "public");
+  // Try multiple path resolution strategies for production deployment
+  const possiblePaths = [
+    path.resolve(__dirname, "..", "public"), // Standard: /app/dist/../public = /app/public
+    path.resolve(process.cwd(), "public"),    // Alternative: Use process working directory
+    path.resolve(__dirname, "public"),         // Fallback: Same directory as server bundle
+    path.resolve(__dirname, "..", "..", "public"), // Deep bundle: /app/dist/server/../public
+  ];
 
-  if (!fs.existsSync(distPath)) {
-    throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`,
-    );
+  let distPath: string | null = null;
+  
+  for (const possiblePath of possiblePaths) {
+    console.log(`[serveStatic] Checking path: ${possiblePath}`);
+    const indexPath = path.resolve(possiblePath, "index.html");
+    
+    // Check if both directory and index.html exist with a single validation
+    if (fs.existsSync(indexPath)) {
+      distPath = possiblePath;
+      console.log(`[serveStatic] ✓ Found valid build directory: ${distPath}`);
+      console.log(`[serveStatic] ✓ index.html exists at: ${indexPath}`);
+      break;
+    } else if (fs.existsSync(possiblePath)) {
+      console.log(`[serveStatic] ✗ Directory exists but missing index.html: ${possiblePath}`);
+    }
   }
 
+  if (!distPath) {
+    const errorMsg = `Could not find the build directory with index.html. Tried:\n${possiblePaths.map(p => `  - ${p}`).join('\n')}`;
+    console.error(`[serveStatic] ${errorMsg}`);
+    throw new Error(errorMsg);
+  }
+
+  console.log(`[serveStatic] Serving static files from: ${distPath}`);
   app.use(express.static(distPath));
 
   // fall through to index.html if the file doesn't exist
   app.use("*", (_req, res) => {
-    res.sendFile(path.resolve(distPath, "index.html"));
+    const indexPath = path.resolve(distPath!, "index.html");
+    res.sendFile(indexPath);
   });
 }
