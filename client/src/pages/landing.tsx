@@ -187,17 +187,17 @@ export default function Landing() {
             </Badge>
           </div>
 
-          {/* LegalWhat Icon - Enhanced and Prominent */}
+          {/* LegalWhat Icon - Medium-sized Prominent Display */}
           <div className="mb-8 flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-700 delay-150">
             <div className="relative">
               {/* Glow effect behind icon */}
-              <div className="absolute inset-0 bg-primary/30 blur-3xl rounded-full scale-150" />
+              <div className="absolute inset-0 bg-primary/30 blur-2xl rounded-full scale-125" />
               {/* Icon container with enhanced styling */}
-              <div className="relative bg-white/10 backdrop-blur-md p-6 rounded-2xl border-2 border-white/30 shadow-2xl hover:scale-105 transition-transform duration-300">
+              <div className="relative bg-white/10 backdrop-blur-md p-4 rounded-xl border-2 border-white/30 shadow-2xl hover:scale-105 transition-transform duration-300">
                 <img 
                   src="/images/Legal What Icon.png" 
                   alt="LegalWhat - AI Legal Platform" 
-                  className="w-32 h-32 md:w-40 md:h-40 object-contain filter drop-shadow-[0_0_20px_rgba(255,255,255,0.4)]"
+                  className="w-20 h-20 md:w-24 md:h-24 object-contain filter drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]"
                   onError={handleImageError}
                 />
               </div>

@@ -193,13 +193,13 @@ export default function LegalizoAuth() {
         description="Join LegalWhat and access professional AI-powered legal services"
       />
 
-      {/* Background with Tweed_Court.png image on both sides */}
+      {/* Background with courthouse image on both sides */}
       <div className="fixed inset-0 -z-10 overflow-hidden">
-        {/* Left Tweed Court image - Enhanced and formatted */}
+        {/* Left courthouse image - Enhanced and formatted */}
         <div 
           className="absolute left-0 top-0 bottom-0 w-1/3 bg-cover bg-center bg-no-repeat"
           style={{ 
-            backgroundImage: "url(/images/Tweed_Court.png)",
+            backgroundImage: "url(/images/courthouse-background.jpg)",
             backgroundSize: 'cover',
             backgroundPosition: 'center center',
             imageRendering: 'crisp-edges'
@@ -215,11 +215,11 @@ export default function LegalizoAuth() {
           <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMDIpIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-30" />
         </div>
         
-        {/* Right Tweed Court image - Enhanced and formatted (mirrored) */}
+        {/* Right courthouse image - Enhanced and formatted (mirrored) */}
         <div 
           className="absolute right-0 top-0 bottom-0 w-1/3 bg-cover bg-center bg-no-repeat"
           style={{ 
-            backgroundImage: "url(/images/Tweed_Court.png)",
+            backgroundImage: "url(/images/courthouse-background.jpg)",
             backgroundSize: 'cover',
             backgroundPosition: 'center center',
             imageRendering: 'crisp-edges',
