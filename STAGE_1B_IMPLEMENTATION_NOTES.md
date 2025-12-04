@@ -33,7 +33,7 @@ import { LAW_TYPE_DATA, type LawTypeInfo } from "@shared/lawTypes";
 ### 3. UI Structure
 
 **Header:**
-- Sticky header with Legalezo branding
+- Sticky header with LegalWhat branding
 - Shield icon + platform name
 - User greeting (if authenticated)
 
@@ -169,7 +169,7 @@ const getIcon = (iconName: string) => {
 
 ## SEO:
 - SEOHead component integration
-- Title: "Welcome to Legalezo - AI Legal Platform"
+- Title: "Welcome to LegalWhat - AI Legal Platform"
 - Description: Selection prompt for legal areas
 
 ## DATA FLOW:

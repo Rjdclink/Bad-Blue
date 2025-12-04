@@ -1,9 +1,9 @@
-// Migration: Create Legalizo Tables
+// Migration: Create LegalWhat Tables
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 
 export async function createLegalizoTables() {
-  console.log("[MIGRATION] Creating Legalizo tables...");
+  console.log("[MIGRATION] Creating LegalWhat tables...");
 
   try {
     // Create legalizo_subscriptions table
@@ -85,9 +85,9 @@ export async function createLegalizoTables() {
       CREATE INDEX IF NOT EXISTS idx_people_search_created ON people_search_reports(created_at);
     `);
 
-    console.log("[MIGRATION] Legalizo tables created successfully");
+    console.log("[MIGRATION] LegalWhat tables created successfully");
   } catch (error) {
-    console.error("[MIGRATION] Error creating Legalizo tables:", error);
+    console.error("[MIGRATION] Error creating LegalWhat tables:", error);
     throw error;
   }
 }

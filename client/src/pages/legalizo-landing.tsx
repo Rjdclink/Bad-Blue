@@ -12,10 +12,10 @@ export default function LegalizoLanding() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted">
       <SEOHead
-        title="Legalizo - AI-Powered Legal Platform | Professional Legal Services"
+        title="LegalWhat - AI-Powered Legal Platform | Professional Legal Services"
         description="Access comprehensive legal services with AI-assisted guidance. Get legal consultation, document creation, and support for all types of law. Subscribe for $25.99/month."
         keywords="legal platform, AI legal services, legal consultation, document creation, legal assistance"
-        ogTitle="Legalizo - Your AI-Powered Legal Partner"
+        ogTitle="LegalWhat - Your AI-Powered Legal Partner"
         ogDescription="Professional legal services with AI assistance for all types of law. Subscribe now for $25.99/month."
       />
 
@@ -94,7 +94,7 @@ export default function LegalizoLanding() {
           <div className="space-y-6">
             <div>
               <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-primary to-blue-600 bg-clip-text text-transparent">
-                Legalizo
+                LegalWhat
               </h1>
               <p className="text-xl text-muted-foreground mb-2">
                 Your AI-Powered Legal Partner
@@ -107,7 +107,7 @@ export default function LegalizoLanding() {
 
             <div className="space-y-4">
               <p className="text-lg leading-relaxed">
-                Legalizo is a revolutionary subscription-based legal platform that democratizes access to professional legal services through cutting-edge AI technology. Our platform combines the expertise of eight coordinated AI systems with comprehensive legal knowledge to provide you with unparalleled legal assistance.
+                LegalWhat is a revolutionary subscription-based legal platform that democratizes access to professional legal services through cutting-edge AI technology. Our platform combines the expertise of eight coordinated AI systems with comprehensive legal knowledge to provide you with unparalleled legal assistance.
               </p>
 
               <div className="grid gap-3">
@@ -375,10 +375,10 @@ export default function LegalizoLanding() {
       {/* Footer */}
       <footer className="container mx-auto px-4 py-8 text-center text-muted-foreground">
         <p className="text-sm">
-          © 2024 Legalizo. All rights reserved. Professional legal services powered by AI.
+          © 2024 LegalWhat. All rights reserved. Professional legal services powered by AI.
         </p>
         <p className="text-xs mt-2">
-          Legalizo provides AI-assisted legal services but does not replace the advice of a licensed attorney.
+          LegalWhat provides AI-assisted legal services but does not replace the advice of a licensed attorney.
         </p>
       </footer>
     </div>

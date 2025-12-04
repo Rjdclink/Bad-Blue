@@ -1,8 +1,8 @@
-# Legalizo Platform Documentation
+# LegalWhat Platform Documentation
 
 ## Overview
 
-Legalizo is a comprehensive subscription-based legal services platform integrated into the Bad Blue application. It provides AI-powered legal consultation, document creation, and deep OSINT people search capabilities for all types of law.
+LegalWhat is a comprehensive subscription-based legal services platform integrated into the Bad Blue application. It provides AI-powered legal consultation, document creation, and deep OSINT people search capabilities for all types of law.
 
 **Subscription Cost:** $25.99/month (processed via Square)
 
@@ -461,7 +461,7 @@ npm run build
 ## Support & Documentation
 
 ### User Support
-- Email: support@legalizo.com (placeholder)
+- Email: support@legalwhat.com (placeholder)
 - In-app contact form
 - Knowledge base (to be created)
 

@@ -27,7 +27,7 @@
 ### Email Service (Resend)
 - [ ] `RESEND_API_KEY` configured
 - [ ] `DEFAULT_FROM_EMAIL` configured (e.g., noreply@yourdomain.com)
-- [ ] `DEFAULT_FROM_NAME` configured (e.g., Legalizo)
+- [ ] `DEFAULT_FROM_NAME` configured (e.g., LegalWhat)
 - [ ] Test email sent successfully
 - [ ] Email templates working correctly
 

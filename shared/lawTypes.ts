@@ -1,5 +1,5 @@
 /**
- * Law Types Constants - Legalezo Platform
+ * Law Types Constants - LegalWhat Platform
  * 
  * STAGE 1A: Created with 30 law types
  * STAGE 1B: Will be imported by WelcomePage component

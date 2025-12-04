@@ -1,4 +1,4 @@
-// Legalizo AI Systems Coordinator
+// LegalWhat AI Systems Coordinator
 // Eight parallel AI systems working in coordinated conjunction
 
 import { analyzeLegalIssue, researchRelevantStatutes } from "./legalAI";

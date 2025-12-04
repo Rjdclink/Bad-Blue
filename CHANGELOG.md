@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the Legalizo/Bad-Blue project documented through 20 implementation stages.
+All notable changes to the LegalWhat/Bad-Blue project documented through 20 implementation stages.
 
 ## Stage 20: Final Verification & Documentation (2025-12-03)
 
