@@ -1111,7 +1111,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(null);
       }
 
-      const userId = req.user.claims.sub;
+      // Safely extract user ID - handles master password, admin bypass, and regular auth
+      const userId = req.user?.claims?.sub || req.user?.id;
+      
+      if (!userId) {
+        console.error("[AUTH] User authenticated but no user ID found:", req.user);
+        return res.status(500).json({ message: "Authentication data incomplete" });
+      }
+
+      const user = await storage.getUser(userId);
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const userWithAdminFlag = {
+        ...user,
+        isAdmin: user.id === "admin-bypass"
+      };
+
+      res.json(userWithAdminFlag);
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
+  // Route alias for backward compatibility with frontend
+  app.get("/api/user", async (req: any, res) => {
+    try {
+      if (!req.isAuthenticated() || !req.user) {
+        return res.json(null);
+      }
+
+      // Use same safe extraction pattern
+      const userId = req.user?.claims?.sub || req.user?.id;
+      
+      if (!userId) {
+        console.error("[AUTH] User authenticated but no user ID found:", req.user);
+        return res.status(500).json({ message: "Authentication data incomplete" });
+      }
+
       const user = await storage.getUser(userId);
 
       if (!user) {
@@ -1238,7 +1278,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const square = getSquareClient();
         const locationId = getSquareLocationId();
-        const userId = req.user.claims.sub;
+        const userId = req.user?.claims?.sub || req.user?.id;
+        
+        if (!userId) {
+          return res.status(401).json({ error: "User authentication required" });
+        }
+        
         const { complaintId } = req.body;
 
         const user = await storage.getUser(userId);
@@ -1320,7 +1365,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const square = getSquareClient();
         const locationId = getSquareLocationId();
-        const userId = req.user.claims.sub;
+        const userId = req.user?.claims?.sub || req.user?.id;
+        
+        if (!userId) {
+          return res.status(401).json({ error: "User authentication required" });
+        }
+        
         const { lawsuitId } = req.body;
 
         const user = await storage.getUser(userId);
@@ -1412,7 +1462,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const square = getSquareClient();
         const locationId = getSquareLocationId();
-        const userId = req.user.claims.sub;
+        const userId = req.user?.claims?.sub || req.user?.id;
+        
+        if (!userId) {
+          return res.status(401).json({ error: "User authentication required" });
+        }
+        
         const { petitionData } = req.body;
 
         const user = await storage.getUser(userId);
@@ -1520,7 +1575,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const square = getSquareClient();
       const locationId = getSquareLocationId();
-      const userId = req.user.claims.sub;
+      const userId = req.user?.claims?.sub || req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User authentication required" });
+      }
+      
       const { foiaRequestId } = req.body;
 
       const user = await storage.getUser(userId);
@@ -1606,7 +1666,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Initialize document creator session
   app.post("/api/document-creator/start", apiRateLimit, isAuthenticated, asyncHandler(async (req: any, res: any) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ error: "User authentication required" });
+    }
+    
     const sessionId = crypto.randomUUID();
 
     // Create initial session
@@ -1646,7 +1711,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Process user message in document creator
   app.post("/api/document-creator/message", apiRateLimit, isAuthenticated, asyncHandler(async (req: any, res: any) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ error: "User authentication required" });
+    }
+    
     const { sessionId, message } = req.body;
 
     if (!sessionId || !message) {
@@ -1713,7 +1783,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Revise document based on user feedback
   app.post("/api/document-creator/revise", apiRateLimit, isAuthenticated, asyncHandler(async (req: any, res: any) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ error: "User authentication required" });
+    }
+    
     const { sessionId, revisionRequest } = req.body;
 
     if (!sessionId || !revisionRequest) {
@@ -1770,7 +1845,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/document-creator/payment", paymentRateLimit, isAuthenticated, asyncHandler(async (req: any, res: any) => {
     const square = getSquareClient();
     const locationId = getSquareLocationId();
-    const userId = req.user.claims.sub;
+    const userId = req.user?.claims?.sub || req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ error: "User authentication required" });
+    }
+    
     const { sessionId } = req.body;
 
     if (!sessionId) {
@@ -2810,7 +2890,12 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
   app.get("/api/badge-lookups", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user?.claims?.sub || req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User authentication required" });
+      }
+      
       const lookups = await storage.getUserBadgeLookups(userId);
       res.json(lookups);
     } catch (error: any) {
@@ -2821,7 +2906,12 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
   app.get("/api/badge-lookups/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user?.claims?.sub || req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ error: "User authentication required" });
+      }
+      
       const { id } = req.params;
 
       const lookup = await storage.getBadgeLookup(id);
