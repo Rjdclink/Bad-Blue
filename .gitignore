@@ -9,6 +9,11 @@ test-*.js
 test-*.ts
 test_*.ts
 
+# Build artifacts in public/ directory
+# (Keep public/images and other git-tracked files, but ignore build output)
+public/assets/
+public/index.html
+
 # Environment variables (contains sensitive secrets)
 .env
 .env.local
