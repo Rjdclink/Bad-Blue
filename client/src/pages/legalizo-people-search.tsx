@@ -130,7 +130,7 @@ export default function LegalizoPeopleSearch() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `legalizo-osint-report-${reportId}.txt`;
+      a.download = `legalwhat-osint-report-${reportId}.txt`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -152,7 +152,7 @@ export default function LegalizoPeopleSearch() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="People Search - Deep OSINT Report | Legalizo"
+        title="People Search - Deep OSINT Report | LegalWhat"
         description="Comprehensive background research with professional OSINT reports"
       />
 
@@ -161,7 +161,7 @@ export default function LegalizoPeopleSearch() {
         <div className="container flex h-16 items-center gap-4 px-4">
           <Link href="/legalizo-welcome" className="flex items-center gap-2">
             <Shield className="h-8 w-8 text-primary" />
-            <span className="font-bold text-xl">Legalizo</span>
+            <span className="font-bold text-xl">LegalWhat</span>
           </Link>
 
           <div className="ml-auto flex items-center gap-4">

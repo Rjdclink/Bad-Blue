@@ -44,7 +44,7 @@ export default function LegalizoWelcome() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Welcome - Legalizo"
+        title="Welcome - LegalWhat"
         description="Access your legal services dashboard"
       />
 
@@ -53,7 +53,7 @@ export default function LegalizoWelcome() {
         <div className="container flex h-16 items-center gap-4 px-4">
           <Link href="/legalizo-welcome" className="flex items-center gap-2">
             <Shield className="h-8 w-8 text-primary" />
-            <span className="font-bold text-xl">Legalizo</span>
+            <span className="font-bold text-xl">LegalWhat</span>
           </Link>
           
           <nav className="ml-8 flex gap-6">
@@ -223,7 +223,7 @@ export default function LegalizoWelcome() {
 
       {/* Footer */}
       <footer className="container mx-auto px-4 py-8 mt-12 border-t text-center text-sm text-muted-foreground">
-        <p>© 2024 Legalizo. All rights reserved.</p>
+        <p>© 2024 LegalWhat. All rights reserved.</p>
         <p className="mt-2">AI-powered legal services platform</p>
       </footer>
     </div>

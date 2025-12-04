@@ -72,7 +72,7 @@ Get current user's status and subscription information (requires authentication)
     "square_subscription_id": "sq_sub_xxx",
     "start_date": "2025-01-01",
     "renewal_date": "2025-02-01",
-    "plan_name": "Legalezo Subscription",
+    "plan_name": "LegalWhat Subscription",
     "price": 2599,
     "currency": "USD",
     "interval": "monthly"
@@ -110,7 +110,7 @@ Get all active subscription plans.
   "plans": [
     {
       "id": 1,
-      "name": "Legalezo Subscription",
+      "name": "LegalWhat Subscription",
       "price": 2599,
       "priceFormatted": "$25.99",
       "currency": "USD",
@@ -133,7 +133,7 @@ Get a specific plan by ID.
 {
   "plan": {
     "id": 1,
-    "name": "Legalezo Subscription",
+    "name": "LegalWhat Subscription",
     "price": 2599,
     "priceFormatted": "$25.99",
     "currency": "USD",

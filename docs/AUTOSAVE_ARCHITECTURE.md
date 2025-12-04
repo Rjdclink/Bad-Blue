@@ -1,6 +1,6 @@
 # Autosave Architecture Documentation
 
-Technical architecture and implementation details for the autosave functionality in Legalizo/Bad-Blue.
+Technical architecture and implementation details for the autosave functionality in LegalWhat/Bad-Blue.
 
 ---
 

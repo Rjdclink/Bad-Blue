@@ -2295,7 +2295,7 @@ export const insertLegalizoSubscriptionSchema = createInsertSchema(legalizoSubsc
 export type LegalizoSubscription = typeof legalizoSubscriptions.$inferSelect;
 export type InsertLegalizoSubscription = z.infer<typeof insertLegalizoSubscriptionSchema>;
 
-// Legalizo subscription pricing
+// LegalWhat subscription pricing
 export const LEGALIZO_SUBSCRIPTION_PRICING = 25.99;
 export const LEGALIZO_SUBSCRIPTION_PRICING_CENTS = 2599; // $25.99 in cents
 

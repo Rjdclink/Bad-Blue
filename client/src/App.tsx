@@ -103,14 +103,14 @@ const PetitionEdit = lazyWithRetry(() => import("@/pages/petition-edit"), 'Petit
 const LegalConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'LegalConsultation');
 const LegalDocumentCreator = lazyWithRetry(() => import("@/pages/legal-document-creator"), 'LegalDocumentCreator');
 
-// Legalizo pages
+// LegalWhat pages
 const LegalizoLanding = lazyWithRetry(() => import("@/pages/legalizo-landing"), 'LegalizoLanding');
 const LegalizoAuth = lazyWithRetry(() => import("@/pages/legalizo-auth"), 'LegalizoAuth');
 const LegalizoWelcome = lazyWithRetry(() => import("@/pages/legalizo-welcome"), 'LegalizoWelcome');
 const LegalizoConsultation = lazyWithRetry(() => import("@/pages/legalizo-consultation"), 'LegalizoConsultation');
 const LegalizoPeopleSearch = lazyWithRetry(() => import("@/pages/legalizo-people-search"), 'LegalizoPeopleSearch');
 
-// New Legalezo Welcome Page - Stage 1B/1C
+// New LegalWhat Welcome Page - Stage 1B/1C
 const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
 
 // Legal Tools Page - Stage 4
@@ -160,7 +160,7 @@ function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Switch>
-        {/* Legalizo public routes */}
+        {/* LegalWhat public routes */}
         <Route path="/legalizo" component={LegalizoLanding} />
         <Route path="/legalizo-auth" component={LegalizoAuth} />
         
@@ -179,13 +179,13 @@ function Router() {
         {/* Protected routes - only accessible when authenticated */}
         {isAuthenticated ? (
           <>
-            {/* New Legalezo Welcome Page - Stage 1B/1C */}
+            {/* New LegalWhat Welcome Page - Stage 1B/1C */}
             <Route path="/welcome" component={WelcomePage} />
             
             {/* Legal Tools Page - Stage 4 */}
             <Route path="/legal-tools" component={LegalToolsPage} />
             
-            {/* Legalizo protected routes */}
+            {/* LegalWhat protected routes */}
             <Route path="/legalizo-welcome" component={LegalizoWelcome} />
             <Route path="/legalizo-consultation" component={LegalizoConsultation} />
             <Route path="/legalizo-people-search" component={LegalizoPeopleSearch} />

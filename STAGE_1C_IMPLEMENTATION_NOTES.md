@@ -8,9 +8,9 @@ Implementer: GitHub Copilot Agent
 - ✅ Law types file location: `/home/runner/work/Bad-Blue/Bad-Blue/shared/lawTypes.ts`
 - ✅ Law types count: 30 types
 - ✅ BadBlue route: `"/"` (root route)
-- ✅ Platform rebranded to "Legalezo"
+- ✅ Platform rebranded to "LegalWhat"
 - ✅ Package name: "legalezo"
-- ✅ Browser title: "Legalezo - AI Legal Platform"
+- ✅ Browser title: "LegalWhat - AI Legal Platform"
 
 ### From Stage 1B:
 - ✅ WelcomePage component location: `/home/runner/work/Bad-Blue/Bad-Blue/client/src/pages/welcome.tsx`
@@ -30,9 +30,9 @@ Implementer: GitHub Copilot Agent
 ### Changes Made:
 
 #### 1. Lazy Load Import Added
-**Location**: Line 114 (after other Legalizo imports)
+**Location**: Line 114 (after other LegalWhat imports)
 ```typescript
-// New Legalezo Welcome Page - Stage 1B
+// New LegalWhat Welcome Page - Stage 1B
 const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
 ```
 
@@ -44,7 +44,7 @@ const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage'
 #### 2. Route Added
 **Location**: Line 180 (inside protected routes block)
 ```typescript
-{/* New Legalezo Welcome Page - Stage 1B/1C */}
+{/* New LegalWhat Welcome Page - Stage 1B/1C */}
 <Route path="/welcome" component={WelcomePage} />
 ```
 
@@ -59,9 +59,9 @@ const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage'
 ### Protected Routes (Authenticated Users):
 ```
 /welcome                    → WelcomePage (NEW - Stage 1C)
-/legalizo-welcome          → LegalizoWelcome (existing)
-/legalizo-consultation     → LegalizoConsultation
-/legalizo-people-search    → LegalizoPeopleSearch
+/legalizo-welcome          → LegalWhatWelcome (existing)
+/legalizo-consultation     → LegalWhatConsultation
+/legalizo-people-search    → LegalWhatPeopleSearch
 /                          → Home (BadBlue)
 /home                      → Home (BadBlue)
 /dashboard                 → Home (BadBlue)
@@ -133,20 +133,20 @@ The root path `/` remains pointing to the Home (BadBlue) component for authentic
 1. **Backward Compatibility**: Existing users expect BadBlue at root
 2. **Law Enforcement Featured**: Law Enforcement routes to `/` from Welcome page
 3. **Gradual Migration**: Welcome page is opt-in via `/welcome` route
-4. **Dual Platform**: Supports both BadBlue and Legalezo experiences
+4. **Dual Platform**: Supports both BadBlue and LegalWhat experiences
 
 ### Alternative Access Points:
 - **BadBlue**: `/`, `/home`, `/dashboard`
-- **Legalezo**: `/welcome` (new), `/legalizo-welcome` (existing alternate)
+- **LegalWhat**: `/welcome` (new), `/legalizo-welcome` (existing alternate)
 - Users can access either experience based on their needs
 
 ## VERIFICATION CHECKLIST:
 
 ### Stage 1A Verification:
 - ✅ Package name: "legalezo"
-- ✅ Browser title: "Legalezo - AI Legal Platform"
+- ✅ Browser title: "LegalWhat - AI Legal Platform"
 - ✅ Logger service: "legalezo"
-- ✅ README updated with Legalezo branding
+- ✅ README updated with LegalWhat branding
 - ✅ Law types file exists: `shared/lawTypes.ts`
 - ✅ 30 law types defined
 - ✅ Law Enforcement featured: true
@@ -248,7 +248,7 @@ Expected: Should compile without errors
 ## STAGE 1 COMPLETION STATUS:
 
 ### ✅ Stage 1A: Rebrand + Law Types Constants
-- Package rebranded to "Legalezo"
+- Package rebranded to "LegalWhat"
 - Browser title updated
 - Logger service renamed
 - README updated
@@ -278,7 +278,7 @@ Expected: Should compile without errors
 
 ## WHAT STAGE 1 ACCOMPLISHES:
 
-1. **Platform Rebrand**: BadBlue → Legalezo with Law Enforcement as flagship
+1. **Platform Rebrand**: BadBlue → LegalWhat with Law Enforcement as flagship
 2. **Law Types Framework**: 30 law practice areas defined and structured
 3. **Welcome Page**: Interactive selection interface for all law types
 4. **Routing**: Welcome page accessible via `/welcome` route
@@ -339,7 +339,7 @@ Stage 1 is now **COMPLETE** and ready for production:
 - Ready for Stage 2 implementation
 
 The platform now has:
-- Legalezo branding throughout
+- LegalWhat branding throughout
 - 30 law types defined and accessible
 - Interactive welcome page for type selection
 - Routing configured for navigation

@@ -1,7 +1,7 @@
-# Legalezo - AI Legal Platform
+# LegalWhat - AI Legal Platform
 
 ## Overview
-Legalezo is an AI-powered legal platform that empowers citizens to access legal help across 30 areas of law. The platform features Law Enforcement Accountability (formerly BadBlue) as a flagship service, providing tools for filing complaints and initiating civil rights lawsuits against police officers. It leverages AI for officer identification, legal analysis, intelligent form prefill, automated routing, and jurisdiction-specific legal document generation. The platform supports secure evidence uploads and offers services like LegalAI Consultation, Officer Search, and various legal document generations to enhance legal accessibility through affordable legal avenues.
+LegalWhat is an AI-powered legal platform that empowers citizens to access legal help across 30 areas of law. The platform features Law Enforcement Accountability (formerly BadBlue) as a flagship service, providing tools for filing complaints and initiating civil rights lawsuits against police officers. It leverages AI for officer identification, legal analysis, intelligent form prefill, automated routing, and jurisdiction-specific legal document generation. The platform supports secure evidence uploads and offers services like LegalAI Consultation, Officer Search, and various legal document generations to enhance legal accessibility through affordable legal avenues.
 
 ## System Architecture
 The platform utilizes a modern web stack featuring:
@@ -153,7 +153,7 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxx
 # Email Service (Resend recommended)
 RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
 DEFAULT_FROM_EMAIL=noreply@yourdomain.com
-DEFAULT_FROM_NAME=Legalizo
+DEFAULT_FROM_NAME=LegalWhat
 
 # Payment Processing (Square)
 SQUARE_ACCESS_TOKEN=your-square-production-token

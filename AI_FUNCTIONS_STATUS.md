@@ -7,35 +7,35 @@ All AI-powered functions have been successfully migrated from OpenAI to Google G
 ### Core AI Services (All Using Gemini)
 
 1. **✅ Officer Search** (`server/officerSearch.ts`)
-   - Uses: `gemini-1.5-flash-latest`
+   - Uses: `gemini-2.5-flash`
    - Searches public databases for officer information
    - Returns: name, badge number, department, rank, career summary
 
 2. **✅ Email Verification** (`server/emailVerification.ts`)
-   - Uses: `gemini-1.5-flash-latest`
+   - Uses: `gemini-2.5-flash`
    - Verifies official police department contact emails
    - Web search + extraction capabilities
    - Returns: verified email with confidence level
 
 3. **✅ Filing Info Search** (`server/filingInfoSearch.ts`)
-   - Uses: `gemini-1.5-flash-latest`
+   - Uses: `gemini-2.5-flash`
    - Searches state court filing requirements
    - Returns: filing fees, e-filing portals, instructions, clerk addresses
    - JSON response mode enabled
 
 4. **✅ Tort Notice Generator** (`server/tortNoticeGenerator.ts`)
-   - Uses: `gemini-1.5-flash-latest`
+   - Uses: `gemini-2.5-flash`
    - Generates state-specific tort claim notices
    - Legally formatted documents
    - Fallback generator included
 
 5. **✅ Legal AI Analysis** (`server/legalAI.ts`)
-   - Uses: `gemini-1.5-flash-latest`
+   - Uses: `gemini-2.5-flash`
    - Analyzes legal issues and provides guidance
    - Generates legal documents (complaints, lawsuits, petitions)
 
 6. **✅ Precedent Search** (`server/precedentSearch.ts`)
-   - Uses: `gemini-1.5-flash-latest`
+   - Uses: `gemini-2.5-flash`
    - Searches for relevant case law and precedents
    - Federal and state jurisdiction support
    - Returns: case names, citations, holdings, relevance
@@ -86,7 +86,7 @@ function getGeminiClient(): GoogleGenAI {
 
 ### Model Selection
 
-Primary model: **gemini-1.5-flash-latest**
+Primary model: **gemini-2.5-flash**
 - Always uses the latest stable version of Gemini 1.5 Flash
 - Fast response times
 - Cost-effective
