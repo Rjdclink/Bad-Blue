@@ -65,7 +65,7 @@ function lazyWithRetry<T extends { default: React.ComponentType<any> }>(
   return lazy(() =>
     importFn().catch((error) => {
       console.error(`[LazyLoad] Failed to load ${chunkName || 'chunk'}:`, error);
-      return { default: () => <div className="p-4 text-center text-destructive">Failed to load page. <button onClick={() => window.location.reload()} className="underline">Refresh</button></div> } as T;
+      return { default: () => <div className="p-4 text-center text-destructive">Failed to load page. <button onClick={() => window.location.reload()} className="underline">Refresh</button></div> } as unknown as T;
     })
   );
 }

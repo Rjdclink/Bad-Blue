@@ -96,11 +96,9 @@ export default function LegalToolsPage() {
   // Consultation mutation
   const consultationMutation = useMutation({
     mutationFn: async (data: { state: string; situation: string; lawType: string }) => {
-      const response = await apiRequest<{ analysis: string }>("/api/legal-consultation", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-      return response.analysis;
+      const response = await apiRequest("/api/legal-consultation", "POST", data);
+      const json = await response.json();
+      return json.analysis as string;
     },
     onSuccess: (analysis) => {
       setConsultationResponse(analysis);

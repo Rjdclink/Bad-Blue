@@ -305,14 +305,12 @@ export function setupLegalizoRoutes(app: Express) {
       let squareCustomerId = user[0].squareCustomerId;
       
       if (!squareCustomerId) {
-        const customerResponse = await squareClient.customersApi.createCustomer({
-          emailAddress: user[0].email,
-          givenName: user[0].firstName,
-          familyName: user[0].lastName,
+        const customerResponse = await squareClient.customers.create({
+          emailAddress: user[0].email || undefined,
           referenceId: user[0].id,
         });
         
-        squareCustomerId = customerResponse.result.customer?.id;
+        squareCustomerId = customerResponse.customer?.id || null;
         
         // Save Square customer ID to user
         if (squareCustomerId) {
@@ -327,7 +325,7 @@ export function setupLegalizoRoutes(app: Express) {
         ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` 
         : 'http://localhost:5000';
 
-      const checkoutResponse = await squareClient.checkoutApi.createPaymentLink({
+      const checkoutResponse = await squareClient.checkout.paymentLinks.create({
         idempotencyKey: `sub-${req.user.id}-${Date.now()}`,
         order: {
           locationId: locationId,
@@ -345,11 +343,11 @@ export function setupLegalizoRoutes(app: Express) {
           askForShippingAddress: false,
         },
         prePopulatedData: {
-          buyerEmail: user[0].email,
+          buyerEmail: user[0].email || undefined,
         },
       });
 
-      const checkoutUrl = checkoutResponse.result.paymentLink?.url;
+      const checkoutUrl = checkoutResponse.paymentLink?.url;
       
       if (!checkoutUrl) {
         throw new Error('Failed to create checkout URL');
