@@ -40,8 +40,11 @@ CREATE INDEX IF NOT EXISTS "officer_profiles_department_idx" ON "officer_profile
 CREATE INDEX IF NOT EXISTS "officer_profiles_location_idx" ON "officer_profiles"("location");
 
 -- Unique constraint to prevent duplicate profiles (name + department combination)
+-- Note: This uses a partial index to handle NULL departments correctly
+-- Multiple officers with the same name but NULL department are allowed (different jurisdictions)
 CREATE UNIQUE INDEX IF NOT EXISTS "officer_profiles_unique_name_dept" 
-  ON "officer_profiles"("officer_name", "department");
+  ON "officer_profiles"("officer_name", "department")
+  WHERE "department" IS NOT NULL;
 
 -- Add comment for documentation
 COMMENT ON TABLE "officer_profiles" IS 'Compiled public data about law enforcement officers from web searches and public records';

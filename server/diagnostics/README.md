@@ -22,8 +22,8 @@ This directory contains various diagnostic tools for testing and monitoring the 
 **How to run:**
 ```bash
 tsx server/quickDiagnostic.ts
-# or
-node server/tests/quickDiagnostic.ts  # compiled version
+# or from the diagnostics directory
+tsx server/diagnostics/quickDiagnostic.ts
 ```
 
 **Output:** JSON format with pass/fail status for each check
