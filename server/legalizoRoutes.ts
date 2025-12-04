@@ -138,8 +138,8 @@ export function setupLegalizoRoutes(app: Express) {
               reject(err);
             } else {
               console.log("✅ Session created for new user:", user.id);
-              console.log('📋 Session status:', req.session);
-              console.log('👤 User authenticated:', req.user);
+              console.log('📋 Session ID:', req.sessionID);
+              console.log('👤 User ID authenticated:', req.user?.id);
               resolve();
             }
           });
@@ -284,8 +284,8 @@ export function setupLegalizoRoutes(app: Express) {
               reject(err);
             } else {
               console.log("✅ Session created for user:", user.id);
-              console.log('📋 Session status:', req.session);
-              console.log('👤 User authenticated:', req.user);
+              console.log('📋 Session ID:', req.sessionID);
+              console.log('👤 User ID authenticated:', req.user?.id);
               resolve();
             }
           });
