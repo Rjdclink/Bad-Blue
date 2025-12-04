@@ -19,15 +19,20 @@ export class BreachDetectionService {
     };
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+      
       const res = await fetch(
         `https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}`,
         {
+          signal: controller.signal,
           headers: {
             'User-Agent': 'BadBlue-OSINT',
             ...(this.hibpKey && { 'hibp-api-key': this.hibpKey }),
           },
         }
       );
+      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();

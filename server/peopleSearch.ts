@@ -593,9 +593,13 @@ export async function conductFullOSINT(
 
   try {
     // SpiderFoot scan (if available)
+    // Note: In production, you may want to implement polling or webhooks
+    // to wait for scan completion before retrieving results
     let spiderfootData;
     if (await spiderfootClient.healthCheck()) {
       const scanId = await spiderfootClient.startScan(searchQuery);
+      // For real-time results, consider implementing a polling mechanism
+      // or using SpiderFoot's webhook functionality
       spiderfootData = await spiderfootClient.getScanResults(scanId);
     }
 

@@ -27,11 +27,25 @@ export class SpiderFootClient {
     const cached = await cacheService.get(cacheKey);
     if (cached) return cached;
 
-    const res = await fetch(`${this.baseUrl}/api/scanresults?id=${scanId}`);
-    const data = await res.json();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
     
-    await cacheService.set(cacheKey, data, 'warm');
-    return data;
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/api/scanresults?id=${scanId}`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeoutId);
+      
+      const data = await res.json();
+      
+      await cacheService.set(cacheKey, data, 'warm');
+      return data;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      console.error('[SpiderFoot] Get scan results failed:', error);
+      throw error;
+    }
   }
 
   async healthCheck(): Promise<boolean> {
