@@ -316,7 +316,7 @@ export default function Landing() {
           <div className="absolute inset-0 bg-black/60" />
         </div>
 
-        {/* Content Container */}
+        {/* Content Container - Wider for three-column layout */}
         <div className="relative z-10 max-w-7xl mx-auto">
           {/* Overlay Text - Description of LEXARA */}
           <div className="text-center mb-12 px-4">
@@ -474,7 +474,7 @@ export default function Landing() {
               {/* Feature 10 */}
               <div className="text-white">
                 <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  10. Secure Collaboration &amp; Version Vault
+                  10. Secure Collaboration & Version Vault
                 </h3>
                 <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
                   — encrypted storage with immutable versions and reviewer annotations linked to the Verifiable Reasoning Log.
