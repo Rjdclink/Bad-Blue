@@ -190,7 +190,12 @@ export default function WelcomePage() {
     
     const selectedType = LAW_TYPE_DATA.find(type => type.id === selectedLawType);
     if (selectedType) {
-      setLocation(selectedType.route);
+      // Force Law Enforcement to go directly to BadBlue tools
+      if (selectedType.id === 'law-enforcement-accountability') {
+        setLocation('/badblue');
+      } else {
+        setLocation(selectedType.route);
+      }
     }
   };
 
