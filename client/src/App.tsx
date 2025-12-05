@@ -162,6 +162,10 @@ function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Switch>
+        {/* LegalWhat Platform Landing Page - Public Entry Point */}
+        <Route path="/" component={Landing} />
+        <Route path="/landing" component={Landing} />
+        
         {/* Public routes - accessible to everyone */}
         <Route path="/subscription-success" component={SubscriptionSuccess} />
         
