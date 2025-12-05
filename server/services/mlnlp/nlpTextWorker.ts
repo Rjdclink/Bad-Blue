@@ -12,9 +12,11 @@
  */
 
 import compromise from 'compromise';
-import { WordTokenizer, PorterStemmer } from 'natural';
+import natural from 'natural';
 import { Worker, WorkerInput, WorkerOutput } from './workerOrchestrator';
 import { logger } from '../../logger';
+
+const { WordTokenizer, PorterStemmer } = natural;
 
 export interface ExtractedEntity {
   type: 'person' | 'org' | 'location' | 'email' | 'phone' | 'date' | 'handle';
