@@ -105,8 +105,9 @@ async function example2_javascriptScraping() {
     console.log(`Found ${links.length} links in rendered content`);
     
     // Show first 5 links
-    console.log('\nFirst 5 links:');
-    links.slice(0, 5).forEach(link => console.log('  -', link));
+    const MAX_DISPLAYED_LINKS = 5;
+    console.log(`\nFirst ${MAX_DISPLAYED_LINKS} links:`);
+    links.slice(0, MAX_DISPLAYED_LINKS).forEach(link => console.log('  -', link));
     
     console.log('\nContent length:', result.markdown?.length, 'characters');
     console.log('Duration:', result.duration, 'ms');

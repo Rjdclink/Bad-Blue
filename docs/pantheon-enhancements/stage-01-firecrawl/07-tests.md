@@ -37,7 +37,7 @@ Create file `server/services/__tests__/firecrawl.test.ts`:
  * @jest-environment node
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { firecrawlService } from '../firecrawlService';
 import { firecrawlCache } from '../firecrawlCache';
 import { firecrawlRateLimiter } from '../firecrawlRateLimiter';

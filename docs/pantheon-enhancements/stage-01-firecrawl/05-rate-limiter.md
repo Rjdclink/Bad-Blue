@@ -314,7 +314,7 @@ export default firecrawlRateLimiter;
 ```typescript
 import { firecrawlRateLimiter } from './services/firecrawlRateLimiter';
 
-async function rateLimit edScrape(url: string) {
+async function rateLimitedScrape(url: string) {
   try {
     // Check rate limit before making request
     await firecrawlRateLimiter.checkLimit();
