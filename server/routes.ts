@@ -822,6 +822,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
   const legalCounselRoutes = await import('./routes/legalCounsel.routes');
   app.use('/api/legal-counsel', legalCounselRoutes.default);
+  
+  // ============================================
+  // DOCUMENT GENERATION ROUTES (Stage 2B)
+  // ============================================
+  const documentRoutes = await import('./routes/document.routes');
+  app.use('/api/documents', documentRoutes.default);
 
   // ============================================
   // PREVIEW ROUTES
