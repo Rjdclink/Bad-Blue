@@ -3,7 +3,7 @@
  * Extracts profile information from platform pages
  */
 
-import * as cheerio from 'cheerio';
+import { load as cheerioLoad } from 'cheerio';
 import type { SherlockResult } from './types';
 import { logger } from '../../logger';
 
@@ -60,7 +60,7 @@ const extractionRules: Record<string, any> = {
     jsonPath: true,
     extract: (html: string) => {
       // Instagram embeds JSON-LD
-      const $ = cheerio.load(html);
+      const $ = cheerioLoad(html);
       const jsonLd = $('script[type="application/ld+json"]').html();
       if (jsonLd) {
         try {
@@ -105,7 +105,7 @@ const extractionRules: Record<string, any> = {
     jsonPath: true,
     extract: (html: string) => {
       // TikTok uses JSON-LD
-      const $ = cheerio.load(html);
+      const $ = cheerioLoad(html);
       const jsonLd = $('script[type="application/ld+json"]').html();
       if (jsonLd) {
         try {
@@ -149,7 +149,7 @@ export class ProfileExtractor {
 
       // Use CSS selectors
       if (rules.selectors) {
-        const $ = cheerio.load(html);
+        const $ = cheerioLoad(html);
         const data: Partial<SherlockResult['profileData']> = {};
 
         if (rules.selectors.displayName) {
