@@ -1,6 +1,6 @@
 /**
  * PANTHEON Intelligence Core - Type Definitions
- * Phase 4A: Foundation Layer Types
+ * Phase 4A - Part 1: Core Types
  */
 
 /**

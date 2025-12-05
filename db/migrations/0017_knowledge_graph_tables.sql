@@ -1,5 +1,6 @@
 -- Migration: Knowledge Graph Tables for PANTHEON Intelligence Core
--- Phase 4A: Foundation Layer for autonomous intelligence
+-- Phase 4A - Part 1: Database Schema
+-- Foundation Layer for autonomous intelligence
 
 -- Knowledge Graph Nodes
 CREATE TABLE IF NOT EXISTS knowledge_graph_nodes (
