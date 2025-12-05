@@ -87,12 +87,17 @@ class ShadowCookieJar implements CookieJar {
       try {
         const cookies = this.jar.getCookiesSync(`http://${domain}`);
         cookies.forEach(cookie => {
-          this.jar.store.removeCookie(cookie.domain, cookie.path || '/', cookie.key, () => {});
+          try {
+            this.jar.store.removeCookie(cookie.domain || '', cookie.path || '/', cookie.key, () => {});
+          } catch (removeError) {
+            // Cookie might already be removed
+          }
         });
       } catch (error) {
         log.error('Failed to clear cookies for domain', { error, domain });
       }
     } else {
+      // Clear all cookies by creating a new jar
       this.jar = new ToughCookieJar();
     }
   }

@@ -236,7 +236,7 @@ export class RequestOrchestrator {
     method: RetrievalMethod,
     executor: (method: RetrievalMethod) => Promise<T>
   ): Promise<{ result: T; retries: number }> {
-    const retryConfig = request.options as any as RetryConfig || this.defaultRetryConfig;
+    const retryConfig = this.defaultRetryConfig;
     let lastError: any;
     
     for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {

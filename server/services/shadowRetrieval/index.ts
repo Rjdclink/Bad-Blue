@@ -370,8 +370,6 @@ export class ShadowRetrievalEngine {
     if (!this.puppeteer.isEnabled()) {
       throw new Error('Puppeteer is not enabled');
     }
-
-    const stealthConfig = this.antiDetection.getPuppeteerStealthConfig();
     
     const result = await this.puppeteer.scrape(url, {
       waitUntil: 'networkidle2',

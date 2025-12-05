@@ -293,13 +293,3 @@ export async function runShadowRetrievalTests() {
   
   return results;
 }
-
-// Run tests if this file is executed directly
-if (require.main === module) {
-  runShadowRetrievalTests()
-    .then(() => process.exit(0))
-    .catch(error => {
-      console.error('Test suite failed:', error);
-      process.exit(1);
-    });
-}
