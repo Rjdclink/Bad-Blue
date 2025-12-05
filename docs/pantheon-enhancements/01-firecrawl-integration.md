@@ -298,6 +298,7 @@ class FirecrawlService {
   private config: FirecrawlConfig;
   private metrics: FirecrawlMetrics;
   private cache: Map<string, { data: any; timestamp: number }>;
+  private cacheHits: number = 0;
   private readonly CACHE_TTL = 3600000; // 1 hour
 
   constructor(config: FirecrawlConfig) {
@@ -347,6 +348,7 @@ class FirecrawlService {
       // Check cache first
       const cached = this.getFromCache(url);
       if (cached) {
+        this.cacheHits++;
         logger.info(`Cache hit for URL: ${url}`);
         this.metrics.cacheHitRate = this.calculateCacheHitRate();
         return { success: true, data: cached };
@@ -681,6 +683,7 @@ class FirecrawlService {
    */
   clearCache(): void {
     this.cache.clear();
+    this.cacheHits = 0;
     logger.info('Firecrawl cache cleared');
   }
 
@@ -719,10 +722,7 @@ class FirecrawlService {
   }
 
   private calculateCacheHitRate(): number {
-    // Cache hits should be tracked separately; this is a simplified approximation
-    // In production, increment a cacheHits counter when cache is used
-    if (this.cache.size === 0) return 0;
-    return this.metrics.totalRequests > 0 ? this.cache.size / this.metrics.totalRequests : 0;
+    return this.metrics.totalRequests > 0 ? this.cacheHits / this.metrics.totalRequests : 0;
   }
 }
 
