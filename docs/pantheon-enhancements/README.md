@@ -148,15 +148,18 @@ async function handleRequest(): Promise<Result> {
 
 #### Caching Implementation (10-15% of code)
 ```typescript
-import { redisCache } from './services/redisCache';
+import { createLogger } from '../logger';
+import { redisCache } from './redisCache';
+
+const logger = createLogger('cache-wrapper');
 
 /**
- * Cache wrapper with TTL and invalidation
+ * Cache wrapper with tier-based TTL
  */
 async function getCachedData<T>(
   key: string,
   fetcher: () => Promise<T>,
-  ttl: number = 3600
+  tier: 'hot' | 'warm' | 'cold' = 'warm'
 ): Promise<T> {
   // Try cache first
   const cached = await redisCache.get(key);
@@ -169,8 +172,8 @@ async function getCachedData<T>(
   logger.debug('Cache miss', { key });
   const data = await fetcher();
   
-  // Store in cache
-  await redisCache.set(key, JSON.stringify(data), ttl);
+  // Store in cache with tier
+  await redisCache.set(key, JSON.stringify(data), tier);
   
   return data;
 }
