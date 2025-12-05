@@ -174,9 +174,19 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
 
   return (
     <div className="space-y-6">
-      {/* Main F.M.I. Upload Card - Forensic Technology Aesthetic */}
-      <Card className="border-2 border-primary/20 bg-gradient-to-br from-slate-950 to-slate-900 text-white">
-        <CardHeader className="space-y-1">
+      {/* Main F.M.I. Upload Card - Forensic Technology Aesthetic with 615D.avif Background */}
+      <Card className="border-2 border-primary/20 bg-gradient-to-br from-slate-950 to-slate-900 text-white overflow-hidden relative">
+        {/* Background Image with Overlay */}
+        <div className="absolute inset-0 opacity-10">
+          <img 
+            src="/images/615D.avif" 
+            alt="" 
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-slate-950/80 via-slate-900/90 to-slate-950/95" />
+        </div>
+        
+        <CardHeader className="space-y-1 relative z-10">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-primary/20 rounded-lg">
               <Brain className="w-6 h-6 text-primary" />
@@ -189,7 +199,7 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="relative z-10">
           {/* Upload Zone */}
           <div
             {...getRootProps()}

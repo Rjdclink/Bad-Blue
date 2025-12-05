@@ -141,7 +141,7 @@ export default function WelcomePage() {
                       </CardHeader>
                     </Card>
                     
-                    {/* "Let's Go" button overlaid on selected card */}
+                    {/* "Let's Go" button overlaid on selected card - Enhanced */}
                     {isSelected && (
                       <div className="absolute top-4 right-4 z-10 animate-in fade-in slide-in-from-right-4 duration-300">
                         <Button
@@ -150,8 +150,13 @@ export default function WelcomePage() {
                             e.stopPropagation();
                             handleLetsGo();
                           }}
-                          className="shadow-lg hover:shadow-xl transition-all"
+                          className="shadow-lg hover:shadow-xl transition-all animate-pulse-subtle bg-gradient-to-r from-primary to-primary/90"
                         >
+                          <img 
+                            src="/images/Law-book.webp" 
+                            alt="" 
+                            className="w-4 h-4 mr-1.5 object-contain"
+                          />
                           Let's Go
                           <ArrowRight className="w-4 h-4 ml-2" />
                         </Button>
@@ -240,7 +245,7 @@ export default function WelcomePage() {
                     </CardHeader>
                   </Card>
                   
-                  {/* "Let's Go" button overlaid on selected card */}
+                  {/* "Let's Go" button overlaid on selected card - Enhanced */}
                   {isSelected && (
                     <div className="absolute top-2 right-2 z-10 animate-in fade-in slide-in-from-right-4 duration-300">
                       <Button
@@ -249,8 +254,13 @@ export default function WelcomePage() {
                           e.stopPropagation();
                           handleLetsGo();
                         }}
-                        className="shadow-lg hover:shadow-xl transition-all text-xs"
+                        className="shadow-lg hover:shadow-xl transition-all text-xs animate-pulse-subtle bg-gradient-to-r from-primary to-primary/90"
                       >
+                        <img 
+                          src="/images/Law-book.webp" 
+                          alt="" 
+                          className="w-3 h-3 mr-1 object-contain"
+                        />
                         Let's Go
                         <ArrowRight className="w-3 h-3 ml-1" />
                       </Button>
