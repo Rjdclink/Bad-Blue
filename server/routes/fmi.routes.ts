@@ -22,6 +22,7 @@ import { isAuthenticated } from '../auth';
 import { asyncHandler } from '../errorHandler';
 import { createLogger } from '../logger';
 import { isValidLawType, LAW_TYPES, type LawType } from '@shared/lawTypes';
+import { apiRateLimit } from '../rateLimit'; // Add rate limiting
 import { 
   analyzeFMIEvidence,
   extractFMIIntelligence,
@@ -129,6 +130,7 @@ export function setupFMIRoutes(app: Express): void {
   /**
    * POST /api/fmi/upload
    * Upload file to F.M.I. for forensic intelligence analysis
+   * Rate limited to prevent abuse
    * 
    * Body (multipart/form-data):
    * - file: The file to upload
@@ -137,6 +139,7 @@ export function setupFMIRoutes(app: Express): void {
    */
   app.post(
     '/api/fmi/upload',
+    apiRateLimit, // Rate limiting for upload endpoint
     isAuthenticated,
     upload.single('file'),
     asyncHandler(async (req: any, res: Response) => {
@@ -221,9 +224,11 @@ export function setupFMIRoutes(app: Express): void {
   /**
    * POST /api/fmi/analyze
    * Analyze file using F.M.I. intelligence engine
+   * Rate limited to prevent abuse
    */
   app.post(
     '/api/fmi/analyze',
+    apiRateLimit, // Rate limiting for analysis endpoint
     isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
       const validation = fmiAnalyzeSchema.safeParse(req.body);
@@ -314,9 +319,11 @@ export function setupFMIRoutes(app: Express): void {
   /**
    * GET /api/fmi/files
    * Get all F.M.I. files for authenticated user
+   * Rate limited for data protection
    */
   app.get(
     '/api/fmi/files',
+    apiRateLimit, // Rate limiting for file list
     isAuthenticated,
     asyncHandler(async (req: any, res: Response) => {
       const userId = req.user?.id;
@@ -347,9 +354,11 @@ export function setupFMIRoutes(app: Express): void {
   /**
    * GET /api/fmi/files/:id
    * Get detailed F.M.I. analysis for a specific file
+   * Rate limited for data protection
    */
   app.get(
     '/api/fmi/files/:id',
+    apiRateLimit, // Rate limiting for file detail
     isAuthenticated,
     asyncHandler(async (req: any, res: Response) => {
       const { id } = req.params;
