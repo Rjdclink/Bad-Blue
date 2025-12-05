@@ -6,6 +6,7 @@ import { enhancedWebSearch } from './webSearchService';
 import { spiderfootClient } from './services/spiderfootClient';
 import { emailFinder } from './services/emailFinder';
 import { breachDetection } from './services/breachDetection';
+import { mlnlpIntelligenceService, MLNLPResult } from './services/mlnlp';
 
 /**
  * Interface for search results from various sources
@@ -39,6 +40,7 @@ export interface PeopleSearchReport {
   summary: string;
   confidenceScore: number;
   sources: OSINTSource[];
+  mlnlpAnalysis?: MLNLPResult; // ML/NLP intelligence results
 }
 
 /**
@@ -99,6 +101,73 @@ export async function conductPeopleSearch(
         aggregateSearchResults(report, result.value);
       }
     });
+
+    // Apply ML/NLP Intelligence Layer
+    try {
+      // Collect all text for NLP processing
+      const combinedText = [
+        ...report.publicRecords,
+        ...report.socialMediaPresence,
+        ...report.employmentAndEducation,
+        ...report.onlineMentions,
+      ].join('\n\n');
+
+      // Process through ML/NLP pipeline
+      if (combinedText.length > 0) {
+        const mlnlpResults = await mlnlpIntelligenceService.processOSINTData({
+          text: combinedText,
+          entities: report.sources.map(source => ({
+            name: searchQuery,
+            source: source.name,
+            metadata: source.data,
+          })),
+          sources: report.sources,
+        });
+
+        // Store ML/NLP analysis
+        report.mlnlpAnalysis = mlnlpResults;
+
+        // Enhance report with ML/NLP insights
+        if (mlnlpResults.nlpResults && mlnlpResults.nlpResults.entities) {
+          // Add extracted entities to appropriate sections
+          mlnlpResults.nlpResults.entities.forEach(entity => {
+            switch (entity.type) {
+              case 'email':
+                if (!report.contactInformation.includes(entity.value)) {
+                  report.contactInformation.push(entity.value);
+                }
+                break;
+              case 'phone':
+                if (!report.contactInformation.includes(entity.value)) {
+                  report.contactInformation.push(entity.value);
+                }
+                break;
+              case 'location':
+                if (!report.locationHistory.includes(entity.value)) {
+                  report.locationHistory.push(entity.value);
+                }
+                break;
+              case 'org':
+                if (!report.employmentAndEducation.includes(entity.value)) {
+                  report.employmentAndEducation.push(entity.value);
+                }
+                break;
+            }
+          });
+        }
+
+        // Update confidence score with ML/NLP insights
+        if (mlnlpResults.confidenceScores && mlnlpResults.confidenceScores.length > 0) {
+          const mlnlpConfidence = mlnlpResults.confidenceScores[0].overallConfidence;
+          report.confidenceScore = Math.round(
+            (report.confidenceScore + mlnlpConfidence) / 2
+          );
+        }
+      }
+    } catch (mlnlpError) {
+      console.error('ML/NLP processing error:', mlnlpError);
+      // Continue without ML/NLP enhancement if it fails
+    }
 
     // Use entity resolution for fuzzy matching across sources
     try {
