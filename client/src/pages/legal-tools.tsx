@@ -92,6 +92,32 @@ export default function LegalToolsPage() {
   const [state, setState] = useState("");
   const [situation, setSituation] = useState("");
   const [consultationResponse, setConsultationResponse] = useState("");
+  const [recommendations, setRecommendations] = useState<any>(null);
+  
+  // Consultation mutation - Enhanced version
+  const enhancedConsultationMutation = useMutation({
+    mutationFn: async (data: { state: string; situation: string; lawType: string }) => {
+      const response = await apiRequest("/api/enhanced-consultation", "POST", data);
+      const json = await response.json();
+      return json;
+    },
+    onSuccess: (data) => {
+      setConsultationResponse(data.analysis);
+      setRecommendations(data);
+      toast({
+        title: "Strategic Analysis Complete",
+        description: "Your comprehensive legal consultation with tool recommendations is ready.",
+      });
+    },
+    onError: (error: Error) => {
+      // Fallback to standard consultation
+      consultationMutation.mutate({
+        state,
+        situation,
+        lawType: validatedLawType,
+      });
+    },
+  });
   
   // Consultation mutation
   const consultationMutation = useMutation({
@@ -126,7 +152,8 @@ export default function LegalToolsPage() {
       return;
     }
     
-    consultationMutation.mutate({
+    // Try enhanced consultation first
+    enhancedConsultationMutation.mutate({
       state,
       situation,
       lawType: validatedLawType,
@@ -228,10 +255,10 @@ export default function LegalToolsPage() {
                   
                   <Button
                     onClick={handleConsultation}
-                    disabled={consultationMutation.isPending}
+                    disabled={consultationMutation.isPending || enhancedConsultationMutation.isPending}
                     className="w-full"
                   >
-                    {consultationMutation.isPending ? (
+                    {(consultationMutation.isPending || enhancedConsultationMutation.isPending) ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                         Analyzing...
@@ -239,22 +266,112 @@ export default function LegalToolsPage() {
                     ) : (
                       <>
                         <CheckCircle2 className="w-4 h-4 mr-2" />
-                        Get Legal Analysis
+                        Get Strategic Analysis
                       </>
                     )}
                   </Button>
                   
                   {consultationResponse && (
-                    <div className="mt-6 p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
-                      <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
-                        <CheckCircle2 className="w-5 h-5 text-green-600" />
-                        Legal Analysis
-                      </h3>
-                      <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <div className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">
-                          {consultationResponse}
+                    <div className="mt-6 space-y-4">
+                      <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                        <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
+                          <CheckCircle2 className="w-5 h-5 text-green-600" />
+                          Legal Analysis
+                        </h3>
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                          <div className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">
+                            {consultationResponse}
+                          </div>
                         </div>
                       </div>
+
+                      {/* Tool Recommendations */}
+                      {recommendations && (
+                        <>
+                          {/* Identified Parties for People Finder */}
+                          {recommendations.identifiedParties && recommendations.identifiedParties.length > 0 && (
+                            <Card className="border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900">
+                              <CardHeader className="pb-3">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                  <Users className="w-4 h-4" />
+                                  Recommended: Research These Individuals
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <div className="space-y-2">
+                                  {recommendations.identifiedParties.map((party: string, idx: number) => (
+                                    <div key={idx} className="flex items-center justify-between p-2 bg-white dark:bg-slate-800 rounded border">
+                                      <span className="text-sm font-medium">{party}</span>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => setLocation(`/people-finder?name=${encodeURIComponent(party)}`)}
+                                      >
+                                        <Users className="w-3 h-3 mr-1" />
+                                        Search
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          )}
+
+                          {/* Suggested Actions */}
+                          {recommendations.recommendations && recommendations.recommendations.length > 0 && (
+                            <Card>
+                              <CardHeader className="pb-3">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                  <CheckCircle2 className="w-4 h-4" />
+                                  Recommended Actions
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <div className="space-y-2">
+                                  {recommendations.recommendations.map((action: any, idx: number) => (
+                                    <div key={idx} className={`p-3 rounded border ${
+                                      action.priority === 'high' ? 'border-red-300 bg-red-50 dark:bg-red-950/20' :
+                                      action.priority === 'medium' ? 'border-yellow-300 bg-yellow-50 dark:bg-yellow-950/20' :
+                                      'border-slate-300 bg-slate-50 dark:bg-slate-900'
+                                    }`}>
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="flex-1">
+                                          <div className="flex items-center gap-2 mb-1">
+                                            <Badge variant={action.priority === 'high' ? 'destructive' : 'secondary'} className="text-xs">
+                                              {action.priority} priority
+                                            </Badge>
+                                            <span className="text-xs text-muted-foreground">{action.type}</span>
+                                          </div>
+                                          <p className="text-sm">{action.description}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          )}
+
+                          {/* Next Steps */}
+                          {recommendations.nextSteps && recommendations.nextSteps.length > 0 && (
+                            <Card className="border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-900">
+                              <CardHeader className="pb-3">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                  <ArrowLeft className="w-4 h-4 rotate-180" />
+                                  Next Steps
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <ol className="space-y-2 list-decimal list-inside">
+                                  {recommendations.nextSteps.map((step: string, idx: number) => (
+                                    <li key={idx} className="text-sm">{step}</li>
+                                  ))}
+                                </ol>
+                              </CardContent>
+                            </Card>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
                 </CardContent>
