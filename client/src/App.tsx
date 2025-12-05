@@ -109,6 +109,9 @@ const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage'
 // Legal Tools Page - Stage 4
 const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'LegalTools');
 
+// People Finder Page - Global Identity Intelligence
+const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'PeopleFinder');
+
 // Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 
@@ -182,6 +185,9 @@ function Router() {
             
             {/* Legal Tools Page - Stage 4 */}
             <Route path="/legal-tools" component={LegalToolsPage} />
+            
+            {/* People Finder - Global Identity Intelligence */}
+            <Route path="/people-finder" component={PeopleFinderPage} />
             
             {/* BadBlue routes - Law Enforcement Accountability */}
             <Route path="/badblue" component={Home} />

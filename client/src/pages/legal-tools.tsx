@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeft, Scale, FileText, Upload, MessageSquare, CheckCircle2, Loader2 } from "lucide-react";
+import { ArrowLeft, Scale, FileText, Upload, MessageSquare, CheckCircle2, Loader2, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -88,7 +88,7 @@ export default function LegalToolsPage() {
   // Validated law type (safe to use)
   const validatedLawType = lawTypeParam;
   
-  const [activeTab, setActiveTab] = useState<'consultation' | 'documents'>('consultation');
+  const [activeTab, setActiveTab] = useState<'consultation' | 'documents' | 'people'>('consultation');
   const [state, setState] = useState("");
   const [situation, setSituation] = useState("");
   const [consultationResponse, setConsultationResponse] = useState("");
@@ -169,15 +169,19 @@ export default function LegalToolsPage() {
           </div>
           
           {/* Main Content */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents')} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2 max-w-md">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents' | 'people')} className="space-y-6">
+            <TabsList className="grid w-full grid-cols-3 max-w-2xl">
               <TabsTrigger value="consultation" className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
-                Legal Consultation
+                Consultation
               </TabsTrigger>
               <TabsTrigger value="documents" className="flex items-center gap-2">
                 <FileText className="w-4 h-4" />
-                Document Tools
+                Documents
+              </TabsTrigger>
+              <TabsTrigger value="people" className="flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                People Finder
               </TabsTrigger>
             </TabsList>
             
@@ -322,6 +326,51 @@ export default function LegalToolsPage() {
                     associatedWith="document"
                     lawType={validatedLawType}
                   />
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            {/* People Finder Tab */}
+            <TabsContent value="people" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="w-5 h-5 text-blue-600" />
+                    People Finder - Identity Intelligence
+                  </CardTitle>
+                  <CardDescription>
+                    Search for individuals relevant to your {lawTypeInfo.name.toLowerCase()} case. Find witnesses, opposing parties, experts, or other relevant individuals.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-12">
+                    <Users className="w-16 h-16 mx-auto mb-4 text-blue-600 opacity-50" />
+                    <p className="text-lg mb-2 font-semibold">Advanced People Search Available</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-6 max-w-md mx-auto">
+                      Use our advanced People Finder to locate witnesses, experts, parties, or other individuals 
+                      relevant to your {lawTypeInfo.name.toLowerCase()} case. Aggregates data from public records, 
+                      court filings, professional networks, and more.
+                    </p>
+                    <Button
+                      onClick={() => setLocation('/people-finder')}
+                      size="lg"
+                      className="gap-2"
+                    >
+                      <Users className="w-4 h-4" />
+                      Launch People Finder
+                    </Button>
+                    
+                    <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-900 text-left max-w-md mx-auto">
+                      <h4 className="font-semibold text-sm mb-2 text-blue-900 dark:text-blue-100">Common Use Cases for {lawTypeInfo.name}:</h4>
+                      <ul className="text-xs text-blue-800 dark:text-blue-200 space-y-1">
+                        <li>• Locate witnesses and expert witnesses</li>
+                        <li>• Find contact information for parties</li>
+                        <li>• Research backgrounds and credentials</li>
+                        <li>• Discover professional associations</li>
+                        <li>• Verify identity and contact details</li>
+                      </ul>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>

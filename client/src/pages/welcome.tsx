@@ -165,6 +165,42 @@ export default function WelcomePage() {
           </div>
         )}
 
+        {/* People Finder - Standalone Tool */}
+        <div className="mb-8 sm:mb-12">
+          <div className="flex items-center gap-2 mb-4">
+            <Badge variant="default" className="text-sm bg-gradient-to-r from-blue-600 to-blue-700">Universal Tool</Badge>
+          </div>
+          <Card
+            className="cursor-pointer transition-all hover:shadow-lg border-2 border-blue-500 bg-gradient-to-br from-blue-50/95 to-blue-100/95 backdrop-blur-sm hover:from-blue-100/95 hover:to-blue-200/95"
+            onClick={() => setLocation('/people-finder')}
+          >
+            <CardHeader>
+              <div className="flex items-start gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <Shield className="h-6 w-6 text-blue-700 dark:text-blue-400" />
+                    <CardTitle className="text-xl sm:text-2xl text-blue-800 dark:text-blue-400">
+                      People Finder - Global Identity Intelligence
+                    </CardTitle>
+                  </div>
+                  <CardDescription className="text-base text-blue-700/90 dark:text-blue-300/90">
+                    Advanced AI-powered people search tool. Find witnesses, experts, parties, or any individual 
+                    relevant to your legal matter. Aggregates data from public records, court filings, social media, 
+                    professional networks, and more. Works across all legal areas.
+                  </CardDescription>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Badge variant="secondary" className="text-xs">🔍 Multi-Source Search</Badge>
+                    <Badge variant="secondary" className="text-xs">🤖 AI Entity Resolution</Badge>
+                    <Badge variant="secondary" className="text-xs">📊 Professional Dossiers</Badge>
+                    <Badge variant="secondary" className="text-xs">⚖️ Legal Research Ready</Badge>
+                  </div>
+                </div>
+                <ArrowRight className="h-6 w-6 text-blue-700 dark:text-blue-400 flex-shrink-0 mt-1" />
+              </div>
+            </CardHeader>
+          </Card>
+        </div>
+
         {/* Other Law Types */}
         <div className="mb-8">
           <h3 className="text-xl font-semibold mb-4 text-white">All Legal Areas</h3>
