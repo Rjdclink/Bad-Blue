@@ -102,6 +102,7 @@ export async function callGemini(
   // Primary model: gemini-2.5-flash-lite (1000 RPD)
   // Fallback model: gemini-2.5-flash (50 RPD) for multimodal/complex tasks
   const modelName = options.model || "gemini-2.5-flash-lite";
+  console.log(`[Gemini] Using model: ${modelName}`);
   const client = getGeminiClient();
 
   const systemPrompt = options.systemPrompt || '';

@@ -182,19 +182,35 @@ export default function LegalToolsPage() {
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents' | 'people' | 'evidence')} className="space-y-6">
             <TabsList className="grid w-full grid-cols-4 max-w-3xl">
               <TabsTrigger value="consultation" className="flex items-center gap-2">
-                <MessageSquare className="w-4 h-4" />
-                Consultation
+                <img 
+                  src="/images/Law-book.webp" 
+                  alt="" 
+                  className="w-4 h-4 object-contain"
+                />
+                LEXARA
               </TabsTrigger>
               <TabsTrigger value="evidence" className="flex items-center gap-2">
-                <Upload className="w-4 h-4" />
+                <img 
+                  src="/images/Law-book.webp" 
+                  alt="" 
+                  className="w-4 h-4 object-contain"
+                />
                 Evidence
               </TabsTrigger>
               <TabsTrigger value="documents" className="flex items-center gap-2">
-                <FileText className="w-4 h-4" />
+                <img 
+                  src="/images/Law-book.webp" 
+                  alt="" 
+                  className="w-4 h-4 object-contain"
+                />
                 Documents
               </TabsTrigger>
               <TabsTrigger value="people" className="flex items-center gap-2">
-                <Users className="w-4 h-4" />
+                <img 
+                  src="/images/Law-book.webp" 
+                  alt="" 
+                  className="w-4 h-4 object-contain"
+                />
                 People
               </TabsTrigger>
             </TabsList>
@@ -204,11 +220,15 @@ export default function LegalToolsPage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <MessageSquare className="w-5 h-5 text-blue-600" />
-                    AI Legal Consultation
+                    <img 
+                      src="/images/Law-book.webp" 
+                      alt="" 
+                      className="w-5 h-5 object-contain"
+                    />
+                    LEXARA — Legal Expert AI Resource Advisor
                   </CardTitle>
                   <CardDescription>
-                    Get expert analysis for your {lawTypeInfo.name.toLowerCase()} case. Our AI is specialized in this practice area.
+                    Get expert analysis for your {lawTypeInfo.name.toLowerCase()} case. LEXARA is specialized in this practice area.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">

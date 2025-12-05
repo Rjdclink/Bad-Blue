@@ -288,18 +288,29 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {/* 1. LegalAI Consultation */}
+            {/* 1. LEXARA - Legal Expert AI Resource Advisor */}
             <Card className="hover-elevate cursor-pointer transition-all" onClick={() => setActiveFeature('consultation')} data-testid="card-legal-consultation">
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="p-3 rounded-lg bg-primary/10">
-                      <Bell className="w-6 h-6 text-primary" />
+                    <div className="relative">
+                      <img 
+                        src="/images/OIP.webp" 
+                        alt="LEXARA - Legal Expert AI Resource Advisor"
+                        className="w-16 h-16 rounded-full object-cover border-2 border-primary shadow-lg"
+                      />
+                      <div className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-1">
+                        <img 
+                          src="/images/Law-book.webp" 
+                          alt="" 
+                          className="w-3 h-3 object-contain"
+                        />
+                      </div>
                     </div>
                     <div>
-                      <CardTitle className="text-2xl">LEXARA - Legal Expert AI</CardTitle>
+                      <CardTitle className="text-2xl">LEXARA</CardTitle>
                       <CardDescription className="mt-1">
-                        AI-powered legal case analysis, evidence intelligence & strategic recommendations - <span className="text-green-600 dark:text-green-400 font-semibold">Included with access</span>
+                        Legal Expert AI Resource Advisor - <span className="text-green-600 dark:text-green-400 font-semibold">Included with access</span>
                       </CardDescription>
                     </div>
                   </div>
@@ -337,8 +348,13 @@ export default function Home() {
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="p-3 rounded-lg bg-primary/10">
+                    <div className="p-3 rounded-lg bg-primary/10 relative">
                       <SearchIcon className="w-6 h-6 text-primary" />
+                      <img 
+                        src="/images/Law-book.webp" 
+                        alt="" 
+                        className="absolute -top-1 -right-1 w-4 h-4 object-contain"
+                      />
                     </div>
                     <div>
                       <CardTitle className="text-2xl">Officer Search</CardTitle>

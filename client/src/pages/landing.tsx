@@ -119,7 +119,7 @@ export default function Landing() {
     "offers": {
       "@type": "Offer",
       "priceCurrency": "USD",
-      "description": "Platform access with LegalAI Consultation and Officer Search"
+      "description": "Platform access with LEXARA Consultation and Officer Search"
     },
     "featureList": [
       "AI-powered officer badge identification",
@@ -226,7 +226,7 @@ export default function Landing() {
           {/* Three-Tier Pricing - Simplified */}
           <div className="max-w-5xl mx-auto mb-10">
             <div className="grid md:grid-cols-3 gap-6">
-              {/* Tier 1: LEXARA Legal Consultation & Officer Search Officer Search */}
+              {/* Tier 1: LEXARA & Officer Search */}
               <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
                 <div className="text-white mb-3">
                   <div className="text-lg font-semibold mb-2">Core Services</div>
@@ -318,7 +318,12 @@ export default function Landing() {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-sm">
-                  <Search className="w-4 h-4 text-primary" />
+                  <img 
+                    src="/images/Law-book.webp" 
+                    alt="" 
+                    className="w-4 h-4 object-contain"
+                    onError={handleImageError}
+                  />
                   Officer Search
                 </CardTitle>
               </CardHeader>
@@ -329,17 +334,30 @@ export default function Landing() {
               </CardContent>
             </Card>
 
-            {/* LegalAI Consultation */}
+            {/* LEXARA - Legal Expert AI Resource Advisor */}
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <Scale className="w-4 h-4 text-primary" />
-                  LegalAI Consultation
-                </CardTitle>
+                <div className="flex items-center gap-2 mb-2">
+                  <img 
+                    src="/images/OIP.webp" 
+                    alt="LEXARA" 
+                    className="w-8 h-8 rounded-full object-cover border-2 border-primary"
+                    onError={handleImageError}
+                  />
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <img 
+                      src="/images/Law-book.webp" 
+                      alt="" 
+                      className="w-4 h-4 object-contain"
+                      onError={handleImageError}
+                    />
+                    LEXARA
+                  </CardTitle>
+                </div>
               </CardHeader>
               <CardContent className="pt-0">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Free legal research and evaluation of potential claims.
+                  Legal Expert AI Resource Advisor - Free legal research and evaluation of potential claims.
                 </p>
               </CardContent>
             </Card>
@@ -348,7 +366,12 @@ export default function Landing() {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-sm">
-                  <FileText className="w-4 h-4 text-primary" />
+                  <img 
+                    src="/images/Law-book.webp" 
+                    alt="" 
+                    className="w-4 h-4 object-contain"
+                    onError={handleImageError}
+                  />
                   File Complaints
                 </CardTitle>
               </CardHeader>
@@ -363,7 +386,12 @@ export default function Landing() {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-sm">
-                  <Scale className="w-4 h-4 text-primary" />
+                  <img 
+                    src="/images/Law-book.webp" 
+                    alt="" 
+                    className="w-4 h-4 object-contain"
+                    onError={handleImageError}
+                  />
                   Civil Rights Lawsuits
                 </CardTitle>
               </CardHeader>
@@ -391,11 +419,11 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Interactive Legal Consultation Sample */}
+      {/* Interactive LEXARA Consultation Sample */}
       <section className="py-20 px-4 bg-background">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-bold mb-4">Try Legal Consultation</h2>
+            <h2 className="text-2xl font-bold mb-4">Try LEXARA</h2>
             <p className="text-sm text-muted-foreground max-w-xl mx-auto">
               Experience BadBlue's AI-powered legal analysis with a free sample consultation. No signup required.
             </p>
