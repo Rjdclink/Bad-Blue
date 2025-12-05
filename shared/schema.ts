@@ -2420,7 +2420,7 @@ export const insertPeopleSearchReportSchema = createInsertSchema(peopleSearchRep
 export type PeopleSearchReport = typeof peopleSearchReports.$inferSelect;
 
 // ============================================
-// EVIDENCE FILES TABLE (Stage 2A - Media Upload System)
+// EVIDENCE FILES TABLE - F.M.I. (Forensic Media Intelligence)
 // ============================================
 export const evidenceFiles = pgTable("evidence_files", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -2432,10 +2432,35 @@ export const evidenceFiles = pgTable("evidence_files", {
   uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
   lawType: text("law_type"), // References law types from shared/lawTypes.ts
   associatedWith: varchar("associated_with", { length: 20 }), // 'consultation' | 'document' | null
+  
+  // F.M.I. - Forensic Media Intelligence metadata
+  fmiAnalysisStatus: varchar("fmi_analysis_status", { length: 20 }).default('pending'), // 'pending' | 'processing' | 'completed' | 'failed'
+  fmiAnalyzedAt: timestamp("fmi_analyzed_at"),
+  
+  // OCR and text extraction
+  extractedText: text("extracted_text"), // OCR results from documents/images
+  extractedMetadata: jsonb("extracted_metadata"), // Technical metadata (EXIF, timestamps, etc.)
+  
+  // Content classification and legal relevance
+  contentClassification: jsonb("content_classification"), // Document type, evidence category, etc.
+  legalRelevanceTags: text("legal_relevance_tags").array(), // Tags for legal significance
+  legalIssuesIdentified: text("legal_issues_identified").array(), // Identified legal claims/defenses
+  
+  // Intelligence analysis results
+  contradictions: jsonb("contradictions"), // Detected contradictions with other evidence
+  corroboration: jsonb("corroboration"), // Corroboration with other evidence
+  caseLinkages: jsonb("case_linkages"), // Links to people, dates, locations, events
+  
+  // Evidence assessment
+  evidenceStrength: varchar("evidence_strength", { length: 20 }), // 'compelling' | 'strong' | 'moderate' | 'weak'
+  admissibilityAssessment: varchar("admissibility_assessment", { length: 30 }), // 'admissible' | 'likely-admissible' | 'questionable'
+  keyFindings: text("key_findings").array(), // Key extracted insights
+  
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_evidence_user").on(table.userId),
   index("idx_evidence_law_type").on(table.lawType),
+  index("idx_fmi_analysis_status").on(table.fmiAnalysisStatus),
 ]);
 
 export const evidenceFilesRelations = relations(evidenceFiles, ({ one }) => ({
@@ -2449,6 +2474,19 @@ export const insertEvidenceFileSchema = createInsertSchema(evidenceFiles).omit({
   id: true,
   createdAt: true,
   uploadedAt: true,
+  fmiAnalysisStatus: true,
+  fmiAnalyzedAt: true,
+  extractedText: true,
+  extractedMetadata: true,
+  contentClassification: true,
+  legalRelevanceTags: true,
+  legalIssuesIdentified: true,
+  contradictions: true,
+  corroboration: true,
+  caseLinkages: true,
+  evidenceStrength: true,
+  admissibilityAssessment: true,
+  keyFindings: true,
 });
 
 export type InsertEvidenceFile = z.infer<typeof insertEvidenceFileSchema>;

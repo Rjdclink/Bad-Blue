@@ -32,7 +32,7 @@ import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from ".
 import { MASTER_PASSWORD } from "./masterPassword";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
-import { setupUploadRoutes } from "./routes/upload.routes";
+import { setupFMIRoutes } from "./routes/fmi.routes";
 import { setupConsultationRoutes } from "./routes/consultation.routes";
 import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
@@ -808,7 +808,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
   setupAutosaveRoutes(app);
   setupLawTypesRoutes(app);
-  setupUploadRoutes(app);
+  setupFMIRoutes(app); // F.M.I. - Forensic Media Intelligence
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
   
   // ============================================
