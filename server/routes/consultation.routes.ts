@@ -14,8 +14,78 @@ const log = createLogger('ConsultationRoutes');
 export function setupConsultationRoutes(app: Express): void {
   
   /**
+   * POST /api/legal-consultation/enhanced
+   * Enhanced consultation with Governing Brain orchestration
+   * 
+   * Body:
+   * - state: State where the issue occurred (required)
+   * - situation: Description of the legal situation (required)  
+   * - lawType: Law type for specialized expertise (required)
+   * - additionalContext: Additional context (optional)
+   * - evidence: Array of evidence objects (optional)
+   * - parties: Plaintiff, defendant, witnesses (optional)
+   * 
+   * Response:
+   * - Comprehensive consultation result with tool recommendations
+   */
+  app.post(
+    '/api/legal-consultation/enhanced',
+    asyncHandler(async (req: Request, res: Response) => {
+      const { state, situation, lawType, additionalContext, evidence, parties } = req.body;
+
+      // Validation
+      if (!state || typeof state !== 'string') {
+        return res.status(400).json({ error: 'State is required' });
+      }
+
+      if (!situation || typeof situation !== 'string' || situation.trim().length === 0) {
+        return res.status(400).json({ error: 'Situation description is required' });
+      }
+
+      if (!lawType || typeof lawType !== 'string') {
+        return res.status(400).json({ error: 'Law type is required' });
+      }
+
+      try {
+        log.info('Enhanced legal consultation requested', {
+          state,
+          lawType,
+          situationLength: situation.length,
+          hasEvidence: !!evidence,
+          hasParties: !!parties,
+        });
+
+        const { legalConsultationEngine } = await import('../services/legalConsultationEngine');
+
+        const result = await legalConsultationEngine.consult({
+          description: situation,
+          state,
+          lawType,
+          additionalContext,
+          evidence,
+          parties,
+        });
+
+        log.info('Enhanced legal consultation completed', {
+          state,
+          lawType,
+          confidence: result.confidence,
+          completeness: result.completeness,
+          issuesFound: result.issues.length,
+          toolsRecommended: result.toolRecommendations.length,
+        });
+
+        res.json(result);
+      } catch (error) {
+        log.error('Enhanced legal consultation failed', { error, state, lawType });
+        throw error;
+      }
+    })
+  );
+
+  /**
    * POST /api/legal-consultation
-   * Analyze a legal issue with AI-powered consultation
+   * Standard AI-powered legal consultation (legacy)
    * 
    * Body:
    * - state: State where the issue occurred (required)

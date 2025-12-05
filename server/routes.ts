@@ -3314,9 +3314,38 @@ Contact: ${foiaRequest.userEmail || userEmail}
   });
 
   // ============================================
-  // OSINT FULL SEARCH ROUTE (Phase 4)
+  // OSINT & PEOPLE FINDER ROUTES (Enhanced)
   // ============================================
 
+  // Enhanced People Finder - Full Intelligence Report
+  app.post('/api/people-finder/enhanced', async (req, res) => {
+    const { name, location, age, email, phone, employer, config } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Name required' });
+    }
+
+    try {
+      const { enhancedPeopleFinder } = await import('./services/enhancedPeopleFinder');
+      
+      const query = {
+        name,
+        location,
+        age,
+        email,
+        phone,
+        employer,
+      };
+
+      const profile = await enhancedPeopleFinder.search(query, config);
+      res.json(profile);
+    } catch (error: any) {
+      console.error('[Enhanced People Finder API] Error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Legacy OSINT Full Search (maintained for backward compatibility)
   app.post('/api/osint/full-search', async (req, res) => {
     const { name, department, badge, location, domain } = req.body;
     
@@ -3471,7 +3500,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     const userIds = allUsers.map(u => u.id);
     
     // Batch fetch all counts in parallel with single queries per table
-    const [complaintsAgg, lawsuitsAgg, petitionsAgg, foiaAgg, authAccountsAgg, subscriptionsAgg] = await Promise.all([
+    const [complaintsAgg, lawsuitsAgg, petitionsAgg, foiaAgg, authAccountsAgg] = await Promise.all([
       db.select({ 
         userId: schema.complaints.userId, 
         count: sql<number>`count(*)::int` 

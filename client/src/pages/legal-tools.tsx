@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeft, Scale, FileText, Upload, MessageSquare, CheckCircle2, Loader2 } from "lucide-react";
+import { ArrowLeft, Scale, FileText, Upload, MessageSquare, CheckCircle2, Loader2, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,6 +13,7 @@ import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SEOHead } from "@/components/SEOHead";
+import { PeopleFinderTool } from "@/components/PeopleFinderTool";
 
 const US_STATES = [
   { code: "AL", name: "Alabama" },
@@ -88,7 +89,7 @@ export default function LegalToolsPage() {
   // Validated law type (safe to use)
   const validatedLawType = lawTypeParam;
   
-  const [activeTab, setActiveTab] = useState<'consultation' | 'documents'>('consultation');
+  const [activeTab, setActiveTab] = useState<'consultation' | 'documents' | 'people'>('consultation');
   const [state, setState] = useState("");
   const [situation, setSituation] = useState("");
   const [consultationResponse, setConsultationResponse] = useState("");
@@ -169,8 +170,8 @@ export default function LegalToolsPage() {
           </div>
           
           {/* Main Content */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents')} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2 max-w-md">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents' | 'people')} className="space-y-6">
+            <TabsList className="grid w-full grid-cols-3 max-w-2xl">
               <TabsTrigger value="consultation" className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
                 Legal Consultation
@@ -178,6 +179,10 @@ export default function LegalToolsPage() {
               <TabsTrigger value="documents" className="flex items-center gap-2">
                 <FileText className="w-4 h-4" />
                 Document Tools
+              </TabsTrigger>
+              <TabsTrigger value="people" className="flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                People Finder
               </TabsTrigger>
             </TabsList>
             
@@ -322,6 +327,25 @@ export default function LegalToolsPage() {
                     associatedWith="document"
                     lawType={validatedLawType}
                   />
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            {/* People Finder Tab */}
+            <TabsContent value="people" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="w-5 h-5 text-blue-600" />
+                    People Intelligence Finder
+                  </CardTitle>
+                  <CardDescription>
+                    Comprehensive OSINT intelligence gathering for {lawTypeInfo.name.toLowerCase()} cases.
+                    Conduct professional background research within legal and ethical boundaries.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <PeopleFinderTool lawType={validatedLawType} />
                 </CardContent>
               </Card>
             </TabsContent>
