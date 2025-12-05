@@ -302,105 +302,49 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Value Proposition - With more spacing */}
-      <section className="py-20 px-4 bg-card mt-16">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl font-bold mb-4">Transparency Through Technology</h2>
-            <p className="text-sm text-muted-foreground max-w-xl mx-auto">
-              Access public information with tools designed for accountability.
+      {/* LEXARA Visual Showcase Section */}
+      <section className="relative py-20 px-4 mt-16 overflow-hidden">
+        {/* Background Image with Dark Overlay */}
+        <div
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{
+            backgroundImage: 'url(/images/Tweed_Court.jpg)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center center'
+          }}
+        >
+          <div className="absolute inset-0 bg-black/60" />
+        </div>
+
+        {/* Content Container */}
+        <div className="relative z-10 max-w-6xl mx-auto">
+          {/* Overlay Text - Description of LEXARA */}
+          <div className="text-center mb-12 px-4">
+            <p className="text-white text-lg md:text-xl lg:text-2xl leading-relaxed max-w-4xl mx-auto font-medium" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+              Meet LEXARA - She's built on an orchestrated network of thirteen specialized AI models that operate in tandem. She provides you with advanced legal reasoning, analysis, in-depth research, cross-verified suggestions, and courtroom ready drafting, tailored to your filing jurisdiction. She can analyze evidence in a wide variety of formats and provide any format of legally compliant documentation.
             </p>
           </div>
 
-          {/* Feature Overview Cards - Reduced to 4 key features */}
-          <div className="grid md:grid-cols-2 gap-6 mb-12 max-w-3xl mx-auto">
-            {/* Officer Search */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <img 
-                    src="/images/Law-book.webp" 
-                    alt="" 
-                    className="w-4 h-4 object-contain"
-                    onError={handleImageError}
-                  />
-                  Officer Search
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  AI-powered search of officer public records across all 50 states.
-                </p>
-              </CardContent>
-            </Card>
+          {/* LEXARA Floating Card */}
+          <div className="flex justify-center">
+            <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
+              {/* LEXARA Image */}
+              <div className="mb-6">
+                <img
+                  src="/images/OIP.webp"
+                  alt="LEXARA - Legal Expert AI Resource Advisor"
+                  className="w-full h-auto rounded-2xl object-cover shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
+                  onError={handleImageError}
+                />
+              </div>
 
-            {/* LEXARA - Legal Expert AI Resource Advisor */}
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center gap-2 mb-2">
-                  <img 
-                    src="/images/OIP.webp" 
-                    alt="LEXARA" 
-                    className="w-8 h-8 rounded-full object-cover border-2 border-primary"
-                    onError={handleImageError}
-                  />
-                  <CardTitle className="flex items-center gap-2 text-sm">
-                    <img 
-                      src="/images/Law-book.webp" 
-                      alt="" 
-                      className="w-4 h-4 object-contain"
-                      onError={handleImageError}
-                    />
-                    LEXARA
-                  </CardTitle>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Legal Expert AI Resource Advisor - Free legal research and evaluation of potential claims.
+              {/* Label Text */}
+              <div className="text-center">
+                <p className="text-white text-sm md:text-base font-light tracking-wide" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.6)' }}>
+                  Legal X-(computational Autonomous Reasoning Architecture)
                 </p>
-              </CardContent>
-            </Card>
-
-            {/* File Complaint */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <img 
-                    src="/images/Law-book.webp" 
-                    alt="" 
-                    className="w-4 h-4 object-contain"
-                    onError={handleImageError}
-                  />
-                  File Complaints
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Document misconduct with automated routing to authorities.
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Civil Rights Lawsuit */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <img 
-                    src="/images/Law-book.webp" 
-                    alt="" 
-                    className="w-4 h-4 object-contain"
-                    onError={handleImageError}
-                  />
-                  Civil Rights Lawsuits
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Generate federal lawsuits with state-specific templates.
-                </p>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </div>
         </div>
       </section>
