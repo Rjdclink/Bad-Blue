@@ -109,7 +109,9 @@ export class GraphAlgorithms {
         adjacency.get(edge.source_id)!.push({
           target: edge.target_id,
           edgeId: edge.id,
-          weight: 1 - edge.weight, // Invert weight so higher weights = shorter distance
+          // Edge weight (0-1) represents relationship strength
+          // Convert to distance: higher strength = lower cost for shortest path
+          weight: 1 - edge.weight,
         });
       }
 

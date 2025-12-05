@@ -397,12 +397,19 @@ export class PreprocessingEngine {
 
   /**
    * Detect language of text
+   * Note: Uses simple ASCII ratio heuristic for Phase 4A
+   * Future phases should integrate proper language detection library
    */
   async detectLanguage(text: string): Promise<string> {
     try {
-      // Simple heuristic: if text contains mostly ASCII, assume English
+      // Simple ASCII-based heuristic for English detection
+      // Threshold: 90% ASCII characters suggests English or similar Latin-script language
+      const ASCII_THRESHOLD = 0.9;
       const asciiRatio = text.split('').filter(c => c.charCodeAt(0) < 128).length / text.length;
-      return asciiRatio > 0.9 ? 'en' : 'unknown';
+      
+      // TODO: Replace with proper language detection library (e.g., franc, langdetect)
+      // for accurate multi-language support
+      return asciiRatio > ASCII_THRESHOLD ? 'en' : 'unknown';
     } catch (error) {
       logger.error('Language detection failed:', error);
       return 'unknown';

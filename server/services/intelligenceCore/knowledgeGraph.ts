@@ -32,6 +32,7 @@ export class KnowledgeGraphCore {
       await pool.query('SELECT 1');
       
       // Verify tables exist
+      const requiredTables = ['knowledge_graph_nodes', 'knowledge_graph_edges', 'knowledge_graph_queries'];
       const tablesCheck = await pool.query(`
         SELECT COUNT(*) as count FROM information_schema.tables 
         WHERE table_schema = 'public' 
@@ -39,8 +40,8 @@ export class KnowledgeGraphCore {
       `);
 
       const tableCount = parseInt(tablesCheck.rows[0].count, 10);
-      if (tableCount !== 3) {
-        logger.warn(`Knowledge graph tables not fully initialized. Found ${tableCount}/3 tables.`);
+      if (tableCount !== requiredTables.length) {
+        logger.warn(`Knowledge graph tables not fully initialized. Found ${tableCount}/${requiredTables.length} tables.`);
         logger.warn('Run migrations to create knowledge graph tables.');
       } else {
         logger.info('Knowledge Graph Core initialized successfully');
@@ -268,10 +269,17 @@ export class KnowledgeGraphCore {
 
   // ==================== QUERY OPERATIONS ====================
 
+  // Default limit for query results to prevent memory issues
+  private readonly DEFAULT_QUERY_LIMIT = 100;
+
   /**
    * Find nodes matching filters
+   * @param filters - Node filters to apply
+   * @param limit - Maximum results to return (default: 100, max: 1000)
    */
-  async findNodes(filters: GraphNodeFilter): Promise<GraphNode[]> {
+  async findNodes(filters: GraphNodeFilter, limit: number = this.DEFAULT_QUERY_LIMIT): Promise<GraphNode[]> {
+    // Cap limit at 1000 to prevent excessive memory usage
+    const safeLimit = Math.min(limit, 1000);
     try {
       const whereClauses: string[] = [];
       const values: any[] = [];
@@ -311,9 +319,10 @@ export class KnowledgeGraphCore {
         SELECT * FROM knowledge_graph_nodes 
         ${whereClause}
         ORDER BY confidence DESC, created_at DESC
-        LIMIT 100
+        LIMIT $${paramIndex}
       `;
 
+      values.push(safeLimit);
       const result = await pool.query(query, values);
       return result.rows.map(row => this.mapRowToNode(row));
     } catch (error) {
