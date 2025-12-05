@@ -111,8 +111,8 @@ export default function Landing() {
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "WebApplication",
-    "name": "BadBlue",
-    "alternateName": ["Bad Blue", "bad blue"],
+    "name": "LegalWhat",
+    "alternateName": ["Legal What", "legal what"],
     "description": "Police accountability platform for filing complaints and civil rights lawsuits online",
     "url": baseUrl,
     "applicationCategory": "LegalService",
@@ -145,8 +145,8 @@ export default function Landing() {
       </audio>
 
       <SEOHead
-        title="Bad Blue — Police Misconduct Accountability Tools"
-        description="Petitions demanding officer resignation, 42 USC §1983 civil rights lawsuits, file police complaints online, FOIA requests. Affordable legal alternative to attorneys, fully remote — never leave home."
+        title="LegalWhat — AI Legal Platform for 30+ Practice Areas"
+        description="AI-powered legal platform covering 30+ practice areas including Law Enforcement Accountability, Family Law, Immigration, Civil Rights, and more. Professional legal tools with AI consultation."
         keywords="BadBlue, Bad Blue, badblue, bad blue, AI legal consultation, legal AI, officer database, case search, police accountability, civil rights, officer information, police brutality, police assault, police lawsuit, police complaint, police grievance, FOIA police, police search, police information, police legal help, police documents, officer brutality, officer assault, officer lawsuit, officer complaint, officer grievance, FOIA officer, officer search, officer information, officer legal, officer documents, department lawsuit, department complaint, department grievance, department FOIA, file police complaint, file officer complaint, lawsuit against police, lawsuit against officer, complaint against police department, grievance against police, legal advice police brutality, legal advice police assault, help with police complaint, help with officer lawsuit, search police officer, find police officer, locate police officer, police officer information, officer resignation petition, petition police officer fired, police misconduct documents, officer misconduct FOIA, police brutality lawsuit, officer assault complaint, police department grievance, legal help police case, police civil rights lawsuit, officer excessive force complaint, police false arrest lawsuit, police harassment complaint, department internal affairs complaint, police accountability legal advice, file complaint police brutality, file lawsuit police assault, FOIA request police records, search officer background, find officer information, locate police department, petition officer resignation, police brutality legal help, officer assault documents, police lawsuit information, complaint police misconduct, grievance officer conduct, legal documents police case, police records FOIA request, officer search database, department complaint process, lawsuit police department, complaint officer brutality, police legal assistance, officer information search, FOIA police documents, petition police accountability, police brutality help, officer assault lawsuit, department grievance filing, legal advice officer misconduct, search police records, find officer details, AI powered legal research, automated legal document generation, state specific legal templates, civil rights violation lawsuit, Section 1983 lawsuit, 42 USC 1983, Bivens action, qualified immunity, police misconduct attorney, civil rights attorney alternative, legal AI assistant, officer badge identification, automated complaint routing, tort notice generator, legal precedent search, filing information search, jurisdiction specific legal help, police accountability tools, officer accountability platform, legal consultation AI, smart legal research, online civil rights lawsuit, online police complaint, online FOIA request, online officer petition, police reform, law enforcement accountability, constitutional rights violation, Fourth Amendment violation, excessive force legal help, false arrest attorney, wrongful arrest lawsuit, police brutality documentation, officer misconduct evidence, legal case management, automated legal forms, police lawsuit filing assistance, civil rights case research, legal AI technology, officer database nationwide, police roster search, department directory, law enforcement information, officer background check, police history search, misconduct record search, complaint history officer, legal help affordable, budget legal assistance, DIY lawsuit, self file lawsuit, pro se legal help, legal document preparation, court filing assistance, legal research tools, case law search, statute search, legal code database, precedent database, filing fee information, court procedures, legal process help, police accountability resources, civil rights resources, legal aid alternative, online legal platform, digital legal services, legal tech platform, AI legal tools, smart legal assistance, automated legal help, police complaint online filing, lawsuit document generator, FOIA letter generator, petition template, legal letter writing, complaint letter police, grievance letter department, legal forms police case, court documents civil rights, filing instructions legal case, how to sue police, how to file police complaint, how to get police records, how to petition officer, police accountability guide, civil rights lawsuit guide, FOIA request guide, legal process guide, police complaint process, lawsuit filing process, legal document process, court filing process, legal help step by step, police case assistance, officer case guidance, department case support, legal resources comprehensive, police accountability comprehensive, civil rights comprehensive, legal platform complete, all in one legal help, complete legal solution, comprehensive police tools, full service legal platform, integrated legal services, police accountability ecosystem, legal consultation platform, officer search platform, legal research platform, complaint filing platform, lawsuit filing platform, FOIA platform, petition platform"
         ogTitle="File Police Complaint Online | BadBlue - Professional Police Accountability Platform"
         ogDescription="Professional legal empowerment platform providing transparent complaint filing systems & civil rights protection services for police misconduct, brutality & excessive force cases."
@@ -205,10 +205,10 @@ export default function Landing() {
           </div>
           
           <h1 className="text-white text-4xl md:text-5xl lg:text-6xl font-bold leading-tight mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300 drop-shadow-2xl">
-            Law Enforcement Accountability Service
+            AI-Powered Legal Platform for 30+ Practice Areas
           </h1>
           <p className="text-white/95 text-base md:text-lg mb-8 leading-relaxed max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 delay-500 drop-shadow-lg">
-            Convenient and affordable access to legal tools, including AI legal support, in-depth officer searches with detailed background reports, FOIA requests (auto submitted), circulation of persuasive petition for officer resignation, elaborate officer complaints (auto submitted) and efficient 1983 civil suits that include tort notice and cover sheet. All without the need to leave home.
+            Comprehensive legal assistance across 30 practice areas, from Law Enforcement Accountability to Family Law, Immigration, Civil Rights, and beyond. AI-powered consultation, document generation, and expert guidance for every legal need.
           </p>
           
           {/* Trust Signals */}
@@ -267,7 +267,7 @@ export default function Landing() {
               data-testid="checkbox-disclaimer"
             />
             <label htmlFor="disclaimer" className="text-sm text-white/90 leading-relaxed cursor-pointer block">
-              I understand that BadBlue provides public records and does not constitute legal advice. I will use this platform responsibly.
+              I understand that LegalWhat provides legal tools and AI assistance but does not constitute legal advice. I will use this platform responsibly.
             </label>
           </div>
 
@@ -276,7 +276,7 @@ export default function Landing() {
             <Button
               size="default"
               className="text-base px-6 bg-primary hover:bg-primary/90 backdrop-blur-sm border border-white/50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-500"
-              onClick={() => window.location.href = "/login?signup=true"}
+              onClick={() => window.location.href = "/login"}
               disabled={!disclaimerAccepted}
               data-testid="button-get-started"
             >
@@ -438,7 +438,7 @@ export default function Landing() {
           <h2 className="text-2xl font-bold mb-6">Our Commitment</h2>
           <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
             <p>
-              BadBlue aggregates information from publicly available records maintained by law enforcement agencies.
+              LegalWhat provides AI-powered legal tools and consultation across 30+ practice areas. Our platform combines cutting-edge AI with professional legal frameworks to make legal services accessible and affordable.
             </p>
             <p>
               If you believe any information needs updating, please{" "}
@@ -460,10 +460,10 @@ export default function Landing() {
             <div>
               <h3 className="font-semibold mb-4 flex items-center gap-2">
                 <Shield className="w-5 h-5" />
-                BadBlue
+                LegalWhat
               </h3>
               <p className="text-sm text-muted-foreground">
-                Making public records accessible for everyone.
+                AI-powered legal platform serving 30+ practice areas.
               </p>
             </div>
             <div>
