@@ -349,8 +349,9 @@ class FirecrawlService {
       const cached = this.getFromCache(url);
       if (cached) {
         this.cacheHits++;
-        logger.info(`Cache hit for URL: ${url}`);
+        this.metrics.successfulRequests++;
         this.metrics.cacheHitRate = this.calculateCacheHitRate();
+        logger.info(`Cache hit for URL: ${url}`);
         return { success: true, data: cached };
       }
 
