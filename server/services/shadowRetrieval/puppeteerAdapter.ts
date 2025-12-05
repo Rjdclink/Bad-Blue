@@ -25,7 +25,7 @@ export class PuppeteerAdapter {
 
   constructor(config?: Partial<PuppeteerConfig>) {
     this.config = {
-      headless: process.env.PUPPETEER_HEADLESS !== 'false',
+      headless: process.env.PUPPETEER_HEADLESS !== 'false' ? true : false,
       timeout: 30000,
       viewport: { width: 1920, height: 1080 },
       args: [
@@ -111,8 +111,8 @@ export class PuppeteerAdapter {
       }
 
       // Set viewport if different from default
-      if (options.viewport || this.config.viewport) {
-        await page.setViewport(options.viewport || this.config.viewport!);
+      if (this.config.viewport) {
+        await page.setViewport(this.config.viewport);
       }
 
       // Set cookies if provided
@@ -165,7 +165,7 @@ export class PuppeteerAdapter {
 
       // Wait additional time if specified
       if (options.waitFor) {
-        await page.waitForTimeout(options.waitFor);
+        await new Promise(resolve => setTimeout(resolve, options.waitFor));
       }
 
       // Scroll to bottom if requested (for lazy-loaded content)

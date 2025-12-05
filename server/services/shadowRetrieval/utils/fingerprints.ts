@@ -148,7 +148,7 @@ export function generateBrowserProfile(
     screen: generateScreen(),
     hardwareConcurrency: generateHardwareConcurrency(),
     deviceMemory: generateDeviceMemory(),
-    doNotTrack: Math.random() > 0.7 ? '1' : null,
+    doNotTrack: Math.random() > 0.7 ? '1' : undefined,
   };
 }
 

@@ -10,10 +10,8 @@ import type {
   RetryConfig,
   CircuitBreakerState,
   RequestOptions,
-  RateLimitError,
-  BlockedError,
-  TimeoutError,
 } from './types';
+import { RateLimitError, BlockedError, TimeoutError } from './types';
 import { calculateBackoffDelay, sleep } from './utils/timing';
 import { logger } from '../../logger';
 

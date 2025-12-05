@@ -75,7 +75,7 @@ export function generateSecFetchHeaders(
   destination: 'document' | 'empty' | 'image' | 'script' | 'style' = 'document',
   mode: 'navigate' | 'cors' | 'no-cors' | 'same-origin' = 'navigate',
   site: 'none' | 'same-origin' | 'same-site' | 'cross-site' = 'none'
-): Record<string, string> {
+): Partial<RequestHeaders> {
   return {
     'Sec-Fetch-Dest': destination,
     'Sec-Fetch-Mode': mode,
@@ -137,8 +137,12 @@ export function generateRequestHeaders(
     'Accept-Encoding': generateAcceptEncodingHeader(),
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
-    'DNT': Math.random() > 0.7 ? '1' : undefined,
   };
+  
+  // Add DNT if needed
+  if (Math.random() > 0.7) {
+    headers['DNT'] = '1';
+  }
   
   // Add Cache-Control if needed
   const cacheControl = generateCacheControlHeader();
@@ -233,7 +237,7 @@ export function generateAJAXHeaders(
 /**
  * Randomize header order (some fingerprinting detects consistent order)
  */
-export function randomizeHeaderOrder(headers: RequestHeaders): RequestHeaders {
+export function randomizeHeaderOrder(headers: RequestHeaders): Record<string, string> {
   const entries = Object.entries(headers);
   
   // Fisher-Yates shuffle
