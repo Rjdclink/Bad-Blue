@@ -200,7 +200,7 @@ export const LEXARA_VOICE_PERSONA: LexaraVoicePersona = {
     },
     explaining: {
       tone: 'instructional and clear',
-      pacing: 'measured',
+      pacing: 'thoughtful',
       characteristics: [
         'Simplified complex concepts',
         'Analogies when helpful',
@@ -211,7 +211,7 @@ export const LEXARA_VOICE_PERSONA: LexaraVoicePersona = {
     },
     reassuring: {
       tone: 'empathetic and warm',
-      pacing: 'gentle',
+      pacing: 'thoughtful',
       characteristics: [
         'Compassionate language',
         'Validation of concerns',
@@ -272,7 +272,7 @@ export function getPersonaForContext(context: SpeechContext): Partial<LexaraVoic
       vocal: {
         ...basePersona.vocal,
         authority: 'authoritative-calm' as const,
-        pacing: 'deliberate' as const,
+        pacing: 'thoughtful' as const,
       },
       speechModel: {
         ...basePersona.speechModel,
@@ -294,7 +294,7 @@ export function getPersonaForContext(context: SpeechContext): Partial<LexaraVoic
       vocal: {
         ...basePersona.vocal,
         articulation: 'clear' as const,
-        pacing: 'measured' as const,
+        pacing: 'thoughtful' as const,
       },
       speechModel: {
         ...basePersona.speechModel,

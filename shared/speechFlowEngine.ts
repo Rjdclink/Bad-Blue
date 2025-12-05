@@ -153,14 +153,14 @@ export class SpeechFlowEngine {
    */
   private splitIntoSentences(text: string): string[] {
     // Protect legal citations and abbreviations
-    const protected = text
+    const protectedText = text
       .replace(/(\d+)\s+(U\.S\.|F\.2d|F\.3d|F\.Supp\.|S\.Ct\.)/g, '$1_$2')
       .replace(/\b(vs\.|v\.|Inc\.|Corp\.|Ltd\.|LLC\.|Dr\.|Mr\.|Mrs\.|Ms\.)/gi, (match) =>
         match.replace(/\./g, '_DOT_')
       );
 
     // Split on sentence endings
-    const sentences = protected.split(/(?<=[.!?])\s+(?=[A-Z])/);
+    const sentences = protectedText.split(/(?<=[.!?])\s+(?=[A-Z])/);
 
     // Restore protected text
     return sentences.map(s =>

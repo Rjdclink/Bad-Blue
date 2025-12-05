@@ -12,7 +12,7 @@ import {
   type VoiceSynthesisRequest 
 } from '../voiceSynthesisService';
 import { createLogger } from '../logger';
-import type { SpeechContext } from '../../shared/lexaraVoicePersona';
+import type { SpeechContext } from '@shared/lexaraVoicePersona';
 
 const log = createLogger('VoiceRoutes');
 

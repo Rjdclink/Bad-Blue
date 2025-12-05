@@ -16,11 +16,11 @@ import {
   type VoiceSynthesisConfig,
   type SpeechContext,
   getPersonaForContext 
-} from '../../shared/lexaraVoicePersona';
+} from '@shared/lexaraVoicePersona';
 import { 
   SpeechFlowEngine,
   type SpeechFlowOutput 
-} from '../../shared/speechFlowEngine';
+} from '@shared/speechFlowEngine';
 import { createLogger } from './logger';
 
 const log = createLogger('VoiceSynthesis');

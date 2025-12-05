@@ -7,7 +7,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToast } from './use-toast';
-import type { SpeechContext } from '../../shared/lexaraVoicePersona';
+import type { SpeechContext } from '@shared/lexaraVoicePersona';
 
 export interface VoiceSynthesisOptions {
   context?: SpeechContext;
