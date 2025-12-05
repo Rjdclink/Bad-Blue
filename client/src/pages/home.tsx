@@ -24,11 +24,8 @@ export default function Home() {
   const [, setLocation] = useLocation();
   const [activeFeature, setActiveFeature] = useState<'consultation' | 'officer-search' | 'ai-subagent' | null>(null);
 
-  // Redirect to landing if not authenticated
-  if (!user) {
-    window.location.href = "/landing";
-    return null;
-  }
+  // REMOVED: No longer redirecting to landing if not authenticated
+  // BadBlue is now accessible without login - users can access all features as guests
 
   // DEPRECATED: Payment success/cancel redirect handler removed
   // Officer search and legal consultation are now FREE for all signed-in users
@@ -209,8 +206,8 @@ export default function Home() {
 
       {/* Back Button */}
       <div className="container px-4 py-4">
-        <Button variant="ghost" onClick={() => setLocation('/landing')} data-testid="button-back">
-          ← Back to Landing Page
+        <Button variant="ghost" onClick={() => setLocation('/badblue')} data-testid="button-back">
+          ← Back to BadBlue Landing
         </Button>
       </div>
 

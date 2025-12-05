@@ -134,7 +134,7 @@ export default function Contact() {
             <span className="font-semibold text-lg">BadBlue</span>
           </Link>
           <nav className="hidden md:flex items-center gap-6">
-            <Link href="/landing" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
+            <Link href="/badblue" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
               <HomeIcon className="w-4 h-4" />
               Home
             </Link>
@@ -398,7 +398,7 @@ export default function Contact() {
                 </p>
                 <div className="flex flex-col sm:flex-row gap-3 justify-center">
                   <Button asChild variant="default" data-testid="button-back-home">
-                    <Link href="/landing">Return Home</Link>
+                    <Link href="/badblue">Return Home</Link>
                   </Button>
                   <Button 
                     variant="outline" 
@@ -518,7 +518,7 @@ export default function Contact() {
       <footer className="border-t bg-card py-8">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex flex-wrap justify-center gap-6 text-sm text-muted-foreground">
-            <Link href="/landing" className="hover:text-foreground">Home</Link>
+            <Link href="/badblue" className="hover:text-foreground">Home</Link>
             <Link href="/login" className="hover:text-foreground">Officer Search</Link>
             <Link href="/login" className="hover:text-foreground">Complaints/FOIA</Link>
             <Link href="/login" className="hover:text-foreground">§1983 Lawsuit Generator</Link>
