@@ -293,7 +293,7 @@ export async function unifiedSearch(
           url,
           snippet: '',
           source: 'combined',
-          aiSummary: openRouterResult.aggregatedAnswer.substring(0, 500),
+          aiSummary: enhancedResults.length === 0 ? openRouterResult.aggregatedAnswer : undefined,
           reliability: determineReliability(url),
           relevanceScore: openRouterResult.confidence,
         });
@@ -600,7 +600,7 @@ export function isWebSearchAvailable(): {
   return {
     openrouter: isOpenRouterWebSearchAvailable(),
     gemini: !!GEMINI_API_KEY && !isCircuitOpen('gemini'),
-    any: isOpenRouterWebSearchAvailable() || (!!GEMINI_API_KEY && WEB_SEARCH_ENABLED),
+    any: isOpenRouterWebSearchAvailable() || (!!GEMINI_API_KEY && !isCircuitOpen('gemini') && WEB_SEARCH_ENABLED),
   };
 }
 
