@@ -18,6 +18,14 @@ import { createLogger } from './logger';
 const log = createLogger('DocumentGenerator');
 
 // ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const MAX_CITATIONS_FOR_VERIFICATION = 5; // Limit verification to most important citations
+const VERIFICATION_SCORE_MULTIPLIER = 100; // Convert ratio to percentage
+const VERIFICATION_PASS_THRESHOLD = 70; // 70% verification score required
+
+// ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
 
@@ -744,13 +752,15 @@ function generateDocumentTitle(request: DocumentGenerationRequest): string {
  */
 function extractCitations(content: string): Array<{ statute: string; caselaw?: string; regulation?: string }> {
   const citations: Array<{ statute: string; caselaw?: string; regulation?: string }> = [];
+  const seenStatutes = new Set<string>(); // Use Set for O(1) lookups
   
   // Extract statute citations (e.g., "42 U.S.C. § 1983", "Cal. Penal Code § 484")
   const statutePattern = /\b\d+\s+U\.S\.C\.\s+§\s+\d+|\b[A-Z][a-z]+\.\s+[A-Za-z]+\s+Code\s+§\s+\d+/g;
   const statutes = content.match(statutePattern) || [];
   
   statutes.forEach(statute => {
-    if (!citations.some(c => c.statute === statute)) {
+    if (!seenStatutes.has(statute)) {
+      seenStatutes.add(statute);
       citations.push({ statute });
     }
   });
@@ -777,7 +787,7 @@ async function verifyDocument(
     const citations = extractCitations(content);
     let verifiedCount = 0;
     
-    for (const citation of citations.slice(0, 5)) {
+    for (const citation of citations.slice(0, MAX_CITATIONS_FOR_VERIFICATION)) {
       try {
         const result = await checkFact({
           claim: citation.statute || citation.caselaw || '',
@@ -793,9 +803,12 @@ async function verifyDocument(
       }
     }
     
-    const score = citations.length > 0 ? (verifiedCount / Math.min(citations.length, 5)) * 100 : 100;
+    const score = citations.length > 0 
+      ? (verifiedCount / Math.min(citations.length, MAX_CITATIONS_FOR_VERIFICATION)) * VERIFICATION_SCORE_MULTIPLIER 
+      : VERIFICATION_SCORE_MULTIPLIER;
+      
     return {
-      verified: score >= 70,
+      verified: score >= VERIFICATION_PASS_THRESHOLD,
       score
     };
   } catch (error) {

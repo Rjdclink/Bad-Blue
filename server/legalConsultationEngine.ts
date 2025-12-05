@@ -16,6 +16,14 @@ import { createLogger } from './logger';
 const log = createLogger('ConsultationEngine');
 
 // ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const MAX_CLAIMS_FOR_VERIFICATION = 5; // Limit verification to most important claims
+const VERIFICATION_CONFIDENCE_THRESHOLD = 0.7; // 70% confidence threshold
+const VERIFICATION_PASS_THRESHOLD = 0.7; // 70% of claims must be verified
+
+// ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
 
@@ -75,7 +83,7 @@ export interface CauseOfAction {
 export interface ProceduralPosture {
   stage: 'pre-litigation' | 'filing' | 'discovery' | 'motion-practice' | 'trial' | 'appeal' | 'post-judgment';
   jurisdiction: string;
-  statueOfLimitationsDeadline?: Date | string;
+  statuteOfLimitationsDeadline?: Date | string;
   urgency: 'critical' | 'high' | 'medium' | 'low';
   nextFilingDeadline?: Date | string;
 }
@@ -468,7 +476,7 @@ Return ONLY valid JSON:
   "posture": {
     "stage": "pre-litigation|filing|discovery|motion-practice|trial|appeal|post-judgment",
     "jurisdiction": "${state} or Federal",
-    "statueOfLimitationsDeadline": "YYYY-MM-DD or null",
+    "statuteOfLimitationsDeadline": "YYYY-MM-DD or null",
     "urgency": "critical|high|medium|low",
     "nextFilingDeadline": "YYYY-MM-DD or null"
   },
@@ -692,7 +700,7 @@ export async function performConsultation(
       let verifiedCount = 0;
       let totalConfidence = 0;
       
-      for (const claim of claims.slice(0, 5)) { // Limit to 5 most important claims
+      for (const claim of claims.slice(0, MAX_CLAIMS_FOR_VERIFICATION)) {
         try {
           const result = await checkFact({
             claim,
@@ -705,7 +713,7 @@ export async function performConsultation(
         }
       }
       
-      verified = verifiedCount >= Math.ceil(claims.length * 0.7); // 70% threshold
+      verified = verifiedCount >= Math.ceil(claims.length * VERIFICATION_PASS_THRESHOLD);
       verificationDetails = {
         claimsChecked: claims.length,
         claimsVerified: verifiedCount,

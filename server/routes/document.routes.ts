@@ -79,14 +79,15 @@ const generateDocumentSchema = z.object({
  */
 router.post('/generate', async (req: Request, res: Response) => {
   try {
-    if (!req.user?.id) {
+    const userId = req.user?.claims?.sub || req.user?.id;
+    if (!userId) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
     const validatedData = generateDocumentSchema.parse(req.body);
     
     log.info('Document generation requested', {
-      userId: req.user.id,
+      userId,
       documentType: validatedData.documentType,
       lawType: validatedData.lawType,
       state: validatedData.state
@@ -95,7 +96,7 @@ router.post('/generate', async (req: Request, res: Response) => {
     const document = await generateLegalDocument(validatedData);
 
     log.info('Document generation completed', {
-      userId: req.user.id,
+      userId,
       documentType: validatedData.documentType,
       wordCount: document.metadata.wordCount,
       pageEstimate: document.metadata.pageEstimate
