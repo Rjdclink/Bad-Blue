@@ -50,6 +50,34 @@ const BOOK_COLORS = [
   { name: 'Trusts Law', color: '#FFD700' },                   // Gold
 ];
 
+// Default color for books without a matched color
+const DEFAULT_BOOK_COLOR = '#666666';
+
+/**
+ * Darkens or lightens a hex color by a given percentage
+ * @param hex - Hex color string (e.g., '#FF0000')
+ * @param percent - Percentage to darken (positive) or lighten (negative)
+ * @returns Adjusted hex color string
+ */
+const adjustColorBrightness = (hex: string, percent: number): string => {
+  // Parse hex color to RGB components
+  const num = parseInt(hex.replace('#', ''), 16);
+  const amt = Math.round(2.55 * percent);
+  
+  // Extract R, G, B components using bit shifting
+  const R = (num >> 16) - amt;
+  const G = (num >> 8 & 0x00FF) - amt;
+  const B = (num & 0x0000FF) - amt;
+  
+  // Clamp each component to 0-255 range and reconstruct hex
+  return '#' + (
+    0x1000000 +
+    (R < 255 ? (R < 1 ? 0 : R) : 255) * 0x10000 +
+    (G < 255 ? (G < 1 ? 0 : G) : 255) * 0x100 +
+    (B < 255 ? (B < 1 ? 0 : B) : 255)
+  ).toString(16).slice(1);
+};
+
 // Book spine component with vertical text and 3D effect
 const BookSpine = ({ 
   lawType, 
@@ -62,22 +90,8 @@ const BookSpine = ({
   isSelected: boolean; 
   onClick: () => void 
 }) => {
-  const darkenColor = (hex: string, percent: number) => {
-    const num = parseInt(hex.replace('#', ''), 16);
-    const amt = Math.round(2.55 * percent);
-    const R = (num >> 16) - amt;
-    const G = (num >> 8 & 0x00FF) - amt;
-    const B = (num & 0x0000FF) - amt;
-    return '#' + (
-      0x1000000 +
-      (R < 255 ? (R < 1 ? 0 : R) : 255) * 0x10000 +
-      (G < 255 ? (G < 1 ? 0 : G) : 255) * 0x100 +
-      (B < 255 ? (B < 1 ? 0 : B) : 255)
-    ).toString(16).slice(1);
-  };
-
-  const darkColor = darkenColor(color, 20);
-  const lighterColor = darkenColor(color, -10);
+  const darkColor = adjustColorBrightness(color, 20);
+  const lighterColor = adjustColorBrightness(color, -10);
 
   return (
     <div
@@ -157,8 +171,12 @@ export default function WelcomePage() {
   const colorMap = new Map(
     BOOK_COLORS.map(item => {
       const lawType = sortedLawTypes.find(lt => lt.name === item.name);
-      return [lawType?.id || '', item.color];
-    })
+      // Only add to map if law type is found
+      if (lawType) {
+        return [lawType.id, item.color];
+      }
+      return null;
+    }).filter(Boolean) as [string, string][]
   );
 
   // Handle law type selection (only one at a time)
@@ -231,7 +249,7 @@ export default function WelcomePage() {
             {/* Books displayed in rows */}
             <div className="flex flex-wrap justify-center gap-2 mb-4">
               {sortedLawTypes.map((lawType) => {
-                const color = colorMap.get(lawType.id) || '#666666';
+                const color = colorMap.get(lawType.id) || DEFAULT_BOOK_COLOR;
                 const isSelected = selectedLawType === lawType.id;
                 
                 return (
