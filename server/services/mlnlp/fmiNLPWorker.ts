@@ -392,6 +392,11 @@ function classifyEventType(event: string): TimelineEvent['eventType'] {
 // KEYPHRASE EXTRACTION
 // ============================================================================
 
+interface TfIdfTerm {
+  term: string;
+  tfidf: number;
+}
+
 /**
  * Extract keyphrases using TF-IDF
  */
@@ -405,7 +410,7 @@ function extractKeyphrases(text: string): Keyphrase[] {
   const keyphrases: Keyphrase[] = [];
   
   // Get top terms
-  tfidf.listTerms(0).slice(0, 20).forEach((item: any) => {
+  tfidf.listTerms(0).slice(0, 20).forEach((item: TfIdfTerm) => {
     const category = categorizeTerm(item.term);
     
     keyphrases.push({
