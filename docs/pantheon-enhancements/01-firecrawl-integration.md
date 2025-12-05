@@ -719,8 +719,10 @@ class FirecrawlService {
   }
 
   private calculateCacheHitRate(): number {
-    const hits = this.metrics.successfulRequests - this.metrics.totalRequests;
-    return this.metrics.totalRequests > 0 ? hits / this.metrics.totalRequests : 0;
+    // Cache hits should be tracked separately; this is a simplified approximation
+    // In production, increment a cacheHits counter when cache is used
+    if (this.cache.size === 0) return 0;
+    return this.metrics.totalRequests > 0 ? this.cache.size / this.metrics.totalRequests : 0;
   }
 }
 
