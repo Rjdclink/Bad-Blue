@@ -24,7 +24,7 @@ export default function OfficerSearchPage() {
         <div className="container max-w-4xl mx-auto px-4 py-4">
           <Button
             variant="ghost"
-            onClick={() => setLocation("/")}
+            onClick={() => setLocation("/home")}
             className="mb-4"
             data-testid="button-back-to-dashboard"
           >
@@ -69,7 +69,7 @@ export default function OfficerSearchPage() {
             </CardContent>
           </Card>
         </div>
-        <OfficerSearch onBack={() => setLocation("/")} />
+        <OfficerSearch onBack={() => setLocation("/home")} />
 
         {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
         <HiddenFAQ path="/officer-search" />

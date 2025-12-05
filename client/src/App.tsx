@@ -159,11 +159,14 @@ function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Switch>
-        {/* Public routes */}
+        {/* Public routes - accessible to everyone */}
         <Route path="/subscription-success" component={SubscriptionSuccess} />
         
-        {/* Public routes */}
+        {/* Root and landing routes - LegalWhat landing page for all users */}
+        <Route path="/" component={Landing} />
         <Route path="/landing" component={Landing} />
+        
+        {/* Other public routes */}
         <Route path="/login" component={Login} />
         <Route path="/contact" component={Contact} />
         <Route path="/support" component={Contact} />
@@ -177,10 +180,7 @@ function Router() {
         {/* Protected routes - only accessible when authenticated */}
         {isAuthenticated ? (
           <>
-            {/* Root route - LegalWhat Welcome Page for law type selection */}
-            <Route path="/" component={WelcomePage} />
-            
-            {/* New Welcome Page - Stage 1B/1C */}
+            {/* Welcome Page - LegalWhat law type selection (post-login) */}
             <Route path="/welcome" component={WelcomePage} />
             
             {/* Legal Tools Page - Stage 4 */}
@@ -224,10 +224,7 @@ function Router() {
             <Route path="/history" component={History} />
             <Route path="/evidence-hub" component={EvidenceHub} />
           </>
-        ) : (
-          // Unauthenticated users: Root route goes to Login/Signup
-          <Route path="/" component={Login} />
-        )}
+        ) : null}
 
         <Route component={NotFound} />
       </Switch>

@@ -208,7 +208,7 @@ export default function LegalDocumentCreator() {
               <span className="font-semibold">BadBlue</span>
             </Link>
             <div className="ml-auto">
-              <Link href="/">
+              <Link href="/welcome">
                 <Button variant="ghost" size="sm">← Back to Dashboard</Button>
               </Link>
             </div>
