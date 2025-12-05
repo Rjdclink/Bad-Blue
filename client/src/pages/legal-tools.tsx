@@ -88,23 +88,23 @@ export default function LegalToolsPage() {
   // Validated law type (safe to use)
   const validatedLawType = lawTypeParam;
   
-  const [activeTab, setActiveTab] = useState<'consultation' | 'documents'>('consultation');
+  const [activeTab, setActiveTab] = useState<'consultation' | 'documents' | 'evidence'>('consultation');
   const [state, setState] = useState("");
   const [situation, setSituation] = useState("");
-  const [consultationResponse, setConsultationResponse] = useState("");
+  const [consultationResponse, setConsultationResponse] = useState<any>(null);
   
   // Consultation mutation
   const consultationMutation = useMutation({
     mutationFn: async (data: { state: string; situation: string; lawType: string }) => {
       const response = await apiRequest("/api/legal-consultation", "POST", data);
       const json = await response.json();
-      return json.analysis as string;
+      return json; // Return full enhanced response
     },
-    onSuccess: (analysis) => {
-      setConsultationResponse(analysis);
+    onSuccess: (data) => {
+      setConsultationResponse(data);
       toast({
         title: "Analysis Complete",
-        description: "Your legal consultation has been generated.",
+        description: "Your comprehensive legal consultation has been generated.",
       });
     },
     onError: (error: Error) => {
@@ -169,15 +169,19 @@ export default function LegalToolsPage() {
           </div>
           
           {/* Main Content */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents')} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2 max-w-md">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents' | 'evidence')} className="space-y-6">
+            <TabsList className="grid w-full grid-cols-3 max-w-2xl">
               <TabsTrigger value="consultation" className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
-                Legal Consultation
+                Consultation
               </TabsTrigger>
               <TabsTrigger value="documents" className="flex items-center gap-2">
                 <FileText className="w-4 h-4" />
-                Document Tools
+                Documents
+              </TabsTrigger>
+              <TabsTrigger value="evidence" className="flex items-center gap-2">
+                <Upload className="w-4 h-4" />
+                Evidence
               </TabsTrigger>
             </TabsList>
             
@@ -241,16 +245,63 @@ export default function LegalToolsPage() {
                   </Button>
                   
                   {consultationResponse && (
-                    <div className="mt-6 p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
-                      <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
-                        <CheckCircle2 className="w-5 h-5 text-green-600" />
-                        Legal Analysis
-                      </h3>
-                      <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <div className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">
-                          {consultationResponse}
+                    <div className="mt-6 space-y-4">
+                      {/* Main Analysis */}
+                      <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                        <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
+                          <CheckCircle2 className="w-5 h-5 text-green-600" />
+                          Legal Analysis
+                        </h3>
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                          <div className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">
+                            {consultationResponse.analysis}
+                          </div>
                         </div>
                       </div>
+                      
+                      {/* Enhanced Details if available */}
+                      {consultationResponse.fullAnalysis && (
+                        <>
+                          {/* Causes of Action */}
+                          {consultationResponse.fullAnalysis.causesOfAction?.length > 0 && (
+                            <div className="p-4 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
+                              <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
+                                Potential Claims ({consultationResponse.fullAnalysis.causesOfAction.length})
+                              </h4>
+                              <div className="space-y-2">
+                                {consultationResponse.fullAnalysis.causesOfAction.slice(0, 3).map((cause: any, idx: number) => (
+                                  <div key={idx} className="text-sm">
+                                    <span className="font-medium">{cause.name}</span>
+                                    <span className={`ml-2 px-2 py-0.5 rounded text-xs ${
+                                      cause.strength === 'strong' ? 'bg-green-200 text-green-800' :
+                                      cause.strength === 'moderate' ? 'bg-yellow-200 text-yellow-800' :
+                                      'bg-red-200 text-red-800'
+                                    }`}>
+                                      {cause.strength}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Next Steps */}
+                          {consultationResponse.nextSteps?.length > 0 && (
+                            <div className="p-4 bg-green-50 dark:bg-green-950 rounded-lg border border-green-200 dark:border-green-800">
+                              <h4 className="font-semibold text-green-900 dark:text-green-100 mb-2">
+                                Recommended Next Steps
+                              </h4>
+                              <ul className="space-y-1">
+                                {consultationResponse.nextSteps.slice(0, 5).map((step: any, idx: number) => (
+                                  <li key={idx} className="text-sm text-green-800 dark:text-green-200">
+                                    • {step.action}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
                 </CardContent>
@@ -322,6 +373,50 @@ export default function LegalToolsPage() {
                     associatedWith="document"
                     lawType={validatedLawType}
                   />
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            {/* Evidence Tab */}
+            <TabsContent value="evidence" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Upload className="w-5 h-5 text-blue-600" />
+                    Evidence Intelligence
+                  </CardTitle>
+                  <CardDescription>
+                    Upload and analyze evidence files with AI-powered legal intelligence.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="p-4 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
+                      <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
+                        Comprehensive Evidence Analysis
+                      </h4>
+                      <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
+                        <li>• Extract facts, timelines, and key information</li>
+                        <li>• Assess admissibility and legal significance</li>
+                        <li>• Detect conflicts and inconsistencies</li>
+                        <li>• Evaluate evidence strength and credibility</li>
+                        <li>• Generate strategic recommendations</li>
+                      </ul>
+                    </div>
+                    
+                    <FileUpload
+                      associatedWith="evidence"
+                      lawType={validatedLawType}
+                    />
+                    
+                    <div className="text-sm text-slate-600 dark:text-slate-400 space-y-1">
+                      <p className="font-medium">Supported file types:</p>
+                      <p>• Documents: PDF, DOC, DOCX, TXT</p>
+                      <p>• Images: JPG, PNG, GIF</p>
+                      <p>• Video: MP4, MOV</p>
+                      <p>• Audio: MP3, WAV</p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
