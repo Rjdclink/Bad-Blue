@@ -838,6 +838,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/evidence', evidenceRoutes.default);
 
   // ============================================
+  // SOCIAL INTELLIGENCE ROUTES (PANTHEON Phase 2)
+  // ============================================
+  const socialIntelligenceRoutes = await import('./routes/socialIntelligence.routes');
+  app.use('/api/social-intelligence', socialIntelligenceRoutes.default);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {
