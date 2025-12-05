@@ -494,7 +494,7 @@ export default function Landing() {
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-4">Revolutionary 12-Model AI Orchestration Network</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
-              Thirteen specialized AI engines working in synchronized coordination to deliver unmatched legal intelligence.
+              Twelve specialized AI engines working in synchronized coordination to deliver unmatched legal intelligence.
             </p>
           </div>
           <AISystemShowcase variant="full" />

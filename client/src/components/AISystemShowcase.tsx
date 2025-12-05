@@ -109,7 +109,7 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
             12-Model AI Orchestration Network
           </CardTitle>
           <CardDescription>
-            Thirteen specialized AI engines working in synchronized coordination
+            Twelve specialized AI engines working in synchronized coordination
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -140,7 +140,8 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
           {/* Background Image */}
           <img 
             src={model.backgroundImage}
-            alt="" 
+            alt=""
+            aria-hidden="true"
             className="absolute inset-0 w-full h-full object-cover"
           />
           
