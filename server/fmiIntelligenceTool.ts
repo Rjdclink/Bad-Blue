@@ -221,20 +221,15 @@ Return ONLY valid JSON:
 }`;
 
     const response = await generateUserText(
-      {
-        taskType: 'fmi-extraction',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `F.M.I. intelligence extraction from ${file.name}`
-      },
+      'fmi-extraction',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.1,
         maxTokens: 2500,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     const extracted = JSON.parse(response.content);
@@ -323,20 +318,15 @@ Return ONLY valid JSON:
 }`;
 
     const response = await generateUserText(
-      {
-        taskType: 'fmi-classification',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `F.M.I. evidence classification for ${file.name}`
-      },
+      'fmi-classification',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1500,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     const classification = JSON.parse(response.content);
