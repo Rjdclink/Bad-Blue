@@ -521,6 +521,8 @@ export class FirecrawlService {
   private config: Required<FirecrawlConfig>;
   private rateLimiter: TokenBucketRateLimiter;
   private stats: FirecrawlStats;
+  private compiledIncludePatterns?: RegExp[];
+  private compiledExcludePatterns?: RegExp[];
 
   constructor(config: FirecrawlConfig) {
     // Set default configuration
@@ -1035,17 +1037,27 @@ export class FirecrawlService {
     includePatterns?: string[],
     excludePatterns?: string[]
   ): boolean {
-    if (excludePatterns) {
-      for (const pattern of excludePatterns) {
-        if (new RegExp(pattern).test(link)) {
+    // Compile patterns once if not already cached
+    if (excludePatterns && !this.compiledExcludePatterns) {
+      this.compiledExcludePatterns = excludePatterns.map(p => new RegExp(p));
+    }
+    if (includePatterns && !this.compiledIncludePatterns) {
+      this.compiledIncludePatterns = includePatterns.map(p => new RegExp(p));
+    }
+
+    // Check exclude patterns
+    if (this.compiledExcludePatterns) {
+      for (const pattern of this.compiledExcludePatterns) {
+        if (pattern.test(link)) {
           return false;
         }
       }
     }
 
-    if (includePatterns) {
-      for (const pattern of includePatterns) {
-        if (new RegExp(pattern).test(link)) {
+    // Check include patterns
+    if (this.compiledIncludePatterns) {
+      for (const pattern of this.compiledIncludePatterns) {
+        if (pattern.test(link)) {
           return true;
         }
       }
@@ -1070,16 +1082,25 @@ export class FirecrawlService {
    * Update average response time
    */
   private updateAvgResponseTime(duration: number): void {
-    const total = this.stats.avgResponseTime * (this.stats.successfulRequests - 1);
-    this.stats.avgResponseTime = (total + duration) / this.stats.successfulRequests;
+    if (this.stats.successfulRequests === 0) {
+      this.stats.avgResponseTime = duration;
+    } else {
+      const total = this.stats.avgResponseTime * (this.stats.successfulRequests - 1);
+      this.stats.avgResponseTime = (total + duration) / this.stats.successfulRequests;
+    }
   }
 }
 
 /**
  * Export singleton instance
  */
+const apiKey = process.env.FIRECRAWL_API_KEY;
+if (!apiKey) {
+  throw new Error('FIRECRAWL_API_KEY environment variable is required');
+}
+
 export const firecrawlService = new FirecrawlService({
-  apiKey: process.env.FIRECRAWL_API_KEY || '',
+  apiKey,
   rateLimit: parseInt(process.env.FIRECRAWL_RATE_LIMIT || '60'),
   cacheTTL: parseInt(process.env.FIRECRAWL_CACHE_TTL || '3600'),
   debug: process.env.NODE_ENV === 'development',

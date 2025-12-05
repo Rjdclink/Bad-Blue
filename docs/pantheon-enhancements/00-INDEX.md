@@ -29,7 +29,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ## 20-Stage Implementation Roadmap
 
 ### Stage 1: Firecrawl Web Intelligence Integration ✓ [In Progress]
-**Impact**: +2.1% (67.5% → 69.6%)  
+**Impact**: +2.1 percentage points (67.5% → 69.6%)  
 **Timeline**: Week 1-2  
 **Code Volume**: 800+ lines  
 **Status**: Documentation Complete
@@ -70,7 +70,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 2: Advanced Entity Resolution Engine
-**Impact**: +1.8% (69.6% → 71.4%)  
+**Impact**: +1.8 percentage points (69.6% → 71.4%)  
 **Timeline**: Week 3-4  
 **Code Volume**: 750+ lines  
 **Status**: Planned
@@ -100,7 +100,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 3: Social Media Intelligence Platform
-**Impact**: +2.3% (71.4% → 73.7%)  
+**Impact**: +2.3 percentage points (71.4% → 73.7%)  
 **Timeline**: Week 5-7  
 **Code Volume**: 950+ lines  
 **Status**: Planned
@@ -126,7 +126,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 4: Public Records Deep Search
-**Impact**: +1.9% (73.7% → 75.6%)  
+**Impact**: +1.9 percentage points (73.7% → 75.6%)  
 **Timeline**: Week 8-10  
 **Code Volume**: 850+ lines  
 **Status**: Planned
@@ -149,7 +149,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 5: Professional Network Mining
-**Impact**: +1.6% (75.6% → 77.2%)  
+**Impact**: +1.6 percentage points (75.6% → 77.2%)  
 **Timeline**: Week 11-12  
 **Code Volume**: 700+ lines  
 **Status**: Planned
@@ -171,7 +171,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 6: Dark Web Monitoring
-**Impact**: +2.5% (77.2% → 79.7%)  
+**Impact**: +2.5 percentage points (77.2% → 79.7%)  
 **Timeline**: Week 13-15  
 **Code Volume**: 1000+ lines  
 **Status**: Planned
@@ -194,7 +194,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 7: Email Intelligence & Verification
-**Impact**: +1.4% (79.7% → 81.1%)  
+**Impact**: +1.4 percentage points (79.7% → 81.1%)  
 **Timeline**: Week 16-17  
 **Code Volume**: 650+ lines  
 **Status**: Planned
@@ -216,7 +216,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 8: Court Records Deep Dive
-**Impact**: +1.7% (81.1% → 82.8%)  
+**Impact**: +1.7 percentage points (81.1% → 82.8%)  
 **Timeline**: Week 18-19  
 **Code Volume**: 800+ lines  
 **Status**: Planned
@@ -238,7 +238,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 9: Geographic Intelligence
-**Impact**: +1.3% (82.8% → 84.1%)  
+**Impact**: +1.3 percentage points (82.8% → 84.1%)  
 **Timeline**: Week 20-21  
 **Code Volume**: 680+ lines  
 **Status**: Planned
@@ -260,7 +260,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 10: Phone Intelligence Platform
-**Impact**: +1.5% (84.1% → 85.6%)  
+**Impact**: +1.5 percentage points (84.1% → 85.6%)  
 **Timeline**: Week 22-23  
 **Code Volume**: 720+ lines  
 **Status**: Planned
@@ -282,7 +282,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 11: News & Media Monitoring
-**Impact**: +1.2% (85.6% → 86.8%)  
+**Impact**: +1.2 percentage points (85.6% → 86.8%)  
 **Timeline**: Week 24-25  
 **Code Volume**: 670+ lines  
 **Status**: Planned
@@ -304,7 +304,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 12: Blockchain Investigation
-**Impact**: +1.6% (86.8% → 88.4%)  
+**Impact**: +1.6 percentage points (86.8% → 88.4%)  
 **Timeline**: Week 26-28  
 **Code Volume**: 820+ lines  
 **Status**: Planned
@@ -326,7 +326,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 13: Document Intelligence
-**Impact**: +1.1% (88.4% → 89.5%)  
+**Impact**: +1.1 percentage points (88.4% → 89.5%)  
 **Timeline**: Week 29-30  
 **Code Volume**: 690+ lines  
 **Status**: Planned
@@ -348,7 +348,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 14: Vehicle Intelligence
-**Impact**: +0.9% (89.5% → 90.4%)  
+**Impact**: +0.9 percentage points (89.5% → 90.4%)  
 **Timeline**: Week 31-32  
 **Code Volume**: 630+ lines  
 **Status**: Planned
@@ -370,7 +370,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 15: Real Estate Intelligence
-**Impact**: +0.8% (90.4% → 91.2%)  
+**Impact**: +0.8 percentage points (90.4% → 91.2%)  
 **Timeline**: Week 33-34  
 **Code Volume**: 610+ lines  
 **Status**: Planned
@@ -392,7 +392,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 16: Business Intelligence
-**Impact**: +0.7% (91.2% → 91.9%)  
+**Impact**: +0.7 percentage points (91.2% → 91.9%)  
 **Timeline**: Week 35-36  
 **Code Volume**: 580+ lines  
 **Status**: Planned
@@ -414,7 +414,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 17: Aviation Intelligence
-**Impact**: +0.6% (91.9% → 92.5%)  
+**Impact**: +0.6 percentage points (91.9% → 92.5%)  
 **Timeline**: Week 37  
 **Code Volume**: 520+ lines  
 **Status**: Planned
@@ -436,7 +436,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 18: Maritime Intelligence
-**Impact**: +0.5% (92.5% → 93.0%)  
+**Impact**: +0.5 percentage points (92.5% → 93.0%)  
 **Timeline**: Week 38  
 **Code Volume**: 500+ lines  
 **Status**: Planned
@@ -458,7 +458,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 19: IoT Device Fingerprinting
-**Impact**: +0.4% (93.0% → 93.4%)  
+**Impact**: +0.4 percentage points (93.0% → 93.4%)  
 **Timeline**: Week 39  
 **Code Volume**: 480+ lines  
 **Status**: Planned
@@ -480,7 +480,7 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ---
 
 ### Stage 20: Predictive Analytics Engine
-**Impact**: +0.3% (93.4% → 93.7%)  
+**Impact**: +0.3 percentage points (93.4% → 93.7%)  
 **Timeline**: Week 40  
 **Code Volume**: 550+ lines  
 **Status**: Planned
@@ -506,19 +506,19 @@ The P.A.N.T.H.E.O.N. initiative represents a comprehensive enhancement program t
 ## Implementation Strategy
 
 ### Phase 1: Foundation (Stages 1-5)
-**Weeks 1-12** | **Impact**: +9.7% (67.5% → 77.2%)  
+**Weeks 1-12** | **Impact**: +9.7 percentage points (67.5% → 77.2%)  
 **Code**: 4,050+ lines
 
 Focus on core data source integrations and foundational services.
 
 ### Phase 2: Advanced Intelligence (Stages 6-10)
-**Weeks 13-23** | **Impact**: +7.4% (77.2% → 84.6%)  
+**Weeks 13-23** | **Impact**: +7.4 percentage points (77.2% → 84.6%)  
 **Code**: 3,850+ lines
 
 Expand into specialized intelligence domains and dark web monitoring.
 
 ### Phase 3: Deep Specialization (Stages 11-15)
-**Weeks 24-34** | **Impact**: +4.6% (84.6% → 89.2%)  
+**Weeks 24-34** | **Impact**: +4.6 percentage points (84.6% → 89.2%)  
 **Code**: 3,420+ lines
 
 Add industry-specific and asset-based intelligence capabilities.

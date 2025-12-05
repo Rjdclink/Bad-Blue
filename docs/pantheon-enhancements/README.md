@@ -498,7 +498,8 @@ When adding new enhancements:
 
 ## Support & Resources
 
-- **Firecrawl Documentation**: https://github.com/mendableai/firecrawl
+- **Firecrawl Documentation**: https://docs.firecrawl.dev
+- **Firecrawl GitHub**: https://github.com/mendableai/firecrawl
 - **LegalWhat Architecture**: See `docs/AI_ARCHITECTURE.md`
 - **OSINT Best Practices**: See `docs/ADVANCED_SEARCH.md`
 - **Security Guidelines**: See `docs/SECURITY_SUMMARY_LEGAL_COUNSEL.md`
