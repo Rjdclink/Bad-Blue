@@ -317,7 +317,7 @@ export default function Landing() {
         </div>
 
         {/* Content Container */}
-        <div className="relative z-10 max-w-6xl mx-auto">
+        <div className="relative z-10 max-w-7xl mx-auto">
           {/* Overlay Text - Description of LEXARA */}
           <div className="text-center mb-12 px-4">
             <p className="text-white text-lg md:text-xl lg:text-2xl leading-relaxed max-w-4xl mx-auto font-medium" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
@@ -325,23 +325,162 @@ export default function Landing() {
             </p>
           </div>
 
-          {/* LEXARA Floating Card */}
-          <div className="flex justify-center">
-            <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
-              {/* LEXARA Image */}
-              <div className="mb-6">
-                <img
-                  src="/images/OIP.webp"
-                  alt="LEXARA - Legal Expert AI Resource Advisor"
-                  className="w-full h-auto rounded-2xl object-cover shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
-                  onError={handleImageError}
-                />
+          {/* Three-Column Layout: Left Features | ALEXARA Image | Right Features */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start px-4">
+            {/* Left Column - Features 1-5 */}
+            <div className="space-y-6">
+              {/* Feature 1 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  1. Parallel Reasoning Engine
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — multiple specialized AIs analyze the same issue simultaneously.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Delivers faster, corroborated answers grounded in multi-angle reasoning.
+                </p>
               </div>
 
-              {/* Label Text */}
-              <div className="text-center">
-                <p className="text-white text-sm md:text-base font-light tracking-wide" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.6)' }}>
-                  Legal X-(computational Autonomous Reasoning Architecture)
+              {/* Feature 2 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  2. Cross-Validation Check
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — every legal conclusion is independently checked across multiple models.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Produces advice that is consistent, defensible, and resistant to oversight.
+                </p>
+              </div>
+
+              {/* Feature 3 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  3. Document Atelier
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — precision drafting of pleadings, motions, contracts, affidavits, and more.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Generates clean, structured documents that meet professional legal standards.
+                </p>
+              </div>
+
+              {/* Feature 4 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  4. Strategic Playbooks (Non-Risk Scoring)
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — generates clear procedural pathways without offering risk/reward scoring.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Gives you organized, step-by-step legal direction without making outcome predictions.
+                </p>
+              </div>
+
+              {/* Feature 5 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  5. Verifiable Reasoning Log
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — transparent, structured explanation of how each conclusion was formed.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Enables easy review, quality control, and compliance with professional expectations.
+                </p>
+              </div>
+            </div>
+
+            {/* Center Column - ALEXARA Floating Card */}
+            <div className="flex justify-center">
+              <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
+                {/* LEXARA Image */}
+                <div className="mb-6">
+                  <img
+                    src="/images/OIP.webp"
+                    alt="LEXARA - Legal Expert AI Resource Advisor"
+                    className="w-full h-auto rounded-2xl object-cover shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
+                    onError={handleImageError}
+                  />
+                </div>
+
+                {/* Label Text */}
+                <div className="text-center">
+                  <p className="text-white text-sm md:text-base font-light tracking-wide" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.6)' }}>
+                    Legal X-(computational Autonomous Reasoning Architecture)
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column - Features 6-10 */}
+            <div className="space-y-6">
+              {/* Feature 6 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  6. Orchestrated Expert Modules
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — thirteen specialized engines work in synchronized, orchestrated coordination.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Produces unified legal insight that draws from multiple areas of expertise without contradiction.
+                </p>
+              </div>
+
+              {/* Feature 7 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  7. Scoped Jurisdictional Filters
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — automatically narrows analysis to the proper scope of statutes, rules, and precedent.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Removes irrelevant material and improves accuracy for your specific jurisdiction.
+                </p>
+              </div>
+
+              {/* Feature 8 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  8. Parallel Case Simulation Sandbox
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — evaluates alternative filings, procedural choices, and argument paths in parallel.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Helps you compare viable approaches using structured, side-by-side reasoning.
+                </p>
+              </div>
+
+              {/* Feature 9 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  9. Legally Compliant Drafting
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — aligns all generated documents with statutory, formatting, and jurisdiction-specific requirements.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Ensures every piece of work is correct on its face, reducing revisions and avoiding rejection.
+                </p>
+              </div>
+
+              {/* Feature 10 */}
+              <div className="text-white">
+                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
+                  10. Secure Collaboration &amp; Version Vault
+                </h3>
+                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  — encrypted storage with immutable versions and reviewer annotations linked to the Verifiable Reasoning Log.
+                </p>
+                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
+                  Benefit: Simplifies team workflows and preserves a clean audit-ready history of edits and decisions.
                 </p>
               </div>
             </div>
