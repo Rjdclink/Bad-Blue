@@ -7,6 +7,8 @@ import { spiderfootClient } from './services/spiderfootClient';
 import { emailFinder } from './services/emailFinder';
 import { breachDetection } from './services/breachDetection';
 import { mlnlpIntelligenceService, MLNLPResult } from './services/mlnlp';
+import { socialIntelligenceService } from './services/socialIntelligence';
+import type { SherlockResult } from './services/socialIntelligence/types';
 
 /**
  * Interface for search results from various sources
@@ -32,6 +34,7 @@ export interface PeopleSearchReport {
   };
   contactInformation: string[];
   socialMediaPresence: string[];
+  socialMediaProfiles?: SherlockResult[]; // Enhanced: Sherlock platform search results
   employmentAndEducation: string[];
   locationHistory: string[];
   publicRecords: string[];
@@ -661,6 +664,49 @@ export async function conductFullOSINT(
   const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
 
   try {
+    // Generate possible usernames from search query
+    const possibleUsernames = [
+      searchQuery.toLowerCase().replace(/\s+/g, ''), // JohnDoe -> johndoe
+      searchQuery.toLowerCase().replace(/\s+/g, '.'), // John Doe -> john.doe
+      searchQuery.toLowerCase().replace(/\s+/g, '_'), // John Doe -> john_doe
+      searchQuery.split(' ')[0].toLowerCase(), // First name only
+    ].filter((u, i, arr) => arr.indexOf(u) === i); // Remove duplicates
+
+    // Search for social media profiles using Sherlock
+    try {
+      const socialProfiles = await socialIntelligenceService.findUserAcrossPlatforms(
+        possibleUsernames[0], // Start with most likely username
+        {
+          concurrency: 10,
+          includeProfileData: true,
+          stealth: true,
+        }
+      );
+
+      // Add found profiles to report
+      if (socialProfiles.length > 0) {
+        enhancedReport.socialMediaProfiles = socialProfiles;
+        
+        // Add profile URLs to socialMediaPresence
+        socialProfiles.forEach(profile => {
+          const entry = `${profile.platform}: ${profile.url}`;
+          if (!enhancedReport.socialMediaPresence.includes(entry)) {
+            enhancedReport.socialMediaPresence.push(entry);
+          }
+        });
+
+        // Add to sources
+        enhancedReport.sources.push({
+          name: 'Social Intelligence Layer (Sherlock)',
+          data: { platforms: socialProfiles.length, usernames: possibleUsernames },
+          confidence: 0.85,
+          timestamp: new Date(),
+        });
+      }
+    } catch (error: any) {
+      console.error('[Full OSINT] Social intelligence search failed:', error.message);
+    }
+
     // SpiderFoot scan (if available)
     // Note: In production, you may want to implement polling or webhooks
     // to wait for scan completion before retrieving results
