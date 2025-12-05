@@ -5,8 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Shield, Search, FileText, TrendingUp, Upload, Database, Bell, Check, Scale, ArrowRight, Users } from "lucide-react";
 import { LanguageSelectorLight } from "@/components/LanguageSelectorLight";
-// Use istockphoto.jpg from public/images as background
-const heroImage = "/images/istockphoto.jpg";
+// Use Constitution.webp from public/images as background
+const heroImage = "/images/Constitution.webp";
 import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
@@ -165,10 +165,8 @@ export default function Landing() {
             backgroundPosition: 'center center'
           }}
         >
-          {/* Enhanced gradient overlay for better text readability */}
-          <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/70 to-black/80" />
-          {/* Additional vignette effect */}
-          <div className="absolute inset-0 bg-radial-gradient from-transparent via-black/20 to-black/50" />
+          {/* Dark overlay for text readability over constitutional background */}
+          <div className="absolute inset-0 bg-black/40" />
         </div>
 
         {/* Language Selector - Fixed top right */}
@@ -223,75 +221,79 @@ export default function Landing() {
             </div>
           </div>
 
-          {/* Three-Tier Pricing - Simplified */}
-          <div className="max-w-5xl mx-auto mb-10">
-            <div className="grid md:grid-cols-3 gap-6">
-              {/* Tier 1: LEXARA & Officer Search */}
-              <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
-                <div className="text-white mb-3">
-                  <div className="text-lg font-semibold mb-2">Core Services</div>
-                  <div className="text-xs text-white/70">Legal consultation & officer search</div>
-                </div>
-                <div className="space-x-1">
-                  <Badge className="bg-white/15 text-white border-white/20 text-xs">FREE with signup</Badge>
-                </div>
-              </div>
 
-              {/* Tier 2: Additional Services */}
-              <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
-                <div className="text-white mb-3">
-                  <div className="text-lg font-semibold mb-2">Documents</div>
-                  <div className="text-xs text-white/70">FOIA, complaints & petitions</div>
+          {/* Login/Get Started Card - Overlays background with glassmorphism */}
+          <div className="max-w-5xl mx-auto bg-white/10 backdrop-blur-md rounded-2xl p-8 border border-white/20 shadow-2xl">
+            {/* Three-Tier Pricing - Simplified */}
+            <div className="mb-10">
+              <div className="grid md:grid-cols-3 gap-6">
+                {/* Tier 1: LEXARA & Officer Search */}
+                <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
+                  <div className="text-white mb-3">
+                    <div className="text-lg font-semibold mb-2">Core Services</div>
+                    <div className="text-xs text-white/70">Legal consultation & officer search</div>
+                  </div>
+                  <div className="space-x-1">
+                    <Badge className="bg-white/15 text-white border-white/20 text-xs">FREE with signup</Badge>
+                  </div>
                 </div>
-                <Badge className="bg-white/15 text-white border-white/20 text-xs">Per document pricing</Badge>
-              </div>
 
-              {/* Tier 3: Civil Lawsuits */}
-              <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
-                <div className="text-white mb-3">
-                  <div className="text-lg font-semibold mb-2">Lawsuits</div>
-                  <div className="text-xs text-white/70">State-specific civil suits</div>
+                {/* Tier 2: Additional Services */}
+                <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
+                  <div className="text-white mb-3">
+                    <div className="text-lg font-semibold mb-2">Documents</div>
+                    <div className="text-xs text-white/70">FOIA, complaints & petitions</div>
+                  </div>
+                  <Badge className="bg-white/15 text-white border-white/20 text-xs">Per document pricing</Badge>
                 </div>
-                <Badge className="bg-white/15 text-white border-white/20 text-xs">DIY or full service</Badge>
+
+                {/* Tier 3: Civil Lawsuits */}
+                <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
+                  <div className="text-white mb-3">
+                    <div className="text-lg font-semibold mb-2">Lawsuits</div>
+                    <div className="text-xs text-white/70">State-specific civil suits</div>
+                  </div>
+                  <Badge className="bg-white/15 text-white border-white/20 text-xs">DIY or full service</Badge>
+                </div>
               </div>
+            </div>
+
+            {/* Legal Disclaimer Checkbox */}
+            <div className="flex items-start gap-3 max-w-xl mx-auto text-left px-4 relative z-10 bg-black/30 backdrop-blur-sm rounded-lg p-4 border border-yellow-400/50">
+              <Checkbox
+                id="disclaimer"
+                checked={disclaimerAccepted}
+                onCheckedChange={(checked) => setDisclaimerAccepted(checked as boolean)}
+                className="mt-0.5 border-2 border-yellow-400 bg-white data-[state=checked]:bg-yellow-400 data-[state=checked]:text-black shrink-0 w-5 h-5 min-w-[1.25rem]"
+                data-testid="checkbox-disclaimer"
+              />
+              <label htmlFor="disclaimer" className="text-sm text-white/90 leading-relaxed cursor-pointer block">
+                I understand that LegalWhat provides legal tools and AI assistance but does not constitute legal advice. I will use this platform responsibly.
+              </label>
+            </div>
+
+            {/* CTA Button */}
+            <div className="mt-6 flex justify-center px-4 relative z-10">
+              <Button
+                size="default"
+                className="text-base px-6 bg-primary hover:bg-primary/90 backdrop-blur-sm border border-white/50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-500"
+                onClick={() => setLocation('/login')}
+                disabled={!disclaimerAccepted}
+                data-testid="button-get-started"
+              >
+                Get Started
+              </Button>
+            </div>
+
+            {/* Trust Indicator */}
+            <div className="mt-8">
+              <Badge className="bg-white/15 backdrop-blur-md text-white border-white/20 px-4 py-2 text-sm">
+                <Shield className="w-4 h-4 mr-2" />
+                Powered by Public Records
+              </Badge>
             </div>
           </div>
 
-          {/* Legal Disclaimer Checkbox - Simplified */}
-          <div className="mt-10 flex items-start gap-3 max-w-xl mx-auto text-left px-4 relative z-10 bg-black/60 backdrop-blur-md rounded-lg p-4 border border-yellow-400/50">
-            <Checkbox
-              id="disclaimer"
-              checked={disclaimerAccepted}
-              onCheckedChange={(checked) => setDisclaimerAccepted(checked as boolean)}
-              className="mt-0.5 border-2 border-yellow-400 bg-white data-[state=checked]:bg-yellow-400 data-[state=checked]:text-black shrink-0 w-5 h-5 min-w-[1.25rem]"
-              data-testid="checkbox-disclaimer"
-            />
-            <label htmlFor="disclaimer" className="text-sm text-white/90 leading-relaxed cursor-pointer block">
-              I understand that LegalWhat provides legal tools and AI assistance but does not constitute legal advice. I will use this platform responsibly.
-            </label>
-          </div>
-
-          {/* CTA Button - Simplified */}
-          <div className="mt-6 flex justify-center px-4 relative z-10">
-            <Button
-              size="default"
-              className="text-base px-6 bg-primary hover:bg-primary/90 backdrop-blur-sm border border-white/50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-500"
-              onClick={() => setLocation('/login')}
-              disabled={!disclaimerAccepted}
-              data-testid="button-get-started"
-            >
-              Get Started
-            </Button>
-          </div>
-
-
-          {/* Trust Indicator */}
-          <div className="mt-12">
-            <Badge className="bg-white/15 backdrop-blur-md text-white border-white/20 px-4 py-2 text-sm">
-              <Shield className="w-4 h-4 mr-2" />
-              Powered by Public Records
-            </Badge>
-          </div>
         </div>
 
         {/* Scroll Indicator */}
@@ -410,7 +412,7 @@ export default function Landing() {
 
                 {/* Label Text */}
                 <div className="text-center">
-                  <p className="text-white text-sm md:text-base font-light tracking-wide" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.6)' }}>
+                  <p className="text-white text-xs font-light tracking-tight whitespace-nowrap" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.6)' }}>
                     Legal X-(computational Autonomous Reasoning Architecture)
                   </p>
                 </div>
