@@ -209,7 +209,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/faq": {
     title: "FAQ - LegalWhat AI Legal Platform",
-    description: "Frequently asked questions about LegalWhat's P.A.N.T.H.E.O.N. 13-AI system, LEXARA consultation, C.A.D.E. document drafting, F.M.I. evidence analysis, and I-DRIVE identity search.",
+    description: "FAQ about LegalWhat's AI legal platform: P.A.N.T.H.E.O.N. system, LEXARA consultation, C.A.D.E. drafting, F.M.I. analysis, I-DRIVE search.",
     keywords: "LegalWhat FAQ, AI legal platform, LEXARA, C.A.D.E., F.M.I., I-DRIVE, P.A.N.T.H.E.O.N., legal AI, 13 AI models",
     ogType: "website",
     canonicalPath: "/faq",

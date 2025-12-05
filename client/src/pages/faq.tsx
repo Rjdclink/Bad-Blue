@@ -53,28 +53,28 @@ const CORE_SYSTEMS = [
     acronym: "Legal Expert AI Resource Advisor",
     description: "Primary legal consultation AI providing comprehensive legal guidance across all 30 law types",
     icon: Brain,
-    color: "blue"
+    iconColor: "text-blue-600"
   },
   {
     name: "C.A.D.E.",
     acronym: "Case Adaptive Drafting Entity",
     description: "Jurisprudential drafting intelligence engine, procedural law-aware, content-adaptive, jurisdiction-specific legal authoring machine, operating as co-counsel to LEXARA",
     icon: FileText,
-    color: "purple"
+    iconColor: "text-purple-600"
   },
   {
     name: "F.M.I.",
     acronym: "Forensic Media Intelligence",
     description: "Evidence analysis system for videos, photos, audio, and documents with advanced pattern recognition",
     icon: Camera,
-    color: "green"
+    iconColor: "text-green-600"
   },
   {
     name: "I-DRIVE",
     acronym: "Identity Data Retrieval & Investigative Examiner",
     description: "Advanced people and identity search tool aggregating data from multiple public and legal sources",
     icon: Search,
-    color: "orange"
+    iconColor: "text-orange-600"
   },
 ];
 
@@ -101,7 +101,8 @@ export default function FAQPage() {
   // Image error handler
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
     console.error('Image failed to load:', e.currentTarget.src);
-    e.currentTarget.style.display = 'none';
+    // Hide image by adding CSS class
+    e.currentTarget.classList.add('hidden');
   };
 
   const faqSections: { title: string; icon: any; items: FAQItem[] }[] = [
@@ -483,7 +484,7 @@ export default function FAQPage() {
               >
                 <CardHeader className="pb-3">
                   <div className="flex items-center gap-2 mb-2">
-                    <Icon className={`h-6 w-6 text-${system.color}-600`} />
+                    <Icon className={`h-6 w-6 ${system.iconColor}`} />
                     <CardTitle className="text-lg">{system.name}</CardTitle>
                   </div>
                   <p className="text-xs text-muted-foreground italic">
