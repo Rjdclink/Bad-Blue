@@ -115,6 +115,9 @@ const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'P
 // Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 
+// FAQ Page
+const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
+
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
 const AdminLawsuits = lazyWithRetry(() => import("@/pages/admin-lawsuits"), 'AdminLawsuits');
@@ -173,6 +176,7 @@ function Router() {
         <Route path="/privacy" component={Privacy} />
         <Route path="/terms" component={Terms} />
         <Route path="/legal-consultation" component={LegalConsultationPage} />
+        <Route path="/faq" component={FAQPage} />
         
         {/* Public petition page - accessible without authentication */}
         <Route path="/petition/:slug" component={PetitionDetail} />

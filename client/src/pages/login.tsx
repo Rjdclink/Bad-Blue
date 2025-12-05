@@ -286,7 +286,7 @@ export default function Login() {
             <div className="mt-6 text-center">
               <Button
                 variant="link"
-                onClick={() => setLocation('/landing')}
+                onClick={() => setLocation('/faq')}
                 className="text-sm"
               >
                 Learn more about LegalWhat
