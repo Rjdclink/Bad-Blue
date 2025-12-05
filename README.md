@@ -337,10 +337,28 @@ badblue/
 ├── server/              # Express backend
 │   ├── routes.ts        # API endpoints
 │   ├── storage.ts       # Database operations
-│   └── *.ts            # Service modules
+│   ├── services/        # Service modules
+│   │   └── mlnlp/      # ML/NLP Intelligence Layer
+│   └── *.ts            # Other service modules
 ├── shared/              # Shared types/schemas
 └── public/              # Static assets
 ```
+
+### ML/NLP Intelligence Layer
+
+The People Finder OSINT system includes an advanced ML/NLP Intelligence Layer that enhances data quality and accuracy:
+
+- **NLP Text Processing**: Extracts entities (people, organizations, locations, emails, phones) from OSINT data
+- **ML Entity Resolution**: Fuzzy matching and deduplication across multiple sources
+- **Confidence Scoring**: Multi-factor assessment of data reliability
+- **Worker Orchestration**: Manages ML/NLP pipeline execution
+
+**Technology Stack:**
+- compromise.js for entity extraction
+- natural for tokenization/stemming
+- fast-levenshtein for fuzzy matching
+
+See [docs/ML_NLP_INTELLIGENCE.md](docs/ML_NLP_INTELLIGENCE.md) for complete documentation.
 
 ### Available Scripts
 
