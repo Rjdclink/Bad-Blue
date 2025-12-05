@@ -129,15 +129,23 @@ function extractNamedEntities(text: string): ExtractedEntity[] {
     });
   });
 
-  // Extract dates
-  doc.dates().forEach((date: any) => {
-    const dateStr = date.text();
-    entities.push({
-      type: 'date',
-      value: dateStr,
-      context: extractContext(text, dateStr),
-      confidence: 0.90
-    });
+  // Extract dates using regex (compromise doesn't have dates())
+  const datePatterns = [
+    /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b/gi,
+    /\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b/g,
+    /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/g
+  ];
+
+  datePatterns.forEach(pattern => {
+    const matches = text.matchAll(pattern);
+    for (const match of matches) {
+      entities.push({
+        type: 'date',
+        value: match[0],
+        context: extractContext(text, match[0]),
+        confidence: 0.90
+      });
+    }
   });
 
   return entities;
@@ -409,9 +417,9 @@ function extractKeyphrases(text: string): Keyphrase[] {
 
   // Extract noun phrases
   const doc = nlp(text);
-  const nounPhrases = doc.match('#Adjective? #Noun+').out('array');
+  const nounPhrases = doc.match('#Adjective? #Noun+').out('array') as string[];
   
-  nounPhrases.slice(0, 10).forEach(phrase => {
+  nounPhrases.slice(0, 10).forEach((phrase: string) => {
     if (!keyphrases.some(k => k.phrase === phrase)) {
       keyphrases.push({
         phrase,

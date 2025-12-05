@@ -129,7 +129,7 @@ export function selectModelsForTask(
   let primary: string;
   let reasoning: string;
 
-  if (priority === TaskPriority.CRITICAL_USER || complexity === TaskComplexity.HIGH) {
+  if (priority === TaskPriority.CRITICAL_USER || complexity === TaskComplexity.COMPREHENSIVE) {
     // Use most accurate model for critical/complex tasks
     primary = sortedModels[0].modelName;
     reasoning = `Selected ${primary} for high accuracy on ${taskType} (critical/complex task)`;
@@ -196,12 +196,13 @@ export async function executeWithConsensus<T>(
   const modelPromises = modelsToUse.map(async (modelName) => {
     try {
       const response = await generateUserText(
-        task,
+        `${task.legalTaskType}-consensus`,
         prompt,
         {
           ...options,
           model: modelName
-        }
+        },
+        task.priority
       );
 
       const parsed = options.parseResult 
@@ -557,14 +558,15 @@ function convertToMLTask(
   };
 
   const mlComplexityMap: Record<TaskComplexity, MLTask['complexity']> = {
-    [TaskComplexity.LOW]: 'low',
-    [TaskComplexity.MEDIUM]: 'medium',
-    [TaskComplexity.HIGH]: 'high'
+    [TaskComplexity.LIGHTWEIGHT]: 'low',
+    [TaskComplexity.MODERATE]: 'medium',
+    [TaskComplexity.COMPREHENSIVE]: 'high'
   };
 
   const mlPriorityMap: Record<TaskPriority, MLTask['priority']> = {
+    [TaskPriority.LOWEST_MAINTENANCE]: 'low',
     [TaskPriority.LOW_BACKGROUND]: 'low',
-    [TaskPriority.NORMAL_USER]: 'normal',
+    [TaskPriority.MEDIUM_BACKGROUND]: 'normal',
     [TaskPriority.HIGH_USER]: 'high',
     [TaskPriority.CRITICAL_USER]: 'urgent'
   };
@@ -628,12 +630,13 @@ export async function executeWithMLRouting<T>(
   // If not using multiple models or not parallelizing, execute with primary model
   if (!options.useMultipleModels && !decision.shouldParallelize) {
     const response = await generateUserText(
-      task,
+      `${task.legalTaskType}-ml-routing`,
       prompt,
       {
         ...options,
         model: decision.primaryModel
-      }
+      },
+      task.priority
     );
 
     const result = options.parseResult 
@@ -656,12 +659,13 @@ export async function executeWithMLRouting<T>(
   const modelPromises = modelsToUse.map(async (modelName) => {
     try {
       const response = await generateUserText(
-        task,
+        `${task.legalTaskType}-ml-consensus`,
         prompt,
         {
           ...options,
           model: modelName
-        }
+        },
+        task.priority
       );
 
       return {
@@ -669,7 +673,7 @@ export async function executeWithMLRouting<T>(
         response: response.content,
         metadata: {
           tokensUsed: response.tokensUsed,
-          responseTime: response.responseTime
+          latencyMs: response.latencyMs
         },
         timestamp: new Date(),
         success: true
@@ -745,11 +749,13 @@ export async function executeLegalConsultationWithML(
   log.info('Executing ML-enhanced legal consultation', { jurisdiction, lawType });
 
   const task: AITaskMetadata & { legalTaskType: LegalTaskType } = {
+    taskName: 'ml-legal-consultation',
     legalTaskType: 'legal-consultation',
     priority: TaskPriority.HIGH_USER,
-    complexity: TaskComplexity.HIGH,
-    usageContext: UsageContext.LEGAL_CONSULTATION,
-    userId: 'system'
+    complexity: TaskComplexity.COMPREHENSIVE,
+    isUserFacing: true,
+    allowDeferral: false,
+    context: UsageContext.USER
   };
 
   const prompt = `Analyze the following legal matter:
