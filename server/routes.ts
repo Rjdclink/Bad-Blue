@@ -828,6 +828,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
   const documentRoutes = await import('./routes/document.routes');
   app.use('/api/documents', documentRoutes.default);
+  
+  // ============================================
+  // EVIDENCE INTELLIGENCE ROUTES (Stage 3B)
+  // ============================================
+  const evidenceRoutes = await import('./routes/evidence.routes');
+  app.use('/api/evidence', evidenceRoutes.default);
 
   // ============================================
   // PREVIEW ROUTES
