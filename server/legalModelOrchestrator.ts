@@ -1,13 +1,24 @@
 /**
- * Legal Model Orchestrator - Stage 5B Implementation
+ * Legal Model Orchestrator - Enhanced with ML Intelligence
  * Enhanced multi-model orchestration specifically for legal tasks
  * 
  * Provides intelligent model selection, result fusion, and consensus building
  * for legal consultation, document generation, and evidence analysis.
+ * 
+ * Integrates ML workers for:
+ * - Confidence scoring and ranking of model outputs
+ * - Intelligent task routing to optimal models
+ * - Conflict resolution between model opinions
  */
 
 import { generateUserText, TaskPriority, TaskComplexity, UsageContext, type AITaskMetadata } from './aiProvider';
 import { createLogger } from './logger';
+import {
+  analyzeConfidence,
+  routeTask,
+  type ModelOutput,
+  type Task as MLTask
+} from './services/mlnlp';
 
 const log = createLogger('LegalModelOrchestrator');
 
@@ -118,7 +129,7 @@ export function selectModelsForTask(
   let primary: string;
   let reasoning: string;
 
-  if (priority === TaskPriority.CRITICAL_USER || complexity === TaskComplexity.HIGH) {
+  if (priority === TaskPriority.CRITICAL_USER || complexity === TaskComplexity.COMPREHENSIVE) {
     // Use most accurate model for critical/complex tasks
     primary = sortedModels[0].modelName;
     reasoning = `Selected ${primary} for high accuracy on ${taskType} (critical/complex task)`;
@@ -185,12 +196,13 @@ export async function executeWithConsensus<T>(
   const modelPromises = modelsToUse.map(async (modelName) => {
     try {
       const response = await generateUserText(
-        task,
+        `${task.legalTaskType}-consensus`,
         prompt,
         {
           ...options,
           model: modelName
-        }
+        },
+        task.priority
       );
 
       const parsed = options.parseResult 
@@ -522,6 +534,263 @@ export async function executeEvidenceAnalysis(
 }
 
 // ============================================================================
+// ML-ENHANCED ORCHESTRATION FUNCTIONS
+// ============================================================================
+
+/**
+ * Convert LegalTaskType to ML Task type
+ */
+function convertToMLTask(
+  taskType: LegalTaskType,
+  priority: TaskPriority,
+  complexity: TaskComplexity,
+  context?: string
+): MLTask {
+  const mlTaskTypeMap: Record<LegalTaskType, MLTask['type']> = {
+    'legal-consultation': 'legal-consultation',
+    'document-generation': 'document-generation',
+    'evidence-analysis': 'evidence-analysis',
+    'legal-research': 'osint-research',
+    'fact-extraction': 'fact-extraction',
+    'legal-reasoning': 'legal-consultation',
+    'precedent-search': 'osint-research',
+    'statute-interpretation': 'legal-consultation'
+  };
+
+  const mlComplexityMap: Record<TaskComplexity, MLTask['complexity']> = {
+    [TaskComplexity.LIGHTWEIGHT]: 'low',
+    [TaskComplexity.MODERATE]: 'medium',
+    [TaskComplexity.COMPREHENSIVE]: 'high'
+  };
+
+  const mlPriorityMap: Record<TaskPriority, MLTask['priority']> = {
+    [TaskPriority.LOWEST_MAINTENANCE]: 'low',
+    [TaskPriority.LOW_BACKGROUND]: 'low',
+    [TaskPriority.MEDIUM_BACKGROUND]: 'normal',
+    [TaskPriority.HIGH_USER]: 'high',
+    [TaskPriority.CRITICAL_USER]: 'urgent'
+  };
+
+  return {
+    id: `task-${Date.now()}`,
+    type: mlTaskTypeMap[taskType] || 'legal-consultation',
+    complexity: mlComplexityMap[complexity] || 'medium',
+    priority: mlPriorityMap[priority] || 'normal',
+    context
+  };
+}
+
+/**
+ * Execute task with ML-enhanced model selection and ranking
+ */
+export async function executeWithMLRouting<T>(
+  task: AITaskMetadata & { legalTaskType: LegalTaskType },
+  prompt: string,
+  options: {
+    systemPrompt?: string;
+    temperature?: number;
+    maxTokens?: number;
+    useJSON?: boolean;
+    parseResult?: (content: string) => T;
+    useMultipleModels?: boolean; // Whether to use consensus approach
+  } = {}
+): Promise<{
+  result: T;
+  routing: {
+    primaryModel: string;
+    reasoning: string;
+    confidence: number;
+  };
+  ranking?: {
+    modelName: string;
+    score: number;
+    rank: number;
+  }[];
+}> {
+  log.info('Executing task with ML routing', { taskType: task.legalTaskType });
+
+  // Convert to ML task format
+  const mlTask = convertToMLTask(
+    task.legalTaskType,
+    task.priority,
+    task.complexity,
+    prompt.substring(0, 200) // Use prompt snippet as context
+  );
+
+  // Get ML-based routing decision
+  const routingResult = await routeTask(mlTask);
+  const { decision } = routingResult;
+
+  log.info('ML routing decision', {
+    primaryModel: decision.primaryModel,
+    confidence: decision.confidence,
+    parallelize: decision.shouldParallelize
+  });
+
+  // If not using multiple models or not parallelizing, execute with primary model
+  if (!options.useMultipleModels && !decision.shouldParallelize) {
+    const response = await generateUserText(
+      `${task.legalTaskType}-ml-routing`,
+      prompt,
+      {
+        ...options,
+        model: decision.primaryModel
+      },
+      task.priority
+    );
+
+    const result = options.parseResult 
+      ? options.parseResult(response.content)
+      : response.content as T;
+
+    return {
+      result,
+      routing: {
+        primaryModel: decision.primaryModel,
+        reasoning: decision.reasoning,
+        confidence: decision.confidence
+      }
+    };
+  }
+
+  // Execute with multiple models for consensus
+  const modelsToUse = decision.parallelModels || [decision.primaryModel, ...decision.fallbackModels.slice(0, 2)];
+  
+  const modelPromises = modelsToUse.map(async (modelName) => {
+    try {
+      const response = await generateUserText(
+        `${task.legalTaskType}-ml-consensus`,
+        prompt,
+        {
+          ...options,
+          model: modelName
+        },
+        task.priority
+      );
+
+      return {
+        modelName,
+        response: response.content,
+        metadata: {
+          tokensUsed: response.tokensUsed,
+          latencyMs: response.latencyMs
+        },
+        timestamp: new Date(),
+        success: true
+      };
+    } catch (error) {
+      log.warn('Model execution failed', { model: modelName, error });
+      return {
+        modelName,
+        response: '',
+        metadata: {},
+        timestamp: new Date(),
+        success: false
+      };
+    }
+  });
+
+  const results = await Promise.all(modelPromises);
+  const successfulResults = results.filter(r => r.success);
+
+  if (successfulResults.length === 0) {
+    throw new Error('All models failed to execute task');
+  }
+
+  // Use ML confidence worker to analyze and rank outputs
+  const modelOutputs: ModelOutput[] = successfulResults.map(r => ({
+    modelName: r.modelName,
+    response: r.response,
+    metadata: r.metadata,
+    timestamp: r.timestamp
+  }));
+
+  const confidenceAnalysis = await analyzeConfidence(modelOutputs, prompt.substring(0, 200));
+
+  log.info('ML confidence analysis complete', {
+    consensusScore: confidenceAnalysis.consensusScore,
+    conflicts: confidenceAnalysis.conflicts.length,
+    primaryModel: confidenceAnalysis.recommendation.primaryModel
+  });
+
+  // Get the top-ranked output
+  const topRanked = confidenceAnalysis.rankedOutputs[0];
+  const result = options.parseResult 
+    ? options.parseResult(topRanked.response)
+    : topRanked.response as T;
+
+  return {
+    result,
+    routing: {
+      primaryModel: topRanked.modelName,
+      reasoning: confidenceAnalysis.recommendation.reasoning,
+      confidence: topRanked.confidenceScore
+    },
+    ranking: confidenceAnalysis.rankedOutputs.map(r => ({
+      modelName: r.modelName,
+      score: r.confidenceScore,
+      rank: r.rank
+    }))
+  };
+}
+
+/**
+ * Execute legal consultation with ML routing
+ */
+export async function executeLegalConsultationWithML(
+  facts: string,
+  jurisdiction: string,
+  lawType: string
+): Promise<{
+  analysis: string;
+  routing: { primaryModel: string; reasoning: string; confidence: number };
+  ranking?: { modelName: string; score: number; rank: number }[];
+}> {
+  log.info('Executing ML-enhanced legal consultation', { jurisdiction, lawType });
+
+  const task: AITaskMetadata & { legalTaskType: LegalTaskType } = {
+    taskName: 'ml-legal-consultation',
+    legalTaskType: 'legal-consultation',
+    priority: TaskPriority.HIGH_USER,
+    complexity: TaskComplexity.COMPREHENSIVE,
+    isUserFacing: true,
+    allowDeferral: false,
+    context: UsageContext.USER
+  };
+
+  const prompt = `Analyze the following legal matter:
+
+Jurisdiction: ${jurisdiction}
+Area of Law: ${lawType}
+
+Facts:
+${facts}
+
+Provide a comprehensive legal analysis including:
+1. Applicable laws and statutes
+2. Key legal issues
+3. Potential claims or defenses
+4. Recommended next steps`;
+
+  const result = await executeWithMLRouting(
+    task,
+    prompt,
+    {
+      systemPrompt: 'You are an expert legal consultant. Provide thorough, accurate legal analysis.',
+      temperature: 0.3,
+      maxTokens: 2000,
+      useMultipleModels: true
+    }
+  );
+
+  return {
+    analysis: result.result as string,
+    routing: result.routing,
+    ranking: result.ranking
+  };
+}
+
+// ============================================================================
 // EXPORT
 // ============================================================================
 
@@ -530,5 +799,8 @@ export const LegalModelOrchestrator = {
   executeWithConsensus,
   executeLegalConsultation,
   executeDocumentGeneration,
-  executeEvidenceAnalysis
+  executeEvidenceAnalysis,
+  // ML-enhanced functions
+  executeWithMLRouting,
+  executeLegalConsultationWithML
 };

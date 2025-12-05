@@ -12,6 +12,12 @@
  * - Case-linking and contextualization
  * - Evidence strength assessment and admissibility analysis
  * 
+ * Enhanced with ML/NLP Intelligence:
+ * - Entity extraction (people, orgs, locations, dates, statutes, courts)
+ * - Relationship extraction (actor-action-target)
+ * - Timeline reconstruction
+ * - Evidentiary tagging (threats, admissions, inconsistencies)
+ * 
  * All evidence processing is centralized through F.M.I. and exposed to LEXARA.
  */
 
@@ -21,6 +27,7 @@ import type { LawType } from '../shared/legalCounselTypes';
 import type { ConsultationFacts, Event, TimelineEntry, Party } from './legalConsultationEngine';
 import { createLogger } from './logger';
 import type { EvidenceFile } from '../shared/schema';
+import { processFMIText, type FMITextInput, type FMINLPResult } from './services/mlnlp';
 
 const log = createLogger('FMI');
 
@@ -264,6 +271,132 @@ Return ONLY valid JSON:
       quotes: []
     };
   }
+}
+
+/**
+ * Extract intelligence using F.M.I. NLP Worker (ML/NLP-based)
+ * Complements AI-based extraction with deterministic NLP analysis
+ */
+export async function extractFMIIntelligenceWithNLP(
+  file: FMIFile,
+  textContent: string,
+  source: 'ocr' | 'transcript' | 'upload' | 'email' = 'upload'
+): Promise<FMINLPResult> {
+  log.info('[F.M.I. NLP] Processing with NLP worker', { fileName: file.name });
+
+  try {
+    const input: FMITextInput = {
+      text: textContent,
+      source,
+      metadata: {
+        fileName: file.name,
+        fileType: file.type,
+        uploadDate: file.uploadDate
+      }
+    };
+
+    const nlpResult = await processFMIText(input);
+
+    log.info('[F.M.I. NLP] NLP processing complete', {
+      fileName: file.name,
+      entities: nlpResult.entities.length,
+      relationships: nlpResult.relationships.length,
+      evidentiaryTags: nlpResult.evidentiaryTags.length
+    });
+
+    return nlpResult;
+  } catch (error) {
+    log.error('[F.M.I. NLP] Failed to process with NLP worker', { error, fileName: file.name });
+    throw error;
+  }
+}
+
+/**
+ * Enhanced extraction that combines AI and NLP approaches
+ */
+export async function extractFMIIntelligenceEnhanced(
+  file: FMIFile,
+  lawType: LawType,
+  state: string,
+  context?: string
+): Promise<{
+  aiExtraction: FMIExtractedContent;
+  nlpAnalysis: FMINLPResult;
+  combined: {
+    allEntities: string[];
+    keyPeople: string[];
+    keyOrganizations: string[];
+    legalReferences: string[];
+    evidentiaryHighlights: string[];
+  };
+}> {
+  log.info('[F.M.I.] Enhanced extraction with AI + NLP', { fileName: file.name });
+
+  // Extract text content
+  const textContent = await extractTextFromFMIFile(file);
+
+  // Run both AI and NLP extraction in parallel
+  const [aiExtraction, nlpAnalysis] = await Promise.all([
+    extractFMIIntelligence(file, lawType, state, context),
+    extractFMIIntelligenceWithNLP(file, textContent, 'upload')
+  ]);
+
+  // Combine results
+  const allEntities = new Set<string>();
+  
+  // Add AI-extracted entities
+  aiExtraction.parties.forEach(p => allEntities.add(p.name));
+  aiExtraction.locations.forEach(l => allEntities.add(l));
+  
+  // Add NLP-extracted entities
+  nlpAnalysis.entities.forEach(e => allEntities.add(e.value));
+
+  // Extract key people
+  const keyPeople = [
+    ...new Set([
+      ...aiExtraction.parties.map(p => p.name),
+      ...nlpAnalysis.entities.filter(e => e.type === 'person').map(e => e.value)
+    ])
+  ];
+
+  // Extract key organizations
+  const keyOrganizations = [
+    ...new Set([
+      ...nlpAnalysis.entities.filter(e => e.type === 'organization' || e.type === 'agency').map(e => e.value)
+    ])
+  ];
+
+  // Extract legal references
+  const legalReferences = [
+    ...new Set([
+      ...nlpAnalysis.entities.filter(e => e.type === 'statute' || e.type === 'court').map(e => e.value)
+    ])
+  ];
+
+  // Extract evidentiary highlights
+  const evidentiaryHighlights = nlpAnalysis.evidentiaryTags
+    .filter(tag => tag.severity === 'high')
+    .map(tag => `${tag.type}: ${tag.explanation}`);
+
+  log.info('[F.M.I.] Enhanced extraction complete', {
+    fileName: file.name,
+    totalEntities: allEntities.size,
+    keyPeople: keyPeople.length,
+    legalRefs: legalReferences.length,
+    evidentiaryTags: evidentiaryHighlights.length
+  });
+
+  return {
+    aiExtraction,
+    nlpAnalysis,
+    combined: {
+      allEntities: Array.from(allEntities),
+      keyPeople,
+      keyOrganizations,
+      legalReferences,
+      evidentiaryHighlights
+    }
+  };
 }
 
 // ============================================================================
