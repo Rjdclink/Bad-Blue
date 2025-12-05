@@ -2,62 +2,88 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 
 interface AIModel {
-  icon: string;
   name: string;
   provider: string;
-  specialty: string;
-  context: string;
+  description: string;
+  backgroundImage: string;
 }
 
 const AI_MODELS: AIModel[] = [
+  // Row 1
   {
-    icon: "⚡",
+    name: "Gemini 2.5 Pro",
+    provider: "Google",
+    description: "Deepest reasoning with 2M token context for complex legal analysis",
+    backgroundImage: "/images/OIP.comp4.webp"
+  },
+  {
     name: "Gemini 2.5 Flash",
     provider: "Google",
-    specialty: "Ultra-fast multimodal analysis",
-    context: "1M context"
+    description: "Lightning-fast multimodal processing for evidence and documents",
+    backgroundImage: "/images/OIP.comp5.webp"
   },
   {
-    icon: "⚖️",
+    name: "Gemini 2.5 Flash Lite",
+    provider: "Google",
+    description: "High-throughput engine handling 1000 requests daily",
+    backgroundImage: "/images/OIP.comp14.webp"
+  },
+  // Row 2
+  {
     name: "Claude 3.5 Sonnet",
     provider: "Anthropic",
-    specialty: "Advanced legal reasoning",
-    context: "200k context"
+    description: "Premium legal reasoning with nuanced constitutional interpretation",
+    backgroundImage: "/images/imag.comp7.webp"
   },
   {
-    icon: "🧠",
-    name: "DeepSeek R1T2 Chimera",
-    provider: "TNG",
-    specialty: "671B parameter deep analysis",
-    context: "163k context"
+    name: "Claude 3.5 Haiku",
+    provider: "Anthropic",
+    description: "Rapid verification specialist for real-time fact-checking",
+    backgroundImage: "/images/superc.comp13.jpg"
   },
   {
-    icon: "📚",
-    name: "Grok 4.1 Fast",
-    provider: "xAI",
-    specialty: "Massive document processing",
-    context: "2M context"
-  },
-  {
-    icon: "🎯",
-    name: "Kimi K2",
-    provider: "MoonshotAI",
-    specialty: "1T parameter structured extraction",
-    context: "256k context"
-  },
-  {
-    icon: "🚀",
-    name: "Groq Llama 3.3",
+    name: "Llama 3.3 70B",
     provider: "Groq",
-    specialty: "Unlimited-speed background processing",
-    context: "Unlimited"
+    description: "Versatile workhorse balancing speed and comprehensive analysis",
+    backgroundImage: "/images/what.comp3.jpg"
+  },
+  // Row 3
+  {
+    name: "Llama 3.1 8B",
+    provider: "Groq",
+    description: "Instant-response engine for lightweight task execution",
+    backgroundImage: "/images/OIP.comp4.webp"
   },
   {
-    icon: "✓",
     name: "Mistral Small",
     provider: "Mistral",
-    specialty: "Balanced verification",
-    context: "Standard"
+    description: "EU-compliant processing with balanced verification protocols",
+    backgroundImage: "/images/OIP.comp5.webp"
+  },
+  {
+    name: "Kimi K2",
+    provider: "Moonshot AI",
+    description: "Trillion-parameter extraction engine for structured legal data",
+    backgroundImage: "/images/OIP.comp14.webp"
+  },
+  // Row 4
+  {
+    name: "DeepSeek R1T2 Chimera",
+    provider: "TNG",
+    description: "671B parameter deep pattern recognition across case law",
+    backgroundImage: "/images/imag.comp7.webp"
+  },
+  {
+    name: "Grok 4.1 Fast",
+    provider: "xAI",
+    description: "Massive 2M context window for entire case file processing",
+    backgroundImage: "/images/superc.comp13.jpg"
+  },
+  {
+    name: "Qwen 2.5 72B",
+    provider: "Alibaba",
+    description: "Precision instruction-following for procedural compliance",
+    backgroundImage: "/images/what.comp3.jpg"
   }
 ];
 
@@ -69,7 +95,7 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
   if (variant === "minimal") {
     return (
       <Badge variant="secondary" className="text-xs sm:text-sm">
-        🤖 Powered by 7 AI Models
+        🤖 Powered by 12 AI Models
       </Badge>
     );
   }
@@ -80,10 +106,10 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
         <CardHeader className="pb-3">
           <CardTitle className="text-lg flex items-center gap-2">
             <span className="text-2xl">🤖</span>
-            7-Provider AI Coordination System
+            12-Model AI Orchestration Network
           </CardTitle>
           <CardDescription>
-            Revolutionary parallel processing with Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral
+            Twelve specialized AI engines working in synchronized coordination
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -91,13 +117,10 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
             {AI_MODELS.map((model) => (
               <div
                 key={model.name}
-                className="flex items-center gap-1.5 p-2 rounded-md bg-background border border-border/50"
+                className="flex flex-col gap-1 p-2 rounded-md bg-background border border-border/50"
               >
-                <span className="text-xl">{model.icon}</span>
-                <div className="min-w-0">
-                  <p className="text-xs font-medium truncate">{model.name}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{model.provider}</p>
-                </div>
+                <p className="text-xs font-medium truncate">{model.name}</p>
+                <p className="text-[10px] text-muted-foreground truncate">{model.provider}</p>
               </div>
             ))}
           </div>
@@ -106,100 +129,45 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
     );
   }
 
-  // Full variant
+  // Full variant - 12 Models in 4×3 Grid
   return (
-    <div className="space-y-6">
-      <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">
-        <CardHeader>
-          <CardTitle className="text-2xl flex items-center gap-3">
-            <span className="text-4xl">🤖</span>
-            Revolutionary 7-Provider AI Coordination System
-          </CardTitle>
-          <CardDescription className="text-base">
-            The world's first police accountability platform powered by seven leading AI models working in parallel
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* AI Model Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {AI_MODELS.map((model) => (
-              <Card key={model.name} className="border-border/50">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start gap-3">
-                    <span className="text-3xl">{model.icon}</span>
-                    <div className="flex-1 min-w-0">
-                      <CardTitle className="text-base leading-tight">
-                        {model.name}
-                      </CardTitle>
-                      <CardDescription className="text-xs mt-1">
-                        {model.provider}
-                      </CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0 space-y-2">
-                  <p className="text-sm">{model.specialty}</p>
-                  <Badge variant="secondary" className="text-xs">
-                    {model.context}
-                  </Badge>
-                </CardContent>
-              </Card>
-            ))}
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {AI_MODELS.map((model) => (
+        <div 
+          key={model.name}
+          className="relative overflow-hidden rounded-2xl shadow-xl group hover:scale-[1.02] transition-transform duration-300"
+        >
+          {/* Background Image */}
+          <img 
+            src={model.backgroundImage}
+            alt=""
+            aria-hidden="true"
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+          
+          {/* Dark Overlay */}
+          <div className="absolute inset-0 bg-black/50" />
+          
+          {/* Content */}
+          <div className="relative z-10 p-6 flex flex-col h-full min-h-[200px]">
+            {/* Model Name */}
+            <h3 className="text-xl font-bold text-white mb-1">{model.name}</h3>
+            
+            {/* Provider */}
+            <p className="text-sm text-white/70 mb-3">{model.provider}</p>
+            
+            {/* Description - Bright soft white with shadowed edges */}
+            <p 
+              className="text-sm text-white/95 mt-auto"
+              style={{ 
+                textShadow: '1px 1px 2px rgba(0,0,0,0.8), -1px -1px 2px rgba(0,0,0,0.8), 1px -1px 2px rgba(0,0,0,0.8), -1px 1px 2px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.5)' 
+              }}
+            >
+              {model.description}
+            </p>
           </div>
-
-          {/* How It Works Section */}
-          <div className="rounded-lg border bg-background p-6 space-y-4">
-            <h3 className="text-lg font-semibold">How It Works</h3>
-            <div className="space-y-3 text-sm">
-              <div className="flex gap-3">
-                <span className="text-primary font-bold">1.</span>
-                <p>
-                  <strong>Parallel Processing:</strong> When you submit a search or document request, 
-                  all seven AI models activate simultaneously, each applying their unique capabilities 
-                  to analyze your case from different angles.
-                </p>
-              </div>
-              <div className="flex gap-3">
-                <span className="text-primary font-bold">2.</span>
-                <p>
-                  <strong>Specialized Analysis:</strong> Gemini handles rapid multimodal analysis, 
-                  Claude provides legal reasoning, DeepSeek performs deep pattern recognition, 
-                  Grok processes massive document sets, Kimi extracts structured data, Groq maintains 
-                  continuous background processing, and Mistral verifies accuracy.
-                </p>
-              </div>
-              <div className="flex gap-3">
-                <span className="text-primary font-bold">3.</span>
-                <p>
-                  <strong>Coordinated Results:</strong> Results from all seven models are synthesized 
-                  into a comprehensive, accurate output that's 5× faster and 10× more thorough than 
-                  traditional single-AI systems.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Benefits */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="flex items-start gap-2 text-sm">
-              <span className="text-green-500">✓</span>
-              <span>7 AI Models Analyze Every Search</span>
-            </div>
-            <div className="flex items-start gap-2 text-sm">
-              <span className="text-green-500">✓</span>
-              <span>Each AI Contributes Its Specialty</span>
-            </div>
-            <div className="flex items-start gap-2 text-sm">
-              <span className="text-green-500">✓</span>
-              <span>5× Faster Processing Speed</span>
-            </div>
-            <div className="flex items-start gap-2 text-sm">
-              <span className="text-green-500">✓</span>
-              <span>10× More Comprehensive Results</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+      ))}
     </div>
   );
 }
