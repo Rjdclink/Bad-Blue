@@ -207,6 +207,17 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     breadcrumbs: [{ name: "Contact", url: `${BASE_URL}/contact` }],
     includeInSitemap: true,
   },
+  "/faq": {
+    title: "FAQ - LegalWhat AI Legal Platform",
+    description: "Frequently asked questions about LegalWhat's P.A.N.T.H.E.O.N. 13-AI system, LEXARA consultation, C.A.D.E. document drafting, F.M.I. evidence analysis, and I-DRIVE identity search.",
+    keywords: "LegalWhat FAQ, AI legal platform, LEXARA, C.A.D.E., F.M.I., I-DRIVE, P.A.N.T.H.E.O.N., legal AI, 13 AI models",
+    ogType: "website",
+    canonicalPath: "/faq",
+    priority: 0.8,
+    changefreq: "weekly",
+    breadcrumbs: [{ name: "FAQ", url: `${BASE_URL}/faq` }],
+    includeInSitemap: true,
+  },
   "/privacy": {
     title: "Privacy Policy | Bad Blue",
     description: "Bad Blue privacy policy. How we protect your data, evidence, and personal information. Your security is our priority.",
