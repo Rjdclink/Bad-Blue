@@ -91,16 +91,19 @@ export default function Login() {
       });
       
       if (response.ok) {
-        const data = await response.json();
+        await response.json();
         
         toast({
           title: "Account created",
-          description: "Please complete your subscription to continue.",
+          description: "Welcome to LegalWhat! Redirecting to your dashboard...",
         });
         
-        // User is created with pending_payment status
-        // Redirect to payment/subscription page
-        setLocation('/subscription-success'); // TODO: Update to actual subscription flow page
+        // Refresh auth state
+        await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+        
+        // Redirect to welcome page - user can access free features
+        // Payment/subscription will be handled separately if needed
+        setLocation('/welcome');
       } else {
         const data = await response.json();
         throw new Error(data.error || "Signup failed");

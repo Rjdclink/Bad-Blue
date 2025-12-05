@@ -53,6 +53,8 @@ export function LogoutButton({ className, onBeforeLogout }: LogoutButtonProps) {
       }
 
       // Step 2: Call logout API to clear session
+      // Note: Using GET per server route definition in auth.routes.ts
+      // Consider changing to POST in future for better REST semantics
       await apiRequest("/api/auth/logout", "GET");
 
       // Step 3: Clear all cached queries

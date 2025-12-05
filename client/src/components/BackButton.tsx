@@ -32,11 +32,13 @@ export function BackButton({ fallbackRoute, className, onBeforeNavigate }: BackB
       }
     }
 
-    // Check if there's browser history to go back to
-    if (window.history.length > 1) {
+    // Note: Using window.history.length is imperfect but works for most cases
+    // It represents total session history, not just app history
+    // For single-page apps, checking if length > 1 is a reasonable heuristic
+    if (window.history.length > 1 && document.referrer) {
       window.history.back();
     } else {
-      // No history - use smart fallback
+      // No reliable history - use smart fallback
       const defaultFallback = isAuthenticated ? "/welcome" : "/login";
       setLocation(fallbackRoute || defaultFallback);
     }
