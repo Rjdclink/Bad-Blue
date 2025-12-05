@@ -65,8 +65,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       throw new Error('Speech recognition not supported in this browser');
     }
 
-    // @ts-ignore - SpeechRecognition types
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    // Type assertion for Web Speech API
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
 
     recognition.continuous = options.continuous ?? true;
@@ -111,7 +111,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       }
 
       if (finalText) {
-        setTranscript(prev => prev + ' ' + finalText);
+        setTranscript(prev => (prev + ' ' + finalText).trim());
         optionsRef.current.onTranscript?.(finalText, true);
       }
 

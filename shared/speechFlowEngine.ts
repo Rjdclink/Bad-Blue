@@ -368,18 +368,19 @@ export class SpeechFlowEngine {
       if (segment.prosody?.rate) {
         const rateMatch = segment.prosody.rate.match(/(\d+)%/);
         if (rateMatch) {
-          const rateFactor = parseInt(rateMatch[1]) / 100;
+          const rateFactor = parseInt(rateMatch[1], 10) / 100;
+          // Adjust word count: faster rate = less time, so divide by rateFactor
           totalWords = totalWords / rateFactor;
         }
       }
 
       // Add pauses
       if (segment.pauseAfter) {
-        const pauseMs = parseInt(segment.pauseAfter);
+        const pauseMs = parseInt(segment.pauseAfter, 10);
         totalPauses += pauseMs;
       }
       if (segment.pauseBefore) {
-        const pauseMs = parseInt(segment.pauseBefore);
+        const pauseMs = parseInt(segment.pauseBefore, 10);
         totalPauses += pauseMs;
       }
     }
@@ -453,10 +454,15 @@ export function textToSpeech(
 
 /**
  * Extract plain text from SSML
+ * Safely removes all XML/SSML tags and normalizes whitespace
  */
 export function ssmlToPlainText(ssml: string): string {
-  return ssml
-    .replace(/<[^>]+>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // First pass: remove all XML/SSML tags completely
+  let text = ssml.replace(/<[^>]*>/g, '');
+  
+  // Second pass: handle any remaining < or > characters (malformed tags)
+  text = text.replace(/</g, '').replace(/>/g, '');
+  
+  // Normalize whitespace
+  return text.replace(/\s+/g, ' ').trim();
 }

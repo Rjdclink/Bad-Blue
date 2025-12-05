@@ -53,7 +53,6 @@ import FMIAnalysis from "@/components/FMIAnalysis";
 import { VoiceToggle, VoiceStatusIndicator } from "@/components/VoiceToggle";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useVoiceSynthesis } from "@/hooks/useVoiceSynthesis";
-import FMIAnalysis from "@/components/FMIAnalysis";
 
 const US_STATES = [
   { code: "AL", name: "Alabama" },

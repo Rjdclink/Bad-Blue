@@ -109,7 +109,10 @@ class ElevenLabsProvider implements VoiceProvider {
     request: VoiceSynthesisRequest,
     ssml: string
   ): Promise<VoiceSynthesisResponse> {
-    const voiceId = request.persona?.voiceId || 'EXAVITQu4vr4xnSDxMaL'; // Professional female voice
+    // Use voiceId from persona config, env var, or default
+    const voiceId = request.persona?.voiceId 
+      || process.env.ELEVENLABS_VOICE_ID 
+      || 'EXAVITQu4vr4xnSDxMaL'; // Professional female voice (default)
     const model = request.persona?.model || 'eleven_multilingual_v2';
 
     const response = await fetch(
@@ -167,9 +170,7 @@ class PollyProvider implements VoiceProvider {
     request: VoiceSynthesisRequest,
     ssml: string
   ): Promise<VoiceSynthesisResponse> {
-    // Note: Would require @aws-sdk/client-polly
-    // For now, return placeholder
-    throw new Error('Amazon Polly integration requires AWS SDK setup');
+    throw new Error('Amazon Polly integration requires AWS SDK setup. Install @aws-sdk/client-polly and configure AWS credentials to use this provider.');
   }
 }
 
@@ -187,8 +188,7 @@ class AzureVoiceProvider implements VoiceProvider {
     request: VoiceSynthesisRequest,
     ssml: string
   ): Promise<VoiceSynthesisResponse> {
-    // Note: Would require microsoft-cognitiveservices-speech-sdk
-    throw new Error('Azure Neural Voice integration requires Speech SDK setup');
+    throw new Error('Azure Neural Voice integration requires Speech SDK setup. Install microsoft-cognitiveservices-speech-sdk and configure AZURE_SPEECH_KEY to use this provider.');
   }
 }
 
@@ -206,8 +206,7 @@ class GoogleTTSProvider implements VoiceProvider {
     request: VoiceSynthesisRequest,
     ssml: string
   ): Promise<VoiceSynthesisResponse> {
-    // Note: Would require @google-cloud/text-to-speech
-    throw new Error('Google Cloud TTS integration requires Cloud SDK setup');
+    throw new Error('Google Cloud TTS integration requires Cloud SDK setup. Install @google-cloud/text-to-speech and configure GOOGLE_APPLICATION_CREDENTIALS to use this provider.');
   }
 }
 
