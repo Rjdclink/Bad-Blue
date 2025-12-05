@@ -5,31 +5,31 @@
  * - Positioned in upper left corner
  * - Small and unobtrusive but clearly visible
  * - Smart history-aware navigation with fallbacks
- * - Protects in-progress data with autosave
  */
 
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
-import { useAutosave } from "@/hooks/useAutosave";
 
 interface BackButtonProps {
   fallbackRoute?: string; // Where to go if no history
   className?: string;
+  onBeforeNavigate?: () => Promise<void>; // Optional callback before navigation
 }
 
-export function BackButton({ fallbackRoute, className }: BackButtonProps) {
+export function BackButton({ fallbackRoute, className, onBeforeNavigate }: BackButtonProps) {
   const [, setLocation] = useLocation();
   const { isAuthenticated } = useAuth();
-  const { saveNow } = useAutosave(); // Hook into autosave system
 
   const handleBack = async () => {
-    // Trigger autosave before navigation
-    try {
-      await saveNow?.();
-    } catch (error) {
-      console.error("Autosave failed during back navigation:", error);
+    // Call optional pre-navigation callback (e.g., for autosave)
+    if (onBeforeNavigate) {
+      try {
+        await onBeforeNavigate();
+      } catch (error) {
+        console.error("Pre-navigation callback failed:", error);
+      }
     }
 
     // Check if there's browser history to go back to

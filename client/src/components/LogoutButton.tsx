@@ -4,45 +4,52 @@
  * Universal logout button for all authenticated app views
  * - Positioned in upper right corner
  * - Small and unobtrusive but clearly visible
- * - Triggers autosave before logout
  * - Redirects to login page after logout
+ * - Note: Autosave should be handled by individual pages/components before calling logout
  */
 
 import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
-import { useAutosave } from "@/hooks/useAutosave";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
+import { useState } from "react";
 
 interface LogoutButtonProps {
   className?: string;
+  onBeforeLogout?: () => Promise<void>; // Optional callback before logout (e.g., for autosave)
 }
 
-export function LogoutButton({ className }: LogoutButtonProps) {
+export function LogoutButton({ className, onBeforeLogout }: LogoutButtonProps) {
   const [, setLocation] = useLocation();
-  const { saveNow } = useAutosave();
   const { toast } = useToast();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const handleLogout = async () => {
+    if (isLoggingOut) return; // Prevent double-clicks
+    
+    setIsLoggingOut(true);
+    
     try {
-      // Step 1: Trigger autosave for any in-progress work
-      toast({
-        title: "Saving your work...",
-        description: "Please wait while we save your progress.",
-      });
-
-      try {
-        await saveNow?.();
-      } catch (error) {
-        console.error("Autosave failed during logout:", error);
-        // Show warning but continue with logout
+      // Step 1: Call optional pre-logout callback (e.g., for autosave)
+      if (onBeforeLogout) {
         toast({
-          title: "Warning",
-          description: "Some changes may not have been saved.",
-          variant: "destructive",
+          title: "Saving your work...",
+          description: "Please wait while we save your progress.",
         });
+
+        try {
+          await onBeforeLogout();
+        } catch (error) {
+          console.error("Pre-logout callback failed:", error);
+          // Show warning but continue with logout
+          toast({
+            title: "Warning",
+            description: "Some changes may not have been saved.",
+            variant: "destructive",
+          });
+        }
       }
 
       // Step 2: Call logout API to clear session
@@ -54,7 +61,7 @@ export function LogoutButton({ className }: LogoutButtonProps) {
       // Step 4: Show success message
       toast({
         title: "Logged out successfully",
-        description: "Your work has been saved.",
+        description: "See you next time!",
       });
 
       // Step 5: Redirect to login page
@@ -66,6 +73,8 @@ export function LogoutButton({ className }: LogoutButtonProps) {
         description: "Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setIsLoggingOut(false);
     }
   };
 
@@ -74,6 +83,7 @@ export function LogoutButton({ className }: LogoutButtonProps) {
       variant="ghost"
       size="sm"
       onClick={handleLogout}
+      disabled={isLoggingOut}
       className={`flex items-center gap-2 hover:bg-accent ${className || ""}`}
       aria-label="Logout"
     >
