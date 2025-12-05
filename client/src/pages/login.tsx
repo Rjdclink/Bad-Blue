@@ -135,15 +135,13 @@ export default function Login() {
         <div
           className="fixed inset-0 bg-cover bg-center bg-no-repeat"
           style={{ 
-            backgroundImage: "url(/images/istockphoto.jpg)",
-            backgroundSize: "cover",
-            backgroundPosition: "center center"
+            backgroundImage: "url(/images/istockphoto.jpg)"
           }}
         >
-          {/* Sophisticated gradient overlay for readability and depth */}
+          {/* Dark overlay for better readability and depth */}
           <div className="absolute inset-0 bg-gradient-to-br from-slate-900/85 via-blue-900/80 to-slate-900/90" />
           {/* Additional vignette effect for professional look */}
-          <div className="absolute inset-0 bg-radial-gradient from-transparent via-black/10 to-black/40" />
+          <div className="absolute inset-0" style={{ background: 'radial-gradient(circle at center, transparent 0%, rgba(0,0,0,0.4) 100%)' }} />
         </div>
 
         {/* Main Content Container */}
@@ -236,7 +234,7 @@ export default function Login() {
                   {/* LEXARA Persona Card */}
                   <div className="lg:order-1 animate-in fade-in slide-in-from-bottom duration-700 delay-500">
                     <div className="relative">
-                      <div className="bg-white/98 backdrop-blur-sm rounded-2xl p-5 lg:p-6 border-2 border-blue-200 shadow-2xl hover:shadow-3xl hover:-translate-y-2 transition-all duration-500 cursor-pointer hover:border-blue-400 group">
+                      <div className="bg-white/98 backdrop-blur-sm rounded-2xl p-5 lg:p-6 border-2 border-blue-200 shadow-2xl hover:shadow-3xl hover:-translate-y-2 transition-all duration-500 hover:border-blue-400 group">
                         {/* Glow effect */}
                         <div className="absolute -inset-1 bg-blue-400/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 -z-10" />
                         
@@ -259,10 +257,6 @@ export default function Login() {
                             src="/images/OIP.webp"
                             alt="LEXARA - Legal AI Assistant"
                             className="w-full h-auto rounded-xl shadow-lg group-hover:scale-105 transition-transform duration-500"
-                            style={{
-                              borderRadius: "12px",
-                              boxShadow: "0 8px 24px rgba(0,0,0,0.2)"
-                            }}
                           />
                         </div>
 
@@ -413,7 +407,7 @@ export default function Login() {
                                   className="h-11 text-base border-2 focus:border-blue-500"
                                 />
                                 <p className="text-xs text-slate-500 font-medium">
-                                  Minimum 8 characters
+                                  Password must be at least 8 characters
                                 </p>
                               </div>
                               
