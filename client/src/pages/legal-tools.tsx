@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeft, Scale, FileText, Upload, MessageSquare, CheckCircle2, Loader2 } from "lucide-react";
+import { ArrowLeft, Scale, FileText, Upload, MessageSquare, CheckCircle2, Loader2, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -8,11 +8,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FileUpload } from "@/components/FileUpload";
+import EvidenceAnalysis from "@/components/EvidenceAnalysis";
 import { LAW_TYPE_DATA } from "@shared/lawTypes";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SEOHead } from "@/components/SEOHead";
+import { Badge } from "@/components/ui/badge";
 
 const US_STATES = [
   { code: "AL", name: "Alabama" },
@@ -88,10 +90,36 @@ export default function LegalToolsPage() {
   // Validated law type (safe to use)
   const validatedLawType = lawTypeParam;
   
-  const [activeTab, setActiveTab] = useState<'consultation' | 'documents' | 'evidence'>('consultation');
+  const [activeTab, setActiveTab] = useState<'consultation' | 'documents' | 'people' | 'evidence'>('consultation');
   const [state, setState] = useState("");
   const [situation, setSituation] = useState("");
-  const [consultationResponse, setConsultationResponse] = useState<any>(null);
+  const [consultationResponse, setConsultationResponse] = useState("");
+  const [recommendations, setRecommendations] = useState<any>(null);
+  
+  // Consultation mutation - Enhanced version
+  const enhancedConsultationMutation = useMutation({
+    mutationFn: async (data: { state: string; situation: string; lawType: string }) => {
+      const response = await apiRequest("/api/enhanced-consultation", "POST", data);
+      const json = await response.json();
+      return json;
+    },
+    onSuccess: (data) => {
+      setConsultationResponse(data.analysis);
+      setRecommendations(data);
+      toast({
+        title: "Strategic Analysis Complete",
+        description: "Your comprehensive legal consultation with tool recommendations is ready.",
+      });
+    },
+    onError: (error: Error) => {
+      // Fallback to standard consultation
+      consultationMutation.mutate({
+        state,
+        situation,
+        lawType: validatedLawType,
+      });
+    },
+  });
   
   // Consultation mutation
   const consultationMutation = useMutation({
@@ -126,7 +154,8 @@ export default function LegalToolsPage() {
       return;
     }
     
-    consultationMutation.mutate({
+    // Try enhanced consultation first
+    enhancedConsultationMutation.mutate({
       state,
       situation,
       lawType: validatedLawType,
@@ -169,19 +198,23 @@ export default function LegalToolsPage() {
           </div>
           
           {/* Main Content */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents' | 'evidence')} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3 max-w-2xl">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents' | 'people' | 'evidence')} className="space-y-6">
+            <TabsList className="grid w-full grid-cols-4 max-w-3xl">
               <TabsTrigger value="consultation" className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
                 Consultation
+              </TabsTrigger>
+              <TabsTrigger value="evidence" className="flex items-center gap-2">
+                <Upload className="w-4 h-4" />
+                Evidence
               </TabsTrigger>
               <TabsTrigger value="documents" className="flex items-center gap-2">
                 <FileText className="w-4 h-4" />
                 Documents
               </TabsTrigger>
-              <TabsTrigger value="evidence" className="flex items-center gap-2">
-                <Upload className="w-4 h-4" />
-                Evidence
+              <TabsTrigger value="people" className="flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                People
               </TabsTrigger>
             </TabsList>
             
@@ -228,10 +261,10 @@ export default function LegalToolsPage() {
                   
                   <Button
                     onClick={handleConsultation}
-                    disabled={consultationMutation.isPending}
+                    disabled={consultationMutation.isPending || enhancedConsultationMutation.isPending}
                     className="w-full"
                   >
-                    {consultationMutation.isPending ? (
+                    {(consultationMutation.isPending || enhancedConsultationMutation.isPending) ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                         Analyzing...
@@ -239,14 +272,13 @@ export default function LegalToolsPage() {
                     ) : (
                       <>
                         <CheckCircle2 className="w-4 h-4 mr-2" />
-                        Get Legal Analysis
+                        Get Strategic Analysis
                       </>
                     )}
                   </Button>
                   
                   {consultationResponse && (
                     <div className="mt-6 space-y-4">
-                      {/* Main Analysis */}
                       <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
                         <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
                           <CheckCircle2 className="w-5 h-5 text-green-600" />
@@ -254,51 +286,95 @@ export default function LegalToolsPage() {
                         </h3>
                         <div className="prose prose-sm dark:prose-invert max-w-none">
                           <div className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">
-                            {consultationResponse.analysis}
+                            {consultationResponse}
                           </div>
                         </div>
                       </div>
-                      
-                      {/* Enhanced Details if available */}
-                      {consultationResponse.fullAnalysis && (
+
+                      {/* Tool Recommendations */}
+                      {recommendations && (
                         <>
-                          {/* Causes of Action */}
-                          {consultationResponse.fullAnalysis.causesOfAction?.length > 0 && (
-                            <div className="p-4 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
-                              <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
-                                Potential Claims ({consultationResponse.fullAnalysis.causesOfAction.length})
-                              </h4>
-                              <div className="space-y-2">
-                                {consultationResponse.fullAnalysis.causesOfAction.slice(0, 3).map((cause: any, idx: number) => (
-                                  <div key={idx} className="text-sm">
-                                    <span className="font-medium">{cause.name}</span>
-                                    <span className={`ml-2 px-2 py-0.5 rounded text-xs ${
-                                      cause.strength === 'strong' ? 'bg-green-200 text-green-800' :
-                                      cause.strength === 'moderate' ? 'bg-yellow-200 text-yellow-800' :
-                                      'bg-red-200 text-red-800'
-                                    }`}>
-                                      {cause.strength}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
+                          {/* Identified Parties for People Finder */}
+                          {recommendations.identifiedParties && recommendations.identifiedParties.length > 0 && (
+                            <Card className="border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900">
+                              <CardHeader className="pb-3">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                  <Users className="w-4 h-4" />
+                                  Recommended: Research These Individuals
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <div className="space-y-2">
+                                  {recommendations.identifiedParties.map((party: string, idx: number) => (
+                                    <div key={idx} className="flex items-center justify-between p-2 bg-white dark:bg-slate-800 rounded border">
+                                      <span className="text-sm font-medium">{party}</span>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => setLocation(`/people-finder?name=${encodeURIComponent(party)}`)}
+                                      >
+                                        <Users className="w-3 h-3 mr-1" />
+                                        Search
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </CardContent>
+                            </Card>
                           )}
-                          
+
+                          {/* Suggested Actions */}
+                          {recommendations.recommendations && recommendations.recommendations.length > 0 && (
+                            <Card>
+                              <CardHeader className="pb-3">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                  <CheckCircle2 className="w-4 h-4" />
+                                  Recommended Actions
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <div className="space-y-2">
+                                  {recommendations.recommendations.map((action: any, idx: number) => (
+                                    <div key={idx} className={`p-3 rounded border ${
+                                      action.priority === 'high' ? 'border-red-300 bg-red-50 dark:bg-red-950/20' :
+                                      action.priority === 'medium' ? 'border-yellow-300 bg-yellow-50 dark:bg-yellow-950/20' :
+                                      'border-slate-300 bg-slate-50 dark:bg-slate-900'
+                                    }`}>
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="flex-1">
+                                          <div className="flex items-center gap-2 mb-1">
+                                            <Badge variant={action.priority === 'high' ? 'destructive' : 'secondary'} className="text-xs">
+                                              {action.priority} priority
+                                            </Badge>
+                                            <span className="text-xs text-muted-foreground">{action.type}</span>
+                                          </div>
+                                          <p className="text-sm">{action.description}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          )}
+
                           {/* Next Steps */}
-                          {consultationResponse.nextSteps?.length > 0 && (
-                            <div className="p-4 bg-green-50 dark:bg-green-950 rounded-lg border border-green-200 dark:border-green-800">
-                              <h4 className="font-semibold text-green-900 dark:text-green-100 mb-2">
-                                Recommended Next Steps
-                              </h4>
-                              <ul className="space-y-1">
-                                {consultationResponse.nextSteps.slice(0, 5).map((step: any, idx: number) => (
-                                  <li key={idx} className="text-sm text-green-800 dark:text-green-200">
-                                    • {step.action}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
+                          {recommendations.nextSteps && recommendations.nextSteps.length > 0 && (
+                            <Card className="border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-900">
+                              <CardHeader className="pb-3">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                  <ArrowLeft className="w-4 h-4 rotate-180" />
+                                  Next Steps
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent>
+                                <ol className="space-y-2 list-decimal list-inside">
+                                  {recommendations.nextSteps.map((step: string, idx: number) => (
+                                    <li key={idx} className="text-sm">{step}</li>
+                                  ))}
+                                </ol>
+                              </CardContent>
+                            </Card>
                           )}
                         </>
                       )}
@@ -325,6 +401,11 @@ export default function LegalToolsPage() {
                   />
                 </CardContent>
               </Card>
+            </TabsContent>
+            
+            {/* Evidence Analysis Tab */}
+            <TabsContent value="evidence" className="space-y-6">
+              <EvidenceAnalysis lawType={validatedLawType} lawTypeName={lawTypeInfo.name} />
             </TabsContent>
             
             {/* Documents Tab */}
@@ -377,44 +458,45 @@ export default function LegalToolsPage() {
               </Card>
             </TabsContent>
             
-            {/* Evidence Tab */}
-            <TabsContent value="evidence" className="space-y-6">
+            {/* People Finder Tab */}
+            <TabsContent value="people" className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Upload className="w-5 h-5 text-blue-600" />
-                    Evidence Intelligence
+                    <Users className="w-5 h-5 text-blue-600" />
+                    People Finder - Identity Intelligence
                   </CardTitle>
                   <CardDescription>
-                    Upload and analyze evidence files with AI-powered legal intelligence.
+                    Search for individuals relevant to your {lawTypeInfo.name.toLowerCase()} case. Find witnesses, opposing parties, experts, or other relevant individuals.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    <div className="p-4 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
-                      <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
-                        Comprehensive Evidence Analysis
-                      </h4>
-                      <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
-                        <li>• Extract facts, timelines, and key information</li>
-                        <li>• Assess admissibility and legal significance</li>
-                        <li>• Detect conflicts and inconsistencies</li>
-                        <li>• Evaluate evidence strength and credibility</li>
-                        <li>• Generate strategic recommendations</li>
+                  <div className="text-center py-12">
+                    <Users className="w-16 h-16 mx-auto mb-4 text-blue-600 opacity-50" />
+                    <p className="text-lg mb-2 font-semibold">Advanced People Search Available</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-6 max-w-md mx-auto">
+                      Use our advanced People Finder to locate witnesses, experts, parties, or other individuals 
+                      relevant to your {lawTypeInfo.name.toLowerCase()} case. Aggregates data from public records, 
+                      court filings, professional networks, and more.
+                    </p>
+                    <Button
+                      onClick={() => setLocation('/people-finder')}
+                      size="lg"
+                      className="gap-2"
+                    >
+                      <Users className="w-4 h-4" />
+                      Launch People Finder
+                    </Button>
+                    
+                    <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-900 text-left max-w-md mx-auto">
+                      <h4 className="font-semibold text-sm mb-2 text-blue-900 dark:text-blue-100">Common Use Cases for {lawTypeInfo.name}:</h4>
+                      <ul className="text-xs text-blue-800 dark:text-blue-200 space-y-1">
+                        <li>• Locate witnesses and expert witnesses</li>
+                        <li>• Find contact information for parties</li>
+                        <li>• Research backgrounds and credentials</li>
+                        <li>• Discover professional associations</li>
+                        <li>• Verify identity and contact details</li>
                       </ul>
-                    </div>
-                    
-                    <FileUpload
-                      associatedWith="evidence"
-                      lawType={validatedLawType}
-                    />
-                    
-                    <div className="text-sm text-slate-600 dark:text-slate-400 space-y-1">
-                      <p className="font-medium">Supported file types:</p>
-                      <p>• Documents: PDF, DOC, DOCX, TXT</p>
-                      <p>• Images: JPG, PNG, GIF</p>
-                      <p>• Video: MP4, MOV</p>
-                      <p>• Audio: MP3, WAV</p>
                     </div>
                   </div>
                 </CardContent>
