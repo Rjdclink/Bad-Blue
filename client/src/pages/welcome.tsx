@@ -17,6 +17,7 @@ import { LAW_TYPE_DATA, type LawTypeInfo } from "@shared/lawTypes";
 import { SEOHead } from "@/components/SEOHead";
 import { useAuth } from "@/hooks/useAuth";
 import { LawBookCheckbox } from "@/components/LawBookCheckbox";
+import { AppHeader } from "@/components/AppHeader";
 
 export default function WelcomePage() {
   const { user } = useAuth();
@@ -69,33 +70,13 @@ export default function WelcomePage() {
         description="Select your legal area to get started with AI-powered legal assistance"
       />
 
-      {/* Header */}
-      <header className="border-b bg-black/50 backdrop-blur-md sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Shield className="h-8 w-8 text-primary" />
-              <div>
-                <h1 className="text-2xl font-bold text-white flex items-center gap-1">
-                  LegalWhat
-                  <img 
-                    src="/images/Legal What Icon.png" 
-                    alt="?" 
-                    className="inline-block h-[1em] w-auto object-contain"
-                    style={{ marginBottom: '-0.05em' }}
-                  />
-                </h1>
-                <p className="text-xs text-white/70">AI Legal Platform</p>
-              </div>
-            </div>
-            {user && (
-              <div className="text-sm text-white/90">
-                Welcome, {user.firstName}
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
+      {/* Header with Back and Logout buttons */}
+      <AppHeader 
+        title="LegalWhat" 
+        subtitle="AI Legal Platform" 
+        fallbackRoute="/login"
+        className="bg-black/50 backdrop-blur-md border-b border-white/20"
+      />
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 sm:py-12">
@@ -127,38 +108,56 @@ export default function WelcomePage() {
                 const isSelected = selectedLawType === lawType.id;
                 
                 return (
-                  <Card
-                    key={lawType.id}
-                    className={`cursor-pointer transition-all hover:shadow-lg border-2 bg-white/95 backdrop-blur-sm ${
-                      isSelected
-                        ? 'border-red-500 bg-red-50/95 shadow-lg'
-                        : 'border-red-200 hover:border-red-300'
-                    }`}
-                    onClick={() => handleSelection(lawType.id)}
-                  >
-                    <CardHeader>
-                      <div className="flex items-start gap-4">
-                        <div className="flex items-center gap-3 flex-1">
-                          <LawBookCheckbox
-                            checked={isSelected}
-                            onCheckedChange={() => handleSelection(lawType.id)}
-                            className="mt-1"
-                          />
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <Icon className="h-6 w-6 text-red-600 dark:text-red-400" />
-                              <CardTitle className="text-xl sm:text-2xl text-red-700 dark:text-red-400">
-                                {lawType.name}
-                              </CardTitle>
+                  <div key={lawType.id} className="relative">
+                    <Card
+                      className={`cursor-pointer transition-all hover:shadow-lg border-2 bg-white/95 backdrop-blur-sm ${
+                        isSelected
+                          ? 'border-red-500 bg-red-50/95 shadow-lg'
+                          : 'border-red-200 hover:border-red-300'
+                      }`}
+                      onClick={() => handleSelection(lawType.id)}
+                    >
+                      <CardHeader>
+                        <div className="flex items-start gap-4">
+                          <div className="flex items-center gap-3 flex-1">
+                            <LawBookCheckbox
+                              checked={isSelected}
+                              onCheckedChange={() => handleSelection(lawType.id)}
+                              className="mt-1"
+                            />
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <Icon className="h-6 w-6 text-red-600 dark:text-red-400" />
+                                <CardTitle className="text-xl sm:text-2xl text-red-700 dark:text-red-400">
+                                  {lawType.name}
+                                </CardTitle>
+                              </div>
+                              <CardDescription className="text-base">
+                                {lawType.description}
+                              </CardDescription>
                             </div>
-                            <CardDescription className="text-base">
-                              {lawType.description}
-                            </CardDescription>
                           </div>
                         </div>
+                      </CardHeader>
+                    </Card>
+                    
+                    {/* "Let's Go" button overlaid on selected card */}
+                    {isSelected && (
+                      <div className="absolute top-4 right-4 z-10 animate-in fade-in slide-in-from-right-4 duration-300">
+                        <Button
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleLetsGo();
+                          }}
+                          className="shadow-lg hover:shadow-xl transition-all"
+                        >
+                          Let's Go
+                          <ArrowRight className="w-4 h-4 ml-2" />
+                        </Button>
                       </div>
-                    </CardHeader>
-                  </Card>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -210,58 +209,62 @@ export default function WelcomePage() {
               const isSelected = selectedLawType === lawType.id;
               
               return (
-                <Card
-                  key={lawType.id}
-                  className={`cursor-pointer transition-all hover:shadow-md bg-white/95 backdrop-blur-sm ${
-                    isSelected
-                      ? 'border-2 border-primary shadow-md'
-                      : 'hover:border-primary/50'
-                  }`}
-                  onClick={() => handleSelection(lawType.id)}
-                >
-                  <CardHeader className="pb-4">
-                    <div className="flex items-start gap-3">
-                      <LawBookCheckbox
-                        checked={isSelected}
-                        onCheckedChange={() => handleSelection(lawType.id)}
-                        className="mt-1"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Icon className="h-5 w-5 text-primary shrink-0" />
-                          <CardTitle className="text-base leading-tight">
-                            {lawType.name}
-                          </CardTitle>
+                <div key={lawType.id} className="relative">
+                  <Card
+                    className={`cursor-pointer transition-all hover:shadow-md bg-white/95 backdrop-blur-sm ${
+                      isSelected
+                        ? 'border-2 border-primary shadow-md'
+                        : 'hover:border-primary/50'
+                    }`}
+                    onClick={() => handleSelection(lawType.id)}
+                  >
+                    <CardHeader className="pb-4">
+                      <div className="flex items-start gap-3">
+                        <LawBookCheckbox
+                          checked={isSelected}
+                          onCheckedChange={() => handleSelection(lawType.id)}
+                          className="mt-1"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Icon className="h-5 w-5 text-primary shrink-0" />
+                            <CardTitle className="text-base leading-tight">
+                              {lawType.name}
+                            </CardTitle>
+                          </div>
+                          <CardDescription className="text-sm line-clamp-2">
+                            {lawType.description}
+                          </CardDescription>
                         </div>
-                        <CardDescription className="text-sm line-clamp-2">
-                          {lawType.description}
-                        </CardDescription>
                       </div>
+                    </CardHeader>
+                  </Card>
+                  
+                  {/* "Let's Go" button overlaid on selected card */}
+                  {isSelected && (
+                    <div className="absolute top-2 right-2 z-10 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <Button
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleLetsGo();
+                        }}
+                        className="shadow-lg hover:shadow-xl transition-all text-xs"
+                      >
+                        Let's Go
+                        <ArrowRight className="w-3 h-3 ml-1" />
+                      </Button>
                     </div>
-                  </CardHeader>
-                </Card>
+                  )}
+                </div>
               );
             })}
           </div>
         </div>
 
-        {/* Let's Go Button - Only shown when a type is selected */}
-        {selectedLawType && (
-          <div className="flex justify-center mt-8 sm:mt-12 animate-in fade-in slide-in-from-bottom-4 duration-300">
-            <Button
-              size="lg"
-              onClick={handleLetsGo}
-              className="min-w-[200px] text-lg h-12 shadow-lg hover:shadow-xl transition-all"
-            >
-              Let's Go
-              <ArrowRight className="w-5 h-5 ml-2" />
-            </Button>
-          </div>
-        )}
-
         {/* Helper Text */}
         {!selectedLawType && (
-          <div className="text-center mt-8 text-muted-foreground">
+          <div className="text-center mt-8 text-white/80">
             <p className="text-sm">Select a legal area above to continue</p>
           </div>
         )}

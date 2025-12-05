@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Shield, Users, Search, Globe, Database } from "lucide-react";
+import { AppHeader } from "@/components/AppHeader";
 
 export default function PeopleFinderPage() {
   const [, setLocation] = useLocation();
@@ -17,15 +18,14 @@ export default function PeopleFinderPage() {
         keywords="people finder, people search, OSINT, identity intelligence, background check, public records search, person lookup, identity verification"
       />
       <div className="min-h-screen bg-background">
+        {/* App Header with Back and Logout */}
+        <AppHeader 
+          title="People Finder"
+          subtitle="Global Identity Intelligence"
+          fallbackRoute="/welcome"
+        />
+        
         <div className="container max-w-7xl mx-auto px-4 py-4">
-          <Button
-            variant="ghost"
-            onClick={() => setLocation("/welcome")}
-            className="mb-4"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Welcome
-          </Button>
 
           {/* Feature Explanation Card */}
           <Card className="mb-6 border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">

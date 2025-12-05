@@ -225,7 +225,8 @@ function Router() {
             <Route path="/evidence-hub" component={EvidenceHub} />
           </>
         ) : (
-          <Route path="/" component={Landing} />
+          // Unauthenticated users: Root route goes to Login/Signup
+          <Route path="/" component={Login} />
         )}
 
         <Route component={NotFound} />
