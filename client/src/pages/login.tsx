@@ -48,7 +48,7 @@ export default function Login() {
     setIsLoading(true);
     
     try {
-      const response = await apiRequest("/api/login", "POST", {
+      const response = await apiRequest("/api/login/local", "POST", {
         email: loginEmail,
         password: loginPassword,
       });
@@ -83,11 +83,11 @@ export default function Login() {
     setIsLoading(true);
     
     try {
-      const response = await apiRequest("/api/auth/signup", "POST", {
+      const response = await apiRequest("/api/register/local", "POST", {
         email: signupEmail,
         password: signupPassword,
-        first_name: signupFirstName,
-        last_name: signupLastName,
+        firstName: signupFirstName,
+        lastName: signupLastName,
       });
       
       if (response.ok) {
