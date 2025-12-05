@@ -183,7 +183,7 @@ export default function Landing() {
           {/* AI Badge */}
           <div className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
             <Badge className="bg-primary/90 text-white border-white/20 px-6 py-2.5 text-sm font-medium backdrop-blur-md shadow-lg">
-              🤖 Powered by 7 AI Models Working in Parallel
+              🤖 Powered by 12 AI Models Working in Parallel
             </Badge>
           </div>
 
@@ -215,7 +215,7 @@ export default function Landing() {
           <div className="flex flex-wrap items-center justify-center gap-4 mb-10 text-sm text-white/95 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-700">
             <div className="flex items-center gap-2">
               <span className="text-green-400">✓</span>
-              <span>7 AI Models Analyze Every Search</span>
+              <span>12 AI Models Analyze Every Search</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-green-400">✓</span>
@@ -492,10 +492,9 @@ export default function Landing() {
       <section className="py-20 px-4 bg-gradient-to-b from-background to-card">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold mb-4">Revolutionary 7-Provider AI Technology</h2>
+            <h2 className="text-3xl font-bold mb-4">Revolutionary 12-Model AI Orchestration Network</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
-              The first police accountability platform powered by seven leading AI models 
-              working simultaneously to deliver unmatched accuracy and speed.
+              Thirteen specialized AI engines working in synchronized coordination to deliver unmatched legal intelligence.
             </p>
           </div>
           <AISystemShowcase variant="full" />
