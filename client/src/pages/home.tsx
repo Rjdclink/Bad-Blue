@@ -8,7 +8,7 @@ import { LanguageSelector } from "@/components/LanguageSelector";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation, Link } from "wouter";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
-import LegalConsultation from "@/components/LegalConsultation";
+import LexaraConsultation from "@/components/LexaraConsultation";
 import OfficerSearch from "@/components/OfficerSearch";
 import { AISubAgentPanel } from "@/components/AISubAgentPanel";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
@@ -72,7 +72,7 @@ export default function Home() {
 
         {/* Feature Content */}
         <div className="container px-4 py-8">
-          <LegalConsultation />
+          <LexaraConsultation />
         </div>
       </div>
     );
@@ -297,9 +297,9 @@ export default function Home() {
                       <Bell className="w-6 h-6 text-primary" />
                     </div>
                     <div>
-                      <CardTitle className="text-2xl">LegalAI Consultation</CardTitle>
+                      <CardTitle className="text-2xl">LEXARA - Legal Expert AI</CardTitle>
                       <CardDescription className="mt-1">
-                        Comprehensive legal research, fact-law analysis & plausibility scoring - <span className="text-green-600 dark:text-green-400 font-semibold">Included with access</span>
+                        AI-powered legal case analysis, evidence intelligence & strategic recommendations - <span className="text-green-600 dark:text-green-400 font-semibold">Included with access</span>
                       </CardDescription>
                     </div>
                   </div>
@@ -308,8 +308,27 @@ export default function Home() {
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground">
-                  Get instant AI analysis of your case for legal actionability. Our system analyzes your situation for potential civil rights violations and recommends the best course of action.
+                  Consult with LEXARA to evaluate potential claims, assess case merit, identify applicable laws, 
+                  and get strategic recommendations. Integrated with F.M.I. (Forensic Media Intelligence) for evidence analysis.
                 </p>
+                <ul className="space-y-2 mt-4">
+                  <li className="flex items-start gap-2 text-sm">
+                    <Bell className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
+                    <span>Multi-area legal analysis (29+ practice areas)</span>
+                  </li>
+                  <li className="flex items-start gap-2 text-sm">
+                    <Bell className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
+                    <span>F.M.I. evidence intelligence integration</span>
+                  </li>
+                  <li className="flex items-start gap-2 text-sm">
+                    <Bell className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
+                    <span>Jurisdiction-specific statute analysis</span>
+                  </li>
+                  <li className="flex items-start gap-2 text-sm">
+                    <Bell className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
+                    <span>Actionability assessment & next steps</span>
+                  </li>
+                </ul>
               </CardContent>
             </Card>
 
