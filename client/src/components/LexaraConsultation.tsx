@@ -9,8 +9,7 @@
  * - F.M.I. (Forensic Media Intelligence) integration
  * - Multi-area of law expertise (29+ practice areas)
  * - Strategic recommendations and next steps
- * 
- * Future: Full voice capabilities with TTS/STT for conversational mode
+ * - Voice Intelligence System (Stages 11-15)
  */
 
 import { useState, useEffect } from "react";
@@ -44,10 +43,16 @@ import {
   XCircle,
   Brain,
   Mic,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import FMIAnalysis from "@/components/FMIAnalysis";
+import { VoiceToggle, VoiceStatusIndicator } from "@/components/VoiceToggle";
+import { useVoiceMode } from "@/hooks/useVoiceMode";
+import { useVoiceSynthesis } from "@/hooks/useVoiceSynthesis";
 import FMIAnalysis from "@/components/FMIAnalysis";
 
 const US_STATES = [
@@ -117,7 +122,52 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
   const [situation, setSituation] = useState("");
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [analysis, setAnalysis] = useState<any>(null);
-  const [voiceEnabled, setVoiceEnabled] = useState(false); // Future: Live conversational mode
+
+  // Voice Intelligence System (Stages 11-15)
+  const voiceMode = useVoiceMode({
+    continuous: true,
+    interimResults: true,
+    onTranscript: (text, isFinal) => {
+      if (isFinal && text.trim()) {
+        // Append finalized speech to situation
+        setSituation(prev => (prev ? `${prev} ${text}` : text).trim());
+      }
+    },
+  });
+
+  const voiceSynthesis = useVoiceSynthesis();
+
+  // Persist voice mode state
+  useEffect(() => {
+    const savedVoiceMode = localStorage.getItem('lexara-voice-mode');
+    if (savedVoiceMode === 'enabled') {
+      // Auto-enable if previously enabled (user preference)
+      // voiceMode.enable(); // Commented out - require explicit activation
+    }
+  }, []);
+
+  useEffect(() => {
+    if (voiceMode.isEnabled) {
+      localStorage.setItem('lexara-voice-mode', 'enabled');
+    } else {
+      localStorage.removeItem('lexara-voice-mode');
+    }
+  }, [voiceMode.isEnabled]);
+
+  // Toggle voice mode
+  const handleVoiceToggle = async () => {
+    if (voiceMode.isEnabled) {
+      voiceMode.disable();
+      voiceSynthesis.stop();
+    } else {
+      try {
+        await voiceMode.enable();
+        voiceMode.startListening();
+      } catch (error) {
+        // Error already handled by useVoiceMode
+      }
+    }
+  };
 
   // Notify parent component when consultation data changes
   useEffect(() => {
@@ -152,6 +202,20 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
         return;
       }
       setAnalysis(data);
+
+      // Stage 15: Speak the analysis if voice mode is enabled
+      if (voiceMode.isEnabled && data.analysis) {
+        const introText = data.actionable 
+          ? "I've completed my analysis. Based on the information you provided, I've identified potential legal claims that may be pursued."
+          : "I've completed my analysis. Based on the information you provided, I have not identified clear legal claims at this time.";
+        
+        const fullResponse = `${introText} ${data.analysis}`;
+        
+        voiceSynthesis.speak(fullResponse, {
+          context: 'evaluation',
+          autoPlay: true,
+        });
+      }
     },
     onError: (error: Error) => {
       console.error("LEXARA consultation error:", error);
@@ -257,23 +321,35 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
             </div>
           </div>
 
-          {/* Voice Mode Toggle (Future Implementation) */}
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="voice-mode"
-              checked={voiceEnabled}
-              onCheckedChange={(checked) => setVoiceEnabled(checked as boolean)}
-              disabled
-              className="disabled:opacity-50"
+          {/* Voice Mode Toggle - Stages 11-15 */}
+          <div className="flex items-center gap-3">
+            <VoiceToggle
+              isEnabled={voiceMode.isEnabled}
+              isListening={voiceMode.isListening}
+              onToggle={handleVoiceToggle}
+              position="inline"
+              size="md"
             />
-            <Label htmlFor="voice-mode" className="text-sm text-muted-foreground cursor-pointer">
-              <span className="flex items-center gap-1">
-                <Mic className="w-3 h-3" />
-                Voice
-              </span>
-            </Label>
+            {voiceSynthesis.isSpeaking && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Volume2 className="w-4 h-4 animate-pulse text-primary" />
+                <span>Speaking...</span>
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Voice Status Indicator */}
+        {voiceMode.isEnabled && (
+          <div className="mb-6">
+            <VoiceStatusIndicator
+              isEnabled={voiceMode.isEnabled}
+              isListening={voiceMode.isListening}
+              isSpeaking={voiceSynthesis.isSpeaking}
+              transcript={voiceMode.interimTranscript}
+            />
+          </div>
+        )}
 
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Main Consultation Area */}
