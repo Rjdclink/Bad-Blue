@@ -165,10 +165,6 @@ function Router() {
         {/* Public routes - accessible to everyone */}
         <Route path="/subscription-success" component={SubscriptionSuccess} />
         
-        {/* Root and landing routes - LegalWhat landing page for all users */}
-        <Route path="/" component={Landing} />
-        <Route path="/landing" component={Landing} />
-        
         {/* Other public routes */}
         <Route path="/login" component={Login} />
         <Route path="/contact" component={Contact} />
