@@ -126,13 +126,13 @@ export default function LegalToolsPage() {
     mutationFn: async (data: { state: string; situation: string; lawType: string }) => {
       const response = await apiRequest("/api/legal-consultation", "POST", data);
       const json = await response.json();
-      return json.analysis as string;
+      return json; // Return full enhanced response
     },
-    onSuccess: (analysis) => {
-      setConsultationResponse(analysis);
+    onSuccess: (data) => {
+      setConsultationResponse(data);
       toast({
         title: "Analysis Complete",
-        description: "Your legal consultation has been generated.",
+        description: "Your comprehensive legal consultation has been generated.",
       });
     },
     onError: (error: Error) => {
