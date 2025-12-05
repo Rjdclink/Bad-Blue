@@ -10,6 +10,11 @@
  */
 
 import { GoogleGenAI } from "@google/genai";
+import { 
+  orchestratedWebSearch, 
+  isOpenRouterWebSearchAvailable,
+  type WebSearchResult 
+} from './openRouterWebSearch';
 
 const BING_API_KEY = process.env.BING_API_KEY || process.env.BING_SEARCH_KEY || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
@@ -138,31 +143,27 @@ function getGeminiClient(): GoogleGenAI {
 
 /**
  * Search using Bing Web Search API
- * @deprecated Bing API has payment requirements (HTTP 402). Use OpenRouter models instead.
- * This function now returns empty results and logs a deprecation warning.
+ * @deprecated Bing API requires paid subscription. Use OpenRouter 3-model orchestration instead.
+ * This function returns empty results and logs a deprecation warning.
  */
 export async function bingSearch(
   query: string, 
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  // DEPRECATED: Bing API requires paid subscription (HTTP 402 errors)
-  // Use OpenRouter models (DeepSeek, Grok, Kimi) for web search instead
-  console.warn('[Web Search] bingSearch is deprecated - use OpenRouter models for web search');
+  console.warn('[Web Search] bingSearch is DEPRECATED - use orchestratedWebSearch from openRouterWebSearch.ts');
   return [];
 }
 
 /**
- * Search using Bing News API (for recent events)
- * @deprecated Bing API has payment requirements (HTTP 402). Use OpenRouter models instead.
- * This function now returns empty results and logs a deprecation warning.
+ * Search using Bing News API
+ * @deprecated Bing API requires paid subscription. Use OpenRouter 3-model orchestration instead.
+ * This function returns empty results and logs a deprecation warning.
  */
 export async function bingNewsSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  // DEPRECATED: Bing API requires paid subscription (HTTP 402 errors)
-  // Use OpenRouter models (DeepSeek, Grok, Kimi) for news search instead
-  console.warn('[Web Search] bingNewsSearch is deprecated - use OpenRouter models for news search');
+  console.warn('[Web Search] bingNewsSearch is DEPRECATED - use orchestratedWebSearch from openRouterWebSearch.ts');
   return [];
 }
 
@@ -259,7 +260,11 @@ Return detailed findings with specific URLs and facts.`;
 }
 
 /**
- * Combined search using both Bing and Gemini for comprehensive results
+ * Unified search using OpenRouter 3-model orchestration
+ * Replaces deprecated Bing/Gemini search with OpenRouter team:
+ *   - Meta Llama 4 Maverick (256K context, multimodal)
+ *   - xAI Grok 4.1 Fast (2M context, real-time)
+ *   - DeepSeek R1T2 Chimera (164K context, reasoning)
  */
 export async function unifiedSearch(
   query: string,
@@ -270,50 +275,64 @@ export async function unifiedSearch(
     return [];
   }
 
-  const useBing = options.useBing !== false && !!BING_API_KEY;
-  const useGemini = options.useGemini !== false && !!GEMINI_API_KEY;
-  
-  const allResults: EnhancedSearchResult[] = [];
-  const seenUrls = new Set<string>();
+  // Primary: Use OpenRouter 3-model orchestration
+  if (isOpenRouterWebSearchAvailable()) {
+    try {
+      const openRouterResult = await orchestratedWebSearch(query, {
+        useOnlinePlugin: false, // Don't use :online to avoid costs
+        timeout: options.timeout || 30000,
+      });
 
-  const searchPromises: Promise<SearchResult[]>[] = [];
+      // Convert OpenRouter results to EnhancedSearchResult format
+      const enhancedResults: EnhancedSearchResult[] = [];
 
-  if (useBing) {
-    searchPromises.push(bingSearch(query, options));
-  }
-  if (useGemini) {
-    searchPromises.push(geminiSearch(query, options));
-  }
-
-  const results = await Promise.allSettled(searchPromises);
-
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      for (const item of result.value) {
-        if (item.url && !seenUrls.has(item.url)) {
-          seenUrls.add(item.url);
-          allResults.push({
-            ...item,
-            source: 'combined',
-            reliability: determineReliability(item.url),
-          });
-        } else if (!item.url && (item as EnhancedSearchResult).aiSummary) {
-          allResults.push(item as EnhancedSearchResult);
-        }
+      // Add sources as individual results
+      for (const url of openRouterResult.sources.slice(0, options.limit || 20)) {
+        enhancedResults.push({
+          title: extractTitleFromUrl(url),
+          url,
+          snippet: '',
+          source: 'combined',
+          aiSummary: openRouterResult.aggregatedAnswer.substring(0, 500),
+          reliability: determineReliability(url),
+          relevanceScore: openRouterResult.confidence,
+        });
       }
+
+      // If no sources but we have aggregated answer, add summary result
+      if (enhancedResults.length === 0 && openRouterResult.aggregatedAnswer) {
+        enhancedResults.push({
+          title: 'OpenRouter AI Search Summary',
+          url: '',
+          snippet: openRouterResult.aggregatedAnswer.substring(0, 500),
+          source: 'combined',
+          aiSummary: openRouterResult.aggregatedAnswer,
+          reliability: 'medium',
+          relevanceScore: openRouterResult.confidence,
+        });
+      }
+
+      console.log(`[Unified Search] OpenRouter: ${enhancedResults.length} results (confidence: ${openRouterResult.confidence}%)`);
+      return enhancedResults;
+    } catch (error: any) {
+      console.warn('[Unified Search] OpenRouter search failed:', error.message);
+      // Fall through to Gemini fallback
     }
   }
 
-  allResults.sort((a, b) => {
-    const reliabilityOrder = { high: 3, medium: 2, low: 1, undefined: 0 };
-    return (reliabilityOrder[b.reliability || 'undefined'] || 0) - 
-           (reliabilityOrder[a.reliability || 'undefined'] || 0);
-  });
-
-  if (allResults.length > 0) {
-    console.log(`[Unified Search] Found ${allResults.length} unique results`);
+  // Fallback: Use Gemini grounding if OpenRouter unavailable
+  if (GEMINI_API_KEY && !isCircuitOpen('gemini')) {
+    console.log('[Unified Search] Falling back to Gemini grounding');
+    try {
+      const geminiResults = await geminiSearch(query, options);
+      return geminiResults.slice(0, options.limit || 20);
+    } catch (error: any) {
+      console.warn('[Unified Search] Gemini search failed:', error.message);
+    }
   }
-  return allResults.slice(0, options.limit || 20);
+
+  console.warn('[Unified Search] No search providers available');
+  return [];
 }
 
 /**
@@ -573,11 +592,15 @@ function determineReliability(url: string): 'high' | 'medium' | 'low' {
   return 'low';
 }
 
-export function isWebSearchAvailable(): { bing: boolean; gemini: boolean; any: boolean } {
+export function isWebSearchAvailable(): { 
+  openrouter: boolean; 
+  gemini: boolean; 
+  any: boolean 
+} {
   return {
-    bing: !!BING_API_KEY,
-    gemini: !!GEMINI_API_KEY,
-    any: !!(BING_API_KEY || GEMINI_API_KEY) && WEB_SEARCH_ENABLED,
+    openrouter: isOpenRouterWebSearchAvailable(),
+    gemini: !!GEMINI_API_KEY && !isCircuitOpen('gemini'),
+    any: isOpenRouterWebSearchAvailable() || (!!GEMINI_API_KEY && WEB_SEARCH_ENABLED),
   };
 }
 
@@ -703,7 +726,11 @@ export class EnhancedWebSearchService {
 
 export const enhancedWebSearch = new EnhancedWebSearchService();
 
-console.log('[Web Search Service] Initialized:', isWebSearchAvailable());
+console.log('[Web Search Service] Initialized:', {
+  openRouterWebSearch: isOpenRouterWebSearchAvailable(),
+  geminiGrounding: !!GEMINI_API_KEY,
+  bingDeprecated: true, // Marked as deprecated
+});
 
 /**
  * SHADOW RETRIEVAL INTEGRATION
