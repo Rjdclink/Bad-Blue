@@ -37,16 +37,29 @@ The ML & NLP Intelligence Layer is a Node-compatible machine learning and natura
 
 ## Node-Compatible Technology Stack
 
-### NLP Libraries
+### NLP Libraries (Currently Used)
 
 - **compromise.js**: Entity extraction (people, organizations, places, dates)
 - **natural**: Tokenization, stemming, and text processing
 - **Regular expressions**: Email, phone, social handle extraction
 
-### ML Libraries
+### ML Libraries (Currently Used)
 
 - **fast-levenshtein**: Fuzzy string matching for entity resolution
 - **Custom algorithms**: Confidence scoring, clustering
+
+### Optional Future Enhancements
+
+The following libraries are NOT currently required but can be added for advanced features:
+
+- **@tensorflow/tfjs-node**: For training custom ML models (entity resolution, classification, anomaly detection)
+- **wink-nlp**: Alternative NLP library with better NER support
+- **onnxruntime-node**: For running pre-trained ML models exported from PyTorch/TensorFlow
+
+To add these optional dependencies:
+```bash
+npm install @tensorflow/tfjs-node wink-nlp onnxruntime-node
+```
 
 ### Future Enhancements
 

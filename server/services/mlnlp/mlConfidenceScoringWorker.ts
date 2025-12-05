@@ -8,6 +8,9 @@
 import { Worker, WorkerInput, WorkerOutput } from './workerOrchestrator';
 import { logger } from '../../logger';
 
+// Configuration constants
+const BASELINE_ATTRIBUTE_COUNT = 10; // Expected number of attributes for a complete profile
+
 export interface AttributeScore {
   attribute: string;
   value: any;
@@ -323,9 +326,8 @@ export class MLConfidenceScoringWorker implements Worker {
     consistencyScore: number;
   } {
     // Data richness: how many attributes do we have?
-    const totalPossibleAttributes = 10; // Arbitrary baseline
     const actualAttributes = attributeScores.length;
-    const dataRichness = Math.min(actualAttributes / totalPossibleAttributes, 1);
+    const dataRichness = Math.min(actualAttributes / BASELINE_ATTRIBUTE_COUNT, 1);
 
     // Source reliability: average of source quality factors
     const avgSourceQuality = attributeScores.length > 0

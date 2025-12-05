@@ -165,7 +165,7 @@ export async function conductPeopleSearch(
         }
       }
     } catch (mlnlpError) {
-      console.error('ML/NLP processing error:', mlnlpError);
+      logger.error('ML/NLP processing error:', mlnlpError);
       // Continue without ML/NLP enhancement if it fails
     }
 

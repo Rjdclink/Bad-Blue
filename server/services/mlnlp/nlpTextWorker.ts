@@ -95,14 +95,13 @@ export class NLPTextWorker implements Worker {
 
     // Extract people
     const people = doc.people().out('array') as string[];
-    people.forEach((person, index) => {
+    people.forEach((person) => {
       entities.push({
         type: 'person',
         value: person,
         normalizedValue: this.normalizeName(person),
         sourceText: person,
         confidence: 0.8,
-        position: { start: 0, end: 0 }, // Compromise doesn't provide exact positions
       });
     });
 

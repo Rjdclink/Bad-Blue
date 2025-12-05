@@ -34,7 +34,11 @@ const result = await mlnlpIntelligenceService.processFullPipeline(text, records)
 - **compromise.js**: Entity extraction
 - **natural**: Tokenization and stemming  
 - **fast-levenshtein**: Fuzzy string matching
-- Ready for **TensorFlow.js** and **ONNX Runtime**
+
+**Optional (for future enhancements):**
+- TensorFlow.js for custom ML models
+- wink-nlp for advanced NLP
+- ONNX Runtime for pre-trained models
 
 ## Testing
 
