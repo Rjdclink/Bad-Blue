@@ -692,3 +692,45 @@ export async function conductFullOSINT(
     return enhancedReport;
   }
 }
+
+/**
+ * SHADOW RETRIEVAL INTEGRATION NOTES
+ * 
+ * The PANTHEON Shadow Retrieval Engine can significantly enhance people search capabilities:
+ * 
+ * Integration opportunities:
+ * 1. searchPublicRecords(): Use Shadow Retrieval to extract data from public record sites
+ *    - Example: Scrape court records, property records, business registrations
+ *    - Benefit: Access JavaScript-rendered content, bypass rate limits
+ * 
+ * 2. searchSocialMedia(): Use Shadow Retrieval for profile extraction
+ *    - Example: Extract LinkedIn, Facebook public profiles
+ *    - Benefit: Handle anti-bot protections, extract structured data
+ * 
+ * 3. searchProfessionalNetworks(): Use Shadow Retrieval for employment history
+ *    - Example: Scrape company websites, professional directories
+ *    - Benefit: Extract tables, forms, hidden APIs
+ * 
+ * 4. searchNewsAndArticles(): Use Shadow Retrieval for news archives
+ *    - Example: Access paywalled content, extract article text
+ *    - Benefit: Extract clean text, bypass JavaScript requirements
+ * 
+ * Example implementation:
+ * ```typescript
+ * import { shadowRetrieval } from './services/shadowRetrieval';
+ * 
+ * async function searchPublicRecords(name: string) {
+ *   const urls = [
+ *     `https://publicrecords.example.com/search?name=${encodeURIComponent(name)}`,
+ *     // ... more URLs
+ *   ];
+ *   
+ *   const results = await shadowRetrieval.batchRetrieve(urls, {
+ *     maxConcurrent: 3,
+ *     delayBetweenRequests: 2000,
+ *   });
+ *   
+ *   return results.filter(r => r.success).map(r => r.data);
+ * }
+ * ```
+ */

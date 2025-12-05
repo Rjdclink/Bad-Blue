@@ -704,3 +704,35 @@ export class EnhancedWebSearchService {
 export const enhancedWebSearch = new EnhancedWebSearchService();
 
 console.log('[Web Search Service] Initialized:', isWebSearchAvailable());
+
+/**
+ * SHADOW RETRIEVAL INTEGRATION
+ * 
+ * The PANTHEON Shadow Retrieval Engine is now available for advanced web scraping needs.
+ * It provides ghost-level data retrieval with anti-detection capabilities.
+ * 
+ * Usage:
+ * ```typescript
+ * import { shadowRetrieval } from './services/shadowRetrieval';
+ * 
+ * // Smart retrieval with automatic strategy selection
+ * const result = await shadowRetrieval.smartRetrieve('https://example.com');
+ * 
+ * // Manual retrieval with specific method
+ * const result2 = await shadowRetrieval.retrieve('https://example.com', {
+ *   method: 'puppeteer',
+ *   timeout: 30000,
+ * });
+ * 
+ * // Batch retrieval
+ * const results = await shadowRetrieval.batchRetrieve([
+ *   'https://site1.com',
+ *   'https://site2.com',
+ * ]);
+ * ```
+ * 
+ * Integration points for future enhancement:
+ * - searchOfficerRecords(): Use Shadow Retrieval to extract officer data from department websites
+ * - searchDepartmentInfo(): Use Shadow Retrieval to scrape department rosters and contact info
+ * - searchTechnicalGuidance(): Use Shadow Retrieval for advanced documentation scraping
+ */
