@@ -15,6 +15,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SEOHead } from "@/components/SEOHead";
 import { Badge } from "@/components/ui/badge";
+import { AppHeader } from "@/components/AppHeader";
 
 const US_STATES = [
   { code: "AL", name: "Alabama" },
@@ -170,34 +171,14 @@ export default function LegalToolsPage() {
       />
       
       <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-950 dark:to-slate-900">
+        {/* App Header with Back and Logout */}
+        <AppHeader 
+          title={lawTypeInfo.name}
+          subtitle="AI-Powered Legal Tools"
+          fallbackRoute="/welcome"
+        />
+        
         <div className="container max-w-7xl mx-auto px-4 py-8">
-          {/* Header */}
-          <div className="mb-8">
-            <Button
-              variant="ghost"
-              onClick={() => setLocation('/welcome')}
-              className="mb-4"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Law Types
-            </Button>
-            
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
-                <Scale className="w-8 h-8 text-blue-600 dark:text-blue-300" />
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100">
-                  {lawTypeInfo.name}
-                </h1>
-                <p className="text-slate-600 dark:text-slate-400 mt-1">
-                  {lawTypeInfo.description}
-                </p>
-              </div>
-            </div>
-          </div>
-          
-          {/* Main Content */}
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents' | 'people' | 'evidence')} className="space-y-6">
             <TabsList className="grid w-full grid-cols-4 max-w-3xl">
               <TabsTrigger value="consultation" className="flex items-center gap-2">
