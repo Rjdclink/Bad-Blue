@@ -1,6 +1,6 @@
 /**
  * PANTHEON Social Intelligence - Sherlock Engine
- * Core username search engine across 400+ platforms
+ * Core username search engine across 120+ platforms
  */
 
 import type {
@@ -140,21 +140,18 @@ export class SherlockEngine {
     options: Required<SherlockSearchOptions>
   ): Promise<SherlockResult[]> {
     const results: SherlockResult[] = [];
-    const executing: Promise<void>[] = [];
+    const executing: Set<Promise<void>> = new Set();
 
     for (const task of tasks) {
       const promise = this.executeSearch(task, options).then((result) => {
         results.push(result);
+        executing.delete(promise);
       });
 
-      executing.push(promise);
+      executing.add(promise);
 
-      if (executing.length >= options.concurrency) {
+      if (executing.size >= options.concurrency) {
         await Promise.race(executing);
-        executing.splice(
-          executing.findIndex((p) => Promise.resolve(p) === p),
-          1
-        );
       }
     }
 

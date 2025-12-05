@@ -1,6 +1,6 @@
 /**
  * PANTHEON Social Intelligence - Type Definitions
- * Types for Sherlock-based username search across 400+ platforms
+ * Types for Sherlock-based username search across 120+ platforms
  */
 
 export interface SherlockSite {
