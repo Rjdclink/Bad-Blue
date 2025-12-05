@@ -321,20 +321,19 @@ export default function Landing() {
           {/* Overlay Text - Description of LEXARA */}
           <div className="text-center mb-12 px-4">
             <p className="text-white text-lg md:text-xl lg:text-2xl leading-relaxed max-w-4xl mx-auto font-medium" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-              Meet LEXARA - She's built on an orchestrated network of thirteen specialized AI models that operate in tandem to provide you with advanced legal reasoning, analysis, in-depth research, cross-verified suggestions, and courtroom ready drafting, tailored to your filing jurisdiction. She can analyze evidence in a wide variety of formats, and provide any format of legally compliant documentation.
+              Meet LEXARA - She's built on an orchestrated network of thirteen specialized AI models that operate in tandem. She provides you with advanced legal reasoning, analysis, in-depth research, cross-verified suggestions, and courtroom ready drafting, tailored to your filing jurisdiction. She can analyze evidence in a wide variety of formats and provide any format of legally compliant documentation.
             </p>
           </div>
 
           {/* LEXARA Floating Card */}
           <div className="flex justify-center">
-            <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 shadow-2xl border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300" style={{ boxShadow: '0 0 40px rgba(96, 165, 250, 0.3), 0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
               {/* LEXARA Image */}
               <div className="mb-6">
                 <img
                   src="/images/OIP.webp"
                   alt="LEXARA - Legal Expert AI Resource Advisor"
-                  className="w-full h-auto rounded-2xl shadow-xl object-cover"
-                  style={{ boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }}
+                  className="w-full h-auto rounded-2xl object-cover shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
                   onError={handleImageError}
                 />
               </div>
