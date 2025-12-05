@@ -346,19 +346,39 @@ badblue/
 
 ### ML/NLP Intelligence Layer
 
-The People Finder OSINT system includes an advanced ML/NLP Intelligence Layer that enhances data quality and accuracy:
+The platform includes an advanced ML/NLP Intelligence Layer with two major components:
 
-- **NLP Text Processing**: Extracts entities (people, organizations, locations, emails, phones) from OSINT data
-- **ML Entity Resolution**: Fuzzy matching and deduplication across multiple sources
+#### 1. OSINT ML/NLP (People Finder)
+Enhances OSINT data quality and accuracy:
+- **NLP Text Processing**: Extracts entities (people, organizations, locations, emails, phones)
+- **ML Entity Resolution**: Fuzzy matching and deduplication across sources
 - **Confidence Scoring**: Multi-factor assessment of data reliability
 - **Worker Orchestration**: Manages ML/NLP pipeline execution
 
-**Technology Stack:**
-- compromise.js for entity extraction
-- natural for tokenization/stemming
-- fast-levenshtein for fuzzy matching
+#### 2. AI Orchestration ML Layer (NEW)
+Intelligently manages multi-model AI operations:
+- **ML Confidence Worker**: Scores and ranks outputs from multiple AI models
+- **ML Routing Worker**: Routes tasks to optimal models based on capabilities
+- **ML Clustering Worker**: Clusters and links entities (people, orgs, cases, documents, evidence)
+- **F.M.I. NLP Worker**: Forensic media intelligence with legal/evidentiary tagging
+  - Entity extraction (people, orgs, dates, statutes, courts, agencies)
+  - Relationship extraction (subject-verb-object, actor-action-target)
+  - Timeline reconstruction from events
+  - Evidentiary tagging (threats, admissions, inconsistencies, corroborations)
 
-See [docs/ML_NLP_INTELLIGENCE.md](docs/ML_NLP_INTELLIGENCE.md) for complete documentation.
+**Technology Stack:**
+- **Node-Compatible ML**: TensorFlow.js, ONNX Runtime
+- **NLP Libraries**: compromise.js, natural, wink-nlp
+- **Similarity**: fast-levenshtein for fuzzy matching
+
+**Integration:**
+- Legal Model Orchestrator (ML-enhanced routing and consensus)
+- F.M.I. Intelligence Tool (AI + NLP combined extraction)
+- LEXARA consultation engine (ML-powered analysis)
+
+See documentation:
+- [ML/NLP Intelligence (OSINT)](docs/ML_NLP_INTELLIGENCE.md)
+- [ML/NLP Orchestration Layer](docs/ML_NLP_ORCHESTRATION.md)
 
 ### Available Scripts
 
