@@ -472,21 +472,47 @@ export class PreprocessingEngine {
 
   /**
    * Extract text from HTML (strip tags)
+   * 
+   * SECURITY NOTE: This function is for TEXT EXTRACTION ONLY.
+   * The extracted text is used for entity extraction and analysis, never for HTML rendering.
+   * This is NOT an XSS sanitization function.
+   * 
+   * The output is used in:
+   * - Entity extraction (ML/NLP processing)
+   * - Text analysis
+   * - Search indexing
+   * 
+   * The output is NEVER:
+   * - Rendered in a browser
+   * - Used in HTML contexts
+   * - Sent to client-side code
+   * 
+   * If you need to sanitize HTML for browser rendering, use a proper library like DOMPurify.
    */
   private extractTextFromHtml(html: string): string {
-    // Remove script and style tags
-    let text = html.replace(/<script[^>]*>.*?<\/script>/gis, '');
-    text = text.replace(/<style[^>]*>.*?<\/style>/gis, '');
+    // Remove script and style tags with comprehensive regex
+    // Match various whitespace characters and handle edge cases
+    let text = html.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, ' ');
+    text = text.replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, ' ');
     
-    // Remove HTML tags
+    // Additional safety: remove any remaining script/style tags that might have malformed syntax
+    // This handles cases like <script > or </ script>
+    text = text.replace(/<\s*script[^>]*>/gi, ' ');
+    text = text.replace(/<\s*\/\s*script\s*>/gi, ' ');
+    text = text.replace(/<\s*style[^>]*>/gi, ' ');
+    text = text.replace(/<\s*\/\s*style\s*>/gi, ' ');
+    
+    // Remove all remaining HTML tags
     text = text.replace(/<[^>]+>/g, ' ');
     
-    // Decode HTML entities
+    // Decode common HTML entities in correct order to avoid double-escaping
     text = text.replace(/&nbsp;/g, ' ');
-    text = text.replace(/&amp;/g, '&');
     text = text.replace(/&lt;/g, '<');
     text = text.replace(/&gt;/g, '>');
     text = text.replace(/&quot;/g, '"');
+    text = text.replace(/&#39;/g, "'");
+    // Decode &amp; last to avoid re-decoding already decoded entities
+    text = text.replace(/&amp;/g, '&');
     
     return text;
   }
