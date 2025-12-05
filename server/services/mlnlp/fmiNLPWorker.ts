@@ -10,8 +10,10 @@
  */
 
 import nlp from 'compromise';
-import { TfIdf, PorterStemmer, WordTokenizer } from 'natural';
+import natural from 'natural';
 import { createLogger } from '../../logger';
+
+const { TfIdf, PorterStemmer, WordTokenizer } = natural;
 
 const log = createLogger('FMINLPWorker');
 
