@@ -225,7 +225,7 @@ function Router() {
             <Route path="/evidence-hub" component={EvidenceHub} />
           </>
         ) : (
-          // Unauthenticated users: Root route goes to Landing page (LegalWhat landing)
+          // Unauthenticated users: Root route shows the Landing page with service overview
           <Route path="/" component={Landing} />
         )}
 
