@@ -219,7 +219,7 @@ function Router() {
             <Route path="/evidence-hub" component={EvidenceHub} />
           </>
         ) : (
-          <Route path="/" component={LegalizoLanding} />
+          <Route path="/" component={Landing} />
         )}
 
         <Route component={NotFound} />
