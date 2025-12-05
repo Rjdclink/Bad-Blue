@@ -36,6 +36,7 @@ import { setupFMIRoutes } from "./routes/fmi.routes";
 import { setupConsultationRoutes } from "./routes/consultation.routes";
 import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
+import { setupVoiceRoutes } from "./routes/voice.routes";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -810,6 +811,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupLawTypesRoutes(app);
   setupFMIRoutes(app); // F.M.I. - Forensic Media Intelligence
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
+  setupVoiceRoutes(app); // Stages 11-15: LEXARA Voice Intelligence System
   
   // ============================================
   // AUTH & SUBSCRIPTION ROUTES (Phase 3)
