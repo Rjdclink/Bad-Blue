@@ -72,10 +72,10 @@ function lazyWithRetry<T extends { default: React.ComponentType<any> }>(
 
 // Lazy load all pages for better performance
 // Critical pages loaded with higher priority
-const Landing = lazyWithRetry(() => {
-  console.log('[Performance] Loading Landing page chunk...');
-  return import("@/pages/landing");
-}, 'Landing');
+const BadBlueLanding = lazyWithRetry(() => {
+  console.log('[Performance] Loading BadBlue Landing page chunk...');
+  return import("@/pages/badblue-landing");
+}, 'BadBlueLanding');
 const Login = lazyWithRetry(() => import("@/pages/login"), 'Login');
 const NotFound = lazyWithRetry(() => import("@/pages/not-found"), 'NotFound')
 const Home = lazyWithRetry(() => import("@/pages/home"), 'Home');
@@ -165,9 +165,13 @@ function Router() {
         {/* Public routes - accessible to everyone */}
         <Route path="/subscription-success" component={SubscriptionSuccess} />
         
-        {/* Root and landing routes - LegalWhat landing page for all users */}
-        <Route path="/" component={Landing} />
-        <Route path="/landing" component={Landing} />
+        {/* BadBlue routes - NO authentication required (public/free access) */}
+        <Route path="/badblue" component={BadBlueLanding} />
+        <Route path="/badblue/welcome" component={Home} />
+        
+        {/* Root and landing routes - placeholder for future LegalWhat landing */}
+        <Route path="/" component={BadBlueLanding} />
+        <Route path="/landing" component={BadBlueLanding} />
         
         {/* Other public routes */}
         <Route path="/login" component={Login} />
@@ -193,8 +197,7 @@ function Router() {
             {/* People Finder - Global Identity Intelligence */}
             <Route path="/people-finder" component={PeopleFinderPage} />
             
-            {/* BadBlue routes - Law Enforcement Accountability */}
-            <Route path="/badblue" component={Home} />
+            {/* BadBlue feature routes - still accessible when logged in */}
             <Route path="/home" component={Home} />
             <Route path="/dashboard" component={Home} />
             <Route path="/officer-search" component={OfficerSearchPage} />

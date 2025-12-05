@@ -7,7 +7,7 @@ interface SEOFooterProps {
 
 export function SEOFooter({ currentPage }: SEOFooterProps) {
   const links = [
-    { href: "/landing", label: "Home" },
+    { href: "/badblue", label: "Home" },
     { href: "/login", label: "Officer Search" },
     { href: "/login", label: "Complaints/FOIA" },
     { href: "/login", label: "§1983 Lawsuit Generator" },

@@ -33,7 +33,7 @@ export default function LegalDocumentCreator() {
   // Redirect if not authenticated
   useEffect(() => {
     if (!user) {
-      setLocation("/landing");
+      setLocation("/badblue");
     }
   }, [user, setLocation]);
 
