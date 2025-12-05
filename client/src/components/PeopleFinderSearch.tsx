@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Card,
@@ -67,11 +67,26 @@ interface PeopleSearchReport {
 export default function PeopleFinderSearch({ onBack }: PeopleFinderSearchProps) {
   const { toast } = useToast();
   
-  const [name, setName] = useState("");
-  const [location, setLocation] = useState("");
+  // Check for URL query parameters
+  const urlParams = new URLSearchParams(window.location.search);
+  const nameParam = urlParams.get('name') || '';
+  const locationParam = urlParams.get('location') || '';
+  
+  const [name, setName] = useState(nameParam);
+  const [location, setLocation] = useState(locationParam);
   const [department, setDepartment] = useState("");
   const [additionalInfo, setAdditionalInfo] = useState("");
   const [results, setResults] = useState<PeopleSearchReport | null>(null);
+
+  // Auto-search if name parameter is provided
+  useEffect(() => {
+    if (nameParam && nameParam.trim()) {
+      // Small delay to ensure component is mounted
+      setTimeout(() => {
+        handleSearch();
+      }, 500);
+    }
+  }, []); // Run only once on mount
 
   const searchMutation = useMutation({
     mutationFn: async (searchData: { name: string; location?: string; department?: string; domain?: string }) => {

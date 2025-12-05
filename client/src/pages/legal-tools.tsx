@@ -8,11 +8,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FileUpload } from "@/components/FileUpload";
+import EvidenceAnalysis from "@/components/EvidenceAnalysis";
 import { LAW_TYPE_DATA } from "@shared/lawTypes";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SEOHead } from "@/components/SEOHead";
+import { Badge } from "@/components/ui/badge";
 
 const US_STATES = [
   { code: "AL", name: "Alabama" },
@@ -88,7 +90,7 @@ export default function LegalToolsPage() {
   // Validated law type (safe to use)
   const validatedLawType = lawTypeParam;
   
-  const [activeTab, setActiveTab] = useState<'consultation' | 'documents' | 'people'>('consultation');
+  const [activeTab, setActiveTab] = useState<'consultation' | 'documents' | 'people' | 'evidence'>('consultation');
   const [state, setState] = useState("");
   const [situation, setSituation] = useState("");
   const [consultationResponse, setConsultationResponse] = useState("");
@@ -196,11 +198,15 @@ export default function LegalToolsPage() {
           </div>
           
           {/* Main Content */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents' | 'people')} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3 max-w-2xl">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'consultation' | 'documents' | 'people' | 'evidence')} className="space-y-6">
+            <TabsList className="grid w-full grid-cols-4 max-w-3xl">
               <TabsTrigger value="consultation" className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
                 Consultation
+              </TabsTrigger>
+              <TabsTrigger value="evidence" className="flex items-center gap-2">
+                <Upload className="w-4 h-4" />
+                Evidence
               </TabsTrigger>
               <TabsTrigger value="documents" className="flex items-center gap-2">
                 <FileText className="w-4 h-4" />
@@ -208,7 +214,7 @@ export default function LegalToolsPage() {
               </TabsTrigger>
               <TabsTrigger value="people" className="flex items-center gap-2">
                 <Users className="w-4 h-4" />
-                People Finder
+                People
               </TabsTrigger>
             </TabsList>
             
@@ -395,6 +401,11 @@ export default function LegalToolsPage() {
                   />
                 </CardContent>
               </Card>
+            </TabsContent>
+            
+            {/* Evidence Analysis Tab */}
+            <TabsContent value="evidence" className="space-y-6">
+              <EvidenceAnalysis lawType={validatedLawType} lawTypeName={lawTypeInfo.name} />
             </TabsContent>
             
             {/* Documents Tab */}
