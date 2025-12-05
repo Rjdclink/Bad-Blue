@@ -10,7 +10,7 @@ const heroImage = "/images/istockphoto.jpg";
 import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
-import SampleLegalConsultation from "@/components/SampleLegalConsultation";
+import SampleLexaraConsultation from "@/components/SampleLegalConsultation"; // Note: Will create dedicated SampleLexara component later
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 import { AISystemShowcase } from "@/components/AISystemShowcase";
@@ -226,7 +226,7 @@ export default function Landing() {
           {/* Three-Tier Pricing - Simplified */}
           <div className="max-w-5xl mx-auto mb-10">
             <div className="grid md:grid-cols-3 gap-6">
-              {/* Tier 1: Legal Consultation & Officer Search */}
+              {/* Tier 1: LEXARA Legal Consultation & Officer Search Officer Search */}
               <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
                 <div className="text-white mb-3">
                   <div className="text-lg font-semibold mb-2">Core Services</div>
@@ -400,7 +400,7 @@ export default function Landing() {
               Experience BadBlue's AI-powered legal analysis with a free sample consultation. No signup required.
             </p>
           </div>
-          <SampleLegalConsultation />
+          <SampleLexaraConsultation />
         </div>
       </section>
 
