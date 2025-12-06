@@ -1,12 +1,19 @@
-# EXIF Geolocation Mapper (IceEngine)
+# IceEngine - Intelligence Collection Engine
 
 ## Overview
 
-The IceEngine EXIF Geolocation Mapper provides legal, consent-based EXIF extraction and geolocation mapping for user-uploaded evidence files. This system is designed for legal proceedings, investigative work, and evidence management.
+The IceEngine provides two main capabilities for legal intelligence gathering:
+
+1. **EXIF Geolocation Mapper** - Legal, consent-based EXIF extraction and geolocation mapping for user-uploaded evidence files
+2. **Differential Snapshot Engine** - Web scraping with change detection and snapshot management for public record monitoring
+
+Both systems are designed for legal proceedings, investigative work, and evidence management.
 
 ## Features
 
-### ✅ Success Criteria (All Implemented)
+### EXIF Geolocation Mapper
+
+#### ✅ Success Criteria (All Implemented)
 
 - ✅ Consent-based EXIF extraction (throws error if no consent)
 - ✅ GPS, altitude, direction, speed, device info extraction
@@ -16,7 +23,15 @@ The IceEngine EXIF Geolocation Mapper provides legal, consent-based EXIF extract
 - ✅ Consent badge visual indicator
 - ✅ Batch processing support
 - ✅ Separate maps per case ID
-- ✅ 304 lines total (ultra-concise)
+
+### Differential Snapshot Engine
+
+- ✅ Web content scraping with Puppeteer
+- ✅ SHA-256 hash-based change detection
+- ✅ GZIP compression for efficient storage
+- ✅ Automatic snapshot management
+- ✅ Rate limiting and retry logic
+- ✅ robots.txt compliance
 
 ## Architecture
 
@@ -26,13 +41,17 @@ server/services/iceEngine/
 │   ├── ExifExtractor.ts      # Consent-based EXIF metadata extraction
 │   ├── LeafletMapper.ts       # Interactive HTML map generation
 │   └── MapRenderer.ts         # Puppeteer screenshot rendering
-├── index.ts                   # Main workflow orchestration
-└── __tests__/                 # Test suite (7 tests, all passing)
+├── core/
+│   └── SnapshotEngine.ts      # Differential snapshot and change detection
+├── scraping/
+│   └── PublicRecordScraper.ts # Web scraping with rate limiting
+├── index.ts                   # Main workflow orchestration (unified exports)
+└── __tests__/                 # Test suite (12+ tests, all passing)
 ```
 
 ## Usage
 
-### Basic Example
+### EXIF Geolocation Mapper Example
 
 ```typescript
 import { generateEvidenceMap } from './server/services/iceEngine';
@@ -52,6 +71,20 @@ const request = {
 
 const result = await generateEvidenceMap(request);
 // Returns: { screenshotPath, htmlPath, locationCount, caseId }
+```
+
+### Snapshot Engine Example
+
+```typescript
+import { crawlAndSnapshot } from './server/services/iceEngine';
+
+const result = await crawlAndSnapshot({
+  url: 'https://example.com/public-records',
+  detectChanges: true,
+  respectRobotsTxt: true,
+  maxRetries: 3
+});
+// Returns: { url, content, changed, previousHash, newHash, timestamp, metadata }
 ```
 
 ### Extract Location Data Only
