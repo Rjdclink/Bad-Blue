@@ -13,7 +13,13 @@ import {
 import { 
   semanticLegalExtractor,
   STATUTE as STATUTE_SCHEMA,
-  type Statute as ExtractedStatute
+  type Statute as ExtractedStatute,
+  courtDocketExtractor,
+  statuteExtractor,
+  precedentExtractor,
+  type CourtDocket,
+  type StatuteData,
+  type CasePrecedent
 } from './services/legalIntelligence';
 
 
@@ -70,6 +76,81 @@ async function extractStatuteFromURL(url: string): Promise<ExtractedStatute | nu
   } catch (error: any) {
     console.error('[Legal AI] Error extracting statute:', error);
     return null;
+  }
+}
+
+
+/**
+ * Phase 3B: Extract court docket information
+ * Supports PACER and state court systems
+ */
+export async function extractCourtDocket(
+  caseNumber: string,
+  jurisdiction: 'federal' | 'state' | 'local' = 'federal',
+  url?: string
+): Promise<CourtDocket | null> {
+  try {
+    console.log('[Legal AI] Extracting court docket:', caseNumber, jurisdiction);
+
+    if (url) {
+      // Extract from specific URL
+      return await courtDocketExtractor.extractDocket(url, caseNumber, jurisdiction);
+    } else {
+      // Would need to build URL from case number and jurisdiction
+      console.warn('[Legal AI] URL required for docket extraction');
+      return null;
+    }
+  } catch (error: any) {
+    console.error('[Legal AI] Error extracting docket:', error);
+    return null;
+  }
+}
+
+
+/**
+ * Phase 3B: Extract statute by citation
+ * Multi-source validation from Cornell LII, Justia, etc.
+ */
+export async function extractStatuteByCitation(
+  citation: string,
+  jurisdiction: string = 'federal'
+): Promise<StatuteData | null> {
+  try {
+    console.log('[Legal AI] Extracting statute by citation:', citation);
+    
+    return await statuteExtractor.extractStatute(citation, jurisdiction, {
+      sources: ['cornell', 'justia'],
+      validateMultiple: true,
+      includeAmendments: true,
+    });
+  } catch (error: any) {
+    console.error('[Legal AI] Error extracting statute:', error);
+    return null;
+  }
+}
+
+
+/**
+ * Phase 3B: Search for case precedents
+ * Searches Justia, FindLaw, Google Scholar
+ */
+export async function searchPrecedents(
+  query: string,
+  jurisdiction?: string,
+  maxResults: number = 10
+): Promise<CasePrecedent[]> {
+  try {
+    console.log('[Legal AI] Searching precedents:', query);
+    
+    return await precedentExtractor.extractPrecedents(query, {
+      jurisdiction,
+      maxResults,
+      sources: ['justia', 'findlaw', 'google-scholar'],
+      relevanceThreshold: 0.6,
+    });
+  } catch (error: any) {
+    console.error('[Legal AI] Error searching precedents:', error);
+    return [];
   }
 }
 
