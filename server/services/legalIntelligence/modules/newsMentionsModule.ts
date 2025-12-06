@@ -76,8 +76,8 @@ class NewsMentionsModuleImpl implements LegalIntelligenceModule {
   private async searchNews(entityName: string): Promise<any[]> {
     try {
       const query = `"${entityName}" news`;
-      const results = await unifiedSearch(query, { maxResults: 5 });
-      return results.results || [];
+      const results = await unifiedSearch(query);
+      return Array.isArray(results) ? results : [];
     } catch (error) {
       logger.error('News search failed:', error);
       return [];

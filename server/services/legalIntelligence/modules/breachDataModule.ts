@@ -31,17 +31,17 @@ class BreachDataModuleImpl implements LegalIntelligenceModule {
 
       if (email) {
         // Check for breaches
-        const breaches = await breachDetection.checkEmail(email);
+        const breachResult = await breachDetection.checkBreaches(email);
         
-        if (breaches && breaches.length > 0) {
+        if (breachResult.breached && breachResult.breaches.length > 0) {
           resultEvents.push({
             id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'breach.discovered',
             entityId: event.entityId,
             data: {
               email,
-              breaches,
-              riskLevel: breaches.length > 3 ? 'high' : 'medium',
+              breaches: breachResult.breaches,
+              riskLevel: breachResult.breaches.length > 3 ? 'high' : 'medium',
             },
             sourceModule: this.name,
             timestamp: new Date(),
