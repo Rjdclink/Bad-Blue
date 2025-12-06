@@ -445,9 +445,41 @@ export class ShadowRetrievalEngine {
     const methods: RetrievalMethod[] = options.preferredMethods || ['fetch', 'puppeteer', 'firecrawl'];
     const now = new Date();
 
-    return methods.map((method, index) => ({
+    // Filter out unavailable methods
+    const availableMethods = methods.filter(method => {
+      if (method === 'puppeteer' && !this.puppeteer.isEnabled()) {
+        log.info('Puppeteer strategy skipped - not available', { 
+          puppeteerEnabled: this.puppeteer.isEnabled() 
+        });
+        return false;
+      }
+      if (method === 'firecrawl' && !this.firecrawl.isEnabled()) {
+        log.debug('Firecrawl strategy skipped - not available', { 
+          firecrawlEnabled: this.firecrawl.isEnabled() 
+        });
+        return false;
+      }
+      // Always allow fetch as it's always available
+      return true;
+    });
+
+    // Ensure we have at least fetch as fallback
+    if (availableMethods.length === 0) {
+      log.warn('No strategies available, falling back to fetch', {
+        originalMethods: methods,
+      });
+      return [{
+        method: 'fetch' as RetrievalMethod,
+        priority: 1,
+        successRate: 0.5,
+        lastUsed: now,
+        avgResponseTime: 1000,
+      }];
+    }
+
+    return availableMethods.map((method, index) => ({
       method,
-      priority: methods.length - index,
+      priority: availableMethods.length - index,
       successRate: 0.5,
       lastUsed: now,
       avgResponseTime: method === 'fetch' ? 1000 : method === 'puppeteer' ? 3000 : 5000,
