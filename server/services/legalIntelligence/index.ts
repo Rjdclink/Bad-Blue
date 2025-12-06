@@ -38,3 +38,18 @@ export { contentFilter } from './contentFilter';
 export { markdownConverter } from './markdownConverter';
 export { extractionCache } from './extractionCache';
 export { semanticLegalExtractor } from './semanticExtractor';
+
+// Phase 3B: Adaptive Crawler & Extractors Exports
+export * from './browserManager';
+export * from './adaptiveCrawler';
+export * from './extractors/courtDocketExtractor';
+export * from './extractors/statuteExtractor';
+export * from './extractors/officerRecordsExtractor';
+export * from './extractors/precedentExtractor';
+
+export { browserManager } from './browserManager';
+export { adaptiveCrawler } from './adaptiveCrawler';
+export { courtDocketExtractor } from './extractors/courtDocketExtractor';
+export { statuteExtractor } from './extractors/statuteExtractor';
+export { officerRecordsExtractor } from './extractors/officerRecordsExtractor';
+export { precedentExtractor } from './extractors/precedentExtractor';
