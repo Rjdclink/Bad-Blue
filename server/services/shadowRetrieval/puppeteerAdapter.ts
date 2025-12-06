@@ -24,14 +24,24 @@ export class PuppeteerAdapter {
   private config: PuppeteerConfig;
   private enabled: boolean = true;
   private isRailway: boolean = false;
+  private isDocker: boolean = false;
+  private isContainer: boolean = false;
   private executablePath: string | undefined;
 
   constructor(config?: Partial<PuppeteerConfig>) {
+    // Detect Docker environment
+    this.isDocker = existsSync('/.dockerenv');
+    
     // Detect Railway environment
     this.isRailway = !!process.env.RAILWAY_ENVIRONMENT;
     
+    // Detect any container environment
+    this.isContainer = this.isDocker || this.isRailway;
+    
     log.info('Initializing Puppeteer adapter', { 
+      isDocker: this.isDocker,
       isRailway: this.isRailway,
+      isContainer: this.isContainer,
       railwayEnv: process.env.RAILWAY_ENVIRONMENT 
     });
 
@@ -47,8 +57,8 @@ export class PuppeteerAdapter {
       '--disable-features=IsolateOrigins,site-per-process',
     ];
 
-    // Add Railway-specific optimization flags
-    const railwayArgs = this.isRailway ? [
+    // Add container-specific optimization flags
+    const containerArgs = this.isContainer ? [
       '--single-process', // Critical for memory constraints
       '--no-zygote', // Prevents zombie processes
       '--disable-accelerated-2d-canvas',
@@ -59,9 +69,9 @@ export class PuppeteerAdapter {
 
     this.config = {
       headless: process.env.PUPPETEER_HEADLESS !== 'false' ? true : false,
-      timeout: this.isRailway ? 60000 : 30000, // 60s for Railway, 30s otherwise
+      timeout: this.isContainer ? 60000 : 30000, // 60s for containers, 30s otherwise
       viewport: { width: 1920, height: 1080 },
-      args: [...baseArgs, ...railwayArgs],
+      args: [...baseArgs, ...containerArgs],
       ...config,
     };
 
@@ -70,6 +80,7 @@ export class PuppeteerAdapter {
       timeout: this.config.timeout,
       executablePath: this.executablePath,
       argsCount: this.config.args?.length,
+      isContainer: this.isContainer,
     });
   }
 
@@ -77,7 +88,27 @@ export class PuppeteerAdapter {
    * Detect system Chromium/Chrome path with fallbacks
    */
   private detectChromiumPath(): string | undefined {
-    // Priority order: env var, then system paths
+    // Container-specific Chromium paths (highest priority for Docker/Railway)
+    if (this.isContainer) {
+      const containerPaths = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+      ];
+
+      for (const path of containerPaths) {
+        if (path && existsSync(path)) {
+          log.info('Using container Chromium', { 
+            path, 
+            isDocker: this.isDocker, 
+            isRailway: this.isRailway 
+          });
+          return path;
+        }
+      }
+    }
+
+    // Priority order for non-container environments: env var, then system paths
     const chromiumPaths = [
       process.env.PUPPETEER_EXECUTABLE_PATH,
       '/usr/bin/chromium-browser',
