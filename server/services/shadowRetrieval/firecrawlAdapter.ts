@@ -234,6 +234,34 @@ export class FirecrawlAdapter {
   getConfig(): FirecrawlConfig {
     return { ...this.config, apiKey: '***' }; // Hide API key
   }
+
+  /**
+   * Scrape with snapshot integration
+   */
+  async scrapeWithSnapshot(url: string, options?: FirecrawlOptions) {
+    const { snapshotEngine } = await import('../iceEngine');
+    const result = await this.scrape(url, options);
+    
+    if (!result.success) {
+      return { content: '', diff: null, result };
+    }
+
+    const content = result.markdown || result.html || '';
+    const diff = await snapshotEngine.detectChanges(url, content);
+    
+    if (diff.changed) {
+      await snapshotEngine.createSnapshot(url, content, {
+        statusCode: 200,
+        headers: {},
+        contentType: 'text/html',
+      });
+      console.log(`[IceEngine] Snapshot created for ${url} (hash: ${diff.newHash.substring(0, 8)})`);
+    } else {
+      console.log(`[IceEngine] No changes detected for ${url}`);
+    }
+
+    return { content, diff, result };
+  }
 }
 
 /**

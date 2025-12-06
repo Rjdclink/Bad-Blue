@@ -1,5 +1,20 @@
 # LegalWhat - AI Legal Platform
 
+## ⚡ Quick Start (90 seconds)
+
+```bash
+bash scripts/instant-setup.sh
+```
+
+Open http://localhost:5000 and start using PANTHEON.
+
+**Alternative methods:**
+- `make setup` - Using Make
+- Open in VS Code → "Reopen in Container"
+- See [Quick Start Guide](docs/QUICK_START.md)
+
+---
+
 ## Overview
 LegalWhat is an AI-powered legal platform that empowers citizens to access legal help across 30 areas of law. The platform features Law Enforcement Accountability (formerly BadBlue) as a flagship service, providing tools for filing complaints and initiating civil rights lawsuits against police officers. It leverages AI for officer identification, legal analysis, intelligent form prefill, automated routing, and jurisdiction-specific legal document generation. The platform supports secure evidence uploads and offers services like LegalAI Consultation, Officer Search, and various legal document generations to enhance legal accessibility through affordable legal avenues.
 
