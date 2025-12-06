@@ -62,7 +62,7 @@ EXPOSE 5000
 RUN useradd -m appuser && \
     chown -R appuser:appuser /app
 
-USER appuser
+USER node
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
