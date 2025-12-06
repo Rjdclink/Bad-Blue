@@ -331,7 +331,7 @@ Railway automatically detects the Dockerfile and builds the container.
 
 ```bash
 # Inside container
-docker exec -it pantheon-app npm run test:puppeteer
+docker exec -it pantheon-app npm run docker:test
 
 # Or manually test
 docker run --rm pantheon:latest node -e "

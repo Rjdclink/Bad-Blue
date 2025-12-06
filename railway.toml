@@ -15,7 +15,7 @@ restartPolicyMaxRetries = 3
 
 [services.web]
 name = "badblue-web"
-port = 5000
+port = 3000
 
 # Environment variables should be configured in Railway dashboard
 # Required environment variables:
