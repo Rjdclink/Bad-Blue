@@ -21,8 +21,13 @@ import { PuppeteerAdapter } from './puppeteerAdapter';
 import { DomainIntelligence } from './domainIntelligence';
 import { sleep } from './utils/timing';
 import { logger } from '../../logger';
+import { cacheManager } from '../caching';
+import { CACHE_CONFIG } from '../../config';
 
 const log = logger.child({ component: 'shadowRetrieval:engine' });
+
+// Initialize retrieval cache
+const retrievalCache = cacheManager.getCache('shadow-retrieval', CACHE_CONFIG.retrieval);
 
 /**
  * Shadow Retrieval Engine
@@ -104,6 +109,14 @@ export class ShadowRetrievalEngine {
     const startTime = new Date();
     const domain = this.extractDomain(url);
     
+    // Check cache first
+    const cacheKey = `${url}:${options.method || 'auto'}`;
+    const cached = retrievalCache.get(cacheKey);
+    if (cached) {
+      log.debug('Cache hit for URL', { url, cacheKey });
+      return cached as RetrievalResult;
+    }
+    
     // Wait if too many concurrent requests
     await this.waitForCapacity();
     this.activeRequests++;
@@ -151,6 +164,12 @@ export class ShadowRetrievalEngine {
         },
         domainProfile: this.domainIntelligence.getProfile(domain),
       };
+
+      // Cache successful retrieval
+      if (retrievalResult.success) {
+        retrievalCache.set(cacheKey, retrievalResult);
+        log.debug('Cached retrieval result', { url, cacheKey });
+      }
 
       log.info('Retrieval successful', {
         url,
