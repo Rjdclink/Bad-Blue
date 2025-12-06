@@ -2,7 +2,8 @@
  * PANTHEON Location Intelligence - Type Definitions
  * 
  * Defines core interfaces for tracking and aggregating location data
- * from public social media sources for OSINT surveillance.
+ * from public social media sources for legitimate security research,
+ * threat intelligence, and authorized investigations.
  */
 
 /**

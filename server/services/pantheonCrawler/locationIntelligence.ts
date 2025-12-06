@@ -40,7 +40,8 @@ export class LocationIntelligenceService {
       }
       
       // Sanitize username to prevent injection attacks
-      const sanitizedUsername = username.trim().replace(/[^a-zA-Z0-9._]/g, '');
+      // Instagram usernames only allow alphanumeric characters and underscores
+      const sanitizedUsername = username.trim().replace(/[^a-zA-Z0-9_]/g, '');
       if (sanitizedUsername !== username.trim()) {
         throw new Error('Username contains invalid characters');
       }
@@ -55,17 +56,17 @@ export class LocationIntelligenceService {
       //    - Calculate confidence based on data quality
       // 5. Return sorted by timestamp (newest first)
       
+      // TODO: Implement actual scraping logic
       // Use fetch with proper headers to avoid detection:
-      const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-US,en;q=0.9',
-      };
+      // const headers = {
+      //   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      //   'Accept': 'text/html,application/xhtml+xml',
+      //   'Accept-Language': 'en-US,en;q=0.9',
+      // };
       
       // Rate limiting: Max 1 request per 5 seconds
       await this.rateLimit('instagram');
       
-      // TODO: Implement actual scraping logic
       // For now, return empty array as foundation
       
       console.log(`[LocationIntel] Instagram scrape initiated for ${sanitizedUsername}`);

@@ -88,7 +88,7 @@ export interface WebSearchResult {
 }
 
 // Rate limit configuration
-const DAILY_REQUEST_LIMIT = 50; // Conservative limit for free tier
+const DAILY_REQUEST_LIMIT = 50; // Per model limit for free tier (50 × 6 models = 300 total)
 const CIRCUIT_BREAKER_FAILURES = 3;
 const CIRCUIT_BREAKER_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
