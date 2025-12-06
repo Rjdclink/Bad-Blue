@@ -48,8 +48,6 @@ interface ContentBlock {
  */
 export class ContentFilter {
   private avgDocLength: number = 0;
-  private termFrequencies: Map<string, number> = new Map();
-  private totalDocs: number = 0;
 
   /**
    * Filter HTML content to remove noise and keep relevant legal content
@@ -68,7 +66,7 @@ export class ContentFilter {
       return html;
     }
 
-    // Calculate average document length
+    // Calculate average document length for BM25
     this.avgDocLength = blocks.reduce((sum, block) => sum + block.wordCount, 0) / blocks.length;
 
     // Score each block using BM25
@@ -184,7 +182,7 @@ export class ContentFilter {
 
   /**
    * Calculate BM25 score for a content block
-   * BM25 formula: IDF(q) * (f(q,D) * (k1 + 1)) / (f(q,D) + k1 * (1 - b + b * |D| / avgdl))
+   * Simplified BM25 for single-document scoring with legal term weighting
    */
   private calculateBM25Score(block: ContentBlock): number {
     const words = block.text.toLowerCase().split(/\s+/);
@@ -205,18 +203,19 @@ export class ContentFilter {
       const freq = termFreq.get(term.toLowerCase()) || 0;
       if (freq > 0) {
         matchedTerms++;
-        // BM25 term score
-        const idf = Math.log((this.totalDocs + 1) / (freq + 0.5));
+        // Simplified BM25 term score (single document context)
+        // For single document, we focus on term frequency saturation
         const numerator = freq * (BM25_K1 + 1);
         const denominator = freq + BM25_K1 * (1 - BM25_B + BM25_B * block.wordCount / Math.max(this.avgDocLength, 1));
-        totalScore += idf * (numerator / denominator);
+        const termScore = numerator / denominator;
+        totalScore += termScore;
       }
     });
 
     // Normalize score (0-1 range approximately)
-    const normalizedScore = Math.min(totalScore / 10, 1);
+    const normalizedScore = Math.min(totalScore / 5, 1);
 
-    // Boost score if multiple legal terms present
+    // Boost score if multiple legal terms present (diversity bonus)
     const diversityBonus = matchedTerms > 3 ? 0.2 : 0;
 
     return normalizedScore + diversityBonus;
@@ -244,10 +243,9 @@ export class ContentFilter {
   /**
    * Get statistics about the last filtering operation
    */
-  getStats(): { avgDocLength: number; totalTerms: number } {
+  getStats(): { avgDocLength: number } {
     return {
       avgDocLength: this.avgDocLength,
-      totalTerms: this.termFrequencies.size,
     };
   }
 }

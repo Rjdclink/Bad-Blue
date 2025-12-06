@@ -47,18 +47,19 @@ export class ExtractionCache {
   }
 
   /**
-   * Generate cache key from schema name and URL
+   * Generate cache key from schema name, URL, and optional parameters
    */
-  private generateKey(schemaName: string, url: string): string {
-    const urlHash = createHash('sha256').update(url).digest('hex');
+  private generateKey(schemaName: string, url: string, options?: string): string {
+    const baseString = options ? `${schemaName}:${url}:${options}` : `${schemaName}:${url}`;
+    const urlHash = createHash('sha256').update(baseString).digest('hex');
     return `${schemaName}:${urlHash}`;
   }
 
   /**
    * Get cached extraction if available and not expired
    */
-  get(schemaName: string, url: string): any | null {
-    const key = this.generateKey(schemaName, url);
+  get(schemaName: string, url: string, options?: string): any | null {
+    const key = this.generateKey(schemaName, url, options);
     const entry = this.cache.get(key);
 
     if (!entry) {
@@ -80,8 +81,8 @@ export class ExtractionCache {
   /**
    * Set cache entry
    */
-  set(schemaName: string, url: string, data: any, ttl?: number): void {
-    const key = this.generateKey(schemaName, url);
+  set(schemaName: string, url: string, data: any, ttl?: number, options?: string): void {
+    const key = this.generateKey(schemaName, url, options);
 
     // Check size limit
     if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
@@ -104,15 +105,15 @@ export class ExtractionCache {
   /**
    * Check if entry exists and is valid
    */
-  has(schemaName: string, url: string): boolean {
-    return this.get(schemaName, url) !== null;
+  has(schemaName: string, url: string, options?: string): boolean {
+    return this.get(schemaName, url, options) !== null;
   }
 
   /**
    * Delete cache entry
    */
-  delete(schemaName: string, url: string): boolean {
-    const key = this.generateKey(schemaName, url);
+  delete(schemaName: string, url: string, options?: string): boolean {
+    const key = this.generateKey(schemaName, url, options);
     const deleted = this.cache.delete(key);
     if (deleted) {
       log.debug('Cache entry deleted', { schemaName, url });

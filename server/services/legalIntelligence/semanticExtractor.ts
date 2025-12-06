@@ -216,6 +216,7 @@ Return JSON format:
 
     let lastError: Error | null = null;
 
+    // Retry logic: attempt up to (retries + 1) total times
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const response = await generateUserText(
@@ -239,7 +240,7 @@ Return JSON format:
         // Extract confidence and data
         const confidence = typeof parsed.confidence === 'number' 
           ? Math.max(0, Math.min(1, parsed.confidence))
-          : 0.7;
+          : 0.7; // Default confidence if not provided
 
         const data = parsed.data || parsed;
 
@@ -247,14 +248,15 @@ Return JSON format:
 
       } catch (error: any) {
         lastError = error;
-        log.warn(`Extraction attempt ${attempt + 1} failed`, {
+        log.warn(`Extraction attempt ${attempt + 1}/${retries + 1} failed`, {
           schemaName: schema.name,
           error: error.message,
         });
 
         if (attempt < retries) {
-          // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          // Wait before retry (exponential backoff)
+          const waitTime = 1000 * (attempt + 1);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
     }
