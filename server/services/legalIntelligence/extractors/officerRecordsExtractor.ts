@@ -308,7 +308,8 @@ export class OfficerRecordsExtractor {
         uniqueRecords.set(key, {
           ...record,
           metadata: {
-            ...record.metadata,
+            extractedAt: record.metadata?.extractedAt || Date.now(),
+            confidence: record.metadata?.confidence || 0.5,
             deduplicated: true,
           },
         });

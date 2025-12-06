@@ -283,7 +283,7 @@ Return ONLY a JSON array of scores in the same order: [0.95, 0.82, ...]
           temperature: 0.3,
           useJSON: true,
         },
-        TaskPriority.NORMAL_USER
+        TaskPriority.HIGH_USER
       );
 
       // Parse scores

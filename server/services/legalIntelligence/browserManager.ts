@@ -133,7 +133,7 @@ export class BrowserManager {
         if (typeof options.waitFor === 'string') {
           await page.waitForSelector(options.waitFor, { timeout: this.options.timeout });
         } else {
-          await page.waitForTimeout(options.waitFor);
+          await new Promise(resolve => setTimeout(resolve, options.waitFor as number));
         }
       }
 
@@ -143,7 +143,7 @@ export class BrowserManager {
       // Take screenshot if requested
       let screenshot: Buffer | undefined;
       if (options.screenshot) {
-        screenshot = await page.screenshot({ fullPage: true });
+        screenshot = Buffer.from(await page.screenshot({ fullPage: true }));
       }
 
       const result: RenderResult = {
@@ -244,7 +244,7 @@ export class BrowserManager {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    return await page.screenshot({ fullPage });
+    return Buffer.from(await page.screenshot({ fullPage }));
   }
 
   /**
