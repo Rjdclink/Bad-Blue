@@ -114,10 +114,10 @@ export class ShadowRetrievalEngine {
     
     // Check cache first
     const cacheKey = `${url}:${options.method || 'auto'}`;
-    const cached = retrievalCache.get<RetrievalResult>(cacheKey);
+    const cached = retrievalCache.get(cacheKey);
     if (cached) {
       log.debug('Cache hit for URL', { url, cacheKey });
-      return cached;
+      return cached as RetrievalResult;
     }
     
     // Wait if too many concurrent requests
