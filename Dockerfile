@@ -53,11 +53,10 @@ RUN npm run build
 # Expose application port
 EXPOSE 3000
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+# Use existing non-root user shipped in the base image
+RUN chown -R node:node /app
 
-USER appuser
+USER node
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
