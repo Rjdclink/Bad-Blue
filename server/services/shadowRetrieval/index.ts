@@ -459,14 +459,14 @@ export class ShadowRetrievalEngine {
         });
         return false;
       }
+      // Always allow fetch as it's always available
       return true;
     });
 
-    // Ensure fetch is always available as fallback
-    if (availableMethods.length === 0 || !availableMethods.includes('fetch')) {
+    // Ensure we have at least fetch as fallback
+    if (availableMethods.length === 0) {
       log.warn('No strategies available, falling back to fetch', {
         originalMethods: methods,
-        availableMethods,
       });
       return [{
         method: 'fetch' as RetrievalMethod,

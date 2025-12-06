@@ -186,9 +186,13 @@ export class PuppeteerAdapter {
     };
 
     // Handle process termination signals
-    process.once('SIGINT', cleanup);
-    process.once('SIGTERM', cleanup);
-    process.once('exit', cleanup);
+    // Only register if not already registered
+    if (process.listenerCount('SIGINT') === 0) {
+      process.once('SIGINT', cleanup);
+    }
+    if (process.listenerCount('SIGTERM') === 0) {
+      process.once('SIGTERM', cleanup);
+    }
   }
 
   /**
@@ -500,28 +504,20 @@ export async function puppeteerScrape(url: string, options?: PuppeteerOptions): 
 /**
  * Cleanup function to close browser on process exit
  */
-let cleanupRegistered = false;
-if (!cleanupRegistered) {
-  cleanupRegistered = true;
-  
-  const shutdown = async () => {
-    if (defaultPuppeteerAdapter) {
-      try {
-        await defaultPuppeteerAdapter.close();
-      } catch (err: any) {
-        log.error('Failed to close Puppeteer browser on exit', { error: err.message });
-      }
+const shutdown = async () => {
+  if (defaultPuppeteerAdapter) {
+    try {
+      await defaultPuppeteerAdapter.close();
+    } catch (err: any) {
+      log.error('Failed to close Puppeteer browser on exit', { error: err.message });
     }
-  };
+  }
+};
 
+// Register shutdown handlers only once
+if (process.listenerCount('SIGINT') === 0) {
   process.on('SIGINT', shutdown);
+}
+if (process.listenerCount('SIGTERM') === 0) {
   process.on('SIGTERM', shutdown);
-  process.on('exit', () => {
-    // Note: async operations not guaranteed in exit handler
-    if (defaultPuppeteerAdapter) {
-      defaultPuppeteerAdapter.close().catch(err => {
-        console.error('Failed to close Puppeteer browser on exit:', err.message);
-      });
-    }
-  });
 }
