@@ -22,3 +22,6 @@ export { PatternDetectionEngine, createPatternDetectionEngine } from './patternD
 
 // Module exports
 export * from './modules';
+
+// Integration utilities
+export * from './integrations';
