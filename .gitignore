@@ -35,3 +35,7 @@ data/
 # Uploads directory (Stage 2A - Media Upload System)
 uploads/
 !uploads/.gitkeep
+
+# Test output directories
+test-output/
+evidence-maps/

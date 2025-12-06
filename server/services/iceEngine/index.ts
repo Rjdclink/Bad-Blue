@@ -1,6 +1,27 @@
+// EXIF Geolocation Mapper exports
+import { exifExtractor, type ConsentedUpload, type LocationData } from './exif/ExifExtractor';
+import { leafletMapper } from './exif/LeafletMapper';
+import { mapRenderer } from './exif/MapRenderer';
+import path from 'path';
+
+// Snapshot Engine exports
 import { snapshotEngine } from './core/SnapshotEngine';
 import { publicRecordScraper } from './scraping/PublicRecordScraper';
 
+// EXIF Geolocation Mapper interfaces
+interface EvidenceMapRequest {
+  uploads: ConsentedUpload[];
+  caseId: string;
+}
+
+interface EvidenceMapResult {
+  screenshotPath: string;
+  htmlPath: string;
+  locationCount: number;
+  caseId: string;
+}
+
+// Snapshot Engine interfaces
 interface CrawlRequest {
   url: string;
   detectChanges?: boolean;
@@ -21,6 +42,47 @@ interface CrawlResult {
   };
 }
 
+// EXIF Geolocation Mapper function
+export async function generateEvidenceMap(request: EvidenceMapRequest): Promise<EvidenceMapResult> {
+  const { uploads, caseId } = request;
+
+  // Validate consent
+  const { valid, invalid } = exifExtractor.validateConsent(uploads);
+  if (invalid.length > 0) {
+    throw new Error(`Cannot process ${invalid.length} files without consent`);
+  }
+
+  console.log(`[IceEngine] Extracting EXIF from ${valid.length} files...`);
+  const locations = await exifExtractor.extractBatch(valid);
+
+  if (locations.length === 0) {
+    throw new Error('No GPS data found in uploaded files');
+  }
+
+  console.log(`[IceEngine] Found ${locations.length} locations`);
+
+  const outputPath = path.join(process.cwd(), 'evidence-maps');
+  const htmlPath = await leafletMapper.generateMapHTML({
+    locations,
+    caseId,
+    outputPath,
+  });
+
+  const screenshotPath = await mapRenderer.renderMapScreenshot({
+    htmlPath,
+    outputPath,
+    caseId,
+  });
+
+  return {
+    screenshotPath,
+    htmlPath,
+    locationCount: locations.length,
+    caseId,
+  };
+}
+
+// Snapshot Engine function
 export async function crawlAndSnapshot(request: CrawlRequest): Promise<CrawlResult> {
   const { url, detectChanges = true } = request;
 
@@ -69,5 +131,6 @@ export async function crawlAndSnapshot(request: CrawlRequest): Promise<CrawlResu
   };
 }
 
-export { snapshotEngine, publicRecordScraper };
-export type { CrawlRequest, CrawlResult };
+// Export all components
+export { exifExtractor, leafletMapper, mapRenderer, snapshotEngine, publicRecordScraper };
+export type { ConsentedUpload, LocationData, EvidenceMapRequest, EvidenceMapResult, CrawlRequest, CrawlResult };
