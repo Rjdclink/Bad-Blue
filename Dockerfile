@@ -1,35 +1,6 @@
 # Production-grade Puppeteer Dockerfile with multi-stage build
-# Build stage
+# Build stage - for compiling the application
 FROM node:20-bookworm-slim AS builder
-
-# Install Chromium and all required dependencies for build
-RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-sandbox \
-    fonts-liberation \
-    fonts-noto-color-emoji \
-    fonts-noto-cjk \
-    libappindicator3-1 \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libxss1 \
-    xdg-utils \
-    wget \
-    ca-certificates \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -50,7 +21,7 @@ RUN npm run build && \
 # Production stage
 FROM node:20-bookworm-slim AS production
 
-# Install only runtime dependencies (Chromium and required libraries)
+# Install Chromium and all required runtime dependencies
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-sandbox \
@@ -97,8 +68,8 @@ COPY --from=builder /app/public ./public
 # Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts
 
-# Expose application port (Railway will set PORT environment variable)
-EXPOSE ${PORT:-5000}
+# Expose application port (Railway will use PORT env var at runtime)
+EXPOSE 5000
 
 # Create non-root user for security
 RUN useradd -m appuser && \
@@ -106,7 +77,7 @@ RUN useradd -m appuser && \
 
 USER appuser
 
-# Health check using dynamic port
+# Health check using dynamic port (Railway sets PORT env var)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD node -e "const port = process.env.PORT || 5000; require('http').get('http://localhost:' + port + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => {process.exit(1)})"
 
