@@ -3,19 +3,18 @@
 # Platform-independent deployment configuration
 
 [build]
-builder = "NIXPACKS"
-buildCommand = "npm run build && node scripts/copy-static-assets.cjs && node scripts/verify-build.cjs"
-
-[build.env]
-NODE_VERSION = "20"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "npm start"
 healthcheckPath = "/api/health"
-healthcheckTimeout = 30
+healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
-region = "us-west1"
+
+[env]
+NODE_ENV = "production"
 
 [services.web]
 name = "badblue-web"
