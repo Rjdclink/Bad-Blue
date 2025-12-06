@@ -38,3 +38,18 @@ export { contentFilter } from './contentFilter';
 export { markdownConverter } from './markdownConverter';
 export { extractionCache } from './extractionCache';
 export { semanticLegalExtractor } from './semanticExtractor';
+
+// Phase 3B: Adaptive Crawler + Browser Manager Exports
+export { browserManager, BrowserManager } from './browserManager';
+export { adaptiveLegalCrawler, AdaptiveLegalCrawler } from './adaptiveCrawler';
+
+// Extractor exports
+export { courtDocketExtractor, CourtDocketExtractor } from './extractors/courtDocketExtractor';
+export { statuteExtractor, StatuteExtractor } from './extractors/statuteExtractor';
+export { officerRecordsExtractor, OfficerRecordsExtractor } from './extractors/officerRecordsExtractor';
+export { precedentExtractor, PrecedentExtractor } from './extractors/precedentExtractor';
+
+export type { Jurisdiction, DocketExtractionOptions } from './extractors/courtDocketExtractor';
+export type { StatuteSource, StatuteExtractionOptions } from './extractors/statuteExtractor';
+export type { OfficerRecordsOptions } from './extractors/officerRecordsExtractor';
+export type { PrecedentSource, PrecedentSearchOptions } from './extractors/precedentExtractor';

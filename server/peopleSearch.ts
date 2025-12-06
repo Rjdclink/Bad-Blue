@@ -8,7 +8,11 @@ import { emailFinder } from './services/emailFinder';
 import { breachDetection } from './services/breachDetection';
 import { mlnlpIntelligenceService, MLNLPResult } from './services/mlnlp';
 import { socialIntelligenceService } from './services/socialIntelligence';
-import { emailDiscoveryService } from './services/legalIntelligence';
+import { 
+  emailDiscoveryService,
+  precedentExtractor,
+  type CasePrecedent
+} from './services/legalIntelligence';
 import type { SherlockResult } from './services/socialIntelligence/types';
 
 /**
@@ -41,6 +45,7 @@ export interface PeopleSearchReport {
   publicRecords: string[];
   onlineMentions: string[];
   riskAndReputation: string[];
+  caseHistory?: CasePrecedent[]; // Phase 3B: Legal case history
   summary: string;
   confidenceScore: number;
   sources: OSINTSource[];
@@ -780,6 +785,34 @@ export async function conductFullOSINT(
     return enhancedReport;
   }
 }
+
+/**
+ * Phase 3B: Search case history for a person
+ * Searches legal databases for cases involving the person
+ */
+export async function searchCaseHistory(
+  personName: string,
+  maxResults: number = 10
+): Promise<CasePrecedent[]> {
+  try {
+    console.log('[People Search] Searching case history:', personName);
+    
+    // Search for cases involving this person
+    const query = `"${personName}"`;
+    const precedents = await precedentExtractor.extractPrecedents(query, {
+      maxResults,
+      sources: ['justia', 'findlaw'],
+      relevanceThreshold: 0.5,
+    });
+
+    console.log('[People Search] Found case history:', precedents.length);
+    return precedents;
+  } catch (error: any) {
+    console.error('[People Search] Error searching case history:', error);
+    return [];
+  }
+}
+
 
 /**
  * SHADOW RETRIEVAL INTEGRATION NOTES
