@@ -135,3 +135,17 @@ export const getBaseUrl = (): string => {
   if (cfg.REPL_SLUG) return `https://${cfg.REPL_SLUG}.replit.app`;
   return `http://localhost:${cfg.PORT}`;
 };
+
+export const CACHE_CONFIG = {
+  retrieval: {
+    ttl: 3600000,
+    maxSize: 50 * 1024 * 1024,
+    maxEntries: 500
+  },
+  search: {
+    ttl: 1800000,
+    maxSize: 20 * 1024 * 1024,
+    maxEntries: 200
+  }
+};
+
