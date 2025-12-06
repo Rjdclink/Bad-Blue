@@ -1,4 +1,5 @@
 /**
+import { generateEventId } from '../utils';
  * Legal Intelligence Modules
  * SpiderFoot-style plugin modules for data enrichment
  */

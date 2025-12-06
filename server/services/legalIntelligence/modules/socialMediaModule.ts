@@ -1,4 +1,5 @@
 /**
+import { generateEventId } from '../utils';
  * Social Media Module
  * Searches public social media profiles
  * SpiderFoot plugin pattern

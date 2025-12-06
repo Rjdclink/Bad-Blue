@@ -1,4 +1,5 @@
 /**
+import { generateEventId } from '../utils';
  * Corporate Module
  * Enriches entities with business entity relationships
  * SpiderFoot plugin pattern

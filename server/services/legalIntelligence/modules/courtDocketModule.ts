@@ -1,4 +1,5 @@
 /**
+import { generateEventId } from '../utils';
  * Court Docket Module
  * Searches court docket systems for case information
  * SpiderFoot plugin pattern

@@ -1,4 +1,5 @@
 /**
+import { generateEventId } from '../utils';
  * Licensing Module
  * Searches professional license databases
  * SpiderFoot plugin pattern

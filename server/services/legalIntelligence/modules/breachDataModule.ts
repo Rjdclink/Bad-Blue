@@ -7,6 +7,7 @@
 import { createLogger } from '../../../logger';
 import type { LegalIntelligenceModule, IntelligenceEvent } from '../types';
 import { breachDetection } from '../../breachDetection';
+import { generateEventId } from '../utils';
 
 const logger = createLogger('BreachDataModule');
 
@@ -35,7 +36,7 @@ class BreachDataModuleImpl implements LegalIntelligenceModule {
         
         if (breachResult.breached && breachResult.breaches.length > 0) {
           resultEvents.push({
-            id: `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+            id: generateEventId(),
             type: 'breach.discovered',
             entityId: event.entityId,
             data: {

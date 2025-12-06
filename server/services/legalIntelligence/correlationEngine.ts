@@ -7,6 +7,7 @@ import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
 import type { IntelligenceEvent, EventHandler, LegalIntelligenceModule, ModuleTask } from './types';
 import { correlationDatabase } from './correlationDB';
+import { AsyncMutex, generateEventId } from './utils';
 
 const logger = createLogger('CorrelationEngine');
 
@@ -215,6 +216,7 @@ export class CorrelationEngine {
   private threadPool: ModuleThreadPool;
   private modules: Map<string, LegalIntelligenceModule> = new Map();
   private initialized = false;
+  private initMutex = new AsyncMutex();
 
   constructor(maxConcurrent: number = 10) {
     this.eventBus = new IntelligenceEventBus();
@@ -222,21 +224,23 @@ export class CorrelationEngine {
   }
 
   /**
-   * Initialize engine
+   * Initialize engine (thread-safe)
    */
   async initialize(): Promise<void> {
-    if (this.initialized) return;
+    return this.initMutex.runExclusive(async () => {
+      if (this.initialized) return;
 
-    try {
-      // Initialize database
-      await correlationDatabase.initialize();
-      
-      this.initialized = true;
-      logger.info('Correlation engine initialized');
-    } catch (error) {
-      logger.error('Failed to initialize correlation engine:', error);
-      throw error;
-    }
+      try {
+        // Initialize database
+        await correlationDatabase.initialize();
+        
+        this.initialized = true;
+        logger.info('Correlation engine initialized');
+      } catch (error) {
+        logger.error('Failed to initialize correlation engine:', error);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -296,7 +300,7 @@ export class CorrelationEngine {
    */
   async emit(type: string, data: any, sourceModule: string, entityId?: string): Promise<string> {
     const event: IntelligenceEvent = {
-      id: this.generateEventId(),
+      id: generateEventId(),
       type,
       entityId,
       data,
@@ -364,13 +368,6 @@ export class CorrelationEngine {
 
     this.initialized = false;
     logger.info('Correlation engine shutdown complete');
-  }
-
-  /**
-   * Generate unique event ID
-   */
-  private generateEventId(): string {
-    return `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   }
 }
 

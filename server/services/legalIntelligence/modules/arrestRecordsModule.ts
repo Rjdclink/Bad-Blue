@@ -1,4 +1,5 @@
 /**
+import { generateEventId } from '../utils';
  * Arrest Records Module
  * Searches arrest and criminal history databases
  * SpiderFoot plugin pattern

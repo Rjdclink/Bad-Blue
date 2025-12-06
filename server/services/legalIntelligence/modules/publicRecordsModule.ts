@@ -7,6 +7,7 @@
 import { createLogger } from '../../../logger';
 import type { LegalIntelligenceModule, IntelligenceEvent, EntityNode } from '../types';
 import { correlationDatabase } from '../correlationDB';
+import { generateEventId } from '../utils';
 
 const logger = createLogger('PublicRecordsModule');
 
@@ -39,7 +40,7 @@ class PublicRecordsModuleImpl implements LegalIntelligenceModule {
         // Create events for discovered entities
         for (const lawsuit of enrichedData.lawsuits) {
           resultEvents.push({
-            id: `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+            id: generateEventId(),
             type: 'entity.lawsuit.discovered',
             entityId: lawsuit.id,
             data: lawsuit,
@@ -51,7 +52,7 @@ class PublicRecordsModuleImpl implements LegalIntelligenceModule {
 
         for (const complaint of enrichedData.complaints) {
           resultEvents.push({
-            id: `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+            id: generateEventId(),
             type: 'entity.complaint.discovered',
             entityId: complaint.id,
             data: complaint,

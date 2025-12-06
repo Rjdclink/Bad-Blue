@@ -7,6 +7,7 @@
 import { createLogger } from '../../../logger';
 import type { LegalIntelligenceModule, IntelligenceEvent } from '../types';
 import { unifiedSearch } from '../../../webSearchService';
+import { generateEventId } from '../utils';
 
 const logger = createLogger('NewsMentionsModule');
 
@@ -35,7 +36,7 @@ class NewsMentionsModuleImpl implements LegalIntelligenceModule {
         
         if (newsResults.length > 0) {
           resultEvents.push({
-            id: `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+            id: generateEventId(),
             type: 'news.mention.discovered',
             entityId: event.entityId,
             data: {
