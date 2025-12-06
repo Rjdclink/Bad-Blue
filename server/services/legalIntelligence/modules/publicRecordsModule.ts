@@ -39,7 +39,7 @@ class PublicRecordsModuleImpl implements LegalIntelligenceModule {
         // Create events for discovered entities
         for (const lawsuit of enrichedData.lawsuits) {
           resultEvents.push({
-            id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            id: `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
             type: 'entity.lawsuit.discovered',
             entityId: lawsuit.id,
             data: lawsuit,
@@ -51,7 +51,7 @@ class PublicRecordsModuleImpl implements LegalIntelligenceModule {
 
         for (const complaint of enrichedData.complaints) {
           resultEvents.push({
-            id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            id: `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
             type: 'entity.complaint.discovered',
             entityId: complaint.id,
             data: complaint,

@@ -240,6 +240,13 @@ export class CorrelationEngine {
   }
 
   /**
+   * Check if engine is initialized
+   */
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  /**
    * Register module
    */
   registerModule(module: LegalIntelligenceModule): void {
@@ -363,7 +370,7 @@ export class CorrelationEngine {
    * Generate unique event ID
    */
   private generateEventId(): string {
-    return `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   }
 }
 

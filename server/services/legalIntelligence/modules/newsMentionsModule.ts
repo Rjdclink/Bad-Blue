@@ -35,7 +35,7 @@ class NewsMentionsModuleImpl implements LegalIntelligenceModule {
         
         if (newsResults.length > 0) {
           resultEvents.push({
-            id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            id: `event_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
             type: 'news.mention.discovered',
             entityId: event.entityId,
             data: {

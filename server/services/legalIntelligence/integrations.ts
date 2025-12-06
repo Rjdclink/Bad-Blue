@@ -29,7 +29,7 @@ export async function enrichOfficerSearch(params: {
 }> {
   try {
     // Initialize correlation engine if needed
-    if (!correlationEngine['initialized']) {
+    if (!correlationEngine.isInitialized()) {
       await correlationEngine.initialize();
     }
 
@@ -117,7 +117,7 @@ export async function enrichPeopleSearch(params: {
   credibilityScore: number;
 }> {
   try {
-    if (!correlationEngine['initialized']) {
+    if (!correlationEngine.isInitialized()) {
       await correlationEngine.initialize();
     }
 
@@ -199,7 +199,7 @@ export async function enrichLegalResearch(params: {
   contextScore: number;
 }> {
   try {
-    if (!correlationEngine['initialized']) {
+    if (!correlationEngine.isInitialized()) {
       await correlationEngine.initialize();
     }
 
@@ -274,7 +274,7 @@ export async function enrichConsultation(params: {
   caseStrengthIndicators: Array<{ indicator: string; score: number }>;
 }> {
   try {
-    if (!correlationEngine['initialized']) {
+    if (!correlationEngine.isInitialized()) {
       await correlationEngine.initialize();
     }
 
