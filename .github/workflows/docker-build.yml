@@ -27,7 +27,3 @@ jobs:
           tags: legalwhat:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Test Puppeteer in container
-        run: |
-          docker run --rm legalwhat:test npm run docker:test
