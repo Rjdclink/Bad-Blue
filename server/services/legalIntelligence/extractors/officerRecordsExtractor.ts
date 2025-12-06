@@ -9,7 +9,7 @@ import { adaptiveLegalCrawler } from '../adaptiveCrawler';
 import { browserManager } from '../browserManager';
 import { logger } from '../../../logger';
 import type { OfficerRecordData, OfficerDisciplinaryRecord } from '../types';
-import type { Page } from 'playwright';
+import type { Page } from '@playwright/test';
 
 const log = logger.child({ component: 'legalIntelligence:officerRecordsExtractor' });
 

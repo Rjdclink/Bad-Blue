@@ -8,7 +8,7 @@ import { browserManager } from '../browserManager';
 import { semanticLegalExtractor, COURT_DOCKET as COURT_DOCKET_SCHEMA } from '../index';
 import { logger } from '../../../logger';
 import type { CourtDocket, DocketEntry } from '../types';
-import type { Page } from 'playwright';
+import type { Page } from '@playwright/test';
 
 const log = logger.child({ component: 'legalIntelligence:courtDocketExtractor' });
 

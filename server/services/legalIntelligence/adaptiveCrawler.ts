@@ -14,7 +14,7 @@ import type {
   UrlPriority, 
   BrowserType 
 } from './types';
-import type { Page } from 'playwright';
+import type { Page } from '@playwright/test';
 
 const log = logger.child({ component: 'legalIntelligence:adaptiveCrawler' });
 

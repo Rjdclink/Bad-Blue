@@ -4,7 +4,7 @@
  * Supports Chromium, Firefox, and WebKit with pooling and reuse
  */
 
-import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page } from 'playwright';
+import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { logger } from '../../logger';
 import type { BrowserType, BrowserSession, BrowserConfig } from './types';
 
