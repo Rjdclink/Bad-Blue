@@ -13,12 +13,17 @@ export class DNSIntelligenceService {
 
   /**
    * Query DNSDumpster API for subdomain enumeration
-   * Note: This is a simplified implementation as DNSDumpster requires scraping
+   * Note: DNSDumpster requires browser automation/scraping which is complex
+   * This is left as a placeholder for future implementation with proper scraping
    */
   private async queryDNSDumpster(domain: string): Promise<SubdomainResult[]> {
-    // DNSDumpster requires CSRF token and form submission
-    // For production, consider using a proxy service or official API
-    console.log(`[DNSIntelligence] DNSDumpster query for ${domain} - requires browser automation`);
+    // DNSDumpster requires CSRF token and form submission with browser automation
+    // Implementation would require:
+    // 1. Puppeteer/Playwright for form submission
+    // 2. CSRF token extraction
+    // 3. Result parsing from HTML
+    // For production, consider using their unofficial API or other services
+    console.log(`[DNSIntelligence] DNSDumpster query for ${domain} - requires browser automation, not implemented`);
     return [];
   }
 

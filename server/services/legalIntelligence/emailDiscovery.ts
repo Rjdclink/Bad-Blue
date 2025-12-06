@@ -83,6 +83,7 @@ export class EmailDiscoveryService {
   /**
    * Query PGP key servers for email addresses
    * TheHarvester pattern: keys.openpgp.org queries
+   * Note: PGP key server search is limited - this implementation queries by domain
    */
   private async searchPGPKeys(domain: string): Promise<EmailResult[]> {
     const results: EmailResult[] = [];
@@ -91,46 +92,14 @@ export class EmailDiscoveryService {
     if (cached) return cached;
 
     try {
-      // Search PGP key server by domain
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const url = `https://keys.openpgp.org/vks/v1/by-email/${encodeURIComponent(`%@${domain}`)}`;
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'LegalWhat-Intelligence/1.0',
-        },
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const text = await response.text();
-        
-        // Extract emails from PGP key data
-        const matches = text.match(this.emailRegex);
-        const emailSet = new Set<string>();
-
-        if (matches) {
-          for (const email of matches) {
-            const cleanEmail = email.toLowerCase();
-            if (cleanEmail.endsWith(`@${domain}`) && !emailSet.has(cleanEmail)) {
-              emailSet.add(cleanEmail);
-              results.push({
-                email: cleanEmail,
-                source: 'pgp',
-                confidence: 80,
-                metadata: {
-                  domain,
-                },
-              });
-            }
-          }
-        }
-      }
-
-      // Cache for 48 hours
+      // Note: keys.openpgp.org doesn't support wildcard email searches directly
+      // This is a placeholder for future implementation with proper PGP key server API
+      // Actual implementation would require iterating through known contacts or
+      // using a different PGP key server that supports domain-wide searches
+      
+      console.log(`[EmailDiscovery] PGP search for ${domain} - limited support, placeholder implementation`);
+      
+      // Cache empty result for 48 hours to avoid repeated failed attempts
       await cacheService.set(cacheKey, results, 'warm');
 
       console.log(`[EmailDiscovery] Found ${results.length} emails from PGP`);
@@ -337,16 +306,45 @@ export class EmailDiscoveryService {
 
       // If firm domain is known, try Hunter.io
       if (firm) {
-        // Extract potential domain from firm name
-        const firmDomain = firm.toLowerCase()
-          .replace(/[^a-z0-9\s]/g, '')
-          .replace(/\s+/g, '')
-          .replace(/(law|firm|llc|pllc|attorneys|lawyers)$/i, '') + '.com';
+        // Known legal domain patterns for common firms
+        const knownDomains: Record<string, string> = {
+          // Add known firm domains here as needed
+        };
         
-        const hunterResults = await this.searchHunter(attorneyName, firmDomain);
-        for (const email of hunterResults) {
-          if (!emailMap.has(email.email)) {
-            emailMap.set(email.email, email);
+        // Try to match known domains first
+        const firmKey = firm.toLowerCase().replace(/[^a-z0-9]/g, '');
+        let firmDomain = knownDomains[firmKey];
+        
+        // If not known, generate a potential domain (but with low confidence)
+        if (!firmDomain) {
+          // Extract clean name and create potential domain
+          const cleanFirm = firm.toLowerCase()
+            .replace(/[^a-z0-9\s]/g, '')
+            .replace(/\s+/g, '')
+            .replace(/(law|firm|llc|pllc|attorneys|lawyers|legal|group|associates)$/i, '');
+          
+          // Only attempt if firm name is reasonable length
+          if (cleanFirm.length >= 3 && cleanFirm.length <= 30) {
+            firmDomain = `${cleanFirm}.com`;
+            
+            const hunterResults = await this.searchHunter(attorneyName, firmDomain);
+            for (const email of hunterResults) {
+              if (!emailMap.has(email.email)) {
+                // Mark as lower confidence since domain was guessed
+                emailMap.set(email.email, {
+                  ...email,
+                  confidence: Math.min(email.confidence, 40),
+                });
+              }
+            }
+          }
+        } else {
+          // Higher confidence for known domains
+          const hunterResults = await this.searchHunter(attorneyName, firmDomain);
+          for (const email of hunterResults) {
+            if (!emailMap.has(email.email)) {
+              emailMap.set(email.email, email);
+            }
           }
         }
       }
@@ -421,7 +419,7 @@ export class EmailDiscoveryService {
         totalFound: 0,
         sources: [],
         searchDuration: Date.now() - startTime,
-        errors: [...errors, `Fatal error: ${error}`],
+        errors: [...errors, `Fatal error: ${error instanceof Error ? error.message : String(error)}`],
       };
     }
   }
