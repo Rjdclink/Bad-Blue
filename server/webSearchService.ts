@@ -1,6 +1,14 @@
 /**
  * Unified Web Search Service
- * Combines Bing Search API and Gemini AI googleSearch for comprehensive web search
+ * OpenRouter 3-Model Orchestrated Web Search (Primary) with Gemini Grounding (Fallback)
+ * 
+ * Primary: OpenRouter 3-model orchestration system
+ *   - Meta Llama 4 Maverick (meta-llama/llama-4-maverick:free) - 256K context, multimodal research
+ *   - xAI Grok 4.1 Fast (xai/grok-4.1-fast:free) - 2M context, real-time research
+ *   - DeepSeek R1T2 Chimera (tng/deepseek-r1t2-chimera:free) - 164K context, reasoning-focused
+ *   - Parallel execution with orchestrated aggregation via openRouterWebSearch.ts
+ * 
+ * Fallback: Gemini AI grounding (only when OpenRouter unavailable)
  * 
  * Usage:
  * - Officer search: Real-time public records, misconduct reports
@@ -260,11 +268,12 @@ Return detailed findings with specific URLs and facts.`;
 }
 
 /**
- * Unified search using OpenRouter 3-model orchestration
- * Replaces deprecated Bing/Gemini search with OpenRouter team:
+ * Unified search using OpenRouter 3-model orchestration (PRIMARY)
+ * Primary web search system using OpenRouter models:
  *   - Meta Llama 4 Maverick (256K context, multimodal)
  *   - xAI Grok 4.1 Fast (2M context, real-time)
  *   - DeepSeek R1T2 Chimera (164K context, reasoning)
+ * Falls back to Gemini grounding only if OpenRouter is unavailable
  */
 export async function unifiedSearch(
   query: string,
@@ -322,12 +331,12 @@ export async function unifiedSearch(
 
   // Fallback: Use Gemini grounding if OpenRouter unavailable
   if (GEMINI_API_KEY && !isCircuitOpen('gemini')) {
-    console.log('[Unified Search] Falling back to Gemini grounding');
+    console.log('[Unified Search] Using Gemini fallback (OpenRouter unavailable)');
     try {
       const geminiResults = await geminiSearch(query, options);
       return geminiResults.slice(0, options.limit || 20);
     } catch (error: any) {
-      console.warn('[Unified Search] Gemini search failed:', error.message);
+      console.warn('[Unified Search] Gemini fallback failed:', error.message);
     }
   }
 
@@ -728,7 +737,7 @@ export const enhancedWebSearch = new EnhancedWebSearchService();
 
 console.log('[Web Search Service] Initialized:', {
   openRouterWebSearch: isOpenRouterWebSearchAvailable(),
-  geminiGrounding: !!GEMINI_API_KEY,
+  geminiGroundingFallback: !!GEMINI_API_KEY,
   bingDeprecated: true, // Marked as deprecated
 });
 
