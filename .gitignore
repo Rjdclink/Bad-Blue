@@ -26,6 +26,12 @@ logs/
 # Backup files
 *.backup
 
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+data/
+
 # Uploads directory (Stage 2A - Media Upload System)
 uploads/
 !uploads/.gitkeep

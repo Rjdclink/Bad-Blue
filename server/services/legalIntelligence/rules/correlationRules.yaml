@@ -1,0 +1,90 @@
+# Correlation Rules for Legal Entity Matching
+# SpiderFoot-inspired pattern detection rules
+
+# Officer Pattern Rules
+- name: "Officer Multiple Lawsuits"
+  entities: ["officer", "lawsuit"]
+  condition: "same_officer_name AND lawsuit_count >= 3"
+  confidence: 0.95
+  patternType: "misconduct_pattern"
+  description: "Officer involved in 3 or more lawsuits"
+  enabled: true
+
+- name: "Officer Multiple Complaints"
+  entities: ["officer", "complaint"]
+  condition: "same_officer_name AND complaint_count >= 5"
+  confidence: 0.92
+  patternType: "misconduct_pattern"
+  description: "Officer with 5 or more complaints"
+  enabled: true
+
+# Department Pattern Rules
+- name: "Department Excessive Force Pattern"
+  entities: ["department", "complaint"]
+  condition: "same_department AND complaint_type == 'excessive_force' AND count >= 3"
+  confidence: 0.88
+  patternType: "systemic_issue"
+  description: "Department with multiple excessive force complaints"
+  enabled: true
+
+- name: "Department Lawsuit Trend"
+  entities: ["department", "lawsuit"]
+  condition: "same_department AND lawsuit_count >= 5"
+  confidence: 0.85
+  patternType: "systemic_issue"
+  description: "Department with high lawsuit frequency"
+  enabled: true
+
+# Attorney-Case Correlation
+- name: "Attorney Specialization"
+  entities: ["attorney", "case"]
+  condition: "same_attorney AND case_type == similar AND count >= 3"
+  confidence: 0.90
+  patternType: "expertise_pattern"
+  description: "Attorney with pattern of similar cases"
+  enabled: true
+
+# Witness Correlation
+- name: "Witness Multiple Cases"
+  entities: ["witness", "case"]
+  condition: "same_witness AND case_count >= 2"
+  confidence: 0.85
+  patternType: "credibility_pattern"
+  description: "Witness appearing in multiple cases"
+  enabled: true
+
+# Cross-Department Patterns
+- name: "Officer Department Transfer Pattern"
+  entities: ["officer", "department"]
+  condition: "same_officer AND department_count >= 2"
+  confidence: 0.87
+  patternType: "employment_pattern"
+  description: "Officer with history of department transfers"
+  enabled: true
+
+# Geographic Clustering
+- name: "Geographic Complaint Clustering"
+  entities: ["complaint", "location"]
+  condition: "location_proximity <= 1000 AND complaint_count >= 3"
+  confidence: 0.83
+  patternType: "geographic_pattern"
+  description: "Multiple complaints in same geographic area"
+  enabled: true
+
+# Temporal Patterns
+- name: "Recent Activity Spike"
+  entities: ["officer", "complaint"]
+  condition: "same_officer AND time_period == 'recent_6_months' AND count >= 3"
+  confidence: 0.90
+  patternType: "temporal_pattern"
+  description: "Spike in recent complaints against officer"
+  enabled: true
+
+# Agency-Entity Correlations
+- name: "Agency FOIA Pattern"
+  entities: ["agency", "case"]
+  condition: "same_agency AND foia_requests >= 3"
+  confidence: 0.80
+  patternType: "transparency_pattern"
+  description: "Agency with multiple FOIA requests"
+  enabled: true
