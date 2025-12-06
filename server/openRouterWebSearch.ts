@@ -9,9 +9,12 @@
  * - Meta Llama 4 Maverick (free) - 256K context, multimodal research
  * - xAI Grok 4.1 Fast (free) - 2M context, real-time research
  * - DeepSeek R1T2 Chimera (free) - 164K context, reasoning-focused
+ * - DeepSeek V3 (free) - 128K context, structured data extraction, MoE architecture
+ * - Qwen3 Coder 480B (free) - 128K context, code/API analysis
+ * - Amazon Nova 2 Lite (free) - Standard context, fast inference, classification
  * 
  * Features:
- * - Orchestrated parallel execution across all 3 models
+ * - Orchestrated parallel execution across all 6 models
  * - Result aggregation and confidence scoring
  * - Optional :online plugin for real-time web search (may incur costs)
  * - Rate limiting and error handling
@@ -54,6 +57,9 @@ export const WEB_SEARCH_MODELS = {
   LLAMA_4_MAVERICK: 'meta-llama/llama-4-maverick:free',
   GROK_4_1_FAST: 'xai/grok-4.1-fast:free',
   DEEPSEEK_R1T2: 'tng/deepseek-r1t2-chimera:free',
+  DEEPSEEK_V3: 'deepseek/deepseek-chat-v3:free',
+  QWEN3_CODER_480B: 'qwen/qwen3-coder-480b:free',
+  AMAZON_NOVA_2_LITE: 'amazon/nova-2-lite:free',
 } as const;
 
 export type WebSearchModel = typeof WEB_SEARCH_MODELS[keyof typeof WEB_SEARCH_MODELS];
@@ -112,6 +118,27 @@ const rateLimitState: Record<string, RateLimitState> = {
     disabled: false,
   },
   [WEB_SEARCH_MODELS.DEEPSEEK_R1T2]: {
+    requests: 0,
+    lastReset: new Date(),
+    failures: 0,
+    lastFailure: 0,
+    disabled: false,
+  },
+  [WEB_SEARCH_MODELS.DEEPSEEK_V3]: {
+    requests: 0,
+    lastReset: new Date(),
+    failures: 0,
+    lastFailure: 0,
+    disabled: false,
+  },
+  [WEB_SEARCH_MODELS.QWEN3_CODER_480B]: {
+    requests: 0,
+    lastReset: new Date(),
+    failures: 0,
+    lastFailure: 0,
+    disabled: false,
+  },
+  [WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE]: {
     requests: 0,
     lastReset: new Date(),
     failures: 0,
@@ -394,7 +421,7 @@ function aggregateResponses(results: ModelResult[]): string {
 }
 
 /**
- * Orchestrated parallel web search using all 3 free models
+ * Orchestrated parallel web search using all 6 free models
  * 
  * This function queries all available free-tier models in parallel and aggregates
  * their responses into a comprehensive result with confidence scoring.
@@ -512,6 +539,30 @@ export function getWebSearchModelStatus(): Record<
         getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_R1T2) > 0,
       requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_R1T2),
       error: rateLimitState[WEB_SEARCH_MODELS.DEEPSEEK_R1T2]?.errorMessage,
+    },
+    [WEB_SEARCH_MODELS.DEEPSEEK_V3]: {
+      available:
+        isOpenRouterWebSearchAvailable() &&
+        !isCircuitOpen(WEB_SEARCH_MODELS.DEEPSEEK_V3) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_V3) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_V3),
+      error: rateLimitState[WEB_SEARCH_MODELS.DEEPSEEK_V3]?.errorMessage,
+    },
+    [WEB_SEARCH_MODELS.QWEN3_CODER_480B]: {
+      available:
+        isOpenRouterWebSearchAvailable() &&
+        !isCircuitOpen(WEB_SEARCH_MODELS.QWEN3_CODER_480B) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.QWEN3_CODER_480B) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.QWEN3_CODER_480B),
+      error: rateLimitState[WEB_SEARCH_MODELS.QWEN3_CODER_480B]?.errorMessage,
+    },
+    [WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE]: {
+      available:
+        isOpenRouterWebSearchAvailable() &&
+        !isCircuitOpen(WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE),
+      error: rateLimitState[WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE]?.errorMessage,
     },
   };
 }
