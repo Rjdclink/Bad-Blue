@@ -185,11 +185,11 @@ export class PuppeteerAdapter {
           log.info('Container-safe flags applied', { 
             flags: containerFlags
           });
-        }
-
-        // Add executable path if detected
-        if (this.executablePath) {
-          launchOptions.executablePath = this.executablePath;
+        } else {
+          // Add executable path if detected (non-container case)
+          if (this.executablePath) {
+            launchOptions.executablePath = this.executablePath;
+          }
         }
 
         this.browser = await puppeteer.launch(launchOptions);
