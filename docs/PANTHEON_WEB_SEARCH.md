@@ -181,7 +181,7 @@ The web search system is fully integrated with PANTHEON's multi-AI orchestration
 ### Cost Efficiency
 - **OpenRouter Models**: Free tier (no inference costs)
 - **Gemini Grounding**: Free with API key (subject to quotas)
-- **:online Plugin**: Disabled by default (would incur costs)
+- **:online plugin**: Disabled by default (would incur costs)
 
 ## Error Handling
 
