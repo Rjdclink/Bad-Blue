@@ -2,7 +2,7 @@
  * server/aiSubAgent.ts
  * Revised AI Sub-Agent with enhanced capabilities:
  * - Multi-provider model selection (env-driven)
- * - Web search fallback (Bing if API key present, otherwise DuckDuckGo HTML)
+ * - Web search via OpenRouter 3-model orchestration (primary) with Gemini fallback
  * - Intelligent package installation (npm) with auto-retry
  * - Safety checks with opt-in override for admin modifications
  * - Daily scheduled web scraping window for officer data (configurable)
@@ -515,8 +515,8 @@ export function getGroqClientWithGovernor(): any {
 }
 
 /**
- * Web search with unified Bing + Gemini service (backward compatible)
- * Uses the new unified search service for better coverage, falls back to legacy if unavailable
+ * Web search using OpenRouter 3-model orchestration (primary) with Gemini fallback
+ * Uses the unified search service which routes through OpenRouter models first
  */
 export async function webSearch(query: string, limit = 5): Promise<Array<{ title: string; url: string; snippet?: string }>> {
   if (!WEB_SEARCH_ENABLED) return [];
