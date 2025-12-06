@@ -11,6 +11,7 @@ import type {
   APIEndpoint,
 } from './types';
 import { logger } from '../../logger';
+import { existsSync } from 'fs';
 
 const log = logger.child({ component: 'shadowRetrieval:puppeteer' });
 
@@ -22,47 +23,172 @@ export class PuppeteerAdapter {
   private browser: Browser | null = null;
   private config: PuppeteerConfig;
   private enabled: boolean = true;
+  private isRailway: boolean = false;
+  private executablePath: string | undefined;
 
   constructor(config?: Partial<PuppeteerConfig>) {
+    // Detect Railway environment
+    this.isRailway = !!process.env.RAILWAY_ENVIRONMENT;
+    
+    log.info('Initializing Puppeteer adapter', { 
+      isRailway: this.isRailway,
+      railwayEnv: process.env.RAILWAY_ENVIRONMENT 
+    });
+
+    // Detect system Chromium path
+    this.executablePath = this.detectChromiumPath();
+
+    // Build base args
+    const baseArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process',
+    ];
+
+    // Add Railway-specific optimization flags
+    const railwayArgs = this.isRailway ? [
+      '--single-process', // Critical for memory constraints
+      '--no-zygote', // Prevents zombie processes
+      '--disable-accelerated-2d-canvas',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+    ] : [];
+
     this.config = {
       headless: process.env.PUPPETEER_HEADLESS !== 'false' ? true : false,
-      timeout: 30000,
+      timeout: this.isRailway ? 60000 : 30000, // 60s for Railway, 30s otherwise
       viewport: { width: 1920, height: 1080 },
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process',
-      ],
+      args: [...baseArgs, ...railwayArgs],
       ...config,
     };
+
+    log.info('Puppeteer configuration initialized', {
+      headless: this.config.headless,
+      timeout: this.config.timeout,
+      executablePath: this.executablePath,
+      argsCount: this.config.args?.length,
+    });
   }
 
   /**
-   * Initialize browser instance
+   * Detect system Chromium/Chrome path with fallbacks
+   */
+  private detectChromiumPath(): string | undefined {
+    // Priority order: env var, then system paths
+    const chromiumPaths = [
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+      '/usr/bin/chromium-browser',
+      '/usr/bin/chromium',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/google-chrome',
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', // macOS
+    ];
+
+    for (const path of chromiumPaths) {
+      if (path && existsSync(path)) {
+        log.info('Chromium executable found', { path });
+        return path;
+      }
+    }
+
+    log.warn('No system Chromium found, will use bundled version');
+    return undefined;
+  }
+
+  /**
+   * Initialize browser instance with retry logic
    */
   async initialize(): Promise<void> {
     if (this.browser) {
       return;
     }
 
-    try {
-      log.info('Launching Puppeteer browser', { headless: this.config.headless });
-      
-      this.browser = await puppeteer.launch({
-        headless: this.config.headless,
-        args: this.config.args,
-        defaultViewport: this.config.viewport,
-      });
+    const maxRetries = 3;
+    let lastError: Error | null = null;
 
-      this.enabled = true;
-      log.info('Puppeteer browser launched successfully');
-    } catch (error: any) {
-      log.error('Failed to launch Puppeteer browser', { error: error.message });
-      this.enabled = false;
-      throw error;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        log.info('Launching Puppeteer browser', { 
+          attempt,
+          maxRetries,
+          headless: this.config.headless,
+          isRailway: this.isRailway,
+          executablePath: this.executablePath,
+        });
+
+        const launchOptions: any = {
+          headless: this.config.headless,
+          args: this.config.args,
+          defaultViewport: this.config.viewport,
+          timeout: this.config.timeout,
+        };
+
+        // Add executable path if detected
+        if (this.executablePath) {
+          launchOptions.executablePath = this.executablePath;
+        }
+
+        this.browser = await puppeteer.launch(launchOptions);
+
+        this.enabled = true;
+        log.info('Puppeteer browser launched successfully', {
+          attempt,
+          pid: this.browser.process()?.pid,
+          wsEndpoint: this.browser.wsEndpoint() ? 'connected' : 'not available',
+        });
+
+        // Set up cleanup handlers
+        this.setupCleanupHandlers();
+
+        return;
+      } catch (error: any) {
+        lastError = error;
+        log.error('Failed to launch Puppeteer browser', { 
+          attempt,
+          maxRetries,
+          error: error.message,
+          stack: error.stack,
+        });
+
+        // Wait before retry with exponential backoff
+        if (attempt < maxRetries) {
+          const backoffDelay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+          log.info('Retrying browser launch', { 
+            attempt: attempt + 1,
+            delayMs: backoffDelay 
+          });
+          await new Promise(resolve => setTimeout(resolve, backoffDelay));
+        }
+      }
     }
+
+    // All retries exhausted - disable Puppeteer and log graceful degradation
+    this.enabled = false;
+    log.warn('Puppeteer disabled after retry exhaustion - falling back to fetch strategy', {
+      maxRetries,
+      lastError: lastError?.message,
+      isRailway: this.isRailway,
+    });
+
+    // Don't throw - allow graceful degradation
+  }
+
+  /**
+   * Set up cleanup handlers for graceful shutdown
+   */
+  private setupCleanupHandlers(): void {
+    const cleanup = async () => {
+      log.info('Cleanup handler triggered');
+      await this.close();
+    };
+
+    // Handle process termination signals
+    process.once('SIGINT', cleanup);
+    process.once('SIGTERM', cleanup);
+    process.once('exit', cleanup);
   }
 
   /**
@@ -70,9 +196,41 @@ export class PuppeteerAdapter {
    */
   async close(): Promise<void> {
     if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-      log.info('Puppeteer browser closed');
+      try {
+        await this.browser.close();
+        this.browser = null;
+        log.info('Puppeteer browser closed');
+      } catch (error: any) {
+        log.error('Error closing Puppeteer browser', { error: error.message });
+      }
+    }
+  }
+
+  /**
+   * Health check - verify browser is operational
+   */
+  async healthCheck(): Promise<boolean> {
+    if (!this.enabled) {
+      return false;
+    }
+
+    try {
+      // Try to initialize if not already done
+      if (!this.browser) {
+        await this.initialize();
+      }
+
+      // Check if browser is still connected
+      if (this.browser && this.browser.isConnected()) {
+        log.debug('Puppeteer health check passed');
+        return true;
+      }
+
+      log.warn('Puppeteer health check failed - browser not connected');
+      return false;
+    } catch (error: any) {
+      log.error('Puppeteer health check error', { error: error.message });
+      return false;
     }
   }
 
@@ -342,10 +500,28 @@ export async function puppeteerScrape(url: string, options?: PuppeteerOptions): 
 /**
  * Cleanup function to close browser on process exit
  */
-process.on('exit', () => {
-  if (defaultPuppeteerAdapter) {
-    defaultPuppeteerAdapter.close().catch(err => {
-      log.error('Failed to close Puppeteer browser on exit', { error: err.message });
-    });
-  }
-});
+let cleanupRegistered = false;
+if (!cleanupRegistered) {
+  cleanupRegistered = true;
+  
+  const shutdown = async () => {
+    if (defaultPuppeteerAdapter) {
+      try {
+        await defaultPuppeteerAdapter.close();
+      } catch (err: any) {
+        log.error('Failed to close Puppeteer browser on exit', { error: err.message });
+      }
+    }
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  process.on('exit', () => {
+    // Note: async operations not guaranteed in exit handler
+    if (defaultPuppeteerAdapter) {
+      defaultPuppeteerAdapter.close().catch(err => {
+        console.error('Failed to close Puppeteer browser on exit:', err.message);
+      });
+    }
+  });
+}
