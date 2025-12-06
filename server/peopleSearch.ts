@@ -8,6 +8,7 @@ import { emailFinder } from './services/emailFinder';
 import { breachDetection } from './services/breachDetection';
 import { mlnlpIntelligenceService, MLNLPResult } from './services/mlnlp';
 import { socialIntelligenceService } from './services/socialIntelligence';
+import { emailDiscoveryService } from './services/legalIntelligence';
 import type { SherlockResult } from './services/socialIntelligence/types';
 
 /**
@@ -437,6 +438,39 @@ async function searchCourtRecords(name: string): Promise<OSINTSource> {
 }
 
 /**
+ * Enhanced: Search for attorney emails using TheHarvester patterns
+ * Used for witness, attorney, and expert contact discovery
+ */
+async function searchAttorneyEmail(name: string, firm?: string): Promise<OSINTSource> {
+  try {
+    const emailResults = await emailDiscoveryService.discoverAttorneyEmail(name, firm);
+    
+    const emails = emailResults.map(result => 
+      `${result.email} (confidence: ${result.confidence}%, source: ${result.source})`
+    );
+
+    return {
+      name: 'Attorney Email Discovery',
+      data: {
+        emails,
+        primaryEmail: emailResults.length > 0 ? emailResults[0].email : null,
+        firm: firm || 'Unknown',
+      },
+      confidence: emailResults.length > 0 ? emailResults[0].confidence / 100 : 0,
+      timestamp: new Date(),
+    };
+  } catch (error) {
+    console.error('[PEOPLE SEARCH] Attorney email discovery failed:', error);
+    return {
+      name: 'Attorney Email Discovery',
+      data: { emails: [], error: 'Email discovery unavailable' },
+      confidence: 0,
+      timestamp: new Date(),
+    };
+  }
+}
+
+/**
  * Aggregate results from multiple sources
  */
 function aggregateSearchResults(
@@ -464,6 +498,14 @@ function aggregateSearchResults(
 
   if (source.name === 'Court Records' && source.data.records) {
     report.publicRecords.push(...source.data.records);
+  }
+
+  // Enhanced: Handle attorney email discovery results
+  if (source.name === 'Attorney Email Discovery' && source.data.emails) {
+    report.contactInformation.push(...source.data.emails);
+    if (source.data.primaryEmail) {
+      report.contactInformation.unshift(`Primary Email: ${source.data.primaryEmail}`);
+    }
   }
 }
 

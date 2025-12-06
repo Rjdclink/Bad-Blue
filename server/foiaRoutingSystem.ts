@@ -3,6 +3,7 @@ import { sendEmail } from './emailService';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { performEnhancedLegalSearch, type LegalSearchResult } from './enhancedLegalSearch';
+import { emailDiscoveryService, type FOIAContact } from './services/legalIntelligence';
 
 const ADMIN_FALLBACK_EMAIL = 'contact.badblue@gmail.com';
 
@@ -217,6 +218,61 @@ export async function lookupFOIAAuthority(
         address: `${agencyName}\nRecords Division\n${city ? city + ', ' : ''}${state}`,
       };
       lookupNotes.push('Using standard police records division address');
+    }
+
+    // Enhanced: Use email discovery service to find FOIA officer emails
+    if (!primaryAuthority?.email) {
+      try {
+        // Extract domain from agency name if possible
+        const agencyDomain = foiaPortal ? new URL(foiaPortal).hostname : undefined;
+        
+        const discoveredContacts = await emailDiscoveryService.discoverFOIAOfficerEmails(
+          agencyName,
+          agencyDomain
+        );
+
+        if (discoveredContacts.length > 0) {
+          const topContact = discoveredContacts[0];
+          
+          if (primaryAuthority) {
+            // Enhance existing primary authority with discovered email
+            primaryAuthority.email = topContact.email;
+            primaryAuthority.verified = true;
+            lookupNotes.push(`Enhanced with email discovery: ${topContact.email} (confidence: ${topContact.confidence}%)`);
+          } else {
+            // Create new primary authority from discovered contact
+            primaryAuthority = {
+              name: topContact.name || 'FOIA Officer',
+              title: 'FOIA Officer',
+              email: topContact.email,
+              phone: topContact.phone,
+              department: topContact.department,
+              type: 'foia_officer',
+              verified: true,
+              source: `Email Discovery (${topContact.sources.join(', ')})`,
+            };
+            lookupNotes.push(`Found via email discovery: ${topContact.email} (confidence: ${topContact.confidence}%)`);
+          }
+
+          // Add additional discovered contacts as alternates
+          for (let i = 1; i < Math.min(discoveredContacts.length, 4); i++) {
+            const contact = discoveredContacts[i];
+            alternateAuthorities.push({
+              name: contact.name || 'Records Contact',
+              title: 'Records Contact',
+              email: contact.email,
+              phone: contact.phone,
+              department: contact.department,
+              type: 'general_contact',
+              verified: true,
+              source: `Email Discovery (${contact.sources.join(', ')})`,
+            });
+          }
+        }
+      } catch (emailDiscoveryError) {
+        console.error('[FOIA Lookup] Email discovery failed:', emailDiscoveryError);
+        lookupNotes.push('Email discovery unavailable - using standard lookup only');
+      }
     }
 
     const result: FOIAAuthorityLookupResult = {
