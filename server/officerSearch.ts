@@ -7,6 +7,7 @@ import { isClaudeAvailable, generateClaudeJSON, callClaude } from "./claude";
 import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 import { searchOfficerRecords as webSearchOfficerRecords, unifiedSearch, isWebSearchAvailable } from './webSearchService';
 import { searchOfficerWithOpenRouter, isOpenRouterAvailable } from './openRouterService';
+import { emailDiscoveryService } from './services/legalIntelligence';
 
 // Complete US state abbreviation to full name mapping
 const STATE_ABBREVIATIONS: Record<string, string> = {
