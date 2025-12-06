@@ -261,7 +261,7 @@ export class AdaptiveLegalCrawler {
         return !noisyPatterns.some(pattern => link.includes(pattern));
       });
 
-      return [...new Set(filtered)]; // Remove duplicates
+      return Array.from(new Set(filtered)); // Remove duplicates
 
     } catch (error: any) {
       log.error('Error extracting links', { error: error.message });

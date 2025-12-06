@@ -132,9 +132,10 @@ export class BrowserManager {
 
     try {
       // Close all contexts first
-      for (const [contextId, context] of entry.contexts) {
+      const contextsArray = Array.from(entry.contexts.values());
+      for (const context of contextsArray) {
         await context.close().catch(err => 
-          log.warn('Error closing context', { contextId, error: err.message })
+          log.warn('Error closing context', { error: err.message })
         );
       }
       entry.contexts.clear();
@@ -154,7 +155,8 @@ export class BrowserManager {
   async closeAll(): Promise<void> {
     log.info('Closing all browsers', { count: this.pool.size });
 
-    const closePromises = Array.from(this.pool.keys()).map(type => 
+    const poolKeys = Array.from(this.pool.keys());
+    const closePromises = poolKeys.map(type => 
       this.closeBrowser(type)
     );
 
@@ -175,7 +177,8 @@ export class BrowserManager {
   getStats() {
     const stats: Record<string, any> = {};
 
-    for (const [type, entry] of this.pool) {
+    const poolEntries = Array.from(this.pool.entries());
+    for (const [type, entry] of poolEntries) {
       stats[type] = {
         requestCount: entry.requestCount,
         contextCount: entry.contexts.size,
@@ -215,7 +218,8 @@ export class BrowserManager {
     this.cleanupInterval = setInterval(async () => {
       const now = Date.now();
 
-      for (const [type, entry] of this.pool) {
+      const poolEntries = Array.from(this.pool.entries());
+      for (const [type, entry] of poolEntries) {
         const idleTime = now - entry.lastUsedAt.getTime();
 
         if (idleTime > this.maxIdleTime) {
