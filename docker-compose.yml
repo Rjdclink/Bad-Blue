@@ -15,8 +15,11 @@ services:
     env_file:
       - .env
     volumes:
-      - .:/app
+      - ./client:/app/client
+      - ./server:/app/server
+      - ./public:/app/public
       - /app/node_modules
+    # NOTE: If you add or remove dependencies, run `docker-compose build` to ensure container dependencies are up to date.
     # NOTE: If you add or remove dependencies, run `docker-compose build` to ensure container dependencies are up to date.
     command: npm run dev
     depends_on:
