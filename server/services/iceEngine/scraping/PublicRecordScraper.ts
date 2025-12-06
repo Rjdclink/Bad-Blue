@@ -68,7 +68,8 @@ export class PublicRecordScraper {
         }
       }
     }
-
+    
+    // This line should never be reached, but TypeScript requires a return
     throw new Error(`Failed to scrape ${url}`);
   }
 

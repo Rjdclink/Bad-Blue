@@ -10,11 +10,13 @@ interface Snapshot {
   hash: string;
   content: Buffer;
   timestamp: Date;
-  metadata: {
-    statusCode: number;
-    headers: Record<string, string>;
-    contentType: string;
-  };
+  metadata: SnapshotMetadata;
+}
+
+interface SnapshotMetadata {
+  statusCode: number;
+  headers: Record<string, string>;
+  contentType: string;
 }
 
 interface SnapshotDiff {
@@ -27,7 +29,7 @@ interface SnapshotDiff {
 export class SnapshotEngine {
   private snapshots = new Map<string, Snapshot>();
 
-  async createSnapshot(url: string, content: string, metadata: any): Promise<Snapshot> {
+  async createSnapshot(url: string, content: string, metadata: SnapshotMetadata): Promise<Snapshot> {
     const hash = this.calculateHash(content);
     const compressed = await gzip(Buffer.from(content));
 
@@ -111,3 +113,4 @@ export class SnapshotEngine {
 }
 
 export const snapshotEngine = new SnapshotEngine();
+export type { Snapshot, SnapshotMetadata, SnapshotDiff };
