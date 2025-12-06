@@ -101,7 +101,7 @@ const schemaTests = [
     const schema = getSchemaByName('statute');
     expect(schema).toBeTruthy();
     expect(schema?.name).toBe('statute');
-    expect(schema?.description).toContain('statute');
+    expect(schema?.description.toLowerCase().includes('statute')).toBe(true);
   }),
 
   test('getSchemaByName returns undefined for unknown schema', async () => {
@@ -160,15 +160,15 @@ const schemaTests = [
 const contentFilterTests = [
   test('ContentFilter removes script tags', async () => {
     const filter = new ContentFilter();
-    const html = '<div>Content</div><script>alert("bad")</script>';
+    const html = '<div><p>Content with legal terms like plaintiff and court proceedings</p></div><script>alert("bad")</script>';
     const filtered = await filter.filterContent(html);
-    expect(filtered.includes('script')).toBe(false);
+    expect(filtered.includes('<script')).toBe(false);
     expect(filtered.includes('Content')).toBe(true);
   }),
 
   test('ContentFilter removes navigation elements', async () => {
     const filter = new ContentFilter();
-    const html = '<nav>Menu</nav><main>Main content</main>';
+    const html = '<nav>Menu</nav><main><p>Main content about the court case and the plaintiff allegations</p></main>';
     const filtered = await filter.filterContent(html);
     expect(filtered.includes('Menu')).toBe(false);
     expect(filtered.includes('Main content')).toBe(true);

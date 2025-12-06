@@ -19,7 +19,7 @@ const CASE_CITATION_PATTERN = /\b([A-Z][a-z]+\s+v\.\s+[A-Z][a-z]+|[A-Z][a-z]+\s+
  * Statute citation patterns for code formatting
  * Examples: 42 U.S.C. § 1983, Cal. Penal Code § 148
  */
-const STATUTE_CITATION_PATTERN = /\b(\d+\s+[A-Z]\.?[A-Z]\.?[A-Z]?\.?\s*(?:Code|Stat|Rev\.\s*Stat)\.?\s*§?\s*\d+(?:[.-]\d+)*)/gi;
+const STATUTE_CITATION_PATTERN = /\b(\d+\s+[A-Z]\.?[A-Z]\.?[A-Z]?\.?\s*(?:Code|Stat|Rev\.\s*Stat|C)\.?\s*§\s*\d+(?:[.-]\d+)*)/gi;
 
 /**
  * Court name patterns for bold formatting
