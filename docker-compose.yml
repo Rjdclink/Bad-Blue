@@ -9,14 +9,15 @@ services:
       - "5000:5000"
     environment:
       - NODE_ENV=development
-      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pantheon
       - PORT=5000
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/legalwhat
     env_file:
       - .env
     volumes:
       - .:/app
       - /app/node_modules
+    # NOTE: If you add or remove dependencies, run `docker-compose build` to ensure container dependencies are up to date.
     command: npm run dev
     depends_on:
       - db
@@ -26,7 +27,7 @@ services:
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=pantheon
+      - POSTGRES_DB=legalwhat
     ports:
       - "5432:5432"
     volumes:

@@ -18,8 +18,8 @@
     "verify:final": "bash scripts/final-verification.sh",
     "deploy:check": "bash scripts/prepare-deployment.sh",
     "ai:analyze": "node scripts/analyze-ai-usage.cjs",
-    "docker:build": "docker build -t pantheon:latest .",
-    "docker:run": "docker run -p 5000:5000 --env-file .env pantheon:latest",
+    "docker:build": "docker build -t legalwhat:latest .",
+    "docker:run": "docker run -p 5000:5000 --env-file .env legalwhat:latest",
     "docker:test": "node scripts/puppeteer-healthcheck.js",
     "docker:dev": "docker-compose up --build"
   },

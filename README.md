@@ -331,10 +331,10 @@ Railway automatically detects the Dockerfile and builds the container.
 
 ```bash
 # Inside container
-docker exec -it pantheon-app npm run docker:test
+docker exec -it legalwhat-app npm run docker:test
 
 # Or manually test
-docker run --rm pantheon:latest node -e "
+docker run --rm legalwhat:latest node -e "
   const puppeteer = require('puppeteer');
   (async () => {
     const browser = await puppeteer.launch({
@@ -352,13 +352,13 @@ docker run --rm pantheon:latest node -e "
 **Issue: Chromium not found**
 ```bash
 # Check Chromium installation
-docker run --rm pantheon:latest which chromium
+docker run --rm legalwhat:latest which chromium
 ```
 
 **Issue: Sandbox errors**
 ```bash
 # Verify sandbox flags are set
-docker run --rm pantheon:latest env | grep PUPPETEER
+docker run --rm legalwhat:latest env | grep PUPPETEER
 ```
 
 ### Platform-Specific Deployment
