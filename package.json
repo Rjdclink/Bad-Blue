@@ -17,7 +17,11 @@
     "verify": "node scripts/verify-stage-1.cjs && node scripts/verify-stage-2.cjs && node scripts/verify-stage-3.cjs && node scripts/verify-stage-4.cjs && node scripts/verify-stage-5.cjs && node scripts/verify-stage-6.cjs && node scripts/verify-stage-16.cjs && node scripts/verify-stage-19.cjs && node scripts/verify-stage-20.cjs",
     "verify:final": "bash scripts/final-verification.sh",
     "deploy:check": "bash scripts/prepare-deployment.sh",
-    "ai:analyze": "node scripts/analyze-ai-usage.cjs"
+    "ai:analyze": "node scripts/analyze-ai-usage.cjs",
+    "docker:build": "docker build -t legalwhat:latest .",
+    "docker:run": "docker run -p 5000:5000 --env-file .env legalwhat:latest",
+    "docker:test": "node scripts/puppeteer-healthcheck.js",
+    "docker:dev": "docker-compose up --build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

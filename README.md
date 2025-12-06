@@ -296,20 +296,69 @@ npm start
 
 **Production Checklist**: See [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md)
 
-### Docker Deployment
-```dockerfile
-FROM node:18-alpine
+## 🐳 Docker Deployment
 
-WORKDIR /app
+### Prerequisites
+- Docker 20.10+
+- Docker Compose 2.0+
 
-COPY package*.json ./
-RUN npm ci --only=production
+### Local Development with Docker
 
-COPY . .
-RUN npm run build
+1. Build and start services:
+```bash
+docker-compose up --build
+```
 
-EXPOSE 5000
-CMD ["npm", "start"]
+2. Access application:
+```
+http://localhost:5000
+```
+
+3. View logs:
+```bash
+docker-compose logs -f app
+```
+
+### Railway Deployment
+
+Railway automatically detects the Dockerfile and builds the container.
+
+1. Push changes to repository
+2. Railway builds using `Dockerfile`
+3. All Chromium dependencies included automatically
+
+### Testing Puppeteer
+
+```bash
+# Inside container
+docker exec -it legalwhat-app npm run docker:test
+
+# Or manually test
+docker run --rm legalwhat:latest node -e "
+  const puppeteer = require('puppeteer');
+  (async () => {
+    const browser = await puppeteer.launch({
+      executablePath: '/usr/bin/chromium',
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    console.log('✅ Puppeteer working!');
+    await browser.close();
+  })();
+"
+```
+
+### Troubleshooting
+
+**Issue: Chromium not found**
+```bash
+# Check Chromium installation
+docker run --rm legalwhat:latest which chromium
+```
+
+**Issue: Sandbox errors**
+```bash
+# Verify sandbox flags are set
+docker run --rm legalwhat:latest env | grep PUPPETEER
 ```
 
 ### Platform-Specific Deployment

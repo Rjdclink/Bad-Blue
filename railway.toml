@@ -12,9 +12,7 @@ healthcheckPath = "/api/health"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
-
-[env]
-NODE_ENV = "production"
+region = "us-east1"
 
 [services.web]
 name = "badblue-web"

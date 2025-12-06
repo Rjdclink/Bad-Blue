@@ -1,8 +1,27 @@
-# Multi-stage build for optimized production image
-FROM node:20-bookworm-slim AS base
+# Production-grade Puppeteer Dockerfile with multi-stage build
+# Build stage - for compiling the application
+FROM node:20-bookworm-slim AS builder
 
-# Install Chromium and all required system dependencies
-# This ensures Puppeteer works reliably in production
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install ALL dependencies (needed for build)
+RUN npm ci
+
+# Copy application code
+COPY . .
+
+# Build application (requires dev dependencies)
+RUN npm run build && \
+    node scripts/copy-static-assets.cjs && \
+    node scripts/verify-build.cjs
+
+# Production stage
+FROM node:20-bookworm-slim AS production
+
+# Install Chromium and all required runtime dependencies
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-sandbox \
@@ -31,36 +50,35 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure Puppeteer to use system Chromium (don't download bundled version)
+# Configure Puppeteer to use system Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     PUPPETEER_ARGS="--no-sandbox --disable-setuid-sandbox"
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files and install only production dependencies
 COPY package*.json ./
+RUN npm ci --only=production
 
-# Install production dependencies only
-RUN npm ci --only=production && npm cache clean --force
+# Copy built application from builder stage
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/public ./public
 
-# Copy application source
-COPY . .
+# Copy necessary runtime files
+COPY --from=builder /app/scripts ./scripts
 
-# Build application
-RUN npm run build
+# Expose application port (Railway will use PORT env var at runtime)
+EXPOSE 5000
 
-# Expose application port
-EXPOSE 3000
+# Create non-root user for security
+RUN useradd -m appuser && \
+    chown -R appuser:appuser /app
 
-# Use existing non-root user shipped in the base image
-RUN chown -R node:node /app
+USER appuser
 
-USER node
-
-# Health check
+# Health check using dynamic port (Railway sets PORT env var)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+  CMD node -e "const port = process.env.PORT || 5000; require('http').get('http://localhost:' + port + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => {process.exit(1)})"
 
-# Start application
 CMD ["npm", "start"]
