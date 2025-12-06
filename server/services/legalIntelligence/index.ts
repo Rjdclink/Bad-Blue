@@ -42,12 +42,18 @@ export { semanticLegalExtractor } from './semanticExtractor';
 // Phase 3B: Adaptive Crawler & Extractors Exports
 export { BrowserManager, getBrowserManager, browserManager } from './browserManager';
 export { AdaptiveCrawler, getAdaptiveCrawler, adaptiveCrawler } from './adaptiveCrawler';
+
+// Alias for develop branch compatibility
+export { adaptiveCrawler as adaptiveLegalCrawler, AdaptiveCrawler as AdaptiveLegalCrawler } from './adaptiveCrawler';
+
+// Extractor exports
 export { CourtDocketExtractor, getCourtDocketExtractor, courtDocketExtractor } from './extractors/courtDocketExtractor';
 export { StatuteExtractor, getStatuteExtractor, statuteExtractor } from './extractors/statuteExtractor';
 export { OfficerRecordsExtractor, getOfficerRecordsExtractor, officerRecordsExtractor } from './extractors/officerRecordsExtractor';
 export { PrecedentExtractor, getPrecedentExtractor, precedentExtractor } from './extractors/precedentExtractor';
 
-export type { DocketData } from './extractors/courtDocketExtractor';
+// Type exports (primary names)
+export type { DocketData, CourtDocket } from './extractors/courtDocketExtractor';
 export type { StatuteData } from './extractors/statuteExtractor';
 export type { OfficerRecordData } from './extractors/officerRecordsExtractor';
-export type { CaseLawData } from './extractors/precedentExtractor';
+export type { CaseLawData, CasePrecedent } from './extractors/precedentExtractor';

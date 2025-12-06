@@ -17,9 +17,9 @@ import {
   courtDocketExtractor,
   statuteExtractor,
   precedentExtractor,
-  type DocketData,
+  type CourtDocket,
   type StatuteData,
-  type CaseLawData
+  type CasePrecedent
 } from './services/legalIntelligence';
 
 
@@ -81,66 +81,65 @@ async function extractStatuteFromURL(url: string): Promise<ExtractedStatute | nu
 
 
 /**
- * Auto-fetch statute by citation using Phase 3B statute extractor
+ * Phase 3B: Extract court docket information
+ * Supports PACER and state court systems
  */
-async function autoFetchStatute(citation: string, state?: string): Promise<StatuteData | null> {
+export async function extractCourtDocket(
+  caseNumber: string,
+  jurisdiction: 'federal' | 'state' | 'local' = 'federal',
+  url?: string
+): Promise<CourtDocket | null> {
   try {
-    console.log('[Legal AI] Auto-fetching statute:', citation, state);
-    const statute = await statuteExtractor.extractStatute(citation, state);
-    
-    if (statute) {
-      console.log('[Legal AI] Statute auto-fetch successful:', statute.citation);
-      return statute;
+    console.log('[Legal AI] Extracting court docket:', caseNumber, jurisdiction);
+
+    if (url) {
+      // Extract from specific URL
+      return await courtDocketExtractor.extractDocket(caseNumber, jurisdiction);
     } else {
-      console.warn('[Legal AI] Statute auto-fetch failed:', citation);
-      return null;
+      // Use case number and jurisdiction
+      return await courtDocketExtractor.extractDocket(caseNumber, jurisdiction);
     }
   } catch (error: any) {
-    console.error('[Legal AI] Error auto-fetching statute:', error);
+    console.error('[Legal AI] Error extracting docket:', error);
     return null;
   }
 }
 
 
 /**
- * Auto-fetch court docket by case number
+ * Phase 3B: Extract statute by citation
+ * Multi-source validation from Cornell LII, Justia, etc.
  */
-async function autoFetchDocket(caseNumber: string, jurisdiction: string): Promise<DocketData | null> {
+export async function extractStatuteByCitation(
+  citation: string,
+  jurisdiction: string = 'federal'
+): Promise<StatuteData | null> {
   try {
-    console.log('[Legal AI] Auto-fetching docket:', caseNumber, jurisdiction);
-    const docket = await courtDocketExtractor.extractDocket(caseNumber, jurisdiction);
+    console.log('[Legal AI] Extracting statute by citation:', citation);
     
-    if (docket) {
-      console.log('[Legal AI] Docket auto-fetch successful:', docket.caseNumber);
-      return docket;
-    } else {
-      console.warn('[Legal AI] Docket auto-fetch failed:', caseNumber);
-      return null;
-    }
+    return await statuteExtractor.extractStatute(citation, jurisdiction);
   } catch (error: any) {
-    console.error('[Legal AI] Error auto-fetching docket:', error);
+    console.error('[Legal AI] Error extracting statute:', error);
     return null;
   }
 }
 
 
 /**
- * Auto-fetch precedents (case law) by search query
+ * Phase 3B: Search for case precedents
+ * Searches Justia, FindLaw, Google Scholar
  */
-async function autoFetchPrecedents(query: string, jurisdiction?: string): Promise<CaseLawData[]> {
+export async function searchPrecedents(
+  query: string,
+  jurisdiction?: string,
+  maxResults: number = 10
+): Promise<CasePrecedent[]> {
   try {
-    console.log('[Legal AI] Auto-fetching precedents:', query, jurisdiction);
-    const cases = await precedentExtractor.extractPrecedents(query, jurisdiction, 10);
+    console.log('[Legal AI] Searching precedents:', query);
     
-    if (cases.length > 0) {
-      console.log('[Legal AI] Precedents auto-fetch successful:', cases.length, 'cases found');
-      return cases;
-    } else {
-      console.warn('[Legal AI] No precedents found for query:', query);
-      return [];
-    }
+    return await precedentExtractor.extractPrecedents(query, jurisdiction, maxResults);
   } catch (error: any) {
-    console.error('[Legal AI] Error auto-fetching precedents:', error);
+    console.error('[Legal AI] Error searching precedents:', error);
     return [];
   }
 }

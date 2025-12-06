@@ -234,3 +234,153 @@ export interface DBCorrelationEvent {
   module_name: string;
   created_at: string;
 }
+
+/**
+ * Phase 3B: Adaptive Crawler + Browser Manager Types
+ */
+
+// Browser types for multi-browser support
+export type BrowserType = 'chromium' | 'firefox' | 'webkit';
+
+// Browser session information
+export interface BrowserSession {
+  id: string;
+  type: BrowserType;
+  browser: any; // Playwright Browser instance
+  context: any; // Playwright BrowserContext instance
+  pages: any[]; // Active pages
+  createdAt: Date;
+  lastUsedAt: Date;
+  requestCount: number;
+}
+
+// Browser configuration options
+export interface BrowserConfig {
+  headless?: boolean;
+  timeout?: number;
+  userAgent?: string;
+  viewport?: {
+    width: number;
+    height: number;
+  };
+  cookies?: Array<{
+    name: string;
+    value: string;
+    domain?: string;
+    path?: string;
+  }>;
+}
+
+// Stop conditions for adaptive crawling
+export interface StopCondition {
+  minItems?: number;      // Found enough items
+  maxDepth?: number;      // Depth limit
+  maxPages?: number;      // Page limit
+  maxTime?: number;       // Time limit in ms
+  custom?: (data: any[]) => boolean;  // Custom logic
+}
+
+// Crawl configuration
+export interface CrawlConfig {
+  startUrl: string;
+  schema?: any; // ExtractionSchema from schemas.ts
+  stopCondition: StopCondition;
+  browserType?: BrowserType;
+  followLinks?: boolean;
+  linkSelector?: string;
+  maxConcurrent?: number;
+  respectRobotsTxt?: boolean;
+  userAgent?: string;
+}
+
+// Crawl result with metadata
+export interface CrawlResult {
+  success: boolean;
+  data: any[];
+  pagesVisited: number;
+  depth: number;
+  duration: number;
+  errors?: string[];
+  stopReason?: string;
+}
+
+// URL priority for link prioritization
+export interface UrlPriority {
+  url: string;
+  priority: number;
+  depth: number;
+  parent?: string;
+}
+
+// Docket entry structure
+export interface DocketEntry {
+  date: Date | string;
+  description: string;
+  document?: string;
+  filedBy?: string;
+}
+
+// Court docket schema (PACER + state courts)
+export interface CourtDocket {
+  caseNumber: string;
+  parties: string[];
+  filingDate: Date | string;
+  status: string;
+  judge?: string;
+  court?: string;
+  jurisdiction?: string;
+  docketEntries: DocketEntry[];
+}
+
+// Statute with amendments
+export interface StatuteData {
+  citation: string;
+  title: string;
+  text: string;
+  effectiveDate?: Date | string;
+  amendments?: Array<{
+    date: Date | string;
+    description: string;
+  }>;
+  jurisdiction: string;
+  source: string;
+}
+
+// Officer disciplinary record
+export interface OfficerDisciplinaryRecord {
+  date: Date | string;
+  type: string;
+  description: string;
+  outcome?: string;
+  status?: string;
+}
+
+// Officer record from transparency portals
+export interface OfficerRecordData {
+  name: string;
+  badgeNumber?: string;
+  department: string;
+  rank?: string;
+  status?: string;
+  hireDate?: Date | string;
+  complaints?: OfficerDisciplinaryRecord[];
+  commendations?: Array<{
+    date: Date | string;
+    description: string;
+  }>;
+  source: string;
+}
+
+// Case precedent for legal research
+export interface CasePrecedent {
+  caseName: string;
+  citation: string;
+  court: string;
+  jurisdiction: string;
+  decisionDate: Date | string;
+  holding: string;
+  reasoning?: string;
+  relevanceScore?: number;
+  judges?: string[];
+  source: string;
+}
