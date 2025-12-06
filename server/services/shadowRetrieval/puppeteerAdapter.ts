@@ -119,12 +119,73 @@ export class PuppeteerAdapter {
           executablePath: this.executablePath,
         });
 
+        // Detect container environment
+        const isDocker = existsSync('/.dockerenv');
+        const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
+        const isContainer = isDocker || isRailway;
+
+        log.info('Environment detection', {
+          isDocker,
+          isRailway,
+          isContainer,
+          platform: process.platform,
+        });
+
         const launchOptions: any = {
           headless: this.config.headless,
           args: this.config.args,
           defaultViewport: this.config.viewport,
           timeout: this.config.timeout,
         };
+
+        // Configure for container environments
+        if (isContainer) {
+          log.info('Container environment detected - configuring for Docker/Railway');
+          
+          // Try to find system Chromium
+          const containerChromiumPaths = [
+            process.env.PUPPETEER_EXECUTABLE_PATH,
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/google-chrome',
+          ].filter(Boolean) as string[];
+
+          let chromiumFound = false;
+          for (const path of containerChromiumPaths) {
+            if (existsSync(path)) {
+              launchOptions.executablePath = path;
+              chromiumFound = true;
+              log.info('System Chromium found', { 
+                path,
+                environment: isDocker ? 'Docker' : isRailway ? 'Railway' : 'Container'
+              });
+              break;
+            }
+          }
+
+          if (!chromiumFound) {
+            log.warn('System Chromium not found in container', {
+              searchedPaths: containerChromiumPaths,
+            });
+          }
+
+          // Add container-safe flags (critical for Docker/Railway)
+          const containerFlags = [
+            '--no-sandbox',              // Required: disables Chrome sandbox in containers
+            '--disable-setuid-sandbox',  // Required: alternative sandbox method
+            '--disable-dev-shm-usage',   // Critical: prevents Docker shared memory errors
+            '--disable-gpu',             // Not needed in containers
+            '--no-first-run',           // Skip first-run tasks
+            '--no-zygote',              // Reduces process count
+          ];
+
+          launchOptions.args.push(...containerFlags);
+
+          log.info('Container-safe flags applied', { 
+            flags: containerFlags
+          });
+        }
 
         // Add executable path if detected
         if (this.executablePath) {
