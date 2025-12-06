@@ -10,6 +10,11 @@ import {
   type LegalSearchResult,
   type AttributedFact 
 } from './enhancedLegalSearch';
+import { 
+  semanticLegalExtractor,
+  STATUTE as STATUTE_SCHEMA,
+  type Statute as ExtractedStatute
+} from './services/legalIntelligence';
 
 
 /**
@@ -39,6 +44,32 @@ async function generateLegalContent(
   } catch (error: any) {
     console.error(`[Legal AI] Error in ${taskName}:`, error);
     throw error;
+  }
+}
+
+
+/**
+ * Extract statute from Cornell LII or other legal sources using semantic extraction
+ * Provides structured data with exact text and metadata
+ */
+async function extractStatuteFromURL(url: string): Promise<ExtractedStatute | null> {
+  try {
+    console.log('[Legal AI] Extracting statute from URL:', url);
+    const result = await semanticLegalExtractor.extract(url, STATUTE_SCHEMA, {
+      useCache: true,
+      cacheTTL: 7 * 24 * 60 * 60 * 1000, // 7 days for statutes (rarely change)
+    });
+
+    if (result.success && result.data) {
+      console.log('[Legal AI] Statute extraction successful:', result.data.citation);
+      return result.data;
+    } else {
+      console.warn('[Legal AI] Statute extraction failed:', result.errors);
+      return null;
+    }
+  } catch (error: any) {
+    console.error('[Legal AI] Error extracting statute:', error);
+    return null;
   }
 }
 

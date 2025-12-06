@@ -2,6 +2,7 @@
  * Legal Intelligence Services
  * TheHarvester-style email and DNS intelligence for legal contacts
  * Phase 2: SpiderFoot Legal Entity Correlation
+ * Phase 3A: Crawl4AI Semantic Extraction
  */
 
 export * from './types';
@@ -25,3 +26,15 @@ export * from './modules';
 
 // Integration utilities
 export * from './integrations';
+
+// Phase 3A: Semantic Extraction Exports
+export * from './schemas';
+export * from './contentFilter';
+export * from './markdownConverter';
+export * from './extractionCache';
+export * from './semanticExtractor';
+
+export { contentFilter } from './contentFilter';
+export { markdownConverter } from './markdownConverter';
+export { extractionCache } from './extractionCache';
+export { semanticLegalExtractor } from './semanticExtractor';
