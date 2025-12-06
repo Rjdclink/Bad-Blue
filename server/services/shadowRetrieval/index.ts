@@ -22,15 +22,12 @@ import { DomainIntelligence } from './domainIntelligence';
 import { sleep } from './utils/timing';
 import { logger } from '../../logger';
 import { cacheManager } from '../caching';
+import { CACHE_CONFIG } from '../../config';
 
 const log = logger.child({ component: 'shadowRetrieval:engine' });
 
 // Initialize retrieval cache
-const retrievalCache = cacheManager.getCache('shadow-retrieval', {
-  ttl: 3600000,
-  maxSize: 50 * 1024 * 1024,
-  maxEntries: 500
-});
+const retrievalCache = cacheManager.getCache('shadow-retrieval', CACHE_CONFIG.retrieval);
 
 /**
  * Shadow Retrieval Engine
