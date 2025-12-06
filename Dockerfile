@@ -58,7 +58,8 @@ RUN npm prune --production
 EXPOSE 5000
 
 # Create non-root user for security
-RUN useradd -m -u 1000 appuser && \
+# Do not force UID 1000 because many base images (e.g. node) already reserve it.
+RUN useradd -m appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
