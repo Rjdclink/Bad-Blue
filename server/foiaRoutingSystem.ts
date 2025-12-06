@@ -8,7 +8,9 @@ import {
   type FOIAContact,
   semanticLegalExtractor,
   contentFilter,
-  markdownConverter
+  markdownConverter,
+  adaptiveCrawler,
+  type CrawlConfig
 } from './services/legalIntelligence';
 
 const ADMIN_FALLBACK_EMAIL = 'contact.badblue@gmail.com';
@@ -210,6 +212,118 @@ export async function scrapeFOIAPortal(url: string): Promise<{
     return null;
   }
 }
+
+
+/**
+ * Auto-scrape FOIA portal using adaptive crawler
+ * Uses Phase 3B adaptive crawler for comprehensive portal scraping
+ */
+export async function autoScrapeFOIAPortal(agencyFOIAUrl: string): Promise<{
+  contacts: FOIAAuthority[];
+  submissionUrl?: string;
+  portalFeatures?: {
+    onlineSubmission: boolean;
+    statusTracking: boolean;
+    documentUpload: boolean;
+  };
+} | null> {
+  try {
+    console.log('[FOIA] Auto-scraping FOIA portal with adaptive crawler:', agencyFOIAUrl);
+
+    // Define schema for FOIA contact extraction
+    const FOIA_CONTACT_SCHEMA = {
+      name: 'foia_contact',
+      description: 'Extract FOIA officer contact information from agency websites',
+      fields: {
+        name: {
+          type: 'string' as const,
+          description: 'Full name of the FOIA officer or contact person',
+          required: true,
+        },
+        title: {
+          type: 'string' as const,
+          description: 'Job title (e.g., FOIA Officer, Records Custodian)',
+          required: false,
+        },
+        email: {
+          type: 'string' as const,
+          description: 'Email address for FOIA requests',
+          required: false,
+        },
+        phone: {
+          type: 'string' as const,
+          description: 'Phone number',
+          required: false,
+        },
+        department: {
+          type: 'string' as const,
+          description: 'Department or division',
+          required: false,
+        },
+        address: {
+          type: 'string' as const,
+          description: 'Mailing address',
+          required: false,
+        },
+      },
+    };
+
+    // Use adaptive crawler to find FOIA contacts
+    const result = await adaptiveCrawler.crawl({
+      startUrl: agencyFOIAUrl,
+      schema: FOIA_CONTACT_SCHEMA,
+      stopCondition: {
+        minItems: 3,
+        maxDepth: 2,
+        successRate: 0.3,
+        maxUrls: 15,
+        timeoutMs: 60000,
+      },
+      followLinks: true,
+      urlPattern: new RegExp(new URL(agencyFOIAUrl).hostname),
+    });
+
+    if (result.data.length === 0) {
+      console.warn('[FOIA] No contacts found through adaptive crawling');
+      return null;
+    }
+
+    // Convert to FOIAAuthority format
+    const contacts: FOIAAuthority[] = result.data.map(contact => ({
+      name: contact.name || 'FOIA Officer',
+      title: contact.title || 'FOIA Officer',
+      email: contact.email,
+      phone: contact.phone,
+      address: contact.address,
+      department: contact.department,
+      type: 'foia_officer' as const,
+      verified: false,
+      source: agencyFOIAUrl,
+    }));
+
+    // Detect portal features from crawl
+    const portalFeatures = {
+      onlineSubmission: result.urlsVisited > 0 && result.data.some(d => 
+        d.title?.toLowerCase().includes('submit') || 
+        d.email?.toLowerCase().includes('submit')
+      ),
+      statusTracking: false, // Could be enhanced with pattern detection
+      documentUpload: false,  // Could be enhanced with pattern detection
+    };
+
+    console.log('[FOIA] Auto-scraping successful:', contacts.length, 'contacts found');
+
+    return {
+      contacts,
+      submissionUrl: agencyFOIAUrl,
+      portalFeatures,
+    };
+  } catch (error: any) {
+    console.error('[FOIA] Error auto-scraping portal:', error);
+    return null;
+  }
+}
+
 
 export async function lookupFOIAAuthority(
   agencyName: string,

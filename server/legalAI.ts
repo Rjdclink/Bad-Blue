@@ -13,7 +13,13 @@ import {
 import { 
   semanticLegalExtractor,
   STATUTE as STATUTE_SCHEMA,
-  type Statute as ExtractedStatute
+  type Statute as ExtractedStatute,
+  courtDocketExtractor,
+  statuteExtractor,
+  precedentExtractor,
+  type DocketData,
+  type StatuteData,
+  type CaseLawData
 } from './services/legalIntelligence';
 
 
@@ -70,6 +76,72 @@ async function extractStatuteFromURL(url: string): Promise<ExtractedStatute | nu
   } catch (error: any) {
     console.error('[Legal AI] Error extracting statute:', error);
     return null;
+  }
+}
+
+
+/**
+ * Auto-fetch statute by citation using Phase 3B statute extractor
+ */
+async function autoFetchStatute(citation: string, state?: string): Promise<StatuteData | null> {
+  try {
+    console.log('[Legal AI] Auto-fetching statute:', citation, state);
+    const statute = await statuteExtractor.extractStatute(citation, state);
+    
+    if (statute) {
+      console.log('[Legal AI] Statute auto-fetch successful:', statute.citation);
+      return statute;
+    } else {
+      console.warn('[Legal AI] Statute auto-fetch failed:', citation);
+      return null;
+    }
+  } catch (error: any) {
+    console.error('[Legal AI] Error auto-fetching statute:', error);
+    return null;
+  }
+}
+
+
+/**
+ * Auto-fetch court docket by case number
+ */
+async function autoFetchDocket(caseNumber: string, jurisdiction: string): Promise<DocketData | null> {
+  try {
+    console.log('[Legal AI] Auto-fetching docket:', caseNumber, jurisdiction);
+    const docket = await courtDocketExtractor.extractDocket(caseNumber, jurisdiction);
+    
+    if (docket) {
+      console.log('[Legal AI] Docket auto-fetch successful:', docket.caseNumber);
+      return docket;
+    } else {
+      console.warn('[Legal AI] Docket auto-fetch failed:', caseNumber);
+      return null;
+    }
+  } catch (error: any) {
+    console.error('[Legal AI] Error auto-fetching docket:', error);
+    return null;
+  }
+}
+
+
+/**
+ * Auto-fetch precedents (case law) by search query
+ */
+async function autoFetchPrecedents(query: string, jurisdiction?: string): Promise<CaseLawData[]> {
+  try {
+    console.log('[Legal AI] Auto-fetching precedents:', query, jurisdiction);
+    const cases = await precedentExtractor.extractPrecedents(query, jurisdiction, 10);
+    
+    if (cases.length > 0) {
+      console.log('[Legal AI] Precedents auto-fetch successful:', cases.length, 'cases found');
+      return cases;
+    } else {
+      console.warn('[Legal AI] No precedents found for query:', query);
+      return [];
+    }
+  } catch (error: any) {
+    console.error('[Legal AI] Error auto-fetching precedents:', error);
+    return [];
   }
 }
 

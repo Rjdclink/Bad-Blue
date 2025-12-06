@@ -11,7 +11,9 @@ import {
   emailDiscoveryService,
   semanticLegalExtractor,
   OFFICER_RECORD as OFFICER_RECORD_SCHEMA,
-  type OfficerRecord as ExtractedOfficerRecord
+  type OfficerRecord as ExtractedOfficerRecord,
+  officerRecordsExtractor,
+  type OfficerRecordData
 } from './services/legalIntelligence';
 
 // Complete US state abbreviation to full name mapping
@@ -91,6 +93,34 @@ export async function extractOfficerRecordFromURL(url: string): Promise<Extracte
     return null;
   }
 }
+
+
+/**
+ * Deep mine officer records from transparency portals and FOIA databases
+ * Uses Phase 3B officer records extractor for multi-source adaptive scraping
+ */
+export async function deepMineOfficerRecords(
+  name: string,
+  department: string
+): Promise<OfficerRecordData[]> {
+  try {
+    console.log('[Officer Search] Deep mining officer records:', name, department);
+    
+    const records = await officerRecordsExtractor.extractOfficerRecords(name, department);
+    
+    if (records.length > 0) {
+      console.log('[Officer Search] Deep mining successful:', records.length, 'records found');
+      return records;
+    } else {
+      console.warn('[Officer Search] No records found through deep mining');
+      return [];
+    }
+  } catch (error: any) {
+    console.error('[Officer Search] Error deep mining officer records:', error);
+    return [];
+  }
+}
+
 
 // Helper to check if Gemini is truly available (has key AND not rate limited)
 function canUseGemini(): boolean {
