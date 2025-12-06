@@ -311,7 +311,7 @@ docker-compose up --build
 
 2. Access application:
 ```
-http://localhost:3000
+http://localhost:5000
 ```
 
 3. View logs:

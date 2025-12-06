@@ -19,7 +19,7 @@
     "deploy:check": "bash scripts/prepare-deployment.sh",
     "ai:analyze": "node scripts/analyze-ai-usage.cjs",
     "docker:build": "docker build -t pantheon:latest .",
-    "docker:run": "docker run -p 3000:3000 --env-file .env pantheon:latest",
+    "docker:run": "docker run -p 5000:5000 --env-file .env pantheon:latest",
     "docker:test": "node scripts/puppeteer-healthcheck.js",
     "docker:dev": "docker-compose up --build"
   },
