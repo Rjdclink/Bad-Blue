@@ -419,7 +419,12 @@ export class OfficerRecordsExtractor {
    * Normalize department name
    */
   private normalizeDepartment(department: string): string {
-    return department.toLowerCase().trim().replace(/\s+/g, '-');
+    return department
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
+      .replace(/\s+/g, '-')      // Replace spaces with hyphens
+      .replace(/-+/g, '-');      // Collapse multiple hyphens
   }
 
   /**

@@ -66,7 +66,8 @@ export class PrecedentExtractor {
         name: 'Google Scholar',
         baseUrl: 'https://scholar.google.com',
         searchPattern: (query: string, jurisdiction?: string) => {
-          const jurisdictionParam = jurisdiction ? `&as_vis=1&as_sdt=6&as_ylo=1900&as_yhi=2024` : '';
+          const currentYear = new Date().getFullYear();
+          const jurisdictionParam = jurisdiction ? `&as_vis=1&as_sdt=6&as_ylo=1900&as_yhi=${currentYear}` : '';
           return `https://scholar.google.com/scholar?q=${encodeURIComponent(query)}${jurisdictionParam}`;
         },
         priority: 1,

@@ -392,27 +392,59 @@ export class StatuteExtractor {
    * Check if URL is federal source
    */
   private isFederalURL(url: string): boolean {
-    return url.includes('cornell.edu') || url.includes('govinfo.gov') || url.includes('uscode');
+    try {
+      const urlObj = new URL(url);
+      const hostname = urlObj.hostname.toLowerCase();
+      return hostname === 'www.law.cornell.edu' || 
+             hostname === 'law.cornell.edu' ||
+             hostname === 'www.govinfo.gov' ||
+             hostname === 'govinfo.gov' ||
+             hostname.endsWith('.govinfo.gov') ||
+             hostname.endsWith('.cornell.edu') ||
+             url.includes('uscode');
+    } catch {
+      return false;
+    }
   }
 
   /**
    * Extract state code from URL
    */
   private extractStateFromURL(url: string): string | undefined {
-    // Simple pattern matching - would need more robust implementation
-    const patterns = [
-      /ca\.gov/i,
-      /nysenate\.gov/i,
-      /texas\.gov/i,
-    ];
-
-    for (const pattern of patterns) {
-      if (pattern.test(url)) {
-        return url.match(pattern)?.[0].split('.')[0].toUpperCase();
+    try {
+      const urlObj = new URL(url);
+      const hostname = urlObj.hostname.toLowerCase();
+      
+      // Map of known state hostnames to state codes
+      const stateMap: Record<string, string> = {
+        'ca.gov': 'CA',
+        'leginfo.legislature.ca.gov': 'CA',
+        'nysenate.gov': 'NY',
+        'texas.gov': 'TX',
+        'statutes.capitol.texas.gov': 'TX',
+      };
+      
+      // Check for exact matches first
+      for (const [pattern, stateCode] of Object.entries(stateMap)) {
+        if (hostname.includes(pattern)) {
+          return stateCode;
+        }
       }
+      
+      // Try to extract from path or subdomain
+      const domainParts = hostname.split('.');
+      if (domainParts.length >= 2) {
+        const tld = domainParts[domainParts.length - 2];
+        // Check if it's a state code (2 letters)
+        if (tld.length === 2) {
+          return tld.toUpperCase();
+        }
+      }
+      
+      return undefined;
+    } catch {
+      return undefined;
     }
-
-    return undefined;
   }
 
   /**

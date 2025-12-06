@@ -5,7 +5,6 @@
  */
 
 import { browserManager, BrowserManager, getBrowserManager } from './browserManager';
-import { contentFilter } from './contentFilter';
 import { semanticLegalExtractor, type ExtractionResult } from './semanticExtractor';
 import { type ExtractionSchema } from './schemas';
 import { logger } from '../../logger';
