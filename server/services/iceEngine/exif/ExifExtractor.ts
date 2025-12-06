@@ -57,7 +57,7 @@ export class ExifExtractor {
         source: {
           filename: upload.filename,
           uploadedBy: upload.uploadedBy,
-          consentGiven: true,
+          consentGiven: upload.consentGiven,
         },
       };
     } catch (error) {

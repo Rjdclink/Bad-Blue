@@ -8,11 +8,12 @@ interface RenderConfig {
   caseId: string;
   width?: number;
   height?: number;
+  renderDelay?: number;
 }
 
 export class MapRenderer {
   async renderMapScreenshot(config: RenderConfig): Promise<string> {
-    const { htmlPath, outputPath, caseId, width = 1920, height = 1080 } = config;
+    const { htmlPath, outputPath, caseId, width = 1920, height = 1080, renderDelay = 2000 } = config;
 
     const browser = await puppeteer.launch({
       headless: true,
@@ -28,7 +29,7 @@ export class MapRenderer {
       await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
 
       await page.waitForFunction(() => (window as any).mapReady === true, { timeout: 30000 });
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, renderDelay));
 
       const screenshotPath = path.join(outputPath, `map-${caseId}.png`);
       await page.screenshot({ path: screenshotPath, fullPage: false });
@@ -41,9 +42,12 @@ export class MapRenderer {
   }
 
   async renderMultipleMaps(configs: RenderConfig[]): Promise<string[]> {
-    const results = await Promise.all(
-      configs.map(config => this.renderMapScreenshot(config))
-    );
+    // Render maps sequentially to avoid resource exhaustion from multiple browser instances
+    const results: string[] = [];
+    for (const config of configs) {
+      const result = await this.renderMapScreenshot(config);
+      results.push(result);
+    }
     return results;
   }
 }
