@@ -3,7 +3,13 @@ import { sendEmail } from './emailService';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { performEnhancedLegalSearch, type LegalSearchResult } from './enhancedLegalSearch';
-import { emailDiscoveryService, type FOIAContact } from './services/legalIntelligence';
+import { 
+  emailDiscoveryService,
+  type FOIAContact,
+  semanticLegalExtractor,
+  contentFilter,
+  markdownConverter
+} from './services/legalIntelligence';
 
 const ADMIN_FALLBACK_EMAIL = 'contact.badblue@gmail.com';
 
@@ -132,6 +138,78 @@ const STATE_FOIA_INFO: Record<string, {
   'WY': { statute: 'Wyo. Stat. § 16-4-201-.205', deadline: 'reasonable time', name: 'Wyoming Public Records Act', exemptionReference: 'Wyo. Stat. § 16-4-203' },
   'DC': { statute: 'D.C. Code § 2-531', deadline: '15 business days', name: 'District of Columbia Freedom of Information Act', exemptionReference: 'D.C. Code § 2-534' },
 };
+
+/**
+ * Scrape FOIA portal for contact information and submission details
+ * Uses semantic extraction for structured data
+ */
+export async function scrapeFOIAPortal(url: string): Promise<{
+  contactInfo?: FOIAAuthority;
+  submissionUrl?: string;
+  instructions?: string;
+} | null> {
+  try {
+    console.log('[FOIA] Scraping FOIA portal:', url);
+    
+    // Retrieve and filter content
+    const shadowRetrieval = await import('./services/shadowRetrieval');
+    const engine = new shadowRetrieval.ShadowRetrievalEngine({ enabled: true });
+    
+    const result = await engine.smartRetrieve(url, {
+      waitForContent: true,
+      extractLinks: true,
+    });
+
+    if (!result.success || !result.html) {
+      console.warn('[FOIA] Failed to retrieve portal:', result.error);
+      return null;
+    }
+
+    // Filter and convert content
+    const filteredHtml = await contentFilter.filterContent(result.html);
+    const markdown = markdownConverter.convert(filteredHtml);
+
+    // Extract contact information using pattern matching
+    const emailPattern = /[\w.-]+@[\w.-]+\.\w+/g;
+    const phonePattern = /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g;
+    
+    const emails = markdown.match(emailPattern) || [];
+    const phones = markdown.match(phonePattern) || [];
+
+    // Look for FOIA-specific terms
+    const foiaOfficerMatch = markdown.match(/(?:FOIA|Public Records|Transparency)\s+(?:Officer|Coordinator|Contact)[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
+    
+    if (emails.length > 0 || foiaOfficerMatch) {
+      const contactInfo: FOIAAuthority = {
+        name: foiaOfficerMatch?.[1] || 'FOIA Officer',
+        title: 'FOIA Officer',
+        email: emails[0],
+        phone: phones[0],
+        type: 'foia_officer',
+        verified: false,
+        source: url,
+      };
+
+      // Extract submission URL from links
+      const submissionUrl = result.links?.find(link => 
+        link.toLowerCase().includes('submit') || 
+        link.toLowerCase().includes('request') ||
+        link.toLowerCase().includes('portal')
+      );
+
+      return {
+        contactInfo,
+        submissionUrl,
+        instructions: markdown.substring(0, 500), // First 500 chars as instructions
+      };
+    }
+
+    return null;
+  } catch (error: any) {
+    console.error('[FOIA] Error scraping portal:', error);
+    return null;
+  }
+}
 
 export async function lookupFOIAAuthority(
   agencyName: string,

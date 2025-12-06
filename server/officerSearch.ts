@@ -7,7 +7,12 @@ import { isClaudeAvailable, generateClaudeJSON, callClaude } from "./claude";
 import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 import { searchOfficerRecords as webSearchOfficerRecords, unifiedSearch, isWebSearchAvailable } from './webSearchService';
 import { searchOfficerWithOpenRouter, isOpenRouterAvailable } from './openRouterService';
-import { emailDiscoveryService } from './services/legalIntelligence';
+import { 
+  emailDiscoveryService,
+  semanticLegalExtractor,
+  OFFICER_RECORD as OFFICER_RECORD_SCHEMA,
+  type OfficerRecord as ExtractedOfficerRecord
+} from './services/legalIntelligence';
 
 // Complete US state abbreviation to full name mapping
 const STATE_ABBREVIATIONS: Record<string, string> = {
@@ -60,6 +65,31 @@ function normalizeState(state: string | undefined): string | undefined {
 function getStateName(stateAbbr: string | undefined): string | undefined {
   if (!stateAbbr) return undefined;
   return STATE_ABBREVIATIONS[stateAbbr.toUpperCase()] || stateAbbr;
+}
+
+/**
+ * Extract officer record from transparency portal or department roster URL
+ * Uses semantic extraction for structured data
+ */
+export async function extractOfficerRecordFromURL(url: string): Promise<ExtractedOfficerRecord | null> {
+  try {
+    console.log('[Officer Search] Extracting officer record from URL:', url);
+    const result = await semanticLegalExtractor.extract(url, OFFICER_RECORD_SCHEMA, {
+      useCache: true,
+      cacheTTL: 48 * 60 * 60 * 1000, // 48 hours
+    });
+
+    if (result.success && result.data) {
+      console.log('[Officer Search] Officer record extraction successful:', result.data.name);
+      return result.data;
+    } else {
+      console.warn('[Officer Search] Officer record extraction failed:', result.errors);
+      return null;
+    }
+  } catch (error: any) {
+    console.error('[Officer Search] Error extracting officer record:', error);
+    return null;
+  }
 }
 
 // Helper to check if Gemini is truly available (has key AND not rate limited)
