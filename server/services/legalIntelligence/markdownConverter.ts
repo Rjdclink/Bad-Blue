@@ -17,7 +17,15 @@ const CASE_CITATION_PATTERN = /\b([A-Z][a-z]+\s+v\.\s+[A-Z][a-z]+|[A-Z][a-z]+\s+
 
 /**
  * Statute citation patterns for code formatting
- * Examples: 42 U.S.C. § 1983, Cal. Penal Code § 148
+ * Examples: 
+ *   - 42 U.S.C. § 1983 (Federal statute)
+ *   - Cal. Penal Code § 148 (State code)
+ *   - 18 U.S.C. § 924 (Federal criminal code)
+ * The pattern matches:
+ *   - Number + State/Federal abbreviation (e.g., "42 U.S.C.")
+ *   - "Code", "Stat", or "C" (for U.S.C. = United States Code)
+ *   - Section symbol § or without
+ *   - Section number with optional subsections (e.g., "1983" or "924.1.a")
  */
 const STATUTE_CITATION_PATTERN = /\b(\d+\s+[A-Z]\.?[A-Z]\.?[A-Z]?\.?\s*(?:Code|Stat|Rev\.\s*Stat|C)\.?\s*§\s*\d+(?:[.-]\d+)*)/gi;
 

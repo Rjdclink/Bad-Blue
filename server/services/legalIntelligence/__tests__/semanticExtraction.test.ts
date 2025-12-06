@@ -101,6 +101,7 @@ const schemaTests = [
     const schema = getSchemaByName('statute');
     expect(schema).toBeTruthy();
     expect(schema?.name).toBe('statute');
+    // Verify description contains 'statute' (case-insensitive)
     expect(schema?.description.toLowerCase().includes('statute')).toBe(true);
   }),
 
@@ -162,6 +163,7 @@ const contentFilterTests = [
     const filter = new ContentFilter();
     const html = '<div><p>Content with legal terms like plaintiff and court proceedings</p></div><script>alert("bad")</script>';
     const filtered = await filter.filterContent(html);
+    // Check for '<script' to ensure the HTML tag itself is removed, not just the word 'script'
     expect(filtered.includes('<script')).toBe(false);
     expect(filtered.includes('Content')).toBe(true);
   }),
