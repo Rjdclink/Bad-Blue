@@ -2,6 +2,9 @@
 
 .DEFAULT_GOAL := help
 
+# Detect docker compose command
+COMPOSE_CMD := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+
 help:
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  PANTHEON Development Commands"
@@ -21,29 +24,29 @@ setup:
 	@bash scripts/instant-setup.sh
 
 start:
-	@docker-compose up -d
+	@$(COMPOSE_CMD) up -d
 	@echo "✅ Services started at http://localhost:5000"
 
 stop:
-	@docker-compose down
+	@$(COMPOSE_CMD) down
 	@echo "✅ Services stopped"
 
 restart:
-	@docker-compose restart
+	@$(COMPOSE_CMD) restart
 	@echo "✅ Services restarted"
 
 logs:
-	@docker-compose logs -f
+	@$(COMPOSE_CMD) logs -f
 
 shell:
-	@docker-compose exec app sh
+	@$(COMPOSE_CMD) exec app sh
 
 db-shell:
-	@docker-compose exec db psql -U postgres -d legalwhat
+	@$(COMPOSE_CMD) exec db psql -U postgres -d legalwhat
 
 status:
-	@docker-compose ps
+	@$(COMPOSE_CMD) ps
 
 clean:
-	@docker-compose down -v
+	@$(COMPOSE_CMD) down -v
 	@echo "✅ Cleaned up"

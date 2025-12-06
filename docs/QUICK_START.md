@@ -62,8 +62,14 @@ make setup
 
 ### Port already in use
 
+Check what's using port 5000:
 ```bash
-lsof -ti:5000 | xargs kill -9
+lsof -ti:5000
+```
+
+Stop the conflicting service or use docker-compose:
+```bash
+make stop
 ```
 
 ## Next Steps
