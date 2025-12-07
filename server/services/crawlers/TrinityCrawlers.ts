@@ -2,7 +2,14 @@ import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
 
 // Types
-interface BrowserFingerprint { canvas: string; webGL: string; fonts: string[]; plugins: string[]; screen: { width: number; height: number }; timezone: string; }
+interface BrowserFingerprint {
+  canvas: string;
+  webGL: string;
+  fonts: string[];
+  plugins: string[];
+  screen: { width: number; height: number };
+  timezone: string;
+}
 type ArmPattern = { angle: number; length: number; branches: number };
 interface Snowflake { id: string; target: string; structure: { arms: 6; pattern: ArmPattern[]; molecules: BrowserFingerprint; density: number; temperature: number; }; createdAt: number; }
 type StormIntensity = 'flurry' | 'snow' | 'storm' | 'blizzard' | 'whiteout';
@@ -15,8 +22,12 @@ interface RequestOptions { method?: string; headers?: Record<string, string>; bo
 // Shared Utilities
 async function executeRequest(url: string, options: RequestOptions): Promise<Response> {
   const controller = new AbortController();
-  setTimeout(() => controller.abort(), options.timeout || 30000);
-  return fetch(url, { ...options, signal: controller.signal });
+  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 function parseResults(html: string): Data { return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' }; }
 function calculateConfidence(data: Data): number { return data.content.length > 100 ? 0.9 : 0.5; }
@@ -194,11 +205,15 @@ class ZombieHead implements CerberusHead {
 }
 
 export class CerberusCrawler {
-  private leftHead: IceHead; private centerHead: HydraHead; private rightHead: ZombieHead;
+  private leftHead: IceHead;
+  private centerHead: HydraHead;
+  private rightHead: ZombieHead;
   private underworldVault: PhylacterySystem;
   constructor(phylactery: PhylacterySystem, stealth: StealthInfrastructure) {
     this.underworldVault = phylactery;
-    this.leftHead = new IceHead(phylactery); this.centerHead = new HydraHead(); this.rightHead = new ZombieHead(phylactery);
+    this.leftHead = new IceHead(phylactery);
+    this.centerHead = new HydraHead();
+    this.rightHead = new ZombieHead(phylactery);
   }
   async attack(target: string): Promise<Data> {
     return Promise.race([this.leftHead.attack(target), this.centerHead.attack(target), this.rightHead.attack(target)]);
@@ -210,10 +225,10 @@ export class CerberusCrawler {
     }
     throw new Error('All heads failed');
   }
-  async regenerateHead(head: 'left' | 'center' | 'right'): Promise<void> {
-    if (head === 'left') this.leftHead = new IceHead(this.underworldVault);
-    else if (head === 'center') this.centerHead = new HydraHead();
-    else if (head === 'right') this.rightHead = new ZombieHead(this.underworldVault);
+  async regenerateHead(head: 'ice' | 'hydra' | 'zombie'): Promise<void> {
+    if (head === 'ice') this.leftHead = new IceHead(this.underworldVault);
+    else if (head === 'hydra') this.centerHead = new HydraHead();
+    else if (head === 'zombie') this.rightHead = new ZombieHead(this.underworldVault);
   }
   getMetrics() { return { leftHead: { ...this.leftHead }, centerHead: { ...this.centerHead }, rightHead: { ...this.rightHead } }; }
 }
