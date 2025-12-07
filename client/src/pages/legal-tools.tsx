@@ -467,8 +467,7 @@ export default function LegalToolsPage() {
                   backgroundImage: 'url(/images/PANTHEON.jpg)',
                   backgroundSize: 'cover',
                   backgroundPosition: 'center',
-                  backgroundRepeat: 'no-repeat',
-                  backgroundAttachment: 'fixed'
+                  backgroundRepeat: 'no-repeat'
                 }}
               >
                 {/* Enhanced semi-transparent overlay with gradient for depth */}
@@ -479,7 +478,7 @@ export default function LegalToolsPage() {
                 
                 <CardHeader className="relative z-10">
                   <CardTitle className="flex items-center gap-2 text-white drop-shadow-lg">
-                    <Users className="w-5 h-5 text-blue-400 drop-shadow-glow" />
+                    <Users className="w-5 h-5 text-blue-400 drop-shadow-[0_0_8px_rgba(96,165,250,0.6)]" />
                     People Finder - Identity Intelligence
                   </CardTitle>
                   <CardDescription className="text-gray-200 drop-shadow-md">
