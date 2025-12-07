@@ -96,13 +96,25 @@ export abstract class BaseCrawler extends EventEmitter {
 
   /**
    * Hash data to 32-byte identifier (not cryptographic)
+   * Uses a simple hash function for generating unique-enough identifiers
    */
   protected hashData(data: any): string {
-    return Buffer.from(JSON.stringify(data)).toString('base64').slice(0, 32);
+    const str = JSON.stringify(data);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    // Create a 32-character hash by combining timestamp and hash value
+    const timestamp = Date.now().toString(36);
+    const hashStr = Math.abs(hash).toString(36);
+    return (timestamp + hashStr + str.length.toString(36)).padEnd(32, '0').slice(0, 32);
   }
 
   /**
    * Calculate probability score (0-1) based on entropy
+   * Lower entropy = higher probability = more predictable
    * Higher entropy = lower probability = more random
    */
   protected calculateProbability(data: any): number {
@@ -110,8 +122,8 @@ export abstract class BaseCrawler extends EventEmitter {
     const uniqueChars = new Set(str).size;
     const entropy = uniqueChars / str.length;
     
-    // Normalize to 0-1 range (higher entropy = lower probability)
-    return Math.min(entropy * 2, 1);
+    // Invert: lower entropy = higher probability
+    return Math.max(0, Math.min(1, 1 - entropy));
   }
 
   /**

@@ -48,6 +48,7 @@ export class PantheonCore extends EventEmitter {
   private entropyField: Map<string, EntropySignature> = new Map();
   private resourceMonitor: NodeJS.Timeout | null = null;
   private swarmActive = false;
+  private lastCpuUsage: NodeJS.CpuUsage = { user: 0, system: 0 };
 
   constructor(private config: PantheonConfig) {
     super();
@@ -87,11 +88,17 @@ export class PantheonCore extends EventEmitter {
    * Get current resource usage
    */
   private async getResourceMetrics(): Promise<ResourceMetrics> {
-    const usage = process.cpuUsage();
+    const usage = process.cpuUsage(this.lastCpuUsage);
     const mem = process.memoryUsage();
     
+    // Calculate CPU percentage over the last interval
+    // cpuUsage returns microseconds, so divide by interval (1000ms = 1,000,000μs) for percentage
+    const cpuPercent = ((usage.user + usage.system) / 10000); // Approximation for 1s interval
+    
+    this.lastCpuUsage = process.cpuUsage();
+    
     return {
-      cpuUsage: (usage.user + usage.system) / 1000000, // Convert to percentage estimate
+      cpuUsage: Math.min(cpuPercent, 100), // Cap at 100%
       memUsage: mem.heapUsed / mem.heapTotal * 100,
       activeWorkers: this.taskQueue.length
     };
@@ -157,14 +164,17 @@ export class PantheonCore extends EventEmitter {
    * Returns top 10% of signatures by score
    */
   compressSolutionSpace(signatures: EntropySignature[]): EntropySignature[] {
+    type ScoredSignature = EntropySignature & { score: number };
+    
     return signatures
       .map(s => ({
         ...s,
         // Score = probability / constraint complexity
         score: s.probability * (1 / (s.constraints.length + 1))
-      }))
-      .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, Math.ceil(signatures.length * 0.1)); // Top 10%
+      } as ScoredSignature))
+      .sort((a: ScoredSignature, b: ScoredSignature) => b.score - a.score)
+      .slice(0, Math.ceil(signatures.length * 0.1)) // Top 10%
+      .map(({ score, ...sig }) => sig); // Remove score property
   }
 
   /**

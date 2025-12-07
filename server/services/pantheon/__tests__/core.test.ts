@@ -335,8 +335,9 @@ export async function runPantheonTests(): Promise<boolean> {
   return results.every(r => r.passed);
 }
 
-// Run tests if executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Run tests if executed directly (ES module compatible)
+const isMainModule = process.argv[1]?.includes('core.test');
+if (isMainModule) {
   runPantheonTests()
     .then(success => {
       process.exit(success ? 0 : 1);
