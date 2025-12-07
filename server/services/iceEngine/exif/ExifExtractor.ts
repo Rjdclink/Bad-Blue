@@ -26,6 +26,8 @@ export interface LocationData {
   };
 }
 
+export class ExifExtractor {
+  async extractLocation(upload: Upload): Promise<LocationData | null> {
     try {
       const parser = ExifParser.create(upload.file);
       const result = parser.parse();
@@ -50,7 +52,6 @@ export interface LocationData {
         source: {
           filename: upload.filename,
           uploadedBy: upload.uploadedBy,
-          consentGiven: upload.consentGiven,
         },
       };
     } catch (error) {
@@ -65,5 +66,6 @@ export interface LocationData {
     );
     return results.filter(r => r !== null) as LocationData[];
   }
+}
 
 export const exifExtractor = new ExifExtractor();
