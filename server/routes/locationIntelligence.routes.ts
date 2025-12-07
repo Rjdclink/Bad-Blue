@@ -45,7 +45,7 @@ router.post('/api/location-intel/analyze', async (req, res) => {
       locations.forEach(loc => locationAggregator.addExifLocation(loc));
     }
 
-    publicRecords.forEach((record: PublicRecord) => {
+    publicRecords.forEach(record => {
       locationAggregator.addPublicRecord(record);
     });
 

@@ -14,9 +14,10 @@ export interface ExifLocation {
 export class ExifToolExtractor {
   async extractLocation(imagePath: string): Promise<ExifLocation | null> {
     try {
-      // Validate file path to prevent command injection
+      // Validate file path to prevent command injection and path traversal
       // Only allow alphanumeric, dots, hyphens, underscores, and forward slashes (no spaces or special chars)
-      if (!/^[a-zA-Z0-9._\-\/]+$/.test(imagePath)) {
+      // Reject paths containing '..' to prevent path traversal
+      if (!/^[a-zA-Z0-9._\-\/]+$/.test(imagePath) || imagePath.includes('..')) {
         console.error(`[ExifTool] Invalid file path format: ${imagePath}`);
         return null;
       }
@@ -28,18 +29,28 @@ export class ExifToolExtractor {
         `exiftool -j -GPSLatitude -GPSLongitude -GPSLatitudeRef -GPSLongitudeRef -GPSAltitude -CreateDate -DateTimeOriginal '${escapedPath}'`
       );
 
-      const data = JSON.parse(stdout)[0];
+      const data = JSON.parse(stdout);
+      
+      // Validate that ExifTool returned data
+      if (!Array.isArray(data) || data.length === 0) {
+        console.log(`[ExifTool] No EXIF data in ${imagePath}`);
+        return null;
+      }
+      
+      const exifData = data[0];
 
-      if (!data.GPSLatitude || !data.GPSLongitude) {
+      if (!exifData.GPSLatitude || !exifData.GPSLongitude) {
         console.log(`[ExifTool] No GPS data in ${imagePath}`);
         return null;
       }
 
-      const latitude = this.parseGPS(data.GPSLatitude, data.GPSLatitudeRef);
-      const longitude = this.parseGPS(data.GPSLongitude, data.GPSLongitudeRef);
+      const latitude = this.parseGPS(exifData.GPSLatitude, exifData.GPSLatitudeRef);
+      const longitude = this.parseGPS(exifData.GPSLongitude, exifData.GPSLongitudeRef);
 
-      // Validate parsed coordinates
-      if (latitude === null || longitude === null) {
+      // Validate parsed coordinates and range
+      if (latitude === null || longitude === null || 
+          latitude < -90 || latitude > 90 || 
+          longitude < -180 || longitude > 180) {
         console.error(`[ExifTool] Invalid GPS coordinates in ${imagePath}`);
         return null;
       }
@@ -48,10 +59,10 @@ export class ExifToolExtractor {
         latitude,
         longitude,
         source: imagePath,
-        altitude: data.GPSAltitude ? parseFloat(data.GPSAltitude) : undefined,
+        altitude: exifData.GPSAltitude ? parseFloat(exifData.GPSAltitude) : undefined,
       };
 
-      const timestamp = data.DateTimeOriginal || data.CreateDate;
+      const timestamp = exifData.DateTimeOriginal || exifData.CreateDate;
       if (timestamp) {
         location.timestamp = new Date(timestamp.replace(/(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3'));
       }

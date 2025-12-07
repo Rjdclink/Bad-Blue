@@ -98,10 +98,10 @@ export class LocationAggregator {
 
   getTimeline(): Array<{ timestamp: Date; latitude: number; longitude: number }> {
     return this.points
-      .filter(p => p.timestamp)
-      .sort((a, b) => a.timestamp!.getTime() - b.timestamp!.getTime())
+      .filter((p): p is LocationPoint & { timestamp: Date } => p.timestamp !== undefined)
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
       .map(p => ({
-        timestamp: p.timestamp!,
+        timestamp: p.timestamp,
         latitude: p.latitude,
         longitude: p.longitude,
       }));
