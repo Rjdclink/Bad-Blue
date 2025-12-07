@@ -32,7 +32,12 @@ router.post('/api/people-search', async (req, res) => {
 
     if (city) query.city = String(city).trim();
     if (state) query.state = String(state).trim();
-    if (age) query.age = parseInt(String(age), 10);
+    if (age) {
+      const parsedAge = parseInt(String(age), 10);
+      if (!isNaN(parsedAge) && parsedAge > 0) {
+        query.age = parsedAge;
+      }
+    }
 
     console.log('[People Search API] Searching for:', query);
 

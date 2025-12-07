@@ -2,13 +2,18 @@
  * Main people search aggregator orchestrator
  * Coordinates parallel scraping across multiple sources with caching
  */
-import { chromium, Browser } from 'playwright';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import type { Browser } from 'playwright';
 import type { SearchQuery, PersonRecord } from './types';
 import { FastPeopleSearchScraper } from './sources/FastPeopleSearchScraper';
 import { TruePeopleSearchScraper } from './sources/TruePeopleSearchScraper';
 import { WhitePagesScraper } from './sources/WhitePagesScraper';
 import { DataFusion } from './fusion/DataFusion';
 import { PeopleSearchCache } from './cache/PeopleSearchCache';
+
+// Add stealth plugin to chromium
+chromium.use(StealthPlugin());
 
 export class PeopleSearchAggregator {
   private cache: PeopleSearchCache;

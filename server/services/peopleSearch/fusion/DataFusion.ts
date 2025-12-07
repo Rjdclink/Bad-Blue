@@ -34,7 +34,7 @@ export class DataFusion {
     const uniqueRelatives = this.deduplicateStrings(allRelatives);
     const uniqueAliases = this.deduplicateStrings(allAliases);
 
-    // Calculate weighted average confidence
+    // Calculate weighted average confidence (average of all source confidences)
     const totalConfidence = records.reduce((sum, r) => sum + r.confidence, 0);
     const avgConfidence = totalConfidence / records.length;
 

@@ -83,8 +83,7 @@ export class PeopleSearchCache {
     return crypto
       .createHash('sha256')
       .update(key.toLowerCase())
-      .digest('base64')
-      .replace(/[/+=]/g, '')
+      .digest('hex')
       .substring(0, 32);
   }
 }

@@ -38,8 +38,14 @@ export abstract class BaseScraper {
       const stateMatch = lastPart.match(/\b([A-Z]{2})\b/);
       const state = stateMatch ? stateMatch[1] : '';
       
-      // City is what remains
-      const city = parts.length === 3 ? parts[1] : parts.slice(1, -1).join(', ').replace(state, '').replace(zip, '').trim();
+      // City is what remains between street and state/zip
+      let city = '';
+      if (parts.length === 3) {
+        city = parts[1];
+      } else if (parts.length > 3) {
+        // Join middle parts, then remove state and zip
+        city = parts.slice(1, -1).join(', ').replace(state, '').replace(zip, '').trim();
+      }
       
       return { street, city, state, zip };
     } catch {
