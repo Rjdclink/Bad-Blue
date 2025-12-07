@@ -1,8 +1,8 @@
 import { Cluster } from 'puppeteer-cluster';
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-
-puppeteer.use(StealthPlugin());
+import type * as PuppeteerType from 'puppeteer';
+import type { Page } from 'puppeteer';
+import puppeteer from 'puppeteer';
+import { proxyChainManager } from '../stealth/ProxyChainManager';
 
 interface ClusterConfig {
   maxConcurrency?: number;
@@ -11,24 +11,8 @@ interface ClusterConfig {
   sameDomainDelay?: number;
 }
 
-interface ScrapeTask {
-  url: string;
-  options?: {
-    waitUntil?: 'load' | 'domcontentloaded' | 'networkidle0' | 'networkidle2';
-    timeout?: number;
-  };
-}
-
-interface ScrapeResult {
-  url: string;
-  content: string;
-  statusCode: number;
-  timestamp: Date;
-  loadTime: number;
-}
-
 export class ClusterManager {
-  private cluster: Cluster | null = null;
+  private cluster?: Cluster;
   private config: ClusterConfig;
 
   constructor(config: ClusterConfig = {}) {
@@ -42,6 +26,10 @@ export class ClusterManager {
 
   async initialize() {
     if (this.cluster) return;
+
+    // Initialize proxy chain for stealth
+    await proxyChainManager.initialize();
+    const stealthProxyUrl = await proxyChainManager.getStealthProxyUrl();
 
     this.cluster = await Cluster.launch({
       concurrency: Cluster.CONCURRENCY_CONTEXT,
@@ -57,55 +45,44 @@ export class ClusterManager {
           '--disable-dev-shm-usage',
           '--disable-accelerated-2d-canvas',
           '--disable-gpu',
+          `--proxy-server=${stealthProxyUrl}`, // Dynamic stealth proxy
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       },
-      // puppeteer-cluster expects any type for puppeteer parameter
-      puppeteer: puppeteer as any,
+      puppeteer: puppeteer as unknown as PuppeteerType.PuppeteerNode,
     });
 
-    await this.cluster.task(async ({ page, data }: { page: any; data: ScrapeTask }) => {
-      const startTime = Date.now();
-      
-      const response = await page.goto(data.url, {
-        waitUntil: data.options?.waitUntil || 'networkidle2',
-        timeout: data.options?.timeout || this.config.timeout,
-      });
-
-      const content = await page.content();
-      const loadTime = Date.now() - startTime;
-
-      return {
-        url: data.url,
-        content,
-        statusCode: response?.status() || 200,
-        timestamp: new Date(),
-        loadTime,
-      };
-    });
-
-    console.log(`[ClusterManager] Initialized with ${this.config.maxConcurrency} workers`);
+    console.log('[ClusterManager] Cluster initialized with stealth proxy');
   }
 
-  async scrape(task: ScrapeTask): Promise<ScrapeResult> {
-    if (!this.cluster) await this.initialize();
-    return this.cluster!.execute(task);
+  async execute<T, D = unknown>(data: D, task: ({ page, data }: { page: Page; data: D }) => Promise<T>): Promise<T> {
+    if (!this.cluster) {
+      await this.initialize();
+    }
+
+    return await this.cluster!.execute(data, task);
   }
 
-  async scrapeMany(tasks: ScrapeTask[]): Promise<ScrapeResult[]> {
-    if (!this.cluster) await this.initialize();
+  async queue<T, D = unknown>(data: D, task: ({ page, data }: { page: Page; data: D }) => Promise<T>): Promise<void> {
+    if (!this.cluster) {
+      await this.initialize();
+    }
 
-    const promises = tasks.map(task => this.cluster!.execute(task));
-    const results = await Promise.all(promises);
-    
-    return results;
+    await this.cluster!.queue(data, task);
   }
 
   async close() {
     if (this.cluster) {
       await this.cluster.close();
-      this.cluster = null;
       console.log('[ClusterManager] Cluster closed');
+    }
+    
+    await proxyChainManager.close();
+  }
+
+  async idle() {
+    if (this.cluster) {
+      await this.cluster.idle();
     }
   }
 
@@ -114,6 +91,7 @@ export class ClusterManager {
       maxConcurrency: this.config.maxConcurrency,
       timeout: this.config.timeout,
       retryLimit: this.config.retryLimit,
+      sameDomainDelay: this.config.sameDomainDelay,
     };
   }
 }
