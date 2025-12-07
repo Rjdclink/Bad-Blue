@@ -117,10 +117,12 @@ export class StarTrekCrawler {
   }
 
   private nearJump(): string {
-    // Jump 10-100 related domains
+    // Jump to a single related domain (simulate 10-100 possible, pick one)
     const count = Math.floor(Math.random() * 91) + 10; // 10-100
-    const domains = this.generateRelatedDomains(count);
-    return domains[Math.floor(Math.random() * domains.length)];
+    const prefixes = ['www', 'api', 'blog', 'shop', 'mail', 'news', 'forum', 'wiki'];
+    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+    const index = Math.floor(Math.random() * count);
+    return `https://${prefix}-${index}.example.com`;
   }
 
   private farJump(): string {
