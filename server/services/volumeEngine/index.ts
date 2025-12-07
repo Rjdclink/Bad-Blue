@@ -1,5 +1,5 @@
 import { clusterManager, ClusterManager } from './core/ClusterManager';
-import { smartCache } from './core/SmartCache';
+import { smartCache, SmartCache } from './core/SmartCache';
 
 interface VolumeRequest {
   urls: string[];
@@ -96,5 +96,5 @@ export async function getSystemStats() {
   };
 }
 
-export { clusterManager, smartCache };
+export { clusterManager, smartCache, ClusterManager, SmartCache };
 export type { VolumeRequest, VolumeResult };
