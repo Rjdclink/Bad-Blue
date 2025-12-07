@@ -83,13 +83,18 @@ export class ProxyChainManager {
   }
 
   private getSessionProxy(): string | undefined {
+    // Check if we have proxies to use
+    if (!this.config.customProxies || this.config.customProxies.length === 0) {
+      return undefined;
+    }
+
     const sessionId = this.generateSessionId();
     let session = this.activeSessions.get(sessionId);
 
     if (!session || session.requestCount >= this.config.sessionPersistence!) {
       // Create new session
-      const proxyUrl = this.config.customProxies![
-        Math.floor(Math.random() * this.config.customProxies!.length)
+      const proxyUrl = this.config.customProxies[
+        Math.floor(Math.random() * this.config.customProxies.length)
       ];
       
       session = {
@@ -107,8 +112,10 @@ export class ProxyChainManager {
   }
 
   private generateSessionId(): string {
-    // Generate session ID based on time window
-    const timeWindow = Math.floor(Date.now() / (this.config.sessionPersistence! * 1000));
+    // Generate session ID based on 5-minute time window
+    // This ensures sessions rotate approximately every 5 minutes
+    const timeWindowMs = 5 * 60 * 1000; // 5 minutes
+    const timeWindow = Math.floor(Date.now() / timeWindowMs);
     return `session-${timeWindow}`;
   }
 
