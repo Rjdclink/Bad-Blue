@@ -3,6 +3,7 @@ import { headersPolyfill as headersPolyFill } from './HeadersPolyfill';
 
 export { tlsFingerprintRandomizer, TLSFingerprintRandomizer } from './TLSFingerprintRandomizer';
 export { headersPolyfill, HeadersPolyfill } from './HeadersPolyfill';
+export { StealthInfrastructure } from './StealthInfrastructure';
 
 // Combined stats export
 export async function getStealthStats() {
