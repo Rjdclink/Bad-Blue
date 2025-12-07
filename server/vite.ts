@@ -20,7 +20,7 @@ export function log(message: string, source = "express") {
 export async function setupVite(app: Express, server: Server) {
   // Dynamic imports - only load Vite in development mode
   const { createServer: createViteServer, createLogger } = await import("vite");
-  const viteConfig = (await import("../vite.config.js")).default;
+  const viteConfig = (await import("../vite.config.ts")).default;
   const { nanoid } = await import("nanoid");
   
   const viteLogger = createLogger();
@@ -76,8 +76,7 @@ export function serveStatic(app: Express) {
   // Try multiple path resolution strategies for production deployment
   // Based on vite.config.ts, the build output is in dist/public
   const possiblePaths = [
-    path.resolve(__dirname, "..", "dist", "public"), // Standard: /app/dist/../dist/public = /app/dist/public
-    path.resolve(__dirname, "public"),               // If dist contains public directly
+    path.resolve(__dirname, "public"),               // Standard: /app/dist/public (when dist is in /app/dist)
     path.resolve(process.cwd(), "dist", "public"),   // Alternative: Use process working directory
     path.resolve(process.cwd(), "public"),           // Fallback: public at root
     path.resolve(__dirname, "..", "public"),         // Legacy: /app/dist/../public = /app/public
