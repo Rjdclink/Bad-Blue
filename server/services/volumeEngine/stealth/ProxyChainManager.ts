@@ -60,31 +60,35 @@ export class ProxyChainManager {
     console.log(`[ProxyChainManager] Anonymous proxy server on port ${this.anonymousProxyServer.port}`);
   }
 
+  private hasAvailableProxies(): boolean {
+    return !!(this.config.customProxies && this.config.customProxies.length > 0);
+  }
+
   private getNextProxy(): string | undefined {
     const { customProxies, rotationMode } = this.config;
 
-    if (!customProxies || customProxies.length === 0) {
+    if (!this.hasAvailableProxies()) {
       return undefined; // Direct connection
     }
 
     switch (rotationMode) {
       case 'round-robin':
-        return customProxies[Math.floor(Date.now() / 1000) % customProxies.length];
+        return customProxies![Math.floor(Date.now() / 1000) % customProxies!.length];
       
       case 'random':
-        return customProxies[Math.floor(Math.random() * customProxies.length)];
+        return customProxies![Math.floor(Math.random() * customProxies!.length)];
       
       case 'session-based':
         return this.getSessionProxy();
       
       default:
-        return customProxies[0];
+        return customProxies![0];
     }
   }
 
   private getSessionProxy(): string | undefined {
     // Check if we have proxies to use
-    if (!this.config.customProxies || this.config.customProxies.length === 0) {
+    if (!this.hasAvailableProxies()) {
       return undefined;
     }
 
