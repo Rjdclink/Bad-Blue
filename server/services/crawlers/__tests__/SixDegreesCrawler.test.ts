@@ -208,6 +208,26 @@ async function runTests() {
     }
   })();
 
+  // Test 16: Validate maxDegrees parameter
+  await test('should validate maxDegrees parameter in buildGraph', async () => {
+    try {
+      await crawler.buildGraph('example.com', -1);
+      throw new Error('Should have thrown error for negative maxDegrees');
+    } catch (error) {
+      expect(error instanceof Error && error.message.includes('maxDegrees')).toBeTruthy();
+    }
+  })();
+
+  // Test 17: Validate maxDegrees upper bound
+  await test('should validate maxDegrees upper bound in buildGraph', async () => {
+    try {
+      await crawler.buildGraph('example.com', 100);
+      throw new Error('Should have thrown error for excessive maxDegrees');
+    } catch (error) {
+      expect(error instanceof Error && error.message.includes('maxDegrees')).toBeTruthy();
+    }
+  })();
+
   // Summary
   console.log('\n' + '='.repeat(50));
   const passed = results.filter(r => r.passed).length;

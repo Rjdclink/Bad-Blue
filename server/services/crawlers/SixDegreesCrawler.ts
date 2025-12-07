@@ -92,6 +92,11 @@ export class SixDegreesCrawler {
   // === GRAPH BUILDING ===
   // Map connections up to 6 degrees
   async buildGraph(seed: string, maxDegrees: number = 6): Promise<void> {
+    // Validate maxDegrees to prevent infinite loops or unexpected behavior
+    if (maxDegrees < 1 || maxDegrees > 10) {
+      throw new Error('maxDegrees must be between 1 and 10');
+    }
+
     const visited = new Set<string>();
     const queue: Array<{ domain: string; degree: number }> = [{ domain: seed, degree: 0 }];
 
@@ -139,14 +144,43 @@ export class SixDegreesCrawler {
     }
   }
 
+  // Helper: construct safe URL from domain
+  private constructUrl(domain: string): string {
+    // Validate and sanitize domain
+    if (!domain || typeof domain !== 'string') {
+      throw new Error('Invalid domain');
+    }
+
+    // Remove any whitespace or control characters
+    const sanitized = domain.trim();
+    
+    // If already a valid URL, validate and return
+    if (sanitized.startsWith('http://') || sanitized.startsWith('https://')) {
+      try {
+        const url = new URL(sanitized);
+        return url.toString();
+      } catch {
+        throw new Error('Invalid URL format');
+      }
+    }
+
+    // Construct URL from domain
+    try {
+      const url = new URL(`https://${sanitized}`);
+      return url.toString();
+    } catch {
+      throw new Error('Invalid domain format');
+    }
+  }
+
   // Discover connections for a domain
   private async discoverConnections(domain: string): Promise<Edge[]> {
     const edges: Edge[] = [];
 
     try {
-      // Fetch domain content
+      // Fetch domain content with validated URL
       const response = await executeRequest(
-        domain.startsWith('http') ? domain : `https://${domain}`,
+        this.constructUrl(domain),
         {
           method: 'GET',
           headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SixDegreesBot/1.0)' },
@@ -157,20 +191,27 @@ export class SixDegreesCrawler {
 
       const html = await response.text();
 
-      // Extract links
+      // Extract links with proper validation
       const linkMatches = html.match(/https?:\/\/[^\s<>"']+/g) || [];
       const uniqueLinks = [...new Set(linkMatches)];
 
-      // Create edges for discovered links
+      // Create edges for discovered links with validation
       for (const link of uniqueLinks.slice(0, 20)) {
-        const linkDomain = this.extractDomain(link);
-        if (linkDomain && linkDomain !== domain) {
-          edges.push({
-            from: domain,
-            to: linkDomain,
-            type: 'link',
-            strength: 1.0
-          });
+        try {
+          // Validate URL before processing
+          new URL(link);
+          const linkDomain = this.extractDomain(link);
+          if (linkDomain && linkDomain !== domain) {
+            edges.push({
+              from: domain,
+              to: linkDomain,
+              type: 'link',
+              strength: 1.0
+            });
+          }
+        } catch {
+          // Skip invalid URLs
+          continue;
         }
       }
 
@@ -517,9 +558,10 @@ export class SixDegreesCrawler {
 
   // Helper: scrape a single domain
   private async scrape(domain: string): Promise<Data> {
-    const url = domain.startsWith('http') ? domain : `https://${domain}`;
-    
     try {
+      // Use helper method for consistent URL construction
+      const url = this.constructUrl(domain);
+      
       const response = await executeRequest(
         url,
         {
