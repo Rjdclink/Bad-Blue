@@ -112,7 +112,7 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
             className={`cursor-pointer transition-all duration-200 ${
               selectedDepth === depth.level
                 ? `ring-2 ring-offset-2 ${depth.level === 4 ? 'ring-red-500' : 'ring-primary'} scale-105`
-                : 'hover:scale-102 hover:shadow-md'
+                : 'hover:scale-[1.02] hover:shadow-md'
             } ${depth.level === 4 ? 'border-red-500/50' : ''}`}
             onClick={() => !isSearching && setSelectedDepth(depth.level)}
           >

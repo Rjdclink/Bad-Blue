@@ -319,7 +319,7 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
         </div>
 
         {/* Summary */}
-        {data.summary && (
+        {data.summary && data.summary.trim() && (
           <div>
             <h3 className="font-semibold mb-2">Summary</h3>
             <p className="text-sm text-muted-foreground">{data.summary}</p>
