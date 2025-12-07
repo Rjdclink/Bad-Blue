@@ -42,12 +42,12 @@ async function executeRequest(url: string, options: RequestOptions): Promise<Res
 }
 
 // Parse HTML results
-function parseResults(html: string, target: string): Data {
+function parseResults(html: string): Data {
   return {
     content: html.replace(/<[^>]*>/g, ' ').substring(0, 2000),
     confidence: 0.8,
     timestamp: Date.now(),
-    target
+    target: ""
   };
 }
 
