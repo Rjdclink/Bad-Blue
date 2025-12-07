@@ -2,12 +2,8 @@ import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
-import viteConfig from "../vite.config";
-import { nanoid } from "nanoid";
 
-const viteLogger = createLogger();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function log(message: string, source = "express") {
@@ -22,6 +18,13 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  // Dynamic imports - only load Vite in development mode
+  const { createServer: createViteServer, createLogger } = await import("vite");
+  const viteConfig = (await import("../vite.config.ts")).default;
+  const { nanoid } = await import("nanoid");
+  
+  const viteLogger = createLogger();
+  
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
@@ -71,11 +74,12 @@ export async function setupVite(app: Express, server: Server) {
 
 export function serveStatic(app: Express) {
   // Try multiple path resolution strategies for production deployment
+  // Based on vite.config.ts, the build output is in dist/public
   const possiblePaths = [
-    path.resolve(__dirname, "..", "public"), // Standard: /app/dist/../public = /app/public
-    path.resolve(process.cwd(), "public"),    // Alternative: Use process working directory
-    path.resolve(__dirname, "public"),         // Fallback: Same directory as server bundle
-    path.resolve(__dirname, "..", "..", "public"), // Deep bundle: /app/dist/server/../public
+    path.resolve(__dirname, "public"),               // Standard: /app/dist/public (when dist is in /app/dist)
+    path.resolve(process.cwd(), "dist", "public"),   // Alternative: Use process working directory
+    path.resolve(process.cwd(), "public"),           // Fallback: public at root
+    path.resolve(__dirname, "..", "public"),         // Legacy: /app/dist/../public = /app/public
   ];
 
   let distPath: string | null = null;

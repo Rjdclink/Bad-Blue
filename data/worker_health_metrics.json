@@ -1,29 +1,5 @@
 [
   {
-    "timestamp": "2025-11-08T07:38:13.861Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:41:11.639Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:42:14.089Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:42:51.451Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
     "timestamp": "2025-11-08T07:44:47.638Z",
     "check": "database_heartbeat",
     "status": "success",
@@ -5788,5 +5764,31 @@
     "timestamp": "2025-12-01T02:03:16.555Z",
     "check": "database_heartbeat",
     "status": "success"
+  },
+  {
+    "timestamp": "2025-12-07T05:16:42.698Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: ",
+    "consecutiveFailures": 1
+  },
+  {
+    "timestamp": "2025-12-07T05:17:33.348Z",
+    "check": "database_repair",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: "
+  },
+  {
+    "timestamp": "2025-12-07T05:17:39.899Z",
+    "check": "database_repair",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: "
+  },
+  {
+    "timestamp": "2025-12-07T05:20:38.354Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: ",
+    "consecutiveFailures": 1
   }
 ]
