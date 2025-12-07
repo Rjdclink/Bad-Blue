@@ -1,4 +1,4 @@
-import LexaraConsultation from "@/components/LexaraConsultation";
+import AlexeraConsultation from "@/components/AlexeraConsultation";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Shield, ArrowLeft } from "lucide-react";
@@ -45,7 +45,7 @@ export default function LegalConsultationPage() {
       </header>
 
       {/* Main Content */}
-      <LexaraConsultation onBack={() => setLocation('/')} />
+      <AlexeraConsultation onBack={() => setLocation('/')} />
     </div>
   );
 }
