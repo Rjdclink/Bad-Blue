@@ -14,9 +14,11 @@ export class SmartCache {
   private cachePath: string;
   private hitCount = 0;
   private missCount = 0;
+  private debug: boolean;
 
-  constructor(cachePath: string = path.join(process.cwd(), '.cache')) {
+  constructor(cachePath: string = path.join(process.cwd(), '.cache'), debug: boolean = false) {
     this.cachePath = cachePath;
+    this.debug = debug;
   }
 
   async initialize() {
@@ -29,7 +31,7 @@ export class SmartCache {
   }
 
   private getCacheKey(url: string): string {
-    return crypto.createHash('md5').update(url).digest('hex');
+    return crypto.createHash('sha256').update(url).digest('hex');
   }
 
   async get(url: string): Promise<string | null> {
@@ -38,7 +40,9 @@ export class SmartCache {
 
     if (entry && this.isValid(entry)) {
       this.hitCount++;
-      console.log(`[SmartCache] HIT (${this.getHitRate()}%) - ${url.substring(0, 50)}`);
+      if (this.debug) {
+        console.log(`[SmartCache] HIT (${this.getHitRate()}%) - ${url.substring(0, 50)}`);
+      }
       return entry.content;
     }
 
@@ -51,7 +55,9 @@ export class SmartCache {
       if (this.isValid(entry)) {
         this.cache.set(key, entry);
         this.hitCount++;
-        console.log(`[SmartCache] HIT (disk) (${this.getHitRate()}%) - ${url.substring(0, 50)}`);
+        if (this.debug) {
+          console.log(`[SmartCache] HIT (disk) (${this.getHitRate()}%) - ${url.substring(0, 50)}`);
+        }
         return entry.content;
       }
     } catch {
@@ -59,7 +65,9 @@ export class SmartCache {
     }
 
     this.missCount++;
-    console.log(`[SmartCache] MISS (${this.getHitRate()}%) - ${url.substring(0, 50)}`);
+    if (this.debug) {
+      console.log(`[SmartCache] MISS (${this.getHitRate()}%) - ${url.substring(0, 50)}`);
+    }
     return null;
   }
 

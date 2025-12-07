@@ -1,4 +1,4 @@
-import { clusterManager } from './core/ClusterManager';
+import { clusterManager, ClusterManager } from './core/ClusterManager';
 import { smartCache } from './core/SmartCache';
 
 interface VolumeRequest {
@@ -15,13 +15,19 @@ interface VolumeResult {
 }
 
 export async function scrapeAtVolume(request: VolumeRequest): Promise<VolumeResult[]> {
-  const { urls, useCache = true } = request;
+  const { urls, useCache = true, maxConcurrency } = request;
 
   console.log(`[VolumeEngine] Processing ${urls.length} URLs`);
 
   // Initialize systems
   await smartCache.initialize();
-  await clusterManager.initialize();
+  
+  // Use custom cluster manager if maxConcurrency is specified
+  const manager = maxConcurrency 
+    ? new ClusterManager({ maxConcurrency })
+    : clusterManager;
+    
+  await manager.initialize();
 
   const results: VolumeResult[] = [];
   const uncachedUrls: string[] = [];
@@ -52,7 +58,7 @@ export async function scrapeAtVolume(request: VolumeRequest): Promise<VolumeResu
   }
 
   // Scrape uncached URLs
-  const scrapeResults = await clusterManager.scrapeMany(
+  const scrapeResults = await manager.scrapeMany(
     uncachedUrls.map(url => ({ url }))
   );
 
@@ -71,6 +77,11 @@ export async function scrapeAtVolume(request: VolumeRequest): Promise<VolumeResu
   }
 
   console.log(`[VolumeEngine] Complete: ${results.length} total results`);
+  
+  // Close custom manager if created
+  if (maxConcurrency) {
+    await manager.close();
+  }
 
   return results;
 }

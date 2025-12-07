@@ -60,6 +60,7 @@ export class ClusterManager {
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       },
+      // puppeteer-cluster expects any type for puppeteer parameter
       puppeteer: puppeteer as any,
     });
 
