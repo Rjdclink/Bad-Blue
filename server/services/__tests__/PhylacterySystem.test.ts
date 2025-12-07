@@ -1,6 +1,11 @@
 /**
  * PhylacterySystem Tests
- * Run with: tsx server/services/__tests__/PhylacterySystem.test.ts
+ * 
+ * Run from project root with:
+ *   npx tsx server/services/__tests__/PhylacterySystem.test.ts
+ * 
+ * Or add to package.json scripts:
+ *   "test:phylactery": "tsx server/services/__tests__/PhylacterySystem.test.ts"
  */
 
 import { PhylacterySystem, type LichState, type DeathMemory, type KnowledgeEntry, type BrowserFingerprint } from '../storage/PhylacterySystem';

@@ -80,7 +80,21 @@ export interface UnifiedIntelligence {
   lastUpdated: number;
 }
 
-// Mock Cloudflare KV Client (replace with actual implementation)
+/**
+ * Mock Cloudflare KV Client
+ * 
+ * For Development/Testing Only:
+ * This mock client simulates Cloudflare KV behavior using in-memory storage.
+ * It supports basic KV operations including expiration and metadata.
+ * 
+ * Production Usage:
+ * Replace with actual Cloudflare KV client by passing it to PhylacterySystem constructor:
+ * ```typescript
+ * import { CloudflareKVClient } from '@cloudflare/workers-types';
+ * const kvClient = new ActualCloudflareKVClient(config);
+ * const phylactery = new PhylacterySystem(kvClient);
+ * ```
+ */
 class MockCloudflareKVClient implements CloudflareKVClient {
   private store = new Map<string, { value: string; metadata?: any; expiresAt?: number }>();
 
