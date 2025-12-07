@@ -1,5 +1,5 @@
 // EXIF Geolocation Mapper exports
-import { exifExtractor, type ConsentedUpload, type LocationData } from './exif/ExifExtractor';
+import { exifExtractor, type LocationData } from './exif/ExifExtractor';
 import { leafletMapper } from './exif/LeafletMapper';
 import { mapRenderer } from './exif/MapRenderer';
 import path from 'path';
@@ -10,7 +10,6 @@ import { publicRecordScraper } from './scraping/PublicRecordScraper';
 
 // EXIF Geolocation Mapper interfaces
 interface EvidenceMapRequest {
-  uploads: ConsentedUpload[];
   caseId: string;
 }
 
@@ -102,7 +101,7 @@ export async function crawlAndSnapshot(request: CrawlRequest): Promise<CrawlResu
       await snapshotEngine.createSnapshot(url, scraped.content, {
         statusCode: scraped.statusCode,
         headers: scraped.headers,
-        contentType: scraped.headers['content-type'] || 'text/html',
+        contentType: scraped.headers || 'text/html',
       });
       console.log(`[IceEngine] Snapshot created (changed: ${diff.changed})`);
     } else {
