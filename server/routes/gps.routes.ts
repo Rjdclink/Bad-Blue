@@ -91,6 +91,17 @@ router.post('/search-radius', async (req: Request, res: Response) => {
   try {
     const { points, centerLat, centerLng, radiusMeters } = req.body;
     
+    // Validate required parameters
+    if (typeof centerLat !== 'number' || centerLat < -90 || centerLat > 90) {
+      return res.status(400).json({ error: 'centerLat must be a number between -90 and 90' });
+    }
+    if (typeof centerLng !== 'number' || centerLng < -180 || centerLng > 180) {
+      return res.status(400).json({ error: 'centerLng must be a number between -180 and 180' });
+    }
+    if (typeof radiusMeters !== 'number' || radiusMeters <= 0) {
+      return res.status(400).json({ error: 'radiusMeters must be a positive number' });
+    }
+    
     const validatedPoints = gpsArraySchema.parse(points) as GPSCoordinates[];
     const results = searchWithinRadius(validatedPoints, centerLat, centerLng, radiusMeters);
     

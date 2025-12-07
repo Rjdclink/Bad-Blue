@@ -123,7 +123,7 @@ export function clusterLocations(
     const neighbors = findNeighbors(points, i, epsilon);
     
     if (neighbors.length >= minPoints) {
-      const cluster = expandCluster(points, i, neighbors, epsilon, visited, clustered);
+      const cluster = expandCluster(points, i, neighbors, epsilon, visited, clustered, minPoints);
       if (cluster.length > 0) {
         clusters.push(createCluster(cluster));
       }
@@ -157,7 +157,8 @@ function expandCluster(
   neighbors: number[],
   epsilon: number,
   visited: Set<number>,
-  clustered: Set<number>
+  clustered: Set<number>,
+  minPoints: number
 ): GPSCoordinates[] {
   const cluster = [points[index]];
   clustered.add(index);
@@ -166,7 +167,7 @@ function expandCluster(
     if (!visited.has(neighborIndex)) {
       visited.add(neighborIndex);
       const newNeighbors = findNeighbors(points, neighborIndex, epsilon);
-      if (newNeighbors.length >= 1) {
+      if (newNeighbors.length >= minPoints) {
         neighbors.push(...newNeighbors);
       }
     }
