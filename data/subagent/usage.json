@@ -178,5 +178,11 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2025-12-07T05:16:46.810Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
   }
 ]

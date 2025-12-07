@@ -1,11 +1,5 @@
 [
   {
-    "timestamp": "2025-11-08T07:38:13.861Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
     "timestamp": "2025-11-08T07:41:11.639Z",
     "check": "database_heartbeat",
     "status": "success",
@@ -5788,5 +5782,12 @@
     "timestamp": "2025-12-01T02:03:16.555Z",
     "check": "database_heartbeat",
     "status": "success"
+  },
+  {
+    "timestamp": "2025-12-07T05:16:42.698Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: ",
+    "consecutiveFailures": 1
   }
 ]
