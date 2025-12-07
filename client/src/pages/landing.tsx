@@ -19,10 +19,14 @@ import { HiddenFAQ } from "@/components/HiddenFAQ";
 export default function Landing() {
   const [, setLocation] = useLocation();
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+  const [iconError, setIconError] = useState(false);
+  const [lexaraImageError, setLexaraImageError] = useState(false);
   
-  // Image error handler
-  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    console.error('Image failed to load:', e.currentTarget.src);
+  // Enhanced image error handler with logging
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>, imageName: string) => {
+    console.error(`Image failed to load: ${imageName}`, e.currentTarget.src);
+    console.error('Attempted path:', e.currentTarget.src);
+    console.error('Current origin:', window.location.origin);
     e.currentTarget.style.display = 'none';
   };
   
@@ -108,6 +112,25 @@ export default function Landing() {
     return () => clearTimeout(timer);
   }, [audioAttempted, audioPlaying]); // Dependencies include new state
 
+  // Debug: Check if images exist (development only)
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      const imagesToCheck = [
+        '/images/Legal%20What%20Icon.png',
+        '/images/Constitution.webp',
+        '/images/Tweed_Court.jpg',
+        '/images/OIP.webp'
+      ];
+      
+      imagesToCheck.forEach(src => {
+        const img = new Image();
+        img.onload = () => console.log(`✅ Image loaded: ${src}`);
+        img.onerror = () => console.error(`❌ Image failed: ${src}`);
+        img.src = src;
+      });
+    }
+  }, []);
+
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "WebApplication",
@@ -160,7 +183,7 @@ export default function Landing() {
         <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{ 
-            backgroundImage: `url(${heroImage})`,
+            backgroundImage: `url(${heroImage}), linear-gradient(to bottom, #1a1a2e, #16213e)`,
             backgroundSize: 'cover',
             backgroundPosition: 'center center'
           }}
@@ -192,12 +215,21 @@ export default function Landing() {
               <div className="absolute inset-0 bg-primary/30 blur-2xl rounded-full scale-125" />
               {/* Icon container with enhanced styling */}
               <div className="relative bg-white/10 backdrop-blur-md p-4 rounded-xl border-2 border-white/30 shadow-2xl hover:scale-105 transition-transform duration-300">
-                <img 
-                  src="/images/Legal What Icon.png" 
-                  alt="LegalWhat - AI Legal Platform" 
-                  className="w-20 h-20 md:w-24 md:h-24 object-contain filter drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]"
-                  onError={handleImageError}
-                />
+                {!iconError ? (
+                  <img 
+                    src="/images/Legal%20What%20Icon.png" 
+                    alt="LegalWhat - AI Legal Platform" 
+                    className="w-20 h-20 md:w-24 md:h-24 object-contain filter drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]"
+                    onError={(e) => {
+                      handleImageError(e, 'LegalWhat Icon');
+                      setIconError(true);
+                    }}
+                  />
+                ) : (
+                  <div className="w-20 h-20 md:w-24 md:h-24 flex items-center justify-center text-white text-3xl font-bold">
+                    LW
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -310,7 +342,7 @@ export default function Landing() {
         <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{
-            backgroundImage: 'url(/images/Tweed_Court.jpg)',
+            backgroundImage: 'url(/images/Tweed_Court.jpg), linear-gradient(135deg, #1a1a2e 0%, #2a2a3e 100%)',
             backgroundSize: 'cover',
             backgroundPosition: 'center center'
           }}
@@ -402,12 +434,24 @@ export default function Landing() {
               <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
                 {/* ALEXERA Image */}
                 <div className="mb-6">
-                  <img
-                    src="/images/OIP.webp"
-                    alt="ALEXERA - Legal Expert AI Resource Advisor"
-                    className="w-full h-auto rounded-2xl object-cover shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
-                    onError={handleImageError}
-                  />
+                  {!lexaraImageError ? (
+                    <img
+                      src="/images/OIP.webp"
+                      alt="LEXARA - Legal Expert AI Resource Advisor"
+                      className="w-full h-auto rounded-2xl object-cover shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
+                      onError={(e) => {
+                        console.error('LEXARA image failed to load:', e.currentTarget.src);
+                        setLexaraImageError(true);
+                      }}
+                    />
+                  ) : (
+                    <div className="w-full h-64 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center shadow-[0_10px_40px_rgba(0,0,0,0.4)]">
+                      <div className="text-white text-center">
+                        <div className="text-6xl mb-2">⚖️</div>
+                        <div className="text-sm font-semibold">LEXARA</div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Label Text */}
@@ -623,9 +667,10 @@ export default function Landing() {
             <p className="flex items-center justify-center gap-1 flex-wrap">
               &copy; 2025 LegalWhat
               <img 
-                src="/images/Legal What Icon.png" 
-                alt="?" 
+                src="/images/Legal%20What%20Icon.png" 
+                alt="LegalWhat" 
                 className="inline-block h-[1em] w-auto object-contain"
+                onError={(e) => e.currentTarget.style.display = 'none'}
               />
               <span>by BadBlue. All rights reserved.</span>
             </p>
