@@ -1,5 +1,5 @@
 import { ProxyConfiguration } from 'apify';
-import ProxyChain from 'proxy-chain';
+import * as ProxyChain from 'proxy-chain';
 
 interface ProxyChainConfig {
   apifyToken?: string;
@@ -46,16 +46,12 @@ export class ProxyChainManager {
     this.anonymousProxyServer = new ProxyChain.Server({
       port: 0, // Random port
       prepareRequestFunction: ({ request, username, password, hostname, port, isHttp }) => {
-        // Dynamic stealth: randomize headers, timing, fingerprints
+        // Dynamic stealth: get next proxy for rotation
+        const upstreamProxyUrl = this.getNextProxy();
+        
         return {
           requestAuthentication: false,
-          upstreamProxyUrl: this.getNextProxy(),
-          customResponseFunction: async ({ response, proxyToClientResponse }) => {
-            // Strip proxy-related headers for stealth
-            delete response.headers['x-proxy-agent'];
-            delete response.headers['via'];
-            return response;
-          },
+          upstreamProxyUrl: upstreamProxyUrl || undefined,
         };
       },
     });

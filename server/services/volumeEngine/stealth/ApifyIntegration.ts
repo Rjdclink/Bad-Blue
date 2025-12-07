@@ -41,42 +41,79 @@ export class ApifyIntegration {
       // Use Apify's CheerioCrawler or PlaywrightCrawler
       const { CheerioCrawler, PlaywrightCrawler } = await import('crawlee');
 
-      const CrawlerClass = config.useChrome ? PlaywrightCrawler : CheerioCrawler;
+      if (config.useChrome) {
+        // Use PlaywrightCrawler
+        const crawler = new PlaywrightCrawler({
+          maxRequestsPerCrawl: config.maxRequestsPerCrawl || 100,
+          maxConcurrency: config.maxConcurrency || 10,
+          proxyConfiguration: config.proxyConfiguration,
+          requestHandler: async ({ request, page }) => {
+            const startTime = Date.now();
+            
+            const content = await page.content();
+            const loadTime = Date.now() - startTime;
 
-      const crawler = new CrawlerClass({
-        maxRequestsPerCrawl: config.maxRequestsPerCrawl || 100,
-        maxConcurrency: config.maxConcurrency || 10,
-        proxyConfiguration: config.proxyConfiguration,
-        requestHandler: async ({ request, page, body, $ }) => {
-          const startTime = Date.now();
-          
-          const content = page ? await page.content() : (body?.toString() || '');
-          const loadTime = Date.now() - startTime;
-
-          results.push({
-            url: request.url,
-            content,
-            statusCode: 200,
-            loadTime,
-            metadata: {
-              loadedAt: new Date().toISOString(),
-              crawler: config.useChrome ? 'playwright' : 'cheerio',
-            },
-          });
-
-          // Store in Apify Dataset if available
-          if (this.initialized && Actor.isAtHome()) {
-            await Dataset.pushData({
+            results.push({
               url: request.url,
               content,
+              statusCode: 200,
               loadTime,
-              timestamp: new Date(),
+              metadata: {
+                loadedAt: new Date().toISOString(),
+                crawler: 'playwright',
+              },
             });
-          }
-        },
-      });
 
-      await crawler.run(config.startUrls);
+            // Store in Apify Dataset if available
+            if (this.initialized && Actor.isAtHome()) {
+              await Dataset.pushData({
+                url: request.url,
+                content,
+                loadTime,
+                timestamp: new Date(),
+              });
+            }
+          },
+        });
+
+        await crawler.run(config.startUrls);
+      } else {
+        // Use CheerioCrawler
+        const crawler = new CheerioCrawler({
+          maxRequestsPerCrawl: config.maxRequestsPerCrawl || 100,
+          maxConcurrency: config.maxConcurrency || 10,
+          proxyConfiguration: config.proxyConfiguration,
+          requestHandler: async ({ request, body }) => {
+            const startTime = Date.now();
+            
+            const content = body?.toString() || '';
+            const loadTime = Date.now() - startTime;
+
+            results.push({
+              url: request.url,
+              content,
+              statusCode: 200,
+              loadTime,
+              metadata: {
+                loadedAt: new Date().toISOString(),
+                crawler: 'cheerio',
+              },
+            });
+
+            // Store in Apify Dataset if available
+            if (this.initialized && Actor.isAtHome()) {
+              await Dataset.pushData({
+                url: request.url,
+                content,
+                loadTime,
+                timestamp: new Date(),
+              });
+            }
+          },
+        });
+
+        await crawler.run(config.startUrls);
+      }
       
       console.log(`[ApifyIntegration] Scraped ${results.length} pages`);
       

@@ -53,7 +53,7 @@ export class ClusterManager {
     console.log('[ClusterManager] Cluster initialized with stealth proxy');
   }
 
-  async execute<T>(task: (page: any, data: any) => Promise<T>, data: any): Promise<T> {
+  async execute<T>(data: any, task: ({ page, data }: { page: any; data: any }) => Promise<T>): Promise<T> {
     if (!this.cluster) {
       await this.initialize();
     }
@@ -61,7 +61,7 @@ export class ClusterManager {
     return await this.cluster!.execute(data, task);
   }
 
-  async queue<T>(task: (page: any, data: any) => Promise<T>, data: any): Promise<void> {
+  async queue<T>(data: any, task: ({ page, data }: { page: any; data: any }) => Promise<T>): Promise<void> {
     if (!this.cluster) {
       await this.initialize();
     }
