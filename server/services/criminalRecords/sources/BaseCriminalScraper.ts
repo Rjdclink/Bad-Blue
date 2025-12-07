@@ -1,29 +1,33 @@
-// Base Criminal Records Scraper
-import type { Page } from 'playwright';
-import type { CriminalSearchQuery, ScraperResult } from '../types';
+import { Page } from 'playwright';
+import { CriminalSearchQuery, CriminalRecord } from '../types';
 
 export abstract class BaseCriminalScraper {
-  protected abstract sourceName: string;
-  protected abstract baseConfidence: number;
-
-  abstract search(query: CriminalSearchQuery, page: Page): Promise<ScraperResult>;
-
-  protected async delay(ms: number): Promise<void> {
-    const jitter = Math.random() * 2000;
-    await new Promise(resolve => setTimeout(resolve, ms + jitter));
+  abstract name: string;
+  abstract confidence: number;
+  
+  abstract search(query: CriminalSearchQuery, page: Page): Promise<CriminalRecord[]>;
+  
+  protected normalizeDate(dateStr: string): string {
+    try {
+      const date = new Date(dateStr);
+      return date.toISOString().split('T')[0];
+    } catch {
+      return dateStr;
+    }
   }
-
-  protected humanLikeDelay(): Promise<void> {
-    return this.delay(3000 + Math.random() * 5000);
+  
+  protected normalizeName(name: string): string {
+    return name.trim().toLowerCase().replace(/\s+/g, ' ');
   }
-
-  protected createResult(records: any[], success: boolean = true, error?: string): ScraperResult {
-    return {
-      success,
-      records,
-      source: this.sourceName,
-      confidence: this.baseConfidence,
-      error,
-    };
+  
+  protected inferDegree(charge: string): 'felony' | 'misdemeanor' | 'infraction' {
+    const lower = charge.toLowerCase();
+    if (lower.includes('felony') || lower.includes('murder') || lower.includes('robbery')) {
+      return 'felony';
+    }
+    if (lower.includes('misdemeanor') || lower.includes('dui') || lower.includes('petty')) {
+      return 'misdemeanor';
+    }
+    return 'infraction';
   }
 }

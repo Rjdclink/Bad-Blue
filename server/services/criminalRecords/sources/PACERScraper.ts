@@ -1,9 +1,9 @@
 // Federal PACER System Scraper
 import type { Page } from 'playwright';
 import type { CriminalSearchQuery, ScraperResult } from '../types';
-import { BaseCriminalScraper } from './BaseCriminalScraper';
+import { LegacyScraperAdapter } from './LegacyScraperAdapter';
 
-export class PACERScraper extends BaseCriminalScraper {
+export class PACERScraper extends LegacyScraperAdapter {
   protected sourceName = 'PACER (Federal Courts)';
   protected baseConfidence = 0.95;
 

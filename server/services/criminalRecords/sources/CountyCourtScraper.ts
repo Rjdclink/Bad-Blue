@@ -1,9 +1,9 @@
 // County Court Records Scraper
 import type { Page } from 'playwright';
 import type { CriminalSearchQuery, ScraperResult } from '../types';
-import { BaseCriminalScraper } from './BaseCriminalScraper';
+import { LegacyScraperAdapter } from './LegacyScraperAdapter';
 
-export class CountyCourtScraper extends BaseCriminalScraper {
+export class CountyCourtScraper extends LegacyScraperAdapter {
   protected sourceName = 'County Courts';
   protected baseConfidence = 0.90;
 

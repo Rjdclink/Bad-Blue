@@ -1,9 +1,9 @@
 // Active Warrant Database Scraper
 import type { Page } from 'playwright';
 import type { CriminalSearchQuery, ScraperResult } from '../types';
-import { BaseCriminalScraper } from './BaseCriminalScraper';
+import { LegacyScraperAdapter } from './LegacyScraperAdapter';
 
-export class WarrantDatabaseScraper extends BaseCriminalScraper {
+export class WarrantDatabaseScraper extends LegacyScraperAdapter {
   protected sourceName = 'Warrant Database';
   protected baseConfidence = 0.80;
 

@@ -1,6 +1,6 @@
 // Criminal Records Service Tests
 import { CriminalRecordsFusion } from '../fusion/CriminalRecordsFusion';
-import { CriminalRecordsCache } from '../cache/CriminalRecordsCache';
+import { LegacyCriminalRecordsCache } from '../cache/LegacyCriminalRecordsCache';
 import type { CriminalRecord } from '../types';
 
 export interface TestResult {
@@ -12,10 +12,10 @@ export interface TestResult {
 
 export class CriminalRecordsTestSuite {
   private results: TestResult[] = [];
-  private cache: CriminalRecordsCache;
+  private cache: LegacyCriminalRecordsCache;
 
   constructor() {
-    this.cache = new CriminalRecordsCache('.cache/test-criminal-records');
+    this.cache = new LegacyCriminalRecordsCache();
   }
 
   async testRecordFusion(): Promise<TestResult> {
