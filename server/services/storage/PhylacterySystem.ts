@@ -116,6 +116,17 @@ export class PhylacterySystem {
   private rateLimitTracker = { requests: 0, resetAt: Date.now() + 86400000 };
   private readonly maxDailyWrites = 1000;
 
+  // Time constants (seconds)
+  private static readonly SECONDS_PER_HOUR = 3600;
+  private static readonly SECONDS_PER_DAY = 86400;
+  private static readonly DAYS_PER_YEAR = 365;
+
+  // Confidence scoring weights
+  private static readonly CONFIDENCE_ZOMBIE_WEIGHT = 30;
+  private static readonly CONFIDENCE_CERBERUS_WEIGHT = 40;
+  private static readonly CONFIDENCE_CACHE_WEIGHT = 30;
+  private static readonly CONFIDENCE_RECENT_BONUS = 10;
+
   constructor(kvClient?: CloudflareKVClient) {
     this.kv = kvClient || new MockCloudflareKVClient();
   }
@@ -247,8 +258,8 @@ export class PhylacterySystem {
   private analyzeDeathPatterns(deaths: DeathMemory[]): Map<string, number> {
     const patterns = new Map<string, number>();
     for (const death of deaths) {
-      const key = death.causeOfDeath;
-      patterns.set(key, (patterns.get(key) || 0) + 1);
+      const deathCause = death.causeOfDeath;
+      patterns.set(deathCause, (patterns.get(deathCause) || 0) + 1);
     }
     return patterns;
   }
@@ -337,8 +348,8 @@ export class PhylacterySystem {
   }
 
   private calculateTTL(permanence: number): number {
-    const maxTTL = 86400 * 365;
-    const minTTL = 3600;
+    const maxTTL = PhylacterySystem.SECONDS_PER_DAY * PhylacterySystem.DAYS_PER_YEAR;
+    const minTTL = PhylacterySystem.SECONDS_PER_HOUR;
     return Math.floor(minTTL + (maxTTL - minTTL) * (permanence / 100));
   }
 
@@ -374,15 +385,15 @@ export class PhylacterySystem {
     cachedData: any
   ): number {
     let score = 0;
-    if (zombieKnowledge.length > 0) score += 30;
-    if (cerberusKnowledge.length > 0) score += 40;
-    if (cachedData) score += 30;
+    if (zombieKnowledge.length > 0) score += PhylacterySystem.CONFIDENCE_ZOMBIE_WEIGHT;
+    if (cerberusKnowledge.length > 0) score += PhylacterySystem.CONFIDENCE_CERBERUS_WEIGHT;
+    if (cachedData) score += PhylacterySystem.CONFIDENCE_CACHE_WEIGHT;
     
     const recentData = [...zombieKnowledge, ...cerberusKnowledge]
-      .filter(d => Date.now() - d.timestamp < 86400000 * 7)
+      .filter(d => Date.now() - d.timestamp < PhylacterySystem.SECONDS_PER_DAY * 1000 * 7)
       .length;
     
-    if (recentData > 5) score = Math.min(100, score + 10);
+    if (recentData > 5) score = Math.min(100, score + PhylacterySystem.CONFIDENCE_RECENT_BONUS);
     return score;
   }
 
