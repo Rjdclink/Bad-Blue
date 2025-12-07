@@ -1941,6 +1941,441 @@ export const tlsFingerprintRandomizer = new TLSFingerprintRandomizer();
 
 ---
 
+---
+
+## VII. CRAWLING ENGINES (Bridge Specifications)
+
+### Puppeteer Integration
+
+```typescript
+/**
+ * Puppeteer-based crawler with stealth
+ * File: server/services/pantheonCrawler/puppeteerBridge.ts
+ */
+
+import puppeteer, { Browser, Page } from 'puppeteer';
+import { headersPolyfill } from '../stealth/HeadersPolyfill';
+
+export interface CrawlOptions {
+  url: string;
+  waitForSelector?: string;
+  executeScript?: string;
+  screenshot?: boolean;
+  timeout?: number;
+}
+
+export async function crawlWithPuppeteer(options: CrawlOptions): Promise<string> {
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
+  
+  try {
+    const page = await browser.newPage();
+    
+    // Apply stealth headers
+    const headers = headersPolyfill.generateAuthenticHeaders({
+      url: options.url,
+      method: 'GET',
+    });
+    
+    await page.setExtraHTTPHeaders(headers);
+    
+    // Navigate
+    await page.goto(options.url, {
+      waitUntil: 'networkidle0',
+      timeout: options.timeout || 30000,
+    });
+    
+    // Wait for selector if specified
+    if (options.waitForSelector) {
+      await page.waitForSelector(options.waitForSelector);
+    }
+    
+    // Execute custom script if provided
+    if (options.executeScript) {
+      await page.evaluate(options.executeScript);
+    }
+    
+    // Get content
+    const content = await page.content();
+    
+    await page.close();
+    return content;
+  } finally {
+    await browser.close();
+  }
+}
+```
+
+### Playwright Integration
+
+```typescript
+/**
+ * Playwright-based crawler for modern web apps
+ * File: server/services/pantheonCrawler/playwrightBridge.ts
+ */
+
+import { chromium, Browser, Page } from 'playwright';
+
+export async function crawlWithPlaywright(url: string): Promise<string> {
+  const browser = await chromium.launch({ headless: true });
+  
+  try {
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    });
+    
+    const page = await context.newPage();
+    await page.goto(url, { waitUntil: 'networkidle' });
+    
+    const content = await page.content();
+    
+    await context.close();
+    return content;
+  } finally {
+    await browser.close();
+  }
+}
+```
+
+### Fallback Chain Logic
+
+```typescript
+/**
+ * Crawler with automatic fallback
+ */
+export async function crawlWithFallback(url: string): Promise<string> {
+  const engines = [
+    { name: 'Puppeteer', fn: () => crawlWithPuppeteer({ url }) },
+    { name: 'Playwright', fn: () => crawlWithPlaywright(url) },
+    { name: 'Firecrawl', fn: () => defaultFirecrawlAdapter.scrape(url) },
+  ];
+  
+  let lastError: Error | undefined;
+  
+  for (const engine of engines) {
+    try {
+      console.log(`[Crawler] Trying ${engine.name}...`);
+      return await engine.fn();
+    } catch (error) {
+      lastError = error as Error;
+      console.error(`[Crawler] ${engine.name} failed:`, lastError.message);
+    }
+  }
+  
+  throw new Error(`All crawling engines failed. Last error: ${lastError?.message}`);
+}
+```
+
+---
+
+## VIII. AI ORCHESTRATION (Full System)
+
+### OpenRouter Web Search
+
+```typescript
+/**
+ * 3-Model OpenRouter web search orchestration
+ * File: server/openRouterWebSearch.ts
+ */
+
+import OpenRouter from '@openrouter/sdk';
+
+const openrouter = new OpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
+
+const WEB_SEARCH_MODELS = [
+  'meta-llama/llama-4-maverick:free',      // 256K context, multimodal
+  'xai/grok-4.1-fast:free',                // 2M context, real-time
+  'tng/deepseek-r1t2-chimera:free',        // 164K context, reasoning
+];
+
+export interface SearchResult {
+  model: string;
+  content: string;
+  sources: string[];
+  confidence: number;
+}
+
+export async function orchestratedWebSearch(
+  query: string,
+  options: {
+    useOnlinePlugin?: boolean;
+    timeout?: number;
+  } = {}
+): Promise<{
+  results: SearchResult[];
+  aggregated: string;
+  sources: string[];
+}> {
+  const { useOnlinePlugin = false, timeout = 30000 } = options;
+  
+  // Execute all models in parallel
+  const promises = WEB_SEARCH_MODELS.map(model =>
+    searchWithModel(query, model, useOnlinePlugin, timeout)
+  );
+  
+  const results = await Promise.allSettled(promises);
+  
+  // Extract successful results
+  const searchResults: SearchResult[] = results
+    .filter((r): r is PromiseFulfilledResult<SearchResult> => r.status === 'fulfilled')
+    .map(r => r.value);
+  
+  if (searchResults.length === 0) {
+    throw new Error('All web search models failed');
+  }
+  
+  // Aggregate results
+  const aggregated = aggregateSearchResults(searchResults);
+  const sources = extractUniqueSources(searchResults);
+  
+  return { results: searchResults, aggregated, sources };
+}
+
+async function searchWithModel(
+  query: string,
+  model: string,
+  useOnlinePlugin: boolean,
+  timeout: number
+): Promise<SearchResult> {
+  const startTime = Date.now();
+  
+  try {
+    const response = await openrouter.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: 'user',
+          content: useOnlinePlugin 
+            ? `Search the web and answer: ${query}`
+            : `Based on your knowledge, answer: ${query}`,
+        },
+      ],
+      ...(useOnlinePlugin && {
+        tools: [{ type: 'web_search' }],
+      }),
+      max_tokens: 4000,
+    });
+    
+    const content = response.choices[0]?.message?.content || '';
+    const sources = extractSources(content);
+    
+    return {
+      model,
+      content,
+      sources,
+      confidence: calculateConfidence(content, Date.now() - startTime),
+    };
+  } catch (error) {
+    console.error(`[WebSearch] ${model} failed:`, error);
+    throw error;
+  }
+}
+
+function extractSources(content: string): string[] {
+  const urlRegex = /https?:\/\/[^\s<>"{}|\^`[\]]+/g;
+  const matches = content.match(urlRegex) || [];
+  return [...new Set(matches)]; // Deduplicate
+}
+
+function calculateConfidence(content: string, latencyMs: number): number {
+  // Score based on content length and response time
+  const lengthScore = Math.min(content.length / 2000, 1) * 50;
+  const speedScore = Math.max(0, 50 - (latencyMs / 100));
+  return Math.round(lengthScore + speedScore);
+}
+
+function aggregateSearchResults(results: SearchResult[]): string {
+  // Combine results with attribution
+  return results
+    .map(r => `[${r.model}]: ${r.content}`)
+    .join('
+
+---
+
+');
+}
+
+function extractUniqueSources(results: SearchResult[]): string[] {
+  const allSources = results.flatMap(r => r.sources);
+  return [...new Set(allSources)];
+}
+```
+
+### Model Selection Logic
+
+```typescript
+/**
+ * Task-aware model selection
+ * File: server/legalModelOrchestrator.ts (extended)
+ */
+
+export function selectOptimalModel(
+  task: LegalTaskType,
+  complexity: TaskComplexity,
+  context: UsageContext
+): AIProvider {
+  // High complexity tasks
+  if (complexity === TaskComplexity.VERY_COMPLEX) {
+    if (context === UsageContext.USER) {
+      return AIProvider.CLAUDE; // Best for deep analysis
+    } else {
+      return AIProvider.GROQ; // Fast for autonomous
+    }
+  }
+  
+  // Task-specific optimization
+  switch (task) {
+    case LegalTaskType.LEGAL_RESEARCH:
+      return AIProvider.GROQ; // Ultra-fast search
+    
+    case LegalTaskType.EVIDENCE_ANALYSIS:
+      return AIProvider.GEMINI; // Best extraction
+    
+    case LegalTaskType.CONSULTATION:
+      return AIProvider.CLAUDE; // Nuanced reasoning
+    
+    case LegalTaskType.DOCUMENT_GENERATION:
+      return AIProvider.MISTRAL; // Strong drafting
+    
+    default:
+      return context === UsageContext.USER 
+        ? AIProvider.MISTRAL 
+        : AIProvider.GROQ;
+  }
+}
+```
+
+---
+
+## IX. API ENDPOINTS (Complete Contract)
+
+### Authentication Endpoints
+
+```typescript
+// POST /api/auth/register
+app.post('/api/auth/register', async (req, res) => {
+  const { email, password, firstName, lastName } = req.body;
+  
+  // Validate input
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password required' });
+  }
+  
+  // Check if user exists
+  const existing = await db.query.users.findFirst({
+    where: eq(users.email, email),
+  });
+  
+  if (existing) {
+    return res.status(409).json({ error: 'User already exists' });
+  }
+  
+  // Hash password
+  const salt = await bcrypt.genSalt(10);
+  const passwordHash = await bcrypt.hash(password, salt);
+  
+  // Create user and auth account
+  const [user] = await db.insert(users).values({
+    email,
+    firstName,
+    lastName,
+  }).returning();
+  
+  await db.insert(authAccounts).values({
+    userId: user.id,
+    authType: 'local',
+    username: email,
+    passwordHash,
+    passwordSalt: salt,
+  });
+  
+  req.session.userId = user.id;
+  
+  res.json({
+    user: {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+    },
+    message: 'Registration successful',
+  });
+});
+
+// POST /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  
+  // Find user
+  const account = await db.query.authAccounts.findFirst({
+    where: eq(authAccounts.username, email),
+    with: { user: true },
+  });
+  
+  if (!account || !account.passwordHash) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  
+  // Verify password
+  const valid = await bcrypt.compare(password, account.passwordHash);
+  if (!valid) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  
+  // Update last login
+  await db.update(authAccounts)
+    .set({ lastLoginAt: new Date() })
+    .where(eq(authAccounts.id, account.id));
+  
+  req.session.userId = account.userId;
+  
+  res.json({
+    user: {
+      id: account.user.id,
+      email: account.user.email,
+      firstName: account.user.firstName,
+      lastName: account.user.lastName,
+    },
+    message: 'Login successful',
+  });
+});
+```
+
+### Rate Limiting Middleware
+
+```typescript
+import rateLimit from 'express-rate-limit';
+
+export const rateLimiters = {
+  auth: rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5,
+    message: 'Too many authentication attempts, please try again later',
+  }),
+  
+  consultation: rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 10,
+    message: 'Consultation rate limit exceeded',
+  }),
+  
+  search: rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 20,
+    message: 'Search rate limit exceeded',
+  }),
+};
+
+// Apply to routes
+app.post('/api/auth/login', rateLimiters.auth, loginHandler);
+app.post('/api/legal-consultation', rateLimiters.consultation, consultationHandler);
+app.post('/api/officer-search', rateLimiters.search, searchHandler);
+```
+
 ## X. CLIENT COMPONENTS (React Specifications)
 
 ### Component Hierarchy
