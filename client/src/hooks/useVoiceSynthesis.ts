@@ -2,7 +2,7 @@
  * useVoiceSynthesis Hook
  * Stage 13-14: Frontend voice synthesis and playback
  * 
- * Provides interface for LEXARA voice synthesis with browser fallback
+ * Provides interface for ALEXERA voice synthesis with browser fallback
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
