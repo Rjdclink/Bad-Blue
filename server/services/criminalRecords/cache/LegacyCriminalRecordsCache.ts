@@ -13,7 +13,7 @@ export class LegacyCriminalRecordsCache {
 
   private getCacheKey(fullName: string, dateOfBirth?: string, state?: string): string {
     const data = `${fullName}-${dateOfBirth || ''}-${state || ''}`;
-    return crypto.createHash('sha256').update(data.toLowerCase()).digest('hex');
+    return crypto.createHash('md5').update(data.toLowerCase()).digest('hex');
   }
 
   async get(fullName: string, dateOfBirth?: string, state?: string): Promise<CriminalRecord | null> {
