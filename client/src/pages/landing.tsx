@@ -327,7 +327,7 @@ export default function Landing() {
             </p>
           </div>
 
-          {/* Three-Column Layout: Left Features | AALEXERA Image | Right Features */}
+          {/* Three-Column Layout: Left Features | ALEXERA Image | Right Features */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start px-4">
             {/* Left Column - Features 1-5 */}
             <div className="space-y-6">
@@ -397,7 +397,7 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Center Column - AALEXERA Floating Card */}
+            {/* Center Column - ALEXERA Floating Card */}
             <div className="flex justify-center">
               <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
                 {/* ALEXERA Image */}

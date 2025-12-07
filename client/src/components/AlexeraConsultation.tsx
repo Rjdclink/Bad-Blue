@@ -12,7 +12,7 @@
  * - Voice Intelligence System (Stages 11-15)
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Card,
@@ -143,28 +143,32 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
     : 'legal matters';
 
   // Auto-greeting: Play after 3 seconds on page load
+  const playGreeting = useCallback(async () => {
+    const greetingText = `Hello, I understand you have some questions about ${lawTypeName}. How can I assist you today?`;
+    
+    try {
+      // Attempt to play greeting
+      await voiceSynthesis.speak(greetingText, {
+        context: 'introduction',
+        autoPlay: true,
+      });
+      
+      setGreetingPlayed(true);
+    } catch (error) {
+      console.log('Auto-greeting prevented (user interaction required):', error);
+      // Silently fail - will work after user interaction
+    }
+  }, [lawTypeName, voiceSynthesis]);
+
   useEffect(() => {
     if (greetingPlayed) return;
 
-    const greetingTimer = setTimeout(async () => {
-      const greetingText = `Hello, I understand you have some questions about ${lawTypeName}. How can I assist you today?`;
-      
-      try {
-        // Attempt to play greeting
-        await voiceSynthesis.speak(greetingText, {
-          context: 'introduction',
-          autoPlay: true,
-        });
-        
-        setGreetingPlayed(true);
-      } catch (error) {
-        console.log('Auto-greeting prevented (user interaction required):', error);
-        // Silently fail - will work after user interaction
-      }
+    const greetingTimer = setTimeout(() => {
+      playGreeting();
     }, 3000); // 3-second delay
 
     return () => clearTimeout(greetingTimer);
-  }, [lawTypeName, greetingPlayed, voiceSynthesis]);
+  }, [greetingPlayed, playGreeting]);
 
   // Persist voice mode state
   useEffect(() => {
