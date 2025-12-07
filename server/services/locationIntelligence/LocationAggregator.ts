@@ -1,5 +1,12 @@
 import { ExifLocation } from './ExifToolExtractor';
 
+// Confidence scores for different location sources
+const EXIF_DEFAULT_CONFIDENCE = 0.85;
+const PUBLIC_RECORD_DEFAULT_CONFIDENCE = 0.95;
+
+// Haversine formula constant
+const EARTH_RADIUS_METERS = 6371e3;
+
 interface LocationPoint {
   latitude: number;
   longitude: number;
@@ -29,7 +36,7 @@ export class LocationAggregator {
       longitude: location.longitude,
       timestamp: location.timestamp,
       source: 'exif',
-      confidence: 0.85,
+      confidence: EXIF_DEFAULT_CONFIDENCE,
       metadata: { altitude: location.altitude, file: location.source },
     });
   }
@@ -37,7 +44,7 @@ export class LocationAggregator {
   addPublicRecord(point: Omit<LocationPoint, 'confidence'> & { confidence?: number }) {
     this.points.push({
       ...point,
-      confidence: point.confidence || 0.95,
+      confidence: point.confidence || PUBLIC_RECORD_DEFAULT_CONFIDENCE,
     });
   }
 
@@ -109,7 +116,6 @@ export class LocationAggregator {
   }
 
   private distance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371e3;
     const φ1 = lat1 * Math.PI / 180;
     const φ2 = lat2 * Math.PI / 180;
     const Δφ = (lat2 - lat1) * Math.PI / 180;
@@ -119,7 +125,7 @@ export class LocationAggregator {
               Math.cos(φ1) * Math.cos(φ2) *
               Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
     
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return EARTH_RADIUS_METERS * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
   clear() {

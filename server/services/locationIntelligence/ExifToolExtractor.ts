@@ -14,7 +14,14 @@ export interface ExifLocation {
 export class ExifToolExtractor {
   async extractLocation(imagePath: string): Promise<ExifLocation | null> {
     try {
-      // Sanitize the file path to prevent command injection
+      // Validate file path to prevent command injection
+      // Only allow alphanumeric, dots, hyphens, underscores, forward slashes, and spaces
+      if (!/^[a-zA-Z0-9._\-\/ ]+$/.test(imagePath)) {
+        console.error(`[ExifTool] Invalid file path format: ${imagePath}`);
+        return null;
+      }
+      
+      // Additional sanitization: escape any special characters that passed the whitelist
       const sanitizedPath = imagePath.replace(/["'`$\\]/g, '\\$&');
       
       const { stdout } = await execAsync(
@@ -28,9 +35,18 @@ export class ExifToolExtractor {
         return null;
       }
 
+      const latitude = this.parseGPS(data.GPSLatitude, data.GPSLatitudeRef);
+      const longitude = this.parseGPS(data.GPSLongitude, data.GPSLongitudeRef);
+
+      // Validate parsed coordinates
+      if (latitude === null || longitude === null) {
+        console.error(`[ExifTool] Invalid GPS coordinates in ${imagePath}`);
+        return null;
+      }
+
       const location: ExifLocation = {
-        latitude: this.parseGPS(data.GPSLatitude, data.GPSLatitudeRef),
-        longitude: this.parseGPS(data.GPSLongitude, data.GPSLongitudeRef),
+        latitude,
+        longitude,
         source: imagePath,
         altitude: data.GPSAltitude ? parseFloat(data.GPSAltitude) : undefined,
       };
@@ -55,7 +71,7 @@ export class ExifToolExtractor {
     return results.filter((loc): loc is ExifLocation => loc !== null);
   }
 
-  private parseGPS(coord: string, ref: string): number {
+  private parseGPS(coord: string, ref: string): number | null {
     if (typeof coord === 'number') {
       return ref === 'S' || ref === 'W' ? -coord : coord;
     }
@@ -72,7 +88,7 @@ export class ExifToolExtractor {
     const parsed = parseFloat(coord);
     if (isNaN(parsed)) {
       console.warn(`[ExifTool] Invalid coordinate value: ${coord}`);
-      return 0;
+      return null;
     }
     return parsed;
   }
