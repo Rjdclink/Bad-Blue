@@ -39,3 +39,6 @@ uploads/
 # Test output directories
 test-output/
 evidence-maps/
+
+# Volume Engine cache
+.cache/
