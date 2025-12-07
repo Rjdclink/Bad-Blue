@@ -16,7 +16,8 @@ const coordinatesSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   altitude: z.number().optional(),
-  timestamp: z.string().optional(),
+  timestamp: z.string().optional().transform(val => val ? new Date(val) : undefined),
+  accuracy: z.number().optional(),
   device: z.string().optional()
 });
 
@@ -53,7 +54,7 @@ router.post('/extract', async (req: Request, res: Response) => {
  */
 router.post('/cluster', async (req: Request, res: Response) => {
   try {
-    const points = gpsArraySchema.parse(req.body.points);
+    const points = gpsArraySchema.parse(req.body.points) as GPSCoordinates[];
     const epsilon = req.body.epsilon || 100; // meters
     const minPoints = req.body.minPoints || 2;
 
@@ -72,7 +73,7 @@ router.post('/cluster', async (req: Request, res: Response) => {
  */
 router.post('/heatmap', async (req: Request, res: Response) => {
   try {
-    const points = gpsArraySchema.parse(req.body.points);
+    const points = gpsArraySchema.parse(req.body.points) as GPSCoordinates[];
     const heatmap = generateHeatmap(points);
     
     res.json(heatmap);
@@ -90,7 +91,7 @@ router.post('/search-radius', async (req: Request, res: Response) => {
   try {
     const { points, centerLat, centerLng, radiusMeters } = req.body;
     
-    const validatedPoints = gpsArraySchema.parse(points);
+    const validatedPoints = gpsArraySchema.parse(points) as GPSCoordinates[];
     const results = searchWithinRadius(validatedPoints, centerLat, centerLng, radiusMeters);
     
     res.json({ results, count: results.length });

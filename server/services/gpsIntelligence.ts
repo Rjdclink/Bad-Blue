@@ -1,4 +1,4 @@
-import ExifReader from 'exifreader';
+import * as ExifReader from 'exifreader';
 import { createLogger } from '../logger';
 
 const log = createLogger('GPSIntelligence');
