@@ -4,7 +4,6 @@ export interface Upload {
   file: Buffer;
   filename: string;
   uploadedBy: string;
-  consentGiven: boolean;
   purpose: 'legal-evidence' | 'public-interest';
   caseId?: string;
 }

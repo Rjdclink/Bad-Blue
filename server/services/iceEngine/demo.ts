@@ -19,7 +19,6 @@ async function demoBasicUsage() {
       file: Buffer.from('mock-image-1'),
       filename: 'evidence-001.jpg',
       uploadedBy: 'officer-smith',
-      consentGiven: true,
       purpose: 'legal-evidence',
       caseId: 'CASE-2024-001',
     },
@@ -27,7 +26,6 @@ async function demoBasicUsage() {
       file: Buffer.from('mock-image-2'),
       filename: 'evidence-002.jpg',
       uploadedBy: 'witness-jones',
-      consentGiven: true,
       purpose: 'legal-evidence',
       caseId: 'CASE-2024-001',
     },
@@ -44,7 +42,6 @@ async function demoExtraction() {
     file: Buffer.from('mock-image'),
     filename: 'test.jpg',
     uploadedBy: 'user',
-    consentGiven: true,
     purpose: 'legal-evidence',
   };
 
@@ -71,7 +68,6 @@ async function demoDataStructures() {
     file: 'Buffer',
     filename: 'evidence.jpg',
     uploadedBy: 'user-id',
-    consentGiven: true,
     purpose: 'legal-evidence',
     caseId: 'CASE-2024-001',
   });

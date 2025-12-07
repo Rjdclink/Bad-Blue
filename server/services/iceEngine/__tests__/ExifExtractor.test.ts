@@ -22,7 +22,6 @@ export class ExifExtractorTestSuite {
         file: Buffer.from('not-a-valid-image'),
         filename: 'test.jpg',
         uploadedBy: 'user1',
-        consentGiven: true,
         purpose: 'legal-evidence',
       };
 
@@ -55,14 +54,12 @@ export class ExifExtractorTestSuite {
           file: Buffer.from('test1'),
           filename: 'test1.jpg',
           uploadedBy: 'user1',
-          consentGiven: true,
           purpose: 'legal-evidence',
         },
         {
           file: Buffer.from('test2'),
           filename: 'test2.jpg',
           uploadedBy: 'user2',
-          consentGiven: true,
           purpose: 'legal-evidence',
         },
       ];
