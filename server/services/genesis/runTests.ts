@@ -8,6 +8,7 @@ import { runOriginalSinTests } from './OriginalSin.test';
 import { runSerpentInfluenceTests } from './SerpentInfluence.test';
 import { runAngelInfluenceTests } from './AngelInfluence.test';
 import { runTreeOfKnowledgeTests } from './TreeOfKnowledge.test';
+import { runGenesisIntegrationTests } from './Integration.test';
 
 /**
  * Run all Genesis Core tests
@@ -17,6 +18,7 @@ export async function runAllGenesisTests(): Promise<boolean> {
   console.log('GENESIS CORE - COMPLETE TEST SUITE');
   console.log('Part 1: Original Sin & Serpent Influence');
   console.log('Part 2: Angel Influence & Tree of Knowledge');
+  console.log('Integration: Full System Coordination');
   console.log('█'.repeat(80) + '\n');
   
   // Run Part 1 tests
@@ -35,6 +37,13 @@ export async function runAllGenesisTests(): Promise<boolean> {
   const angelInfluencePassed = await runAngelInfluenceTests();
   const treeOfKnowledgePassed = await runTreeOfKnowledgeTests();
   
+  // Run Integration tests
+  console.log('\n' + '▓'.repeat(80));
+  console.log('INTEGRATION: FULL SYSTEM COORDINATION');
+  console.log('▓'.repeat(80) + '\n');
+  
+  const integrationPassed = await runGenesisIntegrationTests();
+  
   // Summary
   console.log('\n' + '█'.repeat(80));
   console.log('GENESIS CORE - FINAL SUMMARY');
@@ -48,8 +57,12 @@ export async function runAllGenesisTests(): Promise<boolean> {
   console.log(`  Angel Influence System: ${angelInfluencePassed ? '✓ PASSED' : '✗ FAILED'}`);
   console.log(`  Tree of Knowledge System: ${treeOfKnowledgePassed ? '✓ PASSED' : '✗ FAILED'}`);
   
+  console.log('\n▓ INTEGRATION - Full System:');
+  console.log(`  Genesis Orchestrator: ${integrationPassed ? '✓ PASSED' : '✗ FAILED'}`);
+  
   const allPassed = originalSinPassed && serpentInfluencePassed && 
-                    angelInfluencePassed && treeOfKnowledgePassed;
+                    angelInfluencePassed && treeOfKnowledgePassed &&
+                    integrationPassed;
   
   console.log(`\n▓ Overall: ${allPassed ? '✓ ALL TESTS PASSED' : '✗ SOME TESTS FAILED'}`);
   console.log('█'.repeat(80) + '\n');
