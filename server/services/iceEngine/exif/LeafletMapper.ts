@@ -51,6 +51,7 @@ export class LeafletMapper {
       border-radius: 3px;
       font-size: 10px;
       margin-top: 5px;
+      display: none;
     }
   </style>
 </head>
@@ -80,7 +81,7 @@ export class LeafletMapper {
       const directionStr = loc.direction ? `🧭 ${loc.direction}°<br/>` : '';
       return `
       const marker${idx} = L.marker([${loc.latitude}, ${loc.longitude}])
-        .bindPopup('<b>Evidence ${idx + 1}</b><br/>📅 ${loc.timestamp.toLocaleString()}<br/>📸 ${loc.device?.make || 'Unknown'} ${loc.device?.model || ''}<br/>📍 ${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}<br/>${altitudeStr}${directionStr}<small>Uploaded by: ${loc.source.uploadedBy}</small><br/><small style="color: green;">✓ Consent Given</small>');
+        .bindPopup('<b>Evidence ${idx + 1}</b><br/>📅 ${loc.timestamp.toLocaleString()}<br/>📸 ${loc.device?.make || 'Unknown'} ${loc.device?.model || ''}<br/>📍 ${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}<br/>${altitudeStr}${directionStr}<small>Uploaded by: ${loc.source.uploadedBy}</small>');
       markers.addLayer(marker${idx});
     `;
     }).join('\n')}

@@ -14,16 +14,17 @@ export interface LocationData {
   source: {
     filename: string;
     uploadedBy: string;
-    consentGiven: boolean;
   };
 }
 
-export class ExifExtractor {
-  async extractLocation: Promise<LocationData | null> {
-    if (!upload.consentGiven) {
-      throw new Error('Cannot extract EXIF without explicit user consent');
-    }
+export interface FileUpload {
+  file: Buffer;
+  filename: string;
+  uploadedBy: string;
+}
 
+export class ExifExtractor {
+  async extractLocation(upload: FileUpload): Promise<LocationData | null> {
     try {
       const parser = ExifParser.create(upload.file);
       const result = parser.parse();
@@ -56,11 +57,12 @@ export class ExifExtractor {
     }
   }
 
-  async extractBatch: Promise<LocationData[]> {
+  async extractBatch(uploads: FileUpload[]): Promise<LocationData[]> {
     const results = await Promise.all(
       uploads.map(upload => this.extractLocation(upload))
     );
     return results.filter(r => r !== null) as LocationData[];
   }
+}
   
 export const exifExtractor = new ExifExtractor();
