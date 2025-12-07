@@ -36,7 +36,6 @@ export class LeafletMapperTestSuite {
           source: {
             filename: 'test1.jpg',
             uploadedBy: 'user1',
-            consentGiven: true,
           },
         },
         {
@@ -46,7 +45,6 @@ export class LeafletMapperTestSuite {
           source: {
             filename: 'test2.jpg',
             uploadedBy: 'user2',
-            consentGiven: true,
           },
         },
       ];
@@ -63,7 +61,6 @@ export class LeafletMapperTestSuite {
       
       const passed = fileExists && 
         content.includes('Evidence Map - Case test-case-123') &&
-        content.includes('Consent Verified') &&
         content.includes('leaflet');
 
       // Cleanup
@@ -139,7 +136,6 @@ export class LeafletMapperTestSuite {
           source: {
             filename: 'test.jpg',
             uploadedBy: 'user1',
-            consentGiven: true,
           },
         },
       ];

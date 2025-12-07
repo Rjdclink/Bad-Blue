@@ -2,7 +2,7 @@
  * EXIF Geolocation Mapper Demo
  * 
  * This demo shows how to use the IceEngine EXIF Geolocation Mapper
- * for consent-based evidence mapping.
+ * for evidence mapping.
  * 
  * NOTE: This is a demonstration file. To run with real images,
  * replace the mock data with actual JPEG files containing GPS EXIF data.
