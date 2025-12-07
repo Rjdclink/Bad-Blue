@@ -21,7 +21,7 @@ interface LocationData {
   }>;
   heatmapData: Array<[number, number, number]>;
   timeline: Array<{ timestamp: Date; latitude: number; longitude: number }>;
-  stats: { totalPoints: number; sources: string[]; dateRange: any };
+  stats: { totalPoints: number; sources: string[]; dateRange: { start: Date; end: Date } | null };
 }
 
 export const useLocationIntelligence = () => {
