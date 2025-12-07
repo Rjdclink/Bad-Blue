@@ -1,5 +1,5 @@
 import { BaseCrawler } from '../baseCrawler';
-import { EntropySignature, CrawlerType } from '../core';
+import { EntropySignature, CrawlerType, CrawlerTask, TimingJitterResult, AsyncEchoResult } from '../core';
 
 /**
  * WRAITH CRAWLER - Ghost Layer Entropy Harvester
@@ -12,7 +12,7 @@ import { EntropySignature, CrawlerType } from '../core';
  * Wraiths fail silently - they leave no trace.
  */
 export class WraithCrawler extends BaseCrawler {
-  constructor(task: any) {
+  constructor(task: CrawlerTask) {
     super(task, CrawlerType.WRAITH);
   }
 
@@ -46,7 +46,7 @@ export class WraithCrawler extends BaseCrawler {
    * 
    * High jitter = unstable system = exploitable entropy
    */
-  private async measureTimingJitter(target: string): Promise<any> {
+  private async measureTimingJitter(target: string): Promise<TimingJitterResult> {
     const measurements: number[] = [];
     
     for (let i = 0; i < 5; i++) {
@@ -90,7 +90,7 @@ export class WraithCrawler extends BaseCrawler {
    * Detect async handler signatures
    * Probes for async processing indicators
    */
-  private async detectAsyncEchoes(target: string): Promise<any> {
+  private async detectAsyncEchoes(target: string): Promise<AsyncEchoResult> {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 500);

@@ -1,5 +1,5 @@
 import { BaseCrawler } from '../baseCrawler';
-import { EntropySignature, CrawlerType, CrawlerTask } from '../core';
+import { EntropySignature, CrawlerType, CrawlerTask, ExplorationResult } from '../core';
 import { URL } from 'url';
 
 /**
@@ -103,7 +103,7 @@ class HydraHead {
   /**
    * Explore target and extract intelligence
    */
-  async explore(): Promise<any> {
+  async explore(): Promise<ExplorationResult> {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2000);
@@ -144,12 +144,15 @@ class HydraHead {
    */
   private extractLinks(html: string, baseUrl: string): string[] {
     const links: string[] = [];
-    const regex = /href=["']([^"']+)["']/g;
+    // Handle both quoted and unquoted href attributes
+    const regex = /href=(?:["']([^"']+)["']|([^\s>]+))/gi;
     let match;
     
     while ((match = regex.exec(html)) !== null) {
       try {
-        const url = new URL(match[1], baseUrl);
+        // Use the first capturing group that matched
+        const href = match[1] || match[2];
+        const url = new URL(href, baseUrl);
         
         // Only follow http/https links
         if (url.protocol === 'http:' || url.protocol === 'https:') {
@@ -175,7 +178,9 @@ class HydraHead {
    * - Content density: +0.3
    */
   private assessRichness(html: string): number {
-    const hasJson = html.includes('{') && html.includes('}');
+    // More robust JSON detection - look for JSON-like patterns
+    const jsonPattern = /{[\s\S]*"[^"]+"\s*:\s*[^}]*}/;
+    const hasJson = jsonPattern.test(html);
     const hasTable = html.includes('<table');
     const hasForm = html.includes('<form');
     const density = Math.min(html.length / 10000, 1); // Normalize by 10KB

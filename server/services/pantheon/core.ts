@@ -52,3 +52,40 @@ export interface CrawlerResult {
   success: boolean;
   error?: string;
 }
+
+/**
+ * Timing jitter measurement result
+ */
+export interface TimingJitterResult {
+  avg: number;
+  variance: number;
+  jitter: number;
+  samples: number;
+  stability: number;
+}
+
+/**
+ * Async echo detection result
+ */
+export interface AsyncEchoResult {
+  asyncDetected: boolean;
+  serverSignature: string;
+  hasAsyncHeader: boolean;
+  statusCode: number;
+  responseTime: string | null;
+  error?: boolean;
+}
+
+/**
+ * Hydra head exploration result
+ */
+export interface ExplorationResult {
+  target: string;
+  richness: number;
+  links?: string[];
+  nextTarget: string;
+  statusCode?: number;
+  contentLength?: number;
+  error?: boolean;
+  errorType?: string;
+}
