@@ -187,7 +187,7 @@ export default function LegalToolsPage() {
                   alt="" 
                   className="w-4 h-4 object-contain"
                 />
-                LEXARA
+                ALEXERA
               </TabsTrigger>
               <TabsTrigger value="evidence" className="flex items-center gap-2">
                 <img 
@@ -225,10 +225,10 @@ export default function LegalToolsPage() {
                       alt="" 
                       className="w-5 h-5 object-contain"
                     />
-                    LEXARA — Legal Expert AI Resource Advisor
+                    ALEXERA — Legal Expert AI Resource Advisor
                   </CardTitle>
                   <CardDescription>
-                    Get expert analysis for your {lawTypeInfo.name.toLowerCase()} case. LEXARA is specialized in this practice area.
+                    Get expert analysis for your {lawTypeInfo.name.toLowerCase()} case. ALEXERA is specialized in this practice area.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">

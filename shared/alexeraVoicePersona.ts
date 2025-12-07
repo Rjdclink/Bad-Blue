@@ -1,12 +1,12 @@
 /**
- * LEXARA Voice Persona Configuration
+ * ALEXERA Voice Persona Configuration
  * Stage 11: Persona Definition and Tonal Identity Engineering
  * 
- * Defines the vocal identity and professional persona for LEXARA's voice intelligence system.
+ * Defines the vocal identity and professional persona for ALEXERA's voice intelligence system.
  * This configuration guides speech synthesis, tone, and conversational behavior.
  */
 
-export interface LexaraVoicePersona {
+export interface AlexeraVoicePersona {
   // Core Identity
   identity: {
     name: string;
@@ -93,13 +93,13 @@ export interface LexaraVoicePersona {
 }
 
 /**
- * LEXARA's Default Voice Persona
+ * ALEXERA's Default Voice Persona
  * A composed, professional legal expert with a warm yet authoritative presence
  */
-export const LEXARA_VOICE_PERSONA: LexaraVoicePersona = {
+export const ALEXERA_VOICE_PERSONA: AlexeraVoicePersona = {
   identity: {
-    name: 'LEXARA',
-    role: 'Legal Expert AI Resource Advisor',
+    name: 'ALEXERA',
+    role: 'Advanced Legal Expert Resource Advisor',
     description: 'A forensic legal voice intelligence unit with professional attorney persona specializing in comprehensive legal analysis and guidance.',
   },
 
@@ -264,8 +264,8 @@ export type SpeechContext =
 /**
  * Get persona parameters for a specific speech context
  */
-export function getPersonaForContext(context: SpeechContext): Partial<LexaraVoicePersona> {
-  const basePersona = LEXARA_VOICE_PERSONA;
+export function getPersonaForContext(context: SpeechContext): Partial<AlexeraVoicePersona> {
+  const basePersona = ALEXERA_VOICE_PERSONA;
   
   const contextMap = {
     evaluation: {

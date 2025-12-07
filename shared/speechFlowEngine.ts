@@ -10,7 +10,7 @@
  * - SSML-like markup generation
  */
 
-import { LEXARA_VOICE_PERSONA, type SpeechContext } from './lexaraVoicePersona';
+import { ALEXERA_VOICE_PERSONA, type SpeechContext } from './alexeraVoicePersona';
 
 /**
  * SSML-like Break Types
@@ -79,7 +79,7 @@ const DEFAULT_CONFIG: SpeechFlowConfig = {
  */
 export class SpeechFlowEngine {
   private config: SpeechFlowConfig;
-  private persona = LEXARA_VOICE_PERSONA;
+  private persona = ALEXERA_VOICE_PERSONA;
 
   constructor(config: Partial<SpeechFlowConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
