@@ -88,7 +88,7 @@ Immortal necromancer with army command and soul harvesting.
 
 **Commands:**
 - **Zombie Army**: Deploy learned strategies with resurrection
-- **Ghost Swarm**: Ephemeral ephemeral one-shot crawlers
+- **Ghost Swarm**: Ephemeral one-shot crawlers
 - **Spell Casting**: Simple, Complex, and Forbidden spells
 
 **Forms:**

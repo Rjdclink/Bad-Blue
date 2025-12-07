@@ -123,9 +123,8 @@ export class PhylacterySystem {
     return cleared;
   }
 
-  async resurrect(lichId: string): Promise<boolean> {
+  async resurrect<T = any>(lichId: string): Promise<T | null> {
     // Lich resurrection - retrieve saved state from phylactery
-    const state = await this.retrieveFromVault(lichId);
-    return state !== null;
+    return await this.retrieveFromVault<T>(lichId);
   }
 }

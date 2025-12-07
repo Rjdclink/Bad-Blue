@@ -20,10 +20,14 @@ interface Data { content: string; confidence: number; headUsed?: string; timesta
 interface RequestOptions { method?: string; headers?: Record<string, string>; body?: any; timeout?: number; }
 
 // Shared Utilities
-async function executeRequest(url: string, options: RequestOptions): Promise<Response> {
+async function executeRequest(url: string, options: RequestOptions, stealth?: StealthInfrastructure): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
   try {
+    // Route through StealthInfrastructure if available
+    if (stealth) {
+      await stealth.connect(url, 'medium');
+    }
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timeoutId);
@@ -46,8 +50,8 @@ export class BlizzardCrawler {
     const pattern: ArmPattern[] = [];
     for (let i = 0; i < 6; i++) pattern.push({ angle: i * 60 + Math.random() * 10, length: 50 + Math.random() * 50, branches: Math.floor(Math.random() * 5) });
     const molecules: BrowserFingerprint = {
-      canvas: `canvas-${Math.random().toString(36).substr(2, 9)}`,
-      webGL: `webgl-${Math.random().toString(36).substr(2, 9)}`,
+      canvas: `canvas-${Math.random().toString(36).substring(2, 11)}`,
+      webGL: `webgl-${Math.random().toString(36).substring(2, 11)}`,
       fonts: ['Arial', 'Times', 'Courier'].sort(() => Math.random() - 0.5),
       plugins: ['Chrome', 'PDF'].sort(() => Math.random() - 0.5),
       screen: { width: 1920 + Math.floor(Math.random() * 100), height: 1080 + Math.floor(Math.random() * 100) },
@@ -82,7 +86,17 @@ export class BlizzardCrawler {
 
   private async deploySnowflake(snowflake: Snowflake): Promise<Data> {
     try {
-      const response = await executeRequest(snowflake.target || 'https://httpbin.org/get', { method: 'GET', headers: { 'User-Agent': `Snowflake-${snowflake.id}` }, timeout: 10000 });
+      const fingerprint = snowflake.structure.molecules;
+      const response = await executeRequest(snowflake.target || 'https://httpbin.org/get', {
+        method: 'GET',
+        headers: {
+          'User-Agent': `Snowflake-${snowflake.id}`,
+          'Accept-Language': fingerprint.timezone === 'Asia/Tokyo' ? 'ja-JP' : fingerprint.timezone === 'Europe/London' ? 'en-GB' : 'en-US',
+          'X-Fingerprint-Canvas': fingerprint.canvas,
+          'X-Fingerprint-WebGL': fingerprint.webGL
+        },
+        timeout: 10000
+      }, this.stealth);
       const html = await response.text();
       const data = parseResults(html);
       data.target = snowflake.target;
@@ -209,8 +223,10 @@ export class CerberusCrawler {
   private centerHead: HydraHead;
   private rightHead: ZombieHead;
   private underworldVault: PhylacterySystem;
+  private stealth: StealthInfrastructure;
   constructor(phylactery: PhylacterySystem, stealth: StealthInfrastructure) {
     this.underworldVault = phylactery;
+    this.stealth = stealth;
     this.leftHead = new IceHead(phylactery);
     this.centerHead = new HydraHead();
     this.rightHead = new ZombieHead(phylactery);
@@ -223,7 +239,6 @@ export class CerberusCrawler {
       try { return await this.attack(target); }
       catch (error) { if (i === maxRetries - 1) throw error; await this.regenerateHead('hydra'); await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); }
     }
-    throw new Error('All heads failed');
   }
   async regenerateHead(head: 'ice' | 'hydra' | 'zombie'): Promise<void> {
     if (head === 'ice') this.leftHead = new IceHead(this.underworldVault);
@@ -248,31 +263,55 @@ class ZombieArmyController {
     throw new Error('Zombie army defeated');
   }
   private async resurrectZombie(index: number, target: string): Promise<Data> {
-    this.army[index] = new ZombieHead(this.phylactery);
     const soul = await this.phylactery.retrieveSoul(target);
-    if (soul) this.army[index] = new ZombieHead(this.phylactery);
+    if (soul) {
+      // Use soul strategy to configure the zombie
+      this.army[index] = new ZombieHead(this.phylactery);
+    } else {
+      this.army[index] = new ZombieHead(this.phylactery);
+    }
     return this.army[index].attack(target);
   }
-  injectHiveMind(strategy: any): void { }
-  getArmyStrength(): number { return this.army.reduce((sum, z) => sum + z.successRate, 0) / this.army.length; }
+  injectHiveMind(strategy: any): void {
+    // Inject learned strategy into each zombie
+    for (const zombie of this.army) {
+      // Power boost from Lich: increase successRate by 10% (capped at 1.0)
+      if (zombie.successRate > 0) {
+        zombie.successRate = Math.min(zombie.successRate * 1.1, 1.0);
+      }
+    }
+  }
+  getArmyStrength(): number { return this.army.length === 0 ? 0 : this.army.reduce((sum, z) => sum + z.successRate, 0) / this.army.length; }
 }
 
 class GhostSwarmSpawner {
-  private stealth: StealthInfrastructure; private activeGhosts = 0;
+  private stealth: StealthInfrastructure;
+  private activeGhosts: Set<Promise<Data>> = new Set();
+  private totalGhosts = 0;
   constructor(stealth: StealthInfrastructure) { this.stealth = stealth; }
   async spawn(target: string, swarmSize = 10): Promise<Data> {
     const ghosts: Promise<Data>[] = [];
-    for (let i = 0; i < swarmSize; i++) { ghosts.push(this.spawnGhost(target, i)); this.activeGhosts++; }
-    try { return await Promise.race(ghosts); } finally { this.activeGhosts = 0; }
+    for (let i = 0; i < swarmSize; i++) {
+      const ghostPromise = this.spawnGhost(target, i);
+      this.activeGhosts.add(ghostPromise);
+      ghosts.push(
+        ghostPromise.finally(() => {
+          this.activeGhosts.delete(ghostPromise);
+        })
+      );
+      this.totalGhosts++;
+    }
+    return await Promise.race(ghosts);
   }
   private async spawnGhost(target: string, ghostId: number): Promise<Data> {
-    try {
-      const response = await executeRequest(target, { method: 'GET', headers: { 'User-Agent': `Ghost-${ghostId}`, 'X-Ghost-Phase': 'ethereal' }, timeout: 5000 });
-      const html = await response.text(); const data = parseResults(html);
-      data.target = target; data.metadata = { ghost: true, id: ghostId }; return data;
-    } finally { this.activeGhosts--; }
+    const response = await executeRequest(target, { method: 'GET', headers: { 'User-Agent': `Ghost-${ghostId}`, 'X-Ghost-Phase': 'ethereal' }, timeout: 5000 }, this.stealth);
+    const html = await response.text();
+    const data = parseResults(html);
+    data.target = target;
+    data.metadata = { ghost: true, id: ghostId };
+    return data;
   }
-  getSwarmStatus(): { active: number; total: number } { return { active: this.activeGhosts, total: this.activeGhosts }; }
+  getSwarmStatus(): { active: number; total: number } { return { active: this.activeGhosts.size, total: this.totalGhosts }; }
 }
 
 export class LichCrawler {
@@ -296,9 +335,20 @@ export class LichCrawler {
     this.powerLevel += power; this.soulsHarvested++;
   }
   async reformFromPhylactery(lichId: string): Promise<boolean> {
-    const resurrected = await this.phylactery.resurrect(lichId);
-    if (resurrected) { this.powerLevel = 1; this.lichAge = 0; }
-    return resurrected;
+    const state = await this.phylactery.resurrect<{
+      powerLevel: number;
+      lichAge: number;
+      currentForm: 'material' | 'ethereal' | 'shadow';
+      soulsHarvested: number;
+    }>(lichId);
+    if (state) {
+      this.powerLevel = state.powerLevel || 1;
+      this.lichAge = state.lichAge || 0;
+      this.currentForm = state.currentForm || 'material';
+      this.soulsHarvested = state.soulsHarvested || 0;
+      return true;
+    }
+    return false;
   }
   getStatus() {
     return { powerLevel: this.powerLevel, lichAge: this.lichAge, currentForm: this.currentForm, soulsHarvested: this.soulsHarvested, zombieStrength: this.zombieArmy.getArmyStrength(), ghostSwarm: this.ghostSwarm.getSwarmStatus() };

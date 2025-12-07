@@ -57,7 +57,7 @@ export async function exampleCerberus() {
   console.log('Attack succeeded via:', data.headUsed);
 
   // Example 2: Loyal attack - never gives up
-  const difficultData = await cerberus.loyalAttack('https://difficult-site.com', 100);
+  await cerberus.loyalAttack('https://difficult-site.com', 100);
   console.log('Loyal attack succeeded after retries');
 
   // Example 3: Monitor head performance
@@ -79,21 +79,21 @@ export async function exampleLich() {
   const lich = new LichCrawler(phylactery, stealth);
 
   // Example 1: Cast spells of different power levels
-  const simpleData = await lich.castSpell('https://low-security.com', 'simple');
+  await lich.castSpell('https://low-security.com', 'simple');
   console.log('Simple spell cast, power:', lich.powerLevel);
 
-  const complexData = await lich.castSpell('https://medium-security.com', 'complex');
+  await lich.castSpell('https://medium-security.com', 'complex');
   console.log('Complex spell cast, form:', lich.currentForm);
 
-  const forbiddenData = await lich.castSpell('https://high-security.com', 'forbidden');
+  await lich.castSpell('https://high-security.com', 'forbidden');
   console.log('Forbidden spell cast, souls:', lich.soulsHarvested);
 
   // Example 2: Command zombie army
-  const zombieData = await lich.commandZombies('https://target.com');
+  await lich.commandZombies('https://target.com');
   console.log('Zombie army deployed');
 
   // Example 3: Command ghost swarm
-  const ghostData = await lich.commandGhosts('https://target.com');
+  await lich.commandGhosts('https://target.com');
   console.log('Ghost swarm spawned');
 
   // Example 4: Check Lich status
@@ -131,7 +131,7 @@ export async function exampleCombined() {
   // Phase 2: Cerberus reliably scrapes each target
   console.log('Phase 2: Reliable Collection');
   for (const target of discovered.slice(0, 10)) {
-    const data = await cerberus.attack(target.target);
+    await cerberus.attack(target.target);
     console.log('Collected:', target.target);
   }
 
