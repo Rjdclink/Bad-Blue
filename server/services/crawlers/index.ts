@@ -9,9 +9,11 @@
  * Plus:
  * - StarTrek: Federation explorer with warp drive and phasers
  * - Bird of Prey: Klingon predator with perfect cloaking and disruptors
+ * - Six Degrees: Social graph mapper for relationship discovery
  */
 
 export { BlizzardCrawler, CerberusCrawler, LichCrawler } from './TrinityCrawlers';
 export { StarTrekCrawler } from './StarTrekCrawler';
 export { BirdOfPreyCrawler } from './BirdOfPreyCrawler';
+export { SixDegreesCrawler } from './SixDegreesCrawler';
 export { PhylacterySystem } from '../storage/PhylacterySystem';
