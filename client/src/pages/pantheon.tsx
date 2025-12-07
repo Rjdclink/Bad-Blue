@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { DoomsdayClockSelector } from '@/components/DoomsdayClockSelector';
+import { PantheonProgressTracker } from '@/components/PantheonProgressTracker';
 import { SEOHead } from "@/components/SEOHead";
 import { AppHeader } from "@/components/AppHeader";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,11 +48,13 @@ interface PeopleSearchReport {
 export default function PantheonPage() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<PeopleSearchReport | null>(null);
+  const [searchConfig, setSearchConfig] = useState<SearchConfig | null>(null);
   const { toast } = useToast();
   
   const handleSearchStart = async (config: SearchConfig) => {
     setSearching(true);
     setResults(null);
+    setSearchConfig(config);
     
     try {
       const response = await apiRequest('/api/osint/full-search', 'POST', {
@@ -210,6 +213,19 @@ export default function PantheonPage() {
               isSearching={searching}
             />
           </section>
+          
+          {/* Progress Tracker */}
+          {searching && searchConfig && (
+            <section className="search-progress">
+              <PantheonProgressTracker 
+                searchDepth={searchConfig.searchDepth}
+                isSearching={searching}
+                onComplete={() => {
+                  // Progress complete - actual API response handles results
+                }}
+              />
+            </section>
+          )}
           
           {/* Data Sources */}
           <section className="sources">
