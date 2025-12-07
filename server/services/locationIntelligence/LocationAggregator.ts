@@ -6,7 +6,7 @@ interface LocationPoint {
   timestamp?: Date;
   source: 'exif' | 'social_media' | 'court_record' | 'property' | 'voter' | 'business';
   confidence: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 interface ClusteredLocation {
@@ -99,10 +99,12 @@ export class LocationAggregator {
 
   getHeatmapData(): Array<[number, number, number]> {
     const clustered = this.cluster(50);
+    // Intensity normalizer: dividing by 10 produces a 0-1 scale for typical cluster sizes
+    const HEATMAP_INTENSITY_NORMALIZER = 10;
     return clustered.map(c => [
       c.latitude,
       c.longitude,
-      Math.min(c.occurrences / 10, 1.0),
+      Math.min(c.occurrences / HEATMAP_INTENSITY_NORMALIZER, 1.0),
     ]);
   }
 

@@ -14,8 +14,11 @@ export interface ExifLocation {
 export class ExifToolExtractor {
   async extractLocation(imagePath: string): Promise<ExifLocation | null> {
     try {
+      // Sanitize the file path to prevent command injection
+      const sanitizedPath = imagePath.replace(/["'`$\\]/g, '\\$&');
+      
       const { stdout } = await execAsync(
-        `exiftool -j -GPSLatitude -GPSLongitude -GPSLatitudeRef -GPSLongitudeRef -GPSAltitude -CreateDate -DateTimeOriginal "${imagePath}"`
+        `exiftool -j -GPSLatitude -GPSLongitude -GPSLatitudeRef -GPSLongitudeRef -GPSAltitude -CreateDate -DateTimeOriginal "${sanitizedPath}"`
       );
 
       const data = JSON.parse(stdout)[0];
@@ -66,7 +69,12 @@ export class ExifToolExtractor {
       return ref === 'S' || ref === 'W' ? -decimal : decimal;
     }
 
-    return parseFloat(coord);
+    const parsed = parseFloat(coord);
+    if (isNaN(parsed)) {
+      console.warn(`[ExifTool] Invalid coordinate value: ${coord}`);
+      return 0;
+    }
+    return parsed;
   }
 
   async checkInstalled(): Promise<boolean> {

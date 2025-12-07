@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { exifToolExtractor } from '../services/locationIntelligence/ExifToolExtractor';
 import { locationAggregator } from '../services/locationIntelligence/LocationAggregator';
 
@@ -12,9 +13,30 @@ interface PublicRecord {
   confidence?: number;
 }
 
+const analyzeRequestSchema = z.object({
+  imagePaths: z.array(z.string()).optional().default([]),
+  publicRecords: z.array(z.object({
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    source: z.enum(['social_media', 'court_record', 'property', 'voter', 'business']),
+    timestamp: z.union([z.string(), z.date()]).optional(),
+    confidence: z.number().min(0).max(1).optional(),
+  })).optional().default([]),
+});
+
 router.post('/api/location-intel/analyze', async (req, res) => {
   try {
-    const { imagePaths = [], publicRecords = [] } = req.body;
+    const validation = analyzeRequestSchema.safeParse(req.body);
+    
+    if (!validation.success) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid request data',
+        details: validation.error.errors,
+      });
+    }
+
+    const { imagePaths, publicRecords } = validation.data;
 
     locationAggregator.clear();
 
