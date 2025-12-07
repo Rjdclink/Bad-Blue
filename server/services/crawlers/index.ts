@@ -6,8 +6,10 @@
  * - Cerberus: Three-headed adaptive defense system
  * - Lich: Immortal necromancer with army command
  * - Bird of Prey: Klingon predator with perfect cloaking and disruptors
+ * - Six Degrees: Social graph mapper for relationship discovery
  */
 
 export { BlizzardCrawler, CerberusCrawler, LichCrawler } from './TrinityCrawlers';
 export { BirdOfPreyCrawler } from './BirdOfPreyCrawler';
+export { SixDegreesCrawler } from './SixDegreesCrawler';
 export { PhylacterySystem } from '../storage/PhylacterySystem';
