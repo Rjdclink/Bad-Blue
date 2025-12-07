@@ -4,7 +4,8 @@
  */
 
 import { PhylacterySystem } from '../../storage/PhylacterySystem';
-import { ZombieHiveMind, DarkMagicAI, DeathMemoryExtended } from '../LearningSystems';
+import { ZombieHiveMind, DarkMagicAI } from '../LearningSystems';
+import type { DeathMemory } from '../../storage/PhylacterySystem';
 
 async function testDeathRecording(): Promise<boolean> {
   console.log('\n🧟 Testing Death Recording...');
@@ -12,7 +13,7 @@ async function testDeathRecording(): Promise<boolean> {
     const phylactery = new PhylacterySystem();
     const hiveMind = new ZombieHiveMind(phylactery);
 
-    const death1: DeathMemoryExtended = {
+    const death1: DeathMemory = {
       zombieId: 'zombie-001',
       target: 'test-site.com',
       causeOfDeath: 'captcha',
@@ -55,7 +56,7 @@ async function testPatternAnalysis(): Promise<boolean> {
     const hiveMind = new ZombieHiveMind(phylactery);
 
     for (let i = 0; i < 3; i++) {
-      const death: DeathMemoryExtended = {
+      const death: DeathMemory = {
         zombieId: `zombie-${i}`,
         target: 'pattern-test.com',
         causeOfDeath: i === 0 ? 'captcha' : 'rate-limit',
@@ -104,7 +105,7 @@ async function testStrategyGeneration(): Promise<boolean> {
     const phylactery = new PhylacterySystem();
     const hiveMind = new ZombieHiveMind(phylactery);
 
-    const death: DeathMemoryExtended = {
+    const death: DeathMemory = {
       zombieId: 'zombie-strategy',
       target: 'strategy-test.com',
       causeOfDeath: 'captcha',
@@ -149,7 +150,7 @@ async function testResurrection(): Promise<boolean> {
     const phylactery = new PhylacterySystem();
     const hiveMind = new ZombieHiveMind(phylactery);
 
-    const death: DeathMemoryExtended = {
+    const death: DeathMemory = {
       zombieId: 'zombie-dead',
       target: 'resurrection-test.com',
       causeOfDeath: 'ip-ban',
@@ -203,8 +204,8 @@ async function testDarkMagicAI(): Promise<boolean> {
     await darkMagic.trackPerformance('strategy-1', false);
 
     const best = await darkMagic.getBestStrategy('strategy');
-    if (best && best.successRate !== 2/3) {
-      throw new Error(`Expected success rate 0.67, got ${best.successRate}`);
+    if (best && Math.abs(best.successRate - 2/3) > 0.001) {
+      throw new Error(`Expected success rate ~0.67, got ${best.successRate}`);
     }
 
     console.log('✓ Performance tracking works');

@@ -34,12 +34,14 @@ export interface BrowserFingerprint {
 export interface DeathMemory {
   zombieId: string;
   target: string;
-  causeOfDeath: 'captcha' | 'ip-ban' | 'rate-limit' | 'timeout' | 'cloudflare' | '403' | '429';
+  causeOfDeath: 'captcha' | 'ip-ban' | 'rate-limit' | 'timeout' | 'cloudflare' | '403' | '429' | 'unknown';
   timestamp: number;
   fingerprint: BrowserFingerprint;
   requestCount: number;
   sessionAge: number;
   triggerPattern: string;
+  ipAddress: string;
+  userAgent: string;
 }
 
 export interface AvoidanceStrategy {

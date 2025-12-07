@@ -5,7 +5,6 @@
 export {
   ZombieHiveMind,
   DarkMagicAI,
-  DeathMemoryExtended,
   DeathPatternAnalysis,
   AvoidanceStrategyExtended,
   EnhancedZombie,

@@ -5,11 +5,6 @@
 
 import { PhylacterySystem, DeathMemory, AvoidanceStrategy, BrowserFingerprint } from '../storage/PhylacterySystem';
 
-export interface DeathMemoryExtended extends DeathMemory {
-  ipAddress: string;
-  userAgent: string;
-}
-
 export interface DeathPatternAnalysis {
   target: string;
   totalDeaths: number;
@@ -32,7 +27,7 @@ export interface AvoidanceStrategyExtended extends AvoidanceStrategy {
 export interface EnhancedZombie {
   zombieId: string;
   generation: number;
-  inheritedMemories: DeathMemoryExtended[];
+  inheritedMemories: DeathMemory[];
   strategy: AvoidanceStrategyExtended;
   powerBoost: number;
   wisdom: number;
@@ -65,11 +60,11 @@ export interface StrategyPerformance {
 
 export class ZombieHiveMind {
   private phylactery: PhylacterySystem;
-  private deathCache = new Map<string, DeathMemoryExtended[]>();
+  private deathCache = new Map<string, DeathMemory[]>();
 
   constructor(phylactery: PhylacterySystem) { this.phylactery = phylactery; }
 
-  async recordDeath(memory: DeathMemoryExtended): Promise<void> {
+  async recordDeath(memory: DeathMemory): Promise<void> {
     const dedupeKey = `${memory.target}:${memory.causeOfDeath}:${memory.triggerPattern}`;
     const existing = await this.findExistingDeath(dedupeKey);
     if (existing) {
@@ -81,15 +76,15 @@ export class ZombieHiveMind {
     this.deathCache.delete(memory.target);
   }
 
-  private async findExistingDeath(dedupeKey: string): Promise<DeathMemoryExtended | null> {
+  private async findExistingDeath(dedupeKey: string): Promise<DeathMemory | null> {
     const [target] = dedupeKey.split(':');
     const deaths = await this.queryDeaths(target);
     return deaths.find(d => `${d.target}:${d.causeOfDeath}:${d.triggerPattern}` === dedupeKey) || null;
   }
 
-  async queryDeaths(target: string): Promise<DeathMemoryExtended[]> {
+  async queryDeaths(target: string): Promise<DeathMemory[]> {
     if (this.deathCache.has(target)) return this.deathCache.get(target)!;
-    const deaths = await this.phylactery.queryDeaths(target) as DeathMemoryExtended[];
+    const deaths = await this.phylactery.queryDeaths(target) as DeathMemory[];
     this.deathCache.set(target, deaths);
     return deaths;
   }
@@ -187,7 +182,7 @@ export class DarkMagicAI {
   constructor(phylactery: PhylacterySystem) { this.phylactery = phylactery; }
 
   async analyzeTarget(target: string): Promise<AIAnalysis> {
-    const deaths = await this.phylactery.queryDeaths(target) as DeathMemoryExtended[];
+    const deaths = await this.phylactery.queryDeaths(target) as DeathMemory[];
     if (deaths.length === 0) {
       return { target, bestTimeToAttack: 'morning', bestUserAgents: ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'], bestIPRegions: ['US-East'], successRate: 0, sampleSize: 0 };
     }
@@ -197,10 +192,10 @@ export class DarkMagicAI {
       const period = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'night';
       hourCounts.set(period, (hourCounts.get(period) || 0) + 1);
     });
-    const bestTime = Array.from(hourCounts.entries()).sort((a, b) => a[1] - b[1])[0]?.[0] || 'morning';
+    const bestTime = Array.from(hourCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'morning';
     const agentCounts = new Map<string, number>();
     deaths.forEach(d => agentCounts.set(d.userAgent, (agentCounts.get(d.userAgent) || 0) + 1));
-    const bestAgents = Array.from(agentCounts.entries()).sort((a, b) => a[1] - b[1]).slice(0, 3).map(([agent]) => agent);
+    const bestAgents = Array.from(agentCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([agent]) => agent);
     const failedRequests = deaths.reduce((sum, d) => sum + d.requestCount, 0);
     const estimatedTotal = failedRequests * 1.5;
     const successRate = Math.max(0, (estimatedTotal - failedRequests) / estimatedTotal);
