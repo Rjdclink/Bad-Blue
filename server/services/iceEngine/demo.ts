@@ -2,76 +2,43 @@
  * EXIF Geolocation Mapper Demo
  * 
  * This demo shows how to use the IceEngine EXIF Geolocation Mapper
- * for consent-based evidence mapping.
+ * for evidence mapping.
  * 
  * NOTE: This is a demonstration file. To run with real images,
  * replace the mock data with actual JPEG files containing GPS EXIF data.
  */
 
 import { generateEvidenceMap, exifExtractor } from './index';
-import type { ConsentedUpload } from './exif/ExifExtractor';
+import type { FileUpload } from './exif/ExifExtractor';
 
-async function demoConsentValidation() {
-  console.log('\n=== DEMO 1: Consent Validation ===\n');
+async function demoDataExtraction() {
+  console.log('\n=== DEMO 1: EXIF Data Extraction ===\n');
 
-  const uploads: ConsentedUpload[] = [
+  const uploads: FileUpload[] = [
     {
       file: Buffer.from('mock-image-1'),
       filename: 'evidence-001.jpg',
       uploadedBy: 'officer-smith',
-      consentGiven: true,
-      purpose: 'legal-evidence',
-      caseId: 'CASE-2024-001',
     },
     {
       file: Buffer.from('mock-image-2'),
       filename: 'evidence-002.jpg',
       uploadedBy: 'witness-jones',
-      consentGiven: false,
-      purpose: 'legal-evidence',
-      caseId: 'CASE-2024-001',
     },
   ];
 
-  const { valid, invalid } = exifExtractor.validateConsent(uploads);
-  console.log(`✓ Valid uploads (with consent): ${valid.length}`);
-  console.log(`✗ Invalid uploads (no consent): ${invalid.length}`);
-  console.log('\nConsent validation ensures only authorized files are processed.');
-}
-
-async function demoConsentError() {
-  console.log('\n=== DEMO 2: Consent Error Protection ===\n');
-
-  const uploadWithoutConsent: ConsentedUpload = {
-    file: Buffer.from('mock-image'),
-    filename: 'unauthorized.jpg',
-    uploadedBy: 'unknown',
-    consentGiven: false,
-    purpose: 'legal-evidence',
-  };
-
-  try {
-    await exifExtractor.extractLocation(uploadWithoutConsent);
-    console.log('✗ ERROR: Should have thrown consent error');
-  } catch (error) {
-    if (error instanceof Error) {
-      console.log('✓ Consent error correctly thrown:');
-      console.log(`  "${error.message}"`);
-    }
-  }
+  console.log(`✓ Processing ${uploads.length} uploads`);
+  console.log('\nEXIF extraction processes all provided files.');
 }
 
 async function demoDataStructures() {
-  console.log('\n=== DEMO 3: Expected Data Structures ===\n');
+  console.log('\n=== DEMO 2: Expected Data Structures ===\n');
 
-  console.log('ConsentedUpload Structure:');
+  console.log('FileUpload Structure:');
   console.log({
     file: 'Buffer',
     filename: 'evidence.jpg',
     uploadedBy: 'user-id',
-    consentGiven: true,
-    purpose: 'legal-evidence',
-    caseId: 'CASE-2024-001',
   });
 
   console.log('\nLocationData Structure (expected output):');
@@ -89,18 +56,16 @@ async function demoDataStructures() {
     source: {
       filename: 'evidence.jpg',
       uploadedBy: 'user-id',
-      consentGiven: true,
     },
   });
 }
 
 async function demoWorkflow() {
-  console.log('\n=== DEMO 4: Complete Workflow (Mock) ===\n');
+  console.log('\n=== DEMO 3: Complete Workflow (Mock) ===\n');
 
-  console.log('Step 1: Prepare consented uploads');
+  console.log('Step 1: Prepare uploads');
   console.log('  - Load image files as Buffers');
-  console.log('  - Verify user consent is obtained');
-  console.log('  - Assign case ID and purpose\n');
+  console.log('  - Assign case ID and uploader info\n');
 
   console.log('Step 2: Generate evidence map');
   console.log('  - Extract EXIF data from all images');
@@ -117,7 +82,7 @@ async function demoWorkflow() {
   console.log(`
   const result = await generateEvidenceMap({
     caseId: 'CASE-2024-001',
-    uploads: [/* ConsentedUpload[] */],
+    uploads: [/* FileUpload[] */],
   });
   
   console.log('Map generated:', result.screenshotPath);
@@ -126,7 +91,7 @@ async function demoWorkflow() {
 }
 
 async function demoUseCases() {
-  console.log('\n=== DEMO 5: Use Cases ===\n');
+  console.log('\n=== DEMO 4: Use Cases ===\n');
 
   console.log('1. Police Investigation:');
   console.log('   - Map crime scene photos with timestamps');
@@ -136,12 +101,12 @@ async function demoUseCases() {
   console.log('2. Legal Proceedings:');
   console.log('   - Generate court-ready evidence exhibits');
   console.log('   - Verify photo authenticity via metadata');
-  console.log('   - Show consent compliance to judge\n');
+  console.log('   - Document evidence locations\n');
 
   console.log('3. Journalism & Public Interest:');
   console.log('   - Map protest or event locations');
   console.log('   - Verify source credibility');
-  console.log('   - Protect source consent rights\n');
+  console.log('   - Document locations and times\n');
 
   console.log('4. Insurance Claims:');
   console.log('   - Verify accident locations');
@@ -150,12 +115,7 @@ async function demoUseCases() {
 }
 
 async function demoSecurityFeatures() {
-  console.log('\n=== DEMO 6: Security & Privacy Features ===\n');
-
-  console.log('✓ Consent Enforcement:');
-  console.log('  - Mandatory consent flag on all uploads');
-  console.log('  - Runtime validation before processing');
-  console.log('  - Visual consent badge on outputs\n');
+  console.log('\n=== DEMO 5: Security & Privacy Features ===\n');
 
   console.log('✓ Error Handling:');
   console.log('  - Graceful degradation for corrupted files');
@@ -163,9 +123,9 @@ async function demoSecurityFeatures() {
   console.log('  - Detailed error logging\n');
 
   console.log('✓ Data Integrity:');
-  console.log('  - Original consent status preserved');
   console.log('  - Audit trail via source metadata');
-  console.log('  - No modification of original files\n');
+  console.log('  - No modification of original files');
+  console.log('  - Timestamps preserved from EXIF\n');
 }
 
 async function runAllDemos() {
@@ -174,8 +134,7 @@ async function runAllDemos() {
   console.log('║      EXIF GEOLOCATION MAPPER - DEMONSTRATION SUITE        ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
 
-  await demoConsentValidation();
-  await demoConsentError();
+  await demoDataExtraction();
   await demoDataStructures();
   await demoWorkflow();
   await demoUseCases();
@@ -187,9 +146,8 @@ async function runAllDemos() {
   console.log('╚════════════════════════════════════════════════════════════╝');
   console.log('\nFor production use with real images:');
   console.log('1. Load JPEG files with GPS EXIF data');
-  console.log('2. Obtain explicit user consent');
-  console.log('3. Call generateEvidenceMap() with real uploads');
-  console.log('4. Review generated HTML map and screenshot\n');
+  console.log('2. Call generateEvidenceMap() with uploads');
+  console.log('3. Review generated HTML map and screenshot\n');
 }
 
 // Run demos if executed directly

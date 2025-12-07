@@ -44,14 +44,6 @@ export class LeafletMapper {
       z-index: 1000;
       box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
-    .consent-badge {
-      background: #4CAF50;
-      color: white;
-      padding: 3px 8px;
-      border-radius: 3px;
-      font-size: 10px;
-      margin-top: 5px;
-    }
   </style>
 </head>
 <body>
@@ -59,7 +51,6 @@ export class LeafletMapper {
     <strong>Case ${caseId}</strong><br/>
     ${locations.length} Evidence Location(s)<br/>
     ${locations.map(l => `📍 ${l.timestamp.toLocaleDateString()}`).join('<br/>')}
-    <div class="consent-badge">✓ Consent Verified</div>
   </div>
   <div id="map"></div>
   
@@ -80,7 +71,7 @@ export class LeafletMapper {
       const directionStr = loc.direction ? `🧭 ${loc.direction}°<br/>` : '';
       return `
       const marker${idx} = L.marker([${loc.latitude}, ${loc.longitude}])
-        .bindPopup('<b>Evidence ${idx + 1}</b><br/>📅 ${loc.timestamp.toLocaleString()}<br/>📸 ${loc.device?.make || 'Unknown'} ${loc.device?.model || ''}<br/>📍 ${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}<br/>${altitudeStr}${directionStr}<small>Uploaded by: ${loc.source.uploadedBy}</small><br/><small style="color: green;">✓ Consent Given</small>');
+        .bindPopup('<b>Evidence ${idx + 1}</b><br/>📅 ${loc.timestamp.toLocaleString()}<br/>📸 ${loc.device?.make || 'Unknown'} ${loc.device?.model || ''}<br/>📍 ${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}<br/>${altitudeStr}${directionStr}<small>Uploaded by: ${loc.source.uploadedBy}</small>');
       markers.addLayer(marker${idx});
     `;
     }).join('\n')}

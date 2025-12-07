@@ -1,5 +1,5 @@
 // EXIF Geolocation Mapper exports
-import { exifExtractor, type LocationData } from './exif/ExifExtractor';
+import { exifExtractor, type LocationData, type FileUpload } from './exif/ExifExtractor';
 import { leafletMapper } from './exif/LeafletMapper';
 import { mapRenderer } from './exif/MapRenderer';
 import path from 'path';
@@ -10,6 +10,7 @@ import { publicRecordScraper } from './scraping/PublicRecordScraper';
 
 // EXIF Geolocation Mapper interfaces
 interface EvidenceMapRequest {
+  uploads: FileUpload[];
   caseId: string;
 }
 
@@ -45,14 +46,8 @@ interface CrawlResult {
 export async function generateEvidenceMap(request: EvidenceMapRequest): Promise<EvidenceMapResult> {
   const { uploads, caseId } = request;
 
-  // Validate consent
-  const { valid, invalid } = exifExtractor.validateConsent(uploads);
-  if (invalid.length > 0) {
-    throw new Error(`Cannot process ${invalid.length} files without consent`);
-  }
-
-  console.log(`[IceEngine] Extracting EXIF from ${valid.length} files...`);
-  const locations = await exifExtractor.extractBatch(valid);
+  console.log(`[IceEngine] Extracting EXIF from ${uploads.length} files...`);
+  const locations = await exifExtractor.extractBatch(uploads);
 
   if (locations.length === 0) {
     throw new Error('No GPS data found in uploaded files');
@@ -132,4 +127,4 @@ export async function crawlAndSnapshot(request: CrawlRequest): Promise<CrawlResu
 
 // Export all components
 export { exifExtractor, leafletMapper, mapRenderer, snapshotEngine, publicRecordScraper };
-export type { ConsentedUpload, LocationData, EvidenceMapRequest, EvidenceMapResult, CrawlRequest, CrawlResult };
+export type { FileUpload, LocationData, EvidenceMapRequest, EvidenceMapResult, CrawlRequest, CrawlResult };
