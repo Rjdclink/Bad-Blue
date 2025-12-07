@@ -1,4 +1,3 @@
-```typescript
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -39,7 +38,7 @@ function rotateLog(): void {
 }
 
 // Function to log messages
-function log(message: string): void {
+export function log(message: string): void {
   // Check and rotate logs before writing a new log message
   checkAndRotateLogs();
 
@@ -47,8 +46,5 @@ function log(message: string): void {
   fs.appendFileSync(LOG_FILE_PATH, `${new Date().toISOString()} - ${message}\n`);
 }
 
-// Example usage:
-log('Application started successfully.');
-```
-
-This code defines a basic logging system that checks and rotates the log file when it exceeds a certain size. The `checkAndRotateLogs` function checks the current log file size and rotates the log file if necessary. The `rotateLog` function renames the current log file to a backup log file and removes any existing backup log file. The `log` function writes log messages to the log file and checks for log rotation before writing a new message.
+// Export for use in other modules
+export default { log };
