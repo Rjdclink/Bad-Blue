@@ -1,11 +1,11 @@
 /**
  * Trinity Crawlers - Usage Examples
  * 
- * Demonstrates how to use Blizzard, Cerberus, and Lich crawlers
+ * Demonstrates how to use Blizzard, Cerberus, Lich, and Bird of Prey crawlers
  * for various intelligence gathering scenarios.
  */
 
-import { BlizzardCrawler, CerberusCrawler, LichCrawler } from './TrinityCrawlers';
+import { BlizzardCrawler, CerberusCrawler, LichCrawler, BirdOfPreyCrawler } from './index';
 import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
 
@@ -176,8 +176,124 @@ LICH:
 - Learning from past attempts
 - Budget: High, elite operations
 
+BIRD OF PREY:
+- Need complete invisibility (perfect cloaking)
+- Aggressive data extraction required
+- Bypassing rate limits and shields
+- Fire while cloaked capability
+- Multiple attack patterns needed
+- Budget: High, aggressive operations
+
 COMBINED:
 - Comprehensive intelligence gathering
 - Multi-phase operations
 - Adaptive approach based on target difficulty
 */
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BIRD OF PREY CRAWLER - Klingon Predator Operations
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function exampleBirdOfPrey() {
+  const birdOfPrey = new BirdOfPreyCrawler(stealth, phylactery);
+
+  // Example 1: Perfect cloaking device
+  await birdOfPrey.perfectCloak();
+  console.log('Cloaked status:', birdOfPrey.getStatus());
+  console.log('Combat readiness:', birdOfPrey.getCombatReadiness());
+
+  // Example 2: Fire while cloaked (advanced capability)
+  const canFireCloaked = await birdOfPrey.fireWhileCloaked();
+  console.log('Can fire while cloaked:', canFireCloaked);
+
+  // Example 3: Disruptor weapons
+  const target = 'https://target-site.com';
+  
+  // Standard disruptor (power 10)
+  const disruptorData = await birdOfPrey.fireDisruptors(target, 10);
+  console.log('Disruptor hit:', disruptorData.metadata.power, 'power level');
+
+  // Overload disruptors (power 15)
+  const overloadData = await birdOfPrey.overloadDisruptors(target);
+  console.log('Overload hit:', overloadData.metadata.power, 'power level');
+
+  // Photon torpedo (massive strike)
+  const torpedoData = await birdOfPrey.photonTorpedo(target);
+  console.log('Torpedo hit:', torpedoData.metadata.power, 'power level');
+
+  // Example 4: Decloak Strike (Classic Klingon)
+  const decloakResult = await birdOfPrey.decloakStrike(target);
+  console.log('Decloak strike:', decloakResult.metadata.attackPattern);
+  console.log('Steps:', decloakResult.metadata.steps);
+
+  // Example 5: Ghost Strike (Never seen)
+  const ghostResult = await birdOfPrey.ghostStrike(target);
+  console.log('Ghost strike:', ghostResult.metadata.attackPattern);
+  console.log('Remained cloaked:', ghostResult.metadata.remainedCloaked);
+  console.log('Detection probability:', ghostResult.metadata.detectionProbability);
+
+  // Example 6: Alpha Strike (Multiple targets)
+  const targets = ['https://target1.com', 'https://target2.com', 'https://target3.com'];
+  const alphaResults = await birdOfPrey.alphaStrike(targets);
+  console.log('Alpha strike:', alphaResults.length, 'targets hit');
+  console.log('Total targets:', alphaResults[0]?.metadata.totalTargets);
+
+  // Example 7: Hunt (Stalk and strike)
+  const huntResult = await birdOfPrey.hunt('https://prey-site.com');
+  console.log('Hunt complete:', huntResult.metadata.attackPattern);
+  console.log('Vulnerability score:', huntResult.metadata.vulnerabilityScore);
+  console.log('Strike type:', huntResult.metadata.strikeType);
+
+  // Example 8: Check final status
+  const finalStatus = birdOfPrey.getStatus();
+  console.log('Final status:', {
+    cloaked: finalStatus.cloaked,
+    killCount: finalStatus.killCount,
+    aggression: finalStatus.aggression,
+    ethics: finalStatus.ethics
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMBINED OPERATIONS - Using All Four
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function exampleCombinedWithBirdOfPrey() {
+  const blizzard = new BlizzardCrawler(phylactery, stealth);
+  const cerberus = new CerberusCrawler(phylactery, stealth);
+  const lich = new LichCrawler(phylactery, stealth);
+  const birdOfPrey = new BirdOfPreyCrawler(stealth, phylactery);
+
+  // Scenario: Elite aggressive intelligence operation
+  
+  // Phase 1: Blizzard discovers targets
+  console.log('Phase 1: Discovery');
+  const discovered = await blizzard.triggerAvalanche('https://initial-target.com');
+  console.log('Discovered', discovered.length, 'targets');
+
+  // Phase 2: Bird of Prey hunts high-value targets with perfect stealth
+  console.log('Phase 2: Klingon Predator Operations');
+  const highValueTargets = discovered.filter(d => d.confidence > 0.8).slice(0, 5);
+  for (const target of highValueTargets) {
+    const huntResult = await birdOfPrey.hunt(target.target);
+    console.log('Hunted:', target.target, 'strike type:', huntResult.metadata.strikeType);
+  }
+
+  // Phase 3: Cerberus handles medium-value targets reliably
+  console.log('Phase 3: Reliable Collection');
+  const mediumTargets = discovered.filter(d => d.confidence > 0.5 && d.confidence <= 0.8).slice(0, 10);
+  for (const target of mediumTargets) {
+    await cerberus.attack(target.target);
+  }
+
+  // Phase 4: Lich performs elite operations on protected targets
+  console.log('Phase 4: Elite Operations');
+  const protectedTargets = discovered.filter(d => d.confidence > 0.9).slice(0, 3);
+  for (const target of protectedTargets) {
+    await lich.castSpell(target.target, 'forbidden');
+  }
+
+  // Final: Check all metrics
+  console.log('Bird of Prey status:', birdOfPrey.getStatus());
+  console.log('Phylactery metrics:', phylactery.getMetrics());
+}
