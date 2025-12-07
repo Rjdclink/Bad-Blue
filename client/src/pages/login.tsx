@@ -122,17 +122,15 @@ export default function Login() {
   return (
     <div className="min-h-screen relative">
       <SEOHead
-        title="Login | LegalWhat"
-        description="Sign in to access AI-powered legal tools and consultation"
+        title="Login - LegalWhat AI Legal Platform"
+        description="Sign in to access AI-powered legal tools, document generation, and legal consultation services"
       />
       
       {/* Constitution Background */}
       <div 
         className="absolute inset-0 bg-cover bg-center bg-no-repeat"
         style={{
-          backgroundImage: 'url(/images/Constitution.webp)',
-          backgroundSize: 'cover',
-          backgroundPosition: 'center center'
+          backgroundImage: 'url(/images/Constitution.webp)'
         }}
       >
         {/* Dark overlay for readability */}
