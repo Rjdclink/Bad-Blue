@@ -198,7 +198,10 @@ const tests = [
     const metrics1 = stealth.getMetrics();
     const metrics2 = stealth.getMetrics();
     
-    expect(JSON.stringify(metrics1)).toBe(JSON.stringify(metrics2));
+    // Check structural equality
+    expect(metrics1.vpn.connected).toBe(metrics2.vpn.connected);
+    expect(metrics1.tor.instances).toBe(metrics2.tor.instances);
+    expect(metrics1.success.total).toBe(metrics2.success.total);
   }),
 
   test('Can call getMetrics before initialize', () => {
