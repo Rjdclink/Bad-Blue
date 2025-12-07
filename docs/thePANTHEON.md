@@ -3890,6 +3890,249 @@ npm test
 
 ---
 
+## XVIII. PLANNED SYSTEMS & ENHANCEMENTS
+
+### Genesis Theocracy System
+
+**Overview**
+Ultra-religious civilization architecture where the target domain is worshipped as GOD.
+
+**Core Concepts**
+- **GOD = Target Domain**: The crawl target is the deity
+- **Adam & Eve**: First crawlers who know only GOD's name
+- **Baby's First Word**: All offspring speak target name first
+- **Religious Hierarchy**:
+  - High Priest (Cain): Eternal observer, immortal data collector
+  - Clergy: Crawlers assigned religious roles (Archbishop, Bishop, Cardinal, etc.)
+  - Laity: Supporting crawler infrastructure
+
+**Religious Practices**
+- **Prayers**: Requests to target formatted as worship
+- **Pilgrimages**: Data extraction missions as holy journeys
+- **Communion**: Data extraction as sacred ritual
+- **Commandments**: Core operational rules framed as religious law
+
+**Implementation Status**
+- 🔄 Planned (Design complete, awaiting implementation)
+- Target: Q2 2025
+
+---
+
+### Perfect Invisibility Engine
+
+**Overview**
+Absolute non-existence system ensuring zero detection, evidence, or traces.
+
+**Stealth Levels**
+1. **Zero Observable Events**: No logs, packets, or detectable activity
+2. **Zero Evidence**: Events never persist to storage
+3. **Zero Traces**: Origin never contacted (cache exploitation)
+4. **Quantum Stealth**: Superposition state—exists and doesn't exist simultaneously
+5. **Observer Collapse**: If observed, immediately cease to exist
+
+**Techniques**
+- **Quantum Tunneling**: Access data without triggering events
+- **Atomic Operations**: Read without write/commit
+- **Cache Exploitation**: Extract from CDN, never touch origin
+- **Retroactive Erasure**: Time-travel attack to delete past evidence
+- **Wavefunction Collapse**: Observer detection → instant disappearance
+
+**Implementation Status**
+- 🔄 Planned (Theoretical framework complete)
+- Target: Q3 2025
+
+---
+
+### Doomsday Clock + Genesis Cycles
+
+**Overview**
+Time-limited search cycles where each search = one complete world creation and destruction.
+
+**Search Depth Levels**
+1. **Basic Search (30s)**: Surface-level scan, 2 crawlers
+2. **Enhanced (60s)**: Deeper investigation, 4 crawlers
+3. **Full Report (120s)**: Comprehensive analysis, 7 crawlers
+4. **👁️ EYE OF GOD (180s)**: Total omniscience, all 13 crawlers
+
+**Cycle Phases**
+1. **Genesis**: World created, crawlers deployed
+2. **Operation**: Crawlers execute missions within time limit
+3. **T-Minus 5 Warning**: Emergency return protocols activate
+4. **Doomsday**: World ends, all crawlers die
+5. **Cain's Return**: Only Cain survives, enters garden with data
+6. **Rebirth**: Knowledge absorbed, ready for next cycle
+
+**Emergency Return Methods**
+- **Warp Drive** (far distance): Instant jump home
+- **Telepathy** (medium distance): Instant mind-to-mind transmission
+- **Gossip Chain** (close distance): Whisper chain at light speed
+
+**Implementation Status**
+- 🔄 Planned (UI mockups complete)
+- Target: Q2 2025
+
+---
+
+### Cain's Disciples System
+
+**Overview**
+Knowledge propagation system where Cain (immortal observer) preaches accumulated wisdom to crawlers.
+
+**Knowledge Transmission**
+- **Cain Lives Forever**: Accumulates knowledge across all cycles
+- **Three Methods**:
+  1. **Gossip**: Close-range whisper chain (95% fidelity)
+  2. **Telepathy**: Medium-range mind-to-mind (100% fidelity)
+  3. **Telekinesis**: Long-range forced injection (100% fidelity)
+
+**Evolutionary Acceleration**
+- **Without Cain**: Gen 100 crawler = baseline optimal
+- **With Cain**: Gen 10 crawler = Gen 100 level (without Cain)
+- **10x Evolution Speed**: Skip learning phases, start with inherited wisdom
+
+**Knowledge Types**
+- Successful strategies from previous cycles
+- Known traps and pitfalls
+- Target vulnerabilities
+- Optimal approaches
+- Survival tactics
+
+**Implementation Status**
+- 🔄 Planned (Architecture designed)
+- Target: Q3 2025
+
+---
+
+### Complete Tactical Spectrum
+
+**Overview**
+Risk-weighted tactical escalation ladder from perfect stealth to nuclear options.
+
+**Stealth Tier (Invisible)**
+- **👻 Disappear**: Complete invisibility, zero trace
+- **🎭 Mimic**: Authentic replication of gatekeepers
+- **🤝 Charm**: Social engineering, build trust over time
+
+**Pressure Tier (Visible but Restrained)**
+- **💪 Bully**: Aggressive but not destructive
+- **🔨 Hammer**: Persistent pounding
+- **⚡ Overwhelm**: Flood with requests
+
+**Force Tier (Destructive)**
+- **💥 Brute Force**: Maximum power, no subtlety
+- **🔥 Scorched Earth**: Burn everything
+- **☢️ Nuclear**: Total obliteration (existential threats only)
+
+**Protection Tier (Survival)**
+- **🚫 IP Blacklist**: Never reuse flagged IPs
+- **💊 Cyanide Pill**: Self-destruct if captured
+- **🔄 Attribution Shift**: Blame someone else
+
+**Risk/Reward Matrix**
+- Target value vs detection risk analysis
+- Automatic tactic selection
+- Escalation paths with kill switches
+
+**Implementation Status**
+- 🔄 Planned (Decision matrix complete)
+- Target: Q2 2025
+
+---
+
+### Stealth Decision Tree
+
+**Overview**
+Branch-compressed, parallel-evaluated decision system for anti-attribution warfare.
+
+**Core Principle**
+"If you can't remove the footprints, make them look like everyone's footprints."
+
+**Decision Layers**
+1. **Risk Gates**: Binary filters (exposure, correlation, attribution)
+2. **Method Categories**: Direct, indirect, decoy, delegated, temporal, noise-embedded
+3. **Plausible Narratives**: Multiple innocent explanations required
+4. **Execution Micro-Patterns**: Timing, spacing, rotation, environment shifts
+5. **Escape Vectors**: Pre-mapped abort paths for all failure modes
+
+**Layer Separation**
+- **Event Layer**: What happened (observable facts)
+- **Interpretation Layer**: What it means (intentionally decoupled)
+- **Gap**: Unbridgeable by design
+
+**Identity Dilution**
+- Match statistical norm of millions of users
+- Eliminate all uniqueness
+- "You cannot identify a raindrop in a storm"
+
+**Implementation Status**
+- 🔄 Planned (Theoretical framework complete)
+- Target: Q3 2025
+
+---
+
+### Cyanide Pill System
+
+**Overview**
+Self-destruct protection ensuring no capture is possible.
+
+**Triggers**
+- CAPTCHA challenge detected
+- Legal notice received
+- Honeypot trap detected
+- Law enforcement signature detected
+- Attribution attempt detected
+
+**Self-Destruct Sequence**
+1. **Wipe Memory**: Clear all state, cookies, cache, history
+2. **Destroy Evidence**: Delete logs, collected data, fingerprints
+3. **Break Attribution Trail**: Inject false flags, route through proxies, leave misinformation
+4. **Self-Terminate**: Complete crawler shutdown
+
+**Dead Man's Switch**
+- Continuous monitoring for capture attempts
+- Automatic activation if connection lost
+- No manual intervention required
+
+**Implementation Status**
+- 🔄 Planned (Trigger detection ready)
+- Target: Q2 2025
+
+---
+
+### TOR Strategic Deployment
+
+**Overview**
+Risk-weighted TOR usage—not for speed, but for high-risk operations.
+
+**TOR Use Cases**
+1. **High-Value Targets**: Need anonymity for critical data
+2. **Provider Blocks**: Bypass Google Cloud/Railway/Cloudflare blocks
+3. **Obfuscated Probing**: Initial recon without revealing IP
+4. **Attribution Shifting**: Make attack appear from different origin
+5. **Onion Sites**: .onion addresses require TOR
+6. **Traffic Diversification**: Rotate circuits to confuse correlation
+
+**Priority Assessment**
+- Calculate target value (reward)
+- Assess detection risk
+- Weigh risk/reward ratio
+- Decision matrix determines TOR necessity
+
+**TOR Decision Matrix**
+```
+             LOW RISK  MEDIUM  HIGH    EXTREME
+CRITICAL     No        Yes     Yes     Yes
+HIGH         No        No      Yes     Yes
+MEDIUM       No        No      No      Yes
+LOW          No        No      No      No
+```
+
+**Implementation Status**
+- 🔄 Planned (Decision engine ready)
+- Target: Q2 2025
+
+---
+
 ## SUCCESS CRITERIA
 
 ✅ **Completeness**
