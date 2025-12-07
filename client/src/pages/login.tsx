@@ -120,39 +120,46 @@ export default function Login() {
   };
   
   return (
-    <>
+    <div className="min-h-screen relative">
       <SEOHead
-        title="Login / Sign Up - LegalWhat AI Legal Platform"
-        description="Sign up for LegalWhat to access AI-powered legal tools, document generation, and legal consultation services."
+        title="Login - LegalWhat AI Legal Platform"
+        description="Sign in to access AI-powered legal tools, document generation, and legal consultation services"
       />
       
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-50 to-white dark:from-slate-950 dark:to-slate-900 p-4">
-        {/* Law book background image - subtle */}
-        <div 
-          className="fixed inset-0 opacity-5 bg-cover bg-center bg-no-repeat pointer-events-none"
-          style={{ backgroundImage: "url(/images/Law-book.webp)" }}
-        />
-        
-        <Card className="w-full max-w-md relative z-10">
-          <CardHeader className="text-center">
-            <div className="flex justify-center mb-4">
-              <div className="p-3 bg-primary/10 rounded-lg">
-                <Shield className="h-10 w-10 text-primary" />
-              </div>
+      {/* Constitution Background */}
+      <div 
+        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage: 'url(/images/Constitution.webp)'
+        }}
+      >
+        {/* Dark overlay for readability */}
+        <div className="absolute inset-0 bg-black/60" />
+      </div>
+      
+      {/* Content - Login/Signup Card */}
+      <div className="relative z-10 flex items-center justify-center min-h-screen p-4">
+        <div className="w-full max-w-md">
+          {/* Logo */}
+          <div className="text-center mb-6">
+            <div className="inline-flex items-center gap-2 mb-4">
+              <Shield className="w-10 h-10 text-white" />
+              <h1 className="text-3xl font-bold text-white">LegalWhat</h1>
             </div>
-            <CardTitle className="text-2xl flex items-center justify-center gap-1">
-              Welcome to LegalWhat
-              <img 
-                src="/images/Legal What Icon.png" 
-                alt="?" 
-                className="inline-block h-[1em] w-auto object-contain"
-                style={{ marginBottom: '-0.05em' }}
-              />
-            </CardTitle>
-            <CardDescription>
-              AI-powered legal assistance for all your legal needs
-            </CardDescription>
-          </CardHeader>
+            <p className="text-gray-200 text-sm">
+              AI-Powered Legal Platform
+            </p>
+          </div>
+          
+          <Card className="bg-white/95 backdrop-blur-sm border-white/20 shadow-2xl">
+            <CardHeader className="text-center">
+              <CardTitle className="text-2xl flex items-center justify-center gap-1">
+                Welcome
+              </CardTitle>
+              <CardDescription>
+                Sign in to your account or create a new one
+              </CardDescription>
+            </CardHeader>
           
           <CardContent>
             <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -294,7 +301,8 @@ export default function Login() {
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
-    </>
+    </div>
   );
 }
