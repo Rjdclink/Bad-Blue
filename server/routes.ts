@@ -853,6 +853,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use(locationIntelligenceRoutes.default);
 
   // ============================================
+  // GPS INTELLIGENCE ROUTES (PANTHEON Part 1)
+  // ============================================
+  const gpsRoutes = await import('./routes/gps.routes');
+  app.use('/api/gps', gpsRoutes.default);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {
