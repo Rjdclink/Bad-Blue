@@ -94,11 +94,10 @@ export async function extractCourtDocket(
 
     if (url) {
       // Extract from specific URL
-      return await courtDocketExtractor.extractDocket(url, caseNumber, jurisdiction);
+      return await courtDocketExtractor.extractDocket(caseNumber, jurisdiction);
     } else {
-      // Would need to build URL from case number and jurisdiction
-      console.warn('[Legal AI] URL required for docket extraction');
-      return null;
+      // Use case number and jurisdiction
+      return await courtDocketExtractor.extractDocket(caseNumber, jurisdiction);
     }
   } catch (error: any) {
     console.error('[Legal AI] Error extracting docket:', error);
@@ -118,11 +117,7 @@ export async function extractStatuteByCitation(
   try {
     console.log('[Legal AI] Extracting statute by citation:', citation);
     
-    return await statuteExtractor.extractStatute(citation, jurisdiction, {
-      sources: ['cornell', 'justia'],
-      validateMultiple: true,
-      includeAmendments: true,
-    });
+    return await statuteExtractor.extractStatute(citation, jurisdiction);
   } catch (error: any) {
     console.error('[Legal AI] Error extracting statute:', error);
     return null;
@@ -142,12 +137,7 @@ export async function searchPrecedents(
   try {
     console.log('[Legal AI] Searching precedents:', query);
     
-    return await precedentExtractor.extractPrecedents(query, {
-      jurisdiction,
-      maxResults,
-      sources: ['justia', 'findlaw', 'google-scholar'],
-      relevanceThreshold: 0.6,
-    });
+    return await precedentExtractor.extractPrecedents(query, jurisdiction, maxResults);
   } catch (error: any) {
     console.error('[Legal AI] Error searching precedents:', error);
     return [];

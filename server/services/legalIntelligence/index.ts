@@ -39,17 +39,21 @@ export { markdownConverter } from './markdownConverter';
 export { extractionCache } from './extractionCache';
 export { semanticLegalExtractor } from './semanticExtractor';
 
-// Phase 3B: Adaptive Crawler + Browser Manager Exports
-export { browserManager, BrowserManager } from './browserManager';
-export { adaptiveLegalCrawler, AdaptiveLegalCrawler } from './adaptiveCrawler';
+// Phase 3B: Adaptive Crawler & Extractors Exports
+export { BrowserManager, getBrowserManager, browserManager } from './browserManager';
+export { AdaptiveCrawler, getAdaptiveCrawler, adaptiveCrawler } from './adaptiveCrawler';
+
+// Alias for develop branch compatibility
+export { adaptiveCrawler as adaptiveLegalCrawler, AdaptiveCrawler as AdaptiveLegalCrawler } from './adaptiveCrawler';
 
 // Extractor exports
-export { courtDocketExtractor, CourtDocketExtractor } from './extractors/courtDocketExtractor';
-export { statuteExtractor, StatuteExtractor } from './extractors/statuteExtractor';
-export { officerRecordsExtractor, OfficerRecordsExtractor } from './extractors/officerRecordsExtractor';
-export { precedentExtractor, PrecedentExtractor } from './extractors/precedentExtractor';
+export { CourtDocketExtractor, getCourtDocketExtractor, courtDocketExtractor } from './extractors/courtDocketExtractor';
+export { StatuteExtractor, getStatuteExtractor, statuteExtractor } from './extractors/statuteExtractor';
+export { OfficerRecordsExtractor, getOfficerRecordsExtractor, officerRecordsExtractor } from './extractors/officerRecordsExtractor';
+export { PrecedentExtractor, getPrecedentExtractor, precedentExtractor } from './extractors/precedentExtractor';
 
-export type { Jurisdiction, DocketExtractionOptions } from './extractors/courtDocketExtractor';
-export type { StatuteSource, StatuteExtractionOptions } from './extractors/statuteExtractor';
-export type { OfficerRecordsOptions } from './extractors/officerRecordsExtractor';
-export type { PrecedentSource, PrecedentSearchOptions } from './extractors/precedentExtractor';
+// Type exports (primary names)
+export type { DocketData, CourtDocket } from './extractors/courtDocketExtractor';
+export type { StatuteData } from './extractors/statuteExtractor';
+export type { OfficerRecordData } from './extractors/officerRecordsExtractor';
+export type { CaseLawData, CasePrecedent } from './extractors/precedentExtractor';

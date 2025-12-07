@@ -1,143 +1,196 @@
 /**
- * Adaptive Legal Crawler
- * Information foraging algorithm with auto-stop conditions
- * Implements Crawl4AI patterns for intelligent legal document extraction
+ * Adaptive Crawler - Crawl4AI information foraging pattern
+ * Implements adaptive crawling with automatic stopping, site structure learning,
+ * and dynamic depth adjustment
  */
 
-import { browserManager } from './browserManager';
-import { contentFilter } from './contentFilter';
-import { markdownConverter } from './markdownConverter';
+import { browserManager, BrowserManager, getBrowserManager } from './browserManager';
+import { semanticLegalExtractor, type ExtractionResult } from './semanticExtractor';
+import { type ExtractionSchema } from './schemas';
 import { logger } from '../../logger';
-import type { 
-  CrawlConfig, 
-  CrawlResult, 
-  UrlPriority, 
-  BrowserType 
-} from './types';
-import type { Page } from '@playwright/test';
+import * as cheerio from 'cheerio';
 
 const log = logger.child({ component: 'legalIntelligence:adaptiveCrawler' });
 
+export interface StopCondition {
+  minItems?: number;
+  maxDepth?: number;
+  successRate?: number;
+  maxUrls?: number;
+  timeoutMs?: number;
+}
+
+export interface CrawlConfig {
+  startUrl: string;
+  schema: ExtractionSchema;
+  stopCondition: StopCondition;
+  followLinks?: boolean;
+  maxConcurrent?: number;
+  respectRobotsTxt?: boolean;
+  urlPattern?: RegExp;
+  excludePattern?: RegExp;
+}
+
+export interface CrawlResult {
+  data: any[];
+  urlsVisited: number;
+  depth: number;
+  successRate: number;
+  stoppedReason: string;
+  metadata: {
+    startTime: number;
+    endTime: number;
+    duration: number;
+  };
+}
+
+interface UrlQueueItem {
+  url: string;
+  depth: number;
+  parent?: string;
+}
+
 /**
- * Adaptive Legal Crawler Class
- * Smart crawling with dynamic depth adjustment and link prioritization
+ * Adaptive Crawler
+ * Implements Crawl4AI's information foraging pattern with intelligent stopping
  */
-export class AdaptiveLegalCrawler {
+export class AdaptiveCrawler {
+  private browserMgr: BrowserManager;
   private visitedUrls: Set<string> = new Set();
-  private urlQueue: UrlPriority[] = [];
-  private extractedData: any[] = [];
-  private startTime: number = 0;
+  private urlQueue: UrlQueueItem[] = [];
+  private successfulExtractions: number = 0;
+  private failedExtractions: number = 0;
+
+  constructor(browserManager?: BrowserManager) {
+    this.browserMgr = browserManager || getBrowserManager();
+  }
 
   /**
-   * Main crawl method with adaptive stopping
+   * Crawl a site with adaptive stopping
    */
   async crawl(config: CrawlConfig): Promise<CrawlResult> {
-    this.startTime = Date.now();
-    this.visitedUrls.clear();
-    this.urlQueue = [];
-    this.extractedData = [];
+    const startTime = Date.now();
+    const data: any[] = [];
+    let currentDepth = 0;
 
-    const {
-      startUrl,
-      schema,
-      stopCondition,
-      browserType = 'chromium',
-      followLinks = true,
-      linkSelector = 'a[href]',
-      maxConcurrent = 3,
-      respectRobotsTxt = true,
-    } = config;
+    // Initialize defaults
+    const stopCondition: Required<StopCondition> = {
+      minItems: config.stopCondition.minItems || 1,
+      maxDepth: config.stopCondition.maxDepth || 3,
+      successRate: config.stopCondition.successRate || 0.5,
+      maxUrls: config.stopCondition.maxUrls || 50,
+      timeoutMs: config.stopCondition.timeoutMs || 300000, // 5 minutes
+    };
+
+    const followLinks = config.followLinks !== false;
+    const maxConcurrent = config.maxConcurrent || 3;
+
+    // Add start URL to queue
+    this.urlQueue.push({ url: config.startUrl, depth: 0 });
 
     log.info('Starting adaptive crawl', {
-      startUrl,
-      browserType,
+      startUrl: config.startUrl,
       stopCondition,
+      followLinks,
     });
 
     try {
-      // Initialize with start URL
-      this.urlQueue.push({
-        url: startUrl,
-        priority: 1.0,
-        depth: 0,
-      });
+      while (this.urlQueue.length > 0) {
+        // Check stop conditions
+        const shouldStop = this.shouldStop(data.length, currentDepth, stopCondition, startTime);
+        if (shouldStop.stop) {
+          log.info('Stopping crawl', { reason: shouldStop.reason });
+          return {
+            data,
+            urlsVisited: this.visitedUrls.size,
+            depth: currentDepth,
+            successRate: this.getSuccessRate(),
+            stoppedReason: shouldStop.reason,
+            metadata: {
+              startTime,
+              endTime: Date.now(),
+              duration: Date.now() - startTime,
+            },
+          };
+        }
 
-      let currentDepth = 0;
-      let pagesVisited = 0;
-
-      // Main crawl loop with adaptive stopping
-      while (this.urlQueue.length > 0 && !this.shouldStop(stopCondition, currentDepth, pagesVisited)) {
-        // Sort queue by priority (highest first)
-        this.urlQueue.sort((a, b) => b.priority - a.priority);
-
-        // Get batch of URLs to process concurrently
+        // Get next batch of URLs
         const batch = this.urlQueue.splice(0, maxConcurrent);
-        
-        // Process URLs in parallel
+        currentDepth = Math.max(currentDepth, ...batch.map(item => item.depth));
+
+        // Process batch in parallel
         const results = await Promise.allSettled(
-          batch.map(urlPriority => 
-            this.processUrl(urlPriority, config, browserType, followLinks, linkSelector)
-          )
+          batch.map(item => this.processUrl(item, config))
         );
 
+        // Collect successful results
         for (const result of results) {
           if (result.status === 'fulfilled' && result.value) {
-            const { data, newUrls, depth } = result.value;
-            
-            if (data) {
-              this.extractedData.push(data);
-              log.debug('Extracted data', { count: this.extractedData.length });
-            }
+            const { extracted, links } = result.value;
 
-            // Add new URLs to queue with calculated priorities
-            if (newUrls.length > 0) {
-              this.prioritizeAndAddUrls(newUrls, depth + 1);
-            }
+            if (extracted && extracted.success) {
+              data.push(extracted.data);
+              this.successfulExtractions++;
 
-            currentDepth = Math.max(currentDepth, depth);
-            pagesVisited++;
+              // Add new links to queue if following links
+              if (followLinks && links && links.length > 0) {
+                for (const link of links) {
+                  if (!this.visitedUrls.has(link.url) && !this.urlQueue.some(item => item.url === link.url)) {
+                    // Check URL patterns
+                    if (config.urlPattern && !config.urlPattern.test(link.url)) {
+                      continue;
+                    }
+                    if (config.excludePattern && config.excludePattern.test(link.url)) {
+                      continue;
+                    }
+
+                    this.urlQueue.push({
+                      url: link.url,
+                      depth: link.depth,
+                      parent: link.parent,
+                    });
+                  }
+                }
+              }
+            } else {
+              this.failedExtractions++;
+            }
+          } else {
+            this.failedExtractions++;
           }
         }
 
-        // Adaptive depth adjustment: go deeper if finding good data
-        if (this.getSuccessRate() > 0.8 && stopCondition.maxDepth) {
-          const adjustedMaxDepth = stopCondition.maxDepth + 1;
-          log.debug('Increasing depth due to high success rate', { 
-            newMaxDepth: adjustedMaxDepth,
+        // Adaptive depth adjustment based on success rate
+        if (this.getSuccessRate() < stopCondition.successRate && data.length >= stopCondition.minItems) {
+          log.info('Low success rate, stopping early', {
             successRate: this.getSuccessRate(),
+            threshold: stopCondition.successRate,
           });
+          break;
         }
       }
 
-      const duration = Date.now() - this.startTime;
-      const stopReason = this.getStopReason(stopCondition, currentDepth, pagesVisited);
-
-      log.info('Crawl completed', {
-        pagesVisited,
-        itemsExtracted: this.extractedData.length,
-        duration,
-        stopReason,
-      });
-
       return {
-        success: true,
-        data: this.extractedData,
-        pagesVisited,
+        data,
+        urlsVisited: this.visitedUrls.size,
         depth: currentDepth,
-        duration,
-        stopReason,
+        successRate: this.getSuccessRate(),
+        stoppedReason: 'Queue exhausted',
+        metadata: {
+          startTime,
+          endTime: Date.now(),
+          duration: Date.now() - startTime,
+        },
       };
-
     } catch (error: any) {
       log.error('Crawl failed', { error: error.message });
-      return {
-        success: false,
-        data: this.extractedData,
-        pagesVisited: this.visitedUrls.size,
-        depth: 0,
-        duration: Date.now() - this.startTime,
-        errors: [error.message],
-      };
+      throw error;
+    } finally {
+      // Reset state
+      this.visitedUrls.clear();
+      this.urlQueue = [];
+      this.successfulExtractions = 0;
+      this.failedExtractions = 0;
     }
   }
 
@@ -145,13 +198,10 @@ export class AdaptiveLegalCrawler {
    * Process a single URL
    */
   private async processUrl(
-    urlPriority: UrlPriority,
-    config: CrawlConfig,
-    browserType: BrowserType,
-    followLinks: boolean,
-    linkSelector: string
-  ): Promise<{ data: any | null; newUrls: string[]; depth: number } | null> {
-    const { url, depth } = urlPriority;
+    item: UrlQueueItem,
+    config: CrawlConfig
+  ): Promise<{ extracted: ExtractionResult | null; links: UrlQueueItem[] } | null> {
+    const { url, depth } = item;
 
     // Skip if already visited
     if (this.visitedUrls.has(url)) {
@@ -159,243 +209,144 @@ export class AdaptiveLegalCrawler {
     }
 
     this.visitedUrls.add(url);
-    log.debug('Processing URL', { url, depth });
-
-    let page: Page | null = null;
 
     try {
-      // Create page with browser manager
-      page = await browserManager.createPage(browserType, {
-        headless: true,
-        timeout: 30000,
+      log.debug('Processing URL', { url, depth });
+
+      // Render page with browser
+      const result = await this.browserMgr.renderPage(url, {
+        waitFor: 2000, // Wait 2 seconds for dynamic content
       });
 
-      // Navigate to URL
-      await page.goto(url, {
-        waitUntil: 'networkidle',
-        timeout: 30000,
-      });
+      // Extract data using semantic extractor
+      const extracted = await semanticLegalExtractor.extractFromHTML(
+        result.html,
+        config.schema,
+        {
+          useCache: true,
+          skipFiltering: false,
+        }
+      );
 
-      // Wait for content
-      await browserManager.waitForContent(page);
+      // Extract links for next depth
+      const links = depth < (config.stopCondition.maxDepth || 3)
+        ? this.extractLinks(result.html, url, depth + 1)
+        : [];
 
-      // Extract content
-      const html = await page.content();
-      
-      // Filter and convert content
-      const filteredHtml = await contentFilter.filterContent(html);
-      const markdown = markdownConverter.convert(filteredHtml);
-
-      // Extract structured data if schema provided
-      let extractedData: any | null = null;
-      if (config.schema) {
-        extractedData = await this.extractWithSchema(markdown, config.schema);
-      } else {
-        extractedData = { content: markdown, url };
-      }
-
-      // Extract new URLs if following links
-      let newUrls: string[] = [];
-      if (followLinks) {
-        newUrls = await this.extractLinks(page, linkSelector, url);
-      }
-
-      return {
-        data: extractedData,
-        newUrls,
-        depth,
-      };
-
+      return { extracted, links };
     } catch (error: any) {
-      log.error('Error processing URL', { url, error: error.message });
-      return { data: null, newUrls: [], depth };
-    } finally {
-      // Close page and context
-      if (page) {
-        await page.context().close().catch(err => 
-          log.warn('Error closing context', { error: err.message })
-        );
-      }
+      log.error('Failed to process URL', { url, error: error.message });
+      return null;
     }
   }
 
   /**
-   * Extract links from a page
+   * Extract links from HTML
    */
-  private async extractLinks(page: Page, selector: string, baseUrl: string): Promise<string[]> {
+  private extractLinks(html: string, baseUrl: string, depth: number): UrlQueueItem[] {
     try {
-      const links = await page.$$eval(selector, (elements, base) => {
-        return elements
-          .map((el: any) => {
-            const href = el.getAttribute('href');
-            if (!href) return null;
-            
-            // Convert relative URLs to absolute
-            try {
-              return new URL(href, base).href;
-            } catch {
-              return null;
-            }
-          })
-          .filter((href): href is string => href !== null);
-      }, baseUrl);
+      const $ = cheerio.load(html);
+      const links: UrlQueueItem[] = [];
+      const baseUrlObj = new URL(baseUrl);
 
-      // Filter out external links and common noise
-      const filtered = links.filter(link => {
-        const url = new URL(link);
-        const baseUrlObj = new URL(baseUrl);
-        
-        // Same domain only
-        if (url.hostname !== baseUrlObj.hostname) {
-          return false;
+      $('a[href]').each((_, element) => {
+        const href = $(element).attr('href');
+        if (!href) return;
+
+        try {
+          // Resolve relative URLs
+          const absoluteUrl = new URL(href, baseUrl).href;
+          const urlObj = new URL(absoluteUrl);
+
+          // Only follow links from the same domain
+          if (urlObj.hostname === baseUrlObj.hostname) {
+            links.push({
+              url: absoluteUrl,
+              depth,
+              parent: baseUrl,
+            });
+          }
+        } catch (error) {
+          // Invalid URL, skip
         }
-
-        // Skip common noise patterns
-        const noisyPatterns = [
-          '/login', '/logout', '/signin', '/signup',
-          '/cart', '/checkout', '/account',
-          '.pdf', '.jpg', '.png', '.gif', '.zip',
-          'javascript:', 'mailto:', 'tel:',
-        ];
-
-        return !noisyPatterns.some(pattern => link.includes(pattern));
       });
 
-      return Array.from(new Set(filtered)); // Remove duplicates
-
+      // Remove duplicates
+      return Array.from(new Map(links.map(link => [link.url, link])).values());
     } catch (error: any) {
-      log.error('Error extracting links', { error: error.message });
+      log.error('Failed to extract links', { error: error.message });
       return [];
     }
   }
 
   /**
-   * Prioritize and add URLs to queue
+   * Check if crawl should stop
    */
-  private prioritizeAndAddUrls(urls: string[], depth: number): void {
-    // Legal document relevance keywords
-    const relevantKeywords = [
-      'case', 'docket', 'opinion', 'statute', 'law', 'court',
-      'officer', 'complaint', 'investigation', 'transparency',
-      'record', 'document', 'legal', 'justice',
-    ];
-
-    for (const url of urls) {
-      if (this.visitedUrls.has(url)) {
-        continue;
-      }
-
-      // Calculate priority based on URL content
-      let priority = 0.5; // Base priority
-
-      const urlLower = url.toLowerCase();
-      for (const keyword of relevantKeywords) {
-        if (urlLower.includes(keyword)) {
-          priority += 0.1;
-        }
-      }
-
-      // Penalize deeper URLs slightly
-      priority -= (depth * 0.05);
-      priority = Math.max(0.1, Math.min(1.0, priority));
-
-      this.urlQueue.push({
-        url,
-        priority,
-        depth,
-      });
-    }
-  }
-
-  /**
-   * Check if crawling should stop
-   */
-  private shouldStop(condition: any, depth: number, pagesVisited: number): boolean {
-    // Check min items
-    if (condition.minItems && this.extractedData.length >= condition.minItems) {
-      return true;
+  private shouldStop(
+    itemsCollected: number,
+    currentDepth: number,
+    stopCondition: Required<StopCondition>,
+    startTime: number
+  ): { stop: boolean; reason: string } {
+    // Check minimum items collected
+    if (itemsCollected >= stopCondition.minItems) {
+      return { stop: true, reason: `Minimum items collected (${itemsCollected})` };
     }
 
     // Check max depth
-    if (condition.maxDepth && depth >= condition.maxDepth) {
-      return true;
+    if (currentDepth >= stopCondition.maxDepth) {
+      return { stop: true, reason: `Max depth reached (${currentDepth})` };
     }
 
-    // Check max pages
-    if (condition.maxPages && pagesVisited >= condition.maxPages) {
-      return true;
+    // Check max URLs
+    if (this.visitedUrls.size >= stopCondition.maxUrls) {
+      return { stop: true, reason: `Max URLs visited (${this.visitedUrls.size})` };
     }
 
-    // Check max time
-    if (condition.maxTime && (Date.now() - this.startTime) >= condition.maxTime) {
-      return true;
+    // Check timeout
+    if (Date.now() - startTime >= stopCondition.timeoutMs) {
+      return { stop: true, reason: 'Timeout reached' };
     }
 
-    // Check custom condition
-    if (condition.custom && condition.custom(this.extractedData)) {
-      return true;
+    // Check success rate (only if we have enough data)
+    if (this.visitedUrls.size >= 10) {
+      const successRate = this.getSuccessRate();
+      if (successRate < stopCondition.successRate && itemsCollected > 0) {
+        return { stop: true, reason: `Low success rate (${successRate.toFixed(2)})` };
+      }
     }
 
-    return false;
+    return { stop: false, reason: '' };
   }
 
   /**
-   * Get reason for stopping
-   */
-  private getStopReason(condition: any, depth: number, pagesVisited: number): string {
-    if (condition.minItems && this.extractedData.length >= condition.minItems) {
-      return `Reached minimum items: ${this.extractedData.length}`;
-    }
-    if (condition.maxDepth && depth >= condition.maxDepth) {
-      return `Reached max depth: ${depth}`;
-    }
-    if (condition.maxPages && pagesVisited >= condition.maxPages) {
-      return `Reached max pages: ${pagesVisited}`;
-    }
-    if (condition.maxTime && (Date.now() - this.startTime) >= condition.maxTime) {
-      return `Reached time limit: ${Math.round((Date.now() - this.startTime) / 1000)}s`;
-    }
-    if (condition.custom) {
-      return 'Custom condition met';
-    }
-    return 'Queue exhausted';
-  }
-
-  /**
-   * Calculate success rate for adaptive behavior
+   * Calculate success rate
    */
   private getSuccessRate(): number {
-    if (this.visitedUrls.size === 0) {
-      return 0;
-    }
-    return this.extractedData.length / this.visitedUrls.size;
+    const total = this.successfulExtractions + this.failedExtractions;
+    if (total === 0) return 0;
+    return this.successfulExtractions / total;
   }
 
   /**
-   * Extract data using schema (placeholder - integrates with semantic extractor)
+   * Reset crawler state
    */
-  private async extractWithSchema(markdown: string, schema: any): Promise<any> {
-    // This is a simplified version - in practice, would use semantic extractor
-    // For now, return markdown with URL
-    return {
-      content: markdown,
-      schema: schema.name,
-      extracted: true,
-    };
-  }
-
-  /**
-   * Get next batch of URLs to process
-   */
-  async getNextUrls(startUrl: string, depth: number): Promise<string[]> {
-    const urlsAtDepth = this.urlQueue
-      .filter(up => up.depth === depth)
-      .sort((a, b) => b.priority - a.priority)
-      .map(up => up.url);
-
-    return urlsAtDepth;
+  reset(): void {
+    this.visitedUrls.clear();
+    this.urlQueue = [];
+    this.successfulExtractions = 0;
+    this.failedExtractions = 0;
   }
 }
 
-// Export singleton instance
-export const adaptiveLegalCrawler = new AdaptiveLegalCrawler();
+// Export singleton
+let adaptiveCrawlerInstance: AdaptiveCrawler | null = null;
+
+export function getAdaptiveCrawler(browserManager?: BrowserManager): AdaptiveCrawler {
+  if (!adaptiveCrawlerInstance) {
+    adaptiveCrawlerInstance = new AdaptiveCrawler(browserManager);
+  }
+  return adaptiveCrawlerInstance;
+}
+
+export const adaptiveCrawler = getAdaptiveCrawler();
