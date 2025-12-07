@@ -462,23 +462,20 @@ export default function LegalToolsPage() {
             {/* People Finder Tab */}
             <TabsContent value="people" className="space-y-6">
               <Card 
-                className="relative overflow-hidden shadow-2xl transition-all duration-300 hover:shadow-blue-500/20"
+                className="relative overflow-hidden"
                 style={{
-                  backgroundImage: 'url(/images/PANTHEON.jpg)',
+                  backgroundImage: 'url(/images/PANTHEON.png)',
                   backgroundSize: 'cover',
                   backgroundPosition: 'center',
                   backgroundRepeat: 'no-repeat'
                 }}
               >
-                {/* Enhanced semi-transparent overlay with gradient for depth */}
-                <div className="absolute inset-0 bg-gradient-to-br from-black/60 via-black/50 to-blue-900/40 backdrop-blur-[2px] z-0" />
-                
-                {/* Subtle animated glow effect */}
-                <div className="absolute inset-0 bg-gradient-to-t from-blue-500/10 via-transparent to-purple-500/10 z-0 animate-pulse" style={{ animationDuration: '3s' }} />
+                {/* Simple dark overlay for readability - NO GRADIENTS */}
+                <div className="absolute inset-0 bg-black/60 z-0" />
                 
                 <CardHeader className="relative z-10">
                   <CardTitle className="flex items-center gap-2 text-white drop-shadow-lg">
-                    <Users className="w-5 h-5 text-blue-400 drop-shadow-[0_0_8px_rgba(96,165,250,0.6)]" />
+                    <Users className="w-5 h-5 text-blue-400" />
                     People Finder - Identity Intelligence
                   </CardTitle>
                   <CardDescription className="text-gray-200 drop-shadow-md">
@@ -487,32 +484,39 @@ export default function LegalToolsPage() {
                 </CardHeader>
                 <CardContent className="relative z-10">
                   <div className="text-center py-12">
-                    <div className="relative inline-block mb-4">
-                      <Users className="w-16 h-16 mx-auto text-blue-400 opacity-90 drop-shadow-[0_0_15px_rgba(96,165,250,0.5)] transition-all duration-300 hover:scale-110 hover:drop-shadow-[0_0_25px_rgba(96,165,250,0.8)]" />
-                    </div>
-                    <p className="text-lg mb-2 font-semibold text-white drop-shadow-lg">Advanced People Search Available</p>
-                    <p className="text-sm text-gray-200 drop-shadow-md mb-6 max-w-md mx-auto">
+                    {/* Icon - simple, no glow effects */}
+                    <Users className="w-16 h-16 mx-auto mb-4 text-blue-400 opacity-90" />
+                    {/* Title - consistent white */}
+                    <p className="text-lg mb-2 font-semibold text-white drop-shadow-lg">
+                      Advanced People Search Available
+                    </p>
+                    {/* Description - consistent gray-200 (NO COLOR CHANGES) */}
+                    <p className="text-sm text-gray-200 mb-6 max-w-md mx-auto drop-shadow-md">
                       Use our advanced People Finder to locate witnesses, experts, parties, or other individuals 
                       relevant to your {lawTypeInfo.name.toLowerCase()} case. Aggregates data from public records, 
                       court filings, professional networks, and more.
                     </p>
+                    {/* Button - simple styling */}
                     <Button
                       onClick={() => setLocation('/people-finder')}
                       size="lg"
-                      className="gap-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-blue-500/50 transition-all duration-300 transform hover:scale-105"
+                      className="gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg"
                     >
                       <Users className="w-4 h-4" />
                       Launch People Finder
                     </Button>
                     
-                    <div className="mt-8 p-4 bg-black/50 backdrop-blur-md rounded-lg border border-blue-400/40 shadow-lg shadow-blue-500/20 text-left max-w-md mx-auto transition-all duration-300 hover:border-blue-400/60 hover:shadow-blue-500/30">
-                      <h4 className="font-semibold text-sm mb-2 text-blue-300 drop-shadow-md">Common Use Cases for {lawTypeInfo.name}:</h4>
+                    {/* Common Use Cases - simple backdrop */}
+                    <div className="mt-8 p-4 bg-black/50 backdrop-blur-sm rounded-lg border border-blue-400/30 text-left max-w-md mx-auto">
+                      <h4 className="font-semibold text-sm mb-2 text-blue-300 drop-shadow-md">
+                        Common Use Cases for {lawTypeInfo.name}:
+                      </h4>
                       <ul className="text-xs text-gray-200 space-y-1">
-                        <li className="transition-all duration-200 hover:text-white hover:translate-x-1">• Locate witnesses and expert witnesses</li>
-                        <li className="transition-all duration-200 hover:text-white hover:translate-x-1">• Find contact information for parties</li>
-                        <li className="transition-all duration-200 hover:text-white hover:translate-x-1">• Research backgrounds and credentials</li>
-                        <li className="transition-all duration-200 hover:text-white hover:translate-x-1">• Discover professional associations</li>
-                        <li className="transition-all duration-200 hover:text-white hover:translate-x-1">• Verify identity and contact details</li>
+                        <li>• Locate witnesses and expert witnesses</li>
+                        <li>• Find contact information for parties</li>
+                        <li>• Research backgrounds and credentials</li>
+                        <li>• Discover professional associations</li>
+                        <li>• Verify identity and contact details</li>
                       </ul>
                     </div>
                   </div>
