@@ -4,6 +4,14 @@ import { locationAggregator } from '../services/locationIntelligence/LocationAgg
 
 const router = Router();
 
+interface PublicRecord {
+  latitude: number;
+  longitude: number;
+  source: 'social_media' | 'court_record' | 'property' | 'voter' | 'business';
+  timestamp?: string | Date;
+  confidence?: number;
+}
+
 router.post('/api/location-intel/analyze', async (req, res) => {
   try {
     const { imagePaths = [], publicRecords = [] } = req.body;
@@ -15,7 +23,7 @@ router.post('/api/location-intel/analyze', async (req, res) => {
       locations.forEach(loc => locationAggregator.addExifLocation(loc));
     }
 
-    publicRecords.forEach((record: any) => {
+    publicRecords.forEach((record: PublicRecord) => {
       locationAggregator.addPublicRecord(record);
     });
 

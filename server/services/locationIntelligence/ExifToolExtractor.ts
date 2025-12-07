@@ -15,7 +15,7 @@ export class ExifToolExtractor {
   async extractLocation(imagePath: string): Promise<ExifLocation | null> {
     try {
       const { stdout } = await execAsync(
-        `exiftool -j -GPSLatitude -GPSLongitude -GPSAltitude -CreateDate -DateTimeOriginal "${imagePath}"`
+        `exiftool -j -GPSLatitude -GPSLongitude -GPSLatitudeRef -GPSLongitudeRef -GPSAltitude -CreateDate -DateTimeOriginal "${imagePath}"`
       );
 
       const data = JSON.parse(stdout)[0];

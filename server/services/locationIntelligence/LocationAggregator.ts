@@ -57,7 +57,9 @@ export class LocationAggregator {
         cluster.longitude = (cluster.longitude * cluster.occurrences + point.longitude) / total;
         cluster.occurrences = total;
         cluster.confidence = Math.max(cluster.confidence, point.confidence);
-        cluster.sources.push(point.source);
+        if (!cluster.sources.includes(point.source)) {
+          cluster.sources.push(point.source);
+        }
 
         if (point.timestamp) {
           if (!cluster.firstSeen || point.timestamp < cluster.firstSeen) {
