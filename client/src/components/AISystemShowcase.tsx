@@ -47,43 +47,43 @@ const AI_MODELS: AIModel[] = [
     description: "Versatile workhorse balancing speed and comprehensive analysis",
     backgroundImage: "/images/what.comp3.jpg"
   },
-  // Row 3
+  // Row 3 - Now using unique images
   {
     name: "Llama 3.1 8B",
     provider: "Groq",
     description: "Instant-response engine for lightweight task execution",
-    backgroundImage: "/images/OIP.comp4.webp"
+    backgroundImage: "/images/OIP.webp"
   },
   {
     name: "Mistral Small",
     provider: "Mistral",
     description: "EU-compliant processing with balanced verification protocols",
-    backgroundImage: "/images/OIP.comp5.webp"
+    backgroundImage: "/images/digital-mind-abstract-representation-human-intelligence-neural-network_191095-87127.jpg"
   },
   {
     name: "Kimi K2",
     provider: "Moonshot AI",
     description: "Trillion-parameter extraction engine for structured legal data",
-    backgroundImage: "/images/OIP.comp14.webp"
+    backgroundImage: "/images/R.jpg"
   },
-  // Row 4
+  // Row 4 - Now using unique images
   {
     name: "DeepSeek R1T2 Chimera",
     provider: "TNG",
     description: "671B parameter deep pattern recognition across case law",
-    backgroundImage: "/images/imag.comp7.webp"
+    backgroundImage: "/images/premium_photo-.jpg"
   },
   {
     name: "Grok 4.1 Fast",
     provider: "xAI",
     description: "Massive 2M context window for entire case file processing",
-    backgroundImage: "/images/superc.comp13.jpg"
+    backgroundImage: "/images/FMI.webp"
   },
   {
     name: "Qwen 2.5 72B",
     provider: "Alibaba",
     description: "Precision instruction-following for procedural compliance",
-    backgroundImage: "/images/what.comp3.jpg"
+    backgroundImage: "/images/istockphoto.jpg"
   }
 ];
 
