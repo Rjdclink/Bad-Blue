@@ -103,6 +103,7 @@
     "drizzle-zod": "^0.7.1",
     "embla-carousel-react": "^8.6.0",
     "exif-parser": "^0.1.12",
+    "exifreader": "^4.33.1",
     "express": "^4.21.2",
     "express-session": "^1.18.1",
     "fast-levenshtein": "^3.0.0",
