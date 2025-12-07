@@ -8,7 +8,7 @@
  * Implements a simple scoring model for entity resolution
  */
 
-import * as levenshtein from 'fast-levenshtein';
+import levenshtein from 'fast-levenshtein';
 import { Worker, WorkerInput, WorkerOutput } from './workerOrchestrator';
 import { logger } from '../../logger';
 
