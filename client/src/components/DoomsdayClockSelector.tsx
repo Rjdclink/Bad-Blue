@@ -116,21 +116,21 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
             } ${depth.level === 4 ? 'border-red-500/50' : ''}`}
             onClick={() => !isSearching && setSelectedDepth(depth.level)}
           >
-            <CardContent className="p-4">
-              <div className="flex items-center justify-center mb-2">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-center mb-3">
                 <div
-                  className={`text-4xl p-3 rounded-full bg-gradient-to-br ${depth.color} text-white`}
+                  className={`text-4xl p-3 rounded-full bg-gradient-to-br ${depth.color} text-white shadow-lg`}
                 >
                   {depth.icon}
                 </div>
               </div>
-              <h3 className={`text-center font-bold mb-1 ${depth.level === 4 ? 'text-red-600' : ''}`}>
+              <h3 className={`text-center font-bold mb-2 text-base ${depth.level === 4 ? 'text-red-600' : ''}`}>
                 {depth.title}
               </h3>
-              <p className="text-center text-sm text-muted-foreground mb-2">
+              <p className="text-center text-sm font-medium text-muted-foreground mb-2">
                 ~{depth.duration}
               </p>
-              <p className="text-xs text-center text-muted-foreground">
+              <p className="text-xs text-center text-muted-foreground leading-relaxed">
                 {depth.description}
               </p>
             </CardContent>

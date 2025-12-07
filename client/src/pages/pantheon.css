@@ -4,6 +4,9 @@
   max-width: 1400px;
   margin: 0 auto;
   padding: 2rem 1rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.95);
 }
 
 /* Hero Section */
@@ -46,20 +49,24 @@
 }
 
 .pantheon-container .hero .subtitle {
-  font-size: 1.2rem;
-  color: rgba(255, 255, 255, 0.8);
-  font-weight: 300;
+  font-size: 1.3rem;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 400;
   margin-bottom: 2rem;
   letter-spacing: 0.05em;
+  line-height: 1.6;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .pantheon-container .hero .tagline {
-  font-size: 1.5rem;
+  font-size: 1.6rem;
   font-weight: 600;
   color: #fff;
   margin-top: 2rem;
   position: relative;
   z-index: 1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  letter-spacing: 0.02em;
 }
 
 /* Description Section */
@@ -80,23 +87,27 @@
 }
 
 .pantheon-container .description .main-description {
-  font-size: 1.2rem;
-  line-height: 1.8;
+  font-size: 1.25rem;
+  line-height: 2;
   margin-bottom: 1.5rem;
   text-align: center;
   max-width: 900px;
   margin-left: auto;
   margin-right: auto;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .pantheon-container .description .secondary-description {
-  font-size: 1.1rem;
-  line-height: 1.8;
+  font-size: 1.15rem;
+  line-height: 2;
   text-align: center;
   max-width: 900px;
   margin-left: auto;
   margin-right: auto;
-  opacity: 0.9;
+  opacity: 0.92;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .pantheon-container .description strong {
@@ -141,6 +152,21 @@
   text-align: center;
 }
 
+.pantheon-container .capability-card h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 0.75rem;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.pantheon-container .capability-card p {
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 400;
+}
+
 /* Search Depth Section */
 .pantheon-container .search-depth {
   margin-bottom: 4rem;
@@ -179,8 +205,11 @@
 
 .pantheon-container .sources p {
   text-align: center;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
+  line-height: 1.8;
   margin-bottom: 1.5rem;
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 400;
 }
 
 .pantheon-container .sources strong {
@@ -199,11 +228,14 @@
 }
 
 .pantheon-container .sources-list li {
-  padding: 0.75rem 1rem;
+  padding: 0.85rem 1.1rem;
   background: rgba(233, 69, 96, 0.05);
   border-radius: 0.5rem;
   border-left: 3px solid #e94560;
-  font-size: 0.95rem;
+  font-size: 0.98rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 400;
 }
 
 /* Privacy Notice Section */

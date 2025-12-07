@@ -282,8 +282,8 @@ function CapabilityCard({ icon, title, description }: {
     <Card className="capability-card">
       <CardContent className="p-6">
         <div className="icon text-4xl mb-3">{icon}</div>
-        <h3 className="font-semibold mb-2">{title}</h3>
-        <p className="text-sm text-muted-foreground">{description}</p>
+        <h3 className="font-semibold text-lg mb-2 leading-snug">{title}</h3>
+        <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
       </CardContent>
     </Card>
   );
@@ -309,30 +309,30 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
       <CardContent className="space-y-6">
         {/* Identity Summary */}
         <div>
-          <h3 className="font-semibold mb-2">Identity Summary</h3>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            {data.identitySummary.age && <div><span className="text-muted-foreground">Age:</span> {data.identitySummary.age}</div>}
-            {data.identitySummary.dateOfBirth && <div><span className="text-muted-foreground">DOB:</span> {data.identitySummary.dateOfBirth}</div>}
-            {data.identitySummary.gender && <div><span className="text-muted-foreground">Gender:</span> {data.identitySummary.gender}</div>}
-            <div><span className="text-muted-foreground">Status:</span> {data.identitySummary.verificationStatus}</div>
+          <h3 className="font-semibold text-base mb-3">Identity Summary</h3>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            {data.identitySummary.age && <div className="leading-relaxed"><span className="text-muted-foreground font-medium">Age:</span> {data.identitySummary.age}</div>}
+            {data.identitySummary.dateOfBirth && <div className="leading-relaxed"><span className="text-muted-foreground font-medium">DOB:</span> {data.identitySummary.dateOfBirth}</div>}
+            {data.identitySummary.gender && <div className="leading-relaxed"><span className="text-muted-foreground font-medium">Gender:</span> {data.identitySummary.gender}</div>}
+            <div className="leading-relaxed"><span className="text-muted-foreground font-medium">Status:</span> {data.identitySummary.verificationStatus}</div>
           </div>
         </div>
 
         {/* Summary */}
         {data.summary && data.summary.trim() && (
           <div>
-            <h3 className="font-semibold mb-2">Summary</h3>
-            <p className="text-sm text-muted-foreground">{data.summary}</p>
+            <h3 className="font-semibold text-base mb-3">Summary</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed">{data.summary}</p>
           </div>
         )}
 
         {/* Contact Information */}
         {data.contactInformation && data.contactInformation.length > 0 && (
           <div>
-            <h3 className="font-semibold mb-2">Contact Information</h3>
-            <ul className="space-y-1">
+            <h3 className="font-semibold text-base mb-3">Contact Information</h3>
+            <ul className="space-y-2">
               {data.contactInformation.map((item, idx) => (
-                <li key={idx} className="text-sm">• {item}</li>
+                <li key={idx} className="text-sm leading-relaxed">• {item}</li>
               ))}
             </ul>
           </div>
@@ -341,10 +341,10 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
         {/* Location History */}
         {data.locationHistory && data.locationHistory.length > 0 && (
           <div>
-            <h3 className="font-semibold mb-2">Location History</h3>
-            <ul className="space-y-1">
+            <h3 className="font-semibold text-base mb-3">Location History</h3>
+            <ul className="space-y-2">
               {data.locationHistory.map((item, idx) => (
-                <li key={idx} className="text-sm">• {item}</li>
+                <li key={idx} className="text-sm leading-relaxed">• {item}</li>
               ))}
             </ul>
           </div>
@@ -353,10 +353,10 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
         {/* Employment & Education */}
         {data.employmentAndEducation && data.employmentAndEducation.length > 0 && (
           <div>
-            <h3 className="font-semibold mb-2">Employment & Education</h3>
-            <ul className="space-y-1">
+            <h3 className="font-semibold text-base mb-3">Employment & Education</h3>
+            <ul className="space-y-2">
               {data.employmentAndEducation.map((item, idx) => (
-                <li key={idx} className="text-sm">• {item}</li>
+                <li key={idx} className="text-sm leading-relaxed">• {item}</li>
               ))}
             </ul>
           </div>
@@ -365,10 +365,10 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
         {/* Social Media */}
         {data.socialMediaPresence && data.socialMediaPresence.length > 0 && (
           <div>
-            <h3 className="font-semibold mb-2">Social Media Presence</h3>
-            <ul className="space-y-1">
+            <h3 className="font-semibold text-base mb-3">Social Media Presence</h3>
+            <ul className="space-y-2">
               {data.socialMediaPresence.map((item, idx) => (
-                <li key={idx} className="text-sm">• {item}</li>
+                <li key={idx} className="text-sm leading-relaxed">• {item}</li>
               ))}
             </ul>
           </div>
@@ -377,10 +377,10 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
         {/* Public Records */}
         {data.publicRecords && data.publicRecords.length > 0 && (
           <div>
-            <h3 className="font-semibold mb-2">Public Records</h3>
-            <ul className="space-y-1">
+            <h3 className="font-semibold text-base mb-3">Public Records</h3>
+            <ul className="space-y-2">
               {data.publicRecords.map((item, idx) => (
-                <li key={idx} className="text-sm">• {item}</li>
+                <li key={idx} className="text-sm leading-relaxed">• {item}</li>
               ))}
             </ul>
           </div>
@@ -389,10 +389,10 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
         {/* Sources */}
         {data.sources && data.sources.length > 0 && (
           <div>
-            <h3 className="font-semibold mb-2">Data Sources ({data.sources.length})</h3>
+            <h3 className="font-semibold text-base mb-3">Data Sources ({data.sources.length})</h3>
             <div className="flex flex-wrap gap-2">
               {data.sources.map((source, idx) => (
-                <Badge key={idx} variant="outline" className="text-xs">
+                <Badge key={idx} variant="outline" className="text-xs font-medium">
                   {source.name}
                 </Badge>
               ))}
