@@ -118,6 +118,9 @@ const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-suc
 // FAQ Page
 const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
 
+// Location Intelligence Page - Interactive Heatmap Dashboard
+const LocationIntelPage = lazyWithRetry(() => import("@/pages/location-intel"), 'LocationIntel');
+
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
 const AdminLawsuits = lazyWithRetry(() => import("@/pages/admin-lawsuits"), 'AdminLawsuits');
@@ -192,6 +195,9 @@ function Router() {
             
             {/* People Finder - Global Identity Intelligence */}
             <Route path="/people-finder" component={PeopleFinderPage} />
+            
+            {/* Location Intelligence - Interactive Heatmap Dashboard */}
+            <Route path="/location-intel" component={LocationIntelPage} />
             
             {/* BadBlue routes - Law Enforcement Accountability */}
             <Route path="/badblue" component={Home} />
