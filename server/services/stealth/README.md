@@ -15,6 +15,14 @@ Privacy-preserving tools for legitimate information gathering.
 - Authentic accept, accept-language, accept-encoding values
 - Proper referer and cache-control headers
 
+### StealthInfrastructure (PANTHEON Core)
+- **VPN Manager**: Auto-select fastest free VPN (ProtonVPN/Windscribe/RiseupVPN)
+- **Tor Multi-Instance**: 5 parallel Tor circuits (ports 9050-9054)
+- **ProxyChains Manager**: Dynamic/random/strict chain modes (FAST/STEALTH/ULTRA)
+- **Health Monitor**: Real-time proxy health checking with auto-removal
+- **Connection Router**: Risk-based routing (LOW/MEDIUM/HIGH)
+- **Metrics Tracker**: Performance logging and optimization recommendations
+
 ## Legal Use Cases
 
 ✅ **Journalism** - Source protection, investigative research  
@@ -24,6 +32,7 @@ Privacy-preserving tools for legitimate information gathering.
 
 ## Usage
 
+### Basic Stealth (Headers + TLS)
 ```typescript
 import { headersPolyfill } from './stealth';
 
@@ -33,6 +42,27 @@ const headers = headersPolyfill.generateAuthenticHeaders({
 });
 
 // Headers now match real Chrome 120 on Windows
+```
+
+### Advanced Stealth (Full Infrastructure)
+```typescript
+import { StealthInfrastructure } from './stealth';
+
+const stealth = new StealthInfrastructure();
+await stealth.initialize();
+
+// Low risk connection (VPN only, <150ms)
+const conn = await stealth.connect('http://httpbin.org/ip', 'low');
+
+// High risk connection (VPN + Tor + ProxyChain, <5000ms)
+const secure = await stealth.connect('http://httpbin.org/ip', 'high');
+
+// Rotate identity
+await stealth.rotateIdentity();
+
+// Get metrics
+const metrics = stealth.getMetrics();
+console.log('Success rate:', metrics.success.rate);
 ```
 
 ## Why Authentic Headers Matter
