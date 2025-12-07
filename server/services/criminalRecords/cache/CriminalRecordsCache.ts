@@ -4,9 +4,10 @@ import crypto from 'crypto';
 
 export class CriminalRecordsCache {
   private cacheDir = '.cache/criminal-records';
+  private initPromise: Promise<void>;
   
   constructor() {
-    this.ensureCacheDir();
+    this.initPromise = this.ensureCacheDir();
   }
   
   private async ensureCacheDir(): Promise<void> {
@@ -18,6 +19,7 @@ export class CriminalRecordsCache {
   }
   
   async get(key: string): Promise<any | null> {
+    await this.initPromise;
     const filePath = this.getFilePath(key);
     
     try {
@@ -36,6 +38,7 @@ export class CriminalRecordsCache {
   }
   
   async set(key: string, data: any, ttl: number): Promise<void> {
+    await this.initPromise;
     const filePath = this.getFilePath(key);
     const cached = {
       data,
@@ -51,6 +54,7 @@ export class CriminalRecordsCache {
   }
   
   async delete(key: string): Promise<void> {
+    await this.initPromise;
     const filePath = this.getFilePath(key);
     try {
       await fs.unlink(filePath);
