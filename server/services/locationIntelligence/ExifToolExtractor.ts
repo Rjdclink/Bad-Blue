@@ -15,17 +15,17 @@ export class ExifToolExtractor {
   async extractLocation(imagePath: string): Promise<ExifLocation | null> {
     try {
       // Validate file path to prevent command injection
-      // Only allow alphanumeric, dots, hyphens, underscores, forward slashes, and spaces
-      if (!/^[a-zA-Z0-9._\-\/ ]+$/.test(imagePath)) {
+      // Only allow alphanumeric, dots, hyphens, underscores, and forward slashes (no spaces or special chars)
+      if (!/^[a-zA-Z0-9._\-\/]+$/.test(imagePath)) {
         console.error(`[ExifTool] Invalid file path format: ${imagePath}`);
         return null;
       }
       
-      // Additional sanitization: escape any special characters that passed the whitelist
-      const sanitizedPath = imagePath.replace(/["'`$\\]/g, '\\$&');
+      // Use single quotes to prevent all shell expansion and escape any single quotes in the path
+      const escapedPath = imagePath.replace(/'/g, "'\\''");
       
       const { stdout } = await execAsync(
-        `exiftool -j -GPSLatitude -GPSLongitude -GPSLatitudeRef -GPSLongitudeRef -GPSAltitude -CreateDate -DateTimeOriginal "${sanitizedPath}"`
+        `exiftool -j -GPSLatitude -GPSLongitude -GPSLatitudeRef -GPSLongitudeRef -GPSAltitude -CreateDate -DateTimeOriginal '${escapedPath}'`
       );
 
       const data = JSON.parse(stdout)[0];

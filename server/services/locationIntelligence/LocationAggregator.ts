@@ -7,6 +7,9 @@ const PUBLIC_RECORD_DEFAULT_CONFIDENCE = 0.95;
 // Haversine formula constant
 const EARTH_RADIUS_METERS = 6371e3;
 
+// Heatmap intensity normalizer: dividing by 10 produces a 0-1 scale for typical cluster sizes
+const HEATMAP_INTENSITY_NORMALIZER = 10;
+
 interface LocationPoint {
   latitude: number;
   longitude: number;
@@ -106,8 +109,6 @@ export class LocationAggregator {
 
   getHeatmapData(): Array<[number, number, number]> {
     const clustered = this.cluster(50);
-    // Intensity normalizer: dividing by 10 produces a 0-1 scale for typical cluster sizes
-    const HEATMAP_INTENSITY_NORMALIZER = 10;
     return clustered.map(c => [
       c.latitude,
       c.longitude,
@@ -115,11 +116,15 @@ export class LocationAggregator {
     ]);
   }
 
+  private toRadians(degrees: number): number {
+    return degrees * Math.PI / 180;
+  }
+
   private distance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const φ1 = lat1 * Math.PI / 180;
-    const φ2 = lat2 * Math.PI / 180;
-    const Δφ = (lat2 - lat1) * Math.PI / 180;
-    const Δλ = (lon2 - lon1) * Math.PI / 180;
+    const φ1 = this.toRadians(lat1);
+    const φ2 = this.toRadians(lat2);
+    const Δφ = this.toRadians(lat2 - lat1);
+    const Δλ = this.toRadians(lon2 - lon1);
 
     const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
               Math.cos(φ1) * Math.cos(φ2) *
