@@ -1,11 +1,11 @@
-import { Actor, Dataset } from 'apify';
+import { Actor, Dataset, ProxyConfiguration } from 'apify';
 
 interface ApifyScraperConfig {
   startUrls: string[];
   maxRequestsPerCrawl?: number;
   maxConcurrency?: number;
   useChrome?: boolean;
-  proxyConfiguration?: any;
+  proxyConfiguration?: ProxyConfiguration;
 }
 
 interface ApifyResult {

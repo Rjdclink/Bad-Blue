@@ -1,5 +1,6 @@
 import { Cluster } from 'puppeteer-cluster';
 import type * as PuppeteerType from 'puppeteer';
+import type { Page } from 'puppeteer';
 import puppeteer from 'puppeteer';
 import { proxyChainManager } from '../stealth/ProxyChainManager';
 
@@ -54,7 +55,7 @@ export class ClusterManager {
     console.log('[ClusterManager] Cluster initialized with stealth proxy');
   }
 
-  async execute<T>(data: any, task: ({ page, data }: { page: any; data: any }) => Promise<T>): Promise<T> {
+  async execute<T, D = unknown>(data: D, task: ({ page, data }: { page: Page; data: D }) => Promise<T>): Promise<T> {
     if (!this.cluster) {
       await this.initialize();
     }
@@ -62,7 +63,7 @@ export class ClusterManager {
     return await this.cluster!.execute(data, task);
   }
 
-  async queue<T>(data: any, task: ({ page, data }: { page: any; data: any }) => Promise<T>): Promise<void> {
+  async queue<T, D = unknown>(data: D, task: ({ page, data }: { page: Page; data: D }) => Promise<T>): Promise<void> {
     if (!this.cluster) {
       await this.initialize();
     }

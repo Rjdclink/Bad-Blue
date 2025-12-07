@@ -91,7 +91,7 @@ export class ProxyChainManager {
     const sessionId = this.generateSessionId();
     let session = this.activeSessions.get(sessionId);
 
-    if (!session || session.requestCount >= this.config.sessionPersistence!) {
+    if (!session || session.requestCount >= (this.config.sessionPersistence ?? 100)) {
       // Create new session
       const proxyUrl = this.config.customProxies[
         Math.floor(Math.random() * this.config.customProxies.length)
