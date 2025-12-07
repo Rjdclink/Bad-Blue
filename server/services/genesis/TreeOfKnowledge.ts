@@ -362,7 +362,7 @@ export class TreeOfKnowledge {
     const successRate = successes / group.length;
     
     return {
-      id: `pattern_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: `pattern_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
       conditions,
       influence_levels: {
         serpent: avgSerpent,
