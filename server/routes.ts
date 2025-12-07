@@ -100,6 +100,7 @@ import { setupAuth, isAuthenticated, adminAuthMiddleware } from "./auth";
 import { asyncHandler, notFoundHandler, errorHandler, ErrorTypes } from "./errorHandler";
 import { generateComplaintDocument, generateFOIALetter as generateFOIALetterDoc } from "./documentGenerators";
 import { getBaseURL } from "./platformConfig";
+import { criminalRecordsAggregator } from "./services/criminalRecords";
 import {
   insertComplaintSchema,
   insertLawsuitFilingSchema,
@@ -4559,6 +4560,70 @@ Contact: ${foiaRequest.userEmail || userEmail}
     } catch (error: any) {
       console.error("[DOWNLOAD] Error downloading file:", error);
       res.status(500).json({ error: "Failed to download file" });
+    }
+  }));
+
+  // ============================================
+  // CRIMINAL RECORDS ROUTES (Stage 2.1)
+  // ============================================
+  
+  /**
+   * POST /api/criminal-records
+   * Search criminal records across multiple sources
+   * 
+   * Request body:
+   * {
+   *   fullName: string;
+   *   dateOfBirth?: string; // YYYY-MM-DD
+   *   state?: string;
+   *   county?: string;
+   * }
+   * 
+   * Response:
+   * {
+   *   success: true;
+   *   data: CriminalRecord;
+   * }
+   */
+  app.post('/api/criminal-records', apiRateLimit, asyncHandler(async (req: Request, res: Response) => {
+    const { fullName, dateOfBirth, state, county } = req.body;
+
+    // Validation
+    if (!fullName || typeof fullName !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'fullName is required and must be a string'
+      });
+    }
+
+    // FCRA Compliance Disclaimer
+    console.log('[CriminalRecords] API Request:', {
+      fullName,
+      state,
+      timestamp: new Date().toISOString(),
+      ip: req.ip
+    });
+
+    try {
+      const record = await criminalRecordsAggregator.search({
+        fullName,
+        dateOfBirth,
+        state,
+        county
+      });
+
+      res.json({
+        success: true,
+        data: record,
+        disclaimer: 'For permissible purposes only. Subject to Fair Credit Reporting Act (FCRA). All data should be independently verified.'
+      });
+    } catch (error: any) {
+      console.error('[CriminalRecords] Search error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Criminal records search failed',
+        message: error.message
+      });
     }
   }));
 
