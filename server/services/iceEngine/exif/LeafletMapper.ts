@@ -44,15 +44,6 @@ export class LeafletMapper {
       z-index: 1000;
       box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
-    .consent-badge {
-      background: #4CAF50;
-      color: white;
-      padding: 3px 8px;
-      border-radius: 3px;
-      font-size: 10px;
-      margin-top: 5px;
-      display: none;
-    }
   </style>
 </head>
 <body>
@@ -60,7 +51,6 @@ export class LeafletMapper {
     <strong>Case ${caseId}</strong><br/>
     ${locations.length} Evidence Location(s)<br/>
     ${locations.map(l => `📍 ${l.timestamp.toLocaleDateString()}`).join('<br/>')}
-    <div class="consent-badge">✓ Consent Verified</div>
   </div>
   <div id="map"></div>
   
