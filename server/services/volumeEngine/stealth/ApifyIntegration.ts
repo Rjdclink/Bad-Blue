@@ -84,16 +84,19 @@ export class ApifyIntegration {
           maxConcurrency: config.maxConcurrency || 10,
           proxyConfiguration: config.proxyConfiguration,
           requestHandler: async ({ request, body }) => {
+            // Note: For Cheerio crawler, body is already fetched by the time this handler runs
+            // The actual network request time is not directly accessible here
+            // loadTime represents processing time only
             const startTime = Date.now();
             
             const content = body?.toString() || '';
-            const loadTime = Date.now() - startTime;
+            const processingTime = Date.now() - startTime;
 
             results.push({
               url: request.url,
               content,
               statusCode: 200,
-              loadTime,
+              loadTime: processingTime, // Processing time, not network time
               metadata: {
                 loadedAt: new Date().toISOString(),
                 crawler: 'cheerio',
@@ -105,7 +108,7 @@ export class ApifyIntegration {
               await Dataset.pushData({
                 url: request.url,
                 content,
-                loadTime,
+                loadTime: processingTime,
                 timestamp: new Date(),
               });
             }

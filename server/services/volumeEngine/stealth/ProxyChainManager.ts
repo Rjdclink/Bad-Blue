@@ -20,7 +20,7 @@ export class ProxyChainManager {
   private config: ProxyChainConfig;
   private proxyConfiguration?: ProxyConfiguration;
   private activeSessions = new Map<string, ProxySession>();
-  private anonymousProxyServer?: any;
+  private anonymousProxyServer?: ProxyChain.Server;
 
   constructor(config: ProxyChainConfig = {}) {
     this.config = {
@@ -136,7 +136,7 @@ export class ProxyChainManager {
 
   async close() {
     if (this.anonymousProxyServer) {
-      await this.anonymousProxyServer.close();
+      await this.anonymousProxyServer.close(true);
       console.log('[ProxyChainManager] Proxy server closed');
     }
     this.activeSessions.clear();

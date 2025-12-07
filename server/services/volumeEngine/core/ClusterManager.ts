@@ -1,4 +1,5 @@
 import { Cluster } from 'puppeteer-cluster';
+import type * as PuppeteerType from 'puppeteer';
 import puppeteer from 'puppeteer';
 import { proxyChainManager } from '../stealth/ProxyChainManager';
 
@@ -47,7 +48,7 @@ export class ClusterManager {
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       },
-      puppeteer: puppeteer as any,
+      puppeteer: puppeteer as unknown as PuppeteerType.PuppeteerNode,
     });
 
     console.log('[ClusterManager] Cluster initialized with stealth proxy');
