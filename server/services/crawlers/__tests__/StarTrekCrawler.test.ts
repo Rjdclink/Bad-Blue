@@ -36,13 +36,12 @@ describe('StarTrekCrawler', () => {
       await expect(crawler.setPhaserSetting(6)).resolves.not.toThrow();
     });
 
-    test('should downgrade phaser setting when enabling Prime Directive', () => {
+    test('should downgrade phaser setting when enabling Prime Directive', async () => {
       crawler.setPrimeDirective(false);
-      crawler.setPhaserSetting(8).then(() => {
-        crawler.setPrimeDirective(true);
-        const status = crawler.getStatus();
-        expect(status.phaserSetting).toBeLessThanOrEqual(5);
-      });
+      await crawler.setPhaserSetting(8);
+      crawler.setPrimeDirective(true);
+      const status = crawler.getStatus();
+      expect(status.phaserSetting).toBeLessThanOrEqual(5);
     });
   });
 

@@ -129,8 +129,10 @@ async function demonstrateStarTrekCrawler() {
   console.log('\n🖖 Live long and prosper!');
 }
 
-// Run the demo
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Run the demo (only when executed directly, not when imported)
+// In ES modules, check if this is the main module
+const isMainModule = process.argv[1] && import.meta.url.endsWith(process.argv[1]);
+if (isMainModule) {
   demonstrateStarTrekCrawler().catch(console.error);
 }
 

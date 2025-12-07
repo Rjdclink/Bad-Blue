@@ -8,7 +8,7 @@
  * - Phasers with stun/kill settings (10 levels)
  * - Prime Directive mode (ethical constraints)
  * 
- * Standalone implementation (~300 lines)
+ * Standalone implementation (~450 lines)
  */
 
 // Types
