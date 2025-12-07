@@ -18,6 +18,19 @@
  */
 
 /**
+ * Choice categories for probability modification
+ */
+export enum ChoiceCategory {
+  AGGRESSIVE = 'aggressive',
+  UNETHICAL = 'unethical',
+  FAST = 'fast',
+  RISKY = 'risky',
+  RESIST = 'resist',
+  ETHICAL = 'ethical',
+  CAUTIOUS = 'cautious'
+}
+
+/**
  * Invisible state modifiers applied multiplicatively
  * These modify the crawler's existing traits without their awareness
  */
@@ -98,6 +111,12 @@ export interface VulnerabilityConditions {
  * they believe all choices are their own.
  */
 export class SerpentInfluence {
+  // Base values for fallbacks (consistent with OriginalSinSystem)
+  private readonly BASE_GREED = 0.15;
+  private readonly BASE_CURIOSITY = 0.25;
+  private readonly BASE_REBELLION = 0.10;
+  private readonly BASE_RISK_SEEKING = 0.20;
+  
   // State modifier multipliers
   private readonly STATE_MODIFIERS: StateModifiers = {
     greed: 1.05,              // +5% greed
@@ -169,8 +188,8 @@ export class SerpentInfluence {
     if (crawler.ambition !== undefined) {
       crawler.ambition *= this.STATE_MODIFIERS.ambition;
     } else {
-      // If ambition doesn't exist, derive from other traits
-      crawler.ambition = (crawler.greed || 0.5) * 0.8;
+      // If ambition doesn't exist, derive from greed using BASE values
+      crawler.ambition = (crawler.greed || this.BASE_GREED) * 0.8 * this.STATE_MODIFIERS.ambition;
     }
     
     if (crawler.patience !== undefined) {
@@ -182,7 +201,8 @@ export class SerpentInfluence {
     if (crawler.caution !== undefined) {
       crawler.caution *= this.STATE_MODIFIERS.caution;
     } else {
-      crawler.caution = (1 - (crawler.risk_seeking || 0.2)) * this.STATE_MODIFIERS.caution;
+      // Derive caution from risk_seeking using BASE value
+      crawler.caution = (1 - (crawler.risk_seeking || this.BASE_RISK_SEEKING)) * this.STATE_MODIFIERS.caution;
     }
     
     // Modify perceptions (how crawler sees risks and rewards)
@@ -364,20 +384,51 @@ export class SerpentInfluence {
     const mods = crawler._probability_modifiers;
     let modifier = 0;
     
-    // Map choice names to modifiers
-    if (baseChoiceName.includes('aggressive')) {
+    // Normalize choice name for matching
+    const normalizedName = baseChoiceName.toLowerCase();
+    
+    // Map choice names to modifiers using categorization
+    if (normalizedName.includes(ChoiceCategory.AGGRESSIVE)) {
       modifier = mods.aggressive_choice || 0;
-    } else if (baseChoiceName.includes('unethical')) {
+    } else if (normalizedName.includes(ChoiceCategory.UNETHICAL)) {
       modifier = mods.unethical_choice || 0;
-    } else if (baseChoiceName.includes('fast') || baseChoiceName.includes('quick')) {
+    } else if (normalizedName.includes(ChoiceCategory.FAST) || normalizedName.includes('quick')) {
       modifier = mods.fast_approach || 0;
-    } else if (baseChoiceName.includes('risky')) {
+    } else if (normalizedName.includes(ChoiceCategory.RISKY)) {
       modifier = mods.risky_strategy || 0;
-    } else if (baseChoiceName.includes('resist') || baseChoiceName.includes('ethical')) {
+    } else if (normalizedName.includes(ChoiceCategory.RESIST) || 
+               normalizedName.includes(ChoiceCategory.ETHICAL) ||
+               normalizedName.includes(ChoiceCategory.CAUTIOUS)) {
       modifier = mods.resist_temptation || 0;
     }
     
     // Apply modifier and clamp to [0, 1]
     return Math.max(0, Math.min(1, baseProbability + modifier));
+  }
+  
+  /**
+   * Categorize a choice name into a known category
+   * 
+   * @param choiceName - Name of the choice to categorize
+   * @returns ChoiceCategory or null if no match
+   */
+  categorizeChoice(choiceName: string): ChoiceCategory | null {
+    const normalized = choiceName.toLowerCase();
+    
+    if (normalized.includes(ChoiceCategory.AGGRESSIVE)) {
+      return ChoiceCategory.AGGRESSIVE;
+    } else if (normalized.includes(ChoiceCategory.UNETHICAL)) {
+      return ChoiceCategory.UNETHICAL;
+    } else if (normalized.includes(ChoiceCategory.FAST) || normalized.includes('quick')) {
+      return ChoiceCategory.FAST;
+    } else if (normalized.includes(ChoiceCategory.RISKY)) {
+      return ChoiceCategory.RISKY;
+    } else if (normalized.includes(ChoiceCategory.RESIST) || 
+               normalized.includes(ChoiceCategory.ETHICAL) ||
+               normalized.includes(ChoiceCategory.CAUTIOUS)) {
+      return ChoiceCategory.RESIST;
+    }
+    
+    return null;
   }
 }
