@@ -8,7 +8,11 @@
  * Implements a simple scoring model for entity resolution
  */
 
-import levenshtein from 'fast-levenshtein';
+import * as levenshteinModule from 'fast-levenshtein';
+
+// Work around TypeScript/CommonJS interop issue
+// The module exports a default object with a 'get' method
+const levenshtein = (levenshteinModule as any).default || levenshteinModule;
 import { Worker, WorkerInput, WorkerOutput } from './workerOrchestrator';
 import { logger } from '../../logger';
 

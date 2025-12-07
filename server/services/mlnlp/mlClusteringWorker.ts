@@ -6,7 +6,11 @@
  */
 
 import { createLogger } from '../../logger';
-import levenshtein from 'fast-levenshtein';
+import * as levenshteinModule from 'fast-levenshtein';
+
+// Work around TypeScript/CommonJS interop issue
+// The module exports a default object with a 'get' method
+const levenshtein = (levenshteinModule as any).default || levenshteinModule;
 
 const log = createLogger('MLClusteringWorker');
 
