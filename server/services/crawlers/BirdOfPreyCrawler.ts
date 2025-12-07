@@ -24,8 +24,8 @@ async function executeRequest(url: string, options: RequestOptions, stealth?: St
   } finally { clearTimeout(timeoutId); }
 }
 
-function parseResults(html: string): Data {
-  return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' };
+function parseResults(html: string, maxLength = 1000): Data {
+  return { content: html.replace(/<[^>]*>/g, ' ').substring(0, maxLength), confidence: 0.8, timestamp: Date.now(), target: '' };
 }
 
 export class BirdOfPreyCrawler {
@@ -46,9 +46,9 @@ export class BirdOfPreyCrawler {
     this.cloaked = true; this.cloakStrength = 1.0;
     this.signatures.set('current', {
       ip: this.generateRandomIP(), fingerprint: this.generateFingerprint(),
-      timing: this.generateRandomTimings(), userAgent: this.generateKlingonUserAgent()
+      timing: this.generateRandomTimings(), userAgent: this.generateStealthUserAgent()
     });
-    await this.stealth.connect('', 'high');
+    // Stealth infrastructure will be engaged per-request, not globally
   }
 
   async perfectCloak(): Promise<void> {
@@ -74,10 +74,6 @@ export class BirdOfPreyCrawler {
   private generateQuantumFingerprint(): string { return `quantum-${Math.random().toString(36).substring(2, 15)}-${Date.now()}`; }
   private generateRandomTimings(): number[] { return Array(5).fill(0).map(() => 100 + Math.random() * 500); }
   private generateQuantumTimings(): number[] { return Array(10).fill(0).map(() => 50 + Math.random() * 1000); }
-  private generateKlingonUserAgent(): string {
-    const agents = ['Mozilla/5.0 (Klingon Bird-of-Prey) AppleWebKit/537.36', 'Mozilla/5.0 (X11; Klingon) Chrome/120.0.0.0', 'Mozilla/5.0 (Qo\'noS; rv:109.0) Gecko/20100101 Firefox/120.0'];
-    return agents[Math.floor(Math.random() * agents.length)];
-  }
   private generateStealthUserAgent(): string {
     const agents = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'];
     return agents[Math.floor(Math.random() * agents.length)];
@@ -93,13 +89,12 @@ export class BirdOfPreyCrawler {
     const signature = this.signatures.get(this.cloakStrength >= 2.0 ? 'quantum' : 'current');
     const response = await executeRequest(target, {
       method: 'GET',
-      headers: { 'User-Agent': signature?.userAgent || this.generateKlingonUserAgent(), 'X-Disruptor-Power': power.toString(), 'X-Weapon-Type': 'disruptor', 'X-Cloaked': this.cloaked.toString() },
+      headers: { 'User-Agent': signature?.userAgent || this.generateStealthUserAgent(), 'X-Disruptor-Power': power.toString(), 'X-Weapon-Type': 'disruptor', 'X-Cloaked': this.cloaked.toString() },
       timeout: 5000
     }, this.stealth);
     const html = await response.text();
-    const data = parseResults(html);
+    const data = parseResults(html, 1500);
     data.target = target; data.confidence = 0.8 + (power / 100);
-    data.content = html.replace(/<[^>]*>/g, ' ').substring(0, 1500);
     data.metadata = { weapon: 'disruptor', power, requestsPerMinute, detectionRisk, cloaked: this.cloaked };
     this.killCount++;
     return data;
@@ -112,13 +107,12 @@ export class BirdOfPreyCrawler {
     const signature = this.signatures.get(this.cloakStrength >= 2.0 ? 'quantum' : 'current');
     const response = await executeRequest(target, {
       method: 'GET',
-      headers: { 'User-Agent': signature?.userAgent || this.generateKlingonUserAgent(), 'X-Weapon-Type': 'photon-torpedo', 'X-Weapon-Yield': 'maximum', 'X-Cloaked': this.cloaked.toString() },
+      headers: { 'User-Agent': signature?.userAgent || this.generateStealthUserAgent(), 'X-Weapon-Type': 'photon-torpedo', 'X-Weapon-Yield': 'maximum', 'X-Cloaked': this.cloaked.toString() },
       timeout: 10000
     }, this.stealth);
     const html = await response.text();
-    const data = parseResults(html);
+    const data = parseResults(html, 3000);
     data.target = target; data.confidence = 0.95;
-    data.content = html.replace(/<[^>]*>/g, ' ').substring(0, 3000);
     data.metadata = { weapon: 'photon-torpedo', power, yield: 'maximum', cloaked: this.cloaked };
     this.killCount++;
     return data;
