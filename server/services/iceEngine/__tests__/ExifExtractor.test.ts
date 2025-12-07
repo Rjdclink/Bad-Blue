@@ -1,4 +1,4 @@
-import { ExifExtractor, type ConsentedUpload } from '../exif/ExifExtractor';
+import { ExifExtractor, type Upload } from '../exif/ExifExtractor';
 
 export interface TestResult {
   testName: string;
@@ -15,92 +15,13 @@ export class ExifExtractorTestSuite {
     this.extractor = new ExifExtractor();
   }
 
-  async testConsentValidation(): Promise<TestResult> {
-    const start = Date.now();
-    try {
-      const uploads: ConsentedUpload[] = [
-        {
-          file: Buffer.from('test'),
-          filename: 'test1.jpg',
-          uploadedBy: 'user1',
-          consentGiven: true,
-          purpose: 'legal-evidence',
-        },
-        {
-          file: Buffer.from('test'),
-          filename: 'test2.jpg',
-          uploadedBy: 'user2',
-          consentGiven: false,
-          purpose: 'legal-evidence',
-        },
-      ];
-
-      const result = this.extractor.validateConsent(uploads);
-      const passed = result.valid.length === 1 && result.invalid.length === 1;
-
-      return {
-        testName: 'should validate consent correctly',
-        passed,
-        details: passed
-          ? `Valid: ${result.valid.length}, Invalid: ${result.invalid.length}`
-          : `Expected 1 valid and 1 invalid, got: ${result.valid.length} valid, ${result.invalid.length} invalid`,
-        duration: Date.now() - start,
-      };
-    } catch (error) {
-      return {
-        testName: 'should validate consent correctly',
-        passed: false,
-        details: `Error: ${error instanceof Error ? error.message : String(error)}`,
-        duration: Date.now() - start,
-      };
-    }
-  }
-
-  async testNoConsentError(): Promise<TestResult> {
-    const start = Date.now();
-    try {
-      const upload: ConsentedUpload = {
-        file: Buffer.from('test'),
-        filename: 'test.jpg',
-        uploadedBy: 'user1',
-        consentGiven: false,
-        purpose: 'legal-evidence',
-      };
-
-      let errorThrown = false;
-      try {
-        await this.extractor.extractLocation(upload);
-      } catch (error) {
-        errorThrown = error instanceof Error && 
-          error.message.includes('Cannot extract EXIF without explicit user consent');
-      }
-
-      return {
-        testName: 'should throw error when consent is not given',
-        passed: errorThrown,
-        details: errorThrown
-          ? 'Correctly threw consent error'
-          : 'Did not throw expected consent error',
-        duration: Date.now() - start,
-      };
-    } catch (error) {
-      return {
-        testName: 'should throw error when consent is not given',
-        passed: false,
-        details: `Error: ${error instanceof Error ? error.message : String(error)}`,
-        duration: Date.now() - start,
-      };
-    }
-  }
-
   async testNoGPSDataReturnsNull(): Promise<TestResult> {
     const start = Date.now();
     try {
-      const upload: ConsentedUpload = {
+      const upload: Upload = {
         file: Buffer.from('not-a-valid-image'),
         filename: 'test.jpg',
         uploadedBy: 'user1',
-        consentGiven: true,
         purpose: 'legal-evidence',
       };
 
@@ -128,19 +49,17 @@ export class ExifExtractorTestSuite {
   async testBatchProcessing(): Promise<TestResult> {
     const start = Date.now();
     try {
-      const uploads: ConsentedUpload[] = [
+      const uploads: Upload[] = [
         {
           file: Buffer.from('test1'),
           filename: 'test1.jpg',
           uploadedBy: 'user1',
-          consentGiven: true,
           purpose: 'legal-evidence',
         },
         {
           file: Buffer.from('test2'),
           filename: 'test2.jpg',
           uploadedBy: 'user2',
-          consentGiven: true,
           purpose: 'legal-evidence',
         },
       ];
@@ -170,8 +89,6 @@ export class ExifExtractorTestSuite {
   async runAllTests(): Promise<TestResult[]> {
     this.results = [];
 
-    this.results.push(await this.testConsentValidation());
-    this.results.push(await this.testNoConsentError());
     this.results.push(await this.testNoGPSDataReturnsNull());
     this.results.push(await this.testBatchProcessing());
 
