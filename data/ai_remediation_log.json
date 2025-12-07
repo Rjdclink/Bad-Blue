@@ -1838,5 +1838,155 @@
     "aiSuccess": false,
     "overallSuccess": false,
     "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:28.897Z",
+    "functionAffected": "Database Connection",
+    "cause": "Failed query: SELECT 1\nparams: ",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:28.942Z",
+    "functionAffected": "Env: Stripe Secret Key",
+    "cause": "STRIPE_SECRET_KEY missing",
+    "category": "configuration",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:28.992Z",
+    "functionAffected": "Database Connection",
+    "cause": "Failed query: SELECT 1\nparams: ",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:29.025Z",
+    "functionAffected": "Env: Stripe Secret Key",
+    "cause": "STRIPE_SECRET_KEY missing",
+    "category": "configuration",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:29.140Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:41.407Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "113 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:41.560Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "113 TypeScript errors",
+    "category": "application_code",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:41.658Z",
+    "functionAffected": "Database Connection",
+    "cause": "Failed query: SELECT 1\nparams: ",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:41.693Z",
+    "functionAffected": "Env: Stripe Secret Key",
+    "cause": "STRIPE_SECRET_KEY missing",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:49.509Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "113 TypeScript errors",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:49.584Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:49.620Z",
+    "functionAffected": "Database Connection",
+    "cause": "Failed query: SELECT 1\nparams: ",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:49.655Z",
+    "functionAffected": "Env: Stripe Secret Key",
+    "cause": "STRIPE_SECRET_KEY missing",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:57.128Z",
+    "functionAffected": "Code Quality (LSP)",
+    "cause": "113 TypeScript errors",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
+  },
+  {
+    "timestamp": "2025-12-07T05:21:57.219Z",
+    "functionAffected": "LSP Auto-Fix",
+    "cause": "Automatic fix incomplete",
+    "category": "infrastructure",
+    "aiAttempted": true,
+    "aiSuccess": false,
+    "overallSuccess": false,
+    "aiError": "Groq API error (401): {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n"
   }
 ]

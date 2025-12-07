@@ -1,5 +1,15 @@
 {
-  "timestamp": "2025-12-01T00:41:24.958Z",
-  "queue": [],
-  "queueLength": 0
+  "timestamp": "2025-12-07T05:21:49.619Z",
+  "queue": [
+    {
+      "timestamp": "2025-12-07T05:21:49.619Z",
+      "functionAffected": "Database Connection",
+      "cause": "Heartbeat failure after 3 attempts",
+      "systemState": "not_working",
+      "severity": 5,
+      "priority": 3,
+      "category": "infrastructure"
+    }
+  ],
+  "queueLength": 1
 }
