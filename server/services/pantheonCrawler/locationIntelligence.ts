@@ -223,7 +223,7 @@ export class LocationIntelligenceService {
       const frequencyScore = Math.min(cluster.length / 10, 1) * 100;
       
       clusters.push({
-        id: `cluster_${Date.now()}_${i}`,
+        id: `cluster_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         center: { latitude: centerLat, longitude: centerLon },
         locations: cluster,
         radius: radiusMeters,
@@ -274,8 +274,8 @@ export class LocationIntelligenceService {
       const response = await fetch(url, { headers });
       
       if (!response.ok) {
-        logger.error(`[LocationIntel] Reverse geocoding failed: ${response.status}`);
-        return { error: `Geocoding service returned ${response.status}` };
+        logger.error(`[LocationIntel] Reverse geocoding failed: ${response.status} ${response.statusText}`);
+        return { error: `Geocoding service returned ${response.status}: ${response.statusText}` };
       }
       
       const data = await response.json();
@@ -358,8 +358,8 @@ export class LocationIntelligenceService {
       }
       
       // Sanitize username to prevent injection attacks
-      // Instagram usernames only allow alphanumeric characters, periods, and underscores
-      const sanitizedUsername = username.trim().replace(/[^a-zA-Z0-9._]/g, '');
+      // Instagram usernames only allow alphanumeric characters and underscores (no periods)
+      const sanitizedUsername = username.trim().replace(/[^a-zA-Z0-9_]/g, '');
       if (sanitizedUsername !== username.trim()) {
         throw new Error('Username contains invalid characters');
       }
