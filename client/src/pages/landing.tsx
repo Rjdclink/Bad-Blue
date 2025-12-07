@@ -112,21 +112,23 @@ export default function Landing() {
     return () => clearTimeout(timer);
   }, [audioAttempted, audioPlaying]); // Dependencies include new state
 
-  // Debug: Check if images exist
+  // Debug: Check if images exist (development only)
   useEffect(() => {
-    const imagesToCheck = [
-      '/images/Legal%20What%20Icon.png',
-      '/images/Constitution.webp',
-      '/images/Tweed_Court.jpg',
-      '/images/OIP.webp'
-    ];
-    
-    imagesToCheck.forEach(src => {
-      const img = new Image();
-      img.onload = () => console.log(`✅ Image loaded: ${src}`);
-      img.onerror = () => console.error(`❌ Image failed: ${src}`);
-      img.src = src;
-    });
+    if (import.meta.env.DEV) {
+      const imagesToCheck = [
+        '/images/Legal%20What%20Icon.png',
+        '/images/Constitution.webp',
+        '/images/Tweed_Court.jpg',
+        '/images/OIP.webp'
+      ];
+      
+      imagesToCheck.forEach(src => {
+        const img = new Image();
+        img.onload = () => console.log(`✅ Image loaded: ${src}`);
+        img.onerror = () => console.error(`❌ Image failed: ${src}`);
+        img.src = src;
+      });
+    }
   }, []);
 
   const structuredData = {
