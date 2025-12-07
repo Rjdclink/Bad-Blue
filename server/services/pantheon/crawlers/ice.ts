@@ -18,6 +18,8 @@ import * as cheerio from 'cheerio';
  * - Structured content (lists, definitions)
  */
 export class IceCrawler extends BaseCrawler {
+  private static readonly MAX_RESOURCES = 5; // Limit resource extraction to prevent overload
+  
   constructor(task: any) {
     super(task, CrawlerType.ICE);
   }
@@ -65,13 +67,14 @@ export class IceCrawler extends BaseCrawler {
       
       // Find downloadable resources
       const resources = this.findResources($);
-      for (const resource of resources.slice(0, 5)) { // Limit to 5 resources
+      for (const resource of resources.slice(0, IceCrawler.MAX_RESOURCES)) {
         const sig = await this.extractResourceData(resource);
         if (sig) signatures.push(sig);
       }
       
     } catch (error) {
-      // Ice fails gracefully - returns partial results
+      // Ice fails gracefully - returns partial results on network/parsing errors
+      // This allows the crawler to continue operating even if target is unreachable
     }
     
     return signatures;
@@ -123,7 +126,7 @@ export class IceCrawler extends BaseCrawler {
           headers, 
           rows, 
           rowCount: rows.length,
-          colCount: Math.max(headers.length, rows[0]?.length || 0)
+          colCount: Math.max(headers.length, rows.length > 0 ? rows[0].length : 0)
         });
       }
     });
@@ -202,8 +205,9 @@ export class IceCrawler extends BaseCrawler {
           maxContentLength: 5 * 1024 * 1024 // 5MB max
         });
         
-        // Try to extract GPS (note: extractGPSFromFile expects file path)
-        // For now, we'll just record the resource
+        // Note: extractGPSFromFile expects a file path, not buffer
+        // For now, we record the resource metadata
+        // Future enhancement: write buffer to temp file or extend GPS service to accept buffers
         return this.generateEntropySignature({ 
           type: 'image_resource', 
           url,
@@ -222,6 +226,7 @@ export class IceCrawler extends BaseCrawler {
       
       return null;
     } catch {
+      // Resource download failed - skip this resource
       return null;
     }
   }
