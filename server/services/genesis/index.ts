@@ -9,3 +9,6 @@
 
 export * from './OriginalSin';
 export * from './SerpentInfluence';
+
+// Example usage
+export * as examples from './examples';
