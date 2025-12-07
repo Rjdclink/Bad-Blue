@@ -112,6 +112,9 @@ const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'Legal
 // People Finder Page - Global Identity Intelligence
 const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'PeopleFinder');
 
+// PANTHEON Page - Advanced Intelligence Platform
+const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
+
 // Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 
@@ -195,6 +198,9 @@ function Router() {
             
             {/* People Finder - Global Identity Intelligence */}
             <Route path="/people-finder" component={PeopleFinderPage} />
+            
+            {/* PANTHEON - Advanced Intelligence Platform */}
+            <Route path="/pantheon" component={PantheonPage} />
             
             {/* Location Intelligence - Interactive Heatmap Dashboard */}
             <Route path="/location-intel" component={LocationIntelPage} />

@@ -298,6 +298,58 @@ export default function WelcomePage() {
           )}
         </div>
 
+        {/* PANTHEON - Advanced Intelligence Platform */}
+        <div className="mb-8 sm:mb-12">
+          <div className="flex items-center gap-2 mb-4 justify-center">
+            <Badge variant="default" className="text-sm bg-gradient-to-r from-red-600 to-pink-600">
+              🏛️ Advanced Intelligence Platform
+            </Badge>
+          </div>
+          <div
+            className="cursor-pointer transition-all hover:shadow-xl rounded-lg overflow-hidden"
+            onClick={() => setLocation('/pantheon')}
+            style={{
+              background: 'linear-gradient(135deg, rgba(233, 69, 96, 0.15) 0%, rgba(15, 52, 96, 0.15) 100%)',
+              backdropFilter: 'blur(10px)',
+              border: '3px solid rgba(233, 69, 96, 0.5)',
+            }}
+          >
+            <div className="p-6 flex items-start gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-3">
+                  <Shield className="h-8 w-8 text-red-400" />
+                  <h3 className="text-2xl font-bold text-white">
+                    PANTHEON - Intelligence Platform
+                  </h3>
+                </div>
+                <p className="text-base text-white/80 mb-2">
+                  <strong>Parallel Autonomous Network for Tactical Heuristic Evidence-Obtaining Entity</strong>
+                </p>
+                <p className="text-base text-white/80 mb-4">
+                  Advanced intelligence platform for comprehensive identity profiling. Synthesizes data from 60+ sources 
+                  to construct complete profiles including contacts, addresses, relationships, employment, and digital footprints. 
+                  Uncovers information that even the most expensive services miss.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary" className="text-xs bg-red-500/20 text-red-200 border-red-400/30">
+                    👁️ EYE OF GOD Mode
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs bg-red-500/20 text-red-200 border-red-400/30">
+                    🌐 60+ Data Sources
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs bg-red-500/20 text-red-200 border-red-400/30">
+                    🔍 Deep Intelligence
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs bg-red-500/20 text-red-200 border-red-400/30">
+                    ⚡ Real-Time Resolution
+                  </Badge>
+                </div>
+              </div>
+              <ArrowRight className="h-8 w-8 text-red-400 flex-shrink-0 mt-2" />
+            </div>
+          </div>
+        </div>
+
         {/* People Finder - Styled as Special Reference Book */}
         <div className="mb-8 sm:mb-12">
           <div className="flex items-center gap-2 mb-4 justify-center">
