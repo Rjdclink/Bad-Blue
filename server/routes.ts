@@ -844,6 +844,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/social-intelligence', socialIntelligenceRoutes.default);
 
   // ============================================
+  // LOCATION INTELLIGENCE ROUTES (Phase 2.3a)
+  // ============================================
+  const locationIntelligenceRoutes = await import('./routes/locationIntelligence.routes');
+  app.use(locationIntelligenceRoutes.default);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {
