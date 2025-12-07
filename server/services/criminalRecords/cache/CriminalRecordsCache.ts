@@ -1,80 +1,64 @@
-// Criminal Records Cache - File-based with 90-day TTL
-import fs from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import type { CriminalRecord } from '../types';
 
 export class CriminalRecordsCache {
-  private cacheDir: string;
-  private ttlDays = 90;
-
-  constructor(cacheDir: string = '.cache/criminal-records') {
-    this.cacheDir = path.resolve(cacheDir);
+  private cacheDir = '.cache/criminal-records';
+  
+  constructor() {
     this.ensureCacheDir();
   }
-
-  private ensureCacheDir(): void {
-    if (!fs.existsSync(this.cacheDir)) {
-      fs.mkdirSync(this.cacheDir, { recursive: true });
+  
+  private async ensureCacheDir(): Promise<void> {
+    try {
+      await fs.mkdir(this.cacheDir, { recursive: true });
+    } catch (error) {
+      console.error('[Criminal Records Cache] Failed to create directory:', error);
     }
   }
-
-  private getCacheKey(fullName: string, dateOfBirth?: string, state?: string): string {
-    const data = `${fullName}-${dateOfBirth || ''}-${state || ''}`;
-    return crypto.createHash('sha256').update(data.toLowerCase()).digest('hex');
-  }
-
-  private getCachePath(key: string): string {
-    return path.join(this.cacheDir, `${key}.json`);
-  }
-
-  async get(fullName: string, dateOfBirth?: string, state?: string): Promise<CriminalRecord | null> {
+  
+  async get(key: string): Promise<any | null> {
+    const filePath = this.getFilePath(key);
+    
     try {
-      const key = this.getCacheKey(fullName, dateOfBirth, state);
-      const cachePath = this.getCachePath(key);
-
-      if (!fs.existsSync(cachePath)) {
+      const data = await fs.readFile(filePath, 'utf-8');
+      const cached = JSON.parse(data);
+      
+      if (Date.now() > cached.expiresAt) {
+        await this.delete(key);
         return null;
       }
-
-      const stats = fs.statSync(cachePath);
-      const ageInDays = (Date.now() - stats.mtime.getTime()) / (1000 * 60 * 60 * 24);
-
-      if (ageInDays > this.ttlDays) {
-        fs.unlinkSync(cachePath);
-        return null;
-      }
-
-      const data = fs.readFileSync(cachePath, 'utf-8');
-      const record = JSON.parse(data);
-      record.scrapedAt = new Date(record.scrapedAt);
-      return record;
-    } catch (error) {
-      console.error('[CriminalRecordsCache] Error reading cache:', error);
+      
+      return cached.data;
+    } catch {
       return null;
     }
   }
-
-  async set(fullName: string, dateOfBirth: string | undefined, state: string | undefined, record: CriminalRecord): Promise<void> {
+  
+  async set(key: string, data: any, ttl: number): Promise<void> {
+    const filePath = this.getFilePath(key);
+    const cached = {
+      data,
+      expiresAt: Date.now() + ttl,
+      cachedAt: new Date().toISOString(),
+    };
+    
     try {
-      const key = this.getCacheKey(fullName, dateOfBirth, state);
-      const cachePath = this.getCachePath(key);
-      fs.writeFileSync(cachePath, JSON.stringify(record, null, 2));
+      await fs.writeFile(filePath, JSON.stringify(cached, null, 2), 'utf-8');
     } catch (error) {
-      console.error('[CriminalRecordsCache] Error writing cache:', error);
+      console.error('[Criminal Records Cache] Failed to write:', error);
     }
   }
-
-  async clear(): Promise<void> {
+  
+  async delete(key: string): Promise<void> {
+    const filePath = this.getFilePath(key);
     try {
-      if (fs.existsSync(this.cacheDir)) {
-        const files = fs.readdirSync(this.cacheDir);
-        files.forEach(file => {
-          fs.unlinkSync(path.join(this.cacheDir, file));
-        });
-      }
-    } catch (error) {
-      console.error('[CriminalRecordsCache] Error clearing cache:', error);
-    }
+      await fs.unlink(filePath);
+    } catch {}
+  }
+  
+  private getFilePath(key: string): string {
+    const hash = crypto.createHash('md5').update(key).digest('hex');
+    return path.join(this.cacheDir, `${hash}.json`);
   }
 }

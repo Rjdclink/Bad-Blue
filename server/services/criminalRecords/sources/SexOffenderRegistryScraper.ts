@@ -1,9 +1,9 @@
 // Sex Offender Registry Scraper
 import type { Page } from 'playwright';
 import type { CriminalSearchQuery, ScraperResult } from '../types';
-import { BaseCriminalScraper } from './BaseCriminalScraper';
+import { LegacyScraperAdapter } from './LegacyScraperAdapter';
 
-export class SexOffenderRegistryScraper extends BaseCriminalScraper {
+export class SexOffenderRegistryScraper extends LegacyScraperAdapter {
   protected sourceName = 'Sex Offender Registry';
   protected baseConfidence = 1.0; // Zero false positives
 

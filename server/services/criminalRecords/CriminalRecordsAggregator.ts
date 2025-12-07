@@ -7,10 +7,10 @@ import { PACERScraper } from './sources/PACERScraper';
 import { SexOffenderRegistryScraper } from './sources/SexOffenderRegistryScraper';
 import { WarrantDatabaseScraper } from './sources/WarrantDatabaseScraper';
 import { CriminalRecordsFusion } from './fusion/CriminalRecordsFusion';
-import { CriminalRecordsCache } from './cache/CriminalRecordsCache';
+import { LegacyCriminalRecordsCache } from './cache/LegacyCriminalRecordsCache';
 
 export class CriminalRecordsAggregator {
-  private cache: CriminalRecordsCache;
+  private cache: LegacyCriminalRecordsCache;
   private scrapers = {
     state: new StateCourtScraper(),
     county: new CountyCourtScraper(),
@@ -20,7 +20,7 @@ export class CriminalRecordsAggregator {
   };
 
   constructor() {
-    this.cache = new CriminalRecordsCache();
+    this.cache = new LegacyCriminalRecordsCache();
   }
 
   async search(query: CriminalSearchQuery): Promise<CriminalRecord> {
