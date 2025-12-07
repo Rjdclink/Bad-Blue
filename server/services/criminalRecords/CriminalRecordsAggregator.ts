@@ -48,18 +48,37 @@ export class CriminalRecordsAggregator {
         ],
       });
 
-      page = await browser.newPage({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        viewport: { width: 1920, height: 1080 },
-      });
+      // Create separate pages for each scraper to avoid race conditions
+      const pages = await Promise.all([
+        browser.newPage({
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          viewport: { width: 1920, height: 1080 },
+        }),
+        browser.newPage({
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          viewport: { width: 1920, height: 1080 },
+        }),
+        browser.newPage({
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          viewport: { width: 1920, height: 1080 },
+        }),
+        browser.newPage({
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          viewport: { width: 1920, height: 1080 },
+        }),
+        browser.newPage({
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          viewport: { width: 1920, height: 1080 },
+        }),
+      ]);
 
-      // Search all sources in parallel
+      // Search all sources in parallel with dedicated pages
       const results = await Promise.allSettled([
-        this.scrapers.state.search(query, page),
-        this.scrapers.county.search(query, page),
-        this.scrapers.pacer.search(query, page),
-        this.scrapers.sexOffender.search(query, page),
-        this.scrapers.warrant.search(query, page),
+        this.scrapers.state.search(query, pages[0]),
+        this.scrapers.county.search(query, pages[1]),
+        this.scrapers.pacer.search(query, pages[2]),
+        this.scrapers.sexOffender.search(query, pages[3]),
+        this.scrapers.warrant.search(query, pages[4]),
       ]);
 
       // Collect successful results
@@ -109,8 +128,10 @@ export class CriminalRecordsAggregator {
       console.error('[CriminalRecords] Search error:', error);
       throw new Error(`Criminal records search failed: ${error.message}`);
     } finally {
-      if (page) await page.close();
-      if (browser) await browser.close();
+      // Close all pages
+      if (browser) {
+        await browser.close();
+      }
     }
   }
 }

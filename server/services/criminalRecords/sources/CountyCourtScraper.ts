@@ -65,6 +65,8 @@ export class CountyCourtScraper extends BaseCriminalScraper {
 
   private inferDegree(charge: string): 'felony' | 'misdemeanor' | 'infraction' {
     const lower = charge.toLowerCase();
+    // NOTE: This is a simplified classification. For production, use a lookup table
+    // of actual statute codes mapped to their proper classifications per jurisdiction.
     if (lower.match(/felony|murder|assault|robbery|burglary/)) return 'felony';
     if (lower.match(/misdemeanor|dui|battery/)) return 'misdemeanor';
     return 'infraction';

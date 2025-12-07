@@ -69,15 +69,16 @@ export class CriminalRecordsFusion {
     // Active warrants = high risk
     if (record.activeWarrants.length > 0) score += 8;
     
-    // Violent felonies = high risk
+    // Violent felonies = high risk (from convictions)
     const violentFelonies = record.convictions.filter(c => 
       c.charge.match(/assault|battery|murder|rape|robbery/i)
     );
     score += violentFelonies.length * 3;
     
-    // Other felonies = medium risk
+    // Other felonies = medium risk (from charges, excluding violent ones already counted)
     const otherFelonies = record.charges.filter(c => 
-      c.degree === 'felony' && !violentFelonies.some(v => v.charge === c.charge)
+      c.degree === 'felony' && 
+      !c.charge.match(/assault|battery|murder|rape|robbery/i)
     );
     score += otherFelonies.length * 2;
     
