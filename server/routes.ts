@@ -813,7 +813,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupLawTypesRoutes(app);
   setupFMIRoutes(app); // F.M.I. - Forensic Media Intelligence
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
-  setupVoiceRoutes(app); // Stages 11-15: LEXARA Voice Intelligence System
+  setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
   app.use(peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
   
   // ============================================

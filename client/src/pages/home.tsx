@@ -8,7 +8,7 @@ import { LanguageSelector } from "@/components/LanguageSelector";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation, Link } from "wouter";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
-import LexaraConsultation from "@/components/LexaraConsultation";
+import AlexeraConsultation from "@/components/AlexeraConsultation";
 import OfficerSearch from "@/components/OfficerSearch";
 import { AISubAgentPanel } from "@/components/AISubAgentPanel";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
@@ -72,7 +72,7 @@ export default function Home() {
 
         {/* Feature Content */}
         <div className="container px-4 py-8">
-          <LexaraConsultation />
+          <AlexeraConsultation />
         </div>
       </div>
     );
@@ -288,7 +288,7 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {/* 1. LEXARA - Legal Expert AI Resource Advisor */}
+            {/* 1. ALEXERA - Legal Expert AI Resource Advisor */}
             <Card className="hover-elevate cursor-pointer transition-all" onClick={() => setActiveFeature('consultation')} data-testid="card-legal-consultation">
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -296,7 +296,7 @@ export default function Home() {
                     <div className="relative">
                       <img 
                         src="/images/OIP.webp" 
-                        alt="LEXARA - Legal Expert AI Resource Advisor"
+                        alt="ALEXERA - Legal Expert AI Resource Advisor"
                         className="w-16 h-16 rounded-full object-cover border-2 border-primary shadow-lg"
                       />
                       <div className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-1">
@@ -308,7 +308,7 @@ export default function Home() {
                       </div>
                     </div>
                     <div>
-                      <CardTitle className="text-2xl">LEXARA</CardTitle>
+                      <CardTitle className="text-2xl">ALEXERA</CardTitle>
                       <CardDescription className="mt-1">
                         Legal Expert AI Resource Advisor - <span className="text-green-600 dark:text-green-400 font-semibold">Included with access</span>
                       </CardDescription>
@@ -319,7 +319,7 @@ export default function Home() {
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground">
-                  Consult with LEXARA to evaluate potential claims, assess case merit, identify applicable laws, 
+                  Consult with ALEXERA to evaluate potential claims, assess case merit, identify applicable laws, 
                   and get strategic recommendations. Integrated with F.M.I. (Forensic Media Intelligence) for evidence analysis.
                 </p>
                 <ul className="space-y-2 mt-4">

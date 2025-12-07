@@ -1,10 +1,10 @@
-# LEXARA & F.M.I. Implementation Summary
+# ALEXERA & F.M.I. Implementation Summary
 
 ## Executive Overview
 
 This document summarizes the successful transformation of BadBlue's legal platform, introducing:
 1. **F.M.I. (Forensic Media Intelligence)** - Unified evidence analysis system
-2. **LEXARA (Legal Expert AI Resource Advisor)** - Intelligent legal consultation engine
+2. **ALEXERA (Legal Expert AI Resource Advisor)** - Intelligent legal consultation engine
 3. **Voice System Architecture** - Foundation for TTS/STT conversational mode
 
 ## 1. F.M.I. - Forensic Media Intelligence
@@ -65,7 +65,7 @@ Enhanced `evidence_files` table with comprehensive F.M.I. metadata:
   - File type badges (documents, images, video, audio, email)
   - Evidence repository with status tracking
   - Strength indicators (compelling/strong/moderate/weak)
-  - LEXARA integration indicators
+  - ALEXERA integration indicators
   - Capabilities showcase grid (4 sections)
 
 ### 1.3 Visual Design
@@ -75,10 +75,10 @@ Based on 615D.avif reference image:
 - **Typography**: Professional, clear, forensic technology aesthetic
 - **Layout**: Card-based with prominent upload zone and results area
 
-## 2. LEXARA - Legal Expert AI Resource Advisor
+## 2. ALEXERA - Legal Expert AI Resource Advisor
 
 ### 2.1 Purpose
-LEXARA is the intelligent "governing brain" that coordinates:
+ALEXERA is the intelligent "governing brain" that coordinates:
 - Legal case analysis across 29+ practice areas
 - F.M.I. evidence intelligence integration
 - Multi-jurisdictional statute analysis
@@ -102,7 +102,7 @@ LEXARA is the intelligent "governing brain" that coordinates:
 - **`server/consultationCoordinator.ts`**: Multi-agent coordination
 - **`server/routes/consultation.routes.ts`**: API endpoints
 
-Note: Backend maintains functional naming for API compatibility, while frontend exclusively uses LEXARA branding.
+Note: Backend maintains functional naming for API compatibility, while frontend exclusively uses ALEXERA branding.
 
 ### 2.3 Visual Design
 Based on OIP.webp reference image:
@@ -112,7 +112,7 @@ Based on OIP.webp reference image:
 - **Layout**: Clean, spacious cards with proper hierarchy
 - **Colors**: Primary theme with green success indicators
 
-### 2.4 LEXARA Voice System Architecture (Prepared)
+### 2.4 ALEXERA Voice System Architecture (Prepared)
 
 #### Voice Persona Specifications
 - **Gender**: Feminine
@@ -125,7 +125,7 @@ Based on OIP.webp reference image:
 **Stage 10: TTS Infrastructure**
 - Provider selection: ElevenLabs (primary), AWS Polly, Azure Neural Voice, Google WaveNet, PlayHT
 - Abstraction layer: environment-configured with fallback
-- Voice selection matching LEXARA persona
+- Voice selection matching ALEXERA persona
 - API key management and rate limiting
 
 **Stage 11: Cadence Calibration**
@@ -138,7 +138,7 @@ Based on OIP.webp reference image:
   - Pause structure (frequency, length, placement)
   - Energy/dynamics (loudness contour, stress patterns)
   - Articulation (clarity, vowel length, reduction patterns)
-- Similarity matching to LEXARA profile
+- Similarity matching to ALEXERA profile
 - Prosody rule derivation for SSML generation
 
 **Stage 12: SpeechFlow Engine**
@@ -156,7 +156,7 @@ Based on OIP.webp reference image:
 POST /lexara/speak
 Body: {
   text: string,
-  persona: object,  // LEXARA voice settings
+  persona: object,  // ALEXERA voice settings
   emotion: string,  // 'informative' | 'reassuring' | 'decisive'
   provider_params: object
 }
@@ -169,7 +169,7 @@ Response: {
 - Browser microphone capture
 - Voice Activity Detection (VAD) for turn segmentation
 - STT provider (Google, Azure, Deepgram)
-- Transcription → LEXARA analysis pipeline
+- Transcription → ALEXERA analysis pipeline
 
 **Stage 15: Streaming Output**
 - Streaming TTS where supported
@@ -179,12 +179,12 @@ Response: {
 
 ## 3. Integration Architecture
 
-### 3.1 F.M.I. → LEXARA Flow
+### 3.1 F.M.I. → ALEXERA Flow
 1. User uploads evidence via F.M.I. drag-and-drop
 2. F.M.I. analyzes and extracts intelligence
 3. Extracted facts, classifications, and findings stored in database
-4. LEXARA consultation accesses F.M.I. analysis results
-5. LEXARA incorporates evidence intelligence into legal strategy
+4. ALEXERA consultation accesses F.M.I. analysis results
+5. ALEXERA incorporates evidence intelligence into legal strategy
 6. Combined analysis presented to user
 
 ### 3.2 API Structure
@@ -195,7 +195,7 @@ Response: {
   - /files           : User repository
   - /files/:id       : Detailed results
 
-/api/legal-consultation  (LEXARA backend)
+/api/legal-consultation  (ALEXERA backend)
   - POST             : Case analysis
 ```
 
@@ -272,14 +272,14 @@ Deprecated terms (do not use):
 - "Evidence Upload" (as standalone)
 - "Evidence Analysis Tool"
 
-### 5.2 LEXARA Usage
-**Full Name**: LEXARA — Legal Expert AI Resource Advisor
+### 5.2 ALEXERA Usage
+**Full Name**: ALEXERA — Legal Expert AI Resource Advisor
 **Always establish identity before abbreviation**
 
 Correct usage:
-- "Consult with LEXARA (Legal Expert AI Resource Advisor)"
-- "LEXARA provides comprehensive case analysis"
-- "LEXARA and F.M.I. work together"
+- "Consult with ALEXERA (Legal Expert AI Resource Advisor)"
+- "ALEXERA provides comprehensive case analysis"
+- "ALEXERA and F.M.I. work together"
 
 Deprecated terms (do not use):
 - "Legal Consultation Tool"
@@ -307,9 +307,9 @@ client/src/
 shared/schema.ts                  (evidence_files table enhanced)
 server/routes.ts                  (F.M.I. routes integrated)
 client/src/pages/
-  legal-consultation.tsx          (LEXARA component)
-  home.tsx                        (LEXARA references)
-  landing.tsx                     (LEXARA references)
+  legal-consultation.tsx          (ALEXERA component)
+  home.tsx                        (ALEXERA references)
+  landing.tsx                     (ALEXERA references)
 ```
 
 ### 6.3 Legacy Files (Maintained for Compatibility)
@@ -329,15 +329,15 @@ server/
 
 ### 7.1 TypeScript Compilation
 - ✅ F.M.I. components: Passing
-- ✅ LEXARA components: Passing
+- ✅ ALEXERA components: Passing
 - ⚠️ Legacy evidence tool: Expected errors (deprecated)
 
 ### 7.2 Functional Testing Checklist
 - [ ] F.M.I. file upload (all media types)
 - [ ] F.M.I. analysis trigger
 - [ ] F.M.I. results display
-- [ ] LEXARA consultation submission
-- [ ] LEXARA-F.M.I. integration
+- [ ] ALEXERA consultation submission
+- [ ] ALEXERA-F.M.I. integration
 - [ ] Voice toggle UI (disabled state)
 - [ ] Responsive layout (mobile/tablet/desktop)
 - [ ] Database migration execution
@@ -347,7 +347,7 @@ server/
 - [ ] F.M.I. drag-and-drop functionality
 - [ ] File type icons display correctly
 - [ ] Evidence strength badges render
-- [ ] LEXARA avatar displays (OIP.webp)
+- [ ] ALEXERA avatar displays (OIP.webp)
 - [ ] Voice toggle appears in header
 - [ ] F.M.I. section scrolls properly
 - [ ] Results areas format correctly
@@ -362,7 +362,7 @@ server/
 
 ### 8.2 Environment Variables
 ```bash
-# No new variables required for F.M.I./LEXARA core
+# No new variables required for F.M.I./ALEXERA core
 # Voice system will require (Stage 10+):
 ELEVENLABS_API_KEY=
 AWS_POLLY_ACCESS_KEY=
@@ -380,7 +380,7 @@ GOOGLE_SPEECH_API_KEY=
 - [ ] Test /api/fmi/upload with various file types
 - [ ] Test /api/fmi/analyze with sample files
 - [ ] Test /api/fmi/files retrieval
-- [ ] Test /api/legal-consultation (LEXARA backend)
+- [ ] Test /api/legal-consultation (ALEXERA backend)
 
 ## 9. Performance Considerations
 
@@ -391,7 +391,7 @@ GOOGLE_SPEECH_API_KEY=
 - Status tracking prevents redundant processing
 - Database indexes on frequently queried fields
 
-### 9.2 LEXARA Optimizations
+### 9.2 ALEXERA Optimizations
 - AI token governance integrated
 - Parallel provider orchestration
 - Caching of common analyses (future)
@@ -414,7 +414,7 @@ GOOGLE_SPEECH_API_KEY=
 - ⚠️ TODO: Virus scanning integration
 - ⚠️ TODO: Content sanitization for extracted text
 
-### 10.2 LEXARA Security
+### 10.2 ALEXERA Security
 - ✅ Authentication required
 - ✅ Input validation (state, situation length)
 - ✅ AI token governance (rate limiting)
@@ -437,7 +437,7 @@ GOOGLE_SPEECH_API_KEY=
 - Automated legal document generation from evidence
 - Chain of custody tracking
 
-### 11.2 LEXARA Enhancements
+### 11.2 ALEXERA Enhancements
 - Multi-turn conversation memory
 - Case file management
 - Collaborative workspace for attorney review
@@ -457,7 +457,7 @@ GOOGLE_SPEECH_API_KEY=
 
 ### 12.1 Achieved
 - ✅ F.M.I. consolidates 2 legacy systems
-- ✅ LEXARA frontend completely rebranded
+- ✅ ALEXERA frontend completely rebranded
 - ✅ Visual identities match design references
 - ✅ Database schema enhanced for intelligence
 - ✅ API routes unified and documented
@@ -477,18 +477,18 @@ GOOGLE_SPEECH_API_KEY=
 
 ### 13.1 Code Ownership
 - F.M.I. components: Primary system for evidence
-- LEXARA components: Primary system for consultation
+- ALEXERA components: Primary system for consultation
 - Legacy components: Maintain for backward compatibility, deprecate gradually
 
 ### 13.2 Documentation
 - This file: Architecture and implementation guide
 - Inline comments: Component-level documentation
 - API documentation: OpenAPI/Swagger (recommended addition)
-- User guide: Update with F.M.I. and LEXARA workflows
+- User guide: Update with F.M.I. and ALEXERA workflows
 
 ### 13.3 Monitoring
 - F.M.I. analysis success/failure rates
-- LEXARA consultation completion rates
+- ALEXERA consultation completion rates
 - File upload sizes and types distribution
 - AI token usage per feature
 - (Future) Voice system usage and quality metrics
@@ -499,7 +499,7 @@ This implementation successfully transforms BadBlue's legal platform with:
 
 1. **F.M.I. (Forensic Media Intelligence)**: A professional, unified evidence intelligence system that consolidates and enhances previous upload capabilities with AI-powered analysis, comprehensive metadata, and forensic-grade UI.
 
-2. **LEXARA (Legal Expert AI Resource Advisor)**: An intelligent legal consultation engine with a professional attorney persona, clean interface, F.M.I. integration, and foundation for voice capabilities.
+2. **ALEXERA (Legal Expert AI Resource Advisor)**: An intelligent legal consultation engine with a professional attorney persona, clean interface, F.M.I. integration, and foundation for voice capabilities.
 
 3. **Voice System Architecture**: Complete architectural design for 5-stage TTS/STT implementation, with UI prepared and backend framework defined.
 

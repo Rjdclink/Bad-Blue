@@ -7,7 +7,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToast } from './use-toast';
-import type { SpeechContext } from '@shared/lexaraVoicePersona';
+import type { SpeechContext } from '@shared/alexeraVoicePersona';
 
 export interface VoiceSynthesisOptions {
   context?: SpeechContext;
@@ -30,7 +30,7 @@ export interface VoiceSynthesisResult {
 }
 
 /**
- * Hook for LEXARA voice synthesis
+ * Hook for ALEXERA voice synthesis
  */
 export function useVoiceSynthesis(): VoiceSynthesisResult {
   const { toast } = useToast();
@@ -130,7 +130,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       utterance.voice = preferredVoice;
     }
 
-    // Configure utterance based on LEXARA persona
+    // Configure utterance based on ALEXERA persona
     utterance.rate = 0.95; // Slightly slower for professionalism
     utterance.pitch = 1.1; // Slightly higher for feminine voice
     utterance.volume = 1.0;
@@ -169,7 +169,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     options: VoiceSynthesisOptions
   ) => {
     try {
-      const response = await fetch('/api/lexara/speak', {
+      const response = await fetch('/api/alexera/speak', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
