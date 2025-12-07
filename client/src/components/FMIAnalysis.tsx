@@ -377,9 +377,9 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
           <div className="flex items-start gap-3">
             <Brain className="w-5 h-5 text-primary mt-0.5" />
             <div className="space-y-1">
-              <p className="text-sm font-medium">F.M.I. Integration with LEXARA</p>
+              <p className="text-sm font-medium">F.M.I. Integration with ALEXERA</p>
               <p className="text-xs text-muted-foreground">
-                All evidence analyzed by F.M.I. is automatically integrated with LEXARA (Legal Expert AI Resource Advisor) 
+                All evidence analyzed by F.M.I. is automatically integrated with ALEXERA (Legal Expert AI Resource Advisor) 
                 for comprehensive case strategy and legal analysis.
               </p>
             </div>

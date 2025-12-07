@@ -10,7 +10,7 @@ const heroImage = "/images/Constitution.webp";
 import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
-import SampleLexaraConsultation from "@/components/SampleLegalConsultation"; // Note: Will create dedicated SampleLexara component later
+import SampleAlexeraConsultation from "@/components/SampleLegalConsultation"; // Note: Will create dedicated SampleAlexera component later
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 import { AISystemShowcase } from "@/components/AISystemShowcase";
@@ -142,7 +142,7 @@ export default function Landing() {
     "offers": {
       "@type": "Offer",
       "priceCurrency": "USD",
-      "description": "Platform access with LEXARA Consultation and Officer Search"
+      "description": "Platform access with ALEXERA Consultation and Officer Search"
     },
     "featureList": [
       "AI-powered officer badge identification",
@@ -259,7 +259,7 @@ export default function Landing() {
             {/* Three-Tier Pricing - Simplified */}
             <div className="mb-10">
               <div className="grid md:grid-cols-3 gap-6">
-                {/* Tier 1: LEXARA & Officer Search */}
+                {/* Tier 1: ALEXERA & Officer Search */}
                 <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
                   <div className="text-white mb-3">
                     <div className="text-lg font-semibold mb-2">Core Services</div>
@@ -336,7 +336,7 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* LEXARA Visual Showcase Section */}
+      {/* ALEXERA Visual Showcase Section */}
       <section className="relative py-20 px-4 mt-16 overflow-hidden">
         {/* Background Image with Dark Overlay */}
         <div
@@ -352,14 +352,14 @@ export default function Landing() {
 
         {/* Content Container - Wider for three-column layout */}
         <div className="relative z-10 max-w-7xl mx-auto">
-          {/* Overlay Text - Description of LEXARA */}
+          {/* Overlay Text - Description of ALEXERA */}
           <div className="text-center mb-12 px-4">
             <p className="text-white text-lg md:text-xl lg:text-2xl leading-relaxed max-w-4xl mx-auto font-medium" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-              Meet LEXARA - She's built on an orchestrated network of thirteen specialized AI models that operate in tandem. She provides you with advanced legal reasoning, analysis, in-depth research, cross-verified suggestions, and courtroom ready drafting, tailored to your filing jurisdiction. She can analyze evidence in a wide variety of formats and provide any format of legally compliant documentation.
+              Meet ALEXERA - She's built on an orchestrated network of thirteen specialized AI models that operate in tandem. She provides you with advanced legal reasoning, analysis, in-depth research, cross-verified suggestions, and courtroom ready drafting, tailored to your filing jurisdiction. She can analyze evidence in a wide variety of formats and provide any format of legally compliant documentation.
             </p>
           </div>
 
-          {/* Three-Column Layout: Left Features | ALEXARA Image | Right Features */}
+          {/* Three-Column Layout: Left Features | ALEXERA Image | Right Features */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start px-4">
             {/* Left Column - Features 1-5 */}
             <div className="space-y-6">
@@ -429,10 +429,10 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Center Column - ALEXARA Floating Card */}
+            {/* Center Column - ALEXERA Floating Card */}
             <div className="flex justify-center">
               <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
-                {/* LEXARA Image */}
+                {/* ALEXERA Image */}
                 <div className="mb-6">
                   {!lexaraImageError ? (
                     <img
@@ -547,16 +547,16 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Interactive LEXARA Consultation Sample */}
+      {/* Interactive ALEXERA Consultation Sample */}
       <section className="py-20 px-4 bg-background">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-bold mb-4">Try LEXARA</h2>
+            <h2 className="text-2xl font-bold mb-4">Try ALEXERA</h2>
             <p className="text-sm text-muted-foreground max-w-xl mx-auto">
               Experience BadBlue's AI-powered legal analysis with a free sample consultation. No signup required.
             </p>
           </div>
-          <SampleLexaraConsultation />
+          <SampleAlexeraConsultation />
         </div>
       </section>
 

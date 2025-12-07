@@ -1,10 +1,10 @@
 /**
- * LEXARA - Legal Expert AI Resource Advisor
+ * ALEXERA - Advanced Legal Expert Resource Advisor
  * 
  * The intelligent legal consultation engine featuring a professional female attorney persona.
  * Visual identity based on OIP.webp - composed, confident, authoritative advisor.
  * 
- * LEXARA serves as the "governing brain" coordinating:
+ * ALEXERA serves as the "governing brain" coordinating:
  * - Legal analysis and case evaluation
  * - F.M.I. (Forensic Media Intelligence) integration
  * - Multi-area of law expertise (29+ practice areas)
@@ -12,7 +12,7 @@
  * - Voice Intelligence System (Stages 11-15)
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Card,
@@ -107,13 +107,13 @@ const US_STATES = [
   { code: "WY", name: "Wyoming" },
 ];
 
-interface LexaraConsultationProps {
+interface AlexeraConsultationProps {
   onBack?: () => void;
   lawType?: string;
   onDataChange?: (data: any) => void;
 }
 
-export default function LexaraConsultation({ onBack, lawType, onDataChange }: LexaraConsultationProps) {
+export default function AlexeraConsultation({ onBack, lawType, onDataChange }: AlexeraConsultationProps) {
   const { toast } = useToast();
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -121,6 +121,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
   const [situation, setSituation] = useState("");
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [analysis, setAnalysis] = useState<any>(null);
+  const [greetingPlayed, setGreetingPlayed] = useState(false);
 
   // Voice Intelligence System (Stages 11-15)
   const voiceMode = useVoiceMode({
@@ -136,9 +137,42 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
 
   const voiceSynthesis = useVoiceSynthesis();
 
+  // Get law type name for greeting (import LAW_TYPES_INFO if needed)
+  const lawTypeName = lawType 
+    ? lawType.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+    : 'legal matters';
+
+  // Auto-greeting: Play after 3 seconds on page load
+  const playGreeting = useCallback(async () => {
+    const greetingText = `Hello, I understand you have some questions about ${lawTypeName}. How can I assist you today?`;
+    
+    try {
+      // Attempt to play greeting
+      await voiceSynthesis.speak(greetingText, {
+        context: 'introduction',
+        autoPlay: true,
+      });
+      
+      setGreetingPlayed(true);
+    } catch (error) {
+      console.log('Auto-greeting prevented (user interaction required):', error);
+      // Silently fail - will work after user interaction
+    }
+  }, [lawTypeName, voiceSynthesis]);
+
+  useEffect(() => {
+    if (greetingPlayed) return;
+
+    const greetingTimer = setTimeout(() => {
+      playGreeting();
+    }, 3000); // 3-second delay
+
+    return () => clearTimeout(greetingTimer);
+  }, [greetingPlayed, playGreeting]);
+
   // Persist voice mode state
   useEffect(() => {
-    const savedVoiceMode = localStorage.getItem('lexara-voice-mode');
+    const savedVoiceMode = localStorage.getItem('alexera-voice-mode');
     if (savedVoiceMode === 'enabled') {
       // Auto-enable if previously enabled (user preference)
       // voiceMode.enable(); // Commented out - require explicit activation
@@ -147,9 +181,9 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
 
   useEffect(() => {
     if (voiceMode.isEnabled) {
-      localStorage.setItem('lexara-voice-mode', 'enabled');
+      localStorage.setItem('alexera-voice-mode', 'enabled');
     } else {
-      localStorage.removeItem('lexara-voice-mode');
+      localStorage.removeItem('alexera-voice-mode');
     }
   }, [voiceMode.isEnabled]);
 
@@ -194,8 +228,8 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
     onSuccess: (data) => {
       if (!data || typeof data !== 'object') {
         toast({
-          title: "LEXARA Analysis Error",
-          description: "Received invalid response from LEXARA. Please try again.",
+          title: "ALEXERA Analysis Error",
+          description: "Received invalid response from ALEXERA. Please try again.",
           variant: "destructive",
         });
         return;
@@ -217,10 +251,10 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
       }
     },
     onError: (error: Error) => {
-      console.error("LEXARA consultation error:", error);
+      console.error("ALEXERA consultation error:", error);
       toast({
-        title: "LEXARA Analysis Failed",
-        description: error.message || "LEXARA is unable to analyze your situation. Please try again or contact support.",
+        title: "ALEXERA Analysis Failed",
+        description: error.message || "ALEXERA is unable to analyze your situation. Please try again or contact support.",
         variant: "destructive",
       });
     },
@@ -230,7 +264,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
     if (!disclaimerAccepted) {
       toast({
         title: "Disclaimer Required",
-        description: "Please acknowledge the disclaimer to continue with LEXARA",
+        description: "Please acknowledge the disclaimer to continue with ALEXERA",
         variant: "destructive",
       });
       return;
@@ -239,7 +273,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
     if (!state) {
       toast({
         title: "State Required",
-        description: "LEXARA requires your state for jurisdiction-specific analysis",
+        description: "ALEXERA requires your state for jurisdiction-specific analysis",
         variant: "destructive",
       });
       return;
@@ -248,7 +282,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
     if (!situation.trim()) {
       toast({
         title: "Situation Required",
-        description: "Please describe your situation for LEXARA to analyze",
+        description: "Please describe your situation for ALEXERA to analyze",
         variant: "destructive",
       });
       return;
@@ -296,14 +330,14 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
   return (
     <div className="min-h-screen bg-background">
       <main className="container max-w-6xl mx-auto px-4 py-8">
-        {/* LEXARA Header with Avatar */}
+        {/* ALEXERA Header with Avatar */}
         <div className="mb-8 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            {/* LEXARA Avatar - OIP.webp */}
+            {/* ALEXERA Avatar - OIP.webp */}
             <div className="relative">
               <img 
                 src="/images/OIP.webp" 
-                alt="LEXARA - Legal Expert AI Resource Advisor"
+                alt="ALEXERA - Legal Expert AI Resource Advisor"
                 className="w-20 h-20 rounded-full object-cover border-4 border-primary shadow-lg"
               />
               <div className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-1">
@@ -314,7 +348,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
             <div>
               <h1 className="text-3xl font-bold flex items-center gap-2">
                 <Scale className="w-8 h-8 text-primary" />
-                LEXARA
+                ALEXERA
               </h1>
               <p className="text-muted-foreground">Legal Expert AI Resource Advisor</p>
             </div>
@@ -360,7 +394,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
                   Legal Case Analysis
                 </CardTitle>
                 <CardDescription className="text-base">
-                  LEXARA will evaluate your situation with expert legal analysis
+                  ALEXERA will evaluate your situation with expert legal analysis
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -389,14 +423,14 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
                       <Textarea
                         id="textarea-situation"
                         data-testid="textarea-situation"
-                        placeholder="Tell LEXARA what happened. Include dates, locations, parties involved, specific actions taken, and any evidence you have. Be as detailed as possible..."
+                        placeholder="Tell ALEXERA what happened. Include dates, locations, parties involved, specific actions taken, and any evidence you have. Be as detailed as possible..."
                         value={situation}
                         onChange={(e) => setSituation(e.target.value)}
                         rows={10}
                         className="resize-none"
                       />
                       <p className="text-sm text-muted-foreground">
-                        💡 Tip: More details help LEXARA provide better analysis
+                        💡 Tip: More details help ALEXERA provide better analysis
                       </p>
                     </div>
 
@@ -411,7 +445,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
                           </p>
                         </div>
                         <p className="text-xs text-muted-foreground mb-3">
-                          F.M.I. will automatically extract facts, classify content, and integrate findings with LEXARA's legal analysis.
+                          F.M.I. will automatically extract facts, classify content, and integrate findings with ALEXERA's legal analysis.
                         </p>
                         <Button 
                           variant="outline" 
@@ -441,7 +475,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
                           <label htmlFor="disclaimer-checkbox" className="text-sm leading-relaxed cursor-pointer">
                             <span className="font-semibold text-amber-900 dark:text-amber-100">Required Acknowledgment:</span>{" "}
                             <span className="text-amber-800 dark:text-amber-200">
-                              I understand that LEXARA provides AI-powered legal information, not legal advice. 
+                              I understand that ALEXERA provides AI-powered legal information, not legal advice. 
                               This analysis does not create an attorney-client relationship. For legal representation, 
                               consult a licensed attorney in your jurisdiction.
                             </span>
@@ -460,19 +494,19 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
                       {analyzeMutation.isPending ? (
                         <>
                           <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                          LEXARA is analyzing...
+                          ALEXERA is analyzing...
                         </>
                       ) : (
                         <>
                           <Brain className="mr-2 h-5 w-5" />
-                          Consult LEXARA
+                          Consult ALEXERA
                         </>
                       )}
                     </Button>
                   </>
                 ) : (
                   <>
-                    {/* LEXARA Analysis Results */}
+                    {/* ALEXERA Analysis Results */}
                     <div className="space-y-6">
                       {/* Assessment Banner */}
                       <div className={`p-4 rounded-lg flex items-start gap-3 ${
@@ -489,14 +523,14 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
                           <h3 className={`font-semibold text-lg mb-1 ${
                             analysis.actionable ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'
                           }`}>
-                            LEXARA Assessment: {analysis.actionable ? 'Potentially Actionable' : 'Not Clearly Actionable'}
+                            ALEXERA Assessment: {analysis.actionable ? 'Potentially Actionable' : 'Not Clearly Actionable'}
                           </h3>
                           <p className={`text-sm ${
                             analysis.actionable ? 'text-green-800 dark:text-green-200' : 'text-red-800 dark:text-red-200'
                           }`}>
                             {analysis.actionable 
-                              ? 'Based on your description, LEXARA has identified potential legal claims that may be pursued.'
-                              : 'Based on your description, LEXARA has not identified clear legal claims at this time.'}
+                              ? 'Based on your description, ALEXERA has identified potential legal claims that may be pursued.'
+                              : 'Based on your description, ALEXERA has not identified clear legal claims at this time.'}
                           </p>
                         </div>
                       </div>
@@ -528,7 +562,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
                         variant="outline"
                         className="w-full"
                       >
-                        New LEXARA Consultation
+                        New ALEXERA Consultation
                       </Button>
                     </div>
                   </>
@@ -537,20 +571,20 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
             </Card>
           </div>
 
-          {/* LEXARA Info Sidebar */}
+          {/* ALEXERA Info Sidebar */}
           <div className="space-y-6">
-            {/* LEXARA Capabilities */}
+            {/* ALEXERA Capabilities */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">About LEXARA</CardTitle>
+                <CardTitle className="text-lg">About ALEXERA</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 text-sm">
                   <p>
-                    LEXARA is your Legal Expert AI Resource Advisor, providing comprehensive case analysis across 29+ areas of law.
+                    ALEXERA is your Legal Expert AI Resource Advisor, providing comprehensive case analysis across 29+ areas of law.
                   </p>
                   <div className="space-y-2">
-                    <h4 className="font-semibold">LEXARA Provides:</h4>
+                    <h4 className="font-semibold">ALEXERA Provides:</h4>
                     <ul className="space-y-1 text-muted-foreground">
                       <li>• Case evaluation & merit assessment</li>
                       <li>• Legal claim identification</li>
@@ -574,7 +608,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  LEXARA seamlessly integrates with F.M.I. (Forensic Media Intelligence) to analyze uploaded evidence and incorporate findings into legal strategy.
+                  ALEXERA seamlessly integrates with F.M.I. (Forensic Media Intelligence) to analyze uploaded evidence and incorporate findings into legal strategy.
                 </p>
               </CardContent>
             </Card>
@@ -590,7 +624,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
               onAnalysisComplete={(results) => {
                 toast({
                   title: "F.M.I. Analysis Complete",
-                  description: "Evidence intelligence has been integrated with LEXARA",
+                  description: "Evidence intelligence has been integrated with ALEXERA",
                 });
               }}
             />

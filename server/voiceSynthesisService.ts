@@ -11,12 +11,12 @@
  */
 
 import { 
-  LEXARA_VOICE_PERSONA, 
+  ALEXERA_VOICE_PERSONA, 
   DEFAULT_VOICE_CONFIG,
   type VoiceSynthesisConfig,
   type SpeechContext,
   getPersonaForContext 
-} from '@shared/lexaraVoicePersona';
+} from '@shared/alexeraVoicePersona';
 import { 
   SpeechFlowEngine,
   type SpeechFlowOutput 

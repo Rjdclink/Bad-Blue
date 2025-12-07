@@ -189,7 +189,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
       toast({
         title: 'Voice Mode Enabled',
-        description: 'LEXARA is now listening. You can speak your questions.',
+        description: 'ALEXERA is now listening. You can speak your questions.',
       });
 
     } catch (err) {

@@ -49,7 +49,7 @@ const AI_MODELS = [
 // Core AI Systems
 const CORE_SYSTEMS = [
   {
-    name: "LEXARA",
+    name: "ALEXERA",
     acronym: "Legal Expert AI Resource Advisor",
     description: "Primary legal consultation AI providing comprehensive legal guidance across all 30 law types",
     icon: Brain,
@@ -58,7 +58,7 @@ const CORE_SYSTEMS = [
   {
     name: "C.A.D.E.",
     acronym: "Case Adaptive Drafting Entity",
-    description: "Jurisprudential drafting intelligence engine, procedural law-aware, content-adaptive, jurisdiction-specific legal authoring machine, operating as co-counsel to LEXARA",
+    description: "Jurisprudential drafting intelligence engine, procedural law-aware, content-adaptive, jurisdiction-specific legal authoring machine, operating as co-counsel to ALEXERA",
     icon: FileText,
     iconColor: "text-purple-600"
   },
@@ -165,15 +165,15 @@ export default function FAQPage() {
       icon: Brain,
       items: [
         {
-          question: "What is LEXARA?",
+          question: "What is ALEXERA?",
           answer: (
             <div>
               <p className="mb-2">
-                <span className="font-bold">LEXARA</span> <span className="text-sm text-muted-foreground">(Legal Expert AI Resource Advisor)</span>
+                <span className="font-bold">ALEXERA</span> <span className="text-sm text-muted-foreground">(Legal Expert AI Resource Advisor)</span>
               </p>
               <p>
-                LEXARA is LegalWhat's primary legal consultation AI. Powered by the P.A.N.T.H.E.O.N. framework, 
-                LEXARA provides comprehensive legal guidance across all 30 law types. It analyzes your situation, 
+                ALEXERA is LegalWhat's primary legal consultation AI. Powered by the P.A.N.T.H.E.O.N. framework, 
+                ALEXERA provides comprehensive legal guidance across all 30 law types. It analyzes your situation, 
                 explains relevant laws, identifies your rights, suggests legal strategies, and provides 
                 jurisdiction-specific advice tailored to your location.
               </p>
@@ -189,7 +189,7 @@ export default function FAQPage() {
               </p>
               <p>
                 C.A.D.E. is LegalWhat's jurisprudential drafting intelligence engine. This procedural law-aware, 
-                content-adaptive, jurisdiction-specific legal authoring machine operates as co-counsel to LEXARA. 
+                content-adaptive, jurisdiction-specific legal authoring machine operates as co-counsel to ALEXERA. 
                 C.A.D.E. drafts legal documents including complaints, motions, contracts, and pleadings with 
                 court-ready formatting and proper legal citations.
               </p>
@@ -286,7 +286,7 @@ export default function FAQPage() {
               <ol className="list-decimal list-inside space-y-2">
                 <li>Create a free account by clicking "Get Started" or "Sign Up"</li>
                 <li>Choose your area of law from our 30 law types</li>
-                <li>Describe your legal situation to LEXARA for instant consultation</li>
+                <li>Describe your legal situation to ALEXERA for instant consultation</li>
                 <li>Use C.A.D.E. to draft legal documents, F.M.I. to analyze evidence, or I-DRIVE to search for people</li>
                 <li>Access all tools and AI systems from your dashboard</li>
               </ol>
@@ -308,7 +308,7 @@ export default function FAQPage() {
         },
         {
           question: "Can I use LegalWhat on mobile devices?",
-          answer: "Yes! LegalWhat is fully responsive and works seamlessly on smartphones, tablets, and desktop computers. Access your account, consult with LEXARA, draft documents, and use all features from any device with an internet connection."
+          answer: "Yes! LegalWhat is fully responsive and works seamlessly on smartphones, tablets, and desktop computers. Access your account, consult with ALEXERA, draft documents, and use all features from any device with an internet connection."
         }
       ]
     },
@@ -318,11 +318,11 @@ export default function FAQPage() {
       items: [
         {
           question: "How much does LegalWhat cost?",
-          answer: "LegalWhat offers flexible pricing options to fit your needs. We provide free access to basic consultations with LEXARA. Premium features including advanced document drafting with C.A.D.E., comprehensive evidence analysis with F.M.I., and unlimited identity searches with I-DRIVE are available through affordable subscription plans. Special pricing is available for specific services like complaints, lawsuits, and FOIA requests."
+          answer: "LegalWhat offers flexible pricing options to fit your needs. We provide free access to basic consultations with ALEXERA. Premium features including advanced document drafting with C.A.D.E., comprehensive evidence analysis with F.M.I., and unlimited identity searches with I-DRIVE are available through affordable subscription plans. Special pricing is available for specific services like complaints, lawsuits, and FOIA requests."
         },
         {
           question: "Is there a free trial?",
-          answer: "Yes! New users can access LEXARA consultations for free to experience the power of our P.A.N.T.H.E.O.N. AI system. You can ask legal questions, get initial guidance, and explore the platform before committing to a paid plan."
+          answer: "Yes! New users can access ALEXERA consultations for free to experience the power of our P.A.N.T.H.E.O.N. AI system. You can ask legal questions, get initial guidance, and explore the platform before committing to a paid plan."
         },
         {
           question: "What payment methods do you accept?",
@@ -433,7 +433,7 @@ export default function FAQPage() {
 
       <SEOHead
         title="FAQ - LegalWhat AI Legal Platform"
-        description="Frequently asked questions about LegalWhat's P.A.N.T.H.E.O.N. 13-AI system, LEXARA consultation, C.A.D.E. document drafting, F.M.I. evidence analysis, and I-DRIVE identity search."
+        description="Frequently asked questions about LegalWhat's P.A.N.T.H.E.O.N. 13-AI system, ALEXERA consultation, C.A.D.E. document drafting, F.M.I. evidence analysis, and I-DRIVE identity search."
       />
 
       {/* Header */}
