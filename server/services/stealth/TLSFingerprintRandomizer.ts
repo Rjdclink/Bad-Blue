@@ -50,7 +50,6 @@ export class TLSFingerprintRandomizer {
   getRandomProfile(): TLSProfile {
     const profile = BROWSER_TLS_PROFILES[Math.floor(Math.random() * BROWSER_TLS_PROFILES.length)];
     this.currentProfile = profile;
-    console.log(`[TLS] Using ${profile.name} fingerprint`);
     return profile;
   }
 

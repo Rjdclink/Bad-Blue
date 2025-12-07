@@ -64,7 +64,6 @@ export class HeadersPolyfill {
   getRandomProfile(): BrowserProfile {
     const profile = BROWSER_PROFILES[Math.floor(Math.random() * BROWSER_PROFILES.length)];
     this.currentProfile = profile;
-    console.log(`[Headers] Using ${profile.name} profile`);
     return profile;
   }
 
