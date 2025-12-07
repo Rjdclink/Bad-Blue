@@ -2,6 +2,41 @@
 // PHYLACTERY SYSTEM - Immortal Storage & State Management
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Core Data Structures for Learning Systems
+export interface BrowserFingerprint {
+  userAgent: string;
+  platform: string;
+  vendor: string;
+  languages: string[];
+  screenResolution: string;
+  timezone: string;
+}
+
+export interface DeathMemory {
+  zombieId: string;
+  target: string;
+  causeOfDeath: 'captcha' | 'ip-ban' | 'rate-limit' | 'timeout' | 'cloudflare' | '403' | '429' | 'unknown';
+  timestamp: number;
+  fingerprint: BrowserFingerprint;
+  requestCount: number;
+  sessionAge: number;
+  triggerPattern: string;
+  ipAddress: string;
+  userAgent: string;
+}
+
+export interface AvoidanceStrategy {
+  name: string;
+  maxRequests?: number;
+  minDelay?: number;
+  maxDelay?: number;
+  rotateFingerprint?: boolean;
+  rotateIP?: boolean;
+  useGhostInstead?: boolean;
+  confidence: number;
+}
+
+// Internal types
 interface CacheEntry<T> {
   data: T;
   timestamp: number;
@@ -19,12 +54,14 @@ interface PhylacteryMetrics {
  * Provides three specialized storage vaults:
  * - Ice Crystal Cache (fast retrieval for Blizzard/Cerberus)
  * - Underworld Vault (persistent state for Cerberus)
- * - Soul Storage (Lich power and memory)
+ * - Soul Storage (Lich power and learning system)
+ * - Hive Mind (Zombie death memories for learning)
  */
 export class PhylacterySystem {
   private iceCache = new Map<string, CacheEntry<any>>();
   private underworldVault = new Map<string, any>();
   private souls = new Map<string, { power: number; strategy: any; timestamp: number }>();
+  private hiveMind = new Map<string, DeathMemory>();
   
   private metrics = {
     iceCache: { hits: 0, misses: 0 },
@@ -87,6 +124,22 @@ export class PhylacterySystem {
       power: soul.power,
       strategy: soul.strategy
     }));
+  }
+
+  // Hive Mind - Zombie death memories for learning systems
+  async recordDeath(memory: DeathMemory): Promise<void> {
+    const key = `${memory.target}:${memory.timestamp}:${memory.zombieId}`;
+    this.hiveMind.set(key, memory);
+  }
+
+  async queryDeaths(target: string): Promise<DeathMemory[]> {
+    const deaths: DeathMemory[] = [];
+    for (const [key, memory] of this.hiveMind.entries()) {
+      if (key.startsWith(`${target}:`)) {
+        deaths.push(memory);
+      }
+    }
+    return deaths.sort((a, b) => b.timestamp - a.timestamp);
   }
 
   // Metrics and maintenance
