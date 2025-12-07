@@ -66,5 +66,6 @@ export class ExifExtractor {
     return results.filter(r => r !== null) as LocationData[];
   }
 }
+}
 
 export const exifExtractor = new ExifExtractor();
