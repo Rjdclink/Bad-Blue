@@ -130,7 +130,9 @@ export default function Login() {
       <div 
         className="absolute inset-0 bg-cover bg-center bg-no-repeat"
         style={{
-          backgroundImage: 'url(/images/Constitution.webp)'
+          backgroundImage: 'url(/images/Constitution.webp), linear-gradient(to bottom, #1a1a2e, #16213e)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center center'
         }}
       >
         {/* Dark overlay for readability */}
