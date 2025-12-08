@@ -73,18 +73,8 @@
     
     // Logout function - redirects to platform logout
     function logout() {
-      // Use platform logout endpoint
-      fetch('/api/logout', {
-        method: 'POST',
-        credentials: 'include'
-      })
-      .then(() => {
-        window.location.href = '/login';
-      })
-      .catch(() => {
-        // Fallback: just redirect to login
-        window.location.href = '/login';
-      });
+      // Use platform logout endpoint (GET request)
+      window.location.href = '/api/logout';
     }
   </script>
   
