@@ -159,11 +159,9 @@ class GasOracle {
     
     // Start update interval (60 seconds instead of 15)
     this.updateInterval = setInterval(() => {
-      if (this.running) {
-        this.updateAllGasPrices().catch(error => {
-          console.error('[GasOracle] Auto-update failed:', error);
-        });
-      }
+      this.updateAllGasPrices().catch(error => {
+        console.error('[GasOracle] Auto-update failed:', error);
+      });
     }, 60000);
     
     console.log('[GasOracle] ✓ Started');

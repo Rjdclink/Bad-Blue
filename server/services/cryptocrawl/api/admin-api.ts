@@ -85,6 +85,7 @@ router.post('/start', async (req, res) => {
     // Enable CryptoCrawl services
     await cryptoCrawlState.enable();
     
+    // Only mark as running after successful service enablement
     systemState.running = true;
     systemState.startedAt = Date.now();
     
@@ -101,6 +102,8 @@ router.post('/start', async (req, res) => {
       status: cryptoCrawlState.getStatus()
     });
   } catch (error: any) {
+    // Ensure state is not marked as running on error
+    systemState.running = false;
     res.status(500).json({error: error.message});
   }
 });
@@ -111,18 +114,27 @@ router.post('/stop', async (req, res) => {
     return res.status(400).json({error: 'System not running'});
   }
   
-  // Disable CryptoCrawl services
-  await cryptoCrawlState.disable();
-  
-  systemState.running = false;
-  pipeline.stop();
-  
-  res.json({
-    success: true,
-    message: 'System stopped',
-    uptime: Date.now() - systemState.startedAt,
-    status: cryptoCrawlState.getStatus()
-  });
+  try {
+    // Disable CryptoCrawl services
+    await cryptoCrawlState.disable();
+    
+    systemState.running = false;
+    pipeline.stop();
+    
+    res.json({
+      success: true,
+      message: 'System stopped',
+      uptime: Date.now() - systemState.startedAt,
+      status: cryptoCrawlState.getStatus()
+    });
+  } catch (error: any) {
+    // Mark as stopped even if there was an error
+    systemState.running = false;
+    res.status(500).json({
+      error: error.message,
+      status: cryptoCrawlState.getStatus()
+    });
+  }
 });
 
 // GET /admin/crypto/health - System health check

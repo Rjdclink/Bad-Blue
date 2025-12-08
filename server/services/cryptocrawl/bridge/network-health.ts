@@ -106,11 +106,9 @@ class NetworkHealthMonitor {
   private startAutoUpdate(): void {
     // Update network health every 30 seconds
     this.updateInterval = setInterval(() => {
-      if (this.running) {
-        this.checkAllNetworks().catch(error => {
-          console.error('[NetworkHealth] Auto-update failed:', error);
-        });
-      }
+      this.checkAllNetworks().catch(error => {
+        console.error('[NetworkHealth] Auto-update failed:', error);
+      });
     }, 30000);
   }
 
