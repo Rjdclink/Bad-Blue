@@ -674,9 +674,10 @@ export class EnhancedWebSearchService {
   }
 
   private async executeSearch(query: string): Promise<any[]> {
-    // Unified search using OpenRouter (primary) with Gemini fallback
+    // Unified search: Try OpenRouter first (preferred for web search),
+    // fallback to Gemini grounding if unavailable
     try {
-      // Try OpenRouter orchestrated web search first (85% of searches)
+      // Try OpenRouter orchestrated web search first (preferred)
       if (isOpenRouterWebSearchAvailable()) {
         const webSearchResult = await orchestratedWebSearch(query, {
           useOnlinePlugin: false, // Keep it free
@@ -697,7 +698,7 @@ export class EnhancedWebSearchService {
         }
       }
       
-      // Fallback to Gemini grounding search (15% supplemental)
+      // Fallback to Gemini grounding search if OpenRouter unavailable
       console.log('[Enhanced Search] Falling back to Gemini grounding search');
       return await this.geminiGroundingSearch(query);
       

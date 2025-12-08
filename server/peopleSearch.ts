@@ -15,6 +15,12 @@ import {
 } from './services/legalIntelligence';
 import type { SherlockResult } from './services/socialIntelligence/types';
 
+// Constants for crawler messages
+const CRAWLER_MESSAGES = {
+  LEVEL_3_SUMMARY: '\n\n🔬 Advanced Analysis: Level 3 crawlers (HYDRA, LICH, CERBERUS, BLIZZARD DRAGON) provided enhanced triple-verification and pattern matching.',
+  LEVEL_4_SUMMARY: '\n\n👁️ EYE OF GOD: GENESIS orchestrator activated. Complete identity reconstruction from all 60+ data sources with maximum entropy harvesting.',
+};
+
 /**
  * Interface for search results from various sources
  */
@@ -776,7 +782,7 @@ export async function conductFullOSINT(
         searchQuery.toLowerCase().replace(/\s+/g, ''), // JohnDoe -> johndoe
         searchQuery.toLowerCase().replace(/\s+/g, '.'), // John Doe -> john.doe
         searchQuery.toLowerCase().replace(/\s+/g, '_'), // John Doe -> john_doe
-        searchQuery.trim().split(' ')[0]?.toLowerCase() || searchQuery.toLowerCase(), // First name only, fallback to full query
+        searchQuery.trim().split(' ')[0].toLowerCase(), // First name only
       ].filter(Boolean).filter((u, i, arr) => arr.indexOf(u) === i); // Remove empty strings and duplicates
 
       // Search for social media profiles using Sherlock
@@ -826,7 +832,7 @@ export async function conductFullOSINT(
       // (Implementation would go here - for now, log activation)
       
       // Add placeholder to indicate advanced crawlers were activated
-      enhancedReport.summary += `\n\n🔬 Advanced Analysis: Level 3 crawlers (HYDRA, LICH, CERBERUS, BLIZZARD DRAGON) provided enhanced triple-verification and pattern matching.`;
+      enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_3_SUMMARY;
     }
 
     // Level 4: GENESIS orchestrator (EYE OF GOD)
@@ -836,7 +842,7 @@ export async function conductFullOSINT(
       // GENESIS: Complete identity reconstruction with all crawlers
       // (Implementation would go here - for now, log activation)
       
-      enhancedReport.summary += `\n\n👁️ EYE OF GOD: GENESIS orchestrator activated. Complete identity reconstruction from all 60+ data sources with maximum entropy harvesting.`;
+      enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_4_SUMMARY;
     }
 
     // SpiderFoot scan (if available)

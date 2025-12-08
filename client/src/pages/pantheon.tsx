@@ -24,6 +24,10 @@ const NETWORK_HEAD_IMAGE = '/images/digital-mind-abstract-representation-human-i
 const MAX_HEATMAP_POINTS = 10; // Maximum number of points to display on heatmap
 const MAX_MAP_MARKERS = 5; // Maximum number of markers to display on map
 
+// Location data generation constants
+const COORD_OFFSET_RANGE = 0.1; // Geographic offset range for mock coordinates (degrees)
+const MIN_INTENSITY = 0.5; // Minimum intensity value for heatmap points (0-1)
+
 interface SearchConfig {
   name: string;
   location?: string;
@@ -534,9 +538,9 @@ function generateMockLocationData(locationHistory: string[]): Array<[number, num
   
   return locationHistory.slice(0, MAX_HEATMAP_POINTS).map((_, idx) => {
     // Generate semi-random coordinates within a reasonable range
-    const latOffset = (Math.random() - 0.5) * 0.1;
-    const lngOffset = (Math.random() - 0.5) * 0.1;
-    const intensity = 0.5 + Math.random() * 0.5; // 0.5 to 1.0
+    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
+    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
+    const intensity = MIN_INTENSITY + Math.random() * (1 - MIN_INTENSITY);
     
     return [
       baseCoords[0] + latOffset,
@@ -551,8 +555,8 @@ function generateLocationMarkers(locationHistory: string[]): Array<{ pos: [numbe
   const baseCoords: [number, number] = [40.7128, -74.0060];
   
   return locationHistory.slice(0, MAX_MAP_MARKERS).map((location, idx) => {
-    const latOffset = (Math.random() - 0.5) * 0.1;
-    const lngOffset = (Math.random() - 0.5) * 0.1;
+    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
+    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
     
     return {
       pos: [baseCoords[0] + latOffset, baseCoords[1] + lngOffset] as [number, number],
