@@ -19,6 +19,7 @@ export interface BridgeManagerState {
 export class BridgeManager {
   private running = false;
   private lastUpdate = 0;
+  private emptyState: BridgeManagerState = { running: false, balances: [], gasPrices: [], recommendations: [], networkHealth: [], totalPortfolioValue: 0, lastUpdate: 0 };
 
   constructor() {
     console.log('[BridgeManager] Created (inactive - waiting for manual start)');
@@ -60,7 +61,7 @@ export class BridgeManager {
 
   async getFullState(): Promise<BridgeManagerState> {
     if (!this.running) {
-      return { running: false, balances: [], gasPrices: [], recommendations: [], networkHealth: [], totalPortfolioValue: 0, lastUpdate: 0 };
+      return this.emptyState;
     }
 
     const [balances, gasPricesMap, healthMap] = await Promise.all([
