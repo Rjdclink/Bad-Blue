@@ -3354,7 +3354,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
 
   app.post('/api/osint/full-search', async (req, res) => {
-    const { name, department, badge, location, domain } = req.body;
+    const { name, department, badge, location, domain, searchDepth = 2 } = req.body;
     
     if (!name) {
       return res.status(400).json({ error: 'Name required' });
@@ -3362,7 +3362,16 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
     try {
       const { conductFullOSINT } = await import('./peopleSearch');
-      const report = await conductFullOSINT(name, { department, badge, location, domain });
+      
+      // Pass search depth to the OSINT function
+      const report = await conductFullOSINT(name, { 
+        department, 
+        badge, 
+        location, 
+        domain,
+        searchDepth 
+      });
+      
       res.json(report);
     } catch (error: any) {
       console.error('[OSINT API] Error:', error);
