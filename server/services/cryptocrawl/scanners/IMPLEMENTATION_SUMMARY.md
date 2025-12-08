@@ -184,7 +184,7 @@ export const eliteScanner = {
 ```
 
 ### Dependencies
-- `ethers@5.7.2` - Ethereum library for RPC and contract interactions
+- `ethers@5.8.0` - Ethereum library for RPC and contract interactions
 - `ws@8.18.0` - WebSocket client for mempool monitoring
 
 ---
