@@ -39,6 +39,7 @@ import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
+import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -4669,6 +4670,13 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Mount CryptoCrawl API routes
   app.use('/api/crypto', dashboardApi);
   app.use('/admin/crypto', adminApi);
+  
+  // ============================================
+  // BRIDGE MANAGER API
+  // ============================================
+  
+  // Mount Bridge API routes
+  app.use('/api/bridge', bridgeApi);
   
   // Apply notFoundHandler ONLY to API routes
   app.use('/api', notFoundHandler);
