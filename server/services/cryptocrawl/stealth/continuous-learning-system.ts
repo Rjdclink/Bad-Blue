@@ -15,9 +15,9 @@ interface QValue {
 export class ContinuousLearningSystem {
   // Q-learning parameters
   private qTable: Map<string, Map<string, QValue>> = new Map();
-  private learningRate = 0.1;
-  private discountFactor = 0.95;
-  private explorationRate = 0.2;
+  private readonly learningRate = 0.1;
+  private readonly discountFactor = 0.95;
+  private readonly explorationRate = 0.2;
 
   // Competitor profiles
   private competitors: Map<string, CompetitorProfile> = new Map();
@@ -25,6 +25,13 @@ export class ContinuousLearningSystem {
   // Historical opportunity data for anomaly detection
   private opportunityHistory: Array<{ profit: number; timestamp: number }> = [];
   private readonly historyWindow = 1000; // Keep last 1000 opportunities
+  
+  // Configuration constants
+  private readonly ANOMALY_THRESHOLD = 3.0; // Z-score threshold for anomalies
+  private readonly BID_MULTIPLIER_MIN = 0.8;
+  private readonly BID_MULTIPLIER_MAX = 1.2;
+  private readonly GAS_MULTIPLIER_MIN = 0.9;
+  private readonly GAS_MULTIPLIER_MAX = 1.1;
 
   constructor() {
     this.initializeQTable();
@@ -231,7 +238,7 @@ export class ContinuousLearningSystem {
     // Calculate z-score for each opportunity
     return opportunities.map(opp => {
       const zScore = stdDev > 0 ? (opp.profitEstimate - mean) / stdDev : 0;
-      const isAnomaly = Math.abs(zScore) > 3; // 3 standard deviations
+      const isAnomaly = Math.abs(zScore) > this.ANOMALY_THRESHOLD;
 
       if (isAnomaly) {
         console.log(`[STEALTH] Anomaly detected: profit=${opp.profitEstimate}, z-score=${zScore.toFixed(2)}`);
@@ -327,8 +334,8 @@ export class ContinuousLearningSystem {
   private getRandomAction(): RLAction {
     const paths: Array<'flashbots' | 'bloxroute' | 'direct'> = ['flashbots', 'bloxroute', 'direct'];
     return {
-      bidMultiplier: 0.8 + Math.random() * 0.4, // 0.8-1.2
-      gasMultiplier: 0.9 + Math.random() * 0.2, // 0.9-1.1
+      bidMultiplier: this.BID_MULTIPLIER_MIN + Math.random() * (this.BID_MULTIPLIER_MAX - this.BID_MULTIPLIER_MIN),
+      gasMultiplier: this.GAS_MULTIPLIER_MIN + Math.random() * (this.GAS_MULTIPLIER_MAX - this.GAS_MULTIPLIER_MIN),
       executionPath: paths[Math.floor(Math.random() * paths.length)],
       shouldExecute: Math.random() > 0.1 // 90% execute
     };

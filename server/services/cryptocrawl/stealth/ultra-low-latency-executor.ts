@@ -16,7 +16,7 @@ export class UltraLowLatencyExecutor {
   private preSignedTxPool: PreSignedTemplate[] = [];
   private gasHistory: GasHistory[] = [];
   private providers: Map<string, JsonRpcProvider> = new Map();
-  private wallet?: Wallet;
+  private wallet: Wallet | null = null;
 
   // Execution paths with URLs
   private executionPaths = {
@@ -25,8 +25,8 @@ export class UltraLowLatencyExecutor {
     direct: '' // Will use chain's RPC
   };
 
-  constructor(wallet?: Wallet) {
-    this.wallet = wallet;
+  constructor() {
+    // Wallet will be initialized via initialize()
   }
 
   /**
@@ -301,7 +301,10 @@ export class UltraLowLatencyExecutor {
    * Get target contract address for opportunity
    */
   private getTargetContract(opportunity: Opportunity): string {
-    // In production, this would lookup the DEX router address
+    // TODO: In production, implement proper contract address lookup
+    // This should query from a DEX router registry or configuration
+    // For now, return placeholder to prevent null errors
+    console.warn('[STEALTH] getTargetContract not implemented - using placeholder');
     return '0x0000000000000000000000000000000000000000';
   }
 
@@ -309,7 +312,10 @@ export class UltraLowLatencyExecutor {
    * Encode arbitrage transaction data
    */
   private encodeArbitrage(opportunity: Opportunity): string {
-    // In production, this would encode the actual swap path
+    // TODO: In production, implement actual arbitrage encoding
+    // This should encode swap paths for DEX routers (e.g., Uniswap V2/V3)
+    // Example: router.swapExactTokensForTokens(amountIn, amountOutMin, path, to, deadline)
+    console.warn('[STEALTH] encodeArbitrage not implemented - using placeholder');
     return '0x';
   }
 

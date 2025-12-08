@@ -12,6 +12,15 @@ interface MarketConditions {
   timestamp: number;
 }
 
+// Scaling thresholds (configurable)
+const SCALING_CONFIG = {
+  BURST_VOLATILITY_THRESHOLD: 5, // Volatility % for burst mode
+  BURST_DENSITY_THRESHOLD: 20,   // Opportunities/min for burst mode
+  HIGH_DENSITY_THRESHOLD: 10,    // Opportunities/min for high mode
+  MEDIUM_DENSITY_THRESHOLD: 5,   // Opportunities/min for medium mode
+  LOW_DENSITY_THRESHOLD: 3,      // Below this = low mode for cost savings
+} as const;
+
 export class DynamicScalePhysics {
   private currentProfile: ComputeProfile = 'low';
   private currentConfig: ScaleConfig;
@@ -85,7 +94,7 @@ export class DynamicScalePhysics {
     const originalCost = this.profileCosts[this.currentProfile];
 
     // If density is very low and profit is minimal, scale to minimum
-    if (conditions.opportunityDensity < 3 && conditions.avgProfit < 50) {
+    if (conditions.opportunityDensity < SCALING_CONFIG.LOW_DENSITY_THRESHOLD && conditions.avgProfit < 50) {
       if (this.currentProfile !== 'low') {
         await this.scaleToProfile('low');
         const optimizedCost = this.profileCosts['low'];
@@ -148,17 +157,18 @@ export class DynamicScalePhysics {
    */
   private determineOptimalProfile(conditions: MarketConditions): ComputeProfile {
     // Burst mode for extreme conditions
-    if (conditions.volatility > 5 || conditions.opportunityDensity > 20) {
+    if (conditions.volatility > SCALING_CONFIG.BURST_VOLATILITY_THRESHOLD || 
+        conditions.opportunityDensity > SCALING_CONFIG.BURST_DENSITY_THRESHOLD) {
       return 'burst';
     }
 
     // High mode for busy periods
-    if (conditions.opportunityDensity > 10) {
+    if (conditions.opportunityDensity > SCALING_CONFIG.HIGH_DENSITY_THRESHOLD) {
       return 'high';
     }
 
     // Medium mode for moderate activity
-    if (conditions.opportunityDensity > 5) {
+    if (conditions.opportunityDensity > SCALING_CONFIG.MEDIUM_DENSITY_THRESHOLD) {
       return 'medium';
     }
 

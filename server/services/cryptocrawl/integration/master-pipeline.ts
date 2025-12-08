@@ -28,10 +28,19 @@ class MasterPipeline {
       this.wallet = new Wallet(process.env.PRIVATE_KEY);
     }
 
+    // Known working public RPC endpoints by chain
+    const defaultRpcUrls: Record<string, string> = {
+      polygon: 'https://polygon-rpc.com',
+      bsc: 'https://bsc-dataseed.binance.org',
+      avalanche: 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: 'https://arb1.arbitrum.io/rpc',
+      optimism: 'https://mainnet.optimism.io'
+    };
+
     // Initialize providers for supported chains
     const chains = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
     for (const chain of chains) {
-      const rpcUrl = process.env[`${chain.toUpperCase()}_RPC_URL`] || `https://rpc.${chain}.network`;
+      const rpcUrl = process.env[`${chain.toUpperCase()}_RPC_URL`] || defaultRpcUrls[chain];
       this.providers.set(chain, new JsonRpcProvider(rpcUrl));
     }
 

@@ -280,8 +280,10 @@ export class OperationalIntegrity {
     const state = this.nonceState.get(chain);
     
     if (!state) {
-      // Initialize nonce state
-      const initialNonce = 0; // In production, fetch from provider
+      // Initialize nonce state - in production, fetch from provider
+      // TODO: Implement actual nonce fetching: await wallet.getNonce()
+      const initialNonce = 0; // Placeholder - will cause issues in production
+      console.warn('[STEALTH] Using placeholder nonce - implement wallet.getNonce() for production');
       this.nonceState.set(chain, {
         current: initialNonce,
         pending: new Set(),
