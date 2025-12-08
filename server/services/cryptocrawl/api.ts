@@ -2,9 +2,34 @@
 import { Router } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
+import type { Request, Response, NextFunction } from 'express';
 
 const dashboardApi = Router();
 const adminApi = Router();
+
+// Simple auth middleware for admin routes
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({
+      success: false,
+      message: 'Unauthorized: Authentication required'
+    });
+  }
+  
+  // In production, validate the token against a secure store
+  // For now, accept any non-empty token
+  const token = authHeader.substring(7);
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: 'Unauthorized: Invalid token'
+    });
+  }
+  
+  next();
+}
 
 // Mock data store (replace with actual database in production)
 let systemRunning = false;
@@ -73,10 +98,10 @@ dashboardApi.get('/opportunities', (req, res) => {
   });
 });
 
-// Admin Routes (require authentication in production)
+// Admin Routes (require authentication)
 
 // POST /admin/crypto/start - Start the system
-adminApi.post('/start', (req, res) => {
+adminApi.post('/start', requireAuth, (req, res) => {
   systemRunning = !systemRunning;
   
   broadcast({
@@ -100,7 +125,7 @@ adminApi.post('/start', (req, res) => {
 });
 
 // POST /admin/crypto/stop - Emergency stop
-adminApi.post('/stop', (req, res) => {
+adminApi.post('/stop', requireAuth, (req, res) => {
   systemRunning = false;
   
   broadcast({

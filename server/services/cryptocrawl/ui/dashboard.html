@@ -54,7 +54,7 @@
   <div class="header">
     <h1>🔥 CryptoCrawl</h1>
     <div class="status">
-      <div class="status-dot" id="statusDot"></div>
+      <div class="status-dot" id="statusDot" aria-label="System status indicator"></div>
       <span id="statusText">Running</span>
     </div>
   </div>
@@ -103,8 +103,8 @@
     <div class="section-title">
       <span>📈 Recent Trades</span>
       <div class="controls">
-        <button class="btn-primary" onclick="toggleSystem()">Start/Stop</button>
-        <button class="btn-danger" onclick="emergencyStop()">Emergency Stop</button>
+        <button class="btn-primary" onclick="toggleSystem()" aria-label="Toggle system on or off">Start/Stop</button>
+        <button class="btn-danger" onclick="emergencyStop()" aria-label="Emergency stop all operations">Emergency Stop</button>
       </div>
     </div>
     <div id="recentTrades"></div>

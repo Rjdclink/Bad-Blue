@@ -124,33 +124,66 @@ function addTrade(trade) {
 
 // System controls
 async function toggleSystem() {
-  const response = await fetch('/admin/crypto/start', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
-      'Content-Type': 'application/json'
-    }
-  });
-  
-  const result = await response.json();
-  alert(result.message || 'System toggled');
+  try {
+    const response = await fetch('/admin/crypto/start', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('adminToken') || ''}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const result = await response.json();
+    showNotification(result.message || 'System toggled', response.ok ? 'success' : 'error');
+  } catch (error) {
+    showNotification('Failed to toggle system', 'error');
+  }
 }
 
 async function emergencyStop() {
   if (!confirm('Emergency stop will halt all operations. Continue?')) return;
   
-  const response = await fetch('/admin/crypto/stop', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
-      'Content-Type': 'application/json'
+  try {
+    const response = await fetch('/admin/crypto/stop', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('adminToken') || ''}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const result = await response.json();
+    showNotification(result.message || 'Emergency stop executed', response.ok ? 'success' : 'error');
+    if (response.ok) {
+      document.getElementById('statusText').textContent = 'Stopped';
+      document.getElementById('statusDot').style.background = '#ef4444';
     }
-  });
+  } catch (error) {
+    showNotification('Failed to execute emergency stop', 'error');
+  }
+}
+
+// Simple notification system
+function showNotification(message, type = 'info') {
+  const notification = document.createElement('div');
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 15px 20px;
+    background: ${type === 'error' ? '#ef4444' : type === 'success' ? '#22c55e' : '#3b82f6'};
+    color: white;
+    border-radius: 8px;
+    z-index: 1000;
+    animation: slideIn 0.3s ease;
+  `;
+  notification.textContent = message;
+  document.body.appendChild(notification);
   
-  const result = await response.json();
-  alert(result.message || 'Emergency stop executed');
-  document.getElementById('statusText').textContent = 'Stopped';
-  document.getElementById('statusDot').style.background = '#ef4444';
+  setTimeout(() => {
+    notification.style.animation = 'slideOut 0.3s ease';
+    setTimeout(() => notification.remove(), 300);
+  }, 3000);
 }
 
 // Load initial data
@@ -181,24 +214,30 @@ connect();
 loadInitialData();
 setInterval(updateChart, 5000);
 
-// Mock data for testing (remove in production)
-setInterval(() => {
-  if (Math.random() > 0.7) {
-    addOpportunity({
-      asset: 'USDC/USDT',
-      chain: 'polygon',
-      profit: Math.random() * 200 + 20,
-      tier: 'SAFE',
-      successProbability: 0.85 + Math.random() * 0.1
-    });
-  }
+// Mock data for testing - only enabled if MOCK_DATA is set in localStorage
+const enableMockData = localStorage.getItem('MOCK_DATA') === 'true';
+
+if (enableMockData) {
+  console.log('🎭 Mock data enabled for testing');
   
-  if (Math.random() > 0.8) {
-    addTrade({
-      asset: 'WETH/MATIC',
-      timestamp: Date.now(),
-      success: Math.random() > 0.2,
-      profit: Math.random() * 150 + 10
-    });
-  }
-}, 3000);
+  setInterval(() => {
+    if (Math.random() > 0.7) {
+      addOpportunity({
+        asset: 'USDC/USDT',
+        chain: 'polygon',
+        profit: Math.random() * 200 + 20,
+        tier: 'SAFE',
+        successProbability: 0.85 + Math.random() * 0.1
+      });
+    }
+    
+    if (Math.random() > 0.8) {
+      addTrade({
+        asset: 'WETH/MATIC',
+        timestamp: Date.now(),
+        success: Math.random() > 0.2,
+        profit: Math.random() * 150 + 10
+      });
+    }
+  }, 3000);
+}
