@@ -71,7 +71,7 @@ class FlashbotsEngine {
     bundle.push({
       signer: this.wallet,
       transaction: {
-        to: 'block.coinbase',
+        to: 'block.coinbase', // Flashbots special address - replaced by validator at runtime
         value: this.toWei(validatorTip),
         gasLimit: 21000
       }
@@ -122,12 +122,19 @@ class FlashbotsEngine {
   }
   
   private encodeArbitrage(opp: Opportunity): string {
-    // Encode arbitrage function call
-    return '0x'; // Mock
+    // TODO: Encode actual arbitrage function call based on DEX router
+    // Example: router.swapExactTokensForTokens(amountIn, amountOutMin, path, to, deadline)
+    return '0x'; // Mock - must be implemented for production
   }
   
   private toWei(amount: number | string, unit: string = 'ether'): bigint {
-    return BigInt(Math.floor(Number(amount) * 1e18));
+    const multipliers: Record<string, number> = {
+      'wei': 1,
+      'gwei': 1e9,
+      'ether': 1e18
+    };
+    const multiplier = multipliers[unit] || 1e18;
+    return BigInt(Math.floor(Number(amount) * multiplier));
   }
 }
 

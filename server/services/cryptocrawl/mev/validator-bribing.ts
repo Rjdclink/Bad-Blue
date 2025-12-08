@@ -77,11 +77,8 @@ class ValidatorBribingStrategy {
   ): Promise<MultiBlockBundle> {
     
     // Coordinate across 2-3 blocks with validators
-    const blocks = [
-      await this.getCurrentBlock(),
-      await this.getCurrentBlock() + 1,
-      await this.getCurrentBlock() + 2
-    ];
+    const currentBlock = await this.getCurrentBlock();
+    const blocks = [currentBlock, currentBlock + 1, currentBlock + 2];
     
     const strategy = {
       block1: {
@@ -166,12 +163,16 @@ class ValidatorBribingStrategy {
   }
   
   private async getCurrentBlock(): Promise<number> {
-    return 18000000; // Mock
+    // TODO: Connect to actual provider to get current block
+    // Example: return await provider.getBlockNumber();
+    return 18000000; // Mock - must be implemented for production
   }
   
   private async submitProposal(proposal: any): Promise<boolean> {
-    // Would integrate with actual validator communication
-    return true;
+    // TODO: Integrate with actual validator communication protocol
+    // Example: await validatorRegistry.submitProposal(proposal);
+    console.log('[VALIDATOR] Proposal submitted:', proposal);
+    return true; // Mock - must be implemented for production
   }
 }
 
