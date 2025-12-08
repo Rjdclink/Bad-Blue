@@ -1,2 +1,1 @@
-export { WraithCrawler } from './wraith';
-export { HydraCrawler } from './hydra';
+export { IceCrawler } from './ice';

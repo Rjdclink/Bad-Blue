@@ -674,10 +674,83 @@ export class EnhancedWebSearchService {
   }
 
   private async executeSearch(query: string): Promise<any[]> {
-    // Integration point for actual search API
-    // When integrated with geminiSearch or other search APIs, replace this implementation
-    // Example: return await geminiSearch(query, { limit: 5 });
-    console.warn('[Enhanced Search] executeSearch is a placeholder - integrate with actual search API');
+    // Unified search: Try OpenRouter first (preferred for web search),
+    // fallback to Gemini grounding if unavailable
+    try {
+      // Try OpenRouter orchestrated web search first (preferred)
+      if (isOpenRouterWebSearchAvailable()) {
+        const webSearchResult = await orchestratedWebSearch(query, {
+          useOnlinePlugin: false, // Keep it free
+          timeout: 15000,
+        });
+
+        // Convert WebSearchResult to array of results
+        if (webSearchResult.aggregatedAnswer) {
+          return [{
+            title: `Web Search Results for "${query}"`,
+            snippet: webSearchResult.aggregatedAnswer,
+            url: '',
+            source: 'openrouter-orchestrated',
+            confidence: webSearchResult.confidence,
+            sources: webSearchResult.sources,
+            timestamp: webSearchResult.timestamp,
+          }];
+        }
+      }
+      
+      // Fallback to Gemini grounding search if OpenRouter unavailable
+      console.log('[Enhanced Search] Falling back to Gemini grounding search');
+      return await this.geminiGroundingSearch(query);
+      
+    } catch (error) {
+      console.error('[Enhanced Search] Search failed:', error);
+      // Try Gemini as last resort
+      try {
+        return await this.geminiGroundingSearch(query);
+      } catch (geminiError) {
+        console.error('[Enhanced Search] Gemini fallback also failed:', geminiError);
+        return [];
+      }
+    }
+  }
+
+  private async geminiGroundingSearch(query: string): Promise<any[]> {
+    // Implement Gemini grounding search as fallback
+    if (!GEMINI_API_KEY) {
+      return [];
+    }
+
+    try {
+      // Use shared client for efficiency
+      const genai = getGeminiClient();
+      const model = genai.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+
+      const result = await model.generateContent({
+        contents: [{
+          role: 'user',
+          parts: [{
+            text: `Search and provide information about: ${query}`
+          }]
+        }]
+      });
+
+      const response = await result.response;
+      const text = response.text();
+
+      if (text) {
+        return [{
+          title: `Search Results for "${query}"`,
+          snippet: text,
+          url: '',
+          source: 'gemini-grounding',
+          confidence: 0.7,
+          timestamp: new Date(),
+        }];
+      }
+    } catch (error) {
+      console.error('[Enhanced Search] Gemini search error:', error);
+    }
+
     return [];
   }
 
