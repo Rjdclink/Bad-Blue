@@ -25,6 +25,9 @@ interface GasPrediction {
   mean: number;
   volatility: number;
   recommended: number;
+  maxFeePerGas?: number; // 2024: EIP-1559 support
+  maxPriorityFeePerGas?: number; // 2024: EIP-1559 support
+  confidence: number; // 2024: Prediction confidence score
 }
 
 class UltraLowLatencyExecutor {
@@ -36,6 +39,7 @@ class UltraLowLatencyExecutor {
   private privateRpcUrl: string;
   private flashbotsUrl: string;
   private bloxrouteUrl: string;
+  private gasHistory: number[] = []; // 2024: Gas history tracking
 
   constructor() {
     this.privateRpcUrl = process.env.PRIVATE_RPC_URL || process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo';
@@ -244,8 +248,11 @@ class UltraLowLatencyExecutor {
   async predictOptimalGas(): Promise<GasPrediction> {
     try {
       const currentBlock = await this.provider.getBlockNumber();
+      
+      // 2024 Research: Fetch more blocks for better prediction (200 blocks ~40min)
+      const blockCount = Math.min(200, currentBlock);
       const blocks = await Promise.all(
-        Array.from({ length: Math.min(100, currentBlock) }, (_, i) => 
+        Array.from({ length: blockCount }, (_, i) => 
           this.provider.getBlock(currentBlock - i)
         )
       );
@@ -254,31 +261,68 @@ class UltraLowLatencyExecutor {
         .filter(b => b && b.baseFeePerGas)
         .map(b => Number(b!.baseFeePerGas));
 
+      // Store gas history for trend analysis
+      this.gasHistory = gasPrices.slice(0, 100);
+
       if (gasPrices.length === 0) {
         const feeData = await this.provider.getFeeData();
         const gasPrice = Number(feeData.gasPrice || parseUnits('1', 'gwei'));
         return {
           mean: gasPrice,
           volatility: 0,
-          recommended: gasPrice
+          recommended: gasPrice,
+          maxFeePerGas: gasPrice,
+          maxPriorityFeePerGas: Math.floor(gasPrice * 0.1),
+          confidence: 0.5
         };
       }
 
+      // Calculate statistical measures
       const mean = gasPrices.reduce((a, b) => a + b, 0) / gasPrices.length;
       const variance = gasPrices.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / gasPrices.length;
       const volatility = Math.sqrt(variance);
 
-      // 95% confidence: mean + (2 * volatility)
-      const recommended = Math.ceil(mean + (2 * volatility));
+      // 2024 Research: Use percentile-based recommendation (more robust than mean + 2σ)
+      const sortedPrices = [...gasPrices].sort((a, b) => a - b);
+      const p95Index = Math.floor(sortedPrices.length * 0.95);
+      const recommended = sortedPrices[p95Index] || mean + (2 * volatility);
+
+      // 2024: Calculate trend-based adjustment
+      const recentPrices = gasPrices.slice(0, 10);
+      const olderPrices = gasPrices.slice(10, 20);
+      const recentAvg = recentPrices.reduce((a, b) => a + b, 0) / recentPrices.length;
+      const olderAvg = olderPrices.reduce((a, b) => a + b, 0) / olderPrices.length;
+      const trend = (recentAvg - olderAvg) / olderAvg;
+
+      // Adjust recommendation based on trend
+      const trendAdjusted = trend > 0.1 ? recommended * 1.1 : recommended;
+
+      // 2024: EIP-1559 support
+      const maxFeePerGas = Math.ceil(trendAdjusted);
+      const maxPriorityFeePerGas = Math.ceil(maxFeePerGas * 0.15); // 15% tip
+
+      // Calculate confidence score based on data quality
+      const confidence = Math.min(1.0, gasPrices.length / 200);
 
       logger.debug('Gas prediction calculated', {
         component: 'UltraLowLatencyExecutor',
-        mean,
-        volatility,
-        recommended
+        mean: Math.floor(mean),
+        volatility: Math.floor(volatility),
+        recommended: maxFeePerGas,
+        maxPriorityFee: maxPriorityFeePerGas,
+        trend: `${(trend * 100).toFixed(2)}%`,
+        confidence: confidence.toFixed(2),
+        blocksAnalyzed: gasPrices.length
       });
 
-      return { mean, volatility, recommended };
+      return { 
+        mean, 
+        volatility, 
+        recommended: maxFeePerGas,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+        confidence
+      };
     } catch (error) {
       logger.warn('Failed to predict gas', {
         component: 'UltraLowLatencyExecutor',
@@ -292,7 +336,10 @@ class UltraLowLatencyExecutor {
       return {
         mean: gasPrice,
         volatility: 0,
-        recommended: gasPrice
+        recommended: gasPrice,
+        maxFeePerGas: gasPrice,
+        maxPriorityFeePerGas: Math.floor(gasPrice * 0.1),
+        confidence: 0.3
       };
     }
   }
