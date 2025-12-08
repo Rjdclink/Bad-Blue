@@ -55,7 +55,8 @@ export class MACRotationEngine {
       await execAsync(`ip link set ${interfaceName} down`);
       await execAsync(`ip link set ${interfaceName} address ${newMac}`);
       await execAsync(`ip link set ${interfaceName} up`);
-      await execAsync(`dhclient -r ${interfaceName} && dhclient ${interfaceName}`);
+      await execAsync(`dhclient -r ${interfaceName}`);
+      await execAsync(`dhclient ${interfaceName}`);
 
       const newIp = await this.getCurrentIP(interfaceName);
       const latency = await this.measureLatency(newIp);
