@@ -1,6 +1,8 @@
 import { ChainId, BridgeRoute } from './types';
 import { SUPPORTED_CHAINS } from './chain-config';
 
+const MIN_REBALANCE_AMOUNT = 10; // Minimum USD amount to trigger rebalancing
+
 const BRIDGES = {
   stargate: {
     name: 'Stargate Finance',
@@ -42,14 +44,14 @@ export class RouteOptimizer {
     
     for (const [bridgeKey, bridge] of Object.entries(BRIDGES)) {
       if (bridge.supportedChains.includes(fromChain) && bridge.supportedChains.includes(toChain)) {
-        const fee = amount * (bridge.avgFeePercent / 100);
+        const feeUsd = amount * (bridge.avgFeePercent / 100);
         routes.push({
           bridge: bridge.name,
           fromChain,
           toChain,
           token,
-          fee: bridge.avgFeePercent,
-          feeUsd: fee,
+          fee: feeUsd,
+          feeUsd,
           estimatedTime: bridge.avgTimeSeconds,
           url: this.buildBridgeUrl(bridgeKey, fromChain, toChain, token, amount)
         });
@@ -100,9 +102,9 @@ export class RouteOptimizer {
     
     for (const chain of Object.keys(currentBalances) as ChainId[]) {
       const diff = currentBalances[chain] - targetBalances[chain];
-      if (diff > 10) {
+      if (diff > MIN_REBALANCE_AMOUNT) {
         excess.push({ chain, amount: diff });
-      } else if (diff < -10) {
+      } else if (diff < -MIN_REBALANCE_AMOUNT) {
         deficit.push({ chain, amount: Math.abs(diff) });
       }
     }
@@ -110,7 +112,7 @@ export class RouteOptimizer {
     for (const e of excess) {
       for (const d of deficit) {
         const moveAmount = Math.min(e.amount, d.amount);
-        if (moveAmount > 10) {
+        if (moveAmount > MIN_REBALANCE_AMOUNT) {
           moves.push({
             from: e.chain,
             to: d.chain,

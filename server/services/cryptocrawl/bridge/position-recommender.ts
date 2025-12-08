@@ -1,5 +1,9 @@
 import { ChainId, PositionRecommendation, TokenBalance, GasPrice } from './types';
 
+const REBALANCE_THRESHOLD_PERCENT = 0.1; // 10% deviation triggers rebalancing
+const MIN_REBALANCE_AMOUNT_USD = 20; // Minimum USD amount to trigger rebalancing
+const MIN_TOTAL_BALANCE_USD = 10; // Minimum total balance required for rebalancing
+
 const OPPORTUNITY_WEIGHTS: Record<ChainId, number> = {
   polygon: 0.35,
   arbitrum: 0.30,
@@ -21,11 +25,18 @@ export class PositionRecommender {
 
   updateOpportunityDensity(chain: ChainId, density: number): void {
     this.opportunityDensity.set(chain, density);
+    
+    // Calculate total and normalize in a single pass
     let total = 0;
-    this.opportunityDensity.forEach(d => total += d);
-    this.opportunityDensity.forEach((d, c) => {
-      this.opportunityDensity.set(c, d / total);
-    });
+    for (const [, d] of this.opportunityDensity) {
+      total += d;
+    }
+    
+    if (total > 0) {
+      for (const [c, d] of this.opportunityDensity) {
+        this.opportunityDensity.set(c, d / total);
+      }
+    }
   }
 
   recordTradePerformance(chain: ChainId, profitUsd: number): void {
@@ -41,7 +52,7 @@ export class PositionRecommender {
   ): Promise<PositionRecommendation[]> {
     const totalValue = balances.reduce((sum, b) => sum + b.totalUsd, 0);
     
-    if (totalValue < 10) {
+    if (totalValue < MIN_TOTAL_BALANCE_USD) {
       return balances.map(b => ({
         chain: b.chain,
         currentUsd: b.totalUsd,
@@ -64,7 +75,7 @@ export class PositionRecommender {
       let action: 'add' | 'remove' | 'hold' = 'hold';
       let reason = 'Position is balanced';
       
-      if (Math.abs(diff) > totalValue * 0.1 || Math.abs(diff) > 20) {
+      if (Math.abs(diff) > totalValue * REBALANCE_THRESHOLD_PERCENT || Math.abs(diff) > MIN_REBALANCE_AMOUNT_USD) {
         if (diff > 0) {
           action = 'add';
           const density = this.opportunityDensity.get(chain) || 0;
