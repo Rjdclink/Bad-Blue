@@ -61,7 +61,7 @@ class MempoolIntelligence {
   private static readonly MIN_TX_COUNT_FOR_ARBITRAGE = 3;
   private static readonly MIN_TX_VALUE_FOR_ARBITRAGE = 1000;
   
-  private wsNodes: WebSocket[] = [];
+  private wsNodes: WebSocket.WebSocket[] = [];
   private pendingTxCache = new Map<string, PendingTx>();
   private avgBlockTime = 2000;
   private lastBlockTime = Date.now();
@@ -94,7 +94,7 @@ class MempoolIntelligence {
       if (this.wsConnected.has(endpoint)) continue;
       
       try {
-        const ws = new WebSocket(endpoint);
+        const ws = new WebSocket.WebSocket(endpoint);
         
         ws.on('open', () => {
           this.wsConnected.add(endpoint);
@@ -108,18 +108,18 @@ class MempoolIntelligence {
           console.log(`Successfully connected to ${endpoint}`);
         });
         
-        ws.on('message', (data) => {
+        ws.on('message', (data: WebSocket.RawData) => {
           let parsed;
           try {
             parsed = JSON.parse(data.toString());
-          } catch (err) {
+          } catch (err: any) {
             console.error('Failed to parse WebSocket message as JSON:', err, 'Raw data:', data.toString().substring(0, 100));
             return;
           }
           this.processPendingTx(parsed);
         });
         
-        ws.on('error', (err) => {
+        ws.on('error', (err: Error) => {
           console.error(`WebSocket error for ${endpoint}:`, err.message);
         });
         
@@ -812,7 +812,7 @@ class RealisticEnhancements {
       
       let priorityFee: number;
       try {
-        const priorityFeeHex = await provider.send('eth_maxPriorityFeePerGas', []);
+        const priorityFeeHex = await (provider as any).send('eth_maxPriorityFeePerGas', []);
         priorityFee = Number(ethers.utils.formatUnits(priorityFeeHex, 'gwei'));
       } catch (e) {
         // Fallback to a reasonable default if RPC call fails
