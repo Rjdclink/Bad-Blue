@@ -153,6 +153,10 @@ class NetworkHealthMonitor {
   isRunning(): boolean {
     return this.running;
   }
+
+  getHealthStatus(): Map<ChainId, NetworkHealth> {
+    return this.healthStatus;
+  }
 }
 
 export const networkHealth = new NetworkHealthMonitor();

@@ -1,179 +1,80 @@
-import express, { Request, Response, NextFunction } from 'express';
-import { balanceMonitor, gasOracle, networkHealth, ChainId } from '../bridge';
+import express from 'express';
+import { bridgeManager } from '../bridge/bridge-manager';
+import { withdrawDepositManager } from '../bridge/withdraw-deposit';
+import { routeOptimizer } from '../bridge/route-optimizer';
+import { ChainId } from '../bridge/types';
 
 const router = express.Router();
 
-// Valid chains list
-const VALID_CHAINS: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];
+router.get('/status', (req, res) => {
+  res.json({ running: bridgeManager.isRunning(), withdrawEnabled: withdrawDepositManager.isInitialized() });
+});
 
-/**
- * Middleware to validate chain parameter
- */
-function validateChain(req: Request, res: Response, next: NextFunction) {
-  const { chain } = req.params;
-  
-  if (!VALID_CHAINS.includes(chain as ChainId)) {
-    return res.status(400).json({
-      success: false,
-      error: `Invalid chain. Must be one of: ${VALID_CHAINS.join(', ')}`
-    });
-  }
-  
-  next();
-}
-
-/**
- * GET /api/bridge/balances
- * Returns all token balances for the configured wallet across all chains
- */
-router.get('/balances', async (req: Request, res: Response) => {
+router.post('/start', async (req, res) => {
   try {
-    const balances = await balanceMonitor.getAllBalances();
-    const totalPortfolio = await balanceMonitor.getTotalPortfolioValue();
-
-    res.json({
-      success: true,
-      data: {
-        balances,
-        totalPortfolio,
-        timestamp: Date.now()
-      }
-    });
+    await bridgeManager.start();
+    res.json({ success: true, status: 'running' });
   } catch (error: any) {
-    console.error('Error fetching balances:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to fetch balances'
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-/**
- * GET /api/bridge/balances/:chain
- * Returns token balances for a specific chain
- */
-router.get('/balances/:chain', validateChain, async (req: Request, res: Response) => {
+router.post('/stop', async (req, res) => {
   try {
-    const { chain } = req.params;
-    
-    const balance = await balanceMonitor.getBalance(chain as ChainId);
-
-    res.json({
-      success: true,
-      data: balance
-    });
+    await bridgeManager.stop();
+    res.json({ success: true, status: 'stopped' });
   } catch (error: any) {
-    console.error(`Error fetching balance for ${req.params.chain}:`, error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to fetch balance'
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-/**
- * GET /api/bridge/gas
- * Returns current gas prices for all chains
- */
-router.get('/gas', async (req: Request, res: Response) => {
-  try {
-    await gasOracle.updateAllGasPrices();
-    
-    const gasPrices = await Promise.all(
-      VALID_CHAINS.map(chain => gasOracle.getGasPrice(chain))
-    );
-
-    const cheapestChain = await gasOracle.getCheapestChain();
-
-    res.json({
-      success: true,
-      data: {
-        gasPrices,
-        cheapestChain,
-        timestamp: Date.now()
-      }
-    });
-  } catch (error: any) {
-    console.error('Error fetching gas prices:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to fetch gas prices'
-    });
-  }
+router.get('/state', async (req, res) => {
+  const state = await bridgeManager.getFullState();
+  res.json(state);
 });
 
-/**
- * GET /api/bridge/gas/:chain
- * Returns current gas price for a specific chain
- */
-router.get('/gas/:chain', validateChain, async (req: Request, res: Response) => {
-  try {
-    const { chain } = req.params;
-    
-    const gasPrice = await gasOracle.getGasPrice(chain as ChainId);
-
-    res.json({
-      success: true,
-      data: gasPrice
-    });
-  } catch (error: any) {
-    console.error(`Error fetching gas price for ${req.params.chain}:`, error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to fetch gas price'
-    });
-  }
+router.get('/balances', async (req, res) => {
+  if (!bridgeManager.isRunning()) return res.status(503).json({ error: 'System not running' });
+  res.json({ balances: await bridgeManager.getBalances(), wallet: '0x3d9bf00bB691793Cd256563fd14819B395306f62' });
 });
 
-/**
- * GET /api/bridge/health
- * Returns network health status for all chains
- */
-router.get('/health', async (req: Request, res: Response) => {
-  try {
-    const healthChecks = await networkHealth.checkAllNetworks();
-    const healthyChains = await networkHealth.getHealthyChains();
-    const bestChain = await networkHealth.getBestPerformingChain();
-
-    res.json({
-      success: true,
-      data: {
-        networks: healthChecks,
-        healthyChains,
-        bestPerformingChain: bestChain,
-        timestamp: Date.now()
-      }
-    });
-  } catch (error: any) {
-    console.error('Error checking network health:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to check network health'
-    });
-  }
+router.get('/gas', async (req, res) => {
+  if (!bridgeManager.isRunning()) return res.status(503).json({ error: 'System not running' });
+  res.json({ gasPrices: await bridgeManager.getGasPrices() });
 });
 
-/**
- * GET /api/bridge/health/:chain
- * Returns network health status for a specific chain
- */
-router.get('/health/:chain', validateChain, async (req: Request, res: Response) => {
-  try {
-    const { chain } = req.params;
-    
-    const health = await networkHealth.checkNetwork(chain as ChainId);
-
-    res.json({
-      success: true,
-      data: health
-    });
-  } catch (error: any) {
-    console.error(`Error checking health for ${req.params.chain}:`, error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to check network health'
-    });
-  }
+router.get('/recommendations', async (req, res) => {
+  if (!bridgeManager.isRunning()) return res.status(503).json({ error: 'System not running' });
+  res.json({ recommendations: await bridgeManager.getRecommendations() });
 });
 
-export default router;
+router.get('/routes', (req, res) => {
+  const { from, to, token, amount } = req.query;
+  if (!from || !to || !token || !amount) return res.status(400).json({ error: 'Missing params' });
+  res.json({ routes: bridgeManager.getBridgeRoutes(from as ChainId, to as ChainId, token as 'USDT' | 'USDC', parseFloat(amount as string)) });
+});
+
+router.get('/deposit/:chain', (req, res) => {
+  const chain = req.params.chain as ChainId;
+  res.json(withdrawDepositManager.getDepositInfo(chain));
+});
+
+router.get('/deposit', (req, res) => {
+  res.json({ addresses: withdrawDepositManager.getAllDepositAddresses() });
+});
+
+router.post('/withdraw', async (req, res) => {
+  if (!bridgeManager.isRunning()) return res.status(503).json({ error: 'System not running' });
+  const { chain, token, amount, toAddress } = req.body;
+  if (!chain || !token || !amount || !toAddress) return res.status(400).json({ error: 'Missing params' });
+  const result = await withdrawDepositManager.withdraw({ chain, token, amount: parseFloat(amount), toAddress });
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+router.get('/withdraw/estimate', async (req, res) => {
+  const { chain, token } = req.query;
+  if (!chain || !token) return res.status(400).json({ error: 'Missing params' });
+  res.json(await withdrawDepositManager.estimateWithdrawGas(chain as ChainId, token as 'native' | 'USDT' | 'USDC'));
+});
+
+export { router as bridgeApi };

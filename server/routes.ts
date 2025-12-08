@@ -39,7 +39,7 @@ import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
-import bridgeApi from "./services/cryptocrawl/api/bridge-api";
+import { bridgeApi } from "./services/cryptocrawl/api/bridge-api";
 import {
   generateLegalDocument,
   searchPublicRecords,
