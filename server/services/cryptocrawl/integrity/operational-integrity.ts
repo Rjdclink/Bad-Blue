@@ -73,13 +73,12 @@ class OperationalIntegrity {
     await this.nonceMutex.acquire();
 
     try {
-      // Get nonce with retry logic
-      const nonce = await this.getNonceWithRetry(3);
+      // The nonce will be managed by the execution function itself
+      // We just ensure sequential execution here
       
-      logger.debug('Executing opportunity with nonce', {
+      logger.debug('Executing opportunity with mutex lock', {
         component: 'OperationalIntegrity',
-        opportunityId: opp.id,
-        nonce
+        opportunityId: opp.id
       });
 
       // Execute the opportunity
@@ -104,12 +103,13 @@ class OperationalIntegrity {
     }
   }
 
-  private async getNonceWithRetry(maxAttempts: number): Promise<number> {
+  private async getNonceWithRetry(walletAddress: string, maxAttempts: number): Promise<number> {
     let lastError: Error | undefined;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const nonce = await this.primaryProvider.getBlockNumber();
+        // Get the transaction count (nonce) for the wallet
+        const nonce = await this.primaryProvider.getTransactionCount(walletAddress);
         return nonce;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));

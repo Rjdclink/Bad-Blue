@@ -1,4 +1,4 @@
-import { parseEther } from 'ethers';
+import { parseEther, parseUnits } from 'ethers';
 import logger from '../../../logger.js';
 
 interface Opportunity {
@@ -28,6 +28,9 @@ interface TipCalculation {
   tipPercentage: number;
   competitionAdjustment: number;
 }
+
+// Flashbots magic address - replaced at submission
+const BLOCK_COINBASE = 'block.coinbase';
 
 class ValidatorBribingAdvanced {
   private readonly BASE_TIP_PERCENTAGE = 0.35; // 35% of profit
@@ -109,7 +112,7 @@ class ValidatorBribingAdvanced {
     const validatorTip = totalProfit * this.BASE_TIP_PERCENTAGE;
     
     transactions.push({
-      to: 'block.coinbase', // Flashbots magic address - replaced at submission
+      to: BLOCK_COINBASE, // Flashbots magic address - replaced at submission
       value: parseEther(validatorTip.toString()).toString(),
       data: '0x',
       gasLimit: 21000
@@ -153,7 +156,7 @@ class ValidatorBribingAdvanced {
     const validatorPayment = opp.expectedProfit * this.BASE_TIP_PERCENTAGE;
     
     transactions.push({
-      to: 'block.coinbase',
+      to: BLOCK_COINBASE,
       value: parseEther(validatorPayment.toString()).toString(),
       data: '0x',
       gasLimit: 21000

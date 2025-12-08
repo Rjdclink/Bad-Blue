@@ -1,4 +1,4 @@
-import { Wallet, Transaction, JsonRpcProvider, parseEther } from 'ethers';
+import { Wallet, Transaction, JsonRpcProvider, parseEther, parseUnits } from 'ethers';
 import logger from '../../../logger.js';
 
 interface OpportunityData {
@@ -256,10 +256,11 @@ class UltraLowLatencyExecutor {
 
       if (gasPrices.length === 0) {
         const feeData = await this.provider.getFeeData();
+        const gasPrice = Number(feeData.gasPrice || parseUnits('1', 'gwei'));
         return {
-          mean: Number(feeData.gasPrice || parseEther('0.00000001')),
+          mean: gasPrice,
           volatility: 0,
-          recommended: Number(feeData.gasPrice || parseEther('0.00000001'))
+          recommended: gasPrice
         };
       }
 
@@ -286,7 +287,7 @@ class UltraLowLatencyExecutor {
       
       // Fallback to current gas price
       const feeData = await this.provider.getFeeData();
-      const gasPrice = Number(feeData.gasPrice || parseEther('0.00000001'));
+      const gasPrice = Number(feeData.gasPrice || parseUnits('1', 'gwei'));
       
       return {
         mean: gasPrice,

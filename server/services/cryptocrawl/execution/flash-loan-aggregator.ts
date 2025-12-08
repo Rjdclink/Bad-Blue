@@ -155,13 +155,33 @@ class FlashLoanAggregator {
       // Execute flash loan callback
       const profit = await callback(amount);
       
-      // Validate profit covers fees
+      // Validate profit covers fees and repayment
       if (profit <= totalFee) {
         logger.warn('Flash loan profit insufficient to cover fees', {
           component: 'FlashLoanAggregator',
           profit,
           totalFee,
           netLoss: totalFee - profit
+        });
+        
+        return {
+          success: false,
+          totalFee,
+          allocations
+        };
+      }
+
+      // Validate that loan can be repaid (in production, this would check actual balances)
+      const totalBorrowed = allocations.reduce((sum, alloc) => sum + alloc.amount, 0);
+      const totalRepayment = totalBorrowed + totalFee;
+      
+      if (profit < totalRepayment) {
+        logger.warn('Flash loan profit insufficient for repayment', {
+          component: 'FlashLoanAggregator',
+          profit,
+          totalBorrowed,
+          totalRepayment,
+          shortfall: totalRepayment - profit
         });
         
         return {
