@@ -1,8 +1,6 @@
 import { ethers } from 'ethers';
 import { ChainId } from './types';
-import { SUPPORTED_CHAINS, ERC20_ABI } from './chain-config';
-
-const USER_WALLET = '0x3d9bf00bB691793Cd256563fd14819B395306f62';
+import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, DEFAULT_GAS_LIMIT, TOKEN_TRANSFER_GAS_LIMIT, NATIVE_TOKEN_PRICES } from './chain-config';
 
 export interface WithdrawRequest {
   chain: ChainId;
@@ -67,7 +65,7 @@ export class WithdrawDepositManager {
   }
 
   getAllDepositAddresses(): DepositInfo[] {
-    return (['polygon', 'arbitrum', 'avalanche', 'bsc'] as ChainId[]).map(c => this.getDepositInfo(c));
+    return (Object.keys(SUPPORTED_CHAINS) as ChainId[]).map(c => this.getDepositInfo(c));
   }
 
   async withdrawNative(chain: ChainId, amount: number, toAddress: string): Promise<WithdrawResult> {
@@ -112,7 +110,7 @@ export class WithdrawDepositManager {
   }
 
   async withdraw(request: WithdrawRequest): Promise<WithdrawResult> {
-    if (!this.initialized) return { success: false, error: 'Not initialized. Start system first.' };
+    if (!this.initialized) return { success: false, error: 'Manager not initialized. Call initialize() first.' };
     if (request.token === 'native') {
       return this.withdrawNative(request.chain, request.amount, request.toAddress);
     }
@@ -124,8 +122,7 @@ export class WithdrawDepositManager {
   }
 
   async estimateWithdrawGas(chain: ChainId, token: 'native' | 'USDT' | 'USDC'): Promise<{ gasLimit: number; gasCostUsd: number }> {
-    const gasLimits = { native: 21000, USDT: 65000, USDC: 65000 };
-    const gasLimit = gasLimits[token];
+    const gasLimit = token === 'native' ? DEFAULT_GAS_LIMIT : TOKEN_TRANSFER_GAS_LIMIT;
     const wallet = this.wallets.get(chain);
     if (!wallet?.provider) return { gasLimit, gasCostUsd: 0 };
 
@@ -133,8 +130,7 @@ export class WithdrawDepositManager {
       const feeData = await wallet.provider.getFeeData();
       const gasPrice = feeData.gasPrice || BigInt(0);
       const gasCost = parseFloat(ethers.formatEther(gasPrice * BigInt(gasLimit)));
-      const prices: Record<ChainId, number> = { polygon: 0.5, arbitrum: 2500, avalanche: 25, bsc: 300 };
-      return { gasLimit, gasCostUsd: gasCost * (prices[chain] || 1) };
+      return { gasLimit, gasCostUsd: gasCost * (NATIVE_TOKEN_PRICES[chain] || 1) };
     } catch {
       return { gasLimit, gasCostUsd: 0 };
     }

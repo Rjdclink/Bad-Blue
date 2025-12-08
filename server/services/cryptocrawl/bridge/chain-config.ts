@@ -67,3 +67,12 @@ export const NETWORK_HEALTH_THRESHOLD_MS = 5000; // Consider network healthy if 
 
 // Gas estimation configuration
 export const DEFAULT_GAS_LIMIT = 21000; // Gas limit for simple transfer
+export const TOKEN_TRANSFER_GAS_LIMIT = 65000; // Gas limit for ERC20 token transfers
+
+// Native token prices for gas estimation (USD)
+export const NATIVE_TOKEN_PRICES: Record<ChainId, number> = {
+  polygon: 0.5,
+  arbitrum: 2500,
+  avalanche: 25,
+  bsc: 300
+};
