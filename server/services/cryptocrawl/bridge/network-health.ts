@@ -6,10 +6,11 @@ class NetworkHealthMonitor {
   private providers: Map<ChainId, ethers.JsonRpcProvider> = new Map();
   private healthStatus: Map<ChainId, NetworkHealth> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
+  private running: boolean = false;
 
   constructor() {
-    this.initializeProviders();
-    this.startAutoUpdate();
+    // Do NOT auto-initialize - wait for manual start
+    console.log('[NetworkHealth] Created (inactive - waiting for manual start)');
   }
 
   private initializeProviders(): void {
@@ -106,16 +107,51 @@ class NetworkHealthMonitor {
     // Update network health every 30 seconds
     this.updateInterval = setInterval(() => {
       this.checkAllNetworks().catch(error => {
-        console.error('Auto-update network health failed:', error);
+        console.error('[NetworkHealth] Auto-update failed:', error);
       });
     }, 30000);
   }
 
-  stop(): void {
+  async start(): Promise<void> {
+    if (this.running) {
+      console.log('[NetworkHealth] Already running');
+      return;
+    }
+    
+    console.log('[NetworkHealth] Starting...');
+    this.running = true;
+    
+    // Initialize providers
+    this.initializeProviders();
+    
+    // Do initial health check
+    await this.checkAllNetworks();
+    
+    // Start update interval
+    this.startAutoUpdate();
+    
+    console.log('[NetworkHealth] ✓ Started');
+  }
+
+  async stop(): Promise<void> {
+    if (!this.running) {
+      console.log('[NetworkHealth] Already stopped');
+      return;
+    }
+    
+    console.log('[NetworkHealth] Stopping...');
+    this.running = false;
+    
     if (this.updateInterval) {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
     }
+    
+    console.log('[NetworkHealth] ✓ Stopped');
+  }
+
+  isRunning(): boolean {
+    return this.running;
   }
 }
 
