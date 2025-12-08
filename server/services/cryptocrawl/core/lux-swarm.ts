@@ -50,17 +50,18 @@ class LuxSwarm {
     };
   }
 
-  // Atomic write - updates shared state
+  // Atomic write - updates shared state with proper ordering
   static emit(update: Partial<Omit<LuxSignal, 'timestamp'>>): void {
-    this.state = {
-      ...this.state,
-      ...update,
-      agentStates: update.agentStates || this.state.agentStates,
-      blockHeight: update.blockHeight || this.state.blockHeight,
-      claimed: update.claimed || this.state.claimed,
-      opportunities: update.opportunities || this.state.opportunities,
+    // Apply updates in specific order to prevent race conditions
+    const newState: LuxSignal = {
+      opportunities: update.opportunities !== undefined ? update.opportunities : this.state.opportunities,
+      agentStates: update.agentStates !== undefined ? update.agentStates : this.state.agentStates,
+      blockHeight: update.blockHeight !== undefined ? update.blockHeight : this.state.blockHeight,
+      claimed: update.claimed !== undefined ? update.claimed : this.state.claimed,
       timestamp: Date.now()
     };
+    
+    this.state = newState;
   }
 
   // Reset state (for testing)

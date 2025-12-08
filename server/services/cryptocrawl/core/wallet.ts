@@ -57,8 +57,11 @@ class WalletManager {
   private encryptionKey: Buffer;
 
   constructor() {
-    // Derive encryption key from password "CRYPTOCRAWL"
-    this.encryptionKey = crypto.pbkdf2Sync('CRYPTOCRAWL', 'salt', 100000, 32, 'sha256');
+    // Derive encryption key from password "CRYPTOCRAWL" (as specified in requirements)
+    // NOTE: In production, use environment variable and secure salt from key management system
+    const password = process.env.WALLET_ENCRYPTION_PASSWORD || 'CRYPTOCRAWL';
+    const salt = process.env.WALLET_ENCRYPTION_SALT || crypto.randomBytes(16).toString('hex');
+    this.encryptionKey = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
   }
 
   // Initialize wallet from DB or create new
