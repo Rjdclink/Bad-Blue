@@ -1,13 +1,13 @@
-import {Wallet, providers} from 'ethers';
+import {Wallet, JsonRpcProvider} from 'ethers';
 import {FlashbotsBundleProvider} from '@flashbots/ethers-provider-bundle';
 
 class FlashbotsEngine {
-  private provider: providers.JsonRpcProvider;
+  private provider: JsonRpcProvider;
   private flashbots: FlashbotsBundleProvider;
   private wallet: Wallet;
   
   async initialize() {
-    this.provider = new providers.JsonRpcProvider(process.env.RPC_URL);
+    this.provider = new JsonRpcProvider(process.env.RPC_URL);
     this.wallet = new Wallet(
       process.env.PRIVATE_KEY || Wallet.createRandom().privateKey,
       this.provider

@@ -1,5 +1,5 @@
 // Wallet Manager - Multi-chain wallet with AES-256 encryption
-import { ethers } from 'ethers';
+import { Wallet, HDNodeWallet, JsonRpcProvider, formatEther, parseEther } from 'ethers';
 import { randomBytes, pbkdf2Sync, createCipheriv, createDecipheriv } from 'crypto';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
@@ -37,7 +37,7 @@ interface WithdrawParams {
   amount: string;
 }
 
-type ConnectedWallet = ethers.Wallet;
+type ConnectedWallet = Wallet | HDNodeWallet;
 
 // Load chain configs
 const __filename = fileURLToPath(import.meta.url);
@@ -55,8 +55,8 @@ const getRpcUrl = (config: ChainConfig): string => {
 };
 
 class WalletManager {
-  private wallet?: ethers.Wallet;
-  private providers = new Map<ChainId, ethers.providers.JsonRpcProvider>();
+  private wallet?: Wallet | HDNodeWallet;
+  private providers = new Map<ChainId, JsonRpcProvider>();
   private encryptionKey: Buffer;
 
   constructor() {
@@ -74,15 +74,15 @@ class WalletManager {
     
     if (stored) {
       const privateKey = this.decrypt(stored.encryptedKey);
-      this.wallet = new ethers.Wallet(privateKey);
+      this.wallet = new Wallet(privateKey);
     } else {
       // Create new wallet with random mnemonic
-      this.wallet = ethers.Wallet.createRandom();
+      this.wallet = Wallet.createRandom();
       const encryptedKey = this.encrypt(this.wallet.privateKey);
       const data: WalletData = {
         address: this.wallet.address,
         encryptedKey,
-        mnemonic: this.wallet.mnemonic?.phrase,
+        mnemonic: this.wallet instanceof HDNodeWallet ? this.wallet.mnemonic?.phrase : undefined,
         chains: Object.keys(chainConfigs) as ChainId[]
       };
       this.saveToDB(data);
@@ -91,7 +91,7 @@ class WalletManager {
     // Connect providers for all chains
     for (const [chainId, config] of Object.entries(chainConfigs)) {
       const rpcUrl = getRpcUrl(config);
-      const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+      const provider = new JsonRpcProvider(rpcUrl);
       this.providers.set(chainId as ChainId, provider);
     }
 
@@ -106,7 +106,7 @@ class WalletManager {
   getWallet(chain: ChainId): ConnectedWallet {
     const provider = this.providers.get(chain);
     if (!provider || !this.wallet) throw new Error(`Chain ${chain} not initialized`);
-    return this.wallet.connect(provider);
+    return this.wallet.connect(provider) as ConnectedWallet;
   }
 
   // Fetch balances across all chains
@@ -120,7 +120,7 @@ class WalletManager {
         return {
           chain,
           token: config.nativeToken,
-          balance: ethers.utils.formatEther(balance),
+          balance: formatEther(balance),
           balanceWei: balance.toString()
         };
       })
@@ -136,7 +136,7 @@ class WalletManager {
     
     const tx = await wallet.sendTransaction({
       to,
-      value: ethers.utils.parseEther(amount),
+      value: parseEther(amount),
       gasLimit: 21000
     });
     
