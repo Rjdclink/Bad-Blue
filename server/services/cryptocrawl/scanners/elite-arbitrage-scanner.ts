@@ -116,14 +116,27 @@ class MultilateralPriceIndexer {
 
 // (C) LIQUIDITY-ADAPTIVE EXECUTION
 class LiquidityAdaptiveExecutor {
+  private static readonly MIN_POOL_DEPTH_MULTIPLIER = 5;
+  private static readonly MAX_SLIPPAGE_THRESHOLD = 0.01;
+
   async analyzeExecution(pair: string, amount: number): Promise<ExecutionAnalysis> {
     const poolDepth = await this.getPoolDepthBeforeSlippage(pair);
     const virtualPrice = await this.getVirtualPriceAfterTrade(pair, amount);
     const liquidityReset = await this.checkLiquidityResets(pair);
     const feeTier = await this.getFeeTierDifferentials(pair);
     const slippage = Math.abs(virtualPrice - 1.0);
-    const safe = poolDepth > amount * 5 && slippage < 0.01 && !liquidityReset;
-    return { safe, poolDepth, virtualPrice, slippage, feeTier, expectedOutput: amount * virtualPrice * (1 - feeTier) };
+    const safe =
+      poolDepth > amount * LiquidityAdaptiveExecutor.MIN_POOL_DEPTH_MULTIPLIER &&
+      slippage < LiquidityAdaptiveExecutor.MAX_SLIPPAGE_THRESHOLD &&
+      !liquidityReset;
+    return {
+      safe,
+      poolDepth,
+      virtualPrice,
+      slippage,
+      feeTier,
+      expectedOutput: amount * virtualPrice * (1 - feeTier),
+    };
   }
 
   // NOTE: Production implementation should query actual DEX contracts
