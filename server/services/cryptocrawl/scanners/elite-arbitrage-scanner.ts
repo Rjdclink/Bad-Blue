@@ -172,7 +172,8 @@ class PrivateRPCRouter {
 // (E) MACHINE-LEARNED OPPORTUNITY FILTERING
 class MLOpportunityFilter {
   private trainingData: Array<{ features: number[]; success: boolean }> = [];
-  private weights: number[] = [0.5, 0.3, 0.2, -0.4, 0.6];
+  // Initialize weights to small random values in [-0.1, 0.1] to avoid bias
+  private weights: number[] = Array.from({ length: 5 }, () => (Math.random() * 0.2 - 0.1));
 
   train(pastTrades: Array<{ blockTime: number; gasCost: number; slippage: number; liquidity: number; profit: number; success: boolean }>): void {
     this.trainingData = pastTrades.map(t => ({ features: [t.blockTime, t.gasCost, t.slippage, t.liquidity, t.profit], success: t.success }));
