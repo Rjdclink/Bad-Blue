@@ -59,6 +59,7 @@ router.post('/stop', async (req, res) => {
   }
   
   systemState.running = false;
+  pipeline.stop();
   
   res.json({
     success: true,
@@ -92,17 +93,31 @@ router.get('/config', (req, res) => {
 router.post('/config', (req, res) => {
   const updates = req.body;
   
-  // Validate
+  // Validate inputs
   if (updates.minProfitThreshold !== undefined) {
+    if (typeof updates.minProfitThreshold !== 'number' || updates.minProfitThreshold < 0) {
+      return res.status(400).json({error: 'minProfitThreshold must be a positive number'});
+    }
     systemState.config.minProfitThreshold = updates.minProfitThreshold;
   }
   if (updates.maxGasPrice !== undefined) {
+    if (typeof updates.maxGasPrice !== 'number' || updates.maxGasPrice <= 0) {
+      return res.status(400).json({error: 'maxGasPrice must be a positive number'});
+    }
     systemState.config.maxGasPrice = updates.maxGasPrice;
   }
   if (updates.enabledChains !== undefined) {
+    const validChains = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
+    if (!Array.isArray(updates.enabledChains) || !updates.enabledChains.every((c: string) => validChains.includes(c))) {
+      return res.status(400).json({error: 'enabledChains must be an array of valid chain names'});
+    }
     systemState.config.enabledChains = updates.enabledChains;
   }
   if (updates.riskLevel !== undefined) {
+    const validLevels = ['conservative', 'balanced', 'aggressive'];
+    if (!validLevels.includes(updates.riskLevel)) {
+      return res.status(400).json({error: 'riskLevel must be one of: conservative, balanced, aggressive'});
+    }
     systemState.config.riskLevel = updates.riskLevel;
   }
   

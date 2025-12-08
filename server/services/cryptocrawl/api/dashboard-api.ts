@@ -53,7 +53,7 @@ router.get('/opportunities', async (req, res) => {
       asset: opp.asset,
       chain: opp.chain,
       profit: opp.profitEstimate,
-      successProbability: Math.random() * 0.3 + 0.7,
+      successProbability: 0.85, // TODO: Calculate from historical data
       tier: opp.priority > 70 ? 'A' : opp.priority > 40 ? 'B' : 'C',
       age: Date.now() - opp.timestamp
     }))
@@ -82,7 +82,18 @@ router.post('/withdraw', async (req, res) => {
     return res.status(400).json({error: 'Missing parameters'});
   }
   
+  // Validate amount
+  if (typeof amount !== 'number' || amount <= 0) {
+    return res.status(400).json({error: 'Invalid amount'});
+  }
+  
+  // Validate Ethereum address format
+  if (!/^0x[a-fA-F0-9]{40}$/.test(toAddress)) {
+    return res.status(400).json({error: 'Invalid Ethereum address format'});
+  }
+  
   try {
+    // TODO: Check available balance before withdrawal
     const txHash = await executeWithdrawal(amount, token, toAddress);
     res.json({success: true, txHash});
   } catch (error: any) {
@@ -152,11 +163,18 @@ async function getWalletBalances() {
   ];
 }
 
+// Helper: Execute withdrawal (STUB - Replace with actual wallet integration)
 async function executeWithdrawal(amount: number, token: string, to: string) {
+  // TODO: Integrate with WalletManager for actual withdrawals
+  // For now, return a mock transaction hash
+  console.warn('⚠️ STUB: executeWithdrawal not yet implemented');
   return '0x' + Math.random().toString(16).slice(2, 66);
 }
 
+// Helper: Get trade history (STUB - Replace with database queries)
 async function getTradeHistory(limit: number) {
+  // TODO: Query from crypto_transactions table
+  console.warn('⚠️ STUB: getTradeHistory not yet implemented');
   return Array(limit).fill(null).map((_, i) => ({
     timestamp: Date.now() - i * 60000,
     asset: 'USDC/USDT',
