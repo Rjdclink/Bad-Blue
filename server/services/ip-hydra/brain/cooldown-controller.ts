@@ -10,11 +10,12 @@ export class CooldownController {
   private intensityMetrics: Map<string, IntensityMetrics> = new Map();
   private logger: EventLogger;
   
-  // Configuration
-  private maxSwapsPerMinute = parseInt(process.env.HYDRA_MAX_SWAPS_PER_MIN || '3');
-  private baseCooldownSeconds = 30;
-  private networkWideCooldownSeconds = 120;
-  private networkWideDetectionThreshold = 10;
+  // Configuration - tunable based on operational requirements
+  private readonly maxSwapsPerMinute = parseInt(process.env.HYDRA_MAX_SWAPS_PER_MIN || '3');
+  private readonly baseCooldownSeconds = 30;
+  private readonly MAX_COOLDOWN_SECONDS = 600; // 10 minutes maximum
+  private readonly networkWideCooldownSeconds = 120;
+  private readonly networkWideDetectionThreshold = 10;
 
   constructor() {
     this.logger = EventLogger.getInstance();
@@ -113,11 +114,12 @@ export class CooldownController {
 
   /**
    * Calculate exponential cooldown based on swap count
+   * Starts at 30s and doubles each time, capped at 10 minutes
    */
   private calculateCooldown(swapCount: number): number {
     // Exponential backoff: 30s, 60s, 120s, 240s, etc.
     const multiplier = Math.pow(2, swapCount - this.maxSwapsPerMinute);
-    return Math.min(this.baseCooldownSeconds * multiplier, 600); // Max 10 minutes
+    return Math.min(this.baseCooldownSeconds * multiplier, this.MAX_COOLDOWN_SECONDS);
   }
 
   /**

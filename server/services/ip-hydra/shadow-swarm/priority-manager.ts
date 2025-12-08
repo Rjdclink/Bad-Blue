@@ -10,6 +10,12 @@ export class PriorityTaskManager {
   private tasks: Map<string, PriorityTask> = new Map();
   private queue: PriorityTask[] = [];
 
+  // Priority calculation weights - tuned for blockchain arbitrage
+  private readonly WEIGHT_VALUE = 0.4;      // Asset value impact
+  private readonly WEIGHT_URGENCY = 0.3;    // Time sensitivity impact
+  private readonly WEIGHT_CHAIN = 0.2;      // Network performance impact
+  private readonly WEIGHT_RISK = 0.1;       // Detection risk penalty
+
   /**
    * Calculate priority from multiple factors
    * Priority = (value * 0.4) + (urgency * 0.3) + (chainMultiplier * 0.2) - (detectionRisk * 0.1)
@@ -34,10 +40,10 @@ export class PriorityTaskManager {
 
     // Calculate weighted priority (0-100)
     const priority = Math.min(100, Math.max(0,
-      (value * 0.4) +
-      (urgency * 0.3) +
-      (chainMultiplier * 0.2) -
-      (detectionRisk * 0.1)
+      (value * this.WEIGHT_VALUE) +
+      (urgency * this.WEIGHT_URGENCY) +
+      (chainMultiplier * this.WEIGHT_CHAIN) -
+      (detectionRisk * this.WEIGHT_RISK)
     ));
 
     return Math.round(priority);

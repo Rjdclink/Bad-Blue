@@ -9,7 +9,11 @@ import { randomBytes } from 'crypto';
 export class PredictiveSelector {
   private metrics: Map<string, SubnetMetrics> = new Map();
   private blacklist: Map<string, Date> = new Map();
-  private blacklistDuration = 5 * 60 * 1000; // 5 minutes
+  
+  // Configuration - tunable based on operational needs
+  private readonly BLACKLIST_DURATION_MS = parseInt(
+    process.env.HYDRA_BLACKLIST_DURATION_MS || '300000'
+  ); // Default: 5 minutes
 
   /**
    * Record a subnet performance datapoint
@@ -99,7 +103,18 @@ export class PredictiveSelector {
   /**
    * Calculate score for a subnet metric
    * Higher score = better performance
+   * 
+   * Scoring weights (tunable for ML optimization):
+   * - Success rate: 40% (most important - did it work?)
+   * - Normalized latency: 30% (speed matters)
+   * - Stability: 20% (consistent performance)
+   * - Recency: 10% (recent data more valuable)
    */
+  private readonly SCORE_WEIGHT_SUCCESS = 0.4;
+  private readonly SCORE_WEIGHT_LATENCY = 0.3;
+  private readonly SCORE_WEIGHT_STABILITY = 0.2;
+  private readonly SCORE_WEIGHT_RECENCY = 0.1;
+
   private calculateScore(metric: SubnetMetrics): number {
     // Calculate statistics
     const avgLatency = this.calculateAverage(metric.latency);
@@ -123,10 +138,10 @@ export class PredictiveSelector {
 
     // Weighted score
     const score = (
-      successRate * 0.4 +
-      normalizedLatency * 0.3 +
-      stabilityScore * 0.2 +
-      recencyScore * 0.1
+      successRate * this.SCORE_WEIGHT_SUCCESS +
+      normalizedLatency * this.SCORE_WEIGHT_LATENCY +
+      stabilityScore * this.SCORE_WEIGHT_STABILITY +
+      recencyScore * this.SCORE_WEIGHT_RECENCY
     );
 
     return score;
@@ -196,7 +211,7 @@ export class PredictiveSelector {
    * Blacklist a subnet for the configured duration
    */
   blacklistSubnet(key: string, reason: string): void {
-    const until = new Date(Date.now() + this.blacklistDuration);
+    const until = new Date(Date.now() + this.BLACKLIST_DURATION_MS);
     this.blacklist.set(key, until);
     
     const metric = this.metrics.get(key);

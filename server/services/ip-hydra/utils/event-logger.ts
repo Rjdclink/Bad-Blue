@@ -11,7 +11,9 @@ export class EventLogger {
   private events: LifecycleEvent[] = [];
   private detectionEvents: DetectionEvent[] = [];
   private webhooks: WebhookConfig[] = [];
-  private maxEvents = 10000; // Keep last 10k events
+  
+  // Configuration - tunable based on memory constraints
+  private readonly maxEvents = parseInt(process.env.HYDRA_MAX_EVENTS || '10000');
 
   private constructor() {}
 
