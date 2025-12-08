@@ -50,4 +50,20 @@ export const ERC20_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
-export const USER_WALLET = '0x3d9bf00bB691793Cd256563fd14819B395306f62';
+export const USER_WALLET = process.env.BRIDGE_WALLET_ADDRESS || '0x3d9bf00bB691793Cd256563fd14819B395306f62';
+
+// Fallback prices when CoinGecko API is unavailable
+export const FALLBACK_PRICES = {
+  POL: 0.5,
+  ETH: 2000,
+  AVAX: 20,
+  BNB: 300,
+  USDT: 1,
+  USDC: 1
+};
+
+// Network health configuration
+export const NETWORK_HEALTH_THRESHOLD_MS = 5000; // Consider network healthy if latency < 5s
+
+// Gas estimation configuration
+export const DEFAULT_GAS_LIMIT = 21000; // Gas limit for simple transfer

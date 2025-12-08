@@ -1,7 +1,26 @@
-import express, { Request, Response } from 'express';
-import { balanceMonitor, gasOracle, networkHealth } from '../bridge';
+import express, { Request, Response, NextFunction } from 'express';
+import { balanceMonitor, gasOracle, networkHealth, ChainId } from '../bridge';
 
 const router = express.Router();
+
+// Valid chains list
+const VALID_CHAINS: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];
+
+/**
+ * Middleware to validate chain parameter
+ */
+function validateChain(req: Request, res: Response, next: NextFunction) {
+  const { chain } = req.params;
+  
+  if (!VALID_CHAINS.includes(chain as ChainId)) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid chain. Must be one of: ${VALID_CHAINS.join(', ')}`
+    });
+  }
+  
+  next();
+}
 
 /**
  * GET /api/bridge/balances
@@ -33,18 +52,11 @@ router.get('/balances', async (req: Request, res: Response) => {
  * GET /api/bridge/balances/:chain
  * Returns token balances for a specific chain
  */
-router.get('/balances/:chain', async (req: Request, res: Response) => {
+router.get('/balances/:chain', validateChain, async (req: Request, res: Response) => {
   try {
     const { chain } = req.params;
     
-    if (!['polygon', 'arbitrum', 'avalanche', 'bsc'].includes(chain)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid chain. Must be one of: polygon, arbitrum, avalanche, bsc'
-      });
-    }
-
-    const balance = await balanceMonitor.getBalance(chain as any);
+    const balance = await balanceMonitor.getBalance(chain as ChainId);
 
     res.json({
       success: true,
@@ -67,9 +79,8 @@ router.get('/gas', async (req: Request, res: Response) => {
   try {
     await gasOracle.updateAllGasPrices();
     
-    const chains = ['polygon', 'arbitrum', 'avalanche', 'bsc'] as const;
     const gasPrices = await Promise.all(
-      chains.map(chain => gasOracle.getGasPrice(chain))
+      VALID_CHAINS.map(chain => gasOracle.getGasPrice(chain))
     );
 
     const cheapestChain = await gasOracle.getCheapestChain();
@@ -95,18 +106,11 @@ router.get('/gas', async (req: Request, res: Response) => {
  * GET /api/bridge/gas/:chain
  * Returns current gas price for a specific chain
  */
-router.get('/gas/:chain', async (req: Request, res: Response) => {
+router.get('/gas/:chain', validateChain, async (req: Request, res: Response) => {
   try {
     const { chain } = req.params;
     
-    if (!['polygon', 'arbitrum', 'avalanche', 'bsc'].includes(chain)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid chain. Must be one of: polygon, arbitrum, avalanche, bsc'
-      });
-    }
-
-    const gasPrice = await gasOracle.getGasPrice(chain as any);
+    const gasPrice = await gasOracle.getGasPrice(chain as ChainId);
 
     res.json({
       success: true,
@@ -153,18 +157,11 @@ router.get('/health', async (req: Request, res: Response) => {
  * GET /api/bridge/health/:chain
  * Returns network health status for a specific chain
  */
-router.get('/health/:chain', async (req: Request, res: Response) => {
+router.get('/health/:chain', validateChain, async (req: Request, res: Response) => {
   try {
     const { chain } = req.params;
     
-    if (!['polygon', 'arbitrum', 'avalanche', 'bsc'].includes(chain)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid chain. Must be one of: polygon, arbitrum, avalanche, bsc'
-      });
-    }
-
-    const health = await networkHealth.checkNetwork(chain as any);
+    const health = await networkHealth.checkNetwork(chain as ChainId);
 
     res.json({
       success: true,

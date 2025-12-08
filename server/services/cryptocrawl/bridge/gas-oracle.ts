@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import { ChainId, GasPrice } from './types';
-import { SUPPORTED_CHAINS } from './chain-config';
+import { SUPPORTED_CHAINS, FALLBACK_PRICES, DEFAULT_GAS_LIMIT } from './chain-config';
 
 class GasOracle {
   private providers: Map<ChainId, ethers.JsonRpcProvider> = new Map();
@@ -83,8 +83,8 @@ class GasOracle {
       const gasPriceWei = feeData.maxFeePerGas || feeData.gasPrice || BigInt(0);
       const gweiPrice = parseFloat(ethers.formatUnits(gasPriceWei, 'gwei'));
 
-      // Estimate transaction cost (21000 gas for simple transfer)
-      const gasLimit = 21000;
+      // Estimate transaction cost using configurable gas limit
+      const gasLimit = DEFAULT_GAS_LIMIT;
       const nativePrice = this.nativePrices.get(config.currency) || 0;
       const gasCostEth = parseFloat(ethers.formatEther(gasPriceWei * BigInt(gasLimit)));
       const usdCost = gasCostEth * nativePrice;

@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import { ChainId, TokenBalance } from './types';
-import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET } from './chain-config';
+import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, FALLBACK_PRICES } from './chain-config';
 
 class BalanceMonitor {
   private providers: Map<ChainId, ethers.JsonRpcProvider> = new Map();
@@ -54,12 +54,9 @@ class BalanceMonitor {
       console.error('Failed to update prices:', error);
       // Use fallback prices if API fails
       if (this.prices.size === 0) {
-        this.prices.set('POL', 0.5);
-        this.prices.set('ETH', 2000);
-        this.prices.set('AVAX', 20);
-        this.prices.set('BNB', 300);
-        this.prices.set('USDT', 1);
-        this.prices.set('USDC', 1);
+        Object.entries(FALLBACK_PRICES).forEach(([key, value]) => {
+          this.prices.set(key, value);
+        });
       }
     }
   }

@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import { ChainId, NetworkHealth } from './types';
-import { SUPPORTED_CHAINS } from './chain-config';
+import { SUPPORTED_CHAINS, NETWORK_HEALTH_THRESHOLD_MS } from './chain-config';
 
 class NetworkHealthMonitor {
   private providers: Map<ChainId, ethers.JsonRpcProvider> = new Map();
@@ -37,8 +37,8 @@ class NetworkHealthMonitor {
       
       const latency = Date.now() - startTime;
 
-      // Consider network healthy if latency < 5 seconds
-      const isHealthy = latency < 5000 && blockHeight > 0;
+      // Consider network healthy based on configurable threshold
+      const isHealthy = latency < NETWORK_HEALTH_THRESHOLD_MS && blockHeight > 0;
 
       const health: NetworkHealth = {
         chain,
