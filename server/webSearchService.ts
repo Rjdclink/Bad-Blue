@@ -720,7 +720,8 @@ export class EnhancedWebSearchService {
     }
 
     try {
-      const genai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+      // Use shared client for efficiency
+      const genai = getGeminiClient();
       const model = genai.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
       const result = await model.generateContent({

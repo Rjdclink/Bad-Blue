@@ -19,6 +19,11 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import './pantheon.css';
 
+// Constants
+const NETWORK_HEAD_IMAGE = '/images/digital-mind-abstract-representation-human-intelligence-neural-network_191095-87127.jpg';
+const MAX_HEATMAP_POINTS = 10; // Maximum number of points to display on heatmap
+const MAX_MAP_MARKERS = 5; // Maximum number of markers to display on map
+
 interface SearchConfig {
   name: string;
   location?: string;
@@ -122,7 +127,7 @@ export default function PantheonPage() {
           <section 
             className="network-head-section"
             style={{
-              backgroundImage: 'url(/images/digital-mind-abstract-representation-human-intelligence-neural-network_191095-87127.jpg)',
+              backgroundImage: `url(${NETWORK_HEAD_IMAGE})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center',
               backgroundRepeat: 'no-repeat',
@@ -527,7 +532,7 @@ function generateMockLocationData(locationHistory: string[]): Array<[number, num
   // Base coordinates around New York City
   const baseCoords: [number, number] = [40.7128, -74.0060];
   
-  return locationHistory.slice(0, 10).map((_, idx) => {
+  return locationHistory.slice(0, MAX_HEATMAP_POINTS).map((_, idx) => {
     // Generate semi-random coordinates within a reasonable range
     const latOffset = (Math.random() - 0.5) * 0.1;
     const lngOffset = (Math.random() - 0.5) * 0.1;
@@ -545,7 +550,7 @@ function generateMockLocationData(locationHistory: string[]): Array<[number, num
 function generateLocationMarkers(locationHistory: string[]): Array<{ pos: [number, number]; popup: string }> {
   const baseCoords: [number, number] = [40.7128, -74.0060];
   
-  return locationHistory.slice(0, 5).map((location, idx) => {
+  return locationHistory.slice(0, MAX_MAP_MARKERS).map((location, idx) => {
     const latOffset = (Math.random() - 0.5) * 0.1;
     const lngOffset = (Math.random() - 0.5) * 0.1;
     

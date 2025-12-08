@@ -776,7 +776,7 @@ export async function conductFullOSINT(
         searchQuery.toLowerCase().replace(/\s+/g, ''), // JohnDoe -> johndoe
         searchQuery.toLowerCase().replace(/\s+/g, '.'), // John Doe -> john.doe
         searchQuery.toLowerCase().replace(/\s+/g, '_'), // John Doe -> john_doe
-        searchQuery.split(' ')[0]?.toLowerCase() || searchQuery.toLowerCase(), // First name only, fallback to full query
+        searchQuery.trim().split(' ')[0]?.toLowerCase() || searchQuery.toLowerCase(), // First name only, fallback to full query
       ].filter(Boolean).filter((u, i, arr) => arr.indexOf(u) === i); // Remove empty strings and duplicates
 
       // Search for social media profiles using Sherlock
