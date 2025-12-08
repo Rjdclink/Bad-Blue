@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import WebSocket from 'ws';
+import * as WebSocket from 'ws';
 
 // Type definitions
 interface PendingTx { hash: string; method: string; tokenPair: string; value: number; timestamp: number; }
@@ -15,14 +15,23 @@ class MempoolIntelligence {
   private avgBlockTime = 2000;
   private lastBlockTime = Date.now();
 
+  private wsConnected = new Set<string>();
+
   async initialize(rpcEndpoints: string[]): Promise<void> {
     for (const endpoint of rpcEndpoints) {
+      if (this.wsConnected.has(endpoint)) continue;
       try {
         const ws = new WebSocket(endpoint);
-        ws.on('open', () => ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_subscribe', params: ['newPendingTransactions'] })));
+        ws.on('open', () => {
+          this.wsConnected.add(endpoint);
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_subscribe', params: ['newPendingTransactions'] }));
+        });
         ws.on('message', (data) => this.processPendingTx(JSON.parse(data.toString())));
         ws.on('error', (err) => console.error('WebSocket error:', err));
-        ws.on('close', () => setTimeout(() => this.initialize([endpoint]), 5000));
+        ws.on('close', () => {
+          this.wsConnected.delete(endpoint);
+          setTimeout(() => this.initialize([endpoint]), 5000);
+        });
         this.wsNodes.push(ws);
       } catch (error) {
         console.error(`Failed to connect to ${endpoint}:`, error);
@@ -32,6 +41,8 @@ class MempoolIntelligence {
 
   private processPendingTx(data: any): void {
     if (data.params?.result) {
+      // NOTE: In production, parse actual transaction data from mempool
+      // This uses simulated data for testing and demonstration
       const tx: PendingTx = { hash: data.params.result, method: 'swap', tokenPair: 'USDC/USDT', value: Math.random() * 10000, timestamp: Date.now() };
       this.pendingTxCache.set(tx.hash, tx);
       this.detectArbitrageFormation(tx);
@@ -39,9 +50,12 @@ class MempoolIntelligence {
   }
 
   private detectArbitrageFormation(tx: PendingTx): void {
+    this.lastBlockTime = Date.now();
     const recentTxs = Array.from(this.pendingTxCache.values()).filter(t => Date.now() - t.timestamp < 5000);
     if (recentTxs.length > 3 && recentTxs.some(t => t.value > 1000)) {
       console.log(`Arbitrage formation detected: ${recentTxs.length} pending swaps`);
+      const nextBlock = this.predictBlockBoundary();
+      console.log(`Next block boundary predicted at: ${nextBlock}`);
     }
   }
 
@@ -112,6 +126,8 @@ class LiquidityAdaptiveExecutor {
     return { safe, poolDepth, virtualPrice, slippage, feeTier, expectedOutput: amount * virtualPrice * (1 - feeTier) };
   }
 
+  // NOTE: Production implementation should query actual DEX contracts
+  // These methods use simulated data for testing and demonstration
   private async getPoolDepthBeforeSlippage(pair: string): Promise<number> {
     return 100000 + Math.random() * 900000;
   }
@@ -132,17 +148,17 @@ class LiquidityAdaptiveExecutor {
 // (D) PRIVATE RPC ROUTING
 class PrivateRPCRouter {
   private premiumRPCs = [
-    { name: 'Ankr Premium', url: `https://rpc.ankr.com/polygon/${process.env.ANKR_KEY}`, latency: 0 },
-    { name: 'QuickNode', url: `https://polygon-mainnet.quiknode.pro/${process.env.QUICKNODE_KEY}`, latency: 0 },
-    { name: 'Alchemy', url: `https://polygon-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`, latency: 0 }
+    { name: 'Ankr Premium', url: `https://rpc.ankr.com/polygon/${process.env.ANKR_KEY}`, latency: 0, provider: null as ethers.providers.JsonRpcProvider | null },
+    { name: 'QuickNode', url: `https://polygon-mainnet.quiknode.pro/${process.env.QUICKNODE_KEY}`, latency: 0, provider: null as ethers.providers.JsonRpcProvider | null },
+    { name: 'Alchemy', url: `https://polygon-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`, latency: 0, provider: null as ethers.providers.JsonRpcProvider | null }
   ];
 
   async query<T>(method: string, params: any[]): Promise<T> {
     for (const rpc of this.premiumRPCs.sort((a, b) => a.latency - b.latency)) {
       try {
+        if (!rpc.provider) rpc.provider = new ethers.providers.JsonRpcProvider(rpc.url);
         const startTime = Date.now();
-        const provider = new ethers.providers.JsonRpcProvider(rpc.url);
-        const result = await provider.send(method, params);
+        const result = await rpc.provider.send(method, params);
         rpc.latency = Date.now() - startTime;
         return result as T;
       } catch (error) {
@@ -200,6 +216,8 @@ class OptimisticBundler {
 
   async createBundle(opportunity: Opportunity): Promise<Bundle> {
     const targetBlock = await this.getNextBlockNumber();
+    // NOTE: Production implementation should use actual contract addresses and encoded function calls
+    // These are placeholder values for testing and demonstration
     return {
       transactions: [
         { to: '0xFlashLoanProvider', data: '0xflashloan', value: '0' },
