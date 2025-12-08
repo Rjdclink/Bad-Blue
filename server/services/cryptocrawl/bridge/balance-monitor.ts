@@ -8,9 +8,11 @@ class BalanceMonitor {
   private cache: Map<ChainId, TokenBalance> = new Map();
   private lastPriceUpdate: number = 0;
   private readonly PRICE_CACHE_TTL = 60000; // 1 minute
+  private running: boolean = false;
 
   constructor() {
-    this.initializeProviders();
+    // Do NOT auto-initialize - wait for manual start
+    console.log('[BalanceMonitor] Created (inactive - waiting for manual start)');
   }
 
   private initializeProviders(): void {
@@ -134,6 +136,40 @@ class BalanceMonitor {
   async getTotalPortfolioValue(): Promise<number> {
     const balances = await this.getAllBalances();
     return balances.reduce((sum, balance) => sum + balance.totalUsd, 0);
+  }
+
+  async start(): Promise<void> {
+    if (this.running) {
+      console.log('[BalanceMonitor] Already running');
+      return;
+    }
+    
+    console.log('[BalanceMonitor] Starting...');
+    this.running = true;
+    
+    // Initialize providers
+    this.initializeProviders();
+    
+    console.log('[BalanceMonitor] ✓ Started');
+  }
+
+  async stop(): Promise<void> {
+    if (!this.running) {
+      console.log('[BalanceMonitor] Already stopped');
+      return;
+    }
+    
+    console.log('[BalanceMonitor] Stopping...');
+    this.running = false;
+    
+    // Clear cache
+    this.cache.clear();
+    
+    console.log('[BalanceMonitor] ✓ Stopped');
+  }
+
+  isRunning(): boolean {
+    return this.running;
   }
 }
 

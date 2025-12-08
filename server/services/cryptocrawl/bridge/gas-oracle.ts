@@ -7,10 +7,11 @@ class GasOracle {
   private gasPrices: Map<ChainId, GasPrice> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
   private nativePrices: Map<string, number> = new Map();
+  private running: boolean = false;
 
   constructor() {
-    this.initializeProviders();
-    this.startAutoUpdate();
+    // Do NOT auto-initialize - wait for manual start
+    console.log('[GasOracle] Created (inactive - waiting for manual start)');
   }
 
   private initializeProviders(): void {
@@ -141,20 +142,52 @@ class GasOracle {
     return cheapestChain;
   }
 
-  private startAutoUpdate(): void {
-    // Update gas prices every 15 seconds
+  async start(): Promise<void> {
+    if (this.running) {
+      console.log('[GasOracle] Already running');
+      return;
+    }
+    
+    console.log('[GasOracle] Starting...');
+    this.running = true;
+    
+    // Initialize providers
+    this.initializeProviders();
+    
+    // Do initial update
+    await this.updateAllGasPrices();
+    
+    // Start update interval (60 seconds instead of 15)
     this.updateInterval = setInterval(() => {
-      this.updateAllGasPrices().catch(error => {
-        console.error('Auto-update gas prices failed:', error);
-      });
-    }, 15000);
+      if (this.running) {
+        this.updateAllGasPrices().catch(error => {
+          console.error('[GasOracle] Auto-update failed:', error);
+        });
+      }
+    }, 60000);
+    
+    console.log('[GasOracle] ✓ Started');
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    if (!this.running) {
+      console.log('[GasOracle] Already stopped');
+      return;
+    }
+    
+    console.log('[GasOracle] Stopping...');
+    this.running = false;
+    
     if (this.updateInterval) {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
     }
+    
+    console.log('[GasOracle] ✓ Stopped');
+  }
+
+  isRunning(): boolean {
+    return this.running;
   }
 }
 
