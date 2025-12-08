@@ -70,6 +70,8 @@ export const DEFAULT_GAS_LIMIT = 21000; // Gas limit for simple transfer
 export const TOKEN_TRANSFER_GAS_LIMIT = 65000; // Gas limit for ERC20 token transfers
 
 // Native token prices for gas estimation (USD)
+// Note: These are approximate values used for gas cost USD estimation only.
+// For accurate token prices, use balanceMonitor or gasOracle which fetch real-time data.
 export const NATIVE_TOKEN_PRICES: Record<ChainId, number> = {
   polygon: 0.5,
   arbitrum: 2500,

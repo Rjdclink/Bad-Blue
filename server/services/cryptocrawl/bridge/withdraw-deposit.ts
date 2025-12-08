@@ -89,7 +89,7 @@ export class WithdrawDepositManager {
 
   async withdrawToken(chain: ChainId, token: 'USDT' | 'USDC', amount: number, toAddress: string): Promise<WithdrawResult> {
     const wallet = this.wallets.get(chain);
-    if (!wallet) return { success: false, error: 'Wallet not initialized' };
+    if (!wallet) return { success: false, error: 'Wallet not initialized. Set WALLET_PRIVATE_KEY.' };
     if (!ethers.isAddress(toAddress)) return { success: false, error: 'Invalid address' };
     if (amount <= 0) return { success: false, error: 'Amount must be > 0' };
 
