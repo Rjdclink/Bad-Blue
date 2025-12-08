@@ -25,7 +25,7 @@ export class NamespaceManager {
     const id = `ns-${this.nextId++}`;
     const namespace: NetworkNamespace = {
       id,
-      subnet: subnet || `subnet-${Math.random().toString(36).substr(2, 9)}`,
+      subnet: subnet || `subnet-${Math.random().toString(36).substring(2, 11)}`,
       latencyMs: Math.floor(Math.random() * 100) + 20,
       created: Date.now(),
       lastUsed: Date.now()
@@ -44,7 +44,7 @@ export class NamespaceManager {
     // Create new namespace with improved latency
     const newNamespace: NetworkNamespace = {
       id: `ns-${this.nextId++}`,
-      subnet: `subnet-${Math.random().toString(36).substr(2, 9)}`,
+      subnet: `subnet-${Math.random().toString(36).substring(2, 11)}`,
       latencyMs: Math.max(10, old.latencyMs * 0.8),
       crawlerId: old.crawlerId,
       created: Date.now(),
