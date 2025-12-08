@@ -71,7 +71,9 @@ class FlashbotsEngine {
     bundle.push({
       signer: this.wallet,
       transaction: {
-        to: 'block.coinbase', // Flashbots special address - replaced by validator at runtime
+        // Note: 'block.coinbase' is a Flashbots magic address that gets replaced with
+        // the actual validator's address by the Flashbots relayer at submission time.
+        to: 'block.coinbase',
         value: this.toWei(validatorTip),
         gasLimit: 21000
       }
