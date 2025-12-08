@@ -82,7 +82,7 @@ class WalletManager {
       const data: WalletData = {
         address: this.wallet.address,
         encryptedKey,
-        mnemonic: this.wallet instanceof HDNodeWallet ? this.wallet.mnemonic?.phrase : undefined,
+        mnemonic: this.wallet.mnemonic?.phrase,
         chains: Object.keys(chainConfigs) as ChainId[]
       };
       this.saveToDB(data);
