@@ -41,6 +41,7 @@ import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import { bridgeApi } from "./services/cryptocrawl/api/bridge-api";
+import hydraApiRoutes from "./services/ip-hydra/api/routes";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -4674,6 +4675,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Mount CryptoCrawl API routes
   app.use('/api/crypto', dashboardApi);
   app.use('/admin/crypto', adminApi);
+  
+  // Mount IP-HYDRA API routes
+  app.use('/api/hydra', hydraApiRoutes);
   
   // ============================================
   // BRIDGE MANAGER API
