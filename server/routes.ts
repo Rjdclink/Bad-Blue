@@ -39,6 +39,7 @@ import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
+import { authRouter } from "./services/cryptocrawl/auth";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -4665,6 +4666,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
   // CRYPTOCRAWL DASHBOARD API
   // ============================================
+  
+  // Mount CryptoCrawl auth routes (must be before other crypto routes)
+  app.use('/api/auth', authRouter);
   
   // Mount CryptoCrawl API routes
   app.use('/api/crypto', dashboardApi);

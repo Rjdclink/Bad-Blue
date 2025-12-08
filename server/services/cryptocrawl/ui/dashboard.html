@@ -51,11 +51,49 @@
   </style>
 </head>
 <body>
+  <script>
+    // Auth check - redirect to login if not authenticated
+    (function() {
+      const token = localStorage.getItem('adminToken');
+      if (!token) {
+        window.location.href = '/login.html';
+        return;
+      }
+      
+      // Verify token is still valid
+      fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token})
+      })
+      .then(res => res.json())
+      .then(result => {
+        if (!result.valid) {
+          localStorage.removeItem('adminToken');
+          localStorage.removeItem('userEmail');
+          window.location.href = '/login.html';
+        }
+      })
+      .catch(() => {
+        // If verification fails, redirect to login
+        window.location.href = '/login.html';
+      });
+    })();
+    
+    // Logout function
+    function logout() {
+      localStorage.removeItem('adminToken');
+      localStorage.removeItem('userEmail');
+      window.location.href = '/login.html';
+    }
+  </script>
+  
   <div class="header">
     <h1>🔥 CryptoCrawl</h1>
     <div class="status">
       <div class="status-dot" id="statusDot" aria-label="System status indicator"></div>
       <span id="statusText">Running</span>
+      <button onclick="logout()" style="background: #ef4444; padding: 8px 16px; border: none; border-radius: 6px; color: white; cursor: pointer; margin-left: 20px; font-weight: 600;">Logout</button>
     </div>
   </div>
   

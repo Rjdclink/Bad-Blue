@@ -1,3 +1,19 @@
+// Authentication check
+const adminToken = localStorage.getItem('adminToken');
+if (!adminToken) {
+  window.location.href = '/login.html';
+}
+
+// Add token to all fetch requests
+const originalFetch = window.fetch;
+window.fetch = function(url, options = {}) {
+  if (url.startsWith('/admin/') || url.startsWith('/api/auth/')) {
+    options.headers = options.headers || {};
+    options.headers['Authorization'] = `Bearer ${adminToken}`;
+  }
+  return originalFetch(url, options);
+};
+
 // WebSocket connection
 let ws;
 let reconnectInterval;
