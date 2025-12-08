@@ -1,17 +1,10 @@
-// Authentication check
-const adminToken = localStorage.getItem('adminToken');
-if (!adminToken) {
-  window.location.href = '/login.html';
-}
+// Session-based authentication - no token needed
+// All requests automatically include session cookie
 
-// Add token to all fetch requests (except login endpoint)
+// Ensure credentials are included in all fetch requests
 const originalFetch = window.fetch;
 window.fetch = function(url, options = {}) {
-  // Only add auth header for admin routes and auth verify/logout endpoints
-  if (url.startsWith('/admin/') || url === '/api/auth/verify' || url === '/api/auth/logout') {
-    options.headers = options.headers || {};
-    options.headers['Authorization'] = `Bearer ${adminToken}`;
-  }
+  options.credentials = 'include'; // Always include session cookie
   return originalFetch(url, options);
 };
 
@@ -145,7 +138,6 @@ async function toggleSystem() {
     const response = await fetch('/admin/crypto/start', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${localStorage.getItem('adminToken') || ''}`,
         'Content-Type': 'application/json'
       }
     });
@@ -164,7 +156,6 @@ async function emergencyStop() {
     const response = await fetch('/admin/crypto/stop', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${localStorage.getItem('adminToken') || ''}`,
         'Content-Type': 'application/json'
       }
     });

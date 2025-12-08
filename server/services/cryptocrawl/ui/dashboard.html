@@ -52,39 +52,39 @@
 </head>
 <body>
   <script>
-    // Auth check - redirect to login if not authenticated
+    // Auth check - verify platform session
     (function() {
-      const token = localStorage.getItem('adminToken');
-      if (!token) {
-        window.location.href = '/login.html';
-        return;
-      }
-      
-      // Verify token is still valid
-      fetch('/api/auth/verify', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({token})
+      // Check if user is authenticated via platform session
+      fetch('/api/auth/crypto/verify', {
+        credentials: 'include' // Include session cookie
       })
       .then(res => res.json())
       .then(result => {
-        if (!result.valid) {
-          localStorage.removeItem('adminToken');
-          localStorage.removeItem('userEmail');
-          window.location.href = '/login.html';
+        if (!result.valid || !result.authenticated) {
+          // Not authenticated - redirect to platform login
+          window.location.href = '/login';
         }
       })
       .catch(() => {
-        // If verification fails, redirect to login
-        window.location.href = '/login.html';
+        // If verification fails, redirect to platform login
+        window.location.href = '/login';
       });
     })();
     
-    // Logout function
+    // Logout function - redirects to platform logout
     function logout() {
-      localStorage.removeItem('adminToken');
-      localStorage.removeItem('userEmail');
-      window.location.href = '/login.html';
+      // Use platform logout endpoint
+      fetch('/api/logout', {
+        method: 'POST',
+        credentials: 'include'
+      })
+      .then(() => {
+        window.location.href = '/login';
+      })
+      .catch(() => {
+        // Fallback: just redirect to login
+        window.location.href = '/login';
+      });
     }
   </script>
   

@@ -1,27 +1,21 @@
 import express from 'express';
 import {pipeline} from '../integration/master-pipeline';
-import {validateToken} from '../auth/auth-controller';
+import {validateSession} from '../auth/auth-controller';
 
 const router = express.Router();
 
-// Updated auth middleware using new token system
+// Updated auth middleware using platform session
 const adminAuth = (req: any, res: any, next: any) => {
-  const authHeader = req.headers['authorization'];
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({error: 'Unauthorized: No token provided'});
-  }
-  
-  const token = authHeader.substring(7);
-  const result = validateToken(token);
+  const result = validateSession(req);
   
   if (!result.valid) {
     return res.status(401).json({
-      error: result.expired ? 'Session expired' : 'Invalid token'
+      error: 'Unauthorized: Authentication required',
+      redirectTo: '/login'
     });
   }
   
-  req.user = {email: result.email};
+  req.user = {userId: result.userId};
   next();
 };
 

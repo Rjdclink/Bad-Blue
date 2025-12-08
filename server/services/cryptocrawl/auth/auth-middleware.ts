@@ -1,28 +1,19 @@
 import {Request, Response, NextFunction} from 'express';
-import {validateToken} from './auth-controller';
+import {validateSession} from './auth-controller';
 
-// Middleware for protected routes
+// Middleware for protected routes - uses platform session authentication
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({
-      success: false,
-      message: 'Authentication required'
-    });
-  }
-  
-  const token = authHeader.substring(7);
-  const result = validateToken(token);
+  const result = validateSession(req);
   
   if (!result.valid) {
     return res.status(401).json({
       success: false,
-      message: result.expired ? 'Session expired, please login again' : 'Invalid token'
+      message: 'Authentication required',
+      redirectTo: '/login'
     });
   }
   
   // Attach user to request
-  (req as any).user = {email: result.email};
+  (req as any).user = {userId: result.userId};
   next();
 }
