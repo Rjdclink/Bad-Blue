@@ -4,10 +4,11 @@ if (!adminToken) {
   window.location.href = '/login.html';
 }
 
-// Add token to all fetch requests
+// Add token to all fetch requests (except login endpoint)
 const originalFetch = window.fetch;
 window.fetch = function(url, options = {}) {
-  if (url.startsWith('/admin/') || url.startsWith('/api/auth/')) {
+  // Only add auth header for admin routes and auth verify/logout endpoints
+  if (url.startsWith('/admin/') || url === '/api/auth/verify' || url === '/api/auth/logout') {
     options.headers = options.headers || {};
     options.headers['Authorization'] = `Bearer ${adminToken}`;
   }

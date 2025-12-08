@@ -17,6 +17,8 @@ function generateToken(email: string): string {
     exp: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
   };
   const data = Buffer.from(JSON.stringify(payload)).toString('base64');
+  // Use JWT_SECRET from env if available, otherwise use default
+  // NOTE: In production, set JWT_SECRET env variable for enhanced security
   const secret = process.env.JWT_SECRET || 'cryptocrawl-secret-key-2024';
   const signature = crypto.createHmac('sha256', secret).update(data).digest('hex');
   return `${data}.${signature}`;
@@ -26,6 +28,8 @@ function generateToken(email: string): string {
 function validateToken(token: string): {valid: boolean, email?: string, expired?: boolean} {
   try {
     const [data, signature] = token.split('.');
+    // Use same secret as generateToken
+    // NOTE: In production, set JWT_SECRET env variable for enhanced security
     const secret = process.env.JWT_SECRET || 'cryptocrawl-secret-key-2024';
     const expectedSig = crypto.createHmac('sha256', secret).update(data).digest('hex');
     
