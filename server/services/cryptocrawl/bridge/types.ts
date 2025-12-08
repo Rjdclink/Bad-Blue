@@ -35,3 +35,24 @@ export interface NetworkHealth {
   isHealthy: boolean;
   lastUpdate: number;
 }
+
+export interface BridgeRoute {
+  bridge: string;
+  fromChain: ChainId;
+  toChain: ChainId;
+  token: 'USDT' | 'USDC';
+  fee: number;
+  feeUsd: number;
+  estimatedTime: number;
+  url: string;
+}
+
+export interface PositionRecommendation {
+  chain: ChainId;
+  currentUsd: number;
+  recommendedUsd: number;
+  action: 'add' | 'remove' | 'hold';
+  amountUsd: number;
+  reason: string;
+  opportunityDensity: number;
+}
