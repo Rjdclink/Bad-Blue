@@ -37,13 +37,10 @@ interface RelayPerformance {
   preferredForPrivate: boolean; // Private order flow support
 }
 
-interface RelayPerformance {
-  latency: number;
-  successRate: number;
-  lastUpdate: number;
-  profitShare: number; // MEV-Share compatibility
-  preferredForPrivate: boolean; // Private order flow support
-}
+// 2024 Research: Relay selection constants
+const MIN_RELAYS = 5;
+const MAX_RELAYS = 7;
+const COMPLEX_BUNDLE_THRESHOLD = 5;
 
 const RELAYS: RelayConfig[] = [
   { name: 'Flashbots', endpoint: 'https://relay.flashbots.net', latency: 12 },
@@ -252,10 +249,11 @@ class MultiRelaySubmitter {
       relayScores.set(name, totalScore);
     }
 
-    // Select top 5 relays (or all if bundle is critical)
+    // Select top relays based on bundle complexity
+    const targetRelayCount = bundle.signedTransactions.length > COMPLEX_BUNDLE_THRESHOLD ? MAX_RELAYS : MIN_RELAYS;
     const sortedRelays = Array.from(relayScores.entries())
       .sort((a, b) => b[1] - a[1])
-      .slice(0, bundle.signedTransactions.length > 5 ? 7 : 5); // Use more relays for complex bundles
+      .slice(0, targetRelayCount);
 
     const selectedRelays = new Map<string, FlashbotsBundleProvider>();
     for (const [name, score] of sortedRelays) {

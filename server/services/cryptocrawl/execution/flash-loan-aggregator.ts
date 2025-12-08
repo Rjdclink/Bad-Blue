@@ -242,9 +242,10 @@ class FlashLoanAggregator {
         };
       }
 
-      // Calculate slippage
-      const expectedProfit = profit * 1.05; // Assume 5% slippage tolerance
-      const actualSlippage = Math.abs((profit - expectedProfit) / expectedProfit);
+      // 2024: Calculate expected profit based on opportunity estimate (passed through context)
+      // In production, this would come from the opportunity analyzer
+      const estimatedProfit = amount * 0.02; // Assume 2% arbitrage opportunity
+      const actualSlippage = estimatedProfit > 0 ? Math.abs((profit - estimatedProfit) / estimatedProfit) : 0;
 
       logger.info('Flash loan executed successfully', {
         component: 'FlashLoanAggregator',
@@ -252,6 +253,7 @@ class FlashLoanAggregator {
         totalFee,
         profit,
         netProfit: profit - totalFee,
+        estimatedProfit,
         executionTime: `${executionTime}ms`,
         route: executionRoute,
         slippage: `${(actualSlippage * 100).toFixed(2)}%`,
@@ -291,11 +293,19 @@ class FlashLoanAggregator {
     // In production, use full coalitional game theory with randomized sampling
     const totalAmount = allocations.reduce((sum, alloc) => sum + alloc.amount, 0);
     
+    if (totalAmount === 0) {
+      return shares; // Avoid division by zero
+    }
+    
     for (const alloc of allocations) {
+      if (alloc.amount <= 0) continue; // Skip invalid allocations
+      
       const contribution = alloc.amount / totalAmount;
-      const feeAdjustment = 1 - (alloc.fee / alloc.amount); // Reward 0% fee providers
+      // Fee adjustment: reward 0% fee providers, clamp to [0, 1]
+      const feeRatio = alloc.amount > 0 ? alloc.fee / alloc.amount : 0;
+      const feeAdjustment = Math.max(0, Math.min(1, 1 - feeRatio));
       const shapleyValue = totalProfit * contribution * feeAdjustment;
-      shares[alloc.provider] = shapleyValue;
+      shares[alloc.provider] = Math.max(0, shapleyValue); // Ensure non-negative
     }
     
     return shares;

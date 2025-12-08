@@ -287,12 +287,16 @@ class UltraLowLatencyExecutor {
       const p95Index = Math.floor(sortedPrices.length * 0.95);
       const recommended = sortedPrices[p95Index] || mean + (2 * volatility);
 
-      // 2024: Calculate trend-based adjustment
-      const recentPrices = gasPrices.slice(0, 10);
-      const olderPrices = gasPrices.slice(10, 20);
-      const recentAvg = recentPrices.reduce((a, b) => a + b, 0) / recentPrices.length;
-      const olderAvg = olderPrices.reduce((a, b) => a + b, 0) / olderPrices.length;
-      const trend = (recentAvg - olderAvg) / olderAvg;
+      // 2024: Calculate trend-based adjustment (with safety guards)
+      const recentPrices = gasPrices.slice(0, Math.min(10, gasPrices.length));
+      const olderPrices = gasPrices.slice(10, Math.min(20, gasPrices.length));
+      
+      let trend = 0;
+      if (recentPrices.length > 0 && olderPrices.length > 0) {
+        const recentAvg = recentPrices.reduce((a, b) => a + b, 0) / recentPrices.length;
+        const olderAvg = olderPrices.reduce((a, b) => a + b, 0) / olderPrices.length;
+        trend = olderAvg > 0 ? (recentAvg - olderAvg) / olderAvg : 0;
+      }
 
       // Adjust recommendation based on trend
       const trendAdjusted = trend > 0.1 ? recommended * 1.1 : recommended;
