@@ -434,6 +434,9 @@ app.get("/api/schema-verify", async (_req, res) => {
 
   // Static file serving AFTER dynamic routes
   app.use(express.static("public"));
+  
+  // Serve CryptoCrawl dashboard UI
+  app.use(express.static("server/services/cryptocrawl/ui"));
 
   if (app.get("env") === "development") {
     await setupVite(app, httpServer);

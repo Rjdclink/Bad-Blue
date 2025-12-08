@@ -38,6 +38,7 @@ import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
+import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -4652,6 +4653,14 @@ Contact: ${foiaRequest.userEmail || userEmail}
     });
   }));
 
+  // ============================================
+  // CRYPTOCRAWL DASHBOARD API
+  // ============================================
+  
+  // Mount CryptoCrawl API routes
+  app.use('/api/crypto', dashboardApi);
+  app.use('/admin/crypto', adminApi);
+  
   // Apply notFoundHandler ONLY to API routes
   app.use('/api', notFoundHandler);
   
@@ -4660,5 +4669,17 @@ Contact: ${foiaRequest.userEmail || userEmail}
   app.use(errorHandler);
 
   const httpServer = createServer(app);
+  
+  // Setup WebSocket upgrade handler for CryptoCrawl
+  httpServer.on('upgrade', (request, socket, head) => {
+    if (request.url === '/api/crypto/live') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+  
   return httpServer;
 }

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CryptoCrawl Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0e27; color: #fff; padding: 20px;
+    }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+    .header h1 { font-size: 32px; }
+    .status { display: flex; align-items: center; gap: 10px; }
+    .status-dot { width: 12px; height: 12px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
+    .card { background: #1a1f3a; border-radius: 12px; padding: 20px; border: 1px solid #2a2f4a; }
+    .card-title { color: #94a3b8; font-size: 14px; margin-bottom: 10px; }
+    .card-value { font-size: 36px; font-weight: bold; margin-bottom: 5px; }
+    .card-change { color: #22c55e; font-size: 14px; }
+    .card-change.negative { color: #ef4444; }
+    
+    .section { background: #1a1f3a; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid #2a2f4a; }
+    .section-title { font-size: 18px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
+    
+    .opportunity { display: flex; justify-content: space-between; padding: 12px; background: #0f1425; border-radius: 8px; margin-bottom: 10px; border-left: 3px solid #3b82f6; }
+    .opportunity.high { border-left-color: #22c55e; }
+    .opportunity-info { flex: 1; }
+    .opportunity-asset { font-weight: 600; margin-bottom: 4px; }
+    .opportunity-meta { font-size: 13px; color: #94a3b8; }
+    .opportunity-profit { font-size: 20px; font-weight: bold; color: #22c55e; text-align: right; }
+    
+    .trade { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #2a2f4a; }
+    .trade:last-child { border-bottom: none; }
+    .trade-time { color: #94a3b8; font-size: 13px; }
+    .trade-success { color: #22c55e; }
+    .trade-fail { color: #ef4444; }
+    
+    .controls { display: flex; gap: 10px; }
+    button { padding: 10px 20px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-danger { background: #ef4444; color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    
+    .chart { height: 200px; display: flex; align-items: flex-end; gap: 4px; }
+    .chart-bar { flex: 1; background: linear-gradient(to top, #3b82f6, #60a5fa); border-radius: 4px 4px 0 0; transition: all 0.3s; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🔥 CryptoCrawl</h1>
+    <div class="status">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Running</span>
+    </div>
+  </div>
+  
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Total Profit (24h)</div>
+      <div class="card-value" id="profit24h">$0</div>
+      <div class="card-change" id="profitChange">+0%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Success Rate</div>
+      <div class="card-value" id="successRate">0%</div>
+      <div class="card-change" id="successChange">--</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Trades (24h)</div>
+      <div class="card-value" id="trades24h">0</div>
+      <div class="card-change" id="tradesChange">--</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Avg Profit/Trade</div>
+      <div class="card-value" id="avgProfit">$0</div>
+      <div class="card-change" id="avgChange">--</div>
+    </div>
+  </div>
+  
+  <div class="section">
+    <div class="section-title">
+      <span>📊 Profit Chart (Last 24h)</span>
+    </div>
+    <div class="chart" id="profitChart"></div>
+  </div>
+  
+  <div class="section">
+    <div class="section-title">
+      <span>🎯 Live Opportunities</span>
+      <span id="oppCount" style="color: #94a3b8; font-size: 14px;">0 active</span>
+    </div>
+    <div id="opportunities">
+      <div style="color: #94a3b8; text-align: center; padding: 20px;">Scanning for opportunities...</div>
+    </div>
+  </div>
+  
+  <div class="section">
+    <div class="section-title">
+      <span>📈 Recent Trades</span>
+      <div class="controls">
+        <button class="btn-primary" onclick="toggleSystem()">Start/Stop</button>
+        <button class="btn-danger" onclick="emergencyStop()">Emergency Stop</button>
+      </div>
+    </div>
+    <div id="recentTrades"></div>
+  </div>
+  
+  <script src="/dashboard-client.js"></script>
+</body>
+</html>
