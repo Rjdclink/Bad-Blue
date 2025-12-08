@@ -31,8 +31,15 @@ export class MACRotationEngine {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(':');
   }
 
+  private validateInterfaceName(iface: string): boolean {
+    return /^[a-zA-Z0-9_-]+$/.test(iface) && iface.length < 16;
+  }
+
   async rotateMAC(interfaceName: string, targetSubnet?: string): Promise<MACRotationResult> {
     if (!this.running) return { success: false, oldMac: '', newMac: '', error: 'Engine not running' };
+    if (!this.validateInterfaceName(interfaceName)) {
+      return { success: false, oldMac: '', newMac: '', error: 'Invalid interface name' };
+    }
 
     const oldMac = await this.getCurrentMAC(interfaceName);
     const newMac = this.generateMAC();

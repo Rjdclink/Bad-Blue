@@ -16,6 +16,10 @@ export class NamespaceManager {
     console.log('[NamespaceManager] Created (inactive)');
   }
 
+  private validateNamespaceId(id: string): boolean {
+    return /^hydra-ns-[0-9a-f]{8}$/.test(id);
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -79,6 +83,7 @@ export class NamespaceManager {
   async destroyNamespace(id: string): Promise<boolean> {
     const ns = this.namespaces.get(id);
     if (!ns) return false;
+    if (!this.validateNamespaceId(id)) return false;
 
     try {
       if (process.env.HYDRA_SIMULATION !== 'true') {
