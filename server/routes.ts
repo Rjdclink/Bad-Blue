@@ -16,6 +16,7 @@ declare global {
       isAdmin?: boolean;
       isAdminBypass?: boolean;
       isMasterBypass?: boolean;
+      isCryptoCrawlUser?: boolean;
     }
     interface Request {
       rawBody?: Buffer;
