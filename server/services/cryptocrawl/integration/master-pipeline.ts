@@ -1,5 +1,5 @@
-// Master Pipeline - Integration stub for Dashboard API
-// This connects to the actual agent systems (Starburst Snake, Lux Swarm)
+// Master Pipeline - Integration with Stealth Superiority System
+// Connects Starburst Snake, Lux Swarm, and Stealth systems for crushing performance
 
 import type { Opportunity } from '../core/lux-swarm';
 import { executeWithMaxProfit, multiRelay, flashLoans, ultraLowLatency } from '../execution/index.js';
@@ -30,7 +30,53 @@ class MasterPipeline {
     this.tripleDip = new TripleDipExtractor();
   }
 
+  /**
+   * Initialize the pipeline with stealth systems
+   */
+  async initialize(): Promise<void> {
+    console.log('🚀 Master Pipeline initializing with Stealth Superiority...');
+
+    // Initialize stealth system
+    this.stealthSystem = new StealthSuperiority();
+
+    // In production, initialize wallet and providers from WalletManager
+    // For now, create placeholder
+    if (process.env.PRIVATE_KEY) {
+      this.wallet = new Wallet(process.env.PRIVATE_KEY);
+    }
+
+    // Known working public RPC endpoints by chain
+    const defaultRpcUrls: Record<string, string> = {
+      polygon: 'https://polygon-rpc.com',
+      bsc: 'https://bsc-dataseed.binance.org',
+      avalanche: 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: 'https://arb1.arbitrum.io/rpc',
+      optimism: 'https://mainnet.optimism.io'
+    };
+
+    // Initialize providers for supported chains
+    const chains = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
+    for (const chain of chains) {
+      const rpcUrl = process.env[`${chain.toUpperCase()}_RPC_URL`] || defaultRpcUrls[chain];
+      this.providers.set(chain, new JsonRpcProvider(rpcUrl));
+    }
+
+    // Initialize stealth system if wallet is available
+    if (this.wallet && this.providers.size > 0) {
+      await this.stealthSystem.initialize(this.wallet, this.providers);
+    }
+
+    console.log('✅ Master Pipeline initialized with stealth systems');
+  }
+
+  /**
+   * Start the main pipeline loop
+   */
   async run(): Promise<void> {
+    if (!this.stealthSystem) {
+      await this.initialize();
+    }
+
     this.running = true;
     logger.info('Master Pipeline started with advanced MEV systems', {
       component: 'MasterPipeline'
@@ -94,9 +140,46 @@ class MasterPipeline {
     // This would be expanded in production to detect actual opportunities
   }
 
+  /**
+   * Execute opportunities using stealth system
+   */
+  private async executeOpportunitiesWithStealth(opportunities: Opportunity[]): Promise<void> {
+    if (!this.stealthSystem) return;
+
+    // Filter high-priority opportunities
+    const highPriority = opportunities
+      .filter(opp => opp.priority >= 7 && opp.profitEstimate > 50)
+      .sort((a, b) => b.priority - a.priority)
+      .slice(0, 10); // Top 10 opportunities
+
+    if (highPriority.length > 0) {
+      console.log(`[PIPELINE] Executing ${highPriority.length} high-priority opportunities with stealth...`);
+      
+      // Execute batch with stealth superiority
+      const results = await this.stealthSystem.executeBatch(highPriority);
+      
+      // Log results (invisibly)
+      const successful = results.filter(r => r.success).length;
+      if (successful > 0) {
+        console.log(`[PIPELINE] Completed processing: ${successful}/${results.length} successful`);
+      }
+    }
+  }
+
+  /**
+   * Get current opportunities from LuxSwarm
+   */
   async getCurrentOpportunities(): Promise<Opportunity[]> {
-    // In production, this would query from LuxSwarm.observe()
-    return [];
+    // Observe current state from LuxSwarm
+    const state = LuxSwarm.observe();
+    return state.opportunities;
+  }
+
+  /**
+   * Get stealth metrics for monitoring
+   */
+  getStealthMetrics(): StealthMetrics | null {
+    return this.stealthSystem?.getMetrics() || null;
   }
 
   async executeOpportunity(opp: Opportunity): Promise<void> {
