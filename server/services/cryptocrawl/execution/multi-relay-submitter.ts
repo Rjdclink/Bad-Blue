@@ -109,7 +109,9 @@ class MultiRelaySubmitter {
           setTimeout(() => reject(new Error('Submission timeout')), 2000)
         );
 
-        const submissionPromise = provider.sendBundle(bundle.signedTransactions, targetBlock);
+        // Convert string[] to FlashbotsBundleRawTransaction[]
+        const flashbotsBundle = bundle.signedTransactions.map(tx => ({ signedTransaction: tx }));
+        const submissionPromise = provider.sendBundle(flashbotsBundle, targetBlock);
         
         await Promise.race([submissionPromise, timeoutPromise]);
         

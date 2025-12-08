@@ -32,9 +32,8 @@ class RealtimeDataStream {
     const wsUrl = this.config.wsUrl || this.constructWsUrl(this.config.httpUrl);
     
     try {
-      this.wsProvider = new WebSocketProvider(wsUrl, undefined, {
-        batchMaxCount: 1 // No batching = instant
-      });
+      // WebSocketProvider in ethers v6 takes (url, network) only
+      this.wsProvider = new WebSocketProvider(wsUrl);
 
       await this.wsProvider.ready;
       this.connected = true;
