@@ -40,8 +40,9 @@ export class HydraCrawler extends BaseCrawler {
       this.spawnHead(this.task.target);
     }
     
-    // Process each head concurrently
-    const explorationPromises = this.heads.map(head => head.explore());
+    // Process each head concurrently - use snapshot to prevent infinite loop
+    const headsSnapshot = [...this.heads];
+    const explorationPromises = headsSnapshot.map(head => head.explore());
     const results = await Promise.all(explorationPromises);
 
     for (let i = 0; i < results.length; i++) {
@@ -105,17 +106,21 @@ class HydraHead {
    * Explore target and extract intelligence
    */
   async explore(): Promise<ExplorationResult> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      
       const response = await fetch(this.target, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
         redirect: 'manual',
         signal: controller.signal
       });
       
-      clearTimeout(timeoutId);
+      // Check content length to prevent memory exhaustion
+      const contentLengthHeader = response.headers.get('content-length');
+      if (contentLengthHeader && parseInt(contentLengthHeader) > 10_000_000) { // 10MB limit
+        throw new Error('Response too large');
+      }
       
       const html = await response.text();
       const links = this.extractLinks(html, this.target);
@@ -133,10 +138,13 @@ class HydraHead {
       this.alive = false;
       return { 
         target: this.target, 
-        richness: 0, 
+        richness: 0,
+        nextTarget: '',
         error: true,
         errorType: error instanceof Error ? error.message : 'unknown'
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -145,8 +153,8 @@ class HydraHead {
    */
   private extractLinks(html: string, baseUrl: string): string[] {
     const links: string[] = [];
-    // Handle both quoted and unquoted href attributes
-    const regex = /href=(?:["']([^"']+)["']|([^\s>]+))/gi;
+    // Handle both quoted and unquoted href attributes with ReDoS protection
+    const regex = /href=(?:["']([^"']+)["']|([^\s>]{1,2048}))/gi;
     let match;
     
     while ((match = regex.exec(html)) !== null) {

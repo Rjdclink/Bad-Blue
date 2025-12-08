@@ -82,7 +82,7 @@ export class WraithCrawler extends BaseCrawler {
       variance, 
       jitter,
       samples: measurements.length,
-      stability: jitter / avg // Lower = more stable
+      stability: avg > 0 ? jitter / avg : 0 // Lower = more stable
     };
   }
 
@@ -91,10 +91,10 @@ export class WraithCrawler extends BaseCrawler {
    * Probes for async processing indicators
    */
   private async detectAsyncEchoes(target: string): Promise<AsyncEchoResult> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 500);
+    
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 500);
-      
       const response = await fetch(target, { 
         headers: { 
           'User-Agent': 'Mozilla/5.0',
@@ -102,8 +102,6 @@ export class WraithCrawler extends BaseCrawler {
         },
         signal: controller.signal
       });
-      
-      clearTimeout(timeoutId);
       
       return {
         asyncDetected: !!response.headers.get('x-async'),
@@ -115,8 +113,14 @@ export class WraithCrawler extends BaseCrawler {
     } catch {
       return { 
         asyncDetected: false,
-        error: true 
+        error: true,
+        serverSignature: 'unknown',
+        hasAsyncHeader: false,
+        statusCode: 0,
+        responseTime: null
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }

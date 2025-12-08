@@ -240,7 +240,8 @@ async function runTests() {
 }
 
 // Run tests if this file is executed directly
-const isMainModule = process.argv[1] && import.meta.url.endsWith(process.argv[1]);
+import { fileURLToPath } from 'url';
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMainModule) {
   runTests();
 }
