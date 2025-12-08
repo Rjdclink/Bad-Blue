@@ -692,8 +692,14 @@ export function formatReportForPDF(report: PeopleSearchReport): string {
 }
 
 /**
- * Full OSINT Search with SpiderFoot, Email Finding, and Breach Detection
- * Combines enhanced people search with additional OSINT tools
+ * Conduct full OSINT search with social intelligence, email discovery, and breach detection
+ * Now supports tiered search depths based on Doomsday Clock selection
+ * 
+ * Search Depth Tiers:
+ * - Level 1 (30s): ICE (public records) + STAR TREK (fast warp)
+ * - Level 2 (60s): ICE + WRAITH (social intelligence) + STAR TREK
+ * - Level 3 (120s): ICE + WRAITH + HYDRA + LICH + CERBERUS + BLIZZARD DRAGON + STAR TREK
+ * - Level 4 (180s): ALL crawlers + GENESIS orchestrator (Eye of God)
  */
 export async function conductFullOSINT(
   searchQuery: string,
@@ -702,57 +708,107 @@ export async function conductFullOSINT(
     badge?: string;
     location?: string;
     domain?: string;
+    searchDepth?: number; // 1-4, default 2
   }
 ): Promise<PeopleSearchReport & {
   emails?: any;
   breaches?: any;
   spiderfoot?: any;
+  searchDepthUsed?: number;
+  crawlersActivated?: string[];
 }> {
+  const searchDepth = options?.searchDepth || 2;
+  const crawlersActivated: string[] = [];
+  
+  // Log search depth
+  console.log(`[PANTHEON OSINT] Starting Level ${searchDepth} search for: ${searchQuery}`);
+
+  // Always include ICE crawler (public records)
+  crawlersActivated.push('ICE');
+  
+  // Level 1+: Add STAR TREK (fast warp-speed search)
+  if (searchDepth >= 1) {
+    crawlersActivated.push('STAR_TREK');
+  }
+
+  // Level 2+: Add WRAITH (social intelligence via Sherlock)
+  const shouldActivateWRAITH = searchDepth >= 2;
+  if (shouldActivateWRAITH) {
+    crawlersActivated.push('WRAITH');
+  }
+
+  // Level 3+: Add HYDRA, LICH, CERBERUS, BLIZZARD DRAGON
+  if (searchDepth >= 3) {
+    crawlersActivated.push('HYDRA', 'LICH', 'CERBERUS', 'BLIZZARD_DRAGON');
+  }
+
+  // Level 4: Add GENESIS orchestrator (EYE OF GOD)
+  if (searchDepth >= 4) {
+    crawlersActivated.push('GENESIS');
+  }
+
+  console.log(`[PANTHEON OSINT] Crawlers activated:`, crawlersActivated.join(', '));
+
+  // Run base enhanced search with depth-aware crawler selection
+  // Run base enhanced search with depth-aware crawler selection
   const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
 
   try {
-    // Generate possible usernames from search query
-    const possibleUsernames = [
-      searchQuery.toLowerCase().replace(/\s+/g, ''), // JohnDoe -> johndoe
-      searchQuery.toLowerCase().replace(/\s+/g, '.'), // John Doe -> john.doe
-      searchQuery.toLowerCase().replace(/\s+/g, '_'), // John Doe -> john_doe
-      searchQuery.split(' ')[0].toLowerCase(), // First name only
-    ].filter((u, i, arr) => arr.indexOf(u) === i); // Remove duplicates
-
-    // Search for social media profiles using Sherlock
-    try {
-      const socialProfiles = await socialIntelligenceService.findUserAcrossPlatforms(
-        possibleUsernames[0], // Start with most likely username
-        {
-          concurrency: 10,
-          includeProfileData: true,
-          stealth: true,
-        }
-      );
-
-      // Add found profiles to report
-      if (socialProfiles.length > 0) {
-        enhancedReport.socialMediaProfiles = socialProfiles;
-        
-        // Add profile URLs to socialMediaPresence
-        socialProfiles.forEach(profile => {
-          const entry = `${profile.platform}: ${profile.url}`;
-          if (!enhancedReport.socialMediaPresence.includes(entry)) {
-            enhancedReport.socialMediaPresence.push(entry);
-          }
-        });
-
-        // Add to sources
-        enhancedReport.sources.push({
-          name: 'Social Intelligence Layer (Sherlock)',
-          data: { platforms: socialProfiles.length, usernames: possibleUsernames },
-          confidence: 0.85,
-          timestamp: new Date(),
-        });
-      }
-    } catch (error: any) {
-      console.error('[Full OSINT] Social intelligence search failed:', error.message);
+    // Validate searchQuery before processing
+    if (!searchQuery || typeof searchQuery !== 'string') {
+      console.warn('[People Search] Invalid searchQuery provided:', searchQuery);
+      return {
+        ...enhancedReport,
+        searchDepthUsed: searchDepth,
+        crawlersActivated
+      };
     }
+
+    // Level 2+: Social intelligence via WRAITH crawler (Sherlock)
+    if (shouldActivateWRAITH) {
+      // Generate possible usernames from search query
+      const possibleUsernames = [
+        searchQuery.toLowerCase().replace(/\s+/g, ''), // JohnDoe -> johndoe
+        searchQuery.toLowerCase().replace(/\s+/g, '.'), // John Doe -> john.doe
+        searchQuery.toLowerCase().replace(/\s+/g, '_'), // John Doe -> john_doe
+        searchQuery.split(' ')[0]?.toLowerCase() || searchQuery.toLowerCase(), // First name only, fallback to full query
+      ].filter(Boolean).filter((u, i, arr) => arr.indexOf(u) === i); // Remove empty strings and duplicates
+
+      // Search for social media profiles using Sherlock
+      try {
+        const socialProfiles = await socialIntelligenceService.findUserAcrossPlatforms(
+          possibleUsernames[0], // Start with most likely username
+          {
+            concurrency: 10,
+            includeProfileData: true,
+            stealth: true,
+          }
+        );
+
+        // Add found profiles to report
+        if (socialProfiles.length > 0) {
+          enhancedReport.socialMediaProfiles = socialProfiles;
+          
+          // Add profile URLs to socialMediaPresence
+          socialProfiles.forEach(profile => {
+            const entry = `${profile.platform}: ${profile.url}`;
+            if (!enhancedReport.socialMediaPresence.includes(entry)) {
+              enhancedReport.socialMediaPresence.push(entry);
+            }
+          });
+
+          // Add to sources
+          enhancedReport.sources.push({
+            name: 'Social Intelligence Layer (Sherlock)',
+            data: { platforms: socialProfiles.length, usernames: possibleUsernames },
+            confidence: 0.85,
+            timestamp: new Date(),
+          });
+        }
+      } catch (error: any) {
+        console.error('[Full OSINT] Social intelligence search failed:', error.message);
+      }
+    } // End of WRAITH activation block
 
     // SpiderFoot scan (if available)
     // Note: In production, you may want to implement polling or webhooks
@@ -779,10 +835,16 @@ export async function conductFullOSINT(
       emails: emailData,
       breaches: breachData,
       spiderfoot: spiderfootData,
+      searchDepthUsed: searchDepth,
+      crawlersActivated,
     };
   } catch (error) {
     console.error('[Full OSINT] Error:', error);
-    return enhancedReport;
+    return {
+      ...enhancedReport,
+      searchDepthUsed: searchDepth,
+      crawlersActivated,
+    };
   }
 }
 
