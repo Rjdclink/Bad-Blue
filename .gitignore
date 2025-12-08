@@ -43,5 +43,5 @@ test-output/
 evidence-maps/
 
 # Volume Engine cache
-.cache/test-elite-scanner.ts
 .cache/test-opportunity-system.mjs
+.cache/test-elite-scanner.ts
