@@ -4,12 +4,18 @@ import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 
 const router = express.Router();
 
-// Simple auth middleware
+// Updated auth middleware using platform session
 const adminAuth = (req: any, res: any, next: any) => {
-  const token = req.headers['authorization'];
-  if (token !== `Bearer ${process.env.ADMIN_TOKEN}`) {
-    return res.status(401).json({error: 'Unauthorized'});
+  const result = validateSession(req);
+  
+  if (!result.valid) {
+    return res.status(401).json({
+      error: 'Unauthorized: Authentication required',
+      redirectTo: '/login'
+    });
   }
+  
+  req.user = {userId: result.userId};
   next();
 };
 

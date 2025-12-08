@@ -16,6 +16,7 @@ declare global {
       isAdmin?: boolean;
       isAdminBypass?: boolean;
       isMasterBypass?: boolean;
+      isCryptoCrawlUser?: boolean;
     }
     interface Request {
       rawBody?: Buffer;
@@ -4666,6 +4667,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
   // CRYPTOCRAWL DASHBOARD API
   // ============================================
+  
+  // Mount CryptoCrawl auth routes (must be before other crypto routes)
+  app.use('/api/auth', authRouter);
   
   // Mount CryptoCrawl API routes
   app.use('/api/crypto', dashboardApi);
