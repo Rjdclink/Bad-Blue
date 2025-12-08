@@ -122,10 +122,6 @@ class HydraHead {
         throw new Error('Response too large');
       }
       
-      const contentLengthHeader = response.headers.get('content-length');
-      if (contentLengthHeader && parseInt(contentLengthHeader) > 10_000_000) { // 10MB limit
-        throw new Error('Response too large');
-      }
       const html = await response.text();
       const links = this.extractLinks(html, this.target);
       const richness = this.assessRichness(html);
