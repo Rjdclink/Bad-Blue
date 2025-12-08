@@ -187,6 +187,10 @@ class GasOracle {
   isRunning(): boolean {
     return this.running;
   }
+
+  getAllGasPrices(): Map<ChainId, GasPrice> {
+    return this.gasPrices;
+  }
 }
 
 export const gasOracle = new GasOracle();

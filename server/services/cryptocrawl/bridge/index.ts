@@ -5,3 +5,4 @@ export { gasOracle } from './gas-oracle';
 export { networkHealth } from './network-health';
 export { routeOptimizer } from './route-optimizer';
 export { positionRecommender } from './position-recommender';
+export { bridgeManager, type BridgeManagerState } from './bridge-manager';
