@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { balanceMonitor, gasOracle, networkHealth } from './index';
+import { balanceMonitor, gasOracle, networkHealth } from '../bridge';
 
 const router = express.Router();
 
