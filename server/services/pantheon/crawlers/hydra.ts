@@ -182,8 +182,8 @@ class HydraHead {
     // More robust JSON detection - look for JSON-like patterns
     const jsonPattern = /{[\s\S]*"[^"]+"\s*:\s*[^}]*}/;
     const hasJson = jsonPattern.test(html);
-    const hasTable = html.includes('<table');
-    const hasForm = html.includes('<form');
+    const hasTable = /<table/i.test(html);
+    const hasForm = /<form/i.test(html);
     const density = Math.min(html.length / 10000, 1); // Normalize by 10KB
     
     let score = 0;
