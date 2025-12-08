@@ -1,5 +1,5 @@
 // Starburst Snake - Revolutionary Agent Pattern with Skin Shedding
-import crypto from 'crypto';
+import { randomUUID } from 'crypto';
 import { LuxSwarm, type Opportunity, type AgentState, type ChainId } from '../core/lux-swarm';
 
 // STARBURST: One scanner → many agents
@@ -26,7 +26,7 @@ class SnakeAgent {
 
   constructor(opp: Opportunity, parentState?: Record<string, any>, canShed = true) {
     // Use crypto.randomUUID() for better uniqueness guarantees in high-frequency scenarios
-    this.id = `snake-${Date.now()}-${crypto.randomUUID().split('-')[0]}`;
+    this.id = `snake-${Date.now()}-${randomUUID().split('-')[0]}`;
     this.priority = opp.priority;
     this.target = opp.asset;
     this.chain = opp.chain;

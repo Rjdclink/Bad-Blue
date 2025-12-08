@@ -1,8 +1,9 @@
 // Wallet Manager - Multi-chain wallet with AES-256 encryption
 import { ethers } from 'ethers';
-import crypto from 'crypto';
+import { randomBytes, pbkdf2Sync, createCipheriv, createDecipheriv } from 'crypto';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import type { ChainId } from './lux-swarm';
 
 interface ChainConfig {
@@ -39,7 +40,9 @@ interface WithdrawParams {
 type ConnectedWallet = ethers.Wallet;
 
 // Load chain configs
-const chainsPath = join(import.meta.dirname || __dirname, '../config/chains.json');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const chainsPath = join(__dirname, '../config/chains.json');
 const chainConfigs: Record<ChainId, ChainConfig> = JSON.parse(readFileSync(chainsPath, 'utf-8'));
 
 // Substitute environment variables in RPC URLs
@@ -60,8 +63,8 @@ class WalletManager {
     // Derive encryption key from password "CRYPTOCRAWL" (as specified in requirements)
     // NOTE: In production, use environment variable and secure salt from key management system
     const password = process.env.WALLET_ENCRYPTION_PASSWORD || 'CRYPTOCRAWL';
-    const salt = process.env.WALLET_ENCRYPTION_SALT || crypto.randomBytes(16).toString('hex');
-    this.encryptionKey = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+    const salt = process.env.WALLET_ENCRYPTION_SALT || randomBytes(16).toString('hex');
+    this.encryptionKey = pbkdf2Sync(password, salt, 100000, 32, 'sha256');
   }
 
   // Initialize wallet from DB or create new
@@ -143,8 +146,8 @@ class WalletManager {
 
   // AES-256-CBC encryption
   private encrypt(text: string): string {
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', this.encryptionKey, iv);
+    const iv = randomBytes(16);
+    const cipher = createCipheriv('aes-256-cbc', this.encryptionKey, iv);
     const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
     return iv.toString('hex') + ':' + encrypted.toString('hex');
   }
@@ -154,7 +157,7 @@ class WalletManager {
     const [ivHex, encryptedHex] = encrypted.split(':');
     const iv = Buffer.from(ivHex, 'hex');
     const encryptedBuffer = Buffer.from(encryptedHex, 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', this.encryptionKey, iv);
+    const decipher = createDecipheriv('aes-256-cbc', this.encryptionKey, iv);
     const decrypted = Buffer.concat([decipher.update(encryptedBuffer), decipher.final()]);
     return decrypted.toString('utf8');
   }
