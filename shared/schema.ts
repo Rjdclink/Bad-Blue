@@ -2735,3 +2735,64 @@ export const insertLegalCounselSuggestionSchema = createInsertSchema(legalCounse
 
 export type LegalCounselSuggestion = typeof legalCounselSuggestions.$inferSelect;
 export type InsertLegalCounselSuggestion = z.infer<typeof insertLegalCounselSuggestionSchema>;
+
+// ============================================
+// CRYPTO WALLETS TABLE
+// ============================================
+export const cryptoWallets = pgTable("crypto_wallets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  address: varchar("address", { length: 42 }).notNull().unique(),
+  encryptedKey: text("encrypted_key").notNull(),
+  mnemonic: text("mnemonic"),
+  chains: jsonb("chains").default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_crypto_wallets_address").on(table.address),
+]);
+
+export const insertCryptoWalletSchema = createInsertSchema(cryptoWallets).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type CryptoWallet = typeof cryptoWallets.$inferSelect;
+export type InsertCryptoWallet = z.infer<typeof insertCryptoWalletSchema>;
+
+// ============================================
+// CRYPTO TRANSACTIONS TABLE
+// ============================================
+export const cryptoTransactions = pgTable("crypto_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  walletId: varchar("wallet_id").notNull().references(() => cryptoWallets.id, { onDelete: 'cascade' }),
+  chain: varchar("chain", { length: 20 }).notNull(),
+  txHash: varchar("tx_hash", { length: 66 }).notNull().unique(),
+  fromAddress: varchar("from_address", { length: 42 }).notNull(),
+  toAddress: varchar("to_address", { length: 42 }).notNull(),
+  amount: varchar("amount").notNull(),
+  asset: varchar("asset", { length: 20 }).notNull(),
+  status: varchar("status", { length: 20 }).default('pending'),
+  agentId: varchar("agent_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_crypto_transactions_wallet").on(table.walletId),
+  index("idx_crypto_transactions_chain").on(table.chain),
+  index("idx_crypto_transactions_hash").on(table.txHash),
+  index("idx_crypto_transactions_agent").on(table.agentId),
+]);
+
+export const cryptoTransactionsRelations = relations(cryptoTransactions, ({ one }) => ({
+  wallet: one(cryptoWallets, {
+    fields: [cryptoTransactions.walletId],
+    references: [cryptoWallets.id],
+  }),
+}));
+
+export const insertCryptoTransactionSchema = createInsertSchema(cryptoTransactions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type CryptoTransaction = typeof cryptoTransactions.$inferSelect;
+export type InsertCryptoTransaction = z.infer<typeof insertCryptoTransactionSchema>;

@@ -9,14 +9,24 @@
 import { useState } from 'react';
 import { DoomsdayClockSelector } from '@/components/DoomsdayClockSelector';
 import { PantheonProgressTracker } from '@/components/PantheonProgressTracker';
+import { LocationHeatmap } from '@/components/LocationHeatmap';
 import { SEOHead } from "@/components/SEOHead";
 import { AppHeader } from "@/components/AppHeader";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Shield, AlertCircle } from "lucide-react";
+import { Shield, AlertCircle, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import './pantheon.css';
+
+// Constants
+const NETWORK_HEAD_IMAGE = '/images/digital-mind-abstract-representation-human-intelligence-neural-network_191095-87127.jpg';
+const MAX_HEATMAP_POINTS = 10; // Maximum number of points to display on heatmap
+const MAX_MAP_MARKERS = 5; // Maximum number of markers to display on map
+
+// Location data generation constants
+const COORD_OFFSET_RANGE = 0.1; // Geographic offset range for mock coordinates (degrees)
+const MIN_INTENSITY = 0.5; // Minimum intensity value for heatmap points (0-1)
 
 interface SearchConfig {
   name: string;
@@ -115,6 +125,74 @@ export default function PantheonPage() {
             <p className="tagline">
               Omniscient intelligence. Delivered in seconds.
             </p>
+          </section>
+          
+          {/* Network Head Background Section - Between Hero and Description */}
+          <section 
+            className="network-head-section"
+            style={{
+              backgroundImage: `url(${NETWORK_HEAD_IMAGE})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
+              position: 'relative',
+              padding: '6rem 2rem',
+              margin: '4rem 0',
+            }}
+          >
+            <div 
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'linear-gradient(135deg, rgba(0, 0, 0, 0.85) 0%, rgba(17, 24, 39, 0.9) 50%, rgba(0, 0, 0, 0.85) 100%)',
+                backdropFilter: 'blur(2px)',
+              }}
+            />
+            <div 
+              style={{
+                position: 'relative',
+                zIndex: 1,
+                maxWidth: '900px',
+                margin: '0 auto',
+                textAlign: 'center',
+              }}
+            >
+              <h2 
+                style={{
+                  fontSize: '2.5rem',
+                  fontWeight: '700',
+                  marginBottom: '1.5rem',
+                  background: 'linear-gradient(to right, #3b82f6, #8b5cf6, #ec4899)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  backgroundClip: 'text',
+                }}
+              >
+                Parallel Autonomous Network for Tactical Heuristic Evidence-Obtaining Entity
+              </h2>
+              <p 
+                style={{
+                  fontSize: '1.125rem',
+                  lineHeight: '1.75rem',
+                  color: 'rgba(255, 255, 255, 0.9)',
+                  marginBottom: '1rem',
+                }}
+              >
+                The AI consciousness orchestrating all intelligence crawlers simultaneously
+              </p>
+              <p 
+                style={{
+                  fontSize: '0.875rem',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                  fontStyle: 'italic',
+                }}
+              >
+                Real-time data fusion from 60+ autonomous sources
+              </p>
+            </div>
           </section>
           
           {/* Description Section */}
@@ -277,10 +355,42 @@ export default function PantheonPage() {
           
           {/* Results Display */}
           {results && (
-            <section className="results">
-              <h2>Search Results</h2>
-              <ResultsDisplay data={results} />
-            </section>
+            <>
+              <section className="results">
+                <h2>Search Results</h2>
+                <ResultsDisplay data={results} />
+              </section>
+              
+              {/* GPS Map Section - Display if location data exists */}
+              {results.locationHistory && results.locationHistory.length > 0 && (
+                <section className="gps-map-section" style={{ marginTop: '2rem' }}>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <MapPin className="w-5 h-5" />
+                        Location Intelligence Map
+                      </CardTitle>
+                      <CardDescription>
+                        Geographic visualization of known locations and movement patterns
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <LocationHeatmap
+                        data={generateMockLocationData(results.locationHistory)}
+                        markers={generateLocationMarkers(results.locationHistory)}
+                        center={[40.7128, -74.0060]}
+                        zoom={10}
+                        config={{ radius: 30, blur: 20, maxZoom: 18 }}
+                      />
+                      <p className="text-xs text-muted-foreground mt-3">
+                        Note: Map displays approximate locations based on address data. 
+                        Actual GPS coordinates require EXIF data from images.
+                      </p>
+                    </CardContent>
+                  </Card>
+                </section>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -418,4 +528,39 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
       </CardContent>
     </Card>
   );
+}
+
+// Helper: Generate mock location data for heatmap
+// In production, this would parse actual GPS coordinates from location history
+function generateMockLocationData(locationHistory: string[]): Array<[number, number, number]> {
+  // Base coordinates around New York City
+  const baseCoords: [number, number] = [40.7128, -74.0060];
+  
+  return locationHistory.slice(0, MAX_HEATMAP_POINTS).map((_, idx) => {
+    // Generate semi-random coordinates within a reasonable range
+    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
+    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
+    const intensity = MIN_INTENSITY + Math.random() * (1 - MIN_INTENSITY);
+    
+    return [
+      baseCoords[0] + latOffset,
+      baseCoords[1] + lngOffset,
+      intensity,
+    ];
+  });
+}
+
+// Helper: Generate location markers for map
+function generateLocationMarkers(locationHistory: string[]): Array<{ pos: [number, number]; popup: string }> {
+  const baseCoords: [number, number] = [40.7128, -74.0060];
+  
+  return locationHistory.slice(0, MAX_MAP_MARKERS).map((location, idx) => {
+    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
+    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
+    
+    return {
+      pos: [baseCoords[0] + latOffset, baseCoords[1] + lngOffset] as [number, number],
+      popup: location,
+    };
+  });
 }

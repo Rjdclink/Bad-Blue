@@ -38,6 +38,7 @@ import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
+import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -3353,7 +3354,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
 
   app.post('/api/osint/full-search', async (req, res) => {
-    const { name, department, badge, location, domain } = req.body;
+    const { name, department, badge, location, domain, searchDepth = 2 } = req.body;
     
     if (!name) {
       return res.status(400).json({ error: 'Name required' });
@@ -3361,7 +3362,16 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
     try {
       const { conductFullOSINT } = await import('./peopleSearch');
-      const report = await conductFullOSINT(name, { department, badge, location, domain });
+      
+      // Pass search depth to the OSINT function
+      const report = await conductFullOSINT(name, { 
+        department, 
+        badge, 
+        location, 
+        domain,
+        searchDepth 
+      });
+      
       res.json(report);
     } catch (error: any) {
       console.error('[OSINT API] Error:', error);
@@ -4652,6 +4662,14 @@ Contact: ${foiaRequest.userEmail || userEmail}
     });
   }));
 
+  // ============================================
+  // CRYPTOCRAWL DASHBOARD API
+  // ============================================
+  
+  // Mount CryptoCrawl API routes
+  app.use('/api/crypto', dashboardApi);
+  app.use('/admin/crypto', adminApi);
+  
   // Apply notFoundHandler ONLY to API routes
   app.use('/api', notFoundHandler);
   
@@ -4660,5 +4678,17 @@ Contact: ${foiaRequest.userEmail || userEmail}
   app.use(errorHandler);
 
   const httpServer = createServer(app);
+  
+  // Setup WebSocket upgrade handler for CryptoCrawl
+  httpServer.on('upgrade', (request, socket, head) => {
+    if (request.url === '/api/crypto/live') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+  
   return httpServer;
 }
