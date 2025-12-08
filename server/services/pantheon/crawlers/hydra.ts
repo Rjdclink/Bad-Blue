@@ -40,16 +40,17 @@ export class HydraCrawler extends BaseCrawler {
       this.spawnHead(this.task.target);
     }
     
-    // Process each head
-    for (const head of this.heads) {
-      const result = await head.explore();
-      
+    // Process each head concurrently
+    const explorationPromises = this.heads.map(head => head.explore());
+    const results = await Promise.all(explorationPromises);
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
       // Spawn new heads if source is rich and we have capacity
       if (result.richness > 0.7 && this.heads.length < this.maxHeads) {
         this.spawnHead(result.nextTarget);
         this.layPheromone(result.nextTarget, result.richness);
       }
-      
       signatures.push(this.generateEntropySignature(result));
     }
     
