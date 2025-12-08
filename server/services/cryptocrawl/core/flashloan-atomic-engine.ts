@@ -1,6 +1,13 @@
 // Flash Loan Atomic Engine - Multi-Provider Flash Loans with Pre-Execution Validation
 import { OpportunityScore } from '../orchestrator/execution-orchestrator';
 
+// Configuration constants
+const SWAP_MULTIPLIER = 1.005;
+const TARGET_PROFIT = 50;
+const GAS_COST = 0.5;
+const SIMULATION_FAILURE_RATE = 0.05;
+const EXECUTION_SUCCESS_RATE = 0.95;
+
 interface FlashLoanProvider {
   name: string; chain: string; address: string; fee: number; maxLoan: number; priority: number;
 }
@@ -36,11 +43,11 @@ class FlashLoanAtomicEngine {
     return {
       transactions: [
         {step: 'borrow', provider: provider.name, amount: loanSize},
-        {step: 'swap1', dex: 'uniswap', amountIn: loanSize, expectedOut: loanSize * 1.005},
-        {step: 'swap2', dex: 'sushiswap', amountIn: loanSize * 1.005, expectedOut: repayment + 50},
+        {step: 'swap1', dex: 'uniswap', amountIn: loanSize, expectedOut: loanSize * SWAP_MULTIPLIER},
+        {step: 'swap2', dex: 'sushiswap', amountIn: loanSize * SWAP_MULTIPLIER, expectedOut: repayment + TARGET_PROFIT},
         {step: 'repay', provider: provider.name, amount: repayment}
       ],
-      expectedProfit: 50 - 0.5,
+      expectedProfit: TARGET_PROFIT - GAS_COST,
       provider: provider.name
     };
   }
@@ -74,12 +81,12 @@ class FlashLoanAtomicEngine {
   
   private async simulate(bundle: AtomicBundle): Promise<{success: boolean, error?: string}> {
     const random = Math.random();
-    if (random < 0.05) return {success: false, error: 'Slippage too high'};
+    if (random < SIMULATION_FAILURE_RATE) return {success: false, error: 'Slippage too high'};
     return {success: true};
   }
   
   private async send(bundle: AtomicBundle): Promise<{success: boolean, profit: number}> {
-    const success = Math.random() < 0.95;
+    const success = Math.random() < EXECUTION_SUCCESS_RATE;
     return { success, profit: success ? bundle.expectedProfit : 0 };
   }
 }

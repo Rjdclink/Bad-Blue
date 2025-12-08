@@ -3,6 +3,14 @@ import { Opportunity } from '../core/lux-swarm';
 
 enum ExecutionTier { ULTRA_SAFE = 'ULTRA_SAFE', SAFE = 'SAFE', BALANCED = 'BALANCED', AGGRESSIVE = 'AGGRESSIVE' }
 
+// Configuration constants
+const POSITIVE_TOKENS = ['USDC', 'USDT', 'WETH', 'WMATIC'];
+const SENTIMENT_ADJUSTMENT = 0.2;
+const CURRENT_GAS_GWEI = 30;
+const TARGET_GAS_GWEI = 25;
+const GAS_WAIT_THRESHOLD = 1.5;
+const MAX_GAS_WAIT_MS = 10000;
+
 interface OpportunityScore {
   opportunity: Opportunity;
   successProbability: number;
@@ -67,9 +75,8 @@ class ExecutionOrchestrator {
   
   private async analyzeWithSentiment(opp: Opportunity): Promise<OpportunityScore> {
     const baseAnalysis = await this.analyzer.analyze(opp);
-    const positiveTokens = ['USDC', 'USDT', 'WETH', 'WMATIC'];
-    const sentimentScore = positiveTokens.includes(opp.asset.split('/')[0]) ? 0.1 : 0;
-    const adjusted = baseAnalysis.successProbability * (1 + sentimentScore * 0.2);
+    const sentimentScore = POSITIVE_TOKENS.includes(opp.asset.split('/')[0]) ? 0.1 : 0;
+    const adjusted = baseAnalysis.successProbability * (1 + sentimentScore * SENTIMENT_ADJUSTMENT);
     return { ...baseAnalysis, successProbability: Math.min(1.0, Math.max(0, adjusted)) };
   }
   
@@ -113,9 +120,8 @@ class ExecutionOrchestrator {
   }
   
   private async findOptimalGasWindow(multiplier: number): Promise<{waitTime: number, expectedGas: number}> {
-    const currentGas = 30, targetGas = 25;
-    if (currentGas <= targetGas * multiplier) return {waitTime: 0, expectedGas: currentGas};
-    return {waitTime: multiplier < 1.5 ? 10000 : 0, expectedGas: targetGas};
+    if (CURRENT_GAS_GWEI <= TARGET_GAS_GWEI * multiplier) return {waitTime: 0, expectedGas: CURRENT_GAS_GWEI};
+    return {waitTime: multiplier < GAS_WAIT_THRESHOLD ? MAX_GAS_WAIT_MS : 0, expectedGas: TARGET_GAS_GWEI};
   }
   
   private async executeOne(opp: OpportunityScore, config: ExecutionPlan) {
