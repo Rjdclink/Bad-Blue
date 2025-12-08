@@ -22,6 +22,12 @@ interface TierConfig {
   priority: number;
 }
 
+interface TierStats {
+  count: number;
+  totalExpectedValue: number;
+  avgSuccessProbability: number;
+}
+
 const TIER_CONFIGS: TierConfig[] = [
   {
     tier: ExecutionTier.ULTRA_SAFE,
@@ -115,8 +121,8 @@ class RiskTierSystem {
   }
   
   // Get tier statistics
-  getTierStats(groups: Map<ExecutionTier, OpportunityScore[]>) {
-    const stats: Record<string, any> = {};
+  getTierStats(groups: Map<ExecutionTier, OpportunityScore[]>): Record<string, TierStats> {
+    const stats: Record<string, TierStats> = {};
     
     groups.forEach((opps, tier) => {
       stats[tier] = {
@@ -133,4 +139,4 @@ class RiskTierSystem {
 }
 
 export { RiskTierSystem, ExecutionTier, TIER_CONFIGS };
-export type { TierConfig };
+export type { TierConfig, TierStats };

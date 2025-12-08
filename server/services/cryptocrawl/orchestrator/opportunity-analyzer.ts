@@ -1,5 +1,7 @@
 // Opportunity Quality Analyzer - 15-Dimensional Quality Scoring System
 
+import { ExecutionTier } from './risk-tier-system';
+
 interface Opportunity {
   asset: string;
   chain: string;
@@ -35,16 +37,26 @@ interface OpportunityScore {
   confidence: 'ultra-high' | 'high' | 'medium' | 'low';
 }
 
-enum ExecutionTier {
-  ULTRA_SAFE = 'ultra_safe',
-  SAFE = 'safe',
-  BALANCED = 'balanced',
-  AGGRESSIVE = 'aggressive',
-  DEGEN = 'degen',
-  SKIP = 'skip'
-}
-
 class OpportunityQualityAnalyzer {
+  // Weights for each of the 15 dimensions (order: liquidity, spread, stability, volume, slippage, 
+  // gas, competition, timing, contract, history, oracle, network, whale, flashloan, freshness)
+  private static readonly DIMENSION_WEIGHTS = [
+    0.15, // liquidityDepth - most important
+    0.12, // spreadSize
+    0.10, // priceStability
+    0.08, // volumeConsistency
+    0.10, // slippageRisk
+    0.05, // gasVolatility
+    0.08, // competitionLevel
+    0.07, // blockTiming
+    0.09, // contractRisk
+    0.06, // historicalSuccess
+    0.04, // oracleDeviation
+    0.03, // networkCongestion
+    0.02, // whaleActivity
+    0.01, // flashLoanAvailability
+    0.05  // freshnessScore
+  ];
   
   // Main analysis function
   async analyze(opp: Opportunity): Promise<OpportunityScore> {
@@ -91,22 +103,23 @@ class OpportunityQualityAnalyzer {
   
   // Weighted composite score
   private calculateComposite(m: Metrics): number {
+    const weights = OpportunityQualityAnalyzer.DIMENSION_WEIGHTS;
     return (
-      m.liquidityDepth * 0.15 +
-      m.spreadSize * 0.12 +
-      m.priceStability * 0.10 +
-      m.volumeConsistency * 0.08 +
-      m.slippageRisk * 0.10 +
-      m.gasVolatility * 0.05 +
-      m.competitionLevel * 0.08 +
-      m.blockTiming * 0.07 +
-      m.contractRisk * 0.09 +
-      m.historicalSuccess * 0.06 +
-      m.oracleDeviation * 0.04 +
-      m.networkCongestion * 0.03 +
-      m.whaleActivity * 0.02 +
-      m.flashLoanAvailability * 0.01 +
-      m.freshnessScore * 0.05
+      m.liquidityDepth * weights[0] +
+      m.spreadSize * weights[1] +
+      m.priceStability * weights[2] +
+      m.volumeConsistency * weights[3] +
+      m.slippageRisk * weights[4] +
+      m.gasVolatility * weights[5] +
+      m.competitionLevel * weights[6] +
+      m.blockTiming * weights[7] +
+      m.contractRisk * weights[8] +
+      m.historicalSuccess * weights[9] +
+      m.oracleDeviation * weights[10] +
+      m.networkCongestion * weights[11] +
+      m.whaleActivity * weights[12] +
+      m.flashLoanAvailability * weights[13] +
+      m.freshnessScore * weights[14]
     );
   }
   
@@ -130,7 +143,7 @@ class OpportunityQualityAnalyzer {
       metrics.freshnessScore / 100
     ];
     
-    const weights = [0.15, 0.12, 0.10, 0.08, 0.10, 0.05, 0.08, 0.07, 0.09, 0.06, 0.04, 0.03, 0.02, 0.01, 0.05];
+    const weights = OpportunityQualityAnalyzer.DIMENSION_WEIGHTS;
     const score = features.reduce((sum, f, i) => sum + f * weights[i], 0);
     
     // Sigmoid activation
@@ -166,5 +179,5 @@ class OpportunityQualityAnalyzer {
   }
 }
 
-export { OpportunityQualityAnalyzer, ExecutionTier };
+export { OpportunityQualityAnalyzer };
 export type { Opportunity, Metrics, OpportunityScore };
