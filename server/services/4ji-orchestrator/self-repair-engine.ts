@@ -243,7 +243,7 @@ export class SelfRepairEngine {
     this.ensureInitialized();
 
     const anomaly: DetectedAnomaly = {
-      id: `anomaly-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `anomaly-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       domain,
       timestamp: new Date(),
       severity: anomalyData.severity,

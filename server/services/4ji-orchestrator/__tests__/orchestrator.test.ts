@@ -458,8 +458,20 @@ export async function run4JITests(): Promise<TestResults> {
   return results;
 }
 
-// Run if executed directly
-if (import.meta.url.endsWith(process.argv[1]?.replace(/^file:\/\//, '') || '')) {
+// Run if executed directly - using URL comparison for ESM modules
+const isDirectExecution = (() => {
+  try {
+    const scriptPath = process.argv[1];
+    if (!scriptPath) return false;
+    const fileUrl = new URL(import.meta.url);
+    const scriptUrl = new URL(`file://${scriptPath}`);
+    return fileUrl.pathname === scriptUrl.pathname;
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectExecution) {
   run4JITests()
     .then(results => {
       process.exit(results.failed > 0 ? 1 : 0);

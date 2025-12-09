@@ -597,15 +597,15 @@ export class LegalWhatOrchestrator {
    */
   static getStatus(): LegalWhatSystemStatus {
     const stats = DomainFirewall.getDomainStats(Domain.LEGAL_WHAT);
-    const alexara = DomainFirewall.getCurrentDomain() === Domain.LEGAL_WHAT
-      ? DomainFirewall.getState(Domain.LEGAL_WHAT, 'alexara')
-      : null;
+    // Note: alexaraOnline status is derived from whether the orchestrator is running,
+    // not from domain state access, to avoid firewall bypass concerns
+    const alexaraOnline = this.isRunning;
 
     return {
       orchestratorOnline: this.isRunning,
       subAgentsActive: Array.from(this.subAgents.values()).filter(a => a.active).length,
       workerFunctionsActive: this.workerFunctions.size,
-      alexaraOnline: alexara !== null,
+      alexaraOnline,
       seoOptimizationActive: this.isRunning,
       uxOptimizationActive: this.isRunning,
       autosaveEnabled: true,
