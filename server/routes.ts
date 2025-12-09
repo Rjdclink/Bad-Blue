@@ -90,6 +90,7 @@ import { runAutomatedCleanup, getCleanupLogs, getCleanupStats, deleteOldErrorLog
 import { generateEnhancedComplaint, searchOfficerAuthority, routeComplaint, enhanceComplaintNarrative } from "./complaintDraftingSystem";
 import { generateSection1983Lawsuit } from "./section1983LawsuitGenerator";
 import { runFullDiagnostics } from "./systemDiagnostics";
+import { masterControlConsole, executeMCCDirective } from "./masterControlConsole";
 import {
   apiRateLimit,
   strictRateLimit,
@@ -2591,10 +2592,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
           });
         }
 
-        // Import MCC dynamically to avoid circular dependencies
-        const { executeMCCDirective } = await import('./masterControlConsole');
-        
-        // Execute the directive
+        // Execute the directive using static import
         const result = await executeMCCDirective(prompt);
 
         res.json({
@@ -2624,6 +2622,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
   app.get("/api/mcc/status",
     isAuthenticated,
+    apiRateLimit,
     asyncHandler(async (req: any, res: any) => {
       try {
         const userId = req.user?.claims?.sub;
@@ -2635,7 +2634,6 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
           });
         }
 
-        const { masterControlConsole } = await import('./masterControlConsole');
         const status = await masterControlConsole.getStatus();
 
         res.json({
@@ -2657,6 +2655,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
 
   app.get("/api/mcc/history",
     isAuthenticated,
+    apiRateLimit,
     asyncHandler(async (req: any, res: any) => {
       try {
         const userId = req.user?.claims?.sub;
@@ -2668,7 +2667,6 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
           });
         }
 
-        const { masterControlConsole } = await import('./masterControlConsole');
         const history = masterControlConsole.getExecutionHistory();
 
         // Return summary of recent executions

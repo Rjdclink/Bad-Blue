@@ -20,13 +20,26 @@
  */
 
 import { AICollaborationOrchestrator, OrchestratedResponse, CollaborationResult } from './aiCollaborationOrchestrator';
-import { AIProvider, UsageContext, aiTokenGovernor } from './aiTokenGovernor';
+import { AIProvider, UsageContext, aiTokenGovernor, TaskPriority as GovernorPriority } from './aiTokenGovernor';
 import { AIModelSelector, TaskAttributes, TaskComplexity, TaskPriority } from './aiModelSelector';
 import { processSubAgentCommand, callAIWithGovernor, callAIWithFallback } from './aiSubAgent';
 import { badblueWorker } from './badblueWorker';
 import { logger } from './logger';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+
+// ============================================
+// CONSTANTS - Tunable parameters for MCC
+// ============================================
+
+/** Default estimated tokens for heuristic parsing */
+const DEFAULT_ESTIMATED_TOKENS = 2000;
+
+/** Default confidence for heuristic parsing */
+const DEFAULT_HEURISTIC_CONFIDENCE = 0.6;
+
+/** Average characters per token (rough estimate) */
+const CHARS_PER_TOKEN_ESTIMATE = 4;
 
 /**
  * MCC Task Categories
@@ -300,33 +313,41 @@ Be precise and accurate. Consider the task complexity and what AI capabilities a
       });
       
       if (result.success && result.content) {
-        const parsed = this.extractJSON(result.content);
-        
-        return {
-          originalPrompt: prompt,
-          category: this.mapCategory(parsed.category),
-          executionMode: this.mapExecutionMode(parsed.executionMode),
-          priority: this.mapPriority(parsed.priority),
-          complexity: this.mapComplexity(parsed.complexity),
-          subtasks: [],
-          requiresVerification: parsed.requiresVerification ?? true,
-          estimatedTokens: parsed.estimatedTokens || 2000,
-          confidence: parsed.confidence || 0.7,
-          intent: parsed.intent || 'Execute user directive',
-        };
+        try {
+          const parsed = this.extractJSON(result.content);
+          
+          return {
+            originalPrompt: prompt,
+            category: this.mapCategory(parsed.category),
+            executionMode: this.mapExecutionMode(parsed.executionMode),
+            priority: this.mapPriority(parsed.priority),
+            complexity: this.mapComplexity(parsed.complexity),
+            subtasks: [],
+            requiresVerification: parsed.requiresVerification ?? true,
+            estimatedTokens: parsed.estimatedTokens || DEFAULT_ESTIMATED_TOKENS,
+            confidence: parsed.confidence || 0.7,
+            intent: parsed.intent || 'Execute user directive',
+          };
+        } catch (jsonError: any) {
+          logger.warn('[MCC] JSON parsing failed, using heuristic parsing:', jsonError.message);
+          return this.heuristicParse(prompt);
+        }
       }
     } catch (error: any) {
       logger.warn('[MCC] AI parsing failed, using heuristic parsing:', error.message);
     }
     
-    // Fallback: Heuristic parsing
+    // Fallback: Heuristic parsing (all AI providers failed or no content)
     return this.heuristicParse(prompt);
   }
   
   /**
    * Extract JSON from AI response (handles markdown code blocks)
+   * @param content - Raw AI response content
+   * @returns Parsed JSON object
+   * @throws Error if JSON parsing fails
    */
-  private extractJSON(content: string): any {
+  private extractJSON(content: string): Record<string, unknown> {
     let cleanJson = content.trim();
     
     // Remove markdown code blocks
@@ -409,8 +430,8 @@ Be precise and accurate. Consider the task complexity and what AI capabilities a
       complexity,
       subtasks: [],
       requiresVerification: true,
-      estimatedTokens: 2000,
-      confidence: 0.6,
+      estimatedTokens: DEFAULT_ESTIMATED_TOKENS,
+      confidence: DEFAULT_HEURISTIC_CONFIDENCE,
       intent: `Process ${category} request`,
     };
   }
@@ -585,11 +606,27 @@ Be precise and accurate. Consider the task complexity and what AI capabilities a
       let provider: AIProvider | undefined;
       let tokensUsed = 0;
       
+      // Get optimal provider from token governor based on context
+      const context = task.executionMode === MCCExecutionMode.WORKER 
+        ? UsageContext.AUTONOMOUS 
+        : UsageContext.USER;
+      
+      const taskMetadata = {
+        taskName: task.name,
+        priority: this.mapPriorityToGovernor(task.priority),
+        complexity: task.complexity,
+        isUserFacing: task.executionMode !== MCCExecutionMode.WORKER,
+        allowDeferral: false,
+        context,
+      };
+      
+      const budget = await aiTokenGovernor.getBudgetForTask(taskMetadata);
+      provider = budget.provider;
+      
       // Route to appropriate execution path based on mode
       if (task.executionMode === MCCExecutionMode.WORKER) {
         // Use BadBlue Worker for autonomous tasks
         result = await this.executeWorkerTask(task, directive);
-        provider = AIProvider.GROQ; // Worker uses Groq primarily
       } else {
         // Use Sub-Agent for user-directed tasks
         const subAgentResult = await processSubAgentCommand({
@@ -598,8 +635,7 @@ Be precise and accurate. Consider the task complexity and what AI capabilities a
         });
         
         result = subAgentResult;
-        provider = AIProvider.GEMINI; // Sub-agent uses Gemini primarily
-        tokensUsed = Math.floor((task.description.length + (subAgentResult.response?.length || 0)) / 4);
+        tokensUsed = Math.floor((task.description.length + (subAgentResult.response?.length || 0)) / CHARS_PER_TOKEN_ESTIMATE);
       }
       
       task.status = 'completed';
@@ -754,12 +790,11 @@ Respond with JSON:
       // Attempt to understand and log the error
       const errorMsg = failed.error || 'Unknown error';
       
-      // Log error for worker to handle
+      // Log error for worker to handle - preserve context
       try {
-        await badblueWorker.reportError(
-          new Error(errorMsg),
-          `MCC Subtask: ${failed.subtaskName}`
-        );
+        const errorContext = `MCC Subtask: ${failed.subtaskName}`;
+        // Pass error message and context separately to preserve information
+        await badblueWorker.reportError(errorMsg, errorContext);
         resolutionActions.push(`Reported error to worker: ${failed.subtaskName}`);
       } catch (e) {
         // Worker logging failed - just track it
@@ -932,6 +967,19 @@ Provide a clear, comprehensive response that addresses the original request.`;
       'comprehensive': TaskComplexity.COMPREHENSIVE,
     };
     return complexityMap[complexity?.toLowerCase()] || TaskComplexity.MODERATE;
+  }
+  
+  /**
+   * Map local TaskPriority to Governor TaskPriority
+   */
+  private mapPriorityToGovernor(priority: TaskPriority): GovernorPriority {
+    const priorityMap: Record<TaskPriority, GovernorPriority> = {
+      [TaskPriority.LOW]: GovernorPriority.LOW_BACKGROUND,
+      [TaskPriority.MEDIUM]: GovernorPriority.MEDIUM_BACKGROUND,
+      [TaskPriority.HIGH]: GovernorPriority.HIGH_USER,
+      [TaskPriority.CRITICAL]: GovernorPriority.CRITICAL_USER,
+    };
+    return priorityMap[priority] || GovernorPriority.MEDIUM_BACKGROUND;
   }
   
   /**
