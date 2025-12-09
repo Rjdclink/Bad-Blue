@@ -2,7 +2,7 @@
 // Combines all techniques for crushing superiority that looks like "luck"
 // ENHANCED: Circuit breakers, telemetry, self-healing, and advanced configuration
 
-import { Wallet, JsonRpcProvider } from 'ethers';
+import { Wallet, providers } from 'ethers';
 import type { Opportunity } from '../core/lux-swarm';
 import { UltraLowLatencyExecutor } from './ultra-low-latency-executor';
 import { ContinuousLearningSystem } from './continuous-learning-system';
@@ -12,6 +12,8 @@ import { CircuitBreaker, CircuitBreakerState } from './circuit-breaker';
 import { TelemetrySystem } from './telemetry';
 import { loadConfig, type StealthConfig, STEALTH_PRESETS } from './config';
 import type { ExecutionResult, StealthMetrics, RLAction } from './types';
+
+const { JsonRpcProvider } = providers;
 
 export class StealthSuperiority {
   private executor: UltraLowLatencyExecutor;
@@ -58,7 +60,7 @@ export class StealthSuperiority {
   /**
    * Initialize all stealth subsystems
    */
-  async initialize(wallet: Wallet, providers: Map<string, JsonRpcProvider>): Promise<void> {
+  async initialize(wallet: Wallet, providers: Map<string, providers.JsonRpcProvider>): Promise<void> {
     console.log('🥷 [STEALTH] Initializing Stealth Superiority System...');
     
     this.telemetry.recordEvent('system_init_start', 'system', {}, 'info');
@@ -97,7 +99,7 @@ export class StealthSuperiority {
   /**
    * Extract provider URL safely
    */
-  private getProviderUrl(provider: JsonRpcProvider): string {
+  private getProviderUrl(provider: providers.JsonRpcProvider): string {
     // Try to get URL through public interface
     try {
       // Use toString() which includes the URL

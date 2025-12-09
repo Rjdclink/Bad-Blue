@@ -2,10 +2,12 @@
 // Implements deterministic execution, failover, and shadow testing
 // Target: 99.9% uptime vs 95% industry average
 
-import { JsonRpcProvider } from 'ethers';
+import { providers } from 'ethers';
 import { AsyncMutex } from './async-mutex';
 import type { Opportunity } from '../core/lux-swarm';
 import type { ExecutionResult, ProviderConfig } from './types';
+
+const { JsonRpcProvider } = providers;
 
 interface NonceState {
   current: number;
@@ -112,7 +114,7 @@ export class OperationalIntegrity {
    */
   async executeWithFailover(
     chain: string,
-    executeFn: (provider: JsonRpcProvider) => Promise<ExecutionResult>
+    executeFn: (provider: providers.JsonRpcProvider) => Promise<ExecutionResult>
   ): Promise<ExecutionResult> {
     const providers = this.providers.get(chain);
     if (!providers || providers.length === 0) {

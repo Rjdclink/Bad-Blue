@@ -1,9 +1,12 @@
-import { ethers } from 'ethers';
+import { ethers, providers } from 'ethers';
 import { ChainId, GasPrice } from './types';
 import { SUPPORTED_CHAINS, FALLBACK_PRICES, DEFAULT_GAS_LIMIT } from './chain-config';
 
+const { JsonRpcProvider } = providers;
+const { formatUnits, formatEther } = ethers.utils;
+
 class GasOracle {
-  private providers: Map<ChainId, ethers.JsonRpcProvider> = new Map();
+  private providers: Map<ChainId, providers.JsonRpcProvider> = new Map();
   private gasPrices: Map<ChainId, GasPrice> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
   private nativePrices: Map<string, number> = new Map();
@@ -17,7 +20,7 @@ class GasOracle {
   private initializeProviders(): void {
     Object.entries(SUPPORTED_CHAINS).forEach(([chainId, config]) => {
       try {
-        const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+        const provider = new JsonRpcProvider(config.rpcUrl);
         this.providers.set(chainId as ChainId, provider);
       } catch (error) {
         console.error(`Failed to initialize provider for ${chainId}:`, error);
@@ -81,13 +84,13 @@ class GasOracle {
       const feeData = await provider.getFeeData();
       
       // Use maxFeePerGas if available (EIP-1559), otherwise use gasPrice
-      const gasPriceWei = feeData.maxFeePerGas || feeData.gasPrice || BigInt(0);
-      const gweiPrice = parseFloat(ethers.formatUnits(gasPriceWei, 'gwei'));
+      const gasPriceWei = feeData.maxFeePerGas || feeData.gasPrice || ethers.BigNumber.from(0);
+      const gweiPrice = parseFloat(formatUnits(gasPriceWei, 'gwei'));
 
       // Estimate transaction cost using configurable gas limit
       const gasLimit = DEFAULT_GAS_LIMIT;
       const nativePrice = this.nativePrices.get(config.currency) || 0;
-      const gasCostEth = parseFloat(ethers.formatEther(gasPriceWei * BigInt(gasLimit)));
+      const gasCostEth = parseFloat(formatEther(gasPriceWei.mul(gasLimit)));
       const usdCost = gasCostEth * nativePrice;
 
       const congestionLevel = this.getCongestionLevel(chain, gweiPrice);

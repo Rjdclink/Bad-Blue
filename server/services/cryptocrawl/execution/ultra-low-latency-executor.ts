@@ -1,5 +1,8 @@
-import { Wallet, Transaction, JsonRpcProvider, parseEther, parseUnits } from 'ethers';
+import { Wallet, providers, ethers } from 'ethers';
 import logger from '../../../logger.js';
+
+const { JsonRpcProvider } = providers;
+const { parseEther, parseUnits } = ethers.utils;
 
 interface OpportunityData {
   to: string;
@@ -17,7 +20,7 @@ interface ExecutionResult {
 
 interface PreSignedTx {
   nonce: number;
-  transaction: Transaction;
+  transaction: ethers.Transaction;
   used: boolean;
 }
 
@@ -32,7 +35,7 @@ interface GasPrediction {
 
 class UltraLowLatencyExecutor {
   private wallet: Wallet;
-  private provider: JsonRpcProvider;
+  private provider: providers.JsonRpcProvider;
   private preSignedTxPool: PreSignedTx[] = [];
   private currentNonce: number = 0;
   private initialized = false;
@@ -61,7 +64,7 @@ class UltraLowLatencyExecutor {
     });
 
     // Get current nonce
-    this.currentNonce = await this.wallet.getNonce();
+    this.currentNonce = await this.wallet.getTransactionCount();
     
     // Pre-sign 100 transaction templates
     const gasPrice = await this.predictOptimalGas();
@@ -80,7 +83,7 @@ class UltraLowLatencyExecutor {
 
         this.preSignedTxPool.push({
           nonce: this.currentNonce + i,
-          transaction: Transaction.from(tx),
+          transaction: ethers.utils.parseTransaction(tx),
           used: false
         });
       } catch (error) {
@@ -122,20 +125,20 @@ class UltraLowLatencyExecutor {
 
     try {
       // Update transaction parameters (takes ~2ms)
-      const updatedTx = Transaction.from({
+      const updatedTx = {
         ...preSignedTx.transaction,
         to: opp.to,
         data: opp.data,
         value: opp.value,
         gasLimit: opp.gasLimit
-      });
+      };
 
       // Mark as used
       preSignedTx.used = true;
 
       // Submit via private RPC
       const signedTx = await this.wallet.signTransaction(updatedTx);
-      const response = await this.provider.broadcastTransaction(signedTx);
+      const response = await this.provider.sendTransaction(signedTx);
 
       const latency = Date.now() - startTime;
       
@@ -177,7 +180,7 @@ class UltraLowLatencyExecutor {
       data: opp.data,
       value: opp.value,
       gasLimit: opp.gasLimit,
-      nonce: await this.wallet.getNonce()
+      nonce: await this.wallet.getTransactionCount()
     };
 
     // Race 3 execution paths simultaneously
@@ -228,20 +231,20 @@ class UltraLowLatencyExecutor {
   private async submitViaFlashbots(tx: any): Promise<{ txHash: string; path: string }> {
     const signedTx = await this.wallet.signTransaction(tx);
     const flashbotsProvider = new JsonRpcProvider(this.flashbotsUrl);
-    const response = await flashbotsProvider.broadcastTransaction(signedTx);
+    const response = await flashbotsProvider.sendTransaction(signedTx);
     return { txHash: response.hash, path: 'flashbots' };
   }
 
   private async submitViaBloxroute(tx: any): Promise<{ txHash: string; path: string }> {
     const signedTx = await this.wallet.signTransaction(tx);
     const bloxrouteProvider = new JsonRpcProvider(this.bloxrouteUrl);
-    const response = await bloxrouteProvider.broadcastTransaction(signedTx);
+    const response = await bloxrouteProvider.sendTransaction(signedTx);
     return { txHash: response.hash, path: 'bloxroute' };
   }
 
   private async submitDirect(tx: any): Promise<{ txHash: string; path: string }> {
     const signedTx = await this.wallet.signTransaction(tx);
-    const response = await this.provider.broadcastTransaction(signedTx);
+    const response = await this.provider.sendTransaction(signedTx);
     return { txHash: response.hash, path: 'direct' };
   }
 

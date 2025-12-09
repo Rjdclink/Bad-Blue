@@ -188,7 +188,7 @@ export class InvisibleMode {
    */
   static isInvisible(crawlerId: string): boolean {
     const profile = this.profiles.get(crawlerId);
-    return profile?.active && profile.traceLevel === 0;
+    return profile !== undefined && profile.active && profile.traceLevel === 0;
   }
 
   /**
