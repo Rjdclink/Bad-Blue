@@ -5,6 +5,9 @@
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
 
+// Supported chains - must match ChainId type
+const SUPPORTED_CHAINS: ChainId[] = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
+
 export interface CircuitBreakerConfig {
   // Loss limits
   maxDailyLoss: number;           // Maximum daily loss before halt (ETH)
@@ -93,13 +96,11 @@ class CircuitBreaker {
         executionsLastMinute: 0,
         executionsLastHour: 0,
         lastExecutionTime: 0,
-        positionsPerChain: {
-          polygon: 0,
-          bsc: 0,
-          avalanche: 0,
-          arbitrum: 0,
-          optimism: 0
-        }
+        // Initialize positions for all supported chains
+        positionsPerChain: SUPPORTED_CHAINS.reduce((acc, chain) => {
+          acc[chain] = 0;
+          return acc;
+        }, {} as Record<ChainId, number>)
       }
     };
   }

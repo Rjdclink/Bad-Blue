@@ -29,22 +29,38 @@ export interface HistoricalStats {
   maxConsecutiveLosses: number;
 }
 
+// Configurable simulation parameters for risk of ruin estimation
+interface RiskSimulationConfig {
+  simulations: number;     // Number of Monte Carlo simulations (default: 1000)
+  maxTrades: number;       // Maximum trades per simulation (default: 1000)
+  ruinThreshold: number;   // Fraction of bankroll considered "ruin" (default: 0.01)
+}
+
+const DEFAULT_SIMULATION_CONFIG: RiskSimulationConfig = {
+  simulations: 1000,
+  maxTrades: 1000,
+  ruinThreshold: 0.01  // Consider ruined at 1% of initial
+};
+
 class KellyCriterion {
   private bankroll: number;
   private minFraction: number;
   private maxFraction: number;
   private conservatismLevel: 'aggressive' | 'moderate' | 'conservative';
+  private simulationConfig: RiskSimulationConfig;
 
   constructor(params: {
     bankroll: number;
     minFraction?: number;
     maxFraction?: number;
     conservatismLevel?: 'aggressive' | 'moderate' | 'conservative';
+    simulationConfig?: Partial<RiskSimulationConfig>;
   }) {
     this.bankroll = params.bankroll;
     this.minFraction = params.minFraction || 0.01;   // 1% minimum
     this.maxFraction = params.maxFraction || 0.25;   // 25% maximum
     this.conservatismLevel = params.conservatismLevel || 'moderate';
+    this.simulationConfig = { ...DEFAULT_SIMULATION_CONFIG, ...params.simulationConfig };
   }
 
   /**
@@ -227,16 +243,15 @@ class KellyCriterion {
   }
 
   /**
-   * Estimate risk of ruin using simulation
+   * Estimate risk of ruin using Monte Carlo simulation
+   * Parameters are configurable via constructor's simulationConfig
    */
   private estimateRiskOfRuin(
     winProb: number,
     betFraction: number,
     initialBankroll: number
   ): number {
-    const simulations = 1000;
-    const maxTrades = 1000;
-    const ruinThreshold = 0.01; // Consider ruined at 1% of initial
+    const { simulations, maxTrades, ruinThreshold } = this.simulationConfig;
     
     let ruinCount = 0;
 

@@ -188,33 +188,41 @@ class MultiOraclePriceValidator {
   }
 
   /**
-   * Fetch price from specific oracle (mock implementation)
+   * Fetch price from specific oracle
+   * NOTE: This is a demonstration/testing implementation using mock data.
+   * For production deployment, implement actual RPC calls to oracle contracts:
+   * - Chainlink: AggregatorV3Interface.latestRoundData()
+   * - Uniswap TWAP: OracleLibrary.consult()
+   * - Pyth: IPyth.getPrice()
    */
   private async fetchOraclePrice(
     asset: string,
     chain: ChainId,
     oracle: OracleConfig
   ): Promise<number | null> {
-    // In production, this would make actual RPC calls to oracles
-    // Mock implementation with realistic price variations
+    // Production implementation would make actual RPC calls:
+    // const provider = new JsonRpcProvider(RPC_URLS[chain]);
+    // const contract = new Contract(ORACLE_ADDRESSES[oracle.type], ABI, provider);
+    // return await contract.latestAnswer();
 
+    // Demo/Testing: Returns mock prices with realistic oracle variations
     const basePrice = this.getBasePrice(asset);
     if (basePrice === null) return null;
 
-    // Add small random variation based on oracle type
+    // Simulate oracle-specific characteristics
     let variation = 0;
     switch (oracle.type) {
       case 'chainlink':
-        variation = (Math.random() - 0.5) * 0.002; // ±0.1%
+        variation = (Math.random() - 0.5) * 0.002; // ±0.1% - most stable
         break;
       case 'uniswap_twap':
-        variation = (Math.random() - 0.5) * 0.004; // ±0.2%
+        variation = (Math.random() - 0.5) * 0.004; // ±0.2% - time-weighted
         break;
       case 'pyth':
-        variation = (Math.random() - 0.5) * 0.003; // ±0.15%
+        variation = (Math.random() - 0.5) * 0.003; // ±0.15% - cross-chain
         break;
       case 'dex_spot':
-        variation = (Math.random() - 0.5) * 0.01; // ±0.5%
+        variation = (Math.random() - 0.5) * 0.01; // ±0.5% - real-time spot
         break;
       default:
         variation = (Math.random() - 0.5) * 0.005;
@@ -224,9 +232,12 @@ class MultiOraclePriceValidator {
   }
 
   /**
-   * Get base price for asset (mock)
+   * Get base price for asset (demonstration/testing data)
+   * NOTE: For production, this should fetch real-time prices from
+   * CoinGecko, CoinMarketCap API, or on-chain oracle aggregators
    */
   private getBasePrice(asset: string): number | null {
+    // Demo prices - MUST be replaced with real-time data for production
     const basePrices: Record<string, number> = {
       'ETH': 2000,
       'WETH': 2000,

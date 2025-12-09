@@ -111,7 +111,8 @@ class MonteCarloEngine {
 
   constructor(config: Partial<MonteCarloConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    // Use crypto-quality RNG for better simulation accuracy
+    // Use standard Math.random() - for production cryptographic applications,
+    // consider using crypto.getRandomValues() or a secure PRNG library
     this.rng = () => Math.random();
   }
 
