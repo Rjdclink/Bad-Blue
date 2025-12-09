@@ -35,7 +35,7 @@ import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
-import { MASTER_PASSWORD, checkMasterPassword, getAccessZoneConfig } from "./masterPassword";
+import { MASTER_PASSWORD, checkMasterPassword, getAccessZoneConfig, getMasterUserEmail } from "./masterPassword";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import { setupFMIRoutes } from "./routes/fmi.routes";

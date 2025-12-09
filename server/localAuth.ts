@@ -5,11 +5,11 @@ import bcrypt from "bcrypt";
 import { storage } from "./storage";
 import crypto from "crypto";
 import { 
-  MASTER_PASSWORD, 
   checkMasterPassword, 
   getAccessZoneConfig, 
   generateMasterUserId, 
   getMasterUserEmail,
+  ZONE_FIRST_NAMES,
   type AccessZone,
   type AccessRole 
 } from "./masterPassword";
@@ -109,20 +109,13 @@ export function setupLocalStrategy() {
             const userId = generateMasterUserId(email, accessZone);
             const userEmail = getMasterUserEmail(email, accessZone);
             
-            // Determine user firstName based on zone
-            const zoneFirstNames: Record<AccessZone, string> = {
-              legalwhat: "LegalWhat",
-              orchestrator: "Orchestrator",
-              cryptocrawler: "Crawler",
-            };
-            
             // Create or get master bypass user for this zone
             let user = await storage.getUser(userId);
             if (!user) {
               user = await storage.upsertUser({
                 id: userId,
                 email: userEmail,
-                firstName: zoneFirstNames[accessZone],
+                firstName: ZONE_FIRST_NAMES[accessZone],
                 lastName: "Admin",
                 profileImageUrl: null,
                 lastLoginAt: new Date(),

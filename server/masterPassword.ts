@@ -28,7 +28,8 @@ export const ORCHESTRATOR_PASSWORD = "FORGEAI";
 export const CRYPTOCRAWLER_PASSWORD = "CRPTCRWLR";
 
 /**
- * Backward compatibility alias
+ * Backward compatibility alias - DEPRECATED
+ * @deprecated Use LEGALWHAT_PASSWORD for Zone A access instead
  */
 export const MASTER_PASSWORD = LEGALWHAT_PASSWORD;
 
@@ -74,6 +75,15 @@ export const ACCESS_ZONES: Record<AccessZone, AccessZoneConfig> = {
     route: '/cryptocrawler/dashboard',
     mode: 'crypto',
   },
+};
+
+/**
+ * Zone-specific user first names for created users
+ */
+export const ZONE_FIRST_NAMES: Record<AccessZone, string> = {
+  legalwhat: "LegalWhat",
+  orchestrator: "Orchestrator",
+  cryptocrawler: "Crawler",
 };
 
 /**
