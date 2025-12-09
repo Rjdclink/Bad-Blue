@@ -8,9 +8,9 @@
  * 
  * Available Gemini Models (December 2025):
  * - gemini-3-pro-preview (newest flagship, 1M token context)
- * - gemini-2.5-flash (fast and intelligent)
- * - gemini-2.5-flash-lite (high throughput, 1000 requests/day)
- * - gemini-1.5-pro (stable fallback)
+ * - gemini-3-flash (fast and intelligent, enhanced reasoning)
+ * - gemini-3-pro-preview (preview features, advanced capabilities)
+ * - gemini-2.5-flash (legacy fallback)
  * 
  * NOTE: @google/generative-ai is DEPRECATED (EOL Nov 30, 2025)
  * This file now uses the new unified @google/genai SDK
@@ -105,12 +105,12 @@ export async function callGemini(
     throw new GeminiRateLimitError('Gemini is rate limited - use fallback provider');
   }
 
-  // Primary model: gemini-3-pro-preview (newest flagship, 1M token context)
+  // Primary model: gemini-3-pro (newest flagship, 1M token context, superior reasoning)
   // Fallback models in order of preference:
-  // - gemini-2.5-flash (fast and intelligent)
-  // - gemini-2.5-flash-lite (high throughput)
-  // - gemini-1.5-pro (stable fallback)
-  const modelName = options.model || "gemini-3-pro-preview";
+  // - gemini-3-flash (fast and intelligent, enhanced pattern recognition)
+  // - gemini-3-pro-preview (preview features)
+  // - gemini-2.5-flash (legacy fallback)
+  const modelName = options.model || "gemini-3-pro";
   console.log(`[Gemini] Using model: ${modelName}`);
   const client = getGeminiClient();
 

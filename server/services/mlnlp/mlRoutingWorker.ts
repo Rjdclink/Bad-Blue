@@ -76,18 +76,18 @@ export interface RoutingResult {
 
 const MODEL_CAPABILITIES: ModelCapability[] = [
   {
-    modelName: 'gemini-2.0-flash',
+    modelName: 'gemini-3-flash',
     capabilities: {
-      legalReasoning: 0.75,
-      factExtraction: 0.90,
-      documentGeneration: 0.80,
-      dataAnalysis: 0.85,
-      multilingual: 0.85,
+      legalReasoning: 0.85,
+      factExtraction: 0.95,
+      documentGeneration: 0.90,
+      dataAnalysis: 0.92,
+      multilingual: 0.90,
       speed: 0.95,
       costEfficiency: 0.90
     },
     specializations: ['fact-extraction', 'data-analysis', 'fast-processing'],
-    averageResponseTime: 800,
+    averageResponseTime: 700,
     successRate: 0.88,
     availability: 'available'
   },
