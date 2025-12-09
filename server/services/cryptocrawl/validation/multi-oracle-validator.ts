@@ -76,6 +76,12 @@ const THRESHOLDS = {
   honeypotVolumeRatio: 10      // Sell volume / buy volume ratio for honeypot
 };
 
+// Price result from oracle with timestamp
+interface OraclePriceResult {
+  price: number;
+  timestamp: number;
+}
+
 class MultiOraclePriceValidator {
   private oracles: OracleConfig[];
   private priceCache: Map<string, PriceData[]> = new Map();
@@ -164,14 +170,19 @@ class MultiOraclePriceValidator {
 
     for (const oracle of this.oracles) {
       try {
-        const price = await this.fetchOraclePrice(asset, chain, oracle);
-        if (price !== null) {
+        const priceResult = await this.fetchOraclePrice(asset, chain, oracle);
+        if (priceResult !== null) {
+          // Calculate staleness from the price timestamp
+          const priceTimestamp = priceResult.timestamp || now;
+          const stalenessMs = now - priceTimestamp;
+          const stalenessSeconds = Math.max(0, Math.floor(stalenessMs / 1000));
+          
           prices.push({
             oracle: oracle.name,
-            price,
-            timestamp: now,
+            price: priceResult.price,
+            timestamp: priceTimestamp,
             confidence: this.estimateOracleConfidence(oracle),
-            staleness: 0, // Will be calculated based on actual timestamp
+            staleness: stalenessSeconds,
             source: oracle.type
           });
         }
@@ -199,36 +210,47 @@ class MultiOraclePriceValidator {
     asset: string,
     chain: ChainId,
     oracle: OracleConfig
-  ): Promise<number | null> {
+  ): Promise<OraclePriceResult | null> {
     // Production implementation would make actual RPC calls:
     // const provider = new JsonRpcProvider(RPC_URLS[chain]);
     // const contract = new Contract(ORACLE_ADDRESSES[oracle.type], ABI, provider);
-    // return await contract.latestAnswer();
+    // const result = await contract.latestRoundData();
+    // return { price: result.answer, timestamp: result.updatedAt * 1000 };
 
     // Demo/Testing: Returns mock prices with realistic oracle variations
     const basePrice = this.getBasePrice(asset);
     if (basePrice === null) return null;
 
-    // Simulate oracle-specific characteristics
+    // Simulate oracle-specific characteristics and staleness
     let variation = 0;
+    let stalenessOffsetMs = 0;
+    
     switch (oracle.type) {
       case 'chainlink':
         variation = (Math.random() - 0.5) * 0.002; // ±0.1% - most stable
+        stalenessOffsetMs = Math.floor(Math.random() * 60000); // 0-60 seconds
         break;
       case 'uniswap_twap':
         variation = (Math.random() - 0.5) * 0.004; // ±0.2% - time-weighted
+        stalenessOffsetMs = Math.floor(Math.random() * 120000); // 0-120 seconds
         break;
       case 'pyth':
         variation = (Math.random() - 0.5) * 0.003; // ±0.15% - cross-chain
+        stalenessOffsetMs = Math.floor(Math.random() * 30000); // 0-30 seconds
         break;
       case 'dex_spot':
         variation = (Math.random() - 0.5) * 0.01; // ±0.5% - real-time spot
+        stalenessOffsetMs = Math.floor(Math.random() * 5000); // 0-5 seconds (freshest)
         break;
       default:
         variation = (Math.random() - 0.5) * 0.005;
+        stalenessOffsetMs = Math.floor(Math.random() * 90000);
     }
 
-    return basePrice * (1 + variation);
+    return {
+      price: basePrice * (1 + variation),
+      timestamp: Date.now() - stalenessOffsetMs
+    };
   }
 
   /**

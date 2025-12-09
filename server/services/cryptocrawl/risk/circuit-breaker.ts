@@ -79,7 +79,30 @@ class CircuitBreaker {
   private recoveryTimer?: NodeJS.Timeout;
 
   constructor(config: Partial<CircuitBreakerConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    // Validate and merge config with defaults
+    const mergedConfig = { ...DEFAULT_CONFIG, ...config };
+    
+    // Validate all numeric values are positive
+    if (mergedConfig.maxDailyLoss <= 0) throw new Error('maxDailyLoss must be positive');
+    if (mergedConfig.maxHourlyLoss <= 0) throw new Error('maxHourlyLoss must be positive');
+    if (mergedConfig.maxConsecutiveLosses <= 0) throw new Error('maxConsecutiveLosses must be positive');
+    if (mergedConfig.maxPositionSize <= 0) throw new Error('maxPositionSize must be positive');
+    if (mergedConfig.maxTotalExposure <= 0) throw new Error('maxTotalExposure must be positive');
+    if (mergedConfig.maxPositionsPerChain <= 0) throw new Error('maxPositionsPerChain must be positive');
+    if (mergedConfig.maxExecutionsPerMinute <= 0) throw new Error('maxExecutionsPerMinute must be positive');
+    if (mergedConfig.maxSlippage < 0 || mergedConfig.maxSlippage > 1) throw new Error('maxSlippage must be between 0 and 1');
+    if (mergedConfig.recoveryPeriodMs <= 0) throw new Error('recoveryPeriodMs must be positive');
+    if (mergedConfig.gradualRecoverySteps <= 0) throw new Error('gradualRecoverySteps must be positive');
+    
+    // Ensure logical constraints
+    if (mergedConfig.maxHourlyLoss > mergedConfig.maxDailyLoss) {
+      mergedConfig.maxHourlyLoss = mergedConfig.maxDailyLoss;
+    }
+    if (mergedConfig.maxPositionSize > mergedConfig.maxTotalExposure) {
+      mergedConfig.maxPositionSize = mergedConfig.maxTotalExposure;
+    }
+    
+    this.config = mergedConfig;
     this.state = this.initializeState();
   }
 
@@ -165,7 +188,29 @@ class CircuitBreaker {
   }
 
   /**
-   * Record execution result
+   * Open a new position (called before execution)
+   * Returns a position ID for tracking
+   */
+  openPosition(chain: ChainId, size: number): string {
+    const positionId = `${chain}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Track position opening
+    this.state.metrics.totalExposure += size;
+    this.state.metrics.positionsPerChain[chain]++;
+    
+    logger.debug('Position opened', {
+      component: 'CircuitBreaker',
+      positionId,
+      chain,
+      size,
+      totalExposure: this.state.metrics.totalExposure
+    });
+    
+    return positionId;
+  }
+
+  /**
+   * Record execution result (called after trade completes)
    */
   recordExecution(result: {
     chain: ChainId;
@@ -182,23 +227,18 @@ class CircuitBreaker {
 
     this.executionHistory.push(record);
 
-    // Update metrics
+    // Update PnL metrics
     this.state.metrics.dailyPnL += result.pnl;
     this.state.metrics.hourlyPnL += result.pnl;
     this.state.metrics.lastExecutionTime = record.timestamp;
 
-    // Track consecutive losses
+    // Track consecutive losses (only for completed trades)
     if (result.pnl < 0) {
       this.state.metrics.consecutiveLosses++;
-    } else {
+    } else if (result.pnl > 0) {
       this.state.metrics.consecutiveLosses = 0;
     }
-
-    // Update exposure
-    if (result.success) {
-      this.state.metrics.totalExposure += result.size;
-      this.state.metrics.positionsPerChain[result.chain]++;
-    }
+    // Note: pnl === 0 (break-even) doesn't reset or increment consecutive losses
 
     // Check for breaker triggers
     this.evaluateState();
@@ -213,11 +253,26 @@ class CircuitBreaker {
   }
 
   /**
+   * Close/release position (when trade closes, regardless of outcome)
+   */
+  closePosition(chain: ChainId, size: number): void {
+    this.state.metrics.totalExposure = Math.max(0, this.state.metrics.totalExposure - size);
+    this.state.metrics.positionsPerChain[chain] = Math.max(0, this.state.metrics.positionsPerChain[chain] - 1);
+    
+    logger.debug('Position closed', {
+      component: 'CircuitBreaker',
+      chain,
+      size,
+      totalExposure: this.state.metrics.totalExposure
+    });
+  }
+
+  /**
+   * @deprecated Use closePosition instead
    * Release position (when trade closes)
    */
   releasePosition(chain: ChainId, size: number): void {
-    this.state.metrics.totalExposure = Math.max(0, this.state.metrics.totalExposure - size);
-    this.state.metrics.positionsPerChain[chain] = Math.max(0, this.state.metrics.positionsPerChain[chain] - 1);
+    this.closePosition(chain, size);
   }
 
   /**

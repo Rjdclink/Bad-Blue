@@ -174,92 +174,102 @@ class MonteCarloEngine {
   ): number[][] {
     const paths: number[][] = [];
     const tradesPerPath = Math.floor(strategy.tradesPerDay * this.config.timeHorizonDays);
+    
+    // Store random numbers for antithetic pairing
+    const storedRandoms: number[][] = [];
 
-    for (let i = 0; i < this.config.simulations; i++) {
+    // Calculate actual simulation count based on antithetic setting
+    const simulationCount = this.config.antithetic 
+      ? Math.ceil(this.config.simulations / 2) 
+      : this.config.simulations;
+
+    for (let i = 0; i < simulationCount; i++) {
       const path: number[] = [];
       let cumulativePnL = 0;
+      const randoms: number[] = [];
 
       for (let t = 0; t < tradesPerPath; t++) {
+        // Store random numbers for potential antithetic use
+        const r1 = this.rng();
+        const r2 = this.rng();
+        randoms.push(r1, r2);
+        
         // Generate trade outcome with market conditions impact
-        const outcome = this.simulateTrade(strategy, market);
+        const outcome = this.simulateTradeWithRandoms(strategy, market, r1, r2);
         cumulativePnL += outcome;
         path.push(cumulativePnL);
       }
 
       paths.push(path);
+      
+      // Store randoms for antithetic path
+      if (this.config.antithetic) {
+        storedRandoms.push(randoms);
+      }
+    }
 
-      // Antithetic variates: generate mirror path for variance reduction
-      if (this.config.antithetic && i % 2 === 0) {
+    // Generate antithetic paths using complementary random numbers
+    if (this.config.antithetic) {
+      for (let i = 0; i < storedRandoms.length; i++) {
         const antitheticPath: number[] = [];
         let antiCumulativePnL = 0;
+        const randoms = storedRandoms[i];
         
         for (let t = 0; t < tradesPerPath; t++) {
-          // Use complementary random numbers
-          const antiOutcome = this.simulateAntitheticTrade(strategy, market);
+          // Use 1 - original random numbers for antithetic variance reduction
+          const r1 = 1 - randoms[t * 2];
+          const r2 = 1 - randoms[t * 2 + 1];
+          
+          const antiOutcome = this.simulateTradeWithRandoms(strategy, market, r1, r2);
           antiCumulativePnL += antiOutcome;
           antitheticPath.push(antiCumulativePnL);
         }
         paths.push(antitheticPath);
-        i++; // Skip next iteration since we added antithetic path
       }
     }
 
     return paths;
   }
-
+  
   /**
-   * Simulate a single trade outcome
+   * Simulate trade with explicit random numbers (for antithetic pairing)
    */
-  private simulateTrade(strategy: StrategyProfile, market: MarketCondition): number {
+  private simulateTradeWithRandoms(
+    strategy: StrategyProfile, 
+    market: MarketCondition,
+    successRandom: number,
+    volatilityRandom: number
+  ): number {
     // Adjust success rate based on market conditions
     const adjustedSuccessRate = strategy.baseSuccessRate 
       * market.liquidityScore 
       * (1 - market.competitorDensity * 0.3)
       * (1 - market.networkCongestion * 0.2);
 
-    // Generate trade outcome
-    const isSuccess = this.rng() < adjustedSuccessRate;
+    // Generate trade outcome using provided random numbers
+    const isSuccess = successRandom < adjustedSuccessRate;
 
     if (isSuccess) {
       // Profitable trade with volatility-adjusted returns
       const baseProfit = strategy.avgProfitPerTrade;
-      const volatilityImpact = (this.rng() - 0.5) * 2 * market.volatility * baseProfit;
+      const volatilityImpact = (volatilityRandom - 0.5) * 2 * market.volatility * baseProfit;
       const slippageImpact = strategy.slippageTolerance * (1 + market.networkCongestion);
       
       return baseProfit + volatilityImpact - slippageImpact;
     } else {
       // Loss trade
       const baseLoss = strategy.avgLossPerTrade;
-      const volatilityImpact = this.rng() * market.volatility * baseLoss;
+      const volatilityImpact = volatilityRandom * market.volatility * baseLoss;
       
       return -(baseLoss + volatilityImpact + strategy.gasPerTrade);
     }
   }
 
   /**
-   * Antithetic trade simulation for variance reduction
+   * Simulate a single trade outcome (uses internal RNG)
    */
-  private simulateAntitheticTrade(strategy: StrategyProfile, market: MarketCondition): number {
-    // Use 1 - random for antithetic
-    const adjustedSuccessRate = strategy.baseSuccessRate 
-      * market.liquidityScore 
-      * (1 - market.competitorDensity * 0.3)
-      * (1 - market.networkCongestion * 0.2);
-
-    const isSuccess = (1 - this.rng()) < adjustedSuccessRate;
-
-    if (isSuccess) {
-      const baseProfit = strategy.avgProfitPerTrade;
-      const volatilityImpact = (0.5 - this.rng()) * 2 * market.volatility * baseProfit;
-      const slippageImpact = strategy.slippageTolerance * (1 + market.networkCongestion);
-      
-      return baseProfit + volatilityImpact - slippageImpact;
-    } else {
-      const baseLoss = strategy.avgLossPerTrade;
-      const volatilityImpact = (1 - this.rng()) * market.volatility * baseLoss;
-      
-      return -(baseLoss + volatilityImpact + strategy.gasPerTrade);
-    }
+  private simulateTrade(strategy: StrategyProfile, market: MarketCondition): number {
+    return this.simulateTradeWithRandoms(strategy, market, this.rng(), this.rng());
   }
 
   /**

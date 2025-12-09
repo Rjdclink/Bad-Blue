@@ -56,11 +56,23 @@ class KellyCriterion {
     conservatismLevel?: 'aggressive' | 'moderate' | 'conservative';
     simulationConfig?: Partial<RiskSimulationConfig>;
   }) {
+    // Validate bankroll
+    if (params.bankroll <= 0) {
+      throw new Error('Bankroll must be positive');
+    }
+    
     this.bankroll = params.bankroll;
-    this.minFraction = params.minFraction || 0.01;   // 1% minimum
-    this.maxFraction = params.maxFraction || 0.25;   // 25% maximum
+    this.minFraction = Math.max(0.001, Math.min(params.minFraction || 0.01, 1));   // Clamp to 0.1%-100%
+    this.maxFraction = Math.max(this.minFraction, Math.min(params.maxFraction || 0.25, 1)); // Ensure max >= min
     this.conservatismLevel = params.conservatismLevel || 'moderate';
-    this.simulationConfig = { ...DEFAULT_SIMULATION_CONFIG, ...params.simulationConfig };
+    
+    // Validate and merge simulation config
+    const simConfig = params.simulationConfig || {};
+    this.simulationConfig = {
+      simulations: Math.max(100, simConfig.simulations || DEFAULT_SIMULATION_CONFIG.simulations),
+      maxTrades: Math.max(10, simConfig.maxTrades || DEFAULT_SIMULATION_CONFIG.maxTrades),
+      ruinThreshold: Math.max(0.001, Math.min(simConfig.ruinThreshold || DEFAULT_SIMULATION_CONFIG.ruinThreshold, 0.5))
+    };
   }
 
   /**
@@ -70,12 +82,16 @@ class KellyCriterion {
     const { winProbability, winMultiplier, lossMultiplier } = params;
 
     // Validate inputs
-    if (winProbability <= 0 || winProbability >= 1) {
-      return this.noTradeResult('Invalid win probability');
+    if (typeof winProbability !== 'number' || isNaN(winProbability) || winProbability <= 0 || winProbability >= 1) {
+      return this.noTradeResult('Invalid win probability (must be between 0 and 1 exclusive)');
     }
 
-    if (winMultiplier <= 0 || lossMultiplier <= 0) {
-      return this.noTradeResult('Invalid multipliers');
+    if (typeof winMultiplier !== 'number' || isNaN(winMultiplier) || winMultiplier <= 0) {
+      return this.noTradeResult('Invalid win multiplier (must be positive)');
+    }
+    
+    if (typeof lossMultiplier !== 'number' || isNaN(lossMultiplier) || lossMultiplier <= 0) {
+      return this.noTradeResult('Invalid loss multiplier (must be positive)');
     }
 
     // Kelly formula: f* = (bp - q) / b
@@ -116,8 +132,8 @@ class KellyCriterion {
     const expectedGrowth = p * Math.log(1 + recommendedFraction * winMultiplier) + 
                           q * Math.log(1 - recommendedFraction * lossMultiplier);
 
-    // Estimate risk of ruin
-    const riskOfRuin = this.estimateRiskOfRuin(p, recommendedFraction, 100);
+    // Estimate risk of ruin with proper multipliers
+    const riskOfRuin = this.estimateRiskOfRuin(p, recommendedFraction, 100, winMultiplier, lossMultiplier);
 
     // Calculate actual position size
     const recommendedSize = this.bankroll * recommendedFraction;
@@ -249,9 +265,19 @@ class KellyCriterion {
   private estimateRiskOfRuin(
     winProb: number,
     betFraction: number,
-    initialBankroll: number
+    initialBankroll: number,
+    winMultiplier: number = 1,
+    lossMultiplier: number = 1
   ): number {
     const { simulations, maxTrades, ruinThreshold } = this.simulationConfig;
+    
+    // Validate inputs to prevent infinite loops or invalid calculations
+    if (betFraction <= 0 || betFraction > 1) {
+      return 1; // Invalid bet fraction = certain ruin
+    }
+    if (winProb <= 0 || winProb >= 1) {
+      return winProb <= 0 ? 1 : 0; // No wins = ruin, always wins = no ruin
+    }
     
     let ruinCount = 0;
 
@@ -263,9 +289,16 @@ class KellyCriterion {
         const isWin = Math.random() < winProb;
         
         if (isWin) {
-          bankroll += bet;
+          // Win: gain bet * winMultiplier
+          bankroll += bet * winMultiplier;
         } else {
-          bankroll -= bet;
+          // Loss: lose bet * lossMultiplier
+          bankroll -= bet * lossMultiplier;
+        }
+        
+        // Early exit if bankroll goes to zero or negative
+        if (bankroll <= 0) {
+          break;
         }
       }
 
