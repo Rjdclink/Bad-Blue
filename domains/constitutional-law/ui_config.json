@@ -1,0 +1,58 @@
+{
+  "domain": "constitutional-law",
+  "name": "Constitutional Law",
+  "theme": {
+    "primaryColor": "#CD7F32",
+    "secondaryColor": "#CD7F3288",
+    "accentColor": "#D4AF37",
+    "backgroundColor": "#1a1a2e",
+    "textColor": "#ffffff"
+  },
+  "layout": {
+    "consultationForm": {
+      "title": "Constitutional Law Consultation",
+      "subtitle": "Rights violations, First Amendment, constitutional challenges",
+      "fields": [
+        {
+          "id": "issue_type",
+          "label": "Type of Issue",
+          "type": "select",
+          "options": ["General Inquiry", "Document Review", "Case Evaluation", "Legal Research", "Other"],
+          "required": true
+        },
+        {
+          "id": "description",
+          "label": "Describe Your Situation",
+          "type": "textarea",
+          "placeholder": "Provide details about your Constitutional Law issue...",
+          "required": true
+        },
+        {
+          "id": "deadline",
+          "label": "Any Upcoming Deadlines?",
+          "type": "date",
+          "required": false
+        }
+      ]
+    },
+    "resultsDisplay": {
+      "showCitations": true,
+      "showTemplates": true,
+      "showConfidence": true,
+      "showSuggestedActions": true
+    }
+  },
+  "features": {
+    "voiceInput": true,
+    "documentGeneration": true,
+    "templateLibrary": true,
+    "caseResearch": true,
+    "statuteLookup": true
+  },
+  "accessibility": {
+    "highContrast": true,
+    "screenReaderOptimized": true,
+    "textToSpeech": true,
+    "fontSize": "adjustable"
+  }
+}

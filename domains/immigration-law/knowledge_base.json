@@ -1,0 +1,40 @@
+{
+  "domain": "immigration-law",
+  "name": "Immigration Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "ins-v-chadha",
+      "name": "INS v. Chadha",
+      "citation": "462 U.S. 919 (1983)",
+      "summary": "Landmark case in Immigration Law",
+      "relevance": "Foundational precedent for immigration-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "immigration-law-primary-statute",
+      "name": "Primary Immigration Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Immigration Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "immigration-law-consultation",
+      "name": "Immigration Law Consultation Form",
+      "description": "Standard intake form for Immigration Law matters"
+    },
+    {
+      "id": "immigration-law-letter",
+      "name": "Immigration Law Demand Letter",
+      "description": "Template for formal correspondence in Immigration Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

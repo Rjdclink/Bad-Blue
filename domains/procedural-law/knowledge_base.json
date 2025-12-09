@@ -1,0 +1,40 @@
+{
+  "domain": "procedural-law",
+  "name": "Procedural Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "celotex-corp-v-catrett",
+      "name": "Celotex Corp. v. Catrett",
+      "citation": "477 U.S. 317 (1986)",
+      "summary": "Landmark case in Procedural Law",
+      "relevance": "Foundational precedent for procedural-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "procedural-law-primary-statute",
+      "name": "Primary Procedural Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Procedural Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "procedural-law-consultation",
+      "name": "Procedural Law Consultation Form",
+      "description": "Standard intake form for Procedural Law matters"
+    },
+    {
+      "id": "procedural-law-letter",
+      "name": "Procedural Law Demand Letter",
+      "description": "Template for formal correspondence in Procedural Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

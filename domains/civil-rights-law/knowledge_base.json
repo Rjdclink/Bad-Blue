@@ -1,0 +1,40 @@
+{
+  "domain": "civil-rights-law",
+  "name": "Civil Rights Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "brown-v-board-of-education",
+      "name": "Brown v. Board of Education",
+      "citation": "347 U.S. 483 (1954)",
+      "summary": "Landmark case in Civil Rights Law",
+      "relevance": "Foundational precedent for civil-rights-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "civil-rights-law-primary-statute",
+      "name": "Primary Civil Rights Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Civil Rights Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "civil-rights-law-consultation",
+      "name": "Civil Rights Law Consultation Form",
+      "description": "Standard intake form for Civil Rights Law matters"
+    },
+    {
+      "id": "civil-rights-law-letter",
+      "name": "Civil Rights Law Demand Letter",
+      "description": "Template for formal correspondence in Civil Rights Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

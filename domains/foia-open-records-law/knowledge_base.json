@@ -1,0 +1,40 @@
+{
+  "domain": "foia-open-records-law",
+  "name": "FOIA/Open Records Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "nlrb-v-sears-roebuck--co",
+      "name": "NLRB v. Sears, Roebuck & Co.",
+      "citation": "421 U.S. 132 (1975)",
+      "summary": "Landmark case in FOIA/Open Records Law",
+      "relevance": "Foundational precedent for foia-open-records-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "foia-open-records-law-primary-statute",
+      "name": "Primary FOIA/Open Records Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for FOIA/Open Records Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "foia-open-records-law-consultation",
+      "name": "FOIA/Open Records Law Consultation Form",
+      "description": "Standard intake form for FOIA/Open Records Law matters"
+    },
+    {
+      "id": "foia-open-records-law-letter",
+      "name": "FOIA/Open Records Law Demand Letter",
+      "description": "Template for formal correspondence in FOIA/Open Records Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

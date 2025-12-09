@@ -1,0 +1,40 @@
+{
+  "domain": "criminal-law",
+  "name": "Criminal Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "miranda-v-arizona",
+      "name": "Miranda v. Arizona",
+      "citation": "384 U.S. 436 (1966)",
+      "summary": "Landmark case in Criminal Law",
+      "relevance": "Foundational precedent for criminal-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "criminal-law-primary-statute",
+      "name": "Primary Criminal Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Criminal Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "criminal-law-consultation",
+      "name": "Criminal Law Consultation Form",
+      "description": "Standard intake form for Criminal Law matters"
+    },
+    {
+      "id": "criminal-law-letter",
+      "name": "Criminal Law Demand Letter",
+      "description": "Template for formal correspondence in Criminal Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

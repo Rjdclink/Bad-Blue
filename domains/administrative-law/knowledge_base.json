@@ -1,0 +1,35 @@
+{
+  "domain": "administrative-law",
+  "name": "Administrative Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "chevron-v-nrdc",
+      "name": "Chevron U.S.A., Inc. v. Natural Resources Defense Council, Inc.",
+      "citation": "467 U.S. 837 (1984)",
+      "summary": "Established the Chevron deference doctrine for agency interpretations of statutes",
+      "relevance": "Foundational case for administrative law deference"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "apa",
+      "name": "Administrative Procedure Act",
+      "citation": "5 U.S.C. § 551 et seq.",
+      "summary": "Governs federal agency rulemaking and adjudication procedures"
+    }
+  ],
+  "templates": [
+    {
+      "id": "agency-appeal",
+      "name": "Agency Decision Appeal",
+      "description": "Template for appealing an administrative agency decision"
+    }
+  ],
+  "heuristics": {
+    "exhaustion": "Administrative remedies must typically be exhausted before judicial review",
+    "standing": "Plaintiff must demonstrate concrete injury from agency action",
+    "timeliness": "Appeals must be filed within statutory deadlines"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "domain": "military-veterans-law",
+  "name": "Military/Veterans Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "united-states-v-stanley",
+      "name": "United States v. Stanley",
+      "citation": "483 U.S. 669 (1987)",
+      "summary": "Landmark case in Military/Veterans Law",
+      "relevance": "Foundational precedent for military-veterans-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "military-veterans-law-primary-statute",
+      "name": "Primary Military/Veterans Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Military/Veterans Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "military-veterans-law-consultation",
+      "name": "Military/Veterans Law Consultation Form",
+      "description": "Standard intake form for Military/Veterans Law matters"
+    },
+    {
+      "id": "military-veterans-law-letter",
+      "name": "Military/Veterans Law Demand Letter",
+      "description": "Template for formal correspondence in Military/Veterans Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

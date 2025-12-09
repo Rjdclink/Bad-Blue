@@ -1,0 +1,40 @@
+{
+  "domain": "property-law",
+  "name": "Property Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "kelo-v-city-of-new-london",
+      "name": "Kelo v. City of New London",
+      "citation": "545 U.S. 469 (2005)",
+      "summary": "Landmark case in Property Law",
+      "relevance": "Foundational precedent for property-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "property-law-primary-statute",
+      "name": "Primary Property Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Property Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "property-law-consultation",
+      "name": "Property Law Consultation Form",
+      "description": "Standard intake form for Property Law matters"
+    },
+    {
+      "id": "property-law-letter",
+      "name": "Property Law Demand Letter",
+      "description": "Template for formal correspondence in Property Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

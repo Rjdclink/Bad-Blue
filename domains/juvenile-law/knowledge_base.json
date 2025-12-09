@@ -1,0 +1,40 @@
+{
+  "domain": "juvenile-law",
+  "name": "Juvenile Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "in-re-gault",
+      "name": "In re Gault",
+      "citation": "387 U.S. 1 (1967)",
+      "summary": "Landmark case in Juvenile Law",
+      "relevance": "Foundational precedent for juvenile-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "juvenile-law-primary-statute",
+      "name": "Primary Juvenile Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Juvenile Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "juvenile-law-consultation",
+      "name": "Juvenile Law Consultation Form",
+      "description": "Standard intake form for Juvenile Law matters"
+    },
+    {
+      "id": "juvenile-law-letter",
+      "name": "Juvenile Law Demand Letter",
+      "description": "Template for formal correspondence in Juvenile Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

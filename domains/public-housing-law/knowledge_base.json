@@ -1,0 +1,40 @@
+{
+  "domain": "public-housing-law",
+  "name": "Public Housing Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "hud-v-rucker",
+      "name": "HUD v. Rucker",
+      "citation": "535 U.S. 125 (2002)",
+      "summary": "Landmark case in Public Housing Law",
+      "relevance": "Foundational precedent for public-housing-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "public-housing-law-primary-statute",
+      "name": "Primary Public Housing Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Public Housing Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "public-housing-law-consultation",
+      "name": "Public Housing Law Consultation Form",
+      "description": "Standard intake form for Public Housing Law matters"
+    },
+    {
+      "id": "public-housing-law-letter",
+      "name": "Public Housing Law Demand Letter",
+      "description": "Template for formal correspondence in Public Housing Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "domain": "banking-financing-law",
+  "name": "Banking and Financing Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "citizens-bank-v-alafabco",
+      "name": "Citizens Bank v. Alafabco",
+      "citation": "539 U.S. 52 (2003)",
+      "summary": "Landmark case in Banking and Financing Law",
+      "relevance": "Foundational precedent for banking-financing-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "banking-financing-law-primary-statute",
+      "name": "Primary Banking and Financing Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Banking and Financing Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "banking-financing-law-consultation",
+      "name": "Banking and Financing Law Consultation Form",
+      "description": "Standard intake form for Banking and Financing Law matters"
+    },
+    {
+      "id": "banking-financing-law-letter",
+      "name": "Banking and Financing Law Demand Letter",
+      "description": "Template for formal correspondence in Banking and Financing Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

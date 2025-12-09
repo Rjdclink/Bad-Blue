@@ -1,0 +1,72 @@
+{
+  "domain": "administrative-law",
+  "name": "Administrative Law",
+  "theme": {
+    "primaryColor": "#E83D66",
+    "secondaryColor": "#F8B4C4",
+    "accentColor": "#D4AF37",
+    "backgroundColor": "#1a1a2e",
+    "textColor": "#ffffff"
+  },
+  "layout": {
+    "consultationForm": {
+      "title": "Administrative Law Consultation",
+      "subtitle": "Get help with government agency disputes, regulatory compliance, and administrative appeals",
+      "fields": [
+        {
+          "id": "agency_name",
+          "label": "Agency Name",
+          "type": "text",
+          "placeholder": "e.g., EPA, IRS, SSA",
+          "required": true
+        },
+        {
+          "id": "issue_type",
+          "label": "Type of Issue",
+          "type": "select",
+          "options": [
+            "Agency Decision Appeal",
+            "Regulatory Compliance",
+            "Permit/License Issue",
+            "FOIA Request",
+            "Enforcement Action",
+            "Other"
+          ],
+          "required": true
+        },
+        {
+          "id": "description",
+          "label": "Describe Your Situation",
+          "type": "textarea",
+          "placeholder": "Provide details about your administrative law issue...",
+          "required": true
+        },
+        {
+          "id": "deadline",
+          "label": "Any Upcoming Deadlines?",
+          "type": "date",
+          "required": false
+        }
+      ]
+    },
+    "resultsDisplay": {
+      "showCitations": true,
+      "showTemplates": true,
+      "showConfidence": true,
+      "showSuggestedActions": true
+    }
+  },
+  "features": {
+    "voiceInput": true,
+    "documentGeneration": true,
+    "templateLibrary": true,
+    "caseResearch": true,
+    "statuteLookup": true
+  },
+  "accessibility": {
+    "highContrast": true,
+    "screenReaderOptimized": true,
+    "textToSpeech": true,
+    "fontSize": "adjustable"
+  }
+}

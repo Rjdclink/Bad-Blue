@@ -1,0 +1,40 @@
+{
+  "domain": "probate-estate-law",
+  "name": "Probate and Estate Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "hodel-v-irving",
+      "name": "Hodel v. Irving",
+      "citation": "481 U.S. 704 (1987)",
+      "summary": "Landmark case in Probate and Estate Law",
+      "relevance": "Foundational precedent for probate-estate-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "probate-estate-law-primary-statute",
+      "name": "Primary Probate and Estate Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Probate and Estate Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "probate-estate-law-consultation",
+      "name": "Probate and Estate Law Consultation Form",
+      "description": "Standard intake form for Probate and Estate Law matters"
+    },
+    {
+      "id": "probate-estate-law-letter",
+      "name": "Probate and Estate Law Demand Letter",
+      "description": "Template for formal correspondence in Probate and Estate Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}
