@@ -73,6 +73,17 @@ export {
   type MarketCondition,
 } from './autonomous-optimizer';
 
+export {
+  SuperchainIntegration,
+  superchainIntegration,
+  type SuperchainNetwork,
+  type SuperchainFaucetRequest,
+  type CrossChainMessage,
+  type PaymasterSponsorship,
+  type SuperchainRoute,
+  type SupersimEnvironment,
+} from './superchain-integration';
+
 /**
  * THE HYPER-EVOLVED CAPITAL-FREE ARBITRAGE ENGINE
  * 
@@ -159,8 +170,8 @@ export {
  * ```
  */
 
-export const CAPITAL_FREE_VERSION = '2.0.0';
-export const CAPITAL_FREE_NAME = 'Hyper-Evolved Capital-Free Arbitrage Engine with Autonomous Optimization';
+export const CAPITAL_FREE_VERSION = '2.1.0';
+export const CAPITAL_FREE_NAME = 'Hyper-Evolved Capital-Free Arbitrage Engine with Superchain Integration';
 export const CAPITAL_FREE_CAPABILITIES = [
   // Core Mechanisms
   'Multichain flash loans',
@@ -221,4 +232,16 @@ export const CAPITAL_FREE_CAPABILITIES = [
   'Cross-chain opportunity synthesis',
   'Sub-50ms execution targeting',
   'Compound interest optimization',
+  
+  // Superchain Integration (v2.1)
+  'OP Stack multi-chain support',
+  'Superchain Faucet with reputation multiplier',
+  'Native L2↔L2 interop relaying',
+  'Paymaster gas sponsorship',
+  'Deployment rebate claiming',
+  'Supersim local testing environment',
+  'Cross-Superchain arbitrage routing',
+  'Base/Zora/Mode/Fraxtal/Cyber integration',
+  'Sub-2s cross-chain messaging',
+  'Unified Superchain opportunity scanner',
 ];
