@@ -1,9 +1,11 @@
-import { ethers } from 'ethers';
+import { ethers, providers } from 'ethers';
 import { ChainId, NetworkHealth } from './types';
 import { SUPPORTED_CHAINS, NETWORK_HEALTH_THRESHOLD_MS } from './chain-config';
 
+const { JsonRpcProvider } = providers;
+
 class NetworkHealthMonitor {
-  private providers: Map<ChainId, ethers.JsonRpcProvider> = new Map();
+  private providers: Map<ChainId, providers.JsonRpcProvider> = new Map();
   private healthStatus: Map<ChainId, NetworkHealth> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
   private running: boolean = false;
@@ -16,7 +18,7 @@ class NetworkHealthMonitor {
   private initializeProviders(): void {
     Object.entries(SUPPORTED_CHAINS).forEach(([chainId, config]) => {
       try {
-        const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+        const provider = new JsonRpcProvider(config.rpcUrl);
         this.providers.set(chainId as ChainId, provider);
       } catch (error) {
         console.error(`Failed to initialize provider for ${chainId}:`, error);

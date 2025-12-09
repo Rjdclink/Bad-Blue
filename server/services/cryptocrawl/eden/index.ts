@@ -17,4 +17,30 @@ export {
   type StarburstConfig
 } from './deployment';
 export * from './types';
-export * from './schema';
+// Export schema items with explicit names to avoid conflicts with types.ts
+export {
+  edenLessons,
+  edenStrategyTemplates,
+  edenCainStates,
+  edenMicroCrawlerStates,
+  edenSnapshots,
+  edenCataclysms,
+  edenOpportunities,
+  edenAuditLog,
+  type EdenLesson,
+  type InsertEdenLesson,
+  type EdenStrategyTemplate,
+  type InsertEdenStrategyTemplate,
+  type EdenCainState,
+  type InsertEdenCainState,
+  type EdenMicroCrawlerState,
+  type InsertEdenMicroCrawlerState,
+  type EdenSnapshot as EdenSnapshotRow, // Renamed to avoid conflict with types.ts
+  type InsertEdenSnapshot,
+  type EdenCataclysm,
+  type InsertEdenCataclysm,
+  type EdenOpportunity,
+  type InsertEdenOpportunity,
+  type EdenAuditLog,
+  type InsertEdenAuditLog,
+} from './schema';

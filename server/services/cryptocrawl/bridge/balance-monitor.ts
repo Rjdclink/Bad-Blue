@@ -1,9 +1,12 @@
-import { ethers } from 'ethers';
+import { ethers, providers, Contract } from 'ethers';
 import { ChainId, TokenBalance } from './types';
 import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, FALLBACK_PRICES } from './chain-config';
 
+const { JsonRpcProvider } = providers;
+const { formatEther, formatUnits } = ethers.utils;
+
 class BalanceMonitor {
-  private providers: Map<ChainId, ethers.JsonRpcProvider> = new Map();
+  private providers: Map<ChainId, providers.JsonRpcProvider> = new Map();
   private prices: Map<string, number> = new Map();
   private cache: Map<ChainId, TokenBalance> = new Map();
   private lastPriceUpdate: number = 0;
@@ -18,7 +21,7 @@ class BalanceMonitor {
   private initializeProviders(): void {
     Object.entries(SUPPORTED_CHAINS).forEach(([chainId, config]) => {
       try {
-        const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+        const provider = new JsonRpcProvider(config.rpcUrl);
         this.providers.set(chainId as ChainId, provider);
       } catch (error) {
         console.error(`Failed to initialize provider for ${chainId}:`, error);
@@ -76,21 +79,21 @@ class BalanceMonitor {
       
       // Get native balance
       const nativeBalanceWei = await provider.getBalance(USER_WALLET);
-      const native = parseFloat(ethers.formatEther(nativeBalanceWei));
+      const native = parseFloat(formatEther(nativeBalanceWei));
       const nativePrice = this.prices.get(config.currency) || 0;
       const nativeUsd = native * nativePrice;
 
       // Get USDT balance
-      const usdtContract = new ethers.Contract(config.usdt, ERC20_ABI, provider);
+      const usdtContract = new Contract(config.usdt, ERC20_ABI, provider);
       const usdtBalanceRaw = await usdtContract.balanceOf(USER_WALLET);
       const usdtDecimals = await usdtContract.decimals();
-      const usdt = parseFloat(ethers.formatUnits(usdtBalanceRaw, usdtDecimals));
+      const usdt = parseFloat(formatUnits(usdtBalanceRaw, usdtDecimals));
 
       // Get USDC balance
-      const usdcContract = new ethers.Contract(config.usdc, ERC20_ABI, provider);
+      const usdcContract = new Contract(config.usdc, ERC20_ABI, provider);
       const usdcBalanceRaw = await usdcContract.balanceOf(USER_WALLET);
       const usdcDecimals = await usdcContract.decimals();
-      const usdc = parseFloat(ethers.formatUnits(usdcBalanceRaw, usdcDecimals));
+      const usdc = parseFloat(formatUnits(usdcBalanceRaw, usdcDecimals));
 
       const totalUsd = nativeUsd + usdt + usdc;
 

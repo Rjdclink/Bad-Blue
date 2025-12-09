@@ -2,20 +2,23 @@
 // Implements pre-signed transaction pool, multi-path execution, and predictive gas modeling
 // Target: 30-50ms execution vs 200-300ms competitors = 85% faster
 
-import { Wallet, Transaction, JsonRpcProvider, parseUnits, formatUnits } from 'ethers';
+import { Wallet, providers, ethers } from 'ethers';
 import type { Opportunity, ChainId } from '../core/lux-swarm';
 import type { PreSignedTemplate, ExecutionResult, ExecutionPath } from './types';
 
+const { JsonRpcProvider } = providers;
+const { parseUnits, formatUnits } = ethers.utils;
+
 interface GasHistory {
   timestamp: number;
-  baseFee: bigint;
-  priorityFee: bigint;
+  baseFee: ethers.BigNumber;
+  priorityFee: ethers.BigNumber;
 }
 
 export class UltraLowLatencyExecutor {
   private preSignedTxPool: PreSignedTemplate[] = [];
   private gasHistory: GasHistory[] = [];
-  private providers: Map<string, JsonRpcProvider> = new Map();
+  private providers: Map<string, providers.JsonRpcProvider> = new Map();
   private wallet: Wallet | null = null;
 
   // Execution paths with URLs
@@ -32,7 +35,7 @@ export class UltraLowLatencyExecutor {
   /**
    * Initialize the executor with a wallet and providers
    */
-  async initialize(wallet: Wallet, providers: Map<string, JsonRpcProvider>): Promise<void> {
+  async initialize(wallet: Wallet, providers: Map<string, providers.JsonRpcProvider>): Promise<void> {
     this.wallet = wallet;
     this.providers = providers;
     
@@ -103,7 +106,7 @@ export class UltraLowLatencyExecutor {
         gasLimit: template.template.gasLimit,
         maxFeePerGas,
         maxPriorityFeePerGas,
-        nonce: await this.wallet!.getNonce(),
+        nonce: await this.wallet!.getTransactionCount(),
         chainId: await this.getChainIdNumber(opportunity.chain)
       };
 
@@ -171,7 +174,7 @@ export class UltraLowLatencyExecutor {
    * Predict optimal gas using historical volatility analysis
    * Uses mean + (2 * standard deviation) for 95% confidence
    */
-  private predictOptimalGas(): { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } {
+  private predictOptimalGas(): { maxFeePerGas: ethers.BigNumber; maxPriorityFeePerGas: ethers.BigNumber } {
     if (this.gasHistory.length < 10) {
       // Default fallback
       return {

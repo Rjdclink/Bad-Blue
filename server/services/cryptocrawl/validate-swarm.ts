@@ -1,6 +1,8 @@
 // Validation script for Ultimate Hyper-Evolving Swarm Strategy
 // Verifies that all components are properly integrated
 
+export {}; // Make this a module
+
 console.log('🔍 Validating Ultimate Hyper-Evolving Swarm Strategy...\n');
 
 let errors = 0;
@@ -13,8 +15,8 @@ try {
   console.log('  ✅ Eden imports successful');
   console.log(`  📊 Config: ${EDEN_CONFIG.TOTAL_CAIN_CRAWLERS} Cain crawlers configured`);
   console.log(`  🛡️ Ethical Guards: ${ETHICAL_GUARDS.length} guards active`);
-} catch (error) {
-  console.error('  ❌ Eden import failed:', error.message);
+} catch (error: unknown) {
+  console.error('  ❌ Eden import failed:', (error as Error).message);
   errors++;
 }
 
@@ -24,8 +26,8 @@ try {
   const { CainCrawler, EnhancedMicroCrawler, swarmOrchestrator } = await import('./agents/index.js');
   console.log('  ✅ Agent imports successful');
   console.log('  📦 Components: CainCrawler, EnhancedMicroCrawler, SwarmOrchestrator');
-} catch (error) {
-  console.error('  ❌ Agent import failed:', error.message);
+} catch (error: unknown) {
+  console.error('  ❌ Agent import failed:', (error as Error).message);
   errors++;
 }
 
@@ -35,8 +37,8 @@ try {
   const { LuxSwarm } = await import('./core/lux-swarm.js');
   console.log('  ✅ Core imports successful');
   console.log('  🌟 LuxSwarm coordination system available');
-} catch (error) {
-  console.error('  ❌ Core import failed:', error.message);
+} catch (error: unknown) {
+  console.error('  ❌ Core import failed:', (error as Error).message);
   errors++;
 }
 
@@ -69,15 +71,15 @@ try {
     console.warn('  ⚠️ Control signals may not be functional');
     warnings++;
   }
-} catch (error) {
-  console.error('  ❌ Configuration verification failed:', error.message);
+} catch (error: unknown) {
+  console.error('  ❌ Configuration verification failed:', (error as Error).message);
   errors++;
 }
 
 // Test 5: Check database schema
 try {
   console.log('\n✓ Test 5: Checking database schema...');
-  const schema = await import('./eden/schema.js');
+  const schema = await import('./eden/schema.js') as Record<string, unknown>;
   
   const tables = [
     'edenLessons',
@@ -103,8 +105,8 @@ try {
     console.warn(`  ⚠️ Only ${foundTables}/${tables.length} tables found`);
     warnings++;
   }
-} catch (error) {
-  console.error('  ❌ Schema check failed:', error.message);
+} catch (error: unknown) {
+  console.error('  ❌ Schema check failed:', (error as Error).message);
   errors++;
 }
 
@@ -113,8 +115,8 @@ try {
   console.log('\n✓ Test 6: Verifying type definitions...');
   const types = await import('./eden/types.js');
   console.log('  ✅ All type definitions loaded successfully');
-} catch (error) {
-  console.error('  ❌ Type verification failed:', error.message);
+} catch (error: unknown) {
+  console.error('  ❌ Type verification failed:', (error as Error).message);
   errors++;
 }
 
