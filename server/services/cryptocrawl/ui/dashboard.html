@@ -51,39 +51,11 @@
   </style>
 </head>
 <body>
-  <script>
-    // Auth check - verify platform session
-    (function() {
-      // Check if user is authenticated via platform session
-      fetch('/api/auth/crypto/verify', {
-        credentials: 'include' // Include session cookie
-      })
-      .then(res => res.json())
-      .then(result => {
-        if (!result.valid || !result.authenticated) {
-          // Not authenticated - redirect to platform login
-          window.location.href = '/login';
-        }
-      })
-      .catch(() => {
-        // If verification fails, redirect to platform login
-        window.location.href = '/login';
-      });
-    })();
-    
-    // Logout function - redirects to platform logout
-    function logout() {
-      // Use platform logout endpoint (GET request)
-      window.location.href = '/api/logout';
-    }
-  </script>
-  
   <div class="header">
     <h1>🔥 CryptoCrawl</h1>
     <div class="status">
       <div class="status-dot" id="statusDot" aria-label="System status indicator"></div>
       <span id="statusText">Running</span>
-      <button onclick="logout()" style="background: #ef4444; padding: 8px 16px; border: none; border-radius: 6px; color: white; cursor: pointer; margin-left: 20px; font-weight: 600;">Logout</button>
     </div>
   </div>
   

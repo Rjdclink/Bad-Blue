@@ -2,6 +2,9 @@ import { ChainId, TopologyNode } from './types';
 import { topologyHeatmap } from './topology-heatmap';
 import { namespaceManager } from './namespace-manager';
 
+// Configuration constants
+const MIN_REPOSITION_IMPROVEMENT_THRESHOLD = 1.3; // 30% minimum improvement for repositioning
+
 interface MempoolEdge {
   chain: ChainId;
   validatorNode: string;
@@ -33,50 +36,78 @@ export class MempoolPositioner {
     console.log('[MempoolPositioner] ✓ Stopped');
   }
 
+  reset(): void {
+    this.edges.clear();
+    this.positionedNamespaces.clear();
+    this.running = false;
+    if (this.scanInterval) {
+      clearInterval(this.scanInterval);
+      this.scanInterval = null;
+    }
+  }
+
   private async discoverEdges(): Promise<void> {
     const chains: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc', 'ethereum', 'optimism'];
-    for (const chain of chains) {
+    // Parallel discovery for speed
+    const discoveryPromises = chains.map(async chain => {
       const node = topologyHeatmap.getBestRpcFor(chain);
       if (node) {
         this.edges.set(chain, [{
           chain, validatorNode: node.rpcUrl, estimatedProximity: node.avgLatencyMs, lastUpdate: Date.now()
         }]);
       }
-    }
+    });
+    await Promise.all(discoveryPromises);
   }
 
   private async updateEdgeProximity(): Promise<void> {
+    if (!this.running) return;
+    // Parallel updates for efficiency
+    const updatePromises: Promise<void>[] = [];
     for (const [chain, edges] of this.edges) {
       for (const edge of edges) {
-        const node = topologyHeatmap.getBestRpcFor(chain);
-        if (node) {
-          edge.estimatedProximity = node.avgLatencyMs;
-          edge.lastUpdate = Date.now();
-        }
+        updatePromises.push(
+          (async () => {
+            const node = topologyHeatmap.getBestRpcFor(chain);
+            if (node) {
+              edge.estimatedProximity = node.avgLatencyMs;
+              edge.lastUpdate = Date.now();
+            }
+          })()
+        );
       }
     }
+    await Promise.all(updatePromises);
   }
 
   async positionForMempool(chain: ChainId): Promise<string | null> {
+    if (!this.running) return null;
     const bestSubnet = topologyHeatmap.getBestSubnetFor(chain);
     const result = await namespaceManager.createNamespace(bestSubnet || undefined);
     if (result.success && result.namespace) {
       this.positionedNamespaces.set(result.namespace.id, chain);
+      topologyHeatmap.recordSubnetLatency(result.namespace.subnet, chain, result.namespace.latencyMs);
       return result.namespace.id;
     }
     return null;
   }
 
   async repositionCloser(namespaceId: string, chain: ChainId): Promise<boolean> {
+    if (!this.running) return false;
     const current = namespaceManager.getNamespace(namespaceId);
     if (!current) return false;
     
     const bestSubnet = topologyHeatmap.getBestSubnetFor(chain);
-    if (bestSubnet && bestSubnet !== current.subnet) {
+    const bestRpc = topologyHeatmap.getBestRpcFor(chain);
+    const targetLatency = bestRpc?.avgLatencyMs || current.latencyMs;
+    
+    // Only reposition if significant improvement expected (>30%)
+    if (bestSubnet && bestSubnet !== current.subnet && current.latencyMs > targetLatency * MIN_REPOSITION_IMPROVEMENT_THRESHOLD) {
       const result = await namespaceManager.cycleNamespace(namespaceId);
       if (result.success && result.namespace) {
         this.positionedNamespaces.set(result.namespace.id, chain);
         this.positionedNamespaces.delete(namespaceId);
+        topologyHeatmap.recordSubnetLatency(result.namespace.subnet, chain, result.namespace.latencyMs);
         return result.namespace.latencyMs < current.latencyMs;
       }
     }

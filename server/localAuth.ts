@@ -125,42 +125,6 @@ export function setupLocalStrategy() {
             } as Express.User);
           }
           
-          // Special case: CryptoCrawl access credentials
-          // These hardcoded credentials provide access to the CryptoCrawl dashboard
-          if (email.toLowerCase() === 'cryptocrawler@gmail.com' && password === 'CRYPTOCRAWLER') {
-            const timestamp = new Date().toISOString();
-            console.log(`[CRYPTOCRAWL] ${timestamp} - CryptoCrawl authentication used`);
-            
-            // Create or get CryptoCrawl user
-            let user = await storage.getUser("cryptocrawl-user");
-            if (!user) {
-              user = await storage.upsertUser({
-                id: "cryptocrawl-user",
-                email: "cryptocrawler@gmail.com",
-                firstName: "CryptoCrawl",
-                lastName: "User",
-                profileImageUrl: null,
-                lastLoginAt: new Date(),
-              });
-            } else {
-              // Update last login for existing CryptoCrawl user
-              await storage.updateUserLastLogin("cryptocrawl-user");
-            }
-            
-            // Grant paid access (bypass payment gate)
-            if (!user.hasPaidForAccess) {
-              await storage.updateUserAccess("cryptocrawl-user", "cryptocrawl-user", 0).catch(err => {
-                console.error('[CRYPTOCRAWL] Failed to update access:', err);
-              });
-            }
-            
-            return done(null, {
-              claims: { sub: user.id, email: user.email || "cryptocrawler@gmail.com", firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
-              isAdminBypass: false,
-              isCryptoCrawlUser: true,
-            } as Express.User);
-          }
-          
           // Special case: Admin bypass (requires environment variables - no fallback defaults for security)
           const adminBypassId = process.env.ADMIN_BYPASS_ID;
           const adminBypassPassword = process.env.ADMIN_BYPASS_PASSWORD;

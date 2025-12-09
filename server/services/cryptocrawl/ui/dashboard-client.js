@@ -1,13 +1,3 @@
-// Session-based authentication - no token needed
-// All requests automatically include session cookie
-
-// Ensure credentials are included in all fetch requests
-const originalFetch = window.fetch;
-window.fetch = function(url, options = {}) {
-  options.credentials = 'include'; // Always include session cookie
-  return originalFetch(url, options);
-};
-
 // WebSocket connection
 let ws;
 let reconnectInterval;
@@ -138,6 +128,7 @@ async function toggleSystem() {
     const response = await fetch('/admin/crypto/start', {
       method: 'POST',
       headers: {
+        'Authorization': `Bearer ${localStorage.getItem('adminToken') || ''}`,
         'Content-Type': 'application/json'
       }
     });
@@ -156,6 +147,7 @@ async function emergencyStop() {
     const response = await fetch('/admin/crypto/stop', {
       method: 'POST',
       headers: {
+        'Authorization': `Bearer ${localStorage.getItem('adminToken') || ''}`,
         'Content-Type': 'application/json'
       }
     });

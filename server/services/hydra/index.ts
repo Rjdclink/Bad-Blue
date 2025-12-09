@@ -1,6 +1,6 @@
 export * from './types';
-export { macRotation } from './mac-rotation';
-export { namespaceManager } from './namespace-manager';
-export { topologyHeatmap } from './topology-heatmap';
-export { latencyOptimizer } from './latency-optimizer';
-export { mempoolPositioner } from './mempool-positioner';
+export { macRotation, MACRotationEngine } from './mac-rotation';
+export { namespaceManager, NamespaceManager } from './namespace-manager';
+export { topologyHeatmap, TopologyHeatmap } from './topology-heatmap';
+export { latencyOptimizer, LatencyOptimizer } from './latency-optimizer';
+export { mempoolPositioner, MempoolPositioner } from './mempool-positioner';

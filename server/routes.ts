@@ -16,7 +16,6 @@ declare global {
       isAdmin?: boolean;
       isAdminBypass?: boolean;
       isMasterBypass?: boolean;
-      isCryptoCrawlUser?: boolean;
     }
     interface Request {
       rawBody?: Buffer;
@@ -40,8 +39,7 @@ import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
-import { bridgeApi } from "./services/cryptocrawl/api/bridge-api";
-import hydraApiRoutes from "./services/ip-hydra/api/routes";
+import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -4669,15 +4667,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // CRYPTOCRAWL DASHBOARD API
   // ============================================
   
-  // Mount CryptoCrawl auth routes (must be before other crypto routes)
-  app.use('/api/auth', authRouter);
-  
   // Mount CryptoCrawl API routes
   app.use('/api/crypto', dashboardApi);
   app.use('/admin/crypto', adminApi);
-  
-  // Mount IP-HYDRA API routes
-  app.use('/api/hydra', hydraApiRoutes);
   
   // ============================================
   // BRIDGE MANAGER API

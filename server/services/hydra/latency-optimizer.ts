@@ -2,6 +2,14 @@ import { ChainId, NetworkNamespace } from './types';
 import { topologyHeatmap } from './topology-heatmap';
 import { namespaceManager } from './namespace-manager';
 
+// Configuration constants
+const MIN_IMPROVEMENT_THRESHOLD = 0.2; // 20% minimum improvement to justify optimization
+const NAMESPACE_AGE_THRESHOLD_MS = 300000; // 5 minutes
+const AGE_LATENCY_PENALTY_MS = 10;
+const MAX_OPTIMIZATION_HISTORY = 100;
+const BATCH_OPTIMIZATION_SIZE = 5; // Optimize up to 5 namespaces in parallel
+const OPTIMIZATION_COOLDOWN_MS = 30000; // Don't re-optimize same namespace within 30s
+
 interface OptimizationResult {
   namespaceId: string;
   chain: ChainId;
@@ -14,6 +22,7 @@ export class LatencyOptimizer {
   private optimizationHistory: OptimizationResult[] = [];
   private running = false;
   private optimizeInterval: NodeJS.Timeout | null = null;
+  private lastOptimizationTime: Map<string, number> = new Map();
 
   constructor() {
     console.log('[LatencyOptimizer] Created (inactive)');
@@ -32,23 +41,48 @@ export class LatencyOptimizer {
     console.log('[LatencyOptimizer] ✓ Stopped');
   }
 
+  reset(): void {
+    this.optimizationHistory = [];
+    this.lastOptimizationTime.clear();
+    this.running = false;
+    if (this.optimizeInterval) {
+      clearInterval(this.optimizeInterval);
+      this.optimizeInterval = null;
+    }
+  }
+
   async optimizeForChain(namespaceId: string, chain: ChainId): Promise<OptimizationResult | null> {
     const ns = namespaceManager.getNamespace(namespaceId);
     if (!ns) return null;
+    
+    // Check cooldown
+    const lastOptTime = this.lastOptimizationTime.get(namespaceId);
+    if (lastOptTime && Date.now() - lastOptTime < OPTIMIZATION_COOLDOWN_MS) {
+      return null; // Skip if recently optimized
+    }
 
     const oldLatency = ns.latencyMs;
     const bestSubnet = topologyHeatmap.getBestSubnetFor(chain);
     
+    // Only optimize if improvement is significant (>20%)
     if (bestSubnet && bestSubnet !== ns.subnet) {
+      const bestRpc = topologyHeatmap.getBestRpcFor(chain);
+      const expectedLatency = bestRpc?.avgLatencyMs || oldLatency;
+      
+      // Skip if improvement would be minimal
+      if (oldLatency - expectedLatency < oldLatency * MIN_IMPROVEMENT_THRESHOLD) return null;
+      
       const result = await namespaceManager.cycleNamespace(namespaceId);
       if (result.success && result.namespace) {
         const newLatency = result.namespace.latencyMs;
         const opt: OptimizationResult = {
           namespaceId: result.namespace.id, chain, oldLatency, newLatency,
-          improvement: ((oldLatency - newLatency) / oldLatency) * 100
+          improvement: oldLatency > 0 ? ((oldLatency - newLatency) / oldLatency) * 100 : 0
         };
         this.optimizationHistory.push(opt);
-        if (this.optimizationHistory.length > 100) this.optimizationHistory.shift();
+        if (this.optimizationHistory.length > MAX_OPTIMIZATION_HISTORY) this.optimizationHistory.shift();
+        this.lastOptimizationTime.set(result.namespace.id, Date.now());
+        topologyHeatmap.recordSubnetLatency(result.namespace.subnet, chain, newLatency);
         return opt;
       }
     }
@@ -58,18 +92,31 @@ export class LatencyOptimizer {
   private async optimizeAllNamespaces(): Promise<void> {
     if (!this.running) return;
     const namespaces = namespaceManager.getAllNamespaces();
+    const candidates: { ns: typeof namespaces[0]; chain: ChainId; urgency: number }[] = [];
+    
+    // Identify optimization candidates
     for (const ns of namespaces) {
       if (ns.crawlerId && ns.latencyMs > 100) {
         const chains: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];
         for (const chain of chains) {
           const bestLatency = this.getBestKnownLatency(chain);
           if (ns.latencyMs > bestLatency * 1.5) {
-            await this.optimizeForChain(ns.id, chain);
+            const urgency = (ns.latencyMs - bestLatency) / bestLatency; // Higher urgency = worse latency
+            candidates.push({ ns, chain, urgency });
             break;
           }
         }
       }
     }
+    
+    // Sort by urgency and process top candidates in batches
+    candidates.sort((a, b) => b.urgency - a.urgency);
+    const batch = candidates.slice(0, BATCH_OPTIMIZATION_SIZE);
+    
+    // Optimize in parallel for efficiency
+    await Promise.all(
+      batch.map(({ ns, chain }) => this.optimizeForChain(ns.id, chain))
+    );
   }
 
   private getBestKnownLatency(chain: ChainId): number {
@@ -79,12 +126,23 @@ export class LatencyOptimizer {
 
   selectOptimalNamespace(chain: ChainId, available: NetworkNamespace[]): NetworkNamespace | null {
     if (available.length === 0) return null;
+    
     const bestSubnet = topologyHeatmap.getBestSubnetFor(chain);
     if (bestSubnet) {
       const match = available.find(ns => ns.subnet === bestSubnet);
       if (match) return match;
     }
-    return available.reduce((best, ns) => ns.latencyMs < best.latencyMs ? ns : best);
+    
+    // Fallback: select by latency with recency bonus
+    return available.reduce((best, ns) => {
+      const age = Date.now() - ns.createdAt;
+      const agePenalty = age > NAMESPACE_AGE_THRESHOLD_MS ? AGE_LATENCY_PENALTY_MS : 0;
+      const effectiveLatency = ns.latencyMs + agePenalty;
+      const bestAge = Date.now() - best.createdAt;
+      const bestAgePenalty = bestAge > NAMESPACE_AGE_THRESHOLD_MS ? AGE_LATENCY_PENALTY_MS : 0;
+      const bestEffectiveLatency = best.latencyMs + bestAgePenalty;
+      return effectiveLatency < bestEffectiveLatency ? ns : best;
+    });
   }
 
   getOptimizationStats(): { total: number; avgImprovement: number; history: OptimizationResult[] } {
