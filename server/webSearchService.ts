@@ -206,7 +206,7 @@ Provide comprehensive, accurate information with sources. Focus on:
 Return detailed findings with specific URLs and facts.`;
     
     const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3-pro",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         temperature: 0.1,
@@ -723,7 +723,7 @@ export class EnhancedWebSearchService {
     try {
       // Use shared client for efficiency
       const genai = getGeminiClient();
-      const model = genai.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+      const model = genai.getGenerativeModel({ model: "gemini-3-pro" });
 
       const result = await model.generateContent({
         contents: [{

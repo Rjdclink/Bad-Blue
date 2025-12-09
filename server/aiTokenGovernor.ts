@@ -59,6 +59,14 @@ export enum AIProvider {
   DEEPSEEK = 'deepseek',
   GROK = 'grok',
   KIMI = 'kimi',
+  // Additional OpenRouter models
+  GPT_OSS = 'gpt_oss',
+  FALCON = 'falcon',
+  CODE_LLAMA = 'code_llama',
+  GPT_NEOX = 'gpt_neox',
+  QWEN = 'qwen',
+  GPT5_MINI = 'gpt5_mini',
+  CLAUDE_OPUS = 'claude_opus',
 }
 
 export enum UsageContext {

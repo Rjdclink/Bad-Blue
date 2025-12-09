@@ -1,20 +1,30 @@
 /**
  * AI Model Selector - Intelligent model selection based on task attributes
  * 
- * Scores all 9 models across 11 attributes to select the optimal model for each task.
+ * Scores all 17 models across 16 attributes to select the optimal model for each task.
+ * Enhanced for cryptocrawler AI harmony integration.
  * 
- * GEMINI SELECTION:
- * - Lightweight/high-volume → gemini-2.5-flash-lite (1000 RPD)
- * - Multimodal/images → gemini-2.5-flash (50 RPD)
+ * GEMINI SELECTION (Updated to Gemini 3):
+ * - High-capability tasks → gemini-3-pro (latest reasoning)
+ * - Lightweight/high-volume → gemini-3-flash (fast inference)
  * 
- * CLAUDE SELECTION:
+ * CLAUDE SELECTION (Including Claude 4.5 Opus):
+ * - Premium reasoning → claude-4-5-opus (ultimate capability)
  * - Legal/creative → claude-3-5-sonnet (advanced reasoning)
  * - Fast/verification → claude-3-5-haiku (speed optimized)
+ * 
+ * GPT SELECTION:
+ * - Fast inference → gpt-5-mini (latest GPT architecture)
  * 
  * OPENROUTER SELECTION:
  * - Pattern recognition → DeepSeek (671B params)
  * - Large context → Grok (2M context)
  * - Structured extraction → Kimi (1T params)
+ * - Large scale reasoning → GPT-OSS-120B
+ * - Open source powerhouse → Falcon-180B
+ * - Code generation → Code Llama (70B/34B)
+ * - Efficient inference → GPT-NeoX-20B
+ * - Multilingual/multimodal → Qwen-72B
  */
 
 import { AIProvider, UsageContext } from './aiTokenGovernor';
@@ -101,45 +111,63 @@ interface ModelCapabilities {
  * - 0-29: Minimal or no capability
  */
 const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
-  // Gemini models
-  'gemini-2.5-flash-lite': {
-    multimodal: 60,
-    longContext: 70,
-    massiveContext: 50,
-    structuredOutput: 75,
-    codeGeneration: 65,
-    creativeWriting: 60,
-    reasoning: 65,
-    speed: 95,
-    verification: 70,
-    legalAnalysis: 55,
-    imageAnalysis: 60,
-    patternRecognition: 65,
-    dataExtraction: 70,
-    searchGrounding: 90,
-    costEfficiency: 100,
-    dailyCapacity: 100, // 1000 RPD
-  },
-  'gemini-2.5-flash': {
+  // Gemini models (Updated to Gemini 3)
+  'gemini-3-flash': {
     multimodal: 85,
-    longContext: 85,
-    massiveContext: 75,
-    structuredOutput: 85,
-    codeGeneration: 80,
-    creativeWriting: 75,
-    reasoning: 80,
-    speed: 85,
-    verification: 80,
-    legalAnalysis: 70,
+    longContext: 90,
+    massiveContext: 80,
+    structuredOutput: 90,
+    codeGeneration: 85,
+    creativeWriting: 80,
+    reasoning: 85,
+    speed: 95,
+    verification: 85,
+    legalAnalysis: 75,
     imageAnalysis: 85,
-    patternRecognition: 75,
-    dataExtraction: 80,
+    patternRecognition: 85,
+    dataExtraction: 85,
     searchGrounding: 95,
+    costEfficiency: 95,
+    dailyCapacity: 100, // High throughput
+  },
+  'gemini-3-pro': {
+    multimodal: 95,
+    longContext: 95,
+    massiveContext: 90,
+    structuredOutput: 95,
+    codeGeneration: 95,
+    creativeWriting: 90,
+    reasoning: 98,
+    speed: 80,
+    verification: 95,
+    legalAnalysis: 90,
+    imageAnalysis: 95,
+    patternRecognition: 95,
+    dataExtraction: 95,
+    searchGrounding: 98,
     costEfficiency: 70,
-    dailyCapacity: 50, // 50 RPD
+    dailyCapacity: 50, // Premium model
   },
   
   // Claude models
+  'claude-4-5-opus': {
+    multimodal: 98,
+    longContext: 98,
+    massiveContext: 95,
+    structuredOutput: 98,
+    codeGeneration: 98,
+    creativeWriting: 99,
+    reasoning: 99,
+    speed: 65,
+    verification: 98,
+    legalAnalysis: 99,
+    imageAnalysis: 98,
+    patternRecognition: 98,
+    dataExtraction: 98,
+    searchGrounding: 70,
+    costEfficiency: 40,
+    dailyCapacity: 30, // Premium model
+  },
   'claude-3-5-haiku-20241022': {
     multimodal: 70,
     longContext: 80,
@@ -270,7 +298,135 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     dataExtraction: 95,
     searchGrounding: 70,
     costEfficiency: 70,
-    dailyCapacity: 50, // 50 RPD
+    dailyCapacity: 50,
+  },
+  
+  // Additional OpenRouter models for extended AI harmony
+  'gpt-oss-120b': {
+    multimodal: 40,
+    longContext: 80,
+    massiveContext: 70,
+    structuredOutput: 85,
+    codeGeneration: 85,
+    creativeWriting: 80,
+    reasoning: 88,
+    speed: 65,
+    verification: 80,
+    legalAnalysis: 75,
+    imageAnalysis: 40,
+    patternRecognition: 85,
+    dataExtraction: 80,
+    searchGrounding: 50,
+    costEfficiency: 85,
+    dailyCapacity: 50,
+  },
+  'falcon-180b': {
+    multimodal: 30,
+    longContext: 75,
+    massiveContext: 65,
+    structuredOutput: 80,
+    codeGeneration: 80,
+    creativeWriting: 85,
+    reasoning: 82,
+    speed: 60,
+    verification: 75,
+    legalAnalysis: 70,
+    imageAnalysis: 30,
+    patternRecognition: 80,
+    dataExtraction: 75,
+    searchGrounding: 45,
+    costEfficiency: 80,
+    dailyCapacity: 50,
+  },
+  'code-llama-70b': {
+    multimodal: 20,
+    longContext: 70,
+    massiveContext: 60,
+    structuredOutput: 90,
+    codeGeneration: 95,
+    creativeWriting: 60,
+    reasoning: 80,
+    speed: 75,
+    verification: 85,
+    legalAnalysis: 55,
+    imageAnalysis: 20,
+    patternRecognition: 75,
+    dataExtraction: 80,
+    searchGrounding: 40,
+    costEfficiency: 90,
+    dailyCapacity: 60,
+  },
+  'code-llama-34b': {
+    multimodal: 20,
+    longContext: 65,
+    massiveContext: 55,
+    structuredOutput: 85,
+    codeGeneration: 90,
+    creativeWriting: 55,
+    reasoning: 75,
+    speed: 85,
+    verification: 80,
+    legalAnalysis: 50,
+    imageAnalysis: 20,
+    patternRecognition: 70,
+    dataExtraction: 75,
+    searchGrounding: 35,
+    costEfficiency: 95,
+    dailyCapacity: 70,
+  },
+  'gpt-neox-20b': {
+    multimodal: 25,
+    longContext: 60,
+    massiveContext: 50,
+    structuredOutput: 75,
+    codeGeneration: 75,
+    creativeWriting: 70,
+    reasoning: 72,
+    speed: 80,
+    verification: 70,
+    legalAnalysis: 60,
+    imageAnalysis: 25,
+    patternRecognition: 70,
+    dataExtraction: 70,
+    searchGrounding: 40,
+    costEfficiency: 92,
+    dailyCapacity: 80,
+  },
+  'qwen-72b': {
+    multimodal: 70,
+    longContext: 85,
+    massiveContext: 80,
+    structuredOutput: 88,
+    codeGeneration: 88,
+    creativeWriting: 80,
+    reasoning: 85,
+    speed: 70,
+    verification: 82,
+    legalAnalysis: 75,
+    imageAnalysis: 70,
+    patternRecognition: 85,
+    dataExtraction: 85,
+    searchGrounding: 65,
+    costEfficiency: 75,
+    dailyCapacity: 50,
+  },
+  'gpt-5-mini': {
+    multimodal: 92,
+    longContext: 95,
+    massiveContext: 90,
+    structuredOutput: 95,
+    codeGeneration: 95,
+    creativeWriting: 92,
+    reasoning: 96,
+    speed: 85,
+    verification: 94,
+    legalAnalysis: 90,
+    imageAnalysis: 92,
+    patternRecognition: 95,
+    dataExtraction: 94,
+    searchGrounding: 90,
+    costEfficiency: 65,
+    dailyCapacity: 40,
   },
 };
 
@@ -282,28 +438,33 @@ export class AIModelSelector {
    * Select optimal Gemini model based on task attributes
    */
   static selectGeminiModel(attrs: TaskAttributes): string {
-    // Use flash for multimodal/image tasks
+    // Use gemini-3-pro for multimodal/image tasks
     if (attrs.needsMultimodal || attrs.needsImageAnalysis) {
-      return 'gemini-2.5-flash';
+      return 'gemini-3-pro';
     }
     
-    // Use flash for high-complexity tasks
+    // Use gemini-3-pro for high-complexity tasks
     if (attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'gemini-2.5-flash';
+      return 'gemini-3-pro';
     }
     
-    // Use flash-lite for high-volume/lightweight tasks
+    // Use gemini-3-flash for high-volume/lightweight tasks
     if (attrs.complexity === TaskComplexity.LIGHTWEIGHT || attrs.needsFastResponse) {
-      return 'gemini-2.5-flash-lite';
+      return 'gemini-3-flash';
     }
     
-    // Use flash for long context needs
+    // Use gemini-3-pro for long context needs
     if (attrs.needsLongContext || attrs.needsMassiveContext) {
-      return 'gemini-2.5-flash';
+      return 'gemini-3-pro';
     }
     
-    // Default to flash-lite for cost efficiency
-    return 'gemini-2.5-flash-lite';
+    // Use gemini-3-pro for advanced reasoning
+    if (attrs.needsReasoning || attrs.needsPatternRecognition) {
+      return 'gemini-3-pro';
+    }
+    
+    // Default to gemini-3-flash for cost efficiency
+    return 'gemini-3-flash';
   }
   
   /**
