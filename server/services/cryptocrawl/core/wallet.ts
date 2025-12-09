@@ -1,10 +1,13 @@
 // Wallet Manager - Multi-chain wallet with AES-256 encryption
-import { Wallet, HDNodeWallet, JsonRpcProvider, formatEther, parseEther } from 'ethers';
+import { Wallet, providers, utils } from 'ethers';
 import { randomBytes, pbkdf2Sync, createCipheriv, createDecipheriv } from 'crypto';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type { ChainId } from './lux-swarm';
+
+const { JsonRpcProvider } = providers;
+const { formatEther, parseEther } = utils;
 
 interface ChainConfig {
   rpc?: string;
@@ -37,7 +40,7 @@ interface WithdrawParams {
   amount: string;
 }
 
-type ConnectedWallet = Wallet | HDNodeWallet;
+type ConnectedWallet = Wallet;
 
 // Load chain configs
 const __filename = fileURLToPath(import.meta.url);
@@ -55,8 +58,8 @@ const getRpcUrl = (config: ChainConfig): string => {
 };
 
 class WalletManager {
-  private wallet?: Wallet | HDNodeWallet;
-  private providers = new Map<ChainId, JsonRpcProvider>();
+  private wallet?: Wallet;
+  private providers = new Map<ChainId, providers.JsonRpcProvider>();
   private encryptionKey: Buffer;
 
   constructor() {

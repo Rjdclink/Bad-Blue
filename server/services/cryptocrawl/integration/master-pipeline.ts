@@ -1,7 +1,9 @@
 // Master Pipeline - Integration with Stealth Superiority System
 // Connects Starburst Snake, Lux Swarm, and Stealth systems for crushing performance
 
+import { Wallet, providers } from 'ethers';
 import type { Opportunity } from '../core/lux-swarm';
+import { LuxSwarm } from '../core/lux-swarm.js';
 import { executeWithMaxProfit, multiRelay, flashLoans, ultraLowLatency } from '../execution/index.js';
 import { RealtimeDataStream } from '../scanner/realtime-stream.js';
 import { ReinforcementLearningBidder } from '../learning/reinforcement-learning-bidder.js';
@@ -9,7 +11,10 @@ import { DynamicScalePhysics } from '../scaling/dynamic-scale-physics.js';
 import { OperationalIntegrity } from '../integrity/operational-integrity.js';
 import { ValidatorBribingAdvanced } from '../mev/validator-bribing-advanced.js';
 import { TripleDipExtractor } from '../mev/triple-dip-extractor.js';
+import { StealthSuperiority, type StealthMetrics } from '../stealth/index.js';
 import logger from '../../../logger.js';
+
+const { JsonRpcProvider } = providers;
 
 class MasterPipeline {
   private running = false;
@@ -21,6 +26,9 @@ class MasterPipeline {
   private tripleDip: TripleDipExtractor;
   private opportunitiesProcessed = 0;
   private totalProfit = 0;
+  private stealthSystem: StealthSuperiority | null = null;
+  private wallet: Wallet | null = null;
+  private providers: Map<string, providers.JsonRpcProvider> = new Map();
 
   constructor() {
     this.rlBidder = new ReinforcementLearningBidder();

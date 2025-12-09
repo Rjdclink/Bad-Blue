@@ -1,5 +1,7 @@
-import { WebSocketProvider, JsonRpcProvider } from 'ethers';
+import { providers } from 'ethers';
 import logger from '../../../logger.js';
+
+const { WebSocketProvider, JsonRpcProvider } = providers;
 
 interface StreamConfig {
   wsUrl?: string;
@@ -11,8 +13,8 @@ type BlockCallback = (blockNumber: number) => void;
 type PendingCallback = (tx: any) => void;
 
 class RealtimeDataStream {
-  private wsProvider: WebSocketProvider | null = null;
-  private httpProvider: JsonRpcProvider;
+  private wsProvider: providers.WebSocketProvider | null = null;
+  private httpProvider: providers.JsonRpcProvider;
   private config: StreamConfig;
   private reconnecting = false;
   private blockCallbacks: BlockCallback[] = [];
@@ -164,7 +166,7 @@ class RealtimeDataStream {
     this.pendingCallbacks.push(callback);
   }
 
-  getHttpProvider(): JsonRpcProvider {
+  getHttpProvider(): providers.JsonRpcProvider {
     return this.httpProvider;
   }
 

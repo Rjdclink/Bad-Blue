@@ -1,6 +1,9 @@
-import { ethers } from 'ethers';
+import { ethers, providers, Wallet, Contract } from 'ethers';
 import { ChainId } from './types';
 import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, DEFAULT_GAS_LIMIT, TOKEN_TRANSFER_GAS_LIMIT, NATIVE_TOKEN_PRICES } from './chain-config';
+
+const { JsonRpcProvider } = providers;
+const { parseEther, parseUnits, formatEther, isAddress } = ethers.utils;
 
 export interface WithdrawRequest {
   chain: ChainId;
@@ -24,7 +27,7 @@ export interface WithdrawResult {
 }
 
 export class WithdrawDepositManager {
-  private wallets: Map<ChainId, ethers.Wallet> = new Map();
+  private wallets: Map<ChainId, Wallet> = new Map();
   private initialized = false;
 
   constructor() {
@@ -42,8 +45,8 @@ export class WithdrawDepositManager {
 
     for (const [chainId, config] of Object.entries(SUPPORTED_CHAINS)) {
       try {
-        const provider = new ethers.JsonRpcProvider(config.rpcUrl);
-        const wallet = new ethers.Wallet(privateKey, provider);
+        const provider = new JsonRpcProvider(config.rpcUrl);
+        const wallet = new Wallet(privateKey, provider);
         this.wallets.set(chainId as ChainId, wallet);
         console.log(`[WithdrawDepositManager] ✓ Wallet ready for ${config.name}`);
       } catch (error) {
@@ -71,16 +74,16 @@ export class WithdrawDepositManager {
   async withdrawNative(chain: ChainId, amount: number, toAddress: string): Promise<WithdrawResult> {
     const wallet = this.wallets.get(chain);
     if (!wallet) return { success: false, error: 'Wallet not initialized. Set WALLET_PRIVATE_KEY.' };
-    if (!ethers.isAddress(toAddress)) return { success: false, error: 'Invalid address' };
+    if (!isAddress(toAddress)) return { success: false, error: 'Invalid address' };
     if (amount <= 0) return { success: false, error: 'Amount must be > 0' };
 
     try {
       const tx = await wallet.sendTransaction({
         to: toAddress,
-        value: ethers.parseEther(amount.toString())
+        value: parseEther(amount.toString())
       });
       const receipt = await tx.wait();
-      const txHash = receipt?.hash || tx.hash;
+      const txHash = receipt?.transactionHash || tx.hash;
       return { success: true, txHash, explorerLink: this.getExplorerLink(chain, txHash) };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -90,19 +93,19 @@ export class WithdrawDepositManager {
   async withdrawToken(chain: ChainId, token: 'USDT' | 'USDC', amount: number, toAddress: string): Promise<WithdrawResult> {
     const wallet = this.wallets.get(chain);
     if (!wallet) return { success: false, error: 'Wallet not initialized. Set WALLET_PRIVATE_KEY.' };
-    if (!ethers.isAddress(toAddress)) return { success: false, error: 'Invalid address' };
+    if (!isAddress(toAddress)) return { success: false, error: 'Invalid address' };
     if (amount <= 0) return { success: false, error: 'Amount must be > 0' };
 
     const config = SUPPORTED_CHAINS[chain];
     const tokenAddress = token === 'USDT' ? config.usdt : config.usdc;
 
     try {
-      const contract = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
+      const contract = new Contract(tokenAddress, ERC20_ABI, wallet);
       const decimals = await contract.decimals();
-      const amountWei = ethers.parseUnits(amount.toString(), decimals);
+      const amountWei = parseUnits(amount.toString(), decimals);
       const tx = await contract.transfer(toAddress, amountWei);
       const receipt = await tx.wait();
-      const txHash = receipt?.hash || tx.hash;
+      const txHash = receipt?.transactionHash || tx.hash;
       return { success: true, txHash, explorerLink: this.getExplorerLink(chain, txHash) };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -128,8 +131,8 @@ export class WithdrawDepositManager {
 
     try {
       const feeData = await wallet.provider.getFeeData();
-      const gasPrice = feeData.gasPrice || BigInt(0);
-      const gasCost = parseFloat(ethers.formatEther(gasPrice * BigInt(gasLimit)));
+      const gasPrice = feeData.gasPrice || ethers.BigNumber.from(0);
+      const gasCost = parseFloat(formatEther(gasPrice.mul(gasLimit)));
       return { gasLimit, gasCostUsd: gasCost * (NATIVE_TOKEN_PRICES[chain] || 1) };
     } catch {
       return { gasLimit, gasCostUsd: 0 };

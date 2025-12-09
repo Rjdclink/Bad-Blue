@@ -1,5 +1,7 @@
-import { JsonRpcProvider } from 'ethers';
+import { providers } from 'ethers';
 import logger from '../../../logger.js';
+
+const { JsonRpcProvider } = providers;
 
 interface OpportunityData {
   id: string;
@@ -51,9 +53,9 @@ class AsyncMutex {
 class OperationalIntegrity {
   private nonceMutex = new AsyncMutex();
   private providers: ProviderConfig;
-  private primaryProvider: JsonRpcProvider;
-  private backupProvider: JsonRpcProvider;
-  private fallbackProvider: JsonRpcProvider;
+  private primaryProvider: providers.JsonRpcProvider;
+  private backupProvider: providers.JsonRpcProvider;
+  private fallbackProvider: providers.JsonRpcProvider;
   private wsListeners: any[] = [];
 
   constructor() {
@@ -305,15 +307,15 @@ class OperationalIntegrity {
     return this.wsListeners.filter(l => l.connected).length;
   }
 
-  getPrimaryProvider(): JsonRpcProvider {
+  getPrimaryProvider(): providers.JsonRpcProvider {
     return this.primaryProvider;
   }
 
-  getBackupProvider(): JsonRpcProvider {
+  getBackupProvider(): providers.JsonRpcProvider {
     return this.backupProvider;
   }
 
-  getFallbackProvider(): JsonRpcProvider {
+  getFallbackProvider(): providers.JsonRpcProvider {
     return this.fallbackProvider;
   }
 }

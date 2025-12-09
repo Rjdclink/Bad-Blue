@@ -1,5 +1,7 @@
-import { parseEther, parseUnits } from 'ethers';
+import { ethers } from 'ethers';
 import logger from '../../../logger.js';
+
+const { parseEther, parseUnits } = ethers.utils;
 
 interface Opportunity {
   id: string;

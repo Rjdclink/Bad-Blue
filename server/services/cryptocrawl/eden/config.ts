@@ -8,6 +8,10 @@ export const EDEN_CONFIG = {
   DUAL_PURPOSE_CATACLYSM_CAIN: 1, // Cataclysm detection + Gravity Crawler orchestration
   GENESIS_REAPER_CAINS: 1, // The smartest crawler - monitors and terminates problematic crawlers
   MIN_CAINS_FOR_RESET: 2,
+  // Aliases for legacy/compatibility code
+  ORIGINAL_CAINS: 7, // Original Cain crawlers for knowledge collection
+  CATACLYSM_DETECTION_CAINS: 3, // Cataclysm detection Cains
+  PROBABILITY_MONITORING_CAINS: 5, // Probability monitoring Cains
   
   // Cycle Configuration
   GENESIS_CYCLE_DURATION_MS: 3600000, // 1 hour

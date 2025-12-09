@@ -1,6 +1,8 @@
-import { JsonRpcProvider, Wallet } from 'ethers';
+import { providers, Wallet } from 'ethers';
 import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
+
+const { JsonRpcProvider } = providers;
 
 interface RelayConfig {
   name: string;
@@ -57,7 +59,7 @@ class MultiRelaySubmitter {
   private providers: Map<string, FlashbotsBundleProvider> = new Map();
   private metrics: Map<string, RelayMetrics> = new Map();
   private initialized = false;
-  private provider: JsonRpcProvider;
+  private provider: providers.JsonRpcProvider;
   private wallet: Wallet;
 
   constructor() {
@@ -145,7 +147,7 @@ class MultiRelaySubmitter {
       failed: []
     };
 
-    const submissionPromises = selectedRelays.map(async ([name, provider]) => {
+    const submissionPromises = Array.from(selectedRelays.entries()).map(async ([name, provider]: [string, FlashbotsBundleProvider]) => {
       const metrics = this.metrics.get(name)!;
       metrics.totalAttempts++;
       const startTime = Date.now();
