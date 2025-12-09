@@ -6,6 +6,10 @@ import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
 
+// Configuration constants
+const SAME_BLOCK_WINDOW_MS = 12000; // 12 second window for same-block operations
+const REQUEST_CLEANUP_DELAY_MS = 30000; // 30 seconds before cleaning up requests
+
 export interface FlashLoanRoute {
   provider: string;
   chain: ChainId;
@@ -152,7 +156,7 @@ export class FlashLiquidityLayer {
       amount,
       chain,
       profitEstimate,
-      expiresAt: Date.now() + 12000, // 12 second window (same block)
+      expiresAt: Date.now() + SAME_BLOCK_WINDOW_MS,
       status: 'pending',
       repaymentDeadline: 1, // Must repay within same block
     };
@@ -228,7 +232,7 @@ export class FlashLiquidityLayer {
       // Clean up completed requests
       setTimeout(() => {
         this.pendingRequests.delete(requestId);
-      }, 30000);
+      }, REQUEST_CLEANUP_DELAY_MS);
     }
   }
 

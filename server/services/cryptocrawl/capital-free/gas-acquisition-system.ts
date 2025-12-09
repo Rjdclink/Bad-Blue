@@ -6,6 +6,10 @@ import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
 
+// Configuration constants
+const SAME_BLOCK_WINDOW_MS = 12000; // 12 second window for same-block operations
+const REQUEST_CLEANUP_DELAY_MS = 30000; // 30 seconds before cleaning up requests
+
 export interface GasPoolConfig {
   chain: ChainId;
   poolAddress: string;
@@ -153,7 +157,7 @@ export class GasAcquisitionSystem {
       profitSharePercent: pool.minProfitShare,
       status: 'pending',
       requestedAt: Date.now(),
-      expiresAt: Date.now() + 12000, // 12 second window
+      expiresAt: Date.now() + SAME_BLOCK_WINDOW_MS,
     };
     this.pendingRequests.set(requestId, request);
     this.totalAcquisitions++;
@@ -230,7 +234,7 @@ export class GasAcquisitionSystem {
       // Clean up completed requests
       setTimeout(() => {
         this.pendingRequests.delete(requestId);
-      }, 30000);
+      }, REQUEST_CLEANUP_DELAY_MS);
     }
   }
 

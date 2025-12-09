@@ -6,6 +6,11 @@ import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
 
+// Configuration constants
+const MIN_FAIRNESS_THRESHOLD = 0.7; // Accept trades with at least 70% fairness
+const OFFER_CLEANUP_INTERVAL_MS = 30000; // 30 seconds
+const DEFAULT_OFFER_VALIDITY_MS = DEFAULT_OFFER_VALIDITY_MS; // 1 minute default
+
 export type BarterResourceType = 
   | 'gas'
   | 'routing_rights'
@@ -92,7 +97,7 @@ export class BarterSystem {
     offered: Omit<BarterResource, 'expiresAt'>,
     requested: Omit<BarterResource, 'expiresAt'>,
     offererContract: string,
-    validityPeriod: number = 60000 // 1 minute default
+    validityPeriod: number = DEFAULT_OFFER_VALIDITY_MS // 1 minute default
   ): Promise<BarterOffer> {
     const expiresAt = Date.now() + validityPeriod;
 
@@ -169,7 +174,7 @@ export class BarterSystem {
       const fairness = Math.min(ourRatio, theirRatio) / Math.max(ourRatio, theirRatio);
 
       // Accept if fairness is at least 0.7 (30% deviation acceptable)
-      if (fairness >= 0.7 && fairness > bestFairness) {
+      if (fairness >= MIN_FAIRNESS_THRESHOLD && fairness > bestFairness) {
         bestFairness = fairness;
         bestMatch = candidate;
       }
@@ -380,7 +385,7 @@ export class BarterSystem {
           this.openOffers.delete(id);
         }
       }
-    }, 30000); // Check every 30 seconds
+    }, OFFER_CLEANUP_INTERVAL_MS); // Check every 30 seconds
   }
 
   /**

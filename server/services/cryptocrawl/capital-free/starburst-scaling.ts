@@ -1,11 +1,24 @@
 // Starburst Scaling System - CPU/RAM Resource Architecture
-// 8 Canes (6 Original + 2 Purpose) + 100M+ Crawlers
+// 8 Canes (6 Original + 2 Purpose) + Crawlers (scalable to millions)
 // Implements Starburst Waves for dynamic resource allocation
 
 import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId, Opportunity } from '../core/lux-swarm';
 import { LuxSwarm } from '../core/lux-swarm';
+
+// Configuration constants
+const MAX_CRAWLER_CAPACITY = 1000000; // 1M crawlers (scalable architecture supports 100M+)
+const IDLE_THRESHOLD_MS = 30000; // 30 seconds
+const CANE_BOOST_MIN_PERCENT = 5;
+const CANE_BOOST_MAX_PERCENT = 20;
+const CANE_BOOST_DURATION_MS = 5000;
+const MICRO_CRAWLER_LIFESPAN_MS = 1000;
+const CATACLYSM_HIGH_LOAD_THRESHOLD = 80;
+const CATACLYSM_AFFECTED_CANES_THRESHOLD = 3;
+const CANE_BOOST_PROBABILITY_THRESHOLD = 0.7;
+const CRAWLER_BLOOM_PROBABILITY_THRESHOLD = 0.5;
+const CRAWLER_PRUNE_THRESHOLD = 100;
 
 // Cane Types - The 8 specialized agents
 export type CaneType = 
@@ -75,7 +88,7 @@ const CANE_CONFIGS: Record<CaneType, { cpuBase: number; ramBase: number }> = {
 
 /**
  * Starburst Scaling System
- * Manages 8 Canes + 100M+ crawlers with dynamic resource allocation
+ * Manages 8 Canes + crawlers (scalable to millions) with dynamic resource allocation
  */
 export class StarburstScalingSystem {
   private canes: Map<string, Cane> = new Map();
@@ -83,7 +96,7 @@ export class StarburstScalingSystem {
   private waves: Map<string, StarburstWave> = new Map();
   private isRunning: boolean = false;
   private monitorInterval: NodeJS.Timeout | null = null;
-  private maxCrawlers: number = 1000000; // 1M max (simulated 100M capability)
+  private maxCrawlers: number = MAX_CRAWLER_CAPACITY;
   private wavesTriggered: number = 0;
 
   constructor() {
@@ -175,11 +188,12 @@ export class StarburstScalingSystem {
    * CPU sends 5-20% extra power to canes predicting profit
    */
   async triggerCaneBoost(profitPredictors: string[]): Promise<StarburstWave> {
+    const boostRange = CANE_BOOST_MAX_PERCENT - CANE_BOOST_MIN_PERCENT;
     const wave: StarburstWave = {
       id: `wave-boost-${randomUUID().slice(0, 8)}`,
       type: 'boost',
       targetCanes: profitPredictors,
-      intensity: 5 + Math.random() * 15, // 5-20%
+      intensity: CANE_BOOST_MIN_PERCENT + Math.random() * boostRange,
       triggeredAt: Date.now(),
       completedAt: null,
     };
@@ -216,7 +230,7 @@ export class StarburstScalingSystem {
           cane.status = 'active';
         }
       }
-    }, 5000);
+    }, CANE_BOOST_DURATION_MS);
 
     return wave;
   }
@@ -340,7 +354,7 @@ export class StarburstScalingSystem {
         micro.dissolvedAt = Date.now();
       }
       wave.completedAt = Date.now();
-    }, 1000);
+    }, MICRO_CRAWLER_LIFESPAN_MS);
 
     return wave;
   }
@@ -351,7 +365,6 @@ export class StarburstScalingSystem {
    */
   async triggerDissolution(): Promise<StarburstWave> {
     const now = Date.now();
-    const idleThreshold = 30000; // 30 seconds idle
 
     const wave: StarburstWave = {
       id: `wave-dissolve-${randomUUID().slice(0, 8)}`,
@@ -367,7 +380,7 @@ export class StarburstScalingSystem {
       // Dissolve completed or idle crawlers
       if (
         crawler.status === 'completed' ||
-        (crawler.status === 'active' && now - crawler.createdAt > idleThreshold)
+        (crawler.status === 'active' && now - crawler.createdAt > IDLE_THRESHOLD_MS)
       ) {
         crawler.status = 'dissolved';
         crawler.dissolvedAt = now;
@@ -421,9 +434,9 @@ export class StarburstScalingSystem {
     if (reaperWatcher) {
       // Check for system-wide threats
       const highLoadCanes = Array.from(this.canes.values())
-        .filter(c => c.currentLoad > 80);
+        .filter(c => c.currentLoad > CATACLYSM_HIGH_LOAD_THRESHOLD);
       
-      if (highLoadCanes.length > 3) {
+      if (highLoadCanes.length > CATACLYSM_AFFECTED_CANES_THRESHOLD) {
         // Enter safe mode
         for (const cane of this.canes.values()) {
           if (cane.status !== 'safe_mode') {
@@ -447,18 +460,18 @@ export class StarburstScalingSystem {
         .filter(c => c.type === 'flash_orchestrator' || c.type === 'gas_allocator')
         .map(c => c.id);
       
-      if (profitCanes.length > 0 && Math.random() > 0.7) {
+      if (profitCanes.length > 0 && Math.random() > CANE_BOOST_PROBABILITY_THRESHOLD) {
         await this.triggerCaneBoost(profitCanes);
       }
     }
 
     // GRAVITY COORDINATOR: Spawn crawlers for opportunities
-    if (lux.opportunities.length > 0 && Math.random() > 0.5) {
+    if (lux.opportunities.length > 0 && Math.random() > CRAWLER_BLOOM_PROBABILITY_THRESHOLD) {
       await this.triggerCrawlerBloom(lux.opportunities.slice(0, 10));
     }
 
     // Periodic dissolution to keep memory low
-    if (this.crawlers.size > 100) {
+    if (this.crawlers.size > CRAWLER_PRUNE_THRESHOLD) {
       await this.triggerDissolution();
     }
   }

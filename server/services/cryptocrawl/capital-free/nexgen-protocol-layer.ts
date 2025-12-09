@@ -11,6 +11,15 @@ import { gasAcquisitionSystem } from './gas-acquisition-system';
 import { partnershipFormationSystem } from './partnership-formation';
 import { barterSystem } from './barter-system';
 
+// Configuration constants
+const MIN_CONFIDENCE_THRESHOLD = 0.6;
+const MIN_PROFIT_THRESHOLD = 0.005;
+const HIGH_COMPETITION_THRESHOLD = 0.3;
+const COMPETITOR_IMPACT_FACTOR = 0.5;
+const BARTER_COMPETITION_THRESHOLD = 0.2;
+const BARTER_LIQUIDITY_THRESHOLD = 0.8;
+const MAX_EXPOSURE_RATIO = 0.8;
+
 export interface ProtocolRoute {
   id: string;
   sourceChain: ChainId;
@@ -183,13 +192,13 @@ export class NexGenProtocolLayer {
     }
 
     // 4. Minimum confidence threshold
-    if (profitProbability.confidence < 0.6) {
+    if (profitProbability.confidence < MIN_CONFIDENCE_THRESHOLD) {
       return this.createRejectionDecision('Confidence too low', profitProbability);
     }
 
     // 5. Minimum profit threshold after gas
     const gasEstimate = gasAcquisitionSystem.getEstimatedGasCost(opportunity.chain);
-    if (profitProbability.profit - gasEstimate < 0.005) {
+    if (profitProbability.profit - gasEstimate < MIN_PROFIT_THRESHOLD) {
       return this.createRejectionDecision('Profit below threshold after gas', profitProbability);
     }
 
@@ -238,10 +247,10 @@ export class NexGenProtocolLayer {
     const slippage = 0.005 + Math.random() * 0.01; // 0.5% - 1.5% slippage
     const gasVolatility = 0.1 + Math.random() * 0.3; // 10% - 40% gas volatility
     const liquidityDepth = 0.7 + Math.random() * 0.3; // 70% - 100% liquidity
-    const competitorActivity = Math.random() * 0.5; // 0% - 50% competitor activity
+    const competitorActivity = Math.random() * COMPETITOR_IMPACT_FACTOR; // 0% - 50% competitor activity
 
     // Calculate adjusted profit
-    const adjustedProfit = opportunity.profitEstimate * (1 - slippage) * liquidityDepth * (1 - competitorActivity * 0.5);
+    const adjustedProfit = opportunity.profitEstimate * (1 - slippage) * liquidityDepth * (1 - competitorActivity * COMPETITOR_IMPACT_FACTOR);
 
     // Calculate probability based on factors
     const baseProb = opportunity.priority / 100;
@@ -314,7 +323,7 @@ export class NexGenProtocolLayer {
     profitProbability: ProfitProbability
   ): 'normal' | 'priority' | 'urgent' {
     // High competition = urgent
-    if (profitProbability.factors.competitorActivity > 0.3) {
+    if (profitProbability.factors.competitorActivity > HIGH_COMPETITION_THRESHOLD) {
       return 'urgent';
     }
 
@@ -346,8 +355,8 @@ export class NexGenProtocolLayer {
    */
   private shouldBarter(opportunity: Opportunity, profitProbability: ProfitProbability): boolean {
     // Barter if high competition and good liquidity
-    return profitProbability.factors.competitorActivity > 0.2 && 
-           profitProbability.factors.liquidityDepth > 0.8;
+    return profitProbability.factors.competitorActivity > BARTER_COMPETITION_THRESHOLD && 
+           profitProbability.factors.liquidityDepth > BARTER_LIQUIDITY_THRESHOLD;
   }
 
   /**
@@ -381,7 +390,7 @@ export class NexGenProtocolLayer {
       profile.volatilityScore = Math.min(100, 50 + oppDensity * 5);
 
       // Auto-rebalance if exposure too high
-      if (profile.currentExposure > profile.maxExposure * 0.8) {
+      if (profile.currentExposure > profile.maxExposure * MAX_EXPOSURE_RATIO) {
         this.autoRebalanceRisk(profile);
       }
     }
@@ -480,13 +489,16 @@ export class NexGenProtocolLayer {
 
               // 5. Distribute to partners if alliance exists
               if (decision.partnerAlliance) {
-                const routes = Array.from(partnershipFormationSystem['routes'].values())
-                  .filter(r => r.isActive && r.chain === opportunity.chain);
-                if (routes.length > 0) {
-                  await partnershipFormationSystem.distributeProfitToRoute(
-                    routes[0].id,
-                    decision.profitProbability.profit * 0.1
-                  );
+                const activeAlliances = partnershipFormationSystem.getActiveAlliances(opportunity.chain);
+                if (activeAlliances.length > 0) {
+                  // Use first active alliance for profit distribution
+                  const alliancePartners = activeAlliances[0].partners;
+                  if (alliancePartners.length > 0) {
+                    // Update partner reputation for successful execution
+                    for (const partnerId of alliancePartners) {
+                      partnershipFormationSystem.updatePartnerReputation(partnerId, true);
+                    }
+                  }
                 }
               }
 

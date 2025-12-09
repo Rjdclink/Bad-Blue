@@ -6,6 +6,11 @@ import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
 
+// Configuration constants
+const FULL_PERCENTAGE = 100;
+const REPUTATION_UPDATE_OLD_WEIGHT = 0.9;
+const REPUTATION_UPDATE_NEW_WEIGHT = 0.1;
+
 export interface Partner {
   id: string;
   address: string;
@@ -193,9 +198,9 @@ export class PartnershipFormationSystem {
     }
 
     // Normalize to 100% if needed
-    if (totalShare !== 100) {
+    if (totalShare !== FULL_PERCENTAGE) {
       for (const id of validPartners) {
-        splitRatios[id] = (splitRatios[id] / totalShare) * 100;
+        splitRatios[id] = (splitRatios[id] / totalShare) * FULL_PERCENTAGE;
       }
     }
 
@@ -233,7 +238,7 @@ export class PartnershipFormationSystem {
     for (const partnerId of route.partners) {
       const partner = this.partners.get(partnerId);
       if (partner) {
-        const share = profit * (route.splitRatios[partnerId] / 100);
+        const share = profit * (route.splitRatios[partnerId] / FULL_PERCENTAGE);
         partner.totalProfitShared += share;
         partner.lastActiveAt = Date.now();
         distributed += share;
@@ -266,10 +271,13 @@ export class PartnershipFormationSystem {
 
     // Calculate new reputation based on success rate
     const successRate = partner.successfulTransactions / partner.totalTransactions;
-    const newReputation = Math.round(successRate * 100);
+    const newReputation = Math.round(successRate * FULL_PERCENTAGE);
     
     // Weighted update (90% old, 10% new)
-    partner.reputationScore = Math.round(partner.reputationScore * 0.9 + newReputation * 0.1);
+    partner.reputationScore = Math.round(
+      partner.reputationScore * REPUTATION_UPDATE_OLD_WEIGHT + 
+      newReputation * REPUTATION_UPDATE_NEW_WEIGHT
+    );
     partner.lastActiveAt = Date.now();
   }
 

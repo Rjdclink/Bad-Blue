@@ -6,6 +6,9 @@ import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
 
+// Configuration constants
+const HEALTH_CHECK_FAILURE_RATE = 0.05; // 5% simulated failure rate
+const HEALTH_CHECK_INTERVAL_MS = 30000; // 30 seconds
 export interface NodePlacement {
   id: string;
   name: string;
@@ -261,7 +264,7 @@ export class EdenPlacementStrategy {
 
     for (const [id, placement] of this.placements) {
       // Simulate health check (in production, would ping actual endpoints)
-      const isHealthy = Math.random() > 0.05; // 95% uptime
+      const isHealthy = Math.random() > HEALTH_CHECK_FAILURE_RATE; // 95% uptime
       
       if (!isHealthy && placement.isActive) {
         placement.isActive = false;
