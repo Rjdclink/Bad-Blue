@@ -90,6 +90,7 @@ import { runAutomatedCleanup, getCleanupLogs, getCleanupStats, deleteOldErrorLog
 import { generateEnhancedComplaint, searchOfficerAuthority, routeComplaint, enhanceComplaintNarrative } from "./complaintDraftingSystem";
 import { generateSection1983Lawsuit } from "./section1983LawsuitGenerator";
 import { runFullDiagnostics } from "./systemDiagnostics";
+import { masterControlConsole, executeMCCDirective } from "./masterControlConsole";
 import {
   apiRateLimit,
   strictRateLimit,
@@ -2561,6 +2562,140 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
   });
 
   // (Other AI Sub-Agent endpoints remain unchanged; preserve original logic)
+
+  // ============================================
+  // MASTER CONTROL CONSOLE (MCC) ROUTES
+  // ============================================
+  // Single-prompt interface for coordinating all AI models
+  
+  app.post("/api/mcc/execute",
+    isAuthenticated,
+    subAgentRateLimit,
+    asyncHandler(async (req: any, res: any) => {
+      try {
+        const userId = req.user?.claims?.sub;
+
+        // Only allow admin access to MCC
+        if (userId !== "admin-bypass" && !req.user?.isAdmin) {
+          return res.status(403).json({ 
+            success: false,
+            message: "Access denied: MCC requires admin privileges" 
+          });
+        }
+
+        const { prompt } = req.body;
+
+        if (!prompt || typeof prompt !== 'string') {
+          return res.status(400).json({ 
+            success: false,
+            message: "Prompt is required and must be a string" 
+          });
+        }
+
+        // Execute the directive using static import
+        const result = await executeMCCDirective(prompt);
+
+        res.json({
+          success: result.success,
+          response: result.synthesizedResponse,
+          category: result.parsedDirective.category,
+          executionMode: result.parsedDirective.executionMode,
+          subtasksExecuted: result.executionResults.length,
+          successfulTasks: result.executionResults.filter(r => r.success).length,
+          totalLatencyMs: result.totalLatencyMs,
+          tokensUsed: result.tokensUsed,
+          modelsUsed: result.modelsUsed,
+          crossValidation: result.crossValidation,
+          errorResolution: result.errorResolution,
+        });
+
+      } catch (error: any) {
+        console.error("[MCC] Execution error:", error);
+        res.status(500).json({ 
+          success: false,
+          message: "MCC execution failed", 
+          error: error.message 
+        });
+      }
+    })
+  );
+
+  app.get("/api/mcc/status",
+    isAuthenticated,
+    apiRateLimit,
+    asyncHandler(async (req: any, res: any) => {
+      try {
+        const userId = req.user?.claims?.sub;
+
+        if (userId !== "admin-bypass" && !req.user?.isAdmin) {
+          return res.status(403).json({ 
+            success: false,
+            message: "Access denied: MCC requires admin privileges" 
+          });
+        }
+
+        const status = await masterControlConsole.getStatus();
+
+        res.json({
+          success: true,
+          ...status,
+          timestamp: new Date().toISOString(),
+        });
+
+      } catch (error: any) {
+        console.error("[MCC] Status error:", error);
+        res.status(500).json({ 
+          success: false,
+          message: "Failed to get MCC status", 
+          error: error.message 
+        });
+      }
+    })
+  );
+
+  app.get("/api/mcc/history",
+    isAuthenticated,
+    apiRateLimit,
+    asyncHandler(async (req: any, res: any) => {
+      try {
+        const userId = req.user?.claims?.sub;
+
+        if (userId !== "admin-bypass" && !req.user?.isAdmin) {
+          return res.status(403).json({ 
+            success: false,
+            message: "Access denied: MCC requires admin privileges" 
+          });
+        }
+
+        const history = masterControlConsole.getExecutionHistory();
+
+        // Return summary of recent executions
+        const summary = history.slice(-20).map(r => ({
+          prompt: r.originalPrompt.substring(0, 100),
+          category: r.parsedDirective.category,
+          success: r.success,
+          latencyMs: r.totalLatencyMs,
+          tokensUsed: r.tokensUsed,
+          modelsUsed: r.modelsUsed.length,
+        }));
+
+        res.json({
+          success: true,
+          totalExecutions: history.length,
+          recentExecutions: summary,
+        });
+
+      } catch (error: any) {
+        console.error("[MCC] History error:", error);
+        res.status(500).json({ 
+          success: false,
+          message: "Failed to get MCC history", 
+          error: error.message 
+        });
+      }
+    })
+  );
+
   // ============================================
   // SECURITY FIREWALL CONTROLS
   // ============================================
