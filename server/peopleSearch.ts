@@ -1,5 +1,6 @@
 // LegalWhat People Search - Deep OSINT Report Generation
 // Aggregates public data from multiple sources for comprehensive background reports
+// Utilizes PANTHEON crawler orchestrator for maximum intelligence gathering
 
 import { entityResolver } from './services/entityResolver';
 import { enhancedWebSearch } from './webSearchService';
@@ -14,6 +15,13 @@ import {
   type CasePrecedent
 } from './services/legalIntelligence';
 import type { SherlockResult } from './services/socialIntelligence/types';
+
+// PANTHEON Crawler Orchestrator - Utilizes all crawler functions
+import {
+  pantheonOrchestrator,
+  canActivatePantheon,
+  type CrawlerResult,
+} from './services/pantheonCrawlerOrchestrator';
 
 // Constants for crawler messages
 const CRAWLER_MESSAGES = {
@@ -821,17 +829,59 @@ export async function conductFullOSINT(
       }
     } // End of WRAITH activation block
 
-    // Level 3+: HYDRA + LICH + CERBERUS + BLIZZARD DRAGON activation
+    // Level 3+: HYDRA + LICH + CERBERUS + BLIZZARD DRAGON activation via PANTHEON
     if (searchDepth >= 3) {
-      console.log('[PANTHEON OSINT] Activating Level 3 crawlers: HYDRA, LICH, CERBERUS, BLIZZARD DRAGON');
+      console.log('[PANTHEON OSINT] Activating Level 3 crawlers via PANTHEON Orchestrator');
       
-      // CERBERUS: Triple-verification for critical data
-      // (Implementation would go here - for now, log activation)
+      // Check if PANTHEON is available (not blocked by cryptocrawler)
+      const pantheonStatus = canActivatePantheon();
       
-      // BLIZZARD DRAGON: Pattern matching and overwhelming data storm
-      // (Implementation would go here - for now, log activation)
+      if (pantheonStatus.available) {
+        try {
+          // Generate search targets from the query
+          const searchTargets = [
+            `https://www.google.com/search?q=${encodeURIComponent(searchQuery + ' public records')}`,
+            `https://www.google.com/search?q=${encodeURIComponent(searchQuery + ' news')}`,
+          ];
+          
+          // Use PANTHEON orchestrator with all Level 3 crawlers
+          const crawlerResults = await pantheonOrchestrator.search(searchTargets, {
+            depth: searchDepth as 1 | 2 | 3 | 4,
+            stormIntensity: searchDepth >= 4 ? 'storm' : 'snow',
+          });
+          
+          // Process crawler results
+          if (crawlerResults.length > 0) {
+            const crawlerSummary = crawlerResults
+              .filter(r => r.content && r.confidence > 0.5)
+              .map(r => `[${r.crawler.toUpperCase()}] ${r.content.substring(0, 200)}...`)
+              .join('\n\n');
+            
+            if (crawlerSummary) {
+              enhancedReport.onlineMentions.push(...crawlerResults.map(r => r.content).filter(Boolean));
+              
+              enhancedReport.sources.push({
+                name: 'PANTHEON Crawler Orchestrator',
+                data: { 
+                  crawlersUsed: [...new Set(crawlerResults.map(r => r.crawler))],
+                  resultsCount: crawlerResults.length,
+                  averageConfidence: crawlerResults.reduce((a, b) => a + b.confidence, 0) / crawlerResults.length,
+                },
+                confidence: 0.85,
+                timestamp: new Date(),
+              });
+            }
+          }
+          
+          console.log(`[PANTHEON OSINT] Level 3 crawlers completed: ${crawlerResults.length} results`);
+        } catch (crawlerError: any) {
+          console.error('[PANTHEON OSINT] Crawler orchestration failed:', crawlerError.message);
+        }
+      } else {
+        console.log(`[PANTHEON OSINT] PANTHEON unavailable: ${pantheonStatus.reason}`);
+      }
       
-      // Add placeholder to indicate advanced crawlers were activated
+      // Add summary indicating advanced crawlers were activated
       enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_3_SUMMARY;
     }
 
@@ -839,8 +889,34 @@ export async function conductFullOSINT(
     if (searchDepth >= 4) {
       console.log('[PANTHEON OSINT] 👁️ EYE OF GOD: Activating GENESIS orchestrator for total omniscience');
       
-      // GENESIS: Complete identity reconstruction with all crawlers
-      // (Implementation would go here - for now, log activation)
+      // Check PANTHEON availability again
+      const pantheonStatus = canActivatePantheon();
+      
+      if (pantheonStatus.available) {
+        try {
+          // Trigger avalanche mode for maximum data harvesting
+          const avalancheResults = await pantheonOrchestrator.avalanche(
+            `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`
+          );
+          
+          if (avalancheResults.length > 0) {
+            enhancedReport.sources.push({
+              name: 'GENESIS Orchestrator (Eye of God)',
+              data: { 
+                mode: 'avalanche',
+                resultsCount: avalancheResults.length,
+                cascadeDepth: 5,
+              },
+              confidence: 0.95,
+              timestamp: new Date(),
+            });
+            
+            console.log(`[PANTHEON OSINT] GENESIS avalanche completed: ${avalancheResults.length} results`);
+          }
+        } catch (genesisError: any) {
+          console.error('[PANTHEON OSINT] GENESIS orchestration failed:', genesisError.message);
+        }
+      }
       
       enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_4_SUMMARY;
     }
