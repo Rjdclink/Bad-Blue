@@ -1,6 +1,7 @@
 // API Routes - LegalWhat
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
+import type { AccessZone, AccessRole } from "./masterPassword";
 
 // Extend Express types for authentication
 declare global {
@@ -16,6 +17,11 @@ declare global {
       isAdmin?: boolean;
       isAdminBypass?: boolean;
       isMasterBypass?: boolean;
+      // Three-tier master password access
+      accessZone?: AccessZone;
+      accessRole?: AccessRole;
+      redirectRoute?: string;
+      aiMode?: 'legal' | 'orchestrator' | 'crypto';
     }
     interface Request {
       rawBody?: Buffer;
@@ -29,7 +35,7 @@ import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
-import { MASTER_PASSWORD } from "./masterPassword";
+import { MASTER_PASSWORD, checkMasterPassword, getAccessZoneConfig } from "./masterPassword";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import { setupFMIRoutes } from "./routes/fmi.routes";
@@ -1038,35 +1044,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loginIdentifier = email || username;
       const clientIp = req.ip || req.connection.remoteAddress || "unknown";
 
-      // MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
-      // Password "SARBEAR" works with ANY email or without email
-      if (password === MASTER_PASSWORD) {
-        console.log(`[SECURITY ALERT] Master password used. Email: ${loginIdentifier || 'none'}, IP: ${clientIp}`);
+      // THREE-TIER MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
+      // Zone A: SARBEAR -> LegalWhat Access (works with ANY email or without email)
+      // Zone B: FORGEAI -> 4JI Orchestrator Admin Console
+      // Zone C: CRPTCRWLR -> CryptoCrawler Command Dashboard
+      const accessZone = checkMasterPassword(password);
+      
+      if (accessZone) {
+        const zoneConfig = getAccessZoneConfig(password)!;
+        console.log(`[SECURITY ALERT] ${accessZone.toUpperCase()} master password used. Role: ${zoneConfig.role}. Email: ${loginIdentifier || 'none'}, IP: ${clientIp}`);
+        
         // Let passport strategy handle the master password authentication
         // This will create a user and grant access
-        req.body.email = loginIdentifier || "master@badblue.internal";
+        req.body.email = loginIdentifier || "";
         
         passport.authenticate("local", (err: any, user: any, info: any) => {
           if (err) {
-            console.error("[AUTH ERROR] Master password authentication error:", err);
+            console.error(`[AUTH ERROR] ${accessZone} password authentication error:`, err);
             return res.status(500).json({ message: "Authentication error" });
           }
           if (!user) {
-            console.log(`[AUTH] Master password authentication failed`);
+            console.log(`[AUTH] ${accessZone} password authentication failed`);
             return res.status(401).json({ message: "Authentication failed" });
           }
 
           req.login(user, (loginErr: any) => {
             if (loginErr) {
-              console.error("[AUTH ERROR] Master password req.login error:", loginErr);
+              console.error(`[AUTH ERROR] ${accessZone} password req.login error:`, loginErr);
               return res.status(500).json({ message: "Login failed" });
             }
-            console.log(`[AUTH] Master password login successful`);
+            console.log(`[AUTH] ${accessZone} password login successful. Redirecting to ${zoneConfig.route}`);
             res.json({
               success: true,
               message: "Login successful",
               isMasterBypass: true,
               hasActiveSubscription: true, // Master password bypasses payment
+              accessZone: accessZone,
+              accessRole: zoneConfig.role,
+              redirectRoute: zoneConfig.route,
+              aiMode: zoneConfig.mode,
             });
           });
         })(req, res, next);

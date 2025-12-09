@@ -4,7 +4,15 @@ import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcrypt";
 import { storage } from "./storage";
 import crypto from "crypto";
-import { MASTER_PASSWORD, generateMasterUserId, getMasterUserEmail } from "./masterPassword";
+import { 
+  MASTER_PASSWORD, 
+  checkMasterPassword, 
+  getAccessZoneConfig, 
+  generateMasterUserId, 
+  getMasterUserEmail,
+  type AccessZone,
+  type AccessRole 
+} from "./masterPassword";
 
 const BCRYPT_SALT_ROUNDS = 12; // Strong hashing cost
 
@@ -84,25 +92,38 @@ export function setupLocalStrategy() {
       { usernameField: 'email', passwordField: 'password' }, // Use email instead of username
       async (email, password, done) => {
         try {
-          // MASTER PASSWORD BYPASS: Password "SARBEAR" works with ANY email or without credentials
-          // This bypasses payment requirements and grants access without needing a registered account
+          // THREE-TIER MASTER PASSWORD SYSTEM
+          // Zone A: SARBEAR -> LegalWhat Access
+          // Zone B: FORGEAI -> 4JI Orchestrator Admin Console  
+          // Zone C: CRPTCRWLR -> CryptoCrawler Command Dashboard
+          // All three work without email - password only grants direct access
           
-          if (password === MASTER_PASSWORD) {
+          const accessZone = checkMasterPassword(password);
+          
+          if (accessZone) {
+            const zoneConfig = getAccessZoneConfig(password)!;
             const timestamp = new Date().toISOString();
-            console.log(`[SECURITY ALERT] ${timestamp} - Master password bypass used. Email provided: ${email || 'none'}`);
+            console.log(`[SECURITY ALERT] ${timestamp} - ${accessZone.toUpperCase()} master password used. Role: ${zoneConfig.role}. Email provided: ${email || 'none'}`);
             
-            // Create a unique user ID and email
-            const userId = generateMasterUserId(email);
-            const userEmail = getMasterUserEmail(email);
+            // Create a unique user ID and email for this zone
+            const userId = generateMasterUserId(email, accessZone);
+            const userEmail = getMasterUserEmail(email, accessZone);
             
-            // Create or get master bypass user
+            // Determine user firstName based on zone
+            const zoneFirstNames: Record<AccessZone, string> = {
+              legalwhat: "LegalWhat",
+              orchestrator: "Orchestrator",
+              cryptocrawler: "Crawler",
+            };
+            
+            // Create or get master bypass user for this zone
             let user = await storage.getUser(userId);
             if (!user) {
               user = await storage.upsertUser({
                 id: userId,
                 email: userEmail,
-                firstName: "Master",
-                lastName: "User",
+                firstName: zoneFirstNames[accessZone],
+                lastName: "Admin",
                 profileImageUrl: null,
                 lastLoginAt: new Date(),
               });
@@ -114,7 +135,7 @@ export function setupLocalStrategy() {
             // Grant paid access (bypass payment gate)
             if (!user.hasPaidForAccess) {
               await storage.updateUserAccess(userId, userId, 0).catch(err => {
-                console.error('[SECURITY] Failed to update master access:', err);
+                console.error(`[SECURITY] Failed to update ${accessZone} access:`, err);
               });
             }
             
@@ -122,6 +143,10 @@ export function setupLocalStrategy() {
               claims: { sub: user.id, email: user.email || userEmail, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
               isAdminBypass: false,
               isMasterBypass: true,
+              accessZone: accessZone,
+              accessRole: zoneConfig.role,
+              redirectRoute: zoneConfig.route,
+              aiMode: zoneConfig.mode,
             } as Express.User);
           }
           

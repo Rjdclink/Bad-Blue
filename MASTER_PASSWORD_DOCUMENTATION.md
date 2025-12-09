@@ -1,138 +1,183 @@
-# Master Password Implementation
+# Master Password Implementation - Three-Tier Access System
 
 ## Overview
-This document describes the implementation of the master password "SARBEAR" that bypasses payment requirements and can be used with any email or without email credentials.
+This document describes the implementation of the three-tier master password system that provides isolated access to different platform zones.
 
-## Master Password
+## The Three Master Passwords
+
+### Zone A: LegalWhat User Access
 - **Password**: `SARBEAR`
-- **Works with**: ANY email address or without email
-- **Bypasses**: Payment requirements and subscription checks
-- **Access Level**: Full paid access to all features
+- **Role**: `LEGALWHAT_ROOT`
+- **Route**: `/legalwhat/home`
+- **AI Mode**: `legal`
+- **Purpose**:
+  - Grants entry to the LegalWhat platform interface
+  - Activates the AI subsystem governing legal operations
+  - Allows AIs to visualize, optimize, enhance, and manage all LegalWhat functions
+  - Enables the filing system, autosave restoration, consultation modules, and all legal tools
 
-## How It Works
+### Zone B: 4JI Orchestrator Admin Console
+- **Password**: `FORGEAI`
+- **Role**: `ORCHESTRATOR_ADMIN`
+- **Route**: `/4ji/orchestrator`
+- **AI Mode**: `orchestrator`
+- **Purpose**:
+  - Grants access to the 4JI control console
+  - Controls the merged entity containing all 13+ models unified into a single adaptive intelligence layer
+  - Manages orchestration, scheduling, optimization cycles, subsystem diagnostics
+  - Runs both the Worker Engine and the Sub-Agent Execution Engine
+  - Governs system-wide directives
 
-### 1. Authentication Flow
-When a user attempts to login with the master password:
+### Zone C: CryptoCrawler Dashboard Access
+- **Password**: `CRPTCRWLR`
+- **Role**: `CRAWLER_ROOT`
+- **Route**: `/cryptocrawler/dashboard`
+- **AI Mode**: `crypto`
+- **Purpose**:
+  - Full access to the CryptoCrawler control panel
+  - Controls Monte Carlo simulations
+  - Controls the trading faucet system
+  - Runs deep-market crawling, autonomous strategy evolution
+  - Manages multi-source signal fusion
+  - Uses separate learning + evolving Supabase tables
 
-1. **Priority Check**: Master password is checked FIRST, before admin bypass and rate limiting
-2. **Email Handling**: Works with any email provided, or uses default if no email given
-3. **User Creation**: Automatically creates a user account if one doesn't exist
-4. **Access Granting**: Automatically grants paid/active subscription status
-5. **Session Creation**: Creates a valid authentication session
+## System Rules
 
-### 2. Implementation Files
+### 1. No Email Required
+All three access levels authenticate purely by password:
+- No email field required
+- No username field required
+- No account lookup required
+- Password → direct access
 
-#### server/masterPassword.ts
-Central utility module that defines:
-- `MASTER_PASSWORD` constant: "SARBEAR"
-- `generateMasterUserId()`: Creates consistent user IDs based on email
-- `getMasterUserEmail()`: Handles email fallback logic
-- `isMasterPassword()`: Password verification utility
+### 2. Physical Isolation
+Each password unlocks a different environment:
+- Each zone has its own route
+- Each zone has its own UI
+- Each zone has its own state container
+- Cross-zone access is blocked
 
-#### server/localAuth.ts
-Implements master password check in passport local strategy:
-- Checks password against MASTER_PASSWORD constant
-- Creates user with "Master" first name and "User" last name
-- Grants paid access via `storage.updateUserAccess()`
-- Sets `isMasterBypass: true` flag in user object
+### 3. Domain Isolation (4JI)
+Even though all intelligence is merged into 4JI, domains remain isolated:
 
-#### server/routes.ts
-Handles master password in `/api/login/local` route:
-- Checks before admin bypass and rate limiting
-- Uses passport authentication strategy
-- Returns success with `isMasterBypass` and `hasActiveSubscription` flags
+```
+IF 4ji.current_mode == 'legal':
+    ONLY LegalWhat systems may be read, altered, optimized, or evolved
 
-#### server/legalizoRoutes.ts
-Handles master password in `/api/legalizo/auth/login` route:
-- Creates user in database if needed
-- Creates active subscription with 1-year renewal
-- Returns success with subscription status
+IF 4ji.current_mode == 'crypto':
+    ONLY CryptoCrawler systems may be read, altered, optimized, or evolved
+```
 
-### 3. Security Features
+### 4. Memory Table Isolation
+Each domain has separate tables:
+- `learning_legal`, `evolving_legal` (Legal Domain)
+- `learning_crypto`, `evolving_crypto` (Crypto Domain)
 
-- **Audit Logging**: All master password usage is logged with timestamps
-- **User Tracking**: Each email gets a unique user ID for tracking
-- **Consistent Behavior**: Centralized logic ensures consistent implementation
-- **Bypass Ordering**: Master password checked before rate limits (intentional)
+Flow Rule: `learning_* → evolving_*` (NEVER cross between legal and crypto tables)
+
+## Scheduled Operations (CST)
+
+### Nightly Optimization Window
+- **Start**: 1:30 CST
+- **End**: 3:30 CST
+- **Task**: Full-platform optimization
+
+### Monte Carlo Window
+- **Start**: 3:30 CST
+- **End**: 5:30 CST
+- **Task**: Continuous Monte Carlo training cycles
+
+### Immediate On-Demand Issue Repair
+```
+IF error_detected:
+    4ji.research_fix()
+    4ji.apply_fix(live_patch=True, redeploy=False)
+    4ji.verify_fix()
+```
+
+## API Response Format
+
+When using master passwords, the login endpoint returns:
+
+```json
+{
+  "success": true,
+  "message": "Login successful",
+  "isMasterBypass": true,
+  "hasActiveSubscription": true,
+  "accessZone": "legalwhat|orchestrator|cryptocrawler",
+  "accessRole": "LEGALWHAT_ROOT|ORCHESTRATOR_ADMIN|CRAWLER_ROOT",
+  "redirectRoute": "/legalwhat/home|/4ji/orchestrator|/cryptocrawler/dashboard",
+  "aiMode": "legal|orchestrator|crypto"
+}
+```
 
 ## Usage Examples
 
-### Example 1: Login with any email
+### Example 1: LegalWhat Access
 ```bash
 POST /api/login/local
 {
-  "email": "anything@example.com",
   "password": "SARBEAR"
 }
 ```
-**Result**: Success, user created with email, full access granted
+**Result**: Redirected to `/legalwhat/home` with `LEGALWHAT_ROOT` role
 
-### Example 2: Login without email
+### Example 2: 4JI Orchestrator Access
 ```bash
 POST /api/login/local
 {
-  "email": "",
-  "password": "SARBEAR"
+  "password": "FORGEAI"
 }
 ```
-**Result**: Success, user created with default email "master@badblue.internal", full access granted
+**Result**: Redirected to `/4ji/orchestrator` with `ORCHESTRATOR_ADMIN` role
 
-### Example 3: Legalizo login
+### Example 3: CryptoCrawler Access
 ```bash
-POST /api/legalizo/auth/login
+POST /api/login/local
 {
-  "email": "test@test.com",
-  "password": "SARBEAR"
+  "password": "CRPTCRWLR"
 }
 ```
-**Result**: Success, user created in database with active subscription, full access granted
-
-## Testing
-
-Run the validation script to verify implementation:
-```bash
-node test-master-password.mjs --validate
-```
-
-Run live tests (requires server to be running):
-```bash
-node test-master-password.mjs
-```
+**Result**: Redirected to `/cryptocrawler/dashboard` with `CRAWLER_ROOT` role
 
 ## Security Considerations
 
 ### By Design
-- Master password is hardcoded (as requested in requirements)
-- Bypasses payment (as requested in requirements)
-- Bypasses rate limiting (intentional for master password)
-- Works with any email (as requested in requirements)
+- Master passwords are hardcoded (as required)
+- Each bypasses payment requirements
+- Each bypasses rate limiting (intentional)
+- Works without email (as required)
 
 ### Security Measures
-- All usage is logged with security alerts
-- Unique user IDs prevent account conflicts
+- All usage is logged with security alerts and timestamps
+- Unique user IDs per zone per email (if provided)
 - Proper session management
-- Consistent with other bypass mechanisms
+- Domain isolation prevents cross-zone data access
 
 ## Integration Points
 
-The master password integrates with:
+The master password system integrates with:
 1. **Authentication System**: Passport local strategy
 2. **User Management**: storage.upsertUser()
 3. **Payment System**: storage.updateUserAccess()
 4. **Session Management**: req.login()
-5. **Database**: legalizoSubscriptions table
+5. **Database**: Zone-specific Supabase tables
 
-## Response Flags
+## Active System Integrations
 
-When master password is used, responses include:
-- `success: true`
-- `isMasterBypass: true`
-- `hasActiveSubscription: true`
-- User object with master user details
+All previously defined integrations remain in full force:
+- TradingView
+- Alchemy
+- Monte Carlo Engine
+- Multi-model orchestration
+- Error scanners
+- Self-healers
+- Crawlers
+- Legal filing engines
+- Autosave + Supabase storage
+- Full coding autonomy
+- UI optimization tools
+- Data fusion layer
+- Offline heuristic core
 
-## Notes
-
-- Master password creates unique users per email to avoid conflicts
-- Users created via master password have firstName: "Master", lastName: "User"
-- Payment bypass is permanent for created users
-- Works across all login endpoints (local, legalizo)
