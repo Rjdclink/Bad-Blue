@@ -64,6 +64,62 @@ export {
   type HistoricalStats
 } from './risk/kelly-criterion';
 
+// Capital-Free Arbitrage Engine (Hyper-Evolved System)
+export {
+  // Flash Liquidity
+  FlashLiquidityLayer,
+  flashLiquidityLayer,
+  type FlashLoanRoute,
+  type MicroLiquidityRequest,
+  type LiquidityIntakeResult,
+  // Gas Acquisition
+  GasAcquisitionSystem,
+  gasAcquisitionSystem,
+  type GasPoolConfig,
+  type GasRequest,
+  type GasAcquisitionResult,
+  // Partnership Formation
+  PartnershipFormationSystem,
+  partnershipFormationSystem,
+  type Partner,
+  type ProfitSharingRoute,
+  type MicroAlliance,
+  type PartnershipResult,
+  // Barter System
+  BarterSystem,
+  barterSystem,
+  type BarterResourceType,
+  type BarterResource,
+  type BarterOffer,
+  type BarterExecution,
+  type BarterResult,
+  // NexGen Protocol Layer
+  NexGenProtocolLayer,
+  nexGenProtocolLayer,
+  type ProtocolRoute,
+  type ProfitProbability,
+  type RiskProfile,
+  type ExecutionDecision,
+  // Eden Placement Strategy
+  EdenPlacementStrategy,
+  edenPlacementStrategy,
+  type NodePlacement,
+  type PlacementCluster,
+  type PlacementResult,
+  // Starburst Scaling
+  StarburstScalingSystem,
+  starburstScalingSystem,
+  type CaneType,
+  type Cane,
+  type Crawler,
+  type StarburstWave,
+  type ScalingMetrics,
+  // Module info
+  CAPITAL_FREE_VERSION,
+  CAPITAL_FREE_NAME,
+  CAPITAL_FREE_CAPABILITIES,
+} from './capital-free';
+
 /**
  * Quick Start Example
  * 
@@ -115,8 +171,8 @@ export {
  * 16. **Master Orchestrator** - Unified system coordination
  */
 
-export const SYSTEM_VERSION = '2.0.0';
-export const SYSTEM_NAME = 'Advanced Crawler Evolution System';
+export const SYSTEM_VERSION = '3.0.0';
+export const SYSTEM_NAME = 'Advanced Crawler Evolution System with Capital-Free Arbitrage';
 export const CAPABILITIES = [
   'Multi-network Eden storage',
   'Cain evolution engine',
@@ -134,12 +190,40 @@ export const CAPABILITIES = [
   'Embedded network knowledge',
   'Cataclysm awareness',
   'Master orchestration',
-  // New v2.0 capabilities
+  // v2.0 capabilities
   'Monte Carlo profitability simulation',
   'Multi-oracle price validation',
   'Circuit breaker risk management',
   'Kelly criterion position sizing',
   'Stress testing under extreme conditions',
   'Manipulation detection',
-  'Statistical confidence intervals'
+  'Statistical confidence intervals',
+  // v3.0 Capital-Free Arbitrage Engine
+  'Flash liquidity intake layer',
+  'Zero-collateral micro-liquidity',
+  'Request-bursting for profitable routes',
+  'Same-block flash loan repayment',
+  'Autonomous gas acquisition',
+  'P2P gas networks',
+  'On-chain gas escrows',
+  'Flash-gas pools',
+  'Autonomous partnership formation',
+  'Micro-alliance creation',
+  'Profit-sharing routes',
+  'Reputation scoring',
+  'Bot-to-bot financial barter',
+  'Gas-for-routing exchange',
+  'Liquidity-for-position barter',
+  'NexGen protocol layer',
+  'Graph-based discovery',
+  'Zero-capital orchestration',
+  'Mempool simulation',
+  'Auto-rebalancing risk',
+  'Eden placement strategy',
+  'RPC endpoint optimization',
+  'Block builder integration',
+  'Starburst scaling system',
+  '8-Cane architecture',
+  'Crawler bloom waves',
+  '100M+ crawler capacity',
 ];
