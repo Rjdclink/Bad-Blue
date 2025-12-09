@@ -32,7 +32,8 @@ export class MACRotationEngine {
   }
 
   private validateInterfaceName(iface: string): boolean {
-    // Disallow leading hyphen to prevent it being interpreted as a flag
+    // Disallow leading hyphen to prevent it being interpreted as a command flag
+    // Pattern: first char must be alphanumeric or underscore, rest can include hyphens
     return /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/.test(iface) && iface.length < 16;
   }
 
@@ -128,16 +129,16 @@ export class MACRotationEngine {
   getBestSubnetFor(targetLatency: number): string | null {
     let best: string | null = null;
     let bestScore = Infinity;
-    this.ipQualityMap.forEach((score, ip) => {
+    for (const [ip, score] of this.ipQualityMap) {
       const latencyValues = Object.values(score.latencyMap);
-      if (latencyValues.length === 0) return; // Skip entries with no latency data
+      if (latencyValues.length === 0) continue; // Skip entries with no latency data
       const avg = latencyValues.reduce((a, b) => a + b, 0) / latencyValues.length;
       // Only consider subnets meeting the target latency requirement
       if (avg <= targetLatency && avg < bestScore && score.cooldownUntil < Date.now()) {
         bestScore = avg;
         best = score.subnet;
       }
-    });
+    }
     return best;
   }
 

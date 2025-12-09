@@ -87,7 +87,7 @@ export class NamespaceManager {
       return { success: true, namespace: ns };
     } catch (error: any) {
       // Clean up any partially created resources
-      if (process.env.HYDRA_SIMULATION !== 'true') {
+      if (process.env.HYDRA_SIMULATION !== 'true' && this.validateNamespaceId(id)) {
         try {
           await execAsync(`ip netns del ${id}`).catch(() => {});
           await execAsync(`ip link del veth-${id.slice(-8)}`).catch(() => {});
