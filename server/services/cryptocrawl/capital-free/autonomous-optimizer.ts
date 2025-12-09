@@ -504,7 +504,7 @@ export class AutonomousOptimizer {
     
     const loanMultiplier = typeof strategy.parameters.loanMultiplier === 'number' 
       ? strategy.parameters.loanMultiplier 
-      : 50;
+      : AUTONOMOUS_CONFIG.FLASH_LOAN_ARBITRAGE_WEIGHT * 100 + 20; // Default based on config
     const baseProfit = opportunity.profitEstimate * loanMultiplier;
     const profit = success ? baseProfit * (0.8 + Math.random() * 0.4) : 0;
 

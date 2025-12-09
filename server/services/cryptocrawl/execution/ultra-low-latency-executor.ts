@@ -130,7 +130,7 @@ class UltraLowLatencyExecutor {
         nonce: preSignedTx.transaction.nonce,
         gasPrice: preSignedTx.transaction.gasPrice,
         chainId: preSignedTx.transaction.chainId,
-        type: preSignedTx.transaction.type ?? undefined,
+        type: preSignedTx.transaction.type || undefined,
         accessList: preSignedTx.transaction.accessList,
         maxPriorityFeePerGas: preSignedTx.transaction.maxPriorityFeePerGas,
         maxFeePerGas: preSignedTx.transaction.maxFeePerGas,
