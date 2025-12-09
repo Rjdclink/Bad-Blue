@@ -1,5 +1,6 @@
 // Advanced Crawler Evolution System - Main Export
 // Complete integration of all revolutionary crawler systems
+// Enhanced with Monte Carlo validation, multi-oracle pricing, and advanced risk management
 
 export { EdenStorage, type KnowledgeEntry, type EvolutionResult, type EdenState } from './core/eden-storage';
 export { CainCrawler, CainManager, type CainObservation, type CainMission } from './core/cain-crawler';
@@ -20,6 +21,48 @@ export {
 } from './core/stealth-security';
 export { MasterOrchestrator, type SystemStatus, type PerformanceMetrics, type CataclysmEvent } from './core/master-orchestrator';
 export { LuxSwarm, type Opportunity, type AgentState, type ChainId, type LuxSignal } from './core/lux-swarm';
+
+// Enhanced Validation & Risk Management Systems (Real-World Ready)
+export {
+  MonteCarloEngine,
+  createMonteCarloEngine,
+  MARKET_CONDITIONS,
+  type MonteCarloConfig,
+  type MarketCondition,
+  type SimulationResult,
+  type StrengthWeakness,
+  type StrategyProfile,
+  // NEW: Performance level types for variable results
+  type PerformanceLevel,
+  type PerformanceBreakdown,
+  type ScenarioResults
+} from './validation/monte-carlo-engine';
+
+export {
+  MultiOraclePriceValidator,
+  type OracleConfig,
+  type OracleType,
+  type PriceData,
+  type PriceValidationResult,
+  type ManipulationCheck,
+  type ValidationDetail
+} from './validation/multi-oracle-validator';
+
+export {
+  CircuitBreaker,
+  type CircuitBreakerConfig,
+  type BreakerState,
+  type BreakerMetrics,
+  type BreakerLevel
+} from './risk/circuit-breaker';
+
+export {
+  KellyCriterion,
+  calculateKellyPosition,
+  type KellyParams,
+  type PositionSizeResult,
+  type HistoricalStats
+} from './risk/kelly-criterion';
 
 /**
  * Quick Start Example
@@ -72,7 +115,7 @@ export { LuxSwarm, type Opportunity, type AgentState, type ChainId, type LuxSign
  * 16. **Master Orchestrator** - Unified system coordination
  */
 
-export const SYSTEM_VERSION = '1.0.0';
+export const SYSTEM_VERSION = '2.0.0';
 export const SYSTEM_NAME = 'Advanced Crawler Evolution System';
 export const CAPABILITIES = [
   'Multi-network Eden storage',
@@ -90,5 +133,13 @@ export const CAPABILITIES = [
   'Disco ball mirroring',
   'Embedded network knowledge',
   'Cataclysm awareness',
-  'Master orchestration'
+  'Master orchestration',
+  // New v2.0 capabilities
+  'Monte Carlo profitability simulation',
+  'Multi-oracle price validation',
+  'Circuit breaker risk management',
+  'Kelly criterion position sizing',
+  'Stress testing under extreme conditions',
+  'Manipulation detection',
+  'Statistical confidence intervals'
 ];
