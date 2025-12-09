@@ -84,6 +84,17 @@ export {
   type SupersimEnvironment,
 } from './superchain-integration';
 
+export {
+  AlchemyIntegration,
+  alchemyIntegration,
+  type TokenBalance,
+  type TokenMetadata,
+  type TokenData,
+  type PendingTransaction,
+  type MempoolAnalysis,
+  type AlchemySubscription,
+} from './alchemy-integration';
+
 /**
  * THE HYPER-EVOLVED CAPITAL-FREE ARBITRAGE ENGINE
  * 
@@ -170,8 +181,8 @@ export {
  * ```
  */
 
-export const CAPITAL_FREE_VERSION = '2.1.0';
-export const CAPITAL_FREE_NAME = 'Hyper-Evolved Capital-Free Arbitrage Engine with Superchain Integration';
+export const CAPITAL_FREE_VERSION = '2.2.0';
+export const CAPITAL_FREE_NAME = 'Hyper-Evolved Capital-Free Arbitrage Engine with Alchemy Integration';
 export const CAPITAL_FREE_CAPABILITIES = [
   // Core Mechanisms
   'Multichain flash loans',
@@ -244,4 +255,16 @@ export const CAPITAL_FREE_CAPABILITIES = [
   'Base/Zora/Mode/Fraxtal/Cyber integration',
   'Sub-2s cross-chain messaging',
   'Unified Superchain opportunity scanner',
+  
+  // Alchemy Integration (v2.2)
+  'Alchemy Token API integration',
+  'Real-time token balance tracking',
+  'Token metadata resolution',
+  'Pending transaction monitoring',
+  'Mempool arbitrage detection',
+  'DEX swap transaction identification',
+  'Multi-network WebSocket subscriptions',
+  'Sandwich/backrun/frontrun detection',
+  'Gas price analysis from mempool',
+  'Portfolio token aggregation',
 ];
