@@ -11,6 +11,7 @@ export class NamespaceManager {
   private config: HydraConfig = DEFAULT_HYDRA_CONFIG;
   private running = false;
   private recycleInterval: NodeJS.Timeout | null = null;
+  private startedMacRotation = false;
 
   constructor() {
     console.log('[NamespaceManager] Created (inactive)');
@@ -23,14 +24,20 @@ export class NamespaceManager {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
-    macRotation.start();
+    if (!macRotation.isRunning()) {
+      macRotation.start();
+      this.startedMacRotation = true;
+    }
     this.recycleInterval = setInterval(() => this.recycleStaleNamespaces(), this.config.namespaceRecycleMs);
     console.log('[NamespaceManager] ✓ Started');
   }
 
   async stop(): Promise<void> {
     this.running = false;
-    macRotation.stop();
+    if (this.startedMacRotation) {
+      macRotation.stop();
+      this.startedMacRotation = false;
+    }
     if (this.recycleInterval) clearInterval(this.recycleInterval);
     await this.destroyAllNamespaces();
     console.log('[NamespaceManager] ✓ Stopped');
@@ -39,7 +46,10 @@ export class NamespaceManager {
   async createNamespace(preferredSubnet?: string): Promise<NamespaceCreateResult> {
     if (!this.running) return { success: false, error: 'Manager not running' };
     if (this.namespaces.size >= this.config.maxNamespaces) {
-      await this.recycleOldestNamespace();
+      const recycled = await this.recycleOldestNamespace();
+      if (!recycled && this.namespaces.size >= this.config.maxNamespaces) {
+        return { success: false, error: 'Failed to recycle namespace and max limit reached' };
+      }
     }
 
     const id = `hydra-ns-${crypto.randomBytes(4).toString('hex')}`;
@@ -76,6 +86,15 @@ export class NamespaceManager {
       this.namespaces.set(id, ns);
       return { success: true, namespace: ns };
     } catch (error: any) {
+      // Clean up any partially created resources
+      if (process.env.HYDRA_SIMULATION !== 'true') {
+        try {
+          await execAsync(`ip netns del ${id}`).catch(() => {});
+          await execAsync(`ip link del veth-${id.slice(-8)}`).catch(() => {});
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
       return { success: false, error: error.message };
     }
   }
@@ -113,7 +132,7 @@ export class NamespaceManager {
     }
   }
 
-  private async recycleOldestNamespace(): Promise<void> {
+  private async recycleOldestNamespace(): Promise<boolean> {
     let oldest: string | null = null;
     let oldestTime = Infinity;
     for (const [id, ns] of this.namespaces) {
@@ -122,7 +141,10 @@ export class NamespaceManager {
         oldest = id;
       }
     }
-    if (oldest) await this.destroyNamespace(oldest);
+    if (oldest) {
+      return await this.destroyNamespace(oldest);
+    }
+    return false;
   }
 
   private async destroyAllNamespaces(): Promise<void> {
@@ -169,6 +191,16 @@ export class NamespaceManager {
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  reset(): void {
+    this.namespaces.clear();
+    this.running = false;
+    this.startedMacRotation = false;
+    if (this.recycleInterval) {
+      clearInterval(this.recycleInterval);
+      this.recycleInterval = null;
+    }
   }
 }
 

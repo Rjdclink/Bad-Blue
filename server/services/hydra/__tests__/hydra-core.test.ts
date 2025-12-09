@@ -31,15 +31,11 @@ describe('HYDRA Core - Startup Behavior', () => {
 
 describe('HYDRA Core - MAC Rotation Engine', () => {
   beforeEach(() => {
-    if (macRotation.isRunning()) {
-      macRotation.stop();
-    }
+    macRotation.reset();
   });
 
   afterEach(() => {
-    if (macRotation.isRunning()) {
-      macRotation.stop();
-    }
+    macRotation.reset();
   });
 
   it('should start and stop correctly', () => {
@@ -90,15 +86,13 @@ describe('HYDRA Core - MAC Rotation Engine', () => {
 
 describe('HYDRA Core - Namespace Manager', () => {
   beforeEach(async () => {
-    if (namespaceManager.isRunning()) {
-      await namespaceManager.stop();
-    }
+    namespaceManager.reset();
+    macRotation.reset();
   });
 
   afterEach(async () => {
-    if (namespaceManager.isRunning()) {
-      await namespaceManager.stop();
-    }
+    namespaceManager.reset();
+    macRotation.reset();
   });
 
   it('should start and stop correctly', async () => {
@@ -196,6 +190,144 @@ describe('HYDRA Core - Namespace Manager', () => {
     expect(cycled.namespace?.subnet).toBe('10.0.0');
     
     await namespaceManager.stop();
+    delete process.env.HYDRA_SIMULATION;
+  });
+});
+
+describe('HYDRA Core - Edge Cases and Additional Coverage', () => {
+  beforeEach(async () => {
+    namespaceManager.reset();
+    macRotation.reset();
+  });
+
+  afterEach(async () => {
+    namespaceManager.reset();
+    macRotation.reset();
+  });
+
+  it('should reject interface names with leading hyphen', async () => {
+    process.env.HYDRA_SIMULATION = 'true';
+    macRotation.start();
+    const result = await macRotation.rotateMAC('-eth0', '10.0.0');
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Invalid interface name');
+    macRotation.stop();
+    delete process.env.HYDRA_SIMULATION;
+  });
+
+  it('should handle getBestSubnetFor with target latency', async () => {
+    process.env.HYDRA_SIMULATION = 'true';
+    macRotation.start();
+    
+    // Rotate a few times to populate IP quality map
+    await macRotation.rotateMAC('eth0', '10.0.0');
+    await macRotation.rotateMAC('eth1', '10.1.0');
+    
+    // Should return null if target latency is too strict
+    const best = macRotation.getBestSubnetFor(5);
+    // Since simulated latencies are 10-60ms, a 5ms target should return null
+    expect(best).toBeNull();
+    
+    // Should return subnet if target latency is reasonable
+    const best2 = macRotation.getBestSubnetFor(100);
+    expect(best2).toBeTruthy();
+    
+    macRotation.stop();
+    delete process.env.HYDRA_SIMULATION;
+  });
+
+  it('should handle getBestSubnetFor with empty latency map', () => {
+    const best = macRotation.getBestSubnetFor(50);
+    expect(best).toBeNull();
+  });
+
+  it('should only manage MAC rotation lifecycle if started by manager', async () => {
+    process.env.HYDRA_SIMULATION = 'true';
+    
+    // Start MAC rotation independently
+    macRotation.start();
+    expect(macRotation.isRunning()).toBe(true);
+    
+    // Start namespace manager - should not restart MAC rotation
+    await namespaceManager.start();
+    expect(macRotation.isRunning()).toBe(true);
+    
+    // Stop namespace manager - should not stop MAC rotation
+    await namespaceManager.stop();
+    expect(macRotation.isRunning()).toBe(true);
+    
+    // Clean up
+    macRotation.stop();
+    delete process.env.HYDRA_SIMULATION;
+  });
+
+  it('should manage MAC rotation lifecycle if started by manager', async () => {
+    process.env.HYDRA_SIMULATION = 'true';
+    
+    expect(macRotation.isRunning()).toBe(false);
+    
+    // Start namespace manager - should start MAC rotation
+    await namespaceManager.start();
+    expect(macRotation.isRunning()).toBe(true);
+    
+    // Stop namespace manager - should stop MAC rotation
+    await namespaceManager.stop();
+    expect(macRotation.isRunning()).toBe(false);
+    
+    delete process.env.HYDRA_SIMULATION;
+  });
+
+  it('should return null for getAvailableNamespace when all are assigned', async () => {
+    process.env.HYDRA_SIMULATION = 'true';
+    await namespaceManager.start();
+    
+    const ns1 = await namespaceManager.createNamespace();
+    const ns2 = await namespaceManager.createNamespace();
+    
+    namespaceManager.assignCrawler(ns1.namespace!.id, 'crawler-1');
+    namespaceManager.assignCrawler(ns2.namespace!.id, 'crawler-2');
+    
+    const available = namespaceManager.getAvailableNamespace();
+    expect(available).toBeNull();
+    
+    await namespaceManager.stop();
+    delete process.env.HYDRA_SIMULATION;
+  });
+
+  it('should validate interface name in getCurrentMAC and getCurrentIP', async () => {
+    // These are private methods, but we can test through rotateMAC
+    process.env.HYDRA_SIMULATION = 'false'; // Use real mode to test validation
+    macRotation.start();
+    
+    // With invalid interface, should fail gracefully
+    const result = await macRotation.rotateMAC('invalid;name', '10.0.0');
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Invalid interface name');
+    
+    macRotation.stop();
+  });
+
+  it('should reset MAC rotation engine completely', () => {
+    macRotation.start();
+    expect(macRotation.isRunning()).toBe(true);
+    
+    macRotation.reset();
+    expect(macRotation.isRunning()).toBe(false);
+    expect(macRotation.getIPQualityMap().size).toBe(0);
+  });
+
+  it('should reset namespace manager completely', async () => {
+    process.env.HYDRA_SIMULATION = 'true';
+    await namespaceManager.start();
+    await namespaceManager.createNamespace();
+    
+    expect(namespaceManager.isRunning()).toBe(true);
+    expect(namespaceManager.getStats().total).toBe(1);
+    
+    namespaceManager.reset();
+    expect(namespaceManager.isRunning()).toBe(false);
+    expect(namespaceManager.getStats().total).toBe(0);
+    
     delete process.env.HYDRA_SIMULATION;
   });
 });

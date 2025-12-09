@@ -1,3 +1,3 @@
 export * from './types';
-export { macRotation } from './mac-rotation';
-export { namespaceManager } from './namespace-manager';
+export { macRotation, MACRotationEngine } from './mac-rotation';
+export { namespaceManager, NamespaceManager } from './namespace-manager';

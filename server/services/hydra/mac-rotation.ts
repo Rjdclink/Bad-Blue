@@ -32,7 +32,8 @@ export class MACRotationEngine {
   }
 
   private validateInterfaceName(iface: string): boolean {
-    return /^[a-zA-Z0-9_-]+$/.test(iface) && iface.length < 16;
+    // Disallow leading hyphen to prevent it being interpreted as a flag
+    return /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/.test(iface) && iface.length < 16;
   }
 
   async rotateMAC(interfaceName: string, targetSubnet?: string): Promise<MACRotationResult> {
@@ -72,6 +73,9 @@ export class MACRotationEngine {
   }
 
   private async getCurrentMAC(iface: string): Promise<string> {
+    if (!this.validateInterfaceName(iface)) {
+      return '00:00:00:00:00:00';
+    }
     try {
       const { stdout } = await execAsync(`cat /sys/class/net/${iface}/address`);
       return stdout.trim();
@@ -81,6 +85,9 @@ export class MACRotationEngine {
   }
 
   private async getCurrentIP(iface: string): Promise<string> {
+    if (!this.validateInterfaceName(iface)) {
+      return '0.0.0.0';
+    }
     try {
       const { stdout } = await execAsync(`ip -4 addr show ${iface} | grep inet | awk '{print $2}' | cut -d/ -f1`);
       return stdout.trim();
@@ -122,13 +129,22 @@ export class MACRotationEngine {
     let best: string | null = null;
     let bestScore = Infinity;
     this.ipQualityMap.forEach((score, ip) => {
-      const avg = Object.values(score.latencyMap).reduce((a, b) => a + b, 0) / Object.keys(score.latencyMap).length;
-      if (avg < bestScore && score.cooldownUntil < Date.now()) {
+      const latencyValues = Object.values(score.latencyMap);
+      if (latencyValues.length === 0) return; // Skip entries with no latency data
+      const avg = latencyValues.reduce((a, b) => a + b, 0) / latencyValues.length;
+      // Only consider subnets meeting the target latency requirement
+      if (avg <= targetLatency && avg < bestScore && score.cooldownUntil < Date.now()) {
         bestScore = avg;
         best = score.subnet;
       }
     });
     return best;
+  }
+
+  reset(): void {
+    this.ipQualityMap.clear();
+    this.activeMacs.clear();
+    this.running = false;
   }
 
   isRunning(): boolean {
