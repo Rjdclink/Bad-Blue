@@ -2,6 +2,7 @@
 // Advanced statistical simulation with AI-powered market regime detection,
 // Kelly Criterion position sizing, non-linear profit modeling, and continuous learning
 // Research-backed: Implements variance reduction techniques from quantitative finance
+// Enhanced with: Adaptive regime detection, neural-inspired learning, and hyper-creative logic
 
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
@@ -70,6 +71,9 @@ export interface MarketCondition {
   volumeHistory?: number[];       // Recent volume history
   gasHistory?: number[];          // Recent gas price history
 }
+
+// Market regime classification for adaptive behavior
+export type MarketRegime = 'crisis' | 'stressed' | 'normal' | 'favorable';
 
 // Performance level classification
 export type PerformanceLevel = 'good' | 'medium' | 'bad';
@@ -1183,6 +1187,114 @@ class MonteCarloEngine {
     return paths;
   }
   
+  // ============================================
+  // ADVANCED ADAPTIVE TRADE SIMULATION
+  // ============================================
+  
+  /**
+   * Detect market regime based on stress factors
+   * Uses neural-inspired threshold detection
+   */
+  private detectMarketRegime(stressFactor: number): MarketRegime {
+    if (stressFactor >= REGIME_THRESHOLDS.CRISIS) return 'crisis';
+    if (stressFactor >= REGIME_THRESHOLDS.STRESSED) return 'stressed';
+    if (stressFactor >= REGIME_THRESHOLDS.NORMAL) return 'normal';
+    return 'favorable';
+  }
+
+  /**
+   * Calculate adaptive liquidity factor with exponential smoothing
+   * Implements floor protection for extreme conditions
+   */
+  private calculateAdaptiveLiquidityFactor(liquidityScore: number): number {
+    if (liquidityScore < ADAPTIVE_FLOORS.LIQUIDITY_THRESHOLD) {
+      // Exponential smoothing for very low liquidity
+      // Prevents collapse to zero while maintaining realistic impact
+      return ADAPTIVE_FLOORS.LIQUIDITY_FLOOR + 
+        Math.pow(liquidityScore / ADAPTIVE_FLOORS.LIQUIDITY_THRESHOLD, 0.5) * 
+        (1 - ADAPTIVE_FLOORS.LIQUIDITY_FLOOR);
+    }
+    return liquidityScore;
+  }
+
+  /**
+   * Calculate regime-aware stress factor
+   * Uses weighted combination with adaptive dampening
+   */
+  private calculateStressFactor(market: MarketCondition): number {
+    const liquidityFactor = this.calculateAdaptiveLiquidityFactor(market.liquidityScore);
+    
+    // Normalized volatility with cap
+    const normalizedVolatility = Math.min(1, market.volatility / VOLATILITY_CAPS.MAX_STRESS_VOLATILITY);
+    
+    // Weighted stress calculation
+    const rawStress = (
+      (1 - liquidityFactor) * STRESS_WEIGHTS.LIQUIDITY +
+      market.competitorDensity * STRESS_WEIGHTS.COMPETITION +
+      market.networkCongestion * STRESS_WEIGHTS.CONGESTION +
+      normalizedVolatility * STRESS_WEIGHTS.VOLATILITY
+    );
+    
+    // Apply sigmoid-like smoothing to prevent extreme values
+    // This creates more realistic stress distribution
+    return Math.tanh(rawStress * 1.5) * 0.85;
+  }
+
+  /**
+   * Calculate regime-adaptive adjustment factor
+   * Different regimes use different adaptation strategies
+   */
+  private calculateRegimeAdjustment(stressFactor: number, regime: MarketRegime): number {
+    let baseAdjustment: number;
+    let learningRate: number;
+    
+    switch (regime) {
+      case 'crisis':
+        // In crisis, maintain higher floor but adapt slowly
+        baseAdjustment = 0.50;
+        learningRate = LEARNING_RATES.SLOW;
+        break;
+      case 'stressed':
+        // In stressed conditions, balance floor and adaptation
+        baseAdjustment = 0.60;
+        learningRate = LEARNING_RATES.MEDIUM;
+        break;
+      case 'normal':
+        // Normal conditions allow more aggressive adaptation
+        baseAdjustment = 0.75;
+        learningRate = LEARNING_RATES.MEDIUM;
+        break;
+      case 'favorable':
+      default:
+        // Favorable conditions use full strategy potential
+        baseAdjustment = 0.90;
+        learningRate = LEARNING_RATES.FAST;
+        break;
+    }
+    
+    // Apply stress reduction with regime-aware floor
+    const stressReduction = stressFactor * (1 - baseAdjustment) * (1 + learningRate);
+    return Math.max(ADAPTIVE_FLOORS.STRESS_FLOOR, baseAdjustment - stressReduction);
+  }
+
+  /**
+   * Calculate dynamic success floor based on strategy quality
+   * Better strategies maintain higher performance even in extreme conditions
+   */
+  private calculateDynamicFloor(baseSuccessRate: number, regime: MarketRegime): number {
+    const qualityFactor = baseSuccessRate * ADAPTIVE_FLOORS.SUCCESS_FLOOR_RATIO;
+    
+    // Regime-specific floor multipliers
+    const regimeMultiplier = regime === 'crisis' ? 1.2 : 
+                             regime === 'stressed' ? 1.1 : 
+                             regime === 'normal' ? 1.0 : 0.9;
+    
+    return Math.max(
+      ADAPTIVE_FLOORS.ABSOLUTE_MIN_SUCCESS,
+      qualityFactor * regimeMultiplier
+    );
+  }
+
   /**
    * Simulate trade with explicit random numbers (for antithetic pairing)
    * Enhanced with fat-tail modeling and regime awareness
@@ -1208,7 +1320,9 @@ class MonteCarloEngine {
     // Clamp to valid range
     adjustedSuccessRate = Math.max(0.05, Math.min(0.95, adjustedSuccessRate));
 
-    // Generate trade outcome using provided random numbers
+    // ========================================
+    // PHASE 3: Trade Outcome Determination
+    // ========================================
     const isSuccess = successRandom < adjustedSuccessRate;
 
     if (isSuccess) {
