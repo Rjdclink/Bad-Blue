@@ -158,6 +158,15 @@ export {
   CAPITAL_FREE_CAPABILITIES,
 } from './capital-free';
 
+// AI Harmony Module - 17-Model Orchestration for Cryptocrawler
+export {
+  CryptocrawlerAIHarmony,
+  cryptocrawlerAIHarmony,
+  type AIHarmonyConfig,
+  type HarmonyTaskType,
+  type HarmonyResult
+} from './ai';
+
 // Evolution Module - Hyper-Evolution & Swarm Intelligence
 export {
   HyperEvolutionEngine,

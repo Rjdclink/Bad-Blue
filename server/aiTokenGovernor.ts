@@ -65,6 +65,8 @@ export enum AIProvider {
   CODE_LLAMA = 'code_llama',
   GPT_NEOX = 'gpt_neox',
   QWEN = 'qwen',
+  GPT5_MINI = 'gpt5_mini',
+  CLAUDE_OPUS = 'claude_opus',
 }
 
 export enum UsageContext {

@@ -1,15 +1,20 @@
 /**
  * AI Model Selector - Intelligent model selection based on task attributes
  * 
- * Scores all 15 models across 16 attributes to select the optimal model for each task.
+ * Scores all 17 models across 16 attributes to select the optimal model for each task.
+ * Enhanced for cryptocrawler AI harmony integration.
  * 
  * GEMINI SELECTION (Updated to Gemini 3):
  * - High-capability tasks → gemini-3-pro (latest reasoning)
  * - Lightweight/high-volume → gemini-3-flash (fast inference)
  * 
- * CLAUDE SELECTION:
+ * CLAUDE SELECTION (Including Claude 4.5 Opus):
+ * - Premium reasoning → claude-4-5-opus (ultimate capability)
  * - Legal/creative → claude-3-5-sonnet (advanced reasoning)
  * - Fast/verification → claude-3-5-haiku (speed optimized)
+ * 
+ * GPT SELECTION:
+ * - Fast inference → gpt-5-mini (latest GPT architecture)
  * 
  * OPENROUTER SELECTION:
  * - Pattern recognition → DeepSeek (671B params)
@@ -145,6 +150,24 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   },
   
   // Claude models
+  'claude-4-5-opus': {
+    multimodal: 98,
+    longContext: 98,
+    massiveContext: 95,
+    structuredOutput: 98,
+    codeGeneration: 98,
+    creativeWriting: 99,
+    reasoning: 99,
+    speed: 65,
+    verification: 98,
+    legalAnalysis: 99,
+    imageAnalysis: 98,
+    patternRecognition: 98,
+    dataExtraction: 98,
+    searchGrounding: 70,
+    costEfficiency: 40,
+    dailyCapacity: 30, // Premium model
+  },
   'claude-3-5-haiku-20241022': {
     multimodal: 70,
     longContext: 80,
@@ -386,6 +409,24 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     searchGrounding: 65,
     costEfficiency: 75,
     dailyCapacity: 50,
+  },
+  'gpt-5-mini': {
+    multimodal: 92,
+    longContext: 95,
+    massiveContext: 90,
+    structuredOutput: 95,
+    codeGeneration: 95,
+    creativeWriting: 92,
+    reasoning: 96,
+    speed: 85,
+    verification: 94,
+    legalAnalysis: 90,
+    imageAnalysis: 92,
+    patternRecognition: 95,
+    dataExtraction: 94,
+    searchGrounding: 90,
+    costEfficiency: 65,
+    dailyCapacity: 40,
   },
 };
 

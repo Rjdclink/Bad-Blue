@@ -1,16 +1,21 @@
 /**
- * AI Collaboration Orchestrator - Coordinates multiple AI providers
+ * AI Collaboration Orchestrator - Coordinates multiple AI providers in harmony
  * 
- * Implements 7-way provider orchestration where each provider contributes
- * specialized expertise to complete complex tasks.
+ * Implements 17-model AI harmony orchestration where each provider contributes
+ * specialized expertise to complete complex tasks including cryptocrawler operations.
  * 
- * AUTONOMOUS Tasks (2-Way Exclusive):
- * - Groq (llama-3.3-70b-versatile) + Mistral (mistral-small-latest)
- * - NO other providers allowed in AUTONOMOUS context
+ * AUTONOMOUS Tasks (Open-Source Harmony):
+ * - Groq (llama-3.3-70b) + Mistral + GPT-OSS-120B + Falcon-180B
+ * - Code Llama (70B/34B) + GPT-NeoX-20B + Qwen-72B
  * 
- * USER Tasks (5-Way Intelligent Collaboration):
- * - Gemini + Claude + DeepSeek + Grok + Kimi
- * - NO Groq or Mistral in USER context
+ * USER Tasks (Premium AI Harmony):
+ * - Gemini 3 Pro + Claude 4.5 Opus + Claude 3.5 Sonnet/Haiku
+ * - DeepSeek R1T2 + Grok 4.1 + Kimi K2 + GPT-5 Mini + Qwen-72B
+ * 
+ * CRYPTOCRAWLER Integration:
+ * - Uses full harmony for market analysis and strategy optimization
+ * - Leverages Claude 4.5 Opus for complex reasoning
+ * - GPT-5 Mini for fast inference and pattern recognition
  */
 
 import { AIProvider, UsageContext } from './aiTokenGovernor';
@@ -92,16 +97,27 @@ export type CollaborationRole = keyof typeof COLLABORATION_ROLES;
  */
 function getAvailableProvidersForContext(context: UsageContext): AIProvider[] {
   if (context === UsageContext.AUTONOMOUS) {
-    // AUTONOMOUS: Only Groq and Mistral
-    return [AIProvider.GROQ, AIProvider.MISTRAL];
+    // AUTONOMOUS: Groq, Mistral, and open-source models
+    return [
+      AIProvider.GROQ, 
+      AIProvider.MISTRAL,
+      AIProvider.GPT_OSS,
+      AIProvider.FALCON,
+      AIProvider.CODE_LLAMA,
+      AIProvider.GPT_NEOX,
+      AIProvider.QWEN,
+    ];
   } else {
-    // USER: Gemini, Claude, DeepSeek, Grok, Kimi (NO Groq or Mistral)
+    // USER: Full harmony - all premium models
     return [
       AIProvider.GEMINI,
       AIProvider.CLAUDE,
+      AIProvider.CLAUDE_OPUS,
       AIProvider.DEEPSEEK,
       AIProvider.GROK,
       AIProvider.KIMI,
+      AIProvider.GPT5_MINI,
+      AIProvider.QWEN,
     ];
   }
 }
@@ -778,6 +794,8 @@ export class AICollaborationOrchestrator {
         return 'gemini-3-pro';
       case AIProvider.CLAUDE:
         return 'claude-3-5-haiku-20241022';
+      case AIProvider.CLAUDE_OPUS:
+        return 'claude-4-5-opus';
       case AIProvider.GROQ:
         return 'llama-3.3-70b-versatile';
       case AIProvider.MISTRAL:
@@ -798,6 +816,8 @@ export class AICollaborationOrchestrator {
         return 'gpt-neox-20b';
       case AIProvider.QWEN:
         return 'qwen-72b';
+      case AIProvider.GPT5_MINI:
+        return 'gpt-5-mini';
       default:
         return 'unknown';
     }
