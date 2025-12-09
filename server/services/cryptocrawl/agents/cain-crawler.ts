@@ -263,7 +263,10 @@ export class CainCrawler {
         console.log(`      Bayesian Probability: ${(terminationDecision.statistics.bayesianProbability * 100).toFixed(2)}%`);
         console.log(`      Z-Score: ${terminationDecision.statistics.zScore?.toFixed(2) || 'N/A'}`);
         console.log(`      P-Value: ${terminationDecision.statistics.pValue?.toFixed(4) || 'N/A'}`);
-        console.log(`      Confidence Interval: [${(terminationDecision.statistics.confidenceInterval?.lower * 100).toFixed(1)}%, ${(terminationDecision.statistics.confidenceInterval?.upper * 100).toFixed(1)}%]`);
+        const ci = terminationDecision.statistics.confidenceInterval;
+        if (ci) {
+          console.log(`      Confidence Interval: [${(ci.lower * 100).toFixed(1)}%, ${(ci.upper * 100).toFixed(1)}%]`);
+        }
         console.log(`      Factor Count: ${terminationDecision.statistics.factorCount}/7`);
         
         // Self-destruct mechanism for target crawler
@@ -290,9 +293,10 @@ export class CainCrawler {
     const priorCorruption = EDEN_CONFIG.REAPER_BAYESIAN_PRIOR;
     const likelihoodGivenCorrupt = this.calculateLikelihood(metrics);
     const evidence = this.calculateEvidenceStrength(metrics);
-    const posteriorProbability = (likelihoodGivenCorrupt * priorCorruption) / Math.max(evidence, 0.01);
+    // Prevent division by very small numbers
+    const posteriorProbability = (likelihoodGivenCorrupt * priorCorruption) / Math.max(evidence, 0.1);
     
-    statistics.bayesianProbability = posteriorProbability;
+    statistics.bayesianProbability = Math.min(posteriorProbability, 1.0);
     statistics.likelihoodRatio = likelihoodGivenCorrupt / Math.max(1 - likelihoodGivenCorrupt, 0.01);
 
     // 2. STATISTICAL SIGNIFICANCE TEST (Z-Score)
@@ -305,7 +309,8 @@ export class CainCrawler {
     statistics.standardDeviations = zScore;
     
     if (zScore > EDEN_CONFIG.REAPER_VARIANCE_THRESHOLD) {
-      const pValue = 1 - this.normalCDF(zScore);
+      // Two-tailed p-value for significance testing
+      const pValue = 2 * (1 - this.normalCDF(Math.abs(zScore)));
       terminationScore += 0.30;
       reasons.push(`Statistically significant underperformance (z-score: ${zScore.toFixed(2)}, p-value: ${pValue.toFixed(4)})`);
       statistics.pValue = pValue;
@@ -329,19 +334,23 @@ export class CainCrawler {
     }
 
     // 4. PROFIT WASTE ANALYSIS WITH REGRESSION
-    // Calculate trend and correlation
-    const profitWastePercentage = (metrics.profitWaste / Math.max(metrics.profitWaste + 0.01, 0.02)) * 100;
+    // Calculate profit waste as percentage of expected profit
+    const totalExpectedProfit = metrics.operations * 0.05; // Assume $0.05 expected per operation
+    const profitWastePercentage = (metrics.profitWaste / Math.max(totalExpectedProfit, 0.01)) * 100;
     statistics.profitWastePercentage = profitWastePercentage;
+    statistics.profitWasteDollars = metrics.profitWaste;
     
     if (metrics.profitWaste > EDEN_CONFIG.REAPER_PROFIT_WASTE_THRESHOLD) {
       terminationScore += 0.30;
-      reasons.push(`High profit waste: $${metrics.profitWaste.toFixed(4)}/op (${profitWastePercentage.toFixed(1)}% of capital)`);
+      reasons.push(`High profit waste: $${metrics.profitWaste.toFixed(4)}/op (${profitWastePercentage.toFixed(1)}% of expected)`);
     }
 
     // 5. ERROR RATE WITH EXPONENTIAL WEIGHTED MOVING AVERAGE (EWMA)
     const errorRate = metrics.errorCount / metrics.operations;
     const decayFactor = EDEN_CONFIG.REAPER_PERFORMANCE_DECAY_FACTOR;
-    const ewmaErrorRate = this.calculateEWMA(errorRate, decayFactor, metrics.operations);
+    const alpha = 1 - decayFactor;
+    // Simplified EWMA: without historical data, use current as baseline
+    const ewmaErrorRate = alpha * errorRate + decayFactor * (errorRate * 0.9);
     
     statistics.errorRate = errorRate;
     statistics.ewmaErrorRate = ewmaErrorRate;
@@ -422,13 +431,6 @@ export class CainCrawler {
     const d = 0.3989423 * Math.exp(-x * x / 2);
     const probability = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
     return x > 0 ? 1 - probability : probability;
-  }
-
-  // Exponential Weighted Moving Average for trend analysis
-  private calculateEWMA(currentValue: number, decayFactor: number, periods: number): number {
-    // Simplified EWMA calculation
-    const alpha = 1 - decayFactor;
-    return currentValue * alpha + (1 - alpha) * currentValue * 0.8; // Assume previous EWMA
   }
 
   // Detect suspicious behavior patterns (corruption, rogue behavior)

@@ -108,8 +108,8 @@ class EdenService {
       await this.persistCainState(cainState);
     }
 
-    console.log('[EDEN] ✅ Initialized ${EDEN_CONFIG.TOTAL_CAIN_CRAWLERS} Cain Crawlers');
-    console.log('[EDEN] 📊 Breakdown: ${EDEN_CONFIG.ORIGINAL_CAINS} Original, ${EDEN_CONFIG.CATACLYSM_DETECTION_CAINS} Cataclysm, ${EDEN_CONFIG.GENESIS_REAPER_CAINS} Reaper');
+    console.log(`[EDEN] ✅ Initialized ${EDEN_CONFIG.TOTAL_CAIN_CRAWLERS} Cain Crawlers`);
+    console.log(`[EDEN] 📊 Breakdown: ${EDEN_CONFIG.ORIGINAL_CAINS} Original, ${EDEN_CONFIG.CATACLYSM_DETECTION_CAINS} Cataclysm, ${EDEN_CONFIG.GENESIS_REAPER_CAINS} Reaper`);
     console.log('[EDEN] 🧠 Reaper equipped with advanced statistical reasoning (Bayesian, Z-Score, EWMA)');
   }
 
