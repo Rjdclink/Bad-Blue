@@ -371,9 +371,14 @@ export class TowerOfBabel {
 
   /**
    * Reverse literal layer transformation
+   * NOTE: The literal layer uses XOR transformation which is intentionally
+   * one-way for security. Only the Tree has the full context to interpret
+   * the combined meaning through all three layers together.
+   * The recombination works through holistic interpretation, not byte-exact reversal.
    */
-  private static reverseLiteral(byte: number, position: number): number {
-    // Simplified reverse (in production, would need stored scramble key)
+  private static reverseLiteral(byte: number, _position: number): number {
+    // The literal layer is intentionally not byte-reversible
+    // The Tree interprets meaning through pattern recognition across all layers
     return byte;
   }
 

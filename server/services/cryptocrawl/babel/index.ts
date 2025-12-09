@@ -55,20 +55,20 @@ export {
   TRADINGVIEW_CONFIG,
 } from './tradingview-integration';
 
+// Import for initialization functions
+import { TowerOfBabel as Tower } from './tower-of-babel';
+import { CrawlerFingerprintEngine as Fingerprint } from './crawler-fingerprint';
+import { LightLanguageEngine as LightLang } from './light-language';
+import { TradingViewEngine as TradingView } from './tradingview-integration';
+
 /**
  * Initialize all Babel systems
  */
 export function initializeBabel(): void {
-  // Import directly to avoid circular dependency issues
-  const { TowerOfBabel } = require('./tower-of-babel');
-  const { CrawlerFingerprintEngine } = require('./crawler-fingerprint');
-  const { LightLanguageEngine } = require('./light-language');
-  const { TradingViewEngine } = require('./tradingview-integration');
-
-  TowerOfBabel.initialize();
-  CrawlerFingerprintEngine.initialize();
-  LightLanguageEngine.initialize();
-  TradingViewEngine.initialize();
+  Tower.initialize();
+  Fingerprint.initialize();
+  LightLang.initialize();
+  TradingView.initialize();
 
   console.log('[BABEL] 🏛️✨ All Babel systems initialized - IP protection active');
 }
@@ -77,15 +77,10 @@ export function initializeBabel(): void {
  * Shutdown all Babel systems
  */
 export function shutdownBabel(): void {
-  const { TowerOfBabel } = require('./tower-of-babel');
-  const { CrawlerFingerprintEngine } = require('./crawler-fingerprint');
-  const { LightLanguageEngine } = require('./light-language');
-  const { TradingViewEngine } = require('./tradingview-integration');
-
-  TowerOfBabel.shutdown();
-  CrawlerFingerprintEngine.shutdown();
-  LightLanguageEngine.shutdown();
-  TradingViewEngine.shutdown();
+  Tower.shutdown();
+  Fingerprint.shutdown();
+  LightLang.shutdown();
+  TradingView.shutdown();
 
   console.log('[BABEL] All Babel systems shutdown');
 }

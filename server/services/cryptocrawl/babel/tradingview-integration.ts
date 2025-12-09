@@ -195,8 +195,11 @@ export class TradingViewEngine {
    * NOTE: Replace with actual TradingView API integration in production
    */
   private static generateAnalysis(symbol: string): TechnicalAnalysis {
-    // Generate seed for consistent pseudo-random values within update period
-    const seedValue = Math.floor(Date.now() / 60000) + symbol.length;
+    // Generate seed using symbol hash for consistent pseudo-random values
+    // Using a hash of the symbol ensures unique seeds per symbol
+    const symbolHash = symbol.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const timeBucket = Math.floor(Date.now() / 60000); // Changes every minute
+    const seedValue = (symbolHash * 31) + timeBucket;
     const seededRandom = this.createSeededRandom(seedValue);
 
     // Generate oscillator indicators

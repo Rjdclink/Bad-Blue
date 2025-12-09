@@ -264,16 +264,21 @@ export class CrawlerFingerprintEngine {
       components.linguisticSeed,
       components.behavioralPattern.join(','),
       components.quantumState,
-      crypto.randomBytes(32).toString('hex'),  // Additional entropy
     ];
 
-    // Multi-round hashing for uniqueness
+    // Multi-round hashing for uniqueness - using deterministic seeding
     let signature = signatureData.join('::');
     
+    // Use components to create deterministic additional entropy per round
     for (let round = 0; round < 3; round++) {
+      const roundSeed = crypto
+        .createHash('md5')
+        .update(`${signature}:round:${round}:${crawlerId}`)
+        .digest('hex');
+      
       signature = crypto
         .createHash('sha512')
-        .update(signature + crypto.randomBytes(16).toString('hex'))
+        .update(signature + roundSeed)
         .digest('hex');
     }
 
