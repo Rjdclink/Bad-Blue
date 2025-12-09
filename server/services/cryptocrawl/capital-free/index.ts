@@ -64,6 +64,15 @@ export {
   type ScalingMetrics,
 } from './starburst-scaling';
 
+export {
+  AutonomousOptimizer,
+  autonomousOptimizer,
+  type AutonomousStrategy,
+  type OptimizationState,
+  type ExecutionResult,
+  type MarketCondition,
+} from './autonomous-optimizer';
+
 /**
  * THE HYPER-EVOLVED CAPITAL-FREE ARBITRAGE ENGINE
  * 
@@ -150,8 +159,8 @@ export {
  * ```
  */
 
-export const CAPITAL_FREE_VERSION = '1.0.0';
-export const CAPITAL_FREE_NAME = 'Hyper-Evolved Capital-Free Arbitrage Engine';
+export const CAPITAL_FREE_VERSION = '2.0.0';
+export const CAPITAL_FREE_NAME = 'Hyper-Evolved Capital-Free Arbitrage Engine with Autonomous Optimization';
 export const CAPITAL_FREE_CAPABILITIES = [
   // Core Mechanisms
   'Multichain flash loans',
@@ -200,4 +209,16 @@ export const CAPITAL_FREE_CAPABILITIES = [
   'Micro-crawler flashing',
   'Instant dissolution',
   '100M+ crawler capacity',
+  
+  // Autonomous Optimization (v2.0)
+  'Self-learning strategy adaptation',
+  'Epsilon-greedy exploration/exploitation',
+  'Real-time market condition analysis',
+  'Multi-strategy parallel execution',
+  'Genetic-like strategy evolution',
+  'Automatic risk management',
+  'Novel protocol discovery',
+  'Cross-chain opportunity synthesis',
+  'Sub-50ms execution targeting',
+  'Compound interest optimization',
 ];
