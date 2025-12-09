@@ -50,12 +50,15 @@ const VALIDATION = {
 class AutonomousCryptoFaucet {
   private state: FaucetState;
   private marketConditions: MarketConditions;
-  private oracleValidator = new MultiOraclePriceValidator();
+  private oracleValidator: MultiOraclePriceValidator;
   private isRunning = false;
   private sessionStartTime: number = 0;
   private hourlyResetTime: number = 0;
 
   constructor() {
+    // Initialize oracle validator for price verification
+    this.oracleValidator = new MultiOraclePriceValidator();
+
     // Initialize state with safe defaults
     this.state = {
       mode: 'scanning',
@@ -135,38 +138,58 @@ class AutonomousCryptoFaucet {
 
   /**
    * Update market conditions from various sources
+   * NOTE: In production, this would integrate with real-time market data feeds.
+   * Current implementation uses the oracle validator for price validation
+   * and gas oracle for chain selection, with simulated values for other metrics.
    */
   private async updateMarketConditions(): Promise<void> {
     try {
       // Get gas prices from oracle
       const cheapestChain = await gasOracle.getCheapestChain();
       if (cheapestChain) {
-        // Estimate gas efficiency based on cheapest chain
+        // NOTE: In production, gas efficiency should come from actual chain gas costs
+        // Currently using simulation with bounded random values
         this.marketConditions.gasEfficiency = Math.max(
           VALIDATION.minGasEfficiency,
           Math.min(VALIDATION.maxGasEfficiency, Math.random() * 10)
         );
       }
 
-      // Simulate market volatility (in production, this would come from real data)
-      this.marketConditions.volatility = Math.max(
-        VALIDATION.minVolatility,
-        Math.min(VALIDATION.maxVolatility, 30 + Math.random() * 40)
-      );
+      // Use oracle validator to check price stability (affects volatility estimate)
+      // NOTE: In production, this would use actual price feeds from multiple oracles
+      const priceValidation = await this.oracleValidator.validatePrice('ETH', 'polygon');
+      if (priceValidation.isValid) {
+        // Lower confidence means higher volatility
+        this.marketConditions.volatility = Math.max(
+          VALIDATION.minVolatility,
+          Math.min(VALIDATION.maxVolatility, (1 - priceValidation.confidence) * 100)
+        );
+        
+        // Manipulation risk affects competition level
+        const manipulationRisk = priceValidation.manipulation.honeypotProbability;
+        this.marketConditions.competitionLevel = Math.max(
+          VALIDATION.minCompetition,
+          Math.min(VALIDATION.maxCompetition, 0.3 + manipulationRisk * 0.5)
+        );
+      } else {
+        // Fallback to simulated values if validation fails
+        this.marketConditions.volatility = Math.max(
+          VALIDATION.minVolatility,
+          Math.min(VALIDATION.maxVolatility, 30 + Math.random() * 40)
+        );
+        this.marketConditions.competitionLevel = Math.max(
+          VALIDATION.minCompetition,
+          Math.min(VALIDATION.maxCompetition, 0.3 + Math.random() * 0.4)
+        );
+      }
 
-      // Simulate spread opportunities count
+      // NOTE: Spread opportunities simulation - in production, would scan DEX pairs
       this.marketConditions.spreadOpportunities = Math.max(
         VALIDATION.minSpreadOpportunities,
         Math.floor(Math.random() * 20)
       );
 
-      // Simulate competition level (MEV bot activity)
-      this.marketConditions.competitionLevel = Math.max(
-        VALIDATION.minCompetition,
-        Math.min(VALIDATION.maxCompetition, 0.3 + Math.random() * 0.4)
-      );
-
-      // Simulate liquidity depth
+      // NOTE: Liquidity depth simulation - in production, would query DEX reserves
       this.marketConditions.liquidityDepth = Math.max(
         VALIDATION.minLiquidityDepth,
         50000 + Math.random() * 150000
@@ -240,20 +263,29 @@ class AutonomousCryptoFaucet {
 
   /**
    * STEALTH execution - appear organic
+   * NOTE: This is a simulation/demonstration implementation.
+   * In production, this would integrate with MasterOrchestrator.execute()
+   * to perform actual arbitrage trades with the Lux Swarm system.
    */
   private async executeWithStealth(): Promise<void> {
     // Random delays to avoid pattern detection
     const randomDelay = 1000 + Math.random() * 4000;
     await this.sleep(randomDelay);
 
-    // Vary trade sizes to look natural
-    const sizeVariation = 0.7 + Math.random() * 0.6; // 70-130% of optimal
+    // Vary trade sizes to look natural (70-130% of optimal)
+    const sizeVariation = 0.7 + Math.random() * 0.6;
 
-    // Simulate trade execution (in production, would use MasterOrchestrator)
+    // SIMULATION: In production, this would call MasterOrchestrator.execute()
+    // and track actual trade results from the blockchain
+    // Example production code:
+    // const result = await MasterOrchestrator.executeOpportunity(opportunity, { sizeMultiplier: sizeVariation });
+    // const tradeSuccess = result.success;
+    // const profit = result.netProfit;
+    
     const tradeSuccess = Math.random() > 0.1; // 90% success rate simulation
 
     if (tradeSuccess) {
-      // Simulate profit
+      // SIMULATION: Profit calculation - in production, use actual trade result
       const profit = 10 + Math.random() * 30 * sizeVariation;
       this.state.profitThisSession += profit;
       this.state.profitThisHour += profit;
@@ -270,6 +302,7 @@ class AutonomousCryptoFaucet {
         profit,
         sizeVariation,
         stealthLevel: this.state.stealthLevel,
+        note: 'SIMULATION - replace with actual trade results in production',
       });
     }
   }
