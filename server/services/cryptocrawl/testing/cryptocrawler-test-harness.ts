@@ -28,6 +28,7 @@ import { adaptiveEnsembleEngine } from '../strategies/adaptive-ensemble-engine';
 import { defensiveTradingMode } from '../core/defensive-trading-mode';
 import { entrySignalFilter, EntrySignalFilter } from '../core/entry-signal-filter';
 import { deepLearningStore } from '../learning/deep-learning-store';
+import { instantLearningEngine } from '../learning/instant-learning-engine';
 
 // ============================================
 // CUSTOM ERROR CLASSES
@@ -528,6 +529,15 @@ export class CryptocrawlerTestHarness {
     // Initialize Entry Signal Filter
     entrySignalFilter.reset();
     this.log('info', '✓ Entry Signal Filter initialized');
+    
+    // Initialize Instant Learning Engine - loads learned params from Supabase INSTANTLY
+    try {
+      await instantLearningEngine.initialize();
+      const summary = instantLearningEngine.getSummary();
+      this.log('info', `✓ Instant Learning Engine initialized (${summary.totalSimulations} historical sims, avg win rate: ${(summary.averageWinRate * 100).toFixed(1)}%)`);
+    } catch (error) {
+      this.log('warn', 'Instant Learning Engine initialization failed, starting fresh');
+    }
     
     // Verify Monte Carlo engine
     const testEngine = createMonteCarloEngine({ simulations: 10 });
@@ -1077,10 +1087,19 @@ export class CryptocrawlerTestHarness {
       this.currentState.capitalFreeState.profitGeneratedZeroCapital += result.expectedProfit;
     }
     
-    // *** DEEP LEARNING INTEGRATION ***
-    // Store simulation results for persistent learning in Supabase
+    // ============================================
+    // GENEROUS LEARNING FROM EVERY SIMULATION
+    // Instant Learning Engine captures ALL intelligence
+    // ============================================
+    
+    // GENEROUS: Store comprehensive simulation results via Instant Learning Engine
+    // This learns from EVERY aspect of the simulation and stores to Supabase
+    instantLearningEngine.learnFromSimulation(strategy, condition, level, result)
+      .catch(err => this.log('warn', `Instant learning failed: ${err.message}`));
+    
+    // GENEROUS: Also store in deep learning store for redundancy
     deepLearningStore.recordSimulationResult(strategy, condition, level, result)
-      .catch(err => this.log('warn', `Failed to record to deep learning store: ${err.message}`));
+      .catch(err => this.log('warn', `Deep learning store failed: ${err.message}`));
     
     // Record trade outcome for defensive mode learning
     defensiveTradingMode.recordTrade(result.winRate > 0.5, result.expectedProfit);
@@ -1100,6 +1119,18 @@ export class CryptocrawlerTestHarness {
     }
     
     await this.persistTestResult();
+    
+    // ============================================
+    // FORCE PERSIST ALL LEARNED DATA
+    // Ensure all generous learning is stored
+    // ============================================
+    try {
+      await instantLearningEngine.forcePersist();
+      const metrics = instantLearningEngine.getMetrics();
+      this.log('info', `✓ Instant Learning persisted (${metrics.totalSimulations} sims, avg win: ${(metrics.averageWinRate * 100).toFixed(1)}%)`);
+    } catch (error) {
+      this.log('warn', 'Failed to persist instant learning');
+    }
     
     this.log('info', '✓ Results finalized and persisted to Supabase');
   }
