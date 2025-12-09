@@ -102,6 +102,62 @@ export {
   type StarburstWaveConfig
 } from './rate-limiting';
 
+// Capital-Free Arbitrage Engine (Hyper-Evolved System)
+export {
+  // Flash Liquidity
+  FlashLiquidityLayer,
+  flashLiquidityLayer,
+  type FlashLoanRoute,
+  type MicroLiquidityRequest,
+  type LiquidityIntakeResult,
+  // Gas Acquisition
+  GasAcquisitionSystem,
+  gasAcquisitionSystem,
+  type GasPoolConfig,
+  type GasRequest,
+  type GasAcquisitionResult,
+  // Partnership Formation
+  PartnershipFormationSystem,
+  partnershipFormationSystem,
+  type Partner,
+  type ProfitSharingRoute,
+  type MicroAlliance,
+  type PartnershipResult,
+  // Barter System
+  BarterSystem,
+  barterSystem,
+  type BarterResourceType,
+  type BarterResource,
+  type BarterOffer,
+  type BarterExecution,
+  type BarterResult,
+  // NexGen Protocol Layer
+  NexGenProtocolLayer,
+  nexGenProtocolLayer,
+  type ProtocolRoute,
+  type ProfitProbability,
+  type RiskProfile,
+  type ExecutionDecision,
+  // Eden Placement Strategy
+  EdenPlacementStrategy,
+  edenPlacementStrategy,
+  type NodePlacement,
+  type PlacementCluster,
+  type PlacementResult,
+  // Starburst Scaling
+  StarburstScalingSystem,
+  starburstScalingSystem,
+  type CaneType,
+  type Cane,
+  type Crawler,
+  type StarburstWave,
+  type ScalingMetrics,
+  // Module info
+  CAPITAL_FREE_VERSION,
+  CAPITAL_FREE_NAME,
+  CAPITAL_FREE_CAPABILITIES,
+} from './capital-free';
+
 /**
  * Quick Start Example
  * 
@@ -158,8 +214,8 @@ export {
  * 22. **Six Cane System** - Complete orchestrated swarm intelligence with Grand Orchestrator
  */
 
-export const SYSTEM_VERSION = '2.0.0';
-export const SYSTEM_NAME = 'Advanced Crawler Evolution System';
+export const SYSTEM_VERSION = '3.0.0';
+export const SYSTEM_NAME = 'Advanced Crawler Evolution System with Capital-Free Arbitrage';
 export const CAPABILITIES = [
   'Multi-network Eden storage',
   'Cain evolution engine',

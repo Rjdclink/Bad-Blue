@@ -70,7 +70,7 @@ export interface ConsensusResult<T> {
 
 const MODEL_CAPABILITIES: ModelCapability[] = [
   {
-    modelName: 'gemini-2.0-flash',
+    modelName: 'gemini-2.5-flash',
     strengths: ['fact-extraction', 'evidence-analysis'],
     weaknesses: ['legal-reasoning'],
     costRating: 'low',
