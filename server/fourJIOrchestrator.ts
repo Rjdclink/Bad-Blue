@@ -101,10 +101,12 @@ export interface AIModelConfig {
 
 /**
  * AI Models available for orchestration
+ * Updated December 2025: Gemini 3 models (newest flagship)
  */
 const AI_MODELS: AIModelConfig[] = [
-  { modelId: 'gemini-2.5-flash', role: 'research', priority: 1, available: true },
-  { modelId: 'gemini-2.5-flash', role: 'legal_analysis', priority: 1, available: true },
+  { modelId: 'gemini-3-pro', role: 'research', priority: 1, available: true },
+  { modelId: 'gemini-3-pro', role: 'legal_analysis', priority: 1, available: true },
+  { modelId: 'gemini-3-flash', role: 'drafting', priority: 1, available: true },
   { modelId: 'claude-3-sonnet', role: 'reasoning', priority: 2, available: true },
   { modelId: 'claude-3-haiku', role: 'drafting', priority: 2, available: true },
   { modelId: 'llama-3-70b', role: 'inference', priority: 3, available: true },

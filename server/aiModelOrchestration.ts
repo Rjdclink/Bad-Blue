@@ -60,12 +60,13 @@ export interface OrchestrationResult {
 /**
  * Available AI models configuration
  * These are the free/open models integrated into the system
+ * Updated December 2025: Gemini 3 models (newest flagship)
  */
 export const AI_MODELS: AIModel[] = [
-  // Google Gemini - Primary for research and legal analysis
+  // Google Gemini 3 - Primary for research and legal analysis (NEWEST)
   {
-    id: 'gemini-2.5-flash',
-    name: 'Gemini 2.5 Flash',
+    id: 'gemini-3-pro',
+    name: 'Gemini 3 Pro',
     provider: 'gemini',
     roles: ['research', 'legal_analysis', 'summarization', 'reasoning'],
     maxTokens: 8192,
@@ -74,8 +75,8 @@ export const AI_MODELS: AIModel[] = [
     priority: 1
   },
   {
-    id: 'gemini-2.0-flash',
-    name: 'Gemini 2.0 Flash',
+    id: 'gemini-3-flash',
+    name: 'Gemini 3 Flash',
     provider: 'gemini',
     roles: ['research', 'drafting', 'inference'],
     maxTokens: 8192,
