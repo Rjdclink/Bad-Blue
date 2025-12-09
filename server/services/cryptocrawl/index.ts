@@ -1,6 +1,8 @@
 // Advanced Crawler Evolution System - Main Export
 // Complete integration of all revolutionary crawler systems
-// Enhanced with Monte Carlo validation, multi-oracle pricing, and advanced risk management
+// Includes: Eden Knowledge Repository, Cain Evolution Engine, Swarm Intelligence,
+// Blockchain API Services (Alchemy + Etherscan), Parallel Intelligence Lanes,
+// and Six-Cane Orchestration System
 
 export { EdenStorage, type KnowledgeEntry, type EvolutionResult, type EdenState } from './core/eden-storage';
 export { CainCrawler, CainManager, type CainObservation, type CainMission } from './core/cain-crawler';
@@ -22,47 +24,83 @@ export {
 export { MasterOrchestrator, type SystemStatus, type PerformanceMetrics, type CataclysmEvent } from './core/master-orchestrator';
 export { LuxSwarm, type Opportunity, type AgentState, type ChainId, type LuxSignal } from './core/lux-swarm';
 
-// Enhanced Validation & Risk Management Systems (Real-World Ready)
+// Blockchain API Services (Alchemy + Etherscan)
 export {
-  MonteCarloEngine,
-  createMonteCarloEngine,
-  MARKET_CONDITIONS,
-  type MonteCarloConfig,
-  type MarketCondition,
-  type SimulationResult,
-  type StrengthWeakness,
-  type StrategyProfile,
-  // NEW: Performance level types for variable results
-  type PerformanceLevel,
-  type PerformanceBreakdown,
-  type ScenarioResults
-} from './validation/monte-carlo-engine';
+  BlockchainAPIService,
+  AlchemyProvider,
+  EtherscanProvider,
+  AdvancedRateLimiter,
+  blockchainAPI,
+  type SupportedChain,
+  type EdenRegion,
+  type BlockchainProviderConfig,
+  type RateLimitConfig,
+  type GasData,
+  type BlockData,
+  type TransactionData,
+  type TokenTransfer,
+  type ContractVerification
+} from './api/blockchain-providers';
 
+// Eden Deployment (Hyper-Local Latency Optimization)
 export {
-  MultiOraclePriceValidator,
-  type OracleConfig,
-  type OracleType,
-  type PriceData,
-  type PriceValidationResult,
-  type ManipulationCheck,
-  type ValidationDetail
-} from './validation/multi-oracle-validator';
+  EdenDeploymentManager,
+  edenDeployment,
+  RESOURCE_QUOTAS,
+  STARBURST_CONFIG,
+  type EdenNode,
+  type EdenTier,
+  type EdenRole,
+  type EdenStatus,
+  type RegionLatencyProfile,
+  type DeploymentStrategy,
+  type ResourceQuota,
+  type StarburstConfig
+} from './eden/deployment';
 
+// Intelligence Systems (Parallel Lanes, Gravity Crawler, Cataclysm Reaper, Six-Cane System)
 export {
-  CircuitBreaker,
-  type CircuitBreakerConfig,
-  type BreakerState,
-  type BreakerMetrics,
-  type BreakerLevel
-} from './risk/circuit-breaker';
+  ParallelIntelligenceLanes,
+  parallelIntelligence,
+  GravityCrawler,
+  CataclysmReaper,
+  gravityCrawler,
+  cataclysmReaper,
+  SixCaneSystem,
+  sixCaneSystem,
+  type LaneType,
+  type LaneSignal,
+  type MergedDecision,
+  type LaneConfig,
+  type OrderFlowMetrics,
+  type LiquidityMetrics,
+  type VolatilityMetrics,
+  type BotFootprintMetrics,
+  type LatencyMetrics,
+  type GravityCenter,
+  type LiquidityGravityMap,
+  type CataclysmType,
+  type ReaperStatistics,
+  type CaneRole,
+  type CaneState,
+  type CaneStatus,
+  type CaneMetrics,
+  type OrchestratorDecision,
+  type SwarmCoordinationState
+} from './intelligence';
 
+// Automatic Rate Limiting System (CPU-Aware Adaptive Throttling)
 export {
-  KellyCriterion,
-  calculateKellyPosition,
-  type KellyParams,
-  type PositionSizeResult,
-  type HistoricalStats
-} from './risk/kelly-criterion';
+  AutomaticRateLimiter,
+  autoRateLimiter,
+  calculateBurstProbability,
+  calculateNewRate,
+  calculateWaveDelay,
+  DEFAULT_AUTO_RATE_CONFIG,
+  type AutoRateLimitConfig,
+  type RateLimitState,
+  type StarburstWaveConfig
+} from './rate-limiting';
 
 // Capital-Free Arbitrage Engine (Hyper-Evolved System)
 export {
@@ -120,33 +158,94 @@ export {
   CAPITAL_FREE_CAPABILITIES,
 } from './capital-free';
 
+// AI Harmony Module - 17-Model Orchestration for Cryptocrawler
+export {
+  CryptocrawlerAIHarmony,
+  cryptocrawlerAIHarmony,
+  type AIHarmonyConfig,
+  type HarmonyTaskType,
+  type HarmonyResult
+} from './ai';
+
+// Evolution Module - Hyper-Evolution & Swarm Intelligence
+export {
+  HyperEvolutionEngine,
+  getHyperEvolutionEngine,
+  hyperEvolution,
+  SwarmIntelligenceEngine,
+  getSwarmIntelligenceEngine,
+  swarmIntelligence,
+  FrontierResearchEngine,
+  frontierResearch,
+  DARPA_METHODOLOGIES,
+  NASA_METHODOLOGIES,
+  IARPA_METHODOLOGIES,
+  QUANTUM_METHODOLOGIES,
+  HFT_METHODOLOGIES,
+  type GeneticConfig,
+  type StrategyGenome,
+  type EvolutionState,
+  type SuccessPattern,
+  type FailurePattern,
+  type Particle,
+  type SwarmConfig,
+  type AntColonyConfig,
+  type BeeColonyConfig,
+  type FoodSource,
+  type DARPAMethodology,
+  type NASAMethodology,
+  type IARPAMethodology,
+  type QuantumMethodology,
+  type HFTMethodology,
+  type ResearchSynthesis,
+  type FrontierCapability
+} from './evolution';
+
+// Monte Carlo Engine - Enhanced with Learning
+export {
+  createMonteCarloEngine,
+  MonteCarloEngine,
+  ELITE_STRATEGIES,
+  learningHistory,
+  MARKET_CONDITIONS,
+  type MonteCarloConfig,
+  type MarketCondition,
+  type StrategyProfile,
+  type SimulationResult,
+  type MarketRegime,
+  type MarketRegimeAnalysis,
+  type KellyCriterion,
+  type LearningAdjustments,
+  type PerformanceLevel,
+  type PerformanceBreakdown
+} from './validation/monte-carlo-engine';
+
 /**
  * Quick Start Example
  * 
  * ```typescript
- * import { MasterOrchestrator } from './server/services/cryptocrawl';
+ * import { MasterOrchestrator, sixCaneSystem, blockchainAPI } from './server/services/cryptocrawl';
  * 
- * // Initialize and start the entire advanced crawler system
- * await MasterOrchestrator.initialize();
- * await MasterOrchestrator.start();
+ * // Initialize blockchain API services (Alchemy + Etherscan)
+ * await blockchainAPI.initialize(['ethereum', 'polygon', 'arbitrum']);
  * 
- * // Monitor system status
- * const status = MasterOrchestrator.getStatus();
- * console.log('System Health:', status.systemHealth);
- * console.log('Active Crawlers:', status.totalCrawlers);
- * console.log('Neurofusion Accuracy:', status.neurofusionAccuracy);
+ * // Initialize and start the Six Cane System
+ * await sixCaneSystem.start();
  * 
- * // Get performance metrics
- * const metrics = MasterOrchestrator.getMetrics();
- * console.log('Success Rate:', metrics.successRate);
- * console.log('Total Profit:', metrics.totalProfit);
+ * // Get orchestrated trading decision
+ * const decision = await sixCaneSystem.getDecision('polygon', 'ETH');
+ * console.log('Decision:', decision.finalDecision);
+ * console.log('Confidence:', decision.confidence);
+ * console.log('Strategy:', decision.strategy);
  * 
- * // Force evolution cycle
- * const evolutions = await MasterOrchestrator.forceEvolution();
- * console.log('Evolutions:', evolutions);
+ * // Get system overview
+ * const overview = sixCaneSystem.getSystemOverview();
+ * console.log('Active Canes:', overview.swarmState.activeCanes);
+ * console.log('System Health:', overview.systemHealth.score);
  * 
  * // Stop system
- * MasterOrchestrator.stop();
+ * sixCaneSystem.stop();
+ * await blockchainAPI.destroy();
  * ```
  */
 
@@ -169,10 +268,22 @@ export {
  * 14. **Cataclysm Detection** - Systemic threat awareness and response
  * 15. **Profitability Logic** - Dynamic risk/reward balancing
  * 16. **Master Orchestrator** - Unified system coordination
+ * 17. **Blockchain API (Alchemy + Etherscan)** - Dual-layer blockchain access with advanced rate limiting
+ * 18. **Eden Deployment** - Hyper-local latency optimization with strategic node placement
+ * 19. **Parallel Intelligence Lanes** - 5 parallel signal lanes (Order-Flow, Liquidity, Volatility, Bot-Footprint, Latency-Race)
+ * 20. **Gravity Crawler** - Market activity detection and liquidity center tracking
+ * 21. **Cataclysm Reaper** - Systemic instability monitoring (flash crashes, liquidation cascades, oracle manipulation)
+ * 22. **Six Cane System** - Complete orchestrated swarm intelligence with Grand Orchestrator
+ * 23. **Hyper-Evolution Engine** - Genetic algorithms with 10x accelerated learning
+ * 24. **Swarm Intelligence Discovery** - PSO, ACO, ABC algorithms for strategy discovery
+ * 25. **Market Regime Detection** - Hurst exponent analysis for trend/mean-reversion detection
+ * 26. **Kelly Criterion Sizing** - Mathematically optimal position sizing
+ * 27. **Continuous Learning** - Real-time learning from simulations and deployments
+ * 28. **9-Model AI Orchestration** - Gemini 3, Claude, Groq, Mistral, DeepSeek, Grok, Kimi working in harmony
  */
 
-export const SYSTEM_VERSION = '3.0.0';
-export const SYSTEM_NAME = 'Advanced Crawler Evolution System with Capital-Free Arbitrage';
+export const SYSTEM_VERSION = '4.0.0';
+export const SYSTEM_NAME = 'Hyper-Evolved Crawler System with AI Orchestration';
 export const CAPABILITIES = [
   'Multi-network Eden storage',
   'Cain evolution engine',
@@ -190,40 +301,39 @@ export const CAPABILITIES = [
   'Embedded network knowledge',
   'Cataclysm awareness',
   'Master orchestration',
-  // v2.0 capabilities
-  'Monte Carlo profitability simulation',
-  'Multi-oracle price validation',
-  'Circuit breaker risk management',
+  // New capabilities
+  'Alchemy blockchain access',
+  'Etherscan data layer',
+  'Advanced rate limiting',
+  'Eden hyper-local deployment',
+  'Parallel intelligence lanes',
+  'Order-flow prediction',
+  'Liquidity vision',
+  'Volatility pulse',
+  'Bot behavioral analysis',
+  'Latency race detection',
+  'Gravity crawler',
+  'Cataclysm reaper',
+  'Six cane orchestration',
+  'Grand orchestrator decisions',
+  // Hyper-Evolution Capabilities (v3.0)
+  'Genetic algorithm evolution',
+  'Particle swarm optimization',
+  'Ant colony optimization',
+  'Bee colony algorithm',
+  'Hyper-mutation innovation',
+  'Catastrophe-driven learning',
+  'Market regime detection (Hurst exponent)',
   'Kelly criterion position sizing',
-  'Stress testing under extreme conditions',
-  'Manipulation detection',
-  'Statistical confidence intervals',
-  // v3.0 Capital-Free Arbitrage Engine
-  'Flash liquidity intake layer',
-  'Zero-collateral micro-liquidity',
-  'Request-bursting for profitable routes',
-  'Same-block flash loan repayment',
-  'Autonomous gas acquisition',
-  'P2P gas networks',
-  'On-chain gas escrows',
-  'Flash-gas pools',
-  'Autonomous partnership formation',
-  'Micro-alliance creation',
-  'Profit-sharing routes',
-  'Reputation scoring',
-  'Bot-to-bot financial barter',
-  'Gas-for-routing exchange',
-  'Liquidity-for-position barter',
-  'NexGen protocol layer',
-  'Graph-based discovery',
-  'Zero-capital orchestration',
-  'Mempool simulation',
-  'Auto-rebalancing risk',
-  'Eden placement strategy',
-  'RPC endpoint optimization',
-  'Block builder integration',
-  'Starburst scaling system',
-  '8-Cane architecture',
-  'Crawler bloom waves',
-  '100M+ crawler capacity',
+  'Non-linear fat-tail modeling',
+  'Ensemble prediction averaging',
+  'Continuous learning from simulations',
+  'Real-world deployment feedback',
+  'Success/failure pattern extraction',
+  'Parameter distribution adaptation',
+  'Hall of fame strategy preservation',
+  'Elite strategy breeding',
+  'Multi-objective fitness optimization',
+  'Gemini 3 AI integration',
+  '9-model AI orchestration'
 ];

@@ -207,7 +207,7 @@ Provide comprehensive, accurate information with sources. Focus on:
 Return detailed findings with specific URLs and facts.`;
     
     const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3-pro",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         temperature: 0.1,

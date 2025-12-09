@@ -1,0 +1,196 @@
+name: Cryptocrawler Automated Test Suite
+
+on:
+  # Run on push to main/develop branches
+  push:
+    branches: [main, develop]
+    paths:
+      - 'server/services/cryptocrawl/**'
+      - '.github/workflows/cryptocrawler-test.yml'
+  
+  # Run on pull requests
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'server/services/cryptocrawl/**'
+      - '.github/workflows/cryptocrawler-test.yml'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      simulation_iterations:
+        description: 'Number of Monte Carlo iterations'
+        required: false
+        default: '1000'
+      performance_levels:
+        description: 'Performance levels to test (comma-separated: ideal,average,poor)'
+        required: false
+        default: 'ideal,average,poor'
+      max_runtime_minutes:
+        description: 'Maximum runtime in minutes'
+        required: false
+        default: '5'
+
+  # Run on schedule (daily at 2 AM UTC)
+  schedule:
+    - cron: '0 2 * * *'
+
+# Prevent concurrent runs
+concurrency:
+  group: cryptocrawler-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cryptocrawler-test:
+    name: Cryptocrawler Monte Carlo Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    # Minimal permissions for security
+    permissions:
+      contents: read
+      actions: read
+    
+    # Resource allocation
+    env:
+      NODE_OPTIONS: '--max-old-space-size=4096'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build TypeScript
+        id: build
+        run: |
+          npm run build 2>&1 || {
+            echo "::warning::Build completed with warnings, proceeding with tests"
+          }
+        # Don't fail the entire workflow on build issues as the test harness uses tsx directly
+
+      - name: Run Cryptocrawler Test Suite
+        id: test
+        timeout-minutes: ${{ github.event.inputs.max_runtime_minutes || 5 }}
+        run: |
+          echo "═══════════════════════════════════════════════════════════════════════════"
+          echo "       CRYPTOCRAWLER AUTOMATED TEST SUITE - STARTING"
+          echo "═══════════════════════════════════════════════════════════════════════════"
+          echo "Test Run ID: $TEST_RUN_ID"
+          echo "Performance Levels: ${{ github.event.inputs.performance_levels || 'ideal,average,poor' }}"
+          echo "Simulation Iterations: ${{ github.event.inputs.simulation_iterations || '1000' }}"
+          echo ""
+          
+          # Run the test harness
+          npx tsx server/services/cryptocrawl/testing/run-tests.ts \
+            --iterations="${{ github.event.inputs.simulation_iterations || '1000' }}" \
+            --levels="${{ github.event.inputs.performance_levels || 'ideal,average,poor' }}" \
+            --max-runtime="${{ github.event.inputs.max_runtime_minutes || '5' }}" \
+            2>&1 | tee test-output.log
+          
+          # Check for test success
+          if grep -q "TEST_STATUS=PASSED" test-output.log; then
+            echo "test_status=passed" >> $GITHUB_OUTPUT
+          else
+            echo "test_status=failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate Test Summary
+        if: always()
+        run: |
+          echo "## 🤖 Cryptocrawler Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f test-output.log ]; then
+            echo "### Test Output" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -100 test-output.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID:** $TEST_RUN_ID" >> $GITHUB_STEP_SUMMARY
+          echo "- **Iterations:** ${{ github.event.inputs.simulation_iterations || '1000' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Levels:** ${{ github.event.inputs.performance_levels || 'ideal,average,poor' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max Runtime:** ${{ github.event.inputs.max_runtime_minutes || '5' }} minutes" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Test Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cryptocrawler-test-results-${{ github.run_id }}
+          path: |
+            test-output.log
+          retention-days: 30
+
+      - name: Check Test Status
+        if: steps.test.outputs.test_status == 'failed'
+        run: |
+          echo "❌ Cryptocrawler tests failed"
+          exit 1
+
+  # Separate job for extended simulations (only on schedule or manual trigger)
+  extended-simulation:
+    name: Extended Simulation (10K iterations)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: cryptocrawler-test
+    
+    # Minimal permissions for security
+    permissions:
+      contents: read
+      actions: read
+    
+    env:
+      NODE_OPTIONS: '--max-old-space-size=8192'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      TEST_RUN_ID: ${{ github.run_id }}-extended
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run Extended Simulation
+        timeout-minutes: 45
+        run: |
+          echo "═══════════════════════════════════════════════════════════════════════════"
+          echo "       EXTENDED CRYPTOCRAWLER SIMULATION - 10K ITERATIONS"
+          echo "═══════════════════════════════════════════════════════════════════════════"
+          
+          npx tsx server/services/cryptocrawl/testing/run-tests.ts \
+            --iterations="10000" \
+            --levels="ideal,average,poor" \
+            --max-runtime="45" \
+            --persist-all \
+            2>&1 | tee extended-test-output.log
+
+      - name: Upload Extended Test Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cryptocrawler-extended-results-${{ github.run_id }}
+          path: |
+            extended-test-output.log
+          retention-days: 90
