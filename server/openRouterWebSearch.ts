@@ -5,16 +5,18 @@
  * optimized for web searching and information retrieval. This is separate from the existing
  * multi-AI legal consultation system using Gemini 2.5 models.
  * 
- * Free-Tier Models:
- * - Meta Llama 4 Maverick (free) - 256K context, multimodal research
- * - xAI Grok 4.1 Fast (free) - 2M context, real-time research
- * - DeepSeek R1T2 Chimera (free) - 164K context, reasoning-focused
- * - DeepSeek V3 (free) - 128K context, structured data extraction, MoE architecture
- * - Qwen3 Coder 480B (free) - 128K context, code/API analysis
- * - Amazon Nova 2 Lite (free) - Standard context, fast inference, classification
+ * Free-Tier Models (Updated December 2025):
+ * - Qwen 2.5 72B Instruct (free) - Strong multilingual reasoning
+ * - DeepSeek R1 (free) - Advanced reasoning model
+ * - Meta Llama 3.3 70B (free) - Latest Llama instruct model
+ * - Google Gemma 2 9B IT (free) - Efficient Google model
+ * - Microsoft Phi-4 (free) - Small but capable model
+ * - Mistral 7B Instruct (free) - Fast inference
+ * - Hermes 3 Llama 3.1 405B (free) - Large-scale reasoning
+ * - OpenChat 7B (free) - Chat-optimized model
  * 
  * Features:
- * - Orchestrated parallel execution across all 6 models
+ * - Orchestrated parallel execution across all 8 models
  * - Result aggregation and confidence scoring
  * - Optional :online plugin for real-time web search (may incur costs)
  * - Rate limiting and error handling
@@ -52,14 +54,26 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
  * OpenRouter Free-Tier Web Search Models
  * These models are optimized for web searching and information retrieval
  * Separate from the Gemini-based legal consultation system
+ * 
+ * Updated December 2025 with valid free models:
+ * - qwen/qwen-2.5-72b-instruct:free - Qwen 2.5 72B instruct
+ * - deepseek/deepseek-r1-0528:free - DeepSeek R1 reasoning model
+ * - meta-llama/llama-3.3-70b-instruct:free - Meta Llama 3.3 70B
+ * - google/gemma-2-9b-it:free - Google Gemma 2 9B IT
+ * - microsoft/phi-4:free - Microsoft Phi-4
+ * - mistralai/mistral-7b-instruct:free - Mistral 7B Instruct
+ * - nousresearch/hermes-3-llama-3.1-405b:free - Hermes 3 (Llama 3.1 405B based)
+ * - openchat/openchat-7b:free - OpenChat 7B
  */
 export const WEB_SEARCH_MODELS = {
-  LLAMA_4_MAVERICK: 'meta-llama/llama-4-maverick:free',
-  GROK_4_1_FAST: 'xai/grok-4.1-fast:free',
-  DEEPSEEK_R1T2: 'tng/deepseek-r1t2-chimera:free',
-  DEEPSEEK_V3: 'deepseek/deepseek-chat-v3:free',
-  QWEN3_CODER_480B: 'qwen/qwen3-coder-480b:free',
-  AMAZON_NOVA_2_LITE: 'amazon/nova-2-lite:free',
+  QWEN_2_5_72B: 'qwen/qwen-2.5-72b-instruct:free',
+  DEEPSEEK_R1: 'deepseek/deepseek-r1-0528:free',
+  LLAMA_3_3_70B: 'meta-llama/llama-3.3-70b-instruct:free',
+  GEMMA_2_9B: 'google/gemma-2-9b-it:free',
+  PHI_4: 'microsoft/phi-4:free',
+  MISTRAL_7B: 'mistralai/mistral-7b-instruct:free',
+  HERMES_3_405B: 'nousresearch/hermes-3-llama-3.1-405b:free',
+  OPENCHAT_7B: 'openchat/openchat-7b:free',
 } as const;
 
 export type WebSearchModel = typeof WEB_SEARCH_MODELS[keyof typeof WEB_SEARCH_MODELS];
@@ -88,7 +102,7 @@ export interface WebSearchResult {
 }
 
 // Rate limit configuration
-const DAILY_REQUEST_LIMIT = 50; // Per model limit for free tier (50 × 6 models = 300 total)
+const DAILY_REQUEST_LIMIT = 50; // Per model limit for free tier (50 × 8 models = 400 total)
 const CIRCUIT_BREAKER_FAILURES = 3;
 const CIRCUIT_BREAKER_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -103,42 +117,56 @@ interface RateLimitState {
 }
 
 const rateLimitState: Record<string, RateLimitState> = {
-  [WEB_SEARCH_MODELS.LLAMA_4_MAVERICK]: {
+  [WEB_SEARCH_MODELS.QWEN_2_5_72B]: {
     requests: 0,
     lastReset: new Date(),
     failures: 0,
     lastFailure: 0,
     disabled: false,
   },
-  [WEB_SEARCH_MODELS.GROK_4_1_FAST]: {
+  [WEB_SEARCH_MODELS.DEEPSEEK_R1]: {
     requests: 0,
     lastReset: new Date(),
     failures: 0,
     lastFailure: 0,
     disabled: false,
   },
-  [WEB_SEARCH_MODELS.DEEPSEEK_R1T2]: {
+  [WEB_SEARCH_MODELS.LLAMA_3_3_70B]: {
     requests: 0,
     lastReset: new Date(),
     failures: 0,
     lastFailure: 0,
     disabled: false,
   },
-  [WEB_SEARCH_MODELS.DEEPSEEK_V3]: {
+  [WEB_SEARCH_MODELS.GEMMA_2_9B]: {
     requests: 0,
     lastReset: new Date(),
     failures: 0,
     lastFailure: 0,
     disabled: false,
   },
-  [WEB_SEARCH_MODELS.QWEN3_CODER_480B]: {
+  [WEB_SEARCH_MODELS.PHI_4]: {
     requests: 0,
     lastReset: new Date(),
     failures: 0,
     lastFailure: 0,
     disabled: false,
   },
-  [WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE]: {
+  [WEB_SEARCH_MODELS.MISTRAL_7B]: {
+    requests: 0,
+    lastReset: new Date(),
+    failures: 0,
+    lastFailure: 0,
+    disabled: false,
+  },
+  [WEB_SEARCH_MODELS.HERMES_3_405B]: {
+    requests: 0,
+    lastReset: new Date(),
+    failures: 0,
+    lastFailure: 0,
+    disabled: false,
+  },
+  [WEB_SEARCH_MODELS.OPENCHAT_7B]: {
     requests: 0,
     lastReset: new Date(),
     failures: 0,
@@ -516,53 +544,69 @@ export function getWebSearchModelStatus(): Record<
   { available: boolean; requestsRemaining: number; error?: string }
 > {
   return {
-    [WEB_SEARCH_MODELS.LLAMA_4_MAVERICK]: {
+    [WEB_SEARCH_MODELS.QWEN_2_5_72B]: {
       available:
         isOpenRouterWebSearchAvailable() &&
-        !isCircuitOpen(WEB_SEARCH_MODELS.LLAMA_4_MAVERICK) &&
-        getRemainingRequests(WEB_SEARCH_MODELS.LLAMA_4_MAVERICK) > 0,
-      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.LLAMA_4_MAVERICK),
-      error: rateLimitState[WEB_SEARCH_MODELS.LLAMA_4_MAVERICK]?.errorMessage,
+        !isCircuitOpen(WEB_SEARCH_MODELS.QWEN_2_5_72B) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.QWEN_2_5_72B) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.QWEN_2_5_72B),
+      error: rateLimitState[WEB_SEARCH_MODELS.QWEN_2_5_72B]?.errorMessage,
     },
-    [WEB_SEARCH_MODELS.GROK_4_1_FAST]: {
+    [WEB_SEARCH_MODELS.DEEPSEEK_R1]: {
       available:
         isOpenRouterWebSearchAvailable() &&
-        !isCircuitOpen(WEB_SEARCH_MODELS.GROK_4_1_FAST) &&
-        getRemainingRequests(WEB_SEARCH_MODELS.GROK_4_1_FAST) > 0,
-      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.GROK_4_1_FAST),
-      error: rateLimitState[WEB_SEARCH_MODELS.GROK_4_1_FAST]?.errorMessage,
+        !isCircuitOpen(WEB_SEARCH_MODELS.DEEPSEEK_R1) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_R1) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_R1),
+      error: rateLimitState[WEB_SEARCH_MODELS.DEEPSEEK_R1]?.errorMessage,
     },
-    [WEB_SEARCH_MODELS.DEEPSEEK_R1T2]: {
+    [WEB_SEARCH_MODELS.LLAMA_3_3_70B]: {
       available:
         isOpenRouterWebSearchAvailable() &&
-        !isCircuitOpen(WEB_SEARCH_MODELS.DEEPSEEK_R1T2) &&
-        getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_R1T2) > 0,
-      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_R1T2),
-      error: rateLimitState[WEB_SEARCH_MODELS.DEEPSEEK_R1T2]?.errorMessage,
+        !isCircuitOpen(WEB_SEARCH_MODELS.LLAMA_3_3_70B) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.LLAMA_3_3_70B) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.LLAMA_3_3_70B),
+      error: rateLimitState[WEB_SEARCH_MODELS.LLAMA_3_3_70B]?.errorMessage,
     },
-    [WEB_SEARCH_MODELS.DEEPSEEK_V3]: {
+    [WEB_SEARCH_MODELS.GEMMA_2_9B]: {
       available:
         isOpenRouterWebSearchAvailable() &&
-        !isCircuitOpen(WEB_SEARCH_MODELS.DEEPSEEK_V3) &&
-        getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_V3) > 0,
-      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.DEEPSEEK_V3),
-      error: rateLimitState[WEB_SEARCH_MODELS.DEEPSEEK_V3]?.errorMessage,
+        !isCircuitOpen(WEB_SEARCH_MODELS.GEMMA_2_9B) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.GEMMA_2_9B) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.GEMMA_2_9B),
+      error: rateLimitState[WEB_SEARCH_MODELS.GEMMA_2_9B]?.errorMessage,
     },
-    [WEB_SEARCH_MODELS.QWEN3_CODER_480B]: {
+    [WEB_SEARCH_MODELS.PHI_4]: {
       available:
         isOpenRouterWebSearchAvailable() &&
-        !isCircuitOpen(WEB_SEARCH_MODELS.QWEN3_CODER_480B) &&
-        getRemainingRequests(WEB_SEARCH_MODELS.QWEN3_CODER_480B) > 0,
-      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.QWEN3_CODER_480B),
-      error: rateLimitState[WEB_SEARCH_MODELS.QWEN3_CODER_480B]?.errorMessage,
+        !isCircuitOpen(WEB_SEARCH_MODELS.PHI_4) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.PHI_4) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.PHI_4),
+      error: rateLimitState[WEB_SEARCH_MODELS.PHI_4]?.errorMessage,
     },
-    [WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE]: {
+    [WEB_SEARCH_MODELS.MISTRAL_7B]: {
       available:
         isOpenRouterWebSearchAvailable() &&
-        !isCircuitOpen(WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE) &&
-        getRemainingRequests(WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE) > 0,
-      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE),
-      error: rateLimitState[WEB_SEARCH_MODELS.AMAZON_NOVA_2_LITE]?.errorMessage,
+        !isCircuitOpen(WEB_SEARCH_MODELS.MISTRAL_7B) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.MISTRAL_7B) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.MISTRAL_7B),
+      error: rateLimitState[WEB_SEARCH_MODELS.MISTRAL_7B]?.errorMessage,
+    },
+    [WEB_SEARCH_MODELS.HERMES_3_405B]: {
+      available:
+        isOpenRouterWebSearchAvailable() &&
+        !isCircuitOpen(WEB_SEARCH_MODELS.HERMES_3_405B) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.HERMES_3_405B) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.HERMES_3_405B),
+      error: rateLimitState[WEB_SEARCH_MODELS.HERMES_3_405B]?.errorMessage,
+    },
+    [WEB_SEARCH_MODELS.OPENCHAT_7B]: {
+      available:
+        isOpenRouterWebSearchAvailable() &&
+        !isCircuitOpen(WEB_SEARCH_MODELS.OPENCHAT_7B) &&
+        getRemainingRequests(WEB_SEARCH_MODELS.OPENCHAT_7B) > 0,
+      requestsRemaining: getRemainingRequests(WEB_SEARCH_MODELS.OPENCHAT_7B),
+      error: rateLimitState[WEB_SEARCH_MODELS.OPENCHAT_7B]?.errorMessage,
     },
   };
 }

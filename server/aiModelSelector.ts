@@ -1,30 +1,41 @@
 /**
  * AI Model Selector - Intelligent model selection based on task attributes
  * 
- * Scores all 17 models across 16 attributes to select the optimal model for each task.
+ * Scores all models across 16 attributes to select the optimal model for each task.
  * Enhanced for cryptocrawler AI harmony integration.
  * 
- * GEMINI SELECTION (Updated to Gemini 3):
- * - High-capability tasks → gemini-3-pro (latest reasoning)
- * - Lightweight/high-volume → gemini-3-flash (fast inference)
+ * GEMINI SELECTION (Updated December 2025):
+ * - High-capability tasks → gemini-3-pro-preview (newest flagship, 1M context)
+ * - Lightweight/high-volume → gemini-2.5-flash (fast inference)
+ * - Ultra-high-volume → gemini-2.5-flash-lite (1000 requests/day)
+ * - Stable fallback → gemini-1.5-pro
  * 
- * CLAUDE SELECTION (Including Claude 4.5 Opus):
- * - Premium reasoning → claude-4-5-opus (ultimate capability)
- * - Legal/creative → claude-3-5-sonnet (advanced reasoning)
- * - Fast/verification → claude-3-5-haiku (speed optimized)
+ * CLAUDE SELECTION:
+ * - Legal/creative → claude-3-5-sonnet-latest (advanced reasoning)
+ * - Fast/verification → claude-3-5-haiku-latest (speed optimized)
  * 
- * GPT SELECTION:
- * - Fast inference → gpt-5-mini (latest GPT architecture)
+ * GROQ SELECTION:
+ * - llama-3.3-70b-versatile (fast inference)
+ * - llama-3.1-8b-instant (ultra-fast)
+ * - mixtral-8x7b-32768 (long context)
  * 
- * OPENROUTER SELECTION:
- * - Pattern recognition → DeepSeek (671B params)
- * - Large context → Grok (2M context)
- * - Structured extraction → Kimi (1T params)
- * - Large scale reasoning → GPT-OSS-120B
- * - Open source powerhouse → Falcon-180B
- * - Code generation → Code Llama (70B/34B)
- * - Efficient inference → GPT-NeoX-20B
- * - Multilingual/multimodal → Qwen-72B
+ * MISTRAL SELECTION:
+ * - mistral-large-latest (complex tasks)
+ * - mistral-small-latest (fast inference)
+ * 
+ * DEEPSEEK SELECTION:
+ * - deepseek-chat (reasoning-focused)
+ * - deepseek-coder (code generation)
+ * 
+ * OPENROUTER FREE MODELS (Updated December 2025):
+ * - qwen/qwen-2.5-72b-instruct:free - Multilingual reasoning
+ * - deepseek/deepseek-r1-0528:free - Advanced reasoning
+ * - meta-llama/llama-3.3-70b-instruct:free - General purpose
+ * - google/gemma-2-9b-it:free - Efficient
+ * - microsoft/phi-4:free - Small but capable
+ * - mistralai/mistral-7b-instruct:free - Fast inference
+ * - nousresearch/hermes-3-llama-3.1-405b:free - Large-scale reasoning
+ * - openchat/openchat-7b:free - Chat-optimized
  */
 
 import { AIProvider, UsageContext } from './aiTokenGovernor';
@@ -109,10 +120,12 @@ interface ModelCapabilities {
  * - 50-69: Adequate capability
  * - 30-49: Limited capability
  * - 0-29: Minimal or no capability
+ * 
+ * Updated December 2025 with valid model names
  */
 const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
-  // Gemini models (Updated to Gemini 3)
-  'gemini-3-flash': {
+  // Gemini models (Updated December 2025)
+  'gemini-2.5-flash': {
     multimodal: 85,
     longContext: 90,
     massiveContext: 80,
@@ -130,63 +143,63 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     costEfficiency: 95,
     dailyCapacity: 100, // High throughput
   },
-  'gemini-3-pro': {
+  'gemini-3-pro-preview': {
     multimodal: 95,
-    longContext: 95,
-    massiveContext: 90,
+    longContext: 98,
+    massiveContext: 95,
     structuredOutput: 95,
     codeGeneration: 95,
-    creativeWriting: 90,
+    creativeWriting: 92,
     reasoning: 98,
     speed: 80,
     verification: 95,
-    legalAnalysis: 90,
+    legalAnalysis: 92,
     imageAnalysis: 95,
-    patternRecognition: 95,
+    patternRecognition: 96,
     dataExtraction: 95,
     searchGrounding: 98,
     costEfficiency: 70,
     dailyCapacity: 50, // Premium model
   },
+  'gemini-2.5-flash-lite': {
+    multimodal: 80,
+    longContext: 85,
+    massiveContext: 75,
+    structuredOutput: 88,
+    codeGeneration: 80,
+    creativeWriting: 75,
+    reasoning: 82,
+    speed: 98,
+    verification: 82,
+    legalAnalysis: 70,
+    imageAnalysis: 80,
+    patternRecognition: 82,
+    dataExtraction: 82,
+    searchGrounding: 90,
+    costEfficiency: 98,
+    dailyCapacity: 100, // 1000 requests/day
+  },
+  'gemini-1.5-pro': {
+    multimodal: 90,
+    longContext: 95,
+    massiveContext: 90,
+    structuredOutput: 92,
+    codeGeneration: 90,
+    creativeWriting: 88,
+    reasoning: 92,
+    speed: 75,
+    verification: 90,
+    legalAnalysis: 88,
+    imageAnalysis: 90,
+    patternRecognition: 90,
+    dataExtraction: 90,
+    searchGrounding: 95,
+    costEfficiency: 65,
+    dailyCapacity: 40, // Stable fallback
+  },
   
   // Claude models
-  'claude-4-5-opus': {
-    multimodal: 98,
-    longContext: 98,
-    massiveContext: 95,
-    structuredOutput: 98,
-    codeGeneration: 98,
-    creativeWriting: 99,
-    reasoning: 99,
-    speed: 65,
-    verification: 98,
-    legalAnalysis: 99,
-    imageAnalysis: 98,
-    patternRecognition: 98,
-    dataExtraction: 98,
-    searchGrounding: 70,
-    costEfficiency: 40,
-    dailyCapacity: 30, // Premium model
-  },
-  'claude-3-5-haiku-20241022': {
-    multimodal: 70,
-    longContext: 80,
-    massiveContext: 60,
-    structuredOutput: 85,
-    codeGeneration: 75,
-    creativeWriting: 70,
-    reasoning: 80,
-    speed: 90,
-    verification: 85,
-    legalAnalysis: 70,
-    imageAnalysis: 70,
-    patternRecognition: 75,
-    dataExtraction: 80,
-    searchGrounding: 50,
-    costEfficiency: 80,
-    dailyCapacity: 60,
-  },
-  'claude-3-5-sonnet-20241022': {
+  'claude-3-5-sonnet-latest': {
     multimodal: 85,
     longContext: 90,
     massiveContext: 70,
@@ -204,8 +217,26 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     costEfficiency: 50,
     dailyCapacity: 40,
   },
+  'claude-3-5-haiku-latest': {
+    multimodal: 70,
+    longContext: 80,
+    massiveContext: 60,
+    structuredOutput: 85,
+    codeGeneration: 75,
+    creativeWriting: 70,
+    reasoning: 80,
+    speed: 90,
+    verification: 85,
+    legalAnalysis: 70,
+    imageAnalysis: 70,
+    patternRecognition: 75,
+    dataExtraction: 80,
+    searchGrounding: 50,
+    costEfficiency: 80,
+    dailyCapacity: 60,
+  },
   
-  // Groq models (AUTONOMOUS ONLY)
+  // Groq models
   'llama-3.3-70b-versatile': {
     multimodal: 30,
     longContext: 75,
@@ -224,8 +255,62 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     costEfficiency: 100,
     dailyCapacity: 100, // Unlimited
   },
+  'llama-3.1-8b-instant': {
+    multimodal: 20,
+    longContext: 65,
+    massiveContext: 40,
+    structuredOutput: 75,
+    codeGeneration: 70,
+    creativeWriting: 65,
+    reasoning: 75,
+    speed: 98,
+    verification: 70,
+    legalAnalysis: 60,
+    imageAnalysis: 20,
+    patternRecognition: 70,
+    dataExtraction: 70,
+    searchGrounding: 35,
+    costEfficiency: 100,
+    dailyCapacity: 100,
+  },
+  'mixtral-8x7b-32768': {
+    multimodal: 25,
+    longContext: 70,
+    massiveContext: 45,
+    structuredOutput: 78,
+    codeGeneration: 75,
+    creativeWriting: 72,
+    reasoning: 80,
+    speed: 92,
+    verification: 72,
+    legalAnalysis: 65,
+    imageAnalysis: 25,
+    patternRecognition: 75,
+    dataExtraction: 72,
+    searchGrounding: 38,
+    costEfficiency: 95,
+    dailyCapacity: 100,
+  },
   
-  // Mistral models (AUTONOMOUS ONLY)
+  // Mistral models
+  'mistral-large-latest': {
+    multimodal: 50,
+    longContext: 80,
+    massiveContext: 55,
+    structuredOutput: 88,
+    codeGeneration: 85,
+    creativeWriting: 85,
+    reasoning: 88,
+    speed: 75,
+    verification: 82,
+    legalAnalysis: 82,
+    imageAnalysis: 50,
+    patternRecognition: 82,
+    dataExtraction: 85,
+    searchGrounding: 45,
+    costEfficiency: 70,
+    dailyCapacity: 70,
+  },
   'mistral-small-latest': {
     multimodal: 40,
     longContext: 70,
@@ -245,154 +330,46 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     dailyCapacity: 80, // 150k tokens/day
   },
   
-  // OpenRouter models (USER ONLY)
-  'deepseek-r1t2-chimera': {
+  // DeepSeek models
+  'deepseek-chat': {
     multimodal: 50,
     longContext: 85,
     massiveContext: 80,
     structuredOutput: 85,
     codeGeneration: 90,
     creativeWriting: 75,
-    reasoning: 95,
+    reasoning: 92,
     speed: 70,
     verification: 85,
     legalAnalysis: 80,
     imageAnalysis: 50,
-    patternRecognition: 95,
+    patternRecognition: 92,
     dataExtraction: 85,
     searchGrounding: 60,
-    costEfficiency: 70,
-    dailyCapacity: 50, // 50 RPD
+    costEfficiency: 85,
+    dailyCapacity: 60,
   },
-  'grok-4.1-fast': {
-    multimodal: 90,
-    longContext: 95,
-    massiveContext: 100,
-    structuredOutput: 80,
-    codeGeneration: 85,
-    creativeWriting: 85,
-    reasoning: 85,
-    speed: 80,
-    verification: 75,
-    legalAnalysis: 75,
-    imageAnalysis: 90,
-    patternRecognition: 85,
-    dataExtraction: 80,
-    searchGrounding: 85,
-    costEfficiency: 70,
-    dailyCapacity: 50, // 50 RPD
-  },
-  'kimi-k2': {
-    multimodal: 60,
-    longContext: 90,
-    massiveContext: 85,
-    structuredOutput: 95,
-    codeGeneration: 80,
-    creativeWriting: 70,
-    reasoning: 80,
-    speed: 75,
-    verification: 80,
-    legalAnalysis: 70,
-    imageAnalysis: 60,
-    patternRecognition: 85,
-    dataExtraction: 95,
-    searchGrounding: 70,
-    costEfficiency: 70,
-    dailyCapacity: 50,
-  },
-  
-  // Additional OpenRouter models for extended AI harmony
-  'gpt-oss-120b': {
-    multimodal: 40,
+  'deepseek-coder': {
+    multimodal: 30,
     longContext: 80,
     massiveContext: 70,
-    structuredOutput: 85,
-    codeGeneration: 85,
-    creativeWriting: 80,
-    reasoning: 88,
-    speed: 65,
-    verification: 80,
-    legalAnalysis: 75,
-    imageAnalysis: 40,
-    patternRecognition: 85,
-    dataExtraction: 80,
-    searchGrounding: 50,
-    costEfficiency: 85,
-    dailyCapacity: 50,
-  },
-  'falcon-180b': {
-    multimodal: 30,
-    longContext: 75,
-    massiveContext: 65,
-    structuredOutput: 80,
-    codeGeneration: 80,
-    creativeWriting: 85,
-    reasoning: 82,
-    speed: 60,
-    verification: 75,
-    legalAnalysis: 70,
-    imageAnalysis: 30,
-    patternRecognition: 80,
-    dataExtraction: 75,
-    searchGrounding: 45,
-    costEfficiency: 80,
-    dailyCapacity: 50,
-  },
-  'code-llama-70b': {
-    multimodal: 20,
-    longContext: 70,
-    massiveContext: 60,
     structuredOutput: 90,
     codeGeneration: 95,
     creativeWriting: 60,
-    reasoning: 80,
+    reasoning: 85,
     speed: 75,
-    verification: 85,
+    verification: 88,
     legalAnalysis: 55,
-    imageAnalysis: 20,
-    patternRecognition: 75,
-    dataExtraction: 80,
+    imageAnalysis: 30,
+    patternRecognition: 80,
+    dataExtraction: 85,
     searchGrounding: 40,
     costEfficiency: 90,
     dailyCapacity: 60,
   },
-  'code-llama-34b': {
-    multimodal: 20,
-    longContext: 65,
-    massiveContext: 55,
-    structuredOutput: 85,
-    codeGeneration: 90,
-    creativeWriting: 55,
-    reasoning: 75,
-    speed: 85,
-    verification: 80,
-    legalAnalysis: 50,
-    imageAnalysis: 20,
-    patternRecognition: 70,
-    dataExtraction: 75,
-    searchGrounding: 35,
-    costEfficiency: 95,
-    dailyCapacity: 70,
-  },
-  'gpt-neox-20b': {
-    multimodal: 25,
-    longContext: 60,
-    massiveContext: 50,
-    structuredOutput: 75,
-    codeGeneration: 75,
-    creativeWriting: 70,
-    reasoning: 72,
-    speed: 80,
-    verification: 70,
-    legalAnalysis: 60,
-    imageAnalysis: 25,
-    patternRecognition: 70,
-    dataExtraction: 70,
-    searchGrounding: 40,
-    costEfficiency: 92,
-    dailyCapacity: 80,
-  },
-  'qwen-72b': {
+  
+  // OpenRouter free models (Updated December 2025)
+  'qwen/qwen-2.5-72b-instruct:free': {
     multimodal: 70,
     longContext: 85,
     massiveContext: 80,
@@ -407,26 +384,134 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     patternRecognition: 85,
     dataExtraction: 85,
     searchGrounding: 65,
-    costEfficiency: 75,
+    costEfficiency: 100,
     dailyCapacity: 50,
   },
-  'gpt-5-mini': {
-    multimodal: 92,
-    longContext: 95,
-    massiveContext: 90,
-    structuredOutput: 95,
-    codeGeneration: 95,
-    creativeWriting: 92,
-    reasoning: 96,
-    speed: 85,
-    verification: 94,
-    legalAnalysis: 90,
-    imageAnalysis: 92,
+  'deepseek/deepseek-r1-0528:free': {
+    multimodal: 50,
+    longContext: 85,
+    massiveContext: 80,
+    structuredOutput: 85,
+    codeGeneration: 90,
+    creativeWriting: 75,
+    reasoning: 95,
+    speed: 70,
+    verification: 85,
+    legalAnalysis: 80,
+    imageAnalysis: 50,
     patternRecognition: 95,
-    dataExtraction: 94,
-    searchGrounding: 90,
-    costEfficiency: 65,
+    dataExtraction: 85,
+    searchGrounding: 60,
+    costEfficiency: 100,
+    dailyCapacity: 50,
+  },
+  'meta-llama/llama-3.3-70b-instruct:free': {
+    multimodal: 30,
+    longContext: 75,
+    massiveContext: 50,
+    structuredOutput: 80,
+    codeGeneration: 80,
+    creativeWriting: 75,
+    reasoning: 85,
+    speed: 80,
+    verification: 75,
+    legalAnalysis: 70,
+    imageAnalysis: 30,
+    patternRecognition: 80,
+    dataExtraction: 75,
+    searchGrounding: 40,
+    costEfficiency: 100,
+    dailyCapacity: 50,
+  },
+  'google/gemma-2-9b-it:free': {
+    multimodal: 40,
+    longContext: 60,
+    massiveContext: 40,
+    structuredOutput: 75,
+    codeGeneration: 70,
+    creativeWriting: 70,
+    reasoning: 75,
+    speed: 90,
+    verification: 70,
+    legalAnalysis: 60,
+    imageAnalysis: 40,
+    patternRecognition: 70,
+    dataExtraction: 70,
+    searchGrounding: 50,
+    costEfficiency: 100,
+    dailyCapacity: 60,
+  },
+  'microsoft/phi-4:free': {
+    multimodal: 35,
+    longContext: 55,
+    massiveContext: 35,
+    structuredOutput: 78,
+    codeGeneration: 75,
+    creativeWriting: 68,
+    reasoning: 78,
+    speed: 92,
+    verification: 72,
+    legalAnalysis: 55,
+    imageAnalysis: 35,
+    patternRecognition: 72,
+    dataExtraction: 72,
+    searchGrounding: 45,
+    costEfficiency: 100,
+    dailyCapacity: 70,
+  },
+  'mistralai/mistral-7b-instruct:free': {
+    multimodal: 30,
+    longContext: 60,
+    massiveContext: 35,
+    structuredOutput: 75,
+    codeGeneration: 70,
+    creativeWriting: 72,
+    reasoning: 72,
+    speed: 95,
+    verification: 68,
+    legalAnalysis: 60,
+    imageAnalysis: 30,
+    patternRecognition: 68,
+    dataExtraction: 72,
+    searchGrounding: 35,
+    costEfficiency: 100,
+    dailyCapacity: 80,
+  },
+  'nousresearch/hermes-3-llama-3.1-405b:free': {
+    multimodal: 40,
+    longContext: 80,
+    massiveContext: 70,
+    structuredOutput: 85,
+    codeGeneration: 85,
+    creativeWriting: 80,
+    reasoning: 88,
+    speed: 65,
+    verification: 80,
+    legalAnalysis: 75,
+    imageAnalysis: 40,
+    patternRecognition: 85,
+    dataExtraction: 80,
+    searchGrounding: 50,
+    costEfficiency: 100,
     dailyCapacity: 40,
+  },
+  'openchat/openchat-7b:free': {
+    multimodal: 25,
+    longContext: 55,
+    massiveContext: 30,
+    structuredOutput: 72,
+    codeGeneration: 68,
+    creativeWriting: 70,
+    reasoning: 70,
+    speed: 95,
+    verification: 65,
+    legalAnalysis: 55,
+    imageAnalysis: 25,
+    patternRecognition: 65,
+    dataExtraction: 68,
+    searchGrounding: 30,
+    costEfficiency: 100,
+    dailyCapacity: 80,
   },
 };
 
@@ -438,33 +523,33 @@ export class AIModelSelector {
    * Select optimal Gemini model based on task attributes
    */
   static selectGeminiModel(attrs: TaskAttributes): string {
-    // Use gemini-3-pro for multimodal/image tasks
+    // Use gemini-3-pro-preview for multimodal/image tasks
     if (attrs.needsMultimodal || attrs.needsImageAnalysis) {
-      return 'gemini-3-pro';
+      return 'gemini-3-pro-preview';
     }
     
-    // Use gemini-3-pro for high-complexity tasks
+    // Use gemini-3-pro-preview for high-complexity tasks
     if (attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'gemini-3-pro';
+      return 'gemini-3-pro-preview';
     }
     
-    // Use gemini-3-flash for high-volume/lightweight tasks
+    // Use gemini-2.5-flash for high-volume/lightweight tasks
     if (attrs.complexity === TaskComplexity.LIGHTWEIGHT || attrs.needsFastResponse) {
-      return 'gemini-3-flash';
+      return 'gemini-2.5-flash';
     }
     
-    // Use gemini-3-pro for long context needs
+    // Use gemini-3-pro-preview for long context needs
     if (attrs.needsLongContext || attrs.needsMassiveContext) {
-      return 'gemini-3-pro';
+      return 'gemini-3-pro-preview';
     }
     
-    // Use gemini-3-pro for advanced reasoning
+    // Use gemini-3-pro-preview for advanced reasoning
     if (attrs.needsReasoning || attrs.needsPatternRecognition) {
-      return 'gemini-3-pro';
+      return 'gemini-3-pro-preview';
     }
     
-    // Default to gemini-3-flash for cost efficiency
-    return 'gemini-3-flash';
+    // Default to gemini-2.5-flash for cost efficiency
+    return 'gemini-2.5-flash';
   }
   
   /**
@@ -473,74 +558,75 @@ export class AIModelSelector {
   static selectClaudeModel(attrs: TaskAttributes): string {
     // Use Sonnet for legal analysis
     if (attrs.needsLegalAnalysis) {
-      return 'claude-3-5-sonnet-20241022';
+      return 'claude-3-5-sonnet-latest';
     }
     
     // Use Sonnet for creative writing
     if (attrs.needsCreativeWriting) {
-      return 'claude-3-5-sonnet-20241022';
+      return 'claude-3-5-sonnet-latest';
     }
     
     // Use Sonnet for complex reasoning
     if (attrs.needsReasoning && attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'claude-3-5-sonnet-20241022';
+      return 'claude-3-5-sonnet-latest';
     }
     
     // Use Sonnet for code generation
     if (attrs.needsCodeGeneration && attrs.complexity !== TaskComplexity.LIGHTWEIGHT) {
-      return 'claude-3-5-sonnet-20241022';
+      return 'claude-3-5-sonnet-latest';
     }
     
     // Use Haiku for fast responses
     if (attrs.needsFastResponse) {
-      return 'claude-3-5-haiku-20241022';
+      return 'claude-3-5-haiku-latest';
     }
     
     // Use Haiku for verification tasks
     if (attrs.needsVerification) {
-      return 'claude-3-5-haiku-20241022';
+      return 'claude-3-5-haiku-latest';
     }
     
     // Default to Haiku for cost efficiency
-    return 'claude-3-5-haiku-20241022';
+    return 'claude-3-5-haiku-latest';
   }
   
   /**
    * Select optimal OpenRouter model based on task attributes
+   * Updated December 2025 with valid free models
    */
   static selectOpenRouterModel(attrs: TaskAttributes): string {
-    // Use Grok for massive context (2M tokens)
+    // Use Hermes 3 for massive context
     if (attrs.needsMassiveContext) {
-      return 'grok-4.1-fast';
+      return 'nousresearch/hermes-3-llama-3.1-405b:free';
     }
     
-    // Use Grok for multimodal/image analysis
+    // Use Qwen for multimodal/image analysis
     if (attrs.needsMultimodal || attrs.needsImageAnalysis) {
-      return 'grok-4.1-fast';
+      return 'qwen/qwen-2.5-72b-instruct:free';
     }
     
-    // Use Kimi for structured output/data extraction
+    // Use Qwen for structured output/data extraction
     if (attrs.needsStructuredOutput || attrs.needsDataExtraction) {
-      return 'kimi-k2';
+      return 'qwen/qwen-2.5-72b-instruct:free';
     }
     
-    // Use DeepSeek for pattern recognition
+    // Use DeepSeek R1 for pattern recognition
     if (attrs.needsPatternRecognition) {
-      return 'deepseek-r1t2-chimera';
+      return 'deepseek/deepseek-r1-0528:free';
     }
     
-    // Use DeepSeek for complex reasoning
+    // Use DeepSeek R1 for complex reasoning
     if (attrs.needsReasoning && attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'deepseek-r1t2-chimera';
+      return 'deepseek/deepseek-r1-0528:free';
     }
     
-    // Use DeepSeek for code generation
+    // Use Llama 3.3 for code generation
     if (attrs.needsCodeGeneration) {
-      return 'deepseek-r1t2-chimera';
+      return 'meta-llama/llama-3.3-70b-instruct:free';
     }
     
-    // Default to DeepSeek for general tasks
-    return 'deepseek-r1t2-chimera';
+    // Default to Llama 3.3 for general tasks
+    return 'meta-llama/llama-3.3-70b-instruct:free';
   }
   
   /**
@@ -573,13 +659,7 @@ export class AIModelSelector {
           model = 'mistral-small-latest';
           break;
         case AIProvider.DEEPSEEK:
-          model = 'deepseek-r1t2-chimera';
-          break;
-        case AIProvider.GROK:
-          model = 'grok-4.1-fast';
-          break;
-        case AIProvider.KIMI:
-          model = 'kimi-k2';
+          model = 'deepseek-chat';
           break;
         default:
           continue;

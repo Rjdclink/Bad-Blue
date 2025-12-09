@@ -69,22 +69,35 @@ export const US_STATE_NAMES: Record<USState, string> = {
 
 // ==================== AI PROVIDERS ====================
 // Supported AI providers for legal consultation and document generation
+// Updated December 2025 with valid providers and models
 export const AI_PROVIDERS = {
   GEMINI: 'gemini',
   GROQ: 'groq',
   MISTRAL: 'mistral',
   ANTHROPIC: 'anthropic',
-  OPENROUTER: 'openrouter'
+  OPENROUTER: 'openrouter',
+  DEEPSEEK: 'deepseek',
+  COHERE: 'cohere',
+  TOGETHER: 'together',
+  PERPLEXITY: 'perplexity',
+  FIREWORKS: 'fireworks',
+  CEREBRAS: 'cerebras',
+  SAMBANOVA: 'sambanova',
+  HUGGINGFACE: 'huggingface'
 } as const;
 
 export type AIProvider = typeof AI_PROVIDERS[keyof typeof AI_PROVIDERS];
 
-// OpenRouter models (including Qwen)
+// OpenRouter models (Updated December 2025 with valid free models)
 export const OPENROUTER_MODELS = {
-  QWEN_32B: 'qwen/qwen-2.5-72b-instruct',
-  QWEN_14B: 'qwen/qwen-2-7b-instruct',
-  LLAMA_70B: 'meta-llama/llama-3-70b-instruct',
-  MISTRAL_LARGE: 'mistralai/mistral-large'
+  QWEN_2_5_72B: 'qwen/qwen-2.5-72b-instruct:free',
+  DEEPSEEK_R1: 'deepseek/deepseek-r1-0528:free',
+  LLAMA_3_3_70B: 'meta-llama/llama-3.3-70b-instruct:free',
+  GEMMA_2_9B: 'google/gemma-2-9b-it:free',
+  PHI_4: 'microsoft/phi-4:free',
+  MISTRAL_7B: 'mistralai/mistral-7b-instruct:free',
+  HERMES_3_405B: 'nousresearch/hermes-3-llama-3.1-405b:free',
+  OPENCHAT_7B: 'openchat/openchat-7b:free',
 } as const;
 
 // ==================== LAW TYPES ====================

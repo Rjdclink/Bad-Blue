@@ -30,10 +30,21 @@ export enum TaskComplexity {
 }
 
 export enum AIProvider {
+  // Core providers
   GEMINI = 'gemini',
   GROQ = 'groq',
   MISTRAL = 'mistral',
   CLAUDE = 'claude',
+  // Additional providers (December 2025)
+  OPENROUTER = 'openrouter',
+  DEEPSEEK = 'deepseek',
+  COHERE = 'cohere',
+  TOGETHER = 'together',
+  PERPLEXITY = 'perplexity',
+  FIREWORKS = 'fireworks',
+  CEREBRAS = 'cerebras',
+  SAMBANOVA = 'sambanova',
+  HUGGINGFACE = 'huggingface',
 }
 
 export enum UsageContext {

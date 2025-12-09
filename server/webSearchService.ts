@@ -1,14 +1,19 @@
 /**
  * Unified Web Search Service
- * OpenRouter 3-Model Orchestrated Web Search (Primary) with Gemini Grounding (Fallback)
+ * OpenRouter 3-Model Orchestrated Web Search (Primary) with Zero-API Fallback
  * 
- * Primary: OpenRouter 3-model orchestration system
- *   - Meta Llama 4 Maverick (meta-llama/llama-4-maverick:free) - 256K context, multimodal research
- *   - xAI Grok 4.1 Fast (xai/grok-4.1-fast:free) - 2M context, real-time research
- *   - DeepSeek R1T2 Chimera (tng/deepseek-r1t2-chimera:free) - 164K context, reasoning-focused
+ * Primary: OpenRouter 3-model orchestration system (December 2025):
+ *   - Qwen 2.5 72B (qwen/qwen-2.5-72b-instruct:free) - Multilingual reasoning
+ *   - DeepSeek R1 (deepseek/deepseek-r1-0528:free) - Advanced reasoning
+ *   - Meta Llama 3.3 70B (meta-llama/llama-3.3-70b-instruct:free) - General purpose
  *   - Parallel execution with orchestrated aggregation via openRouterWebSearch.ts
  * 
- * Fallback: Gemini AI grounding (only when OpenRouter unavailable)
+ * Fallback 1: Gemini AI grounding (when OpenRouter unavailable)
+ * 
+ * Fallback 2: ZERO-API Mode (when no external APIs configured)
+ *   - Local knowledge base with legal expertise
+ *   - Pattern matching and template-based responses
+ *   - Works completely offline without any API keys
  * 
  * Usage:
  * - Officer search: Real-time public records, misconduct reports
@@ -270,11 +275,11 @@ Return detailed findings with specific URLs and facts.`;
 
 /**
  * Unified search using OpenRouter 3-model orchestration (PRIMARY)
- * Primary web search system using OpenRouter models:
- *   - Meta Llama 4 Maverick (256K context, multimodal)
- *   - xAI Grok 4.1 Fast (2M context, real-time)
- *   - DeepSeek R1T2 Chimera (164K context, reasoning)
- * Falls back to Gemini grounding only if OpenRouter is unavailable
+ * Primary web search system using OpenRouter free models:
+ *   - Qwen 2.5 72B (multilingual reasoning)
+ *   - DeepSeek R1 (advanced reasoning)
+ *   - Meta Llama 3.3 70B (general purpose)
+ * Falls back to Gemini grounding, then Zero-API local intelligence
  */
 export async function unifiedSearch(
   query: string,
@@ -339,6 +344,31 @@ export async function unifiedSearch(
     } catch (error: any) {
       console.warn('[Unified Search] Gemini fallback failed:', error.message);
     }
+  }
+
+  // ZERO-API FALLBACK: Use local intelligence when no external APIs available
+  console.log('[Unified Search] Using Zero-API local intelligence fallback');
+  try {
+    const { generateZeroApiResponse } = await import('./zeroApiIntelligence');
+    const zeroApiResult = await generateZeroApiResponse(query, {
+      type: options.category === 'officer' ? 'officer-search' : 'legal-consultation',
+    });
+    
+    return [{
+      title: 'PANTHEON Local Intelligence',
+      url: '',
+      snippet: zeroApiResult.content.substring(0, 500),
+      source: 'combined',
+      aiSummary: zeroApiResult.content,
+      reliability: zeroApiResult.confidence >= 0.8 ? 'high' : zeroApiResult.confidence >= 0.6 ? 'medium' : 'low',
+      relevanceScore: zeroApiResult.confidence * 100,
+      metadata: {
+        source: zeroApiResult.source,
+        patterns: zeroApiResult.metadata?.patterns,
+      },
+    }];
+  } catch (zeroApiError: any) {
+    console.warn('[Unified Search] Zero-API fallback failed:', zeroApiError.message);
   }
 
   console.warn('[Unified Search] No search providers available');

@@ -52,14 +52,15 @@ export enum TaskComplexity {
 }
 
 export enum AIProvider {
+  // Core providers
   GEMINI = 'gemini',
   GROQ = 'groq',
   MISTRAL = 'mistral',
   CLAUDE = 'claude',
   DEEPSEEK = 'deepseek',
+  // OpenRouter models (legacy names for backward compatibility)
   GROK = 'grok',
   KIMI = 'kimi',
-  // Additional OpenRouter models
   GPT_OSS = 'gpt_oss',
   FALCON = 'falcon',
   CODE_LLAMA = 'code_llama',
@@ -67,6 +68,15 @@ export enum AIProvider {
   QWEN = 'qwen',
   GPT5_MINI = 'gpt5_mini',
   CLAUDE_OPUS = 'claude_opus',
+  // Additional providers (December 2025)
+  OPENROUTER = 'openrouter',
+  COHERE = 'cohere',
+  TOGETHER = 'together',
+  PERPLEXITY = 'perplexity',
+  FIREWORKS = 'fireworks',
+  CEREBRAS = 'cerebras',
+  SAMBANOVA = 'sambanova',
+  HUGGINGFACE = 'huggingface',
 }
 
 export enum UsageContext {
