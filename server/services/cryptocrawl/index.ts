@@ -21,33 +21,97 @@ export {
 export { MasterOrchestrator, type SystemStatus, type PerformanceMetrics, type CataclysmEvent } from './core/master-orchestrator';
 export { LuxSwarm, type Opportunity, type AgentState, type ChainId, type LuxSignal } from './core/lux-swarm';
 
+// Blockchain API Services (Alchemy + Etherscan)
+export {
+  BlockchainAPIService,
+  AlchemyProvider,
+  EtherscanProvider,
+  AdvancedRateLimiter,
+  blockchainAPI,
+  type SupportedChain,
+  type EdenRegion,
+  type BlockchainProviderConfig,
+  type RateLimitConfig,
+  type GasData,
+  type BlockData,
+  type TransactionData,
+  type TokenTransfer,
+  type ContractVerification
+} from './api/blockchain-providers';
+
+// Eden Deployment (Hyper-Local Latency Optimization)
+export {
+  EdenDeploymentManager,
+  edenDeployment,
+  RESOURCE_QUOTAS,
+  STARBURST_CONFIG,
+  type EdenNode,
+  type EdenTier,
+  type EdenRole,
+  type EdenStatus,
+  type RegionLatencyProfile,
+  type DeploymentStrategy,
+  type ResourceQuota,
+  type StarburstConfig
+} from './eden/deployment';
+
+// Intelligence Systems (Parallel Lanes, Gravity Crawler, Cataclysm Reaper, Six-Cane System)
+export {
+  ParallelIntelligenceLanes,
+  parallelIntelligence,
+  GravityCrawler,
+  CataclysmReaper,
+  gravityCrawler,
+  cataclysmReaper,
+  SixCaneSystem,
+  sixCaneSystem,
+  type LaneType,
+  type LaneSignal,
+  type MergedDecision,
+  type LaneConfig,
+  type OrderFlowMetrics,
+  type LiquidityMetrics,
+  type VolatilityMetrics,
+  type BotFootprintMetrics,
+  type LatencyMetrics,
+  type GravityCenter,
+  type LiquidityGravityMap,
+  type CataclysmType,
+  type ReaperStatistics,
+  type CaneRole,
+  type CaneState,
+  type CaneStatus,
+  type CaneMetrics,
+  type OrchestratorDecision,
+  type SwarmCoordinationState
+} from './intelligence';
+
 /**
  * Quick Start Example
  * 
  * ```typescript
- * import { MasterOrchestrator } from './server/services/cryptocrawl';
+ * import { MasterOrchestrator, sixCaneSystem, blockchainAPI } from './server/services/cryptocrawl';
  * 
- * // Initialize and start the entire advanced crawler system
- * await MasterOrchestrator.initialize();
- * await MasterOrchestrator.start();
+ * // Initialize blockchain API services (Alchemy + Etherscan)
+ * await blockchainAPI.initialize(['ethereum', 'polygon', 'arbitrum']);
  * 
- * // Monitor system status
- * const status = MasterOrchestrator.getStatus();
- * console.log('System Health:', status.systemHealth);
- * console.log('Active Crawlers:', status.totalCrawlers);
- * console.log('Neurofusion Accuracy:', status.neurofusionAccuracy);
+ * // Initialize and start the Six Cane System
+ * await sixCaneSystem.start();
  * 
- * // Get performance metrics
- * const metrics = MasterOrchestrator.getMetrics();
- * console.log('Success Rate:', metrics.successRate);
- * console.log('Total Profit:', metrics.totalProfit);
+ * // Get orchestrated trading decision
+ * const decision = await sixCaneSystem.getDecision('polygon', 'ETH');
+ * console.log('Decision:', decision.finalDecision);
+ * console.log('Confidence:', decision.confidence);
+ * console.log('Strategy:', decision.strategy);
  * 
- * // Force evolution cycle
- * const evolutions = await MasterOrchestrator.forceEvolution();
- * console.log('Evolutions:', evolutions);
+ * // Get system overview
+ * const overview = sixCaneSystem.getSystemOverview();
+ * console.log('Active Canes:', overview.swarmState.activeCanes);
+ * console.log('System Health:', overview.systemHealth.score);
  * 
  * // Stop system
- * MasterOrchestrator.stop();
+ * sixCaneSystem.stop();
+ * await blockchainAPI.destroy();
  * ```
  */
 
@@ -70,9 +134,15 @@ export { LuxSwarm, type Opportunity, type AgentState, type ChainId, type LuxSign
  * 14. **Cataclysm Detection** - Systemic threat awareness and response
  * 15. **Profitability Logic** - Dynamic risk/reward balancing
  * 16. **Master Orchestrator** - Unified system coordination
+ * 17. **Blockchain API (Alchemy + Etherscan)** - Dual-layer blockchain access with advanced rate limiting
+ * 18. **Eden Deployment** - Hyper-local latency optimization with strategic node placement
+ * 19. **Parallel Intelligence Lanes** - 5 parallel signal lanes (Order-Flow, Liquidity, Volatility, Bot-Footprint, Latency-Race)
+ * 20. **Gravity Crawler** - Market activity detection and liquidity center tracking
+ * 21. **Cataclysm Reaper** - Systemic instability monitoring (flash crashes, liquidation cascades, oracle manipulation)
+ * 22. **Six Cane System** - Complete orchestrated swarm intelligence with Grand Orchestrator
  */
 
-export const SYSTEM_VERSION = '1.0.0';
+export const SYSTEM_VERSION = '2.0.0';
 export const SYSTEM_NAME = 'Advanced Crawler Evolution System';
 export const CAPABILITIES = [
   'Multi-network Eden storage',
@@ -90,5 +160,20 @@ export const CAPABILITIES = [
   'Disco ball mirroring',
   'Embedded network knowledge',
   'Cataclysm awareness',
-  'Master orchestration'
+  'Master orchestration',
+  // New capabilities
+  'Alchemy blockchain access',
+  'Etherscan data layer',
+  'Advanced rate limiting',
+  'Eden hyper-local deployment',
+  'Parallel intelligence lanes',
+  'Order-flow prediction',
+  'Liquidity vision',
+  'Volatility pulse',
+  'Bot behavioral analysis',
+  'Latency race detection',
+  'Gravity crawler',
+  'Cataclysm reaper',
+  'Six cane orchestration',
+  'Grand orchestrator decisions'
 ];
