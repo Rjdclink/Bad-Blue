@@ -5,6 +5,9 @@
  * with automatic failover and circuit breaker pattern.
  * 
  * Nitter is a privacy-focused Twitter frontend that doesn't require authentication.
+ * 
+ * Note: Nitter instances can be unreliable. The service uses multiple fallback
+ * instances and circuit breaker patterns to handle failures gracefully.
  */
 
 import { logger } from '../../logger';
@@ -47,20 +50,20 @@ export interface TwitterProfile {
  * Social Media Scraper Service
  */
 export class SocialMediaScraperService {
-  // List of working Nitter instances (as of implementation)
+  // List of working Nitter instances (Updated December 2025)
   // These are public instances - check https://github.com/zedeus/nitter/wiki/Instances
+  // Note: Many Nitter instances are frequently down. This list prioritizes stability.
   private nitterInstances: NitterInstance[] = [
-    { url: 'https://nitter.net', available: true, lastCheck: 0, failureCount: 0, circuitBreakerOpen: false },
     { url: 'https://nitter.poast.org', available: true, lastCheck: 0, failureCount: 0, circuitBreakerOpen: false },
     { url: 'https://nitter.cz', available: true, lastCheck: 0, failureCount: 0, circuitBreakerOpen: false },
-    { url: 'https://nitter.privacydev.net', available: true, lastCheck: 0, failureCount: 0, circuitBreakerOpen: false },
     { url: 'https://nitter.1d4.us', available: true, lastCheck: 0, failureCount: 0, circuitBreakerOpen: false },
+    { url: 'https://nitter.unixfox.eu', available: true, lastCheck: 0, failureCount: 0, circuitBreakerOpen: false },
   ];
 
-  // Circuit breaker configuration
-  private readonly MAX_FAILURES = 5;
-  private readonly CIRCUIT_BREAKER_TIMEOUT = 300000; // 5 minutes
-  private readonly REQUEST_TIMEOUT = 10000; // 10 seconds
+  // Circuit breaker configuration - reduced retries to minimize failures
+  private readonly MAX_FAILURES = 2; // Reduced from 5 to fail faster
+  private readonly CIRCUIT_BREAKER_TIMEOUT = 600000; // 10 minutes (increased from 5)
+  private readonly REQUEST_TIMEOUT = 8000; // 8 seconds (reduced from 10)
 
   /**
    * Get Twitter profile via Nitter with automatic failover

@@ -4,7 +4,13 @@
  * Gemini (Google) AI Service - MIGRATED to @google/genai SDK (Nov 30, 2025)
  * - Shared low-level client for entire application
  * - Supports text + JSON structured output
- * - Defaults to Gemini-2.5-flash (LATEST + FAST)
+ * - Defaults to Gemini-3-pro-preview (NEWEST FLAGSHIP)
+ * 
+ * Available Gemini Models (December 2025):
+ * - gemini-3-pro-preview (newest flagship, 1M token context)
+ * - gemini-2.5-flash (fast and intelligent)
+ * - gemini-2.5-flash-lite (high throughput, 1000 requests/day)
+ * - gemini-1.5-pro (stable fallback)
  * 
  * NOTE: @google/generative-ai is DEPRECATED (EOL Nov 30, 2025)
  * This file now uses the new unified @google/genai SDK
@@ -99,9 +105,12 @@ export async function callGemini(
     throw new GeminiRateLimitError('Gemini is rate limited - use fallback provider');
   }
 
-  // Primary model: gemini-3-pro (latest and most capable)
-  // Fallback model: gemini-3-flash for high-volume tasks
-  const modelName = options.model || "gemini-3-pro";
+  // Primary model: gemini-3-pro-preview (newest flagship, 1M token context)
+  // Fallback models in order of preference:
+  // - gemini-2.5-flash (fast and intelligent)
+  // - gemini-2.5-flash-lite (high throughput)
+  // - gemini-1.5-pro (stable fallback)
+  const modelName = options.model || "gemini-3-pro-preview";
   console.log(`[Gemini] Using model: ${modelName}`);
   const client = getGeminiClient();
 
@@ -243,7 +252,7 @@ Respond with a JSON object containing:
       : `User: ${userMessage}`;
 
     const response = await client.models.generateContent({
-      model: "gemini-3-pro",
+      model: "gemini-3-pro-preview",
       contents: [
         { role: "user", parts: [{ text: `${systemPrompt}\n\n${fullPrompt}` }] }
       ],

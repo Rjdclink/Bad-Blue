@@ -111,8 +111,9 @@ export class SocialIntelligenceService {
 
     // Use display name as potential username
     if (knownAccount.profileData?.displayName) {
+      const displayName = knownAccount.profileData.displayName || '';
       const sanitized = this.validator.sanitize(
-        knownAccount.profileData.displayName.toLowerCase().replace(/\s+/g, '')
+        displayName.toLowerCase().replace(/\s+/g, '')
       );
       if (sanitized) relatedUsernames.push(sanitized);
     }

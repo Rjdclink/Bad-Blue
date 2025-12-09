@@ -120,7 +120,7 @@ export class SherlockEngine {
       return {
         platform,
         username,
-        url: site.url.replace('{}', username),
+        url: (site.url || '').replace('{}', username || ''),
         exists: false,
         confidence: 'low',
         retrievedAt: new Date(),
@@ -167,8 +167,8 @@ export class SherlockEngine {
     options: Required<SherlockSearchOptions>
   ): Promise<SherlockResult> {
     const { platform, site, username } = task;
-    const url = site.url.replace('{}', username);
-    const probeUrl = site.urlProbe ? site.urlProbe.replace('{}', username) : url;
+    const url = (site.url || '').replace('{}', username || '');
+    const probeUrl = site.urlProbe ? (site.urlProbe || '').replace('{}', username || '') : url;
 
     const result: SherlockResult = {
       platform,
