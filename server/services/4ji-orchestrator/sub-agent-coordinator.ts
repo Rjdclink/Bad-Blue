@@ -373,7 +373,7 @@ export class SubAgentCoordinator {
     }
 
     const task: SubAgentTask = {
-      id: `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
       agentId,
       type: taskType,
       priority,

@@ -403,8 +403,9 @@ export class AutonomousEvolutionEngine {
     const cryptoStats = DomainFirewall.getDomainStats(Domain.CRYPTO_CRAWLER);
     
     const totalErrors = legalStats.errorCount + cryptoStats.errorCount;
-    const resolvedErrors = legalStats.errorCount - legalStats.unresolvedErrors + 
-                          cryptoStats.errorCount - cryptoStats.unresolvedErrors;
+    const legalResolved = legalStats.errorCount - legalStats.unresolvedErrors;
+    const cryptoResolved = cryptoStats.errorCount - cryptoStats.unresolvedErrors;
+    const resolvedErrors = legalResolved + cryptoResolved;
     
     if (totalErrors > 0) {
       this.metrics.errorResolutionRate = (resolvedErrors / totalErrors) * 100;
@@ -457,7 +458,7 @@ export class AutonomousEvolutionEngine {
    */
   static async queueOptimization(params: Omit<OptimizationTask, 'id' | 'status' | 'createdAt'>): Promise<string> {
     const task: OptimizationTask = {
-      id: `opt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
       status: 'pending',
       createdAt: new Date(),
       ...params,
@@ -475,7 +476,7 @@ export class AutonomousEvolutionEngine {
    */
   static async queueEnhancement(params: Omit<EnhancementTask, 'id' | 'status' | 'createdAt'>): Promise<string> {
     const task: EnhancementTask = {
-      id: `enh-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `enh-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
       status: 'queued',
       createdAt: new Date(),
       ...params,
