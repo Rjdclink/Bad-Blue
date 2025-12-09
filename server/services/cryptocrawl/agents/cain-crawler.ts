@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto';
 import { eden } from '../eden/service';
 import { EDEN_CONFIG, CONTROL_SIGNALS } from '../eden/config';
 import { LuxSwarm, type Opportunity, type AgentState } from '../core/lux-swarm';
-import type { LessonPacket, CainState, CataclysimEvent, OpportunityEvent } from '../eden/types';
+import type { LessonPacket, CainState, CataclysmEvent, OpportunityEvent } from '../eden/types';
 
 export type CainType = 'cataclysm_detection' | 'probability_monitoring';
 
@@ -133,7 +133,7 @@ export class CainCrawler {
     // Check for network congestion
     const avgLatency = this.calculateAverageLatency();
     if (avgLatency > EDEN_CONFIG.MAX_LATENCY_MS * 2) {
-      const event: CataclysimEvent = {
+      const event: CataclysmEvent = {
         id: randomUUID(),
         type: 'network_congestion',
         severity: 'high',
@@ -148,7 +148,7 @@ export class CainCrawler {
 
     // Check for system overload
     if (lux.agentStates.size > EDEN_CONFIG.MAX_CONCURRENT_EXECUTIONS * 1.5) {
-      const event: CataclysimEvent = {
+      const event: CataclysmEvent = {
         id: randomUUID(),
         type: 'system_overload',
         severity: 'medium',
@@ -305,25 +305,30 @@ export class CainCrawler {
     console.log(`[CAIN-${this.id}] 💥 Triggering starburst for ${event.type} on ${event.chain}`);
 
     // Create lesson for starburst trigger
+    // Note: This is a trigger event, not an actual execution
     const lesson: LessonPacket = {
       id: randomUUID(),
       cainId: this.id,
       opportunitySignature: `${event.type}-${event.chain}-${event.id}`,
       outcome: 'success',
-      profitActual: 0,
+      profitActual: 0, // Starburst trigger, not execution
       profitEstimated: event.profitEstimate,
-      latency: 0,
-      gasUsed: 0,
+      latency: 0, // Instant trigger
+      gasUsed: 0, // No gas for trigger
       chain: event.chain,
       timestamp: Date.now(),
-      metadata: { starburstTriggered: true, eventId: event.id },
+      metadata: { 
+        starburstTriggered: true, 
+        eventId: event.id,
+        isSimulation: true, // Mark as simulation/trigger event
+      },
     };
 
     this.lessonsCollected.push(lesson);
   }
 
   // Trigger recovery actions for cataclysm
-  private async triggerRecovery(event: CataclysimEvent): Promise<void> {
+  private async triggerRecovery(event: CataclysmEvent): Promise<void> {
     console.log(`[CAIN-${this.id}] 🛡️ Triggering recovery for ${event.type}`);
 
     for (const action of event.recoveryActions) {

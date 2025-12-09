@@ -140,7 +140,7 @@ export class SwarmOrchestrator {
         // Brief pause between cycles
         await this.sleep(1000);
       } catch (error) {
-        console.error('[SWARM] ❌ Micro-crawler loop error::', error);
+        console.error('[SWARM] ❌ Micro-crawler loop error:', error);
         await this.sleep(5000);
       }
     }

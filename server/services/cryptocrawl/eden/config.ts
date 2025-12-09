@@ -66,6 +66,11 @@ export const EDEN_CONFIG = {
   // Emergency Decommission
   EMERGENCY_KEY_ESCROW: process.env.EMERGENCY_KEY_ESCROW || '',
   DECOMMISSION_ENABLED: process.env.ENABLE_EMERGENCY_DECOMMISSION === 'true',
+  
+  // Simulation Constants
+  PROFIT_VARIANCE_MIN: 0.8, // 80% of estimated profit (lower bound)
+  PROFIT_VARIANCE_RANGE: 0.4, // Up to 40% above minimum (80-120% range)
+  EXECUTION_COST_USD: 0.001, // $0.001 per execution
 } as const;
 
 // Control Signals (used in code)

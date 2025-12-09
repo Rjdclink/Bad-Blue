@@ -253,10 +253,13 @@ export class EnhancedMicroCrawler {
   private async simulateExecution(opp: Opportunity): Promise<{ profit: number }> {
     // In production, this would execute real trades
     // For now, we simulate with estimated profit
-    const actualProfit = opp.profitEstimate * (0.8 + Math.random() * 0.4); // 80-120% of estimate
+    const actualProfit = opp.profitEstimate * (
+      EDEN_CONFIG.PROFIT_VARIANCE_MIN + 
+      Math.random() * EDEN_CONFIG.PROFIT_VARIANCE_RANGE
+    );
     
     // Add to running cost
-    this.runningCost += 0.001; // $0.001 per execution
+    this.runningCost += EDEN_CONFIG.EXECUTION_COST_USD;
 
     return { profit: actualProfit };
   }

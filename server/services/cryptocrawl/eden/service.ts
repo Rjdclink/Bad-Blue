@@ -4,16 +4,7 @@
 import { randomUUID } from 'crypto';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { EDEN_CONFIG, CONTROL_SIGNALS, ETHICAL_GUARDS } from './config';
-import type {
-  LessonPacket,
-  StrategyTemplate,
-  CainState,
-  MicroCrawlerState,
-  EdenSnapshot,
-  CataclysimEvent,
-  OpportunityEvent,
-  ChainId,
-} from './types';
+import type { LessonPacket, StrategyTemplate, CainState, MicroCrawlerState, EdenSnapshot, CataclysmEvent, OpportunityEvent, ChainId } from './types';
 
 class EdenService {
   private supabase: SupabaseClient | null = null;
@@ -154,25 +145,34 @@ class EdenService {
 
     // Store in Supabase
     if (this.supabase) {
-      const { error } = await this.supabase
-        .from('eden_lessons')
-        .insert({
-          id: lesson.id,
-          cain_id: lesson.cainId,
-          opportunity_signature: lesson.opportunitySignature,
-          outcome: lesson.outcome,
-          profit_actual: lesson.profitActual,
-          profit_estimated: lesson.profitEstimated,
-          latency: lesson.latency,
-          gas_used: lesson.gasUsed,
-          failure_mode: lesson.failureMode,
-          chain: lesson.chain,
-          timestamp: new Date(lesson.timestamp),
-          metadata: lesson.metadata,
-        });
+      try {
+        const { error } = await this.supabase
+          .from('eden_lessons')
+          .insert({
+            id: lesson.id,
+            cain_id: lesson.cainId,
+            opportunity_signature: lesson.opportunitySignature,
+            outcome: lesson.outcome,
+            profit_actual: lesson.profitActual,
+            profit_estimated: lesson.profitEstimated,
+            latency: lesson.latency,
+            gas_used: lesson.gasUsed,
+            failure_mode: lesson.failureMode,
+            chain: lesson.chain,
+            timestamp: new Date(lesson.timestamp),
+            metadata: lesson.metadata,
+          });
 
-      if (error) {
-        console.error('[EDEN] ❌ Failed to record lesson:', error);
+        if (error) {
+          // Check for specific constraint violations
+          if (error.code === '23505') {
+            console.warn(`[EDEN] ⚠️ Duplicate lesson ID ${lesson.id}, skipping`);
+          } else {
+            console.error(`[EDEN] ❌ Failed to record lesson (${error.code}):`, error.message);
+          }
+        }
+      } catch (error) {
+        console.error('[EDEN] ❌ Database error recording lesson:', error);
       }
     }
 
@@ -323,7 +323,7 @@ class EdenService {
   }
 
   // Record cataclysm event
-  async recordCataclysm(event: CataclysimEvent): Promise<void> {
+  async recordCataclysm(event: CataclysmEvent): Promise<void> {
     console.log(`[EDEN] 🚨 Cataclysm detected: ${event.type} (${event.severity})`);
 
     if (this.supabase) {

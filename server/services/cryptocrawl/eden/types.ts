@@ -94,7 +94,7 @@ export interface ProfitabilityObjective {
   score: number;
 }
 
-export interface CataclysimEvent {
+export interface CataclysmEvent {
   id: string;
   type: 'market_crash' | 'network_congestion' | 'exploit_detected' | 'oracle_failure' | 'system_overload';
   severity: 'critical' | 'high' | 'medium' | 'low';
