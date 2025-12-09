@@ -266,7 +266,8 @@ export class MasterOrchestrator {
 
     // Network failure detection
     if (status.systemHealth < 30) {
-      this.triggerCataclysm('system-overload', 'high', ['polygon', 'bsc']);
+      const chains: ChainId[] = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
+      this.triggerCataclysm('system-overload', 'high', chains);
     }
 
     // Security breach detection

@@ -132,7 +132,7 @@ export class EdenStorage {
       throw new Error(`Eden not initialized on ${chain}`);
     }
 
-    const id = `${entry.type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const id = `${entry.type}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
     const knowledgeEntry: KnowledgeEntry = {
       ...entry,
       id,

@@ -297,7 +297,7 @@ export class NeurofusionEngine {
     this.backpropagate(expectedOutput, predictedOutput);
 
     // Store learning pattern
-    const patternId = `pattern-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const patternId = `pattern-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
     const pattern: LearningPattern = {
       id: patternId,
       pattern: input,

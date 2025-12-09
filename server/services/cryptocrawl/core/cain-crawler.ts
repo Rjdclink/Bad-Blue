@@ -154,7 +154,7 @@ export class CainCrawler {
    */
   private async observeCrawler(crawlerId: string, state: AgentState): Promise<void> {
     const observation: CainObservation = {
-      id: `obs-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `obs-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       crawlerId,
       timestamp: Date.now(),
       chain: 'polygon', // Default, can be enhanced
@@ -177,7 +177,7 @@ export class CainCrawler {
    */
   private async observeOpportunity(opportunity: Opportunity): Promise<void> {
     const observation: CainObservation = {
-      id: `obs-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `obs-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       crawlerId: 'system',
       timestamp: Date.now(),
       chain: opportunity.chain,
@@ -204,7 +204,7 @@ export class CainCrawler {
 
     // Collect chain patterns
     const observation: CainObservation = {
-      id: `obs-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `obs-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       crawlerId: 'cain',
       timestamp: Date.now(),
       chain,

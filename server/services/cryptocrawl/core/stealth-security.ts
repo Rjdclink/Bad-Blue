@@ -121,11 +121,9 @@ export class InvisibleMode {
    * Generate unique fingerprint
    */
   private static generateFingerprint(): string {
-    // Create a unique, rotating fingerprint
-    const random = crypto.randomBytes(16);
-    const timestamp = Date.now();
-    const combined = Buffer.concat([random, Buffer.from(timestamp.toString())]);
-    return crypto.createHash('sha256').update(combined).digest('hex');
+    // Create a unique, rotating fingerprint using only random bytes for maximum entropy
+    const random = crypto.randomBytes(32);
+    return crypto.createHash('sha256').update(random).digest('hex');
   }
 
   /**

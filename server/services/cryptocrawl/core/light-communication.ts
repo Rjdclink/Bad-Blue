@@ -174,7 +174,7 @@ export class LightCommunicationSystem {
     }
 
     const signal: LightSignal = {
-      id: `signal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `signal-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       source,
       type,
       priority,

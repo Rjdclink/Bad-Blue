@@ -3,9 +3,9 @@
 
 import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
-import { LuxSwarm, type Opportunity, type AgentState, type ChainId } from './lux-swarm';
-import { EdenStorage } from './eden-storage';
-import { NeurofusionEngine } from './neurofusion';
+import { LuxSwarm, type Opportunity, type AgentState, type ChainId } from '../core/lux-swarm';
+import { EdenStorage } from '../core/eden-storage';
+import { NeurofusionEngine } from '../core/neurofusion';
 
 export interface TwinState {
   twinAId: string;
@@ -191,7 +191,7 @@ export class ConjoinedTwinCrawler {
    */
   private async observe(opportunity: Opportunity, observedBy: 'twinA' | 'twinB'): Promise<void> {
     const observation = {
-      id: `obs-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `obs-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       observedBy,
       opportunity,
       timestamp: Date.now(),
@@ -330,7 +330,7 @@ export class ConjoinedTwinCrawler {
    */
   private createTask(taskData: Omit<Task, 'id' | 'status' | 'timestamp'>): void {
     const task: Task = {
-      id: `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `task-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       ...taskData,
       status: 'pending',
       timestamp: Date.now()
