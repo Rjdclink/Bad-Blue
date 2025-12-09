@@ -62,10 +62,9 @@ export function generateCacheControlHeader(): string {
     'max-age=0',
     'no-cache',
     'max-age=3600',
-    undefined,
   ];
   
-  return cacheControls[Math.floor(Math.random() * cacheControls.length)];
+  return cacheControls[Math.floor(Math.random() * cacheControls.length)] ?? 'no-cache';
 }
 
 /**
@@ -237,7 +236,7 @@ export function generateAJAXHeaders(
 /**
  * Randomize header order (some fingerprinting detects consistent order)
  */
-export function randomizeHeaderOrder(headers: RequestHeaders): Record<string, string> {
+export function randomizeHeaderOrder(headers: RequestHeaders): Record<string, string | undefined> {
   const entries = Object.entries(headers);
   
   // Fisher-Yates shuffle

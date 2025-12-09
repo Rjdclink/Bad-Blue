@@ -115,6 +115,7 @@ export interface SearchOptions {
   freshness?: 'day' | 'week' | 'month' | 'all';
   safeSearch?: 'off' | 'moderate' | 'strict';
   market?: string;
+  timeout?: number;
 }
 
 export interface LegalSearchResult {
@@ -721,11 +722,11 @@ export class EnhancedWebSearchService {
     }
 
     try {
-      // Use shared client for efficiency
+      // Use shared client for efficiency - new @google/genai API
       const genai = getGeminiClient();
-      const model = genai.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-      const result = await model.generateContent({
+      const result = await genai.models.generateContent({
+        model: "gemini-2.0-flash-exp",
         contents: [{
           role: 'user',
           parts: [{
@@ -734,8 +735,7 @@ export class EnhancedWebSearchService {
         }]
       });
 
-      const response = await result.response;
-      const text = response.text();
+      const text = result.text || '';
 
       if (text) {
         return [{

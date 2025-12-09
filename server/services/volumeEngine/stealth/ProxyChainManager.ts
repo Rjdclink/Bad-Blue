@@ -94,11 +94,16 @@ export class ProxyChainManager {
 
     const sessionId = this.generateSessionId();
     let session = this.activeSessions.get(sessionId);
+    const customProxies = this.config.customProxies;
+
+    if (!customProxies || customProxies.length === 0) {
+      return undefined;
+    }
 
     if (!session || session.requestCount >= (this.config.sessionPersistence ?? 100)) {
       // Create new session
-      const proxyUrl = this.config.customProxies[
-        Math.floor(Math.random() * this.config.customProxies.length)
+      const proxyUrl = customProxies[
+        Math.floor(Math.random() * customProxies.length)
       ];
       
       session = {
@@ -126,6 +131,10 @@ export class ProxyChainManager {
   async getStealthProxyUrl(): Promise<string> {
     if (!this.anonymousProxyServer) {
       await this.initialize();
+    }
+
+    if (!this.anonymousProxyServer) {
+      throw new Error('Failed to initialize proxy server');
     }
 
     return `http://127.0.0.1:${this.anonymousProxyServer.port}`;

@@ -9,7 +9,7 @@
  * - Evidence strength assessment
  */
 
-import { generateUserText, TaskPriority, TaskComplexity, UsageContext } from './aiProvider';
+import { generateUserText, TaskPriority } from './aiProvider';
 import { getExpertSystemConfig } from './legalCounselExpertSystem';
 import type { LawType } from '../shared/legalCounselTypes';
 import type { ConsultationFacts, Event, TimelineEntry, Party } from './legalConsultationEngine';
@@ -206,20 +206,15 @@ Return ONLY valid JSON:
 }`;
 
     const response = await generateUserText(
-      {
-        taskType: 'evidence-extraction',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `Extract evidence from ${file.name}`
-      },
+      'evidence-extraction',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.1,
         maxTokens: 2500,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     const extracted = JSON.parse(response.content);
@@ -307,20 +302,15 @@ Return ONLY valid JSON:
 }`;
 
     const response = await generateUserText(
-      {
-        taskType: 'evidence-classification',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `Classify evidence ${file.name}`
-      },
+      'evidence-classification',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1000,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     return JSON.parse(response.content);
@@ -383,20 +373,15 @@ Return ONLY valid JSON:
 }`;
 
     const response = await generateUserText(
-      {
-        taskType: 'legal-significance',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `Assess significance of ${file.name}`
-      },
+      'legal-significance',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1000,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     return JSON.parse(response.content);
@@ -460,20 +445,15 @@ Return ONLY valid JSON:
 }`;
 
     const response = await generateUserText(
-      {
-        taskType: 'evidence-strength',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `Assess strength of ${file.name}`
-      },
+      'evidence-strength',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1500,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     return JSON.parse(response.content);
@@ -633,20 +613,15 @@ Return ONLY valid JSON:
 }`;
 
     const response = await generateUserText(
-      {
-        taskType: 'conflict-detection',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.HIGH,
-        description: 'Detect conflicts across evidence'
-      },
+      'conflict-detection',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 2000,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     return JSON.parse(response.content);
@@ -762,19 +737,14 @@ LEGAL SIGNIFICANCE: ${legalSignificance.relevantTo.join(', ')}
 Write a 2-3 sentence professional summary of this evidence's importance and role in the case.`;
 
     const response = await generateUserText(
-      {
-        taskType: 'evidence-summary',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.MEDIUM_USER,
-        complexity: TaskComplexity.LOW,
-        description: 'Generate evidence summary'
-      },
+      'evidence-summary',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.3,
         maxTokens: 300
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     return response.content;
