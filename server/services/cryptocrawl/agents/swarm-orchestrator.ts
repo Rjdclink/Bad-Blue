@@ -35,11 +35,11 @@ export class SwarmOrchestrator {
     console.log(`[SWARM] 📊 ${this.cainCrawlers.size} Cain crawlers, ${this.microCrawlers.size} micro crawlers`);
   }
 
-  // Initialize 9 Cain crawlers (7 original, 1 cataclysm, 1 reaper)
+  // Initialize 8 Cain crawlers (6 original, 1 cataclysm, 1 reaper)
   private async initializeCainCrawlers(): Promise<void> {
     console.log('[SWARM] 🔧 Initializing Cain Crawlers...');
 
-    // Create Original Cains (7)
+    // Create Original Cains (6)
     for (let i = 0; i < EDEN_CONFIG.ORIGINAL_CAINS; i++) {
       const cainId = `cain-original-${i + 1}`;
       const cain = new CainCrawler(cainId, 'original');

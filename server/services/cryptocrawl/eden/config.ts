@@ -3,8 +3,8 @@
 
 export const EDEN_CONFIG = {
   // Cain Configuration
-  TOTAL_CAIN_CRAWLERS: 9,
-  ORIGINAL_CAINS: 7,
+  TOTAL_CAIN_CRAWLERS: 8,
+  ORIGINAL_CAINS: 6,
   CATACLYSM_DETECTION_CAINS: 1,
   GENESIS_REAPER_CAINS: 1, // The smartest crawler - monitors and terminates problematic crawlers
   MIN_CAINS_FOR_RESET: 2,
@@ -73,7 +73,7 @@ export const EDEN_CONFIG = {
   PROFIT_VARIANCE_RANGE: 0.4, // Up to 40% above minimum (80-120% range)
   EXECUTION_COST_USD: 0.001, // $0.001 per execution
   
-  // Genesis Reaper Configuration
+  // Genesis Reaper Configuration - Advanced Statistical Reasoning
   REAPER_MONITORING_INTERVAL_MS: 5000, // Monitor every 5 seconds
   REAPER_MIN_SAMPLE_SIZE: 10, // Min operations before judgement
   REAPER_INEFFICIENCY_THRESHOLD: 0.3, // < 30% success rate is inefficient
@@ -81,6 +81,15 @@ export const EDEN_CONFIG = {
   REAPER_ERROR_THRESHOLD: 5, // 5 consecutive errors triggers review
   REAPER_CORRUPTION_CHECK_INTERVAL_MS: 60000, // Check for corruption every minute
   REAPER_DECISION_CONFIDENCE_MIN: 0.85, // 85% confidence required for termination
+  
+  // Advanced Statistical Formulas for Reaper Reasoning
+  REAPER_BAYESIAN_PRIOR: 0.05, // 5% prior probability of corruption
+  REAPER_CONFIDENCE_INTERVAL: 0.95, // 95% confidence interval for statistical tests
+  REAPER_VARIANCE_THRESHOLD: 2.5, // Standard deviations from mean (z-score)
+  REAPER_TREND_WINDOW: 20, // Operations to analyze for trend detection
+  REAPER_REGRESSION_R_SQUARED_MIN: 0.6, // Minimum R² for trend significance
+  REAPER_OUTLIER_IQR_MULTIPLIER: 1.5, // IQR multiplier for outlier detection
+  REAPER_PERFORMANCE_DECAY_FACTOR: 0.95, // Exponential decay for weighted performance
   
   // Database Error Codes
   POSTGRES_UNIQUE_VIOLATION: '23505', // Duplicate key error

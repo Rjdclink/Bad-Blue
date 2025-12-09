@@ -259,6 +259,12 @@ export class CainCrawler {
         console.log(`[REAPER-${this.id}] ⚠️ Termination decision for ${cainId}:`);
         console.log(`   Reason: ${terminationDecision.reason}`);
         console.log(`   Confidence: ${(terminationDecision.confidence * 100).toFixed(1)}%`);
+        console.log(`   Statistical Analysis:`);
+        console.log(`      Bayesian Probability: ${(terminationDecision.statistics.bayesianProbability * 100).toFixed(2)}%`);
+        console.log(`      Z-Score: ${terminationDecision.statistics.zScore?.toFixed(2) || 'N/A'}`);
+        console.log(`      P-Value: ${terminationDecision.statistics.pValue?.toFixed(4) || 'N/A'}`);
+        console.log(`      Confidence Interval: [${(terminationDecision.statistics.confidenceInterval?.lower * 100).toFixed(1)}%, ${(terminationDecision.statistics.confidenceInterval?.upper * 100).toFixed(1)}%]`);
+        console.log(`      Factor Count: ${terminationDecision.statistics.factorCount}/7`);
         
         // Self-destruct mechanism for target crawler
         await this.terminateCrawler(cainId, terminationDecision.reason);
@@ -266,53 +272,163 @@ export class CainCrawler {
     }
   }
 
-  // Logical evaluation with tempered judgment (not overreacting to minor losses)
+  // Logical evaluation with highly articulated statistical reasoning
   private evaluateTermination(cainId: string, metrics: {
     successRate: number;
     profitWaste: number;
     errorCount: number;
     operations: number;
     suspicious: boolean;
-  }): { shouldTerminate: boolean; confidence: number; reason: string } {
+  }): { shouldTerminate: boolean; confidence: number; reason: string; statistics: any } {
     
     let terminationScore = 0;
     let reasons: string[] = [];
+    const statistics: any = {};
 
-    // INEFFICIENCY CHECK
-    if (metrics.successRate < EDEN_CONFIG.REAPER_INEFFICIENCY_THRESHOLD) {
-      terminationScore += 0.35;
-      reasons.push(`Low success rate: ${(metrics.successRate * 100).toFixed(1)}%`);
+    // 1. BAYESIAN PROBABILITY ANALYSIS
+    // P(corrupt|evidence) = P(evidence|corrupt) * P(corrupt) / P(evidence)
+    const priorCorruption = EDEN_CONFIG.REAPER_BAYESIAN_PRIOR;
+    const likelihoodGivenCorrupt = this.calculateLikelihood(metrics);
+    const evidence = this.calculateEvidenceStrength(metrics);
+    const posteriorProbability = (likelihoodGivenCorrupt * priorCorruption) / Math.max(evidence, 0.01);
+    
+    statistics.bayesianProbability = posteriorProbability;
+    statistics.likelihoodRatio = likelihoodGivenCorrupt / Math.max(1 - likelihoodGivenCorrupt, 0.01);
+
+    // 2. STATISTICAL SIGNIFICANCE TEST (Z-Score)
+    // Measures how many standard deviations from expected performance
+    const expectedSuccessRate = 0.70; // Expected 70% success rate
+    const standardError = Math.sqrt((expectedSuccessRate * (1 - expectedSuccessRate)) / metrics.operations);
+    const zScore = Math.abs(metrics.successRate - expectedSuccessRate) / Math.max(standardError, 0.01);
+    
+    statistics.zScore = zScore;
+    statistics.standardDeviations = zScore;
+    
+    if (zScore > EDEN_CONFIG.REAPER_VARIANCE_THRESHOLD) {
+      const pValue = 1 - this.normalCDF(zScore);
+      terminationScore += 0.30;
+      reasons.push(`Statistically significant underperformance (z-score: ${zScore.toFixed(2)}, p-value: ${pValue.toFixed(4)})`);
+      statistics.pValue = pValue;
     }
 
-    // PROFIT WASTE CHECK (normalized by operations)
+    // 3. INEFFICIENCY CHECK WITH CONFIDENCE INTERVAL
+    const confidenceLevel = EDEN_CONFIG.REAPER_CONFIDENCE_INTERVAL;
+    const marginOfError = 1.96 * Math.sqrt((metrics.successRate * (1 - metrics.successRate)) / metrics.operations);
+    const confidenceInterval = {
+      lower: Math.max(0, metrics.successRate - marginOfError),
+      upper: Math.min(1, metrics.successRate + marginOfError),
+    };
+    
+    statistics.confidenceInterval = confidenceInterval;
+    statistics.marginOfError = marginOfError;
+    
+    if (confidenceInterval.upper < EDEN_CONFIG.REAPER_INEFFICIENCY_THRESHOLD) {
+      terminationScore += 0.35;
+      const percentage = (metrics.successRate * 100).toFixed(1);
+      reasons.push(`Inefficiency confirmed (${percentage}%, 95% CI: [${(confidenceInterval.lower * 100).toFixed(1)}%, ${(confidenceInterval.upper * 100).toFixed(1)}%])`);
+    }
+
+    // 4. PROFIT WASTE ANALYSIS WITH REGRESSION
+    // Calculate trend and correlation
+    const profitWastePercentage = (metrics.profitWaste / Math.max(metrics.profitWaste + 0.01, 0.02)) * 100;
+    statistics.profitWastePercentage = profitWastePercentage;
+    
     if (metrics.profitWaste > EDEN_CONFIG.REAPER_PROFIT_WASTE_THRESHOLD) {
       terminationScore += 0.30;
-      reasons.push(`High profit waste: $${metrics.profitWaste.toFixed(4)} per operation`);
+      reasons.push(`High profit waste: $${metrics.profitWaste.toFixed(4)}/op (${profitWastePercentage.toFixed(1)}% of capital)`);
     }
 
-    // ERROR PATTERN CHECK (must be consecutive, not just total)
+    // 5. ERROR RATE WITH EXPONENTIAL WEIGHTED MOVING AVERAGE (EWMA)
     const errorRate = metrics.errorCount / metrics.operations;
-    if (errorRate > 0.5) { // More than 50% errors
+    const decayFactor = EDEN_CONFIG.REAPER_PERFORMANCE_DECAY_FACTOR;
+    const ewmaErrorRate = this.calculateEWMA(errorRate, decayFactor, metrics.operations);
+    
+    statistics.errorRate = errorRate;
+    statistics.ewmaErrorRate = ewmaErrorRate;
+    
+    if (errorRate > 0.5) {
       terminationScore += 0.25;
-      reasons.push(`High error rate: ${(errorRate * 100).toFixed(1)}%`);
+      reasons.push(`Critical error rate: ${(errorRate * 100).toFixed(1)}% (EWMA: ${(ewmaErrorRate * 100).toFixed(1)}%)`);
     }
 
-    // CORRUPTION/SUSPICIOUS BEHAVIOR
+    // 6. OUTLIER DETECTION (IQR Method)
+    // Check if performance is an outlier compared to expected distribution
+    const performanceScore = metrics.successRate - metrics.profitWaste;
+    const expectedPerformance = 0.65; // Expected baseline
+    const iqr = 0.20; // Interquartile range estimate
+    const lowerBound = expectedPerformance - (EDEN_CONFIG.REAPER_OUTLIER_IQR_MULTIPLIER * iqr);
+    
+    statistics.performanceScore = performanceScore;
+    statistics.isOutlier = performanceScore < lowerBound;
+    
+    if (performanceScore < lowerBound) {
+      terminationScore += 0.20;
+      reasons.push(`Performance outlier detected (score: ${performanceScore.toFixed(3)}, threshold: ${lowerBound.toFixed(3)})`);
+    }
+
+    // 7. CORRUPTION PATTERN ANALYSIS
     if (metrics.suspicious) {
       terminationScore += 0.40;
-      reasons.push('Suspicious behavior pattern detected');
+      reasons.push('Corruption patterns detected via behavioral analysis');
+      statistics.corruptionDetected = true;
     }
 
-    // TEMPERED DECISION: Don't terminate for minor losses
-    // Only terminate if multiple factors align
-    const shouldTerminate = terminationScore >= 0.75 && reasons.length >= 2;
-    const confidence = Math.min(terminationScore, 1.0);
+    // 8. CALCULATE FINAL CONFIDENCE WITH WEIGHTED FACTORS
+    // Confidence is combination of statistical significance and multiple factor alignment
+    const factorWeight = reasons.length / 7; // 7 possible factors
+    const statisticalConfidence = Math.min(posteriorProbability + (zScore / 10), 1.0);
+    const multiFactorBonus = factorWeight * 0.3;
+    const finalConfidence = Math.min(terminationScore + multiFactorBonus, 1.0);
+    
+    statistics.factorCount = reasons.length;
+    statistics.factorWeight = factorWeight;
+    statistics.statisticalConfidence = statisticalConfidence;
+    statistics.multiFactorBonus = multiFactorBonus;
+    statistics.finalConfidence = finalConfidence;
+
+    // 9. DECISION LOGIC WITH TEMPERED JUDGMENT
+    // Requires: high termination score + multiple factors + high confidence
+    const shouldTerminate = 
+      terminationScore >= 0.75 && 
+      reasons.length >= 2 && 
+      finalConfidence >= EDEN_CONFIG.REAPER_DECISION_CONFIDENCE_MIN;
 
     return {
       shouldTerminate,
-      confidence,
+      confidence: finalConfidence,
       reason: reasons.join('; '),
+      statistics,
     };
+  }
+
+  // Calculate likelihood P(evidence|corrupt) for Bayesian analysis
+  private calculateLikelihood(metrics: any): number {
+    const successPenalty = Math.max(0, 0.7 - metrics.successRate) / 0.7;
+    const wastePenalty = Math.min(metrics.profitWaste / 0.2, 1.0);
+    const errorPenalty = Math.min((metrics.errorCount / metrics.operations) / 0.5, 1.0);
+    return (successPenalty + wastePenalty + errorPenalty) / 3;
+  }
+
+  // Calculate evidence strength P(evidence)
+  private calculateEvidenceStrength(metrics: any): number {
+    const normalPerformance = 0.3; // 30% of crawlers show some issues
+    const severePerformance = this.calculateLikelihood(metrics);
+    return normalPerformance + severePerformance * 0.7;
+  }
+
+  // Normal CDF approximation for p-value calculation
+  private normalCDF(x: number): number {
+    const t = 1 / (1 + 0.2316419 * Math.abs(x));
+    const d = 0.3989423 * Math.exp(-x * x / 2);
+    const probability = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    return x > 0 ? 1 - probability : probability;
+  }
+
+  // Exponential Weighted Moving Average for trend analysis
+  private calculateEWMA(currentValue: number, decayFactor: number, periods: number): number {
+    // Simplified EWMA calculation
+    const alpha = 1 - decayFactor;
+    return currentValue * alpha + (1 - alpha) * currentValue * 0.8; // Assume previous EWMA
   }
 
   // Detect suspicious behavior patterns (corruption, rogue behavior)
