@@ -94,11 +94,7 @@ export class ProxyChainManager {
 
     const sessionId = this.generateSessionId();
     let session = this.activeSessions.get(sessionId);
-    const customProxies = this.config.customProxies;
-
-    if (!customProxies || customProxies.length === 0) {
-      return undefined;
-    }
+    const customProxies = this.config.customProxies!; // Safe: hasAvailableProxies() verified this exists
 
     if (!session || session.requestCount >= (this.config.sessionPersistence ?? 100)) {
       // Create new session

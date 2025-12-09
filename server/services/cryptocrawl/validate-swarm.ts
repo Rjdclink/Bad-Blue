@@ -12,7 +12,7 @@ async function runValidation(): Promise<void> {
   // Test 1: Import Eden components
   try {
     console.log('✓ Test 1: Importing Eden components...');
-    const { eden, EDEN_CONFIG, ETHICAL_GUARDS } = await import('./eden/index.js');
+    const { EDEN_CONFIG, ETHICAL_GUARDS } = await import('./eden/index.js');
     console.log('  ✅ Eden imports successful');
     console.log(`  📊 Config: ${EDEN_CONFIG.TOTAL_CAIN_CRAWLERS} Cain crawlers configured`);
     console.log(`  🛡️ Ethical Guards: ${ETHICAL_GUARDS.length} guards active`);
@@ -24,7 +24,8 @@ async function runValidation(): Promise<void> {
   // Test 2: Import Agent components
   try {
     console.log('\n✓ Test 2: Importing Agent components...');
-    const { CainCrawler, EnhancedMicroCrawler, swarmOrchestrator } = await import('./agents/index.js');
+    // Import to verify module loads correctly - components validated by successful import
+    await import('./agents/index.js');
     console.log('  ✅ Agent imports successful');
     console.log('  📦 Components: CainCrawler, EnhancedMicroCrawler, SwarmOrchestrator');
   } catch (error: unknown) {
@@ -36,8 +37,13 @@ async function runValidation(): Promise<void> {
   try {
     console.log('\n✓ Test 3: Importing Core components...');
     const { LuxSwarm } = await import('./core/lux-swarm.js');
-    console.log('  ✅ Core imports successful');
-    console.log('  🌟 LuxSwarm coordination system available');
+    if (LuxSwarm) {
+      console.log('  ✅ Core imports successful');
+      console.log(`  🌟 LuxSwarm coordination system available (type: ${typeof LuxSwarm})`);
+    } else {
+      console.warn('  ⚠️ LuxSwarm is not defined');
+      warnings++;
+    }
   } catch (error: unknown) {
     console.error('  ❌ Core import failed:', (error as Error).message);
     errors++;
@@ -114,7 +120,7 @@ async function runValidation(): Promise<void> {
   // Test 6: Verify types
   try {
     console.log('\n✓ Test 6: Verifying type definitions...');
-    const types = await import('./eden/types.js');
+    await import('./eden/types.js');
     console.log('  ✅ All type definitions loaded successfully');
   } catch (error: unknown) {
     console.error('  ❌ Type verification failed:', (error as Error).message);
