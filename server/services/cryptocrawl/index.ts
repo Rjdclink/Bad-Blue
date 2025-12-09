@@ -31,7 +31,11 @@ export {
   type MarketCondition,
   type SimulationResult,
   type StrengthWeakness,
-  type StrategyProfile
+  type StrategyProfile,
+  // NEW: Performance level types for variable results
+  type PerformanceLevel,
+  type PerformanceBreakdown,
+  type ScenarioResults
 } from './validation/monte-carlo-engine';
 
 export {

@@ -9,7 +9,11 @@ export {
   type MarketCondition,
   type SimulationResult,
   type StrengthWeakness,
-  type StrategyProfile
+  type StrategyProfile,
+  // NEW: Performance level types
+  type PerformanceLevel,
+  type PerformanceBreakdown,
+  type ScenarioResults
 } from './monte-carlo-engine';
 
 export {

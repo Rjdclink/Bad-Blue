@@ -21,6 +21,32 @@ export interface MarketCondition {
   networkCongestion: number;  // Network congestion level
 }
 
+// Performance level classification
+export type PerformanceLevel = 'good' | 'medium' | 'bad';
+
+// Detailed performance breakdown
+export interface PerformanceBreakdown {
+  level: PerformanceLevel;
+  score: number;                    // 0-100 overall score
+  profitabilityScore: number;       // 0-100 profit potential
+  riskScore: number;                // 0-100 risk management (higher = better)
+  consistencyScore: number;         // 0-100 consistency of returns
+  resilienceScore: number;          // 0-100 performance in stress
+  recommendation: string;           // Actionable recommendation
+  tradingApproval: 'approved' | 'conditional' | 'rejected';
+  conditions?: string[];            // Conditions for conditional approval
+}
+
+// Variable results based on performance scenarios
+export interface ScenarioResults {
+  bestCase: number;                 // 95th percentile outcome
+  expectedCase: number;             // 50th percentile outcome  
+  worstCase: number;                // 5th percentile outcome
+  probabilityOfProfit: number;      // Chance of positive return
+  probabilityOfMajorLoss: number;   // Chance of >20% loss
+  breakEvenProbability: number;     // Chance of roughly breaking even
+}
+
 export interface SimulationResult {
   expectedProfit: number;
   standardDeviation: number;
@@ -43,6 +69,10 @@ export interface SimulationResult {
   strengthsWeaknesses: StrengthWeakness[];
   convergenceDiagnostic: number;
   strategyRating: 'A' | 'B' | 'C' | 'D' | 'F';
+  // NEW: Enhanced performance analysis
+  performanceLevel: PerformanceLevel;
+  performanceBreakdown: PerformanceBreakdown;
+  scenarioResults: ScenarioResults;
 }
 
 export interface StrengthWeakness {
@@ -151,6 +181,13 @@ class MonteCarloEngine {
     // Check convergence
     results.convergenceDiagnostic = this.checkConvergence(paths);
 
+    // NEW: Calculate performance level and breakdown
+    results.performanceBreakdown = this.calculatePerformanceBreakdown(results, strategy, marketCondition);
+    results.performanceLevel = results.performanceBreakdown.level;
+    
+    // NEW: Calculate scenario results (variable outcomes)
+    results.scenarioResults = this.calculateScenarioResults(results);
+
     const elapsed = Date.now() - startTime;
     
     logger.info('Monte Carlo simulation complete', {
@@ -159,7 +196,9 @@ class MonteCarloEngine {
       expectedProfit: results.expectedProfit.toFixed(4),
       sharpeRatio: results.sharpeRatio.toFixed(4),
       winRate: `${(results.winRate * 100).toFixed(2)}%`,
-      rating: results.strategyRating
+      rating: results.strategyRating,
+      performanceLevel: results.performanceLevel,
+      tradingApproval: results.performanceBreakdown.tradingApproval
     });
 
     return results;
@@ -341,6 +380,7 @@ class MonteCarloEngine {
       p95: sortedPnLs[Math.floor(n * 0.95)]
     };
 
+    // Initialize with placeholder values - will be calculated later in runSimulation
     return {
       expectedProfit,
       standardDeviation,
@@ -356,7 +396,27 @@ class MonteCarloEngine {
       percentiles,
       strengthsWeaknesses: [],
       convergenceDiagnostic: 0,
-      strategyRating: 'C'
+      strategyRating: 'C',
+      // Performance level fields initialized with defaults
+      performanceLevel: 'medium' as PerformanceLevel,
+      performanceBreakdown: {
+        level: 'medium' as PerformanceLevel,
+        score: 50,
+        profitabilityScore: 50,
+        riskScore: 50,
+        consistencyScore: 50,
+        resilienceScore: 50,
+        recommendation: 'Awaiting full analysis',
+        tradingApproval: 'conditional' as const
+      },
+      scenarioResults: {
+        bestCase: percentiles.p95,
+        expectedCase: percentiles.p50,
+        worstCase: percentiles.p5,
+        probabilityOfProfit: winRate,
+        probabilityOfMajorLoss: 0.1,
+        breakEvenProbability: 0.1
+      }
     };
   }
 
@@ -565,6 +625,150 @@ class MonteCarloEngine {
   }
 
   /**
+   * Calculate detailed performance breakdown with variable levels
+   */
+  private calculatePerformanceBreakdown(
+    results: Partial<SimulationResult>,
+    strategy: StrategyProfile,
+    market: MarketCondition
+  ): PerformanceBreakdown {
+    // Calculate individual scores (0-100)
+    
+    // Profitability Score: Based on expected profit, profit factor, and win rate
+    const profitabilityScore = Math.min(100, Math.max(0,
+      (results.expectedProfit && results.expectedProfit > 0 ? 40 : 0) +
+      (results.profitFactor ? Math.min(30, (results.profitFactor - 1) * 20) : 0) +
+      (results.winRate ? Math.min(30, results.winRate * 40) : 0)
+    ));
+
+    // Risk Score: Based on drawdown, VaR, and Sharpe ratio (inverted for safety)
+    const maxDrawdownPenalty = results.maxDrawdown ? results.maxDrawdown * 100 : 50;
+    const varPenalty = results.valueAtRisk95 ? Math.min(30, results.valueAtRisk95 * 10) : 15;
+    const riskScore = Math.min(100, Math.max(0,
+      100 - maxDrawdownPenalty - varPenalty +
+      (results.sharpeRatio ? Math.min(30, results.sharpeRatio * 15) : 0)
+    ));
+
+    // Consistency Score: Based on standard deviation and confidence interval width
+    const stdDevPenalty = results.standardDeviation ? Math.min(40, results.standardDeviation * 20) : 20;
+    const ciWidth = results.confidenceInterval ? 
+      Math.abs(results.confidenceInterval[1] - results.confidenceInterval[0]) : 1;
+    const consistencyScore = Math.min(100, Math.max(0,
+      100 - stdDevPenalty - Math.min(30, ciWidth * 10) +
+      (results.sortinoRatio ? Math.min(20, results.sortinoRatio * 10) : 0)
+    ));
+
+    // Resilience Score: Based on market stress factors
+    const marketStressFactor = market.volatility * 0.3 + 
+      (1 - market.liquidityScore) * 0.3 + 
+      market.competitorDensity * 0.2 +
+      market.networkCongestion * 0.2;
+    const resilienceBonus = results.expectedProfit && results.expectedProfit > 0 ? 20 : -20;
+    const resilienceScore = Math.min(100, Math.max(0,
+      70 - marketStressFactor * 50 + resilienceBonus +
+      (strategy.executionLatency < 100 ? 10 : 0)
+    ));
+
+    // Calculate overall score (weighted average)
+    const overallScore = (
+      profitabilityScore * 0.35 +
+      riskScore * 0.30 +
+      consistencyScore * 0.20 +
+      resilienceScore * 0.15
+    );
+
+    // Determine performance level
+    let level: PerformanceLevel;
+    if (overallScore >= 70) {
+      level = 'good';
+    } else if (overallScore >= 45) {
+      level = 'medium';
+    } else {
+      level = 'bad';
+    }
+
+    // Generate recommendation and trading approval
+    let recommendation: string;
+    let tradingApproval: 'approved' | 'conditional' | 'rejected';
+    const conditions: string[] = [];
+
+    if (level === 'good') {
+      recommendation = 'Strategy shows strong performance. Proceed with standard position sizing.';
+      tradingApproval = 'approved';
+    } else if (level === 'medium') {
+      recommendation = 'Strategy shows moderate performance. Use conservative position sizes and monitor closely.';
+      tradingApproval = 'conditional';
+      
+      if (riskScore < 50) conditions.push('Implement additional stop-loss protection');
+      if (consistencyScore < 50) conditions.push('Reduce position size by 50%');
+      if (resilienceScore < 50) conditions.push('Avoid trading during high volatility periods');
+      if (profitabilityScore < 50) conditions.push('Require higher profit threshold for entry');
+    } else {
+      recommendation = 'Strategy shows poor performance. Do not trade until fundamental improvements are made.';
+      tradingApproval = 'rejected';
+      
+      if (profitabilityScore < 30) conditions.push('Improve entry/exit logic');
+      if (riskScore < 30) conditions.push('Implement circuit breakers');
+      if (consistencyScore < 30) conditions.push('Reduce exposure significantly');
+      if (resilienceScore < 30) conditions.push('Strategy not suitable for current market conditions');
+    }
+
+    return {
+      level,
+      score: Math.round(overallScore),
+      profitabilityScore: Math.round(profitabilityScore),
+      riskScore: Math.round(riskScore),
+      consistencyScore: Math.round(consistencyScore),
+      resilienceScore: Math.round(resilienceScore),
+      recommendation,
+      tradingApproval,
+      conditions: conditions.length > 0 ? conditions : undefined
+    };
+  }
+
+  /**
+   * Calculate variable scenario results (best/expected/worst case)
+   */
+  private calculateScenarioResults(results: Partial<SimulationResult>): ScenarioResults {
+    const percentiles = results.percentiles || { p5: 0, p25: 0, p50: 0, p75: 0, p95: 0 };
+    const expectedProfit = results.expectedProfit || 0;
+    const winRate = results.winRate || 0;
+    const stdDev = results.standardDeviation || 0;
+
+    // Best case: 95th percentile outcome
+    const bestCase = percentiles.p95;
+
+    // Expected case: median (50th percentile)
+    const expectedCase = percentiles.p50;
+
+    // Worst case: 5th percentile outcome
+    const worstCase = percentiles.p5;
+
+    // Probability of profit: estimate from distribution
+    const probabilityOfProfit = winRate;
+
+    // Probability of major loss (>20% of expected returns or >20% drawdown)
+    const lossThreshold = Math.abs(expectedProfit * 0.2);
+    const probabilityOfMajorLoss = worstCase < -lossThreshold ? 
+      Math.min(0.5, 0.05 + (Math.abs(worstCase) / (stdDev || 1)) * 0.1) : 
+      0.05;
+
+    // Break-even probability: within ±5% of zero
+    const breakEvenRange = Math.abs(expectedProfit * 0.05) || 0.01;
+    const breakEvenProbability = expectedCase >= -breakEvenRange && expectedCase <= breakEvenRange ?
+      0.15 : 0.05;
+
+    return {
+      bestCase,
+      expectedCase,
+      worstCase,
+      probabilityOfProfit,
+      probabilityOfMajorLoss,
+      breakEvenProbability
+    };
+  }
+
+  /**
    * Run stress test under extreme market conditions
    */
   async runStressTest(strategy: StrategyProfile): Promise<Record<string, SimulationResult>> {
@@ -604,6 +808,26 @@ class MonteCarloEngine {
     });
 
     return results;
+  }
+
+  /**
+   * Quick performance assessment without full simulation
+   * Returns variable results based on strategy parameters
+   */
+  quickAssessment(strategy: StrategyProfile): { level: PerformanceLevel; reason: string } {
+    // Quick heuristic assessment
+    const expectedEdge = strategy.baseSuccessRate * strategy.avgProfitPerTrade - 
+      (1 - strategy.baseSuccessRate) * (strategy.avgLossPerTrade + strategy.gasPerTrade);
+    
+    const profitToLossRatio = strategy.avgProfitPerTrade / (strategy.avgLossPerTrade + strategy.gasPerTrade);
+    
+    if (expectedEdge > 0 && strategy.baseSuccessRate > 0.6 && profitToLossRatio > 1.5) {
+      return { level: 'good', reason: 'Strong edge with favorable risk/reward' };
+    } else if (expectedEdge > 0 && strategy.baseSuccessRate > 0.5) {
+      return { level: 'medium', reason: 'Positive edge but requires monitoring' };
+    } else {
+      return { level: 'bad', reason: 'Negative or marginal edge' };
+    }
   }
 }
 
