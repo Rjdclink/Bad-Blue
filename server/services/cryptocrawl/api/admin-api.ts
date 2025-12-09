@@ -1,19 +1,87 @@
 import express from 'express';
 import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
+import { 
+  authenticateWithPassword, 
+  requireCryptoCrawlAuth,
+  validateSessionToken,
+  revokeSession,
+  getSessionInfo
+} from '../auth/passwordAuth';
 
 const router = express.Router();
 
-// Simple auth middleware
-const adminAuth = (req: any, res: any, next: any) => {
-  const token = req.headers['authorization'];
-  if (token !== `Bearer ${process.env.ADMIN_TOKEN}`) {
-    return res.status(401).json({error: 'Unauthorized'});
-  }
-  next();
-};
+// ============================================
+// AUTHENTICATION ROUTES (No auth required)
+// ============================================
 
-router.use(adminAuth);
+// POST /admin/crypto/auth - Authenticate with master password
+// NO email required - just password
+router.post('/auth', (req, res) => {
+  const { password } = req.body;
+  
+  if (!password) {
+    return res.status(400).json({
+      success: false,
+      error: 'Password required'
+    });
+  }
+  
+  const result = authenticateWithPassword(password);
+  
+  if (result.success) {
+    res.json({
+      success: true,
+      token: result.token,
+      expiresAt: result.expiresAt,
+      message: 'Authentication successful. Use token in Authorization header.'
+    });
+  } else {
+    res.status(401).json({
+      success: false,
+      error: result.error || 'Authentication failed'
+    });
+  }
+});
+
+// POST /admin/crypto/logout - Revoke session
+router.post('/logout', (req, res) => {
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    revokeSession(token);
+  }
+  
+  res.json({
+    success: true,
+    message: 'Session revoked'
+  });
+});
+
+// GET /admin/crypto/session - Check session status
+router.get('/session', (req, res) => {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.json({
+      authenticated: false
+    });
+  }
+  
+  const token = authHeader.substring(7);
+  const info = getSessionInfo(token);
+  
+  res.json({
+    authenticated: info.valid,
+    expiresIn: info.expiresIn
+  });
+});
+
+// ============================================
+// PROTECTED ROUTES (Require authentication)
+// ============================================
+router.use(requireCryptoCrawlAuth);
 
 // CryptoCrawl system state manager
 const cryptoCrawlState = {
