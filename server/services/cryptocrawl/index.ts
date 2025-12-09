@@ -158,6 +158,45 @@ export {
   CAPITAL_FREE_CAPABILITIES,
 } from './capital-free';
 
+// Evolution Module - Hyper-Evolution & Swarm Intelligence
+export {
+  HyperEvolutionEngine,
+  getHyperEvolutionEngine,
+  hyperEvolution,
+  SwarmIntelligenceEngine,
+  getSwarmIntelligenceEngine,
+  swarmIntelligence,
+  type GeneticConfig,
+  type StrategyGenome,
+  type EvolutionState,
+  type SuccessPattern,
+  type FailurePattern,
+  type Particle,
+  type SwarmConfig,
+  type AntColonyConfig,
+  type BeeColonyConfig,
+  type FoodSource
+} from './evolution';
+
+// Monte Carlo Engine - Enhanced with Learning
+export {
+  createMonteCarloEngine,
+  MonteCarloEngine,
+  ELITE_STRATEGIES,
+  learningHistory,
+  MARKET_CONDITIONS,
+  type MonteCarloConfig,
+  type MarketCondition,
+  type StrategyProfile,
+  type SimulationResult,
+  type MarketRegime,
+  type MarketRegimeAnalysis,
+  type KellyCriterion,
+  type LearningAdjustments,
+  type PerformanceLevel,
+  type PerformanceBreakdown
+} from './validation/monte-carlo-engine';
+
 /**
  * Quick Start Example
  * 
@@ -212,10 +251,16 @@ export {
  * 20. **Gravity Crawler** - Market activity detection and liquidity center tracking
  * 21. **Cataclysm Reaper** - Systemic instability monitoring (flash crashes, liquidation cascades, oracle manipulation)
  * 22. **Six Cane System** - Complete orchestrated swarm intelligence with Grand Orchestrator
+ * 23. **Hyper-Evolution Engine** - Genetic algorithms with 10x accelerated learning
+ * 24. **Swarm Intelligence Discovery** - PSO, ACO, ABC algorithms for strategy discovery
+ * 25. **Market Regime Detection** - Hurst exponent analysis for trend/mean-reversion detection
+ * 26. **Kelly Criterion Sizing** - Mathematically optimal position sizing
+ * 27. **Continuous Learning** - Real-time learning from simulations and deployments
+ * 28. **9-Model AI Orchestration** - Gemini 3, Claude, Groq, Mistral, DeepSeek, Grok, Kimi working in harmony
  */
 
-export const SYSTEM_VERSION = '3.0.0';
-export const SYSTEM_NAME = 'Advanced Crawler Evolution System with Capital-Free Arbitrage';
+export const SYSTEM_VERSION = '4.0.0';
+export const SYSTEM_NAME = 'Hyper-Evolved Crawler System with AI Orchestration';
 export const CAPABILITIES = [
   'Multi-network Eden storage',
   'Cain evolution engine',
@@ -247,5 +292,25 @@ export const CAPABILITIES = [
   'Gravity crawler',
   'Cataclysm reaper',
   'Six cane orchestration',
-  'Grand orchestrator decisions'
+  'Grand orchestrator decisions',
+  // Hyper-Evolution Capabilities (v3.0)
+  'Genetic algorithm evolution',
+  'Particle swarm optimization',
+  'Ant colony optimization',
+  'Bee colony algorithm',
+  'Hyper-mutation innovation',
+  'Catastrophe-driven learning',
+  'Market regime detection (Hurst exponent)',
+  'Kelly criterion position sizing',
+  'Non-linear fat-tail modeling',
+  'Ensemble prediction averaging',
+  'Continuous learning from simulations',
+  'Real-world deployment feedback',
+  'Success/failure pattern extraction',
+  'Parameter distribution adaptation',
+  'Hall of fame strategy preservation',
+  'Elite strategy breeding',
+  'Multi-objective fitness optimization',
+  'Gemini 3 AI integration',
+  '9-model AI orchestration'
 ];

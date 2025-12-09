@@ -775,7 +775,7 @@ export class AICollaborationOrchestrator {
   private static getDefaultModelForProvider(provider: AIProvider): string {
     switch (provider) {
       case AIProvider.GEMINI:
-        return 'gemini-2.5-flash-lite';
+        return 'gemini-3-pro';
       case AIProvider.CLAUDE:
         return 'claude-3-5-haiku-20241022';
       case AIProvider.GROQ:

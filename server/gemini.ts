@@ -99,9 +99,9 @@ export async function callGemini(
     throw new GeminiRateLimitError('Gemini is rate limited - use fallback provider');
   }
 
-  // Primary model: gemini-2.5-flash-lite (1000 RPD)
-  // Fallback model: gemini-2.5-flash (50 RPD) for multimodal/complex tasks
-  const modelName = options.model || "gemini-2.5-flash-lite";
+  // Primary model: gemini-3-pro (latest and most capable)
+  // Fallback model: gemini-3-flash for high-volume tasks
+  const modelName = options.model || "gemini-3-pro";
   console.log(`[Gemini] Using model: ${modelName}`);
   const client = getGeminiClient();
 
@@ -243,7 +243,7 @@ Respond with a JSON object containing:
       : `User: ${userMessage}`;
 
     const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3-pro",
       contents: [
         { role: "user", parts: [{ text: `${systemPrompt}\n\n${fullPrompt}` }] }
       ],

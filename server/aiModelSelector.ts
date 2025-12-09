@@ -3,9 +3,9 @@
  * 
  * Scores all 9 models across 11 attributes to select the optimal model for each task.
  * 
- * GEMINI SELECTION:
- * - Lightweight/high-volume → gemini-2.5-flash-lite (1000 RPD)
- * - Multimodal/images → gemini-2.5-flash (50 RPD)
+ * GEMINI SELECTION (Updated to Gemini 3):
+ * - High-capability tasks → gemini-3-pro (latest reasoning)
+ * - Lightweight/high-volume → gemini-3-flash (fast inference)
  * 
  * CLAUDE SELECTION:
  * - Legal/creative → claude-3-5-sonnet (advanced reasoning)
@@ -101,42 +101,42 @@ interface ModelCapabilities {
  * - 0-29: Minimal or no capability
  */
 const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
-  // Gemini models
-  'gemini-2.5-flash-lite': {
-    multimodal: 60,
-    longContext: 70,
-    massiveContext: 50,
-    structuredOutput: 75,
-    codeGeneration: 65,
-    creativeWriting: 60,
-    reasoning: 65,
-    speed: 95,
-    verification: 70,
-    legalAnalysis: 55,
-    imageAnalysis: 60,
-    patternRecognition: 65,
-    dataExtraction: 70,
-    searchGrounding: 90,
-    costEfficiency: 100,
-    dailyCapacity: 100, // 1000 RPD
-  },
-  'gemini-2.5-flash': {
+  // Gemini models (Updated to Gemini 3)
+  'gemini-3-flash': {
     multimodal: 85,
-    longContext: 85,
-    massiveContext: 75,
-    structuredOutput: 85,
-    codeGeneration: 80,
-    creativeWriting: 75,
-    reasoning: 80,
-    speed: 85,
-    verification: 80,
-    legalAnalysis: 70,
+    longContext: 90,
+    massiveContext: 80,
+    structuredOutput: 90,
+    codeGeneration: 85,
+    creativeWriting: 80,
+    reasoning: 85,
+    speed: 95,
+    verification: 85,
+    legalAnalysis: 75,
     imageAnalysis: 85,
-    patternRecognition: 75,
-    dataExtraction: 80,
+    patternRecognition: 85,
+    dataExtraction: 85,
     searchGrounding: 95,
+    costEfficiency: 95,
+    dailyCapacity: 100, // High throughput
+  },
+  'gemini-3-pro': {
+    multimodal: 95,
+    longContext: 95,
+    massiveContext: 90,
+    structuredOutput: 95,
+    codeGeneration: 95,
+    creativeWriting: 90,
+    reasoning: 98,
+    speed: 80,
+    verification: 95,
+    legalAnalysis: 90,
+    imageAnalysis: 95,
+    patternRecognition: 95,
+    dataExtraction: 95,
+    searchGrounding: 98,
     costEfficiency: 70,
-    dailyCapacity: 50, // 50 RPD
+    dailyCapacity: 50, // Premium model
   },
   
   // Claude models
@@ -282,28 +282,33 @@ export class AIModelSelector {
    * Select optimal Gemini model based on task attributes
    */
   static selectGeminiModel(attrs: TaskAttributes): string {
-    // Use flash for multimodal/image tasks
+    // Use gemini-3-pro for multimodal/image tasks
     if (attrs.needsMultimodal || attrs.needsImageAnalysis) {
-      return 'gemini-2.5-flash';
+      return 'gemini-3-pro';
     }
     
-    // Use flash for high-complexity tasks
+    // Use gemini-3-pro for high-complexity tasks
     if (attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'gemini-2.5-flash';
+      return 'gemini-3-pro';
     }
     
-    // Use flash-lite for high-volume/lightweight tasks
+    // Use gemini-3-flash for high-volume/lightweight tasks
     if (attrs.complexity === TaskComplexity.LIGHTWEIGHT || attrs.needsFastResponse) {
-      return 'gemini-2.5-flash-lite';
+      return 'gemini-3-flash';
     }
     
-    // Use flash for long context needs
+    // Use gemini-3-pro for long context needs
     if (attrs.needsLongContext || attrs.needsMassiveContext) {
-      return 'gemini-2.5-flash';
+      return 'gemini-3-pro';
     }
     
-    // Default to flash-lite for cost efficiency
-    return 'gemini-2.5-flash-lite';
+    // Use gemini-3-pro for advanced reasoning
+    if (attrs.needsReasoning || attrs.needsPatternRecognition) {
+      return 'gemini-3-pro';
+    }
+    
+    // Default to gemini-3-flash for cost efficiency
+    return 'gemini-3-flash';
   }
   
   /**
