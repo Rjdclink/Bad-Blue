@@ -27,19 +27,50 @@
  *    - Automatic fix implementation
  *    - Evolution tracking per domain
  * 
+ * 5. CREATIVE PROMPT ENGINE (NEW):
+ *    - Maximum creativity directive implementation
+ *    - Recursive adaptive logic across all modalities
+ *    - Autonomous decision-making and evolution
+ *    - Applied to all orchestrator and sub-agent operations
+ * 
+ * 6. AUTONOMOUS EVOLUTION ENGINE (NEW):
+ *    - Real-time learning table updates
+ *    - Verified evolution transfers
+ *    - Bidirectional knowledge flow within domain constraints
+ *    - Performance monitoring and adaptive optimization
+ * 
+ * 7. SUB-AGENT COORDINATOR (NEW):
+ *    - Unique identifier assignment for all agents
+ *    - Full authorization for code execution, research, optimizations
+ *    - Autonomous operation within domain constraints
+ *    - 16+ specialized sub-agents across Legal and Crypto domains
+ * 
  * ARCHITECTURE PRINCIPLES:
  * - LegalWhat and Crypto Crawler are fully mirrored twin systems
  * - Zero cross-domain awareness or influence
  * - Identical structural frameworks, independent execution
  * - Complete operational autonomy per domain
+ * - Recursive task completion to the 4th power
+ * 
+ * MASTER PASSWORDS:
+ * - SARBEAR → Legal What platform (no email required)
+ * - CRPTCRWLR → Crypto Crawler dashboard (no email required)
+ * - FORGEAI → 4JI admin console (orchestrator)
  * 
  * USAGE:
  * ```typescript
- * import { ForgeAI, Domain, DomainFirewall } from './services/4ji-orchestrator';
+ * import { ForgeAI, Domain, DomainFirewall, SubAgentCoordinator } from './services/4ji-orchestrator';
  * 
- * // Initialize the unified orchestrator
+ * // Initialize the unified orchestrator with all sub-systems
  * await ForgeAI.initialize();
  * await ForgeAI.start();
+ * 
+ * // Initialize sub-agent coordinator
+ * SubAgentCoordinator.initialize();
+ * 
+ * // Initialize autonomous evolution
+ * AutonomousEvolutionEngine.initialize();
+ * AutonomousEvolutionEngine.start();
  * 
  * // Execute tasks within isolated domains
  * const result = await ForgeAI.executeTask({
@@ -51,19 +82,12 @@
  *   prompt: 'Analyze this civil rights case...',
  * });
  * 
- * // Or use domain-specific orchestrators
- * import { LegalWhatOrchestrator } from './services/4ji-orchestrator';
- * 
- * await LegalWhatOrchestrator.initialize();
- * await LegalWhatOrchestrator.start();
- * 
- * const consultation = await LegalWhatOrchestrator.processConsultation({
- *   id: 'consult-1',
- *   situation: 'My civil rights were violated...',
- *   lawType: 'civil-rights',
- *   jurisdiction: 'federal',
- *   urgency: 'high',
- * });
+ * // Assign task to specific sub-agent
+ * await SubAgentCoordinator.assignTask(
+ *   '4JI-LEGAL-RESEARCH-001',
+ *   'precedent-search',
+ *   { query: 'civil rights violation precedents' }
+ * );
  * ```
  */
 
@@ -91,6 +115,35 @@ export {
   type ResearchResult,
   type RepairAction,
 } from './self-repair-engine';
+
+// Creative prompt engine (NEW)
+export {
+  CreativePromptEngine,
+  CREATIVE_IGNITION_PROMPT,
+  type CreativeAgentConfig,
+  type CreativeTaskContext,
+  type EvolutionEntry,
+  type LearningEntry,
+} from './creative-prompt-engine';
+
+// Autonomous evolution engine (NEW)
+export {
+  AutonomousEvolutionEngine,
+  type OptimizationTask,
+  type EnhancementTask,
+  type TestResult,
+  type PerformanceMetrics,
+} from './autonomous-evolution-engine';
+
+// Sub-agent coordinator (NEW)
+export {
+  SubAgentCoordinator,
+  AuthorizationLevel,
+  type SubAgentConfig,
+  type SubAgentStatus,
+  type SubAgentTask,
+  type SubAgentCapability,
+} from './sub-agent-coordinator';
 
 // Re-export AI types for convenience
 export type { AIModelConfig, AICapability } from './forge-ai';
