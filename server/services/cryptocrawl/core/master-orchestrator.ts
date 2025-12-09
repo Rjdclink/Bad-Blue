@@ -362,6 +362,11 @@ export class MasterOrchestrator {
     }, 30000); // Resolve after 30 seconds
   }
 
+  // Constants for emergency stealth
+  private static readonly EMERGENCY_BASE_TIMEOUT = 60000; // 60 seconds
+  private static readonly EMERGENCY_STAGGER_INTERVAL = 1000; // 1 second
+  private static readonly EMERGENCY_STAGGER_SLOTS = 30; // 30 slots (0-29 seconds)
+
   /**
    * Activate emergency stealth for all crawlers with staggered self-destruct to avoid thundering herd
    */
@@ -372,15 +377,16 @@ export class MasterOrchestrator {
     // Stagger self-destruct timers to prevent thundering herd problem
     agents.forEach(([agentId], index) => {
       InvisibleMode.activate(agentId, 'invisible');
-      // Stagger countdown: 60s base + random offset (0-30s) per agent
-      const staggeredTimeout = 60000 + (index % 30) * 1000;
+      // Stagger countdown: base timeout + random offset per agent
+      const staggeredTimeout = this.EMERGENCY_BASE_TIMEOUT + 
+        (index % this.EMERGENCY_STAGGER_SLOTS) * this.EMERGENCY_STAGGER_INTERVAL;
       CyanideProtocol.arm(agentId, 'capture', staggeredTimeout);
     });
 
     logger.warn('Emergency stealth activated with staggered self-destruct', {
       component: 'MasterOrchestrator',
       crawlers: agents.length,
-      timeRange: '60-90s'
+      timeRange: `${this.EMERGENCY_BASE_TIMEOUT / 1000}-${(this.EMERGENCY_BASE_TIMEOUT + this.EMERGENCY_STAGGER_SLOTS * this.EMERGENCY_STAGGER_INTERVAL) / 1000}s`
     });
   }
 

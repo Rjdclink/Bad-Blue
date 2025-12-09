@@ -192,7 +192,17 @@ export class StarburstEngine {
 
     // Calculate how many replicas to create with memory constraint
     const spaceAvailable = this.maxReplicas - this.replicas.size;
-    const replicasToCreate = Math.min(trigger.replicationFactor, spaceAvailable);
+    
+    // Further limit based on available memory (estimate ~50KB per replica)
+    const estimatedReplicaSizeKB = 50;
+    const memoryAvailableMB = this.memoryThresholdMB - memoryUsageMB;
+    const memoryBasedLimit = Math.floor((memoryAvailableMB * 1024) / estimatedReplicaSizeKB);
+    
+    const replicasToCreate = Math.min(
+      trigger.replicationFactor,
+      spaceAvailable,
+      memoryBasedLimit
+    );
 
     logger.info('STARBURST TRIGGERED!', {
       component: 'StarburstEngine',
@@ -200,7 +210,8 @@ export class StarburstEngine {
       value,
       replicasToCreate,
       currentReplicas: this.replicas.size,
-      memoryUsageMB: memoryUsageMB.toFixed(2)
+      memoryUsageMB: memoryUsageMB.toFixed(2),
+      memoryLimit: memoryBasedLimit
     });
 
     // Create replicas with specialized roles
