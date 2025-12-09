@@ -41,14 +41,3 @@ export {
   type ResearchSynthesis,
   type FrontierCapability
 } from './frontier-research-integration';
-
-export {
-  TargetValidationEngine,
-  targetValidator,
-  DAILY_PROFIT_TARGET,
-  CONFIDENCE_THRESHOLD,
-  type ValidationResult,
-  type StressTestResult,
-  type StrategyAllocation,
-  type DeploymentGate
-} from './target-validation-engine';

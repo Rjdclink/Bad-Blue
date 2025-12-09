@@ -788,6 +788,16 @@ export class AICollaborationOrchestrator {
         return 'grok-4.1-fast';
       case AIProvider.KIMI:
         return 'kimi-k2';
+      case AIProvider.GPT_OSS:
+        return 'gpt-oss-120b';
+      case AIProvider.FALCON:
+        return 'falcon-180b';
+      case AIProvider.CODE_LLAMA:
+        return 'code-llama-70b';
+      case AIProvider.GPT_NEOX:
+        return 'gpt-neox-20b';
+      case AIProvider.QWEN:
+        return 'qwen-72b';
       default:
         return 'unknown';
     }

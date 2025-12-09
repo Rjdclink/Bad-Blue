@@ -1,7 +1,7 @@
 /**
  * AI Model Selector - Intelligent model selection based on task attributes
  * 
- * Scores all 9 models across 11 attributes to select the optimal model for each task.
+ * Scores all 15 models across 16 attributes to select the optimal model for each task.
  * 
  * GEMINI SELECTION (Updated to Gemini 3):
  * - High-capability tasks → gemini-3-pro (latest reasoning)
@@ -15,6 +15,11 @@
  * - Pattern recognition → DeepSeek (671B params)
  * - Large context → Grok (2M context)
  * - Structured extraction → Kimi (1T params)
+ * - Large scale reasoning → GPT-OSS-120B
+ * - Open source powerhouse → Falcon-180B
+ * - Code generation → Code Llama (70B/34B)
+ * - Efficient inference → GPT-NeoX-20B
+ * - Multilingual/multimodal → Qwen-72B
  */
 
 import { AIProvider, UsageContext } from './aiTokenGovernor';
@@ -270,7 +275,117 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     dataExtraction: 95,
     searchGrounding: 70,
     costEfficiency: 70,
-    dailyCapacity: 50, // 50 RPD
+    dailyCapacity: 50,
+  },
+  
+  // Additional OpenRouter models for extended AI harmony
+  'gpt-oss-120b': {
+    multimodal: 40,
+    longContext: 80,
+    massiveContext: 70,
+    structuredOutput: 85,
+    codeGeneration: 85,
+    creativeWriting: 80,
+    reasoning: 88,
+    speed: 65,
+    verification: 80,
+    legalAnalysis: 75,
+    imageAnalysis: 40,
+    patternRecognition: 85,
+    dataExtraction: 80,
+    searchGrounding: 50,
+    costEfficiency: 85,
+    dailyCapacity: 50,
+  },
+  'falcon-180b': {
+    multimodal: 30,
+    longContext: 75,
+    massiveContext: 65,
+    structuredOutput: 80,
+    codeGeneration: 80,
+    creativeWriting: 85,
+    reasoning: 82,
+    speed: 60,
+    verification: 75,
+    legalAnalysis: 70,
+    imageAnalysis: 30,
+    patternRecognition: 80,
+    dataExtraction: 75,
+    searchGrounding: 45,
+    costEfficiency: 80,
+    dailyCapacity: 50,
+  },
+  'code-llama-70b': {
+    multimodal: 20,
+    longContext: 70,
+    massiveContext: 60,
+    structuredOutput: 90,
+    codeGeneration: 95,
+    creativeWriting: 60,
+    reasoning: 80,
+    speed: 75,
+    verification: 85,
+    legalAnalysis: 55,
+    imageAnalysis: 20,
+    patternRecognition: 75,
+    dataExtraction: 80,
+    searchGrounding: 40,
+    costEfficiency: 90,
+    dailyCapacity: 60,
+  },
+  'code-llama-34b': {
+    multimodal: 20,
+    longContext: 65,
+    massiveContext: 55,
+    structuredOutput: 85,
+    codeGeneration: 90,
+    creativeWriting: 55,
+    reasoning: 75,
+    speed: 85,
+    verification: 80,
+    legalAnalysis: 50,
+    imageAnalysis: 20,
+    patternRecognition: 70,
+    dataExtraction: 75,
+    searchGrounding: 35,
+    costEfficiency: 95,
+    dailyCapacity: 70,
+  },
+  'gpt-neox-20b': {
+    multimodal: 25,
+    longContext: 60,
+    massiveContext: 50,
+    structuredOutput: 75,
+    codeGeneration: 75,
+    creativeWriting: 70,
+    reasoning: 72,
+    speed: 80,
+    verification: 70,
+    legalAnalysis: 60,
+    imageAnalysis: 25,
+    patternRecognition: 70,
+    dataExtraction: 70,
+    searchGrounding: 40,
+    costEfficiency: 92,
+    dailyCapacity: 80,
+  },
+  'qwen-72b': {
+    multimodal: 70,
+    longContext: 85,
+    massiveContext: 80,
+    structuredOutput: 88,
+    codeGeneration: 88,
+    creativeWriting: 80,
+    reasoning: 85,
+    speed: 70,
+    verification: 82,
+    legalAnalysis: 75,
+    imageAnalysis: 70,
+    patternRecognition: 85,
+    dataExtraction: 85,
+    searchGrounding: 65,
+    costEfficiency: 75,
+    dailyCapacity: 50,
   },
 };
 

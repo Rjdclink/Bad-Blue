@@ -28,6 +28,14 @@ const SUPERCHAIN_CONFIG = {
   FAUCET_REPUTATION_MULTIPLIER_MAX: 20,
   FAUCET_COOLDOWN_HOURS: 24,
   
+  // Profitability Faucet Configuration (Enhanced)
+  PROFIT_DAILY_TARGET: 30000,           // $30,000/day target
+  PROFIT_MIN_FLOW_RATE: 0.1,            // Minimum 10% of target
+  PROFIT_MAX_FLOW_RATE: 1.5,            // Maximum 150% of target
+  PROFIT_FLOW_INCREMENT: 0.05,          // 5% adjustment increments
+  PROFIT_RISK_TOLERANCE: 0.15,          // 15% acceptable drawdown
+  PROFIT_REBALANCE_INTERVAL_MS: 3600000, // Rebalance every hour
+  
   // Relayer Configuration
   RELAYER_L2_TO_L1_WAIT_DAYS: 7,
   RELAYER_L2_TO_L2_LATENCY_MS: 2000,
@@ -197,27 +205,324 @@ const SUPERCHAIN_NETWORKS: Record<SuperchainNetwork, {
 };
 
 // ============================================================================
-// SUPERCHAIN FAUCET - Reputation-Based Resource Acquisition
+// SUPERCHAIN FAUCET - Reputation-Based Resource Acquisition + Profitability Control
 // ============================================================================
 
+// Profitability Flow Interfaces
+interface ProfitFlowState {
+  currentFlowRate: number;
+  targetDailyProfit: number;
+  actualizedProfit: number;
+  pendingProfit: number;
+  flowHistory: ProfitFlowAdjustment[];
+  lastRebalance: number;
+}
+
+interface ProfitFlowAdjustment {
+  timestamp: number;
+  previousFlow: number;
+  newFlow: number;
+  reason: string;
+}
+
+interface ProfitIncrement {
+  strategyId: string;
+  amount: number;
+  timestamp: number;
+  confidence: number;
+}
+
 /**
- * Superchain Faucet Integration
+ * Superchain Faucet Integration - Enhanced with Profitability Control
  * - Reputation-based drip multiplier (up to 20x)
  * - Multi-network testnet support
  * - GitHub/Optimist NFT/Attestation authentication
+ * - $30,000/day profitability target with incremental flow control
+ * - Dynamic flow rate adjustment based on market conditions
  */
 class SuperchainFaucet {
   private requests: Map<string, SuperchainFaucetRequest> = new Map();
   private reputationScores: Map<string, number> = new Map();
   private lastDripTime: Map<string, number> = new Map();
   private totalDripped: number = 0;
+  
+  // Profitability Control State
+  private profitFlowState: ProfitFlowState;
+  private profitIncrements: ProfitIncrement[] = [];
+  private rebalanceInterval: NodeJS.Timeout | null = null;
+  private strategyHealth: Map<string, number> = new Map();
 
   constructor() {
-    logger.info('[SuperchainFaucet] Initialized', {
+    // Initialize profit flow state
+    this.profitFlowState = {
+      currentFlowRate: 1.0,
+      targetDailyProfit: SUPERCHAIN_CONFIG.PROFIT_DAILY_TARGET,
+      actualizedProfit: 0,
+      pendingProfit: 0,
+      flowHistory: [],
+      lastRebalance: Date.now()
+    };
+    
+    logger.info('[SuperchainFaucet] Initialized with profitability control', {
       component: 'SuperchainFaucet',
       maxMultiplier: SUPERCHAIN_CONFIG.FAUCET_REPUTATION_MULTIPLIER_MAX,
+      dailyProfitTarget: SUPERCHAIN_CONFIG.PROFIT_DAILY_TARGET,
     });
   }
+
+  // ============================================================================
+  // PROFITABILITY FLOW CONTROL
+  // ============================================================================
+  
+  /**
+   * Start automatic profitability flow regulation
+   */
+  startProfitabilityRegulation(): void {
+    if (this.rebalanceInterval) {
+      logger.warn('[SuperchainFaucet] Profitability regulation already running');
+      return;
+    }
+    
+    logger.info('[SuperchainFaucet] Starting profitability flow regulation', {
+      component: 'SuperchainFaucet',
+      dailyTarget: SUPERCHAIN_CONFIG.PROFIT_DAILY_TARGET,
+      initialFlow: this.profitFlowState.currentFlowRate
+    });
+    
+    this.rebalanceInterval = setInterval(() => {
+      this.rebalanceProfitFlow();
+    }, SUPERCHAIN_CONFIG.PROFIT_REBALANCE_INTERVAL_MS);
+    
+    // Initial rebalance
+    this.rebalanceProfitFlow();
+  }
+  
+  /**
+   * Stop profitability regulation
+   */
+  stopProfitabilityRegulation(): void {
+    if (this.rebalanceInterval) {
+      clearInterval(this.rebalanceInterval);
+      this.rebalanceInterval = null;
+    }
+    logger.info('[SuperchainFaucet] Profitability regulation stopped');
+  }
+  
+  /**
+   * Record a profit increment from a strategy
+   */
+  recordProfitIncrement(increment: ProfitIncrement): void {
+    this.profitIncrements.push(increment);
+    
+    // Update state based on confidence
+    if (increment.confidence > 0.8) {
+      this.profitFlowState.actualizedProfit += increment.amount;
+    } else {
+      this.profitFlowState.pendingProfit += increment.amount;
+    }
+    
+    // Update strategy health
+    const currentHealth = this.strategyHealth.get(increment.strategyId) || 100;
+    const newHealth = increment.amount > 0 
+      ? Math.min(100, currentHealth + 2)
+      : Math.max(0, currentHealth - 5);
+    this.strategyHealth.set(increment.strategyId, newHealth);
+    
+    // Trigger rebalance if significant change (>10% of target)
+    if (Math.abs(increment.amount) > this.profitFlowState.targetDailyProfit * 0.1) {
+      this.rebalanceProfitFlow();
+    }
+    
+    logger.debug('[SuperchainFaucet] Profit increment recorded', {
+      component: 'SuperchainFaucet',
+      strategy: increment.strategyId,
+      amount: increment.amount,
+      totalActualized: this.profitFlowState.actualizedProfit
+    });
+  }
+  
+  /**
+   * Rebalance flow rate based on current performance
+   */
+  private rebalanceProfitFlow(): void {
+    const previousFlow = this.profitFlowState.currentFlowRate;
+    const config = SUPERCHAIN_CONFIG;
+    
+    // Calculate performance metrics
+    const hoursSinceReset = this.getHoursSinceReset();
+    const expectedProgress = hoursSinceReset / 24;
+    const actualProgress = this.profitFlowState.actualizedProfit / config.PROFIT_DAILY_TARGET;
+    const progressRatio = expectedProgress > 0 ? actualProgress / expectedProgress : 1;
+    
+    // Calculate risk exposure
+    const recentIncrements = this.profitIncrements.filter(
+      i => Date.now() - i.timestamp < 3600000
+    );
+    const losses = recentIncrements.filter(i => i.amount < 0);
+    const totalLoss = losses.reduce((sum, i) => sum + Math.abs(i.amount), 0);
+    const totalGain = recentIncrements.reduce((sum, i) => sum + Math.max(0, i.amount), 0);
+    const riskExposure = totalGain > 0 ? totalLoss / totalGain : 0;
+    
+    // Determine new flow rate
+    let newFlow = this.profitFlowState.currentFlowRate;
+    let reason = 'routine_check';
+    
+    if (progressRatio < 0.7) {
+      // Underperforming - increase flow
+      newFlow = Math.min(config.PROFIT_MAX_FLOW_RATE, 
+        this.profitFlowState.currentFlowRate + config.PROFIT_FLOW_INCREMENT * 2);
+      reason = 'underperformance_boost';
+    } else if (progressRatio > 1.3) {
+      // Overperforming - can reduce risk
+      newFlow = Math.max(config.PROFIT_MIN_FLOW_RATE, 
+        this.profitFlowState.currentFlowRate - config.PROFIT_FLOW_INCREMENT);
+      reason = 'overperformance_stabilize';
+    } else if (riskExposure > config.PROFIT_RISK_TOLERANCE) {
+      // High risk - reduce flow
+      newFlow = Math.max(config.PROFIT_MIN_FLOW_RATE, 
+        this.profitFlowState.currentFlowRate - config.PROFIT_FLOW_INCREMENT * 2);
+      reason = 'risk_reduction';
+    }
+    
+    // Apply new flow rate
+    if (newFlow !== previousFlow) {
+      this.profitFlowState.currentFlowRate = newFlow;
+      this.profitFlowState.targetDailyProfit = config.PROFIT_DAILY_TARGET * newFlow;
+      
+      this.profitFlowState.flowHistory.push({
+        timestamp: Date.now(),
+        previousFlow,
+        newFlow,
+        reason
+      });
+      
+      // Keep history manageable (last 500 entries)
+      if (this.profitFlowState.flowHistory.length > 500) {
+        this.profitFlowState.flowHistory = this.profitFlowState.flowHistory.slice(-250);
+      }
+      
+      logger.info('[SuperchainFaucet] Profit flow rate adjusted', {
+        component: 'SuperchainFaucet',
+        previousFlow: previousFlow.toFixed(3),
+        newFlow: newFlow.toFixed(3),
+        reason,
+        newTarget: this.profitFlowState.targetDailyProfit
+      });
+    }
+    
+    this.profitFlowState.lastRebalance = Date.now();
+  }
+  
+  /**
+   * Get hours since daily reset (midnight UTC)
+   */
+  private getHoursSinceReset(): number {
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setUTCHours(0, 0, 0, 0);
+    return (now.getTime() - midnight.getTime()) / 3600000;
+  }
+  
+  /**
+   * Reset daily counters (call at midnight UTC)
+   */
+  resetDailyProfitCounters(): void {
+    const previousActualized = this.profitFlowState.actualizedProfit;
+    const config = SUPERCHAIN_CONFIG;
+    
+    this.profitFlowState.actualizedProfit = 0;
+    this.profitFlowState.pendingProfit = 0;
+    this.profitIncrements = [];
+    
+    // Reset flow to baseline if yesterday was good (>80% of target)
+    if (previousActualized >= config.PROFIT_DAILY_TARGET * 0.8) {
+      this.profitFlowState.currentFlowRate = 1.0;
+      this.profitFlowState.targetDailyProfit = config.PROFIT_DAILY_TARGET;
+    }
+    
+    logger.info('[SuperchainFaucet] Daily profit counters reset', {
+      component: 'SuperchainFaucet',
+      previousDayProfit: previousActualized,
+      targetMet: previousActualized >= config.PROFIT_DAILY_TARGET
+    });
+  }
+  
+  /**
+   * Get current profit flow metrics
+   */
+  getProfitFlowMetrics(): {
+    dailyTarget: number;
+    currentFlow: number;
+    projectedDaily: number;
+    hourlyRate: number;
+    efficiency: number;
+    riskAdjustedReturn: number;
+  } {
+    const hoursSinceReset = this.getHoursSinceReset();
+    const hourlyRate = hoursSinceReset > 0 
+      ? this.profitFlowState.actualizedProfit / hoursSinceReset 
+      : 0;
+    const projectedDaily = hourlyRate * 24;
+    const config = SUPERCHAIN_CONFIG;
+    const efficiency = config.PROFIT_DAILY_TARGET > 0 
+      ? this.profitFlowState.actualizedProfit / (config.PROFIT_DAILY_TARGET * (hoursSinceReset / 24))
+      : 0;
+    
+    // Calculate risk exposure for risk-adjusted return
+    const recentIncrements = this.profitIncrements.filter(
+      i => Date.now() - i.timestamp < 3600000
+    );
+    const losses = recentIncrements.filter(i => i.amount < 0);
+    const totalLoss = losses.reduce((sum, i) => sum + Math.abs(i.amount), 0);
+    const totalGain = recentIncrements.reduce((sum, i) => sum + Math.max(0, i.amount), 0);
+    const riskExposure = totalGain > 0 ? totalLoss / totalGain : 0;
+    
+    return {
+      dailyTarget: config.PROFIT_DAILY_TARGET,
+      currentFlow: this.profitFlowState.currentFlowRate,
+      projectedDaily,
+      hourlyRate,
+      efficiency: Math.min(2, efficiency),
+      riskAdjustedReturn: projectedDaily * (1 - riskExposure)
+    };
+  }
+  
+  /**
+   * Get profit flow state
+   */
+  getProfitFlowState(): ProfitFlowState {
+    return { ...this.profitFlowState };
+  }
+  
+  /**
+   * Manually set flow rate (override)
+   */
+  setFlowRate(rate: number, reason: string = 'manual_override'): void {
+    const previousFlow = this.profitFlowState.currentFlowRate;
+    const config = SUPERCHAIN_CONFIG;
+    const newFlow = Math.max(config.PROFIT_MIN_FLOW_RATE, 
+      Math.min(config.PROFIT_MAX_FLOW_RATE, rate));
+    
+    this.profitFlowState.currentFlowRate = newFlow;
+    this.profitFlowState.targetDailyProfit = config.PROFIT_DAILY_TARGET * newFlow;
+    
+    this.profitFlowState.flowHistory.push({
+      timestamp: Date.now(),
+      previousFlow,
+      newFlow,
+      reason
+    });
+    
+    logger.info('[SuperchainFaucet] Flow rate manually set', {
+      component: 'SuperchainFaucet',
+      newFlow,
+      reason
+    });
+  }
+
+  // ============================================================================
+  // TESTNET DRIP FUNCTIONS (Original)
+  // ============================================================================
 
   /**
    * Request testnet ETH with reputation-based multiplier
@@ -320,7 +625,12 @@ class SuperchainFaucet {
     this.reputationScores.set(address, Math.max(0, Math.min(100, current + delta)));
   }
 
-  getStatistics(): { totalRequests: number; totalDripped: number; avgMultiplier: number } {
+  getStatistics(): { 
+    totalRequests: number; 
+    totalDripped: number; 
+    avgMultiplier: number;
+    profitFlow: ReturnType<SuperchainFaucet['getProfitFlowMetrics']>;
+  } {
     const requests = Array.from(this.requests.values());
     const fulfilledRequests = requests.filter(r => r.status === 'fulfilled');
     const avgMultiplier = fulfilledRequests.length > 0
@@ -330,6 +640,12 @@ class SuperchainFaucet {
 
     return {
       totalRequests: requests.length,
+      totalDripped: this.totalDripped,
+      avgMultiplier,
+      profitFlow: this.getProfitFlowMetrics(),
+    };
+  }
+}
       totalDripped: this.totalDripped,
       avgMultiplier,
     };
