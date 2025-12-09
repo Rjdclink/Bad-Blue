@@ -34,7 +34,7 @@ export interface StrategyTemplate {
 
 export interface CainState {
   id: string;
-  type: 'original' | 'cataclysm_detection' | 'genesis_reaper';
+  type: 'conjoined_twin' | 'dual_cataclysm' | 'genesis_reaper';
   status: 'active' | 'eden_return' | 'genesis_cycle' | 'doomsday' | 'inactive';
   cycleCount: number;
   lessonsCollected: number;
@@ -42,6 +42,14 @@ export interface CainState {
   currentMission?: string;
   replicas: string[];
   knowledge: Record<string, any>;
+  // Conjoined-Twin specific
+  learningRate?: number;
+  adaptationScore?: number;
+  coordinationEfficiency?: number;
+  validationAccuracy?: number;
+  // Dual-Purpose Cataclysm specific
+  gravityCrawlersOrchestrated?: number;
+  botPatternsDetected?: number;
 }
 
 export interface MicroCrawlerState {

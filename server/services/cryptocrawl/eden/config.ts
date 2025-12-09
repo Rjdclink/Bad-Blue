@@ -2,10 +2,10 @@
 // Defines all constants and thresholds for the swarm system
 
 export const EDEN_CONFIG = {
-  // Cain Configuration
-  TOTAL_CAIN_CRAWLERS: 8,
-  ORIGINAL_CAINS: 6,
-  CATACLYSM_DETECTION_CAINS: 1,
+  // Cain Configuration - Conjoined-Twin Meta-Strategy
+  TOTAL_CAIN_CRAWLERS: 12, // 10 Conjoined-Twin + 1 Dual-Purpose Cataclysm + 1 Genesis Reaper
+  CONJOINED_TWIN_CAINS: 10, // Original meta-strategy Cains (learn, adapt, coordinate, validate, dictate)
+  DUAL_PURPOSE_CATACLYSM_CAIN: 1, // Cataclysm detection + Gravity Crawler orchestration
   GENESIS_REAPER_CAINS: 1, // The smartest crawler - monitors and terminates problematic crawlers
   MIN_CAINS_FOR_RESET: 2,
   
@@ -93,6 +93,36 @@ export const EDEN_CONFIG = {
   
   // Database Error Codes
   POSTGRES_UNIQUE_VIOLATION: '23505', // Duplicate key error
+  
+  // Starburst Expansion Configuration
+  STARBURST_INITIAL_CRAWLERS: 1000, // Initial burst size
+  STARBURST_MAX_CRAWLERS: 10000000, // Maximum 10 million crawlers
+  STARBURST_EXPANSION_RATE: 10, // 10x expansion per trigger
+  STARBURST_RADIAL_LAYERS: 5, // Number of radial diffusion layers
+  
+  // Disco-Ball Mirroring
+  DISCO_BALL_SHARDS_PER_CRAWLER: 200, // 200 reflective shards per crawler
+  DISCO_BALL_UPDATE_INTERVAL_MS: 1000, // Update shards every second
+  
+  // Snipe Strategy
+  SNIPE_REACTION_TIME_MS: 50, // 50ms first-touch reaction
+  SNIPE_SUB_BLOCK_PRECISION_MS: 100, // 100ms sub-block timing precision
+  SNIPE_MEMPOOL_FORECAST_WINDOW_MS: 2000, // 2s forecast window
+  
+  // CBVH Protocol
+  CBVH_SAMPLE_SIZE: 100, // Validate 100 crawlers per cycle
+  CBVH_DIVERGENCE_THRESHOLD: 0.15, // 15% divergence triggers doomsday
+  CBVH_VALIDATION_INTERVAL_MS: 30000, // Validate every 30 seconds
+  
+  // Gravity Crawler (Crowd Magnet)
+  GRAVITY_BOT_DETECTION_CONFIDENCE_MIN: 0.8, // 80% confidence to act
+  GRAVITY_PATTERN_MEMORY: 1000, // Remember 1000 bot patterns
+  GRAVITY_PREDICTION_ACCURACY_TARGET: 0.95, // 95% prediction accuracy target
+  
+  // Cascading Opportunity Trees
+  CASCADE_MAX_DEPTH: 4, // 4 levels deep
+  CASCADE_BRANCH_FACTOR: 6, // 6 branches per opportunity
+  CASCADE_MIN_PROFIT_THRESHOLD: 0.01, // $0.01 minimum profit per branch
 } as const;
 
 // Control Signals (used in code)
