@@ -99,6 +99,9 @@ export const EDEN_CONFIG = {
   STARBURST_MAX_CRAWLERS: 10000000, // Maximum 10 million crawlers
   STARBURST_EXPANSION_RATE: 10, // 10x expansion per trigger
   STARBURST_RADIAL_LAYERS: 5, // Number of radial diffusion layers
+  STARBURST_RESOURCE_LIMIT_CPU: 0.8, // 80% max CPU before throttling
+  STARBURST_RESOURCE_LIMIT_MEMORY: 0.85, // 85% max memory before throttling
+  STARBURST_GRADUAL_SCALE_DELAY_MS: 5000, // 5s delay between expansion waves
   
   // Disco-Ball Mirroring
   DISCO_BALL_SHARDS_PER_CRAWLER: 200, // 200 reflective shards per crawler

@@ -224,9 +224,14 @@ export class CainValidationProtocol {
     // Implementation would trigger Genesis cycle for this Cain only
   }
 
-  // Random sample utility
+  // Random sample utility with Fisher-Yates shuffle
   private randomSample<T>(array: T[], size: number): T[] {
-    const shuffled = array.sort(() => 0.5 - Math.random());
+    const shuffled = [...array];
+    // Fisher-Yates shuffle for unbiased randomization
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
     return shuffled.slice(0, Math.min(size, array.length));
   }
 
