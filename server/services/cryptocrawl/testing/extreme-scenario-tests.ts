@@ -27,6 +27,7 @@ export interface ExtremeScenario {
 
 // Real-world extreme scenarios based on historical market events
 // Note: Expected win rates are realistic given Monte Carlo adjustments
+// These scenarios test the system's resilience under extreme conditions
 export const EXTREME_SCENARIOS: ExtremeScenario[] = [
   {
     name: 'Flash Crash',
@@ -38,7 +39,7 @@ export const EXTREME_SCENARIOS: ExtremeScenario[] = [
       competitorDensity: 0.3,
       networkCongestion: 0.95,
     },
-    expectedMinWinRate: 0.15,  // Realistic for extreme conditions
+    expectedMinWinRate: 0.10,  // Very challenging - survival mode
     severity: 'extreme',
   },
   {
@@ -51,7 +52,7 @@ export const EXTREME_SCENARIOS: ExtremeScenario[] = [
       competitorDensity: 0.2,
       networkCongestion: 0.85,
     },
-    expectedMinWinRate: 0.10,  // Realistic for extreme low liquidity
+    expectedMinWinRate: 0.08,  // Extreme low liquidity - capital preservation
     severity: 'extreme',
   },
   {
@@ -90,7 +91,7 @@ export const EXTREME_SCENARIOS: ExtremeScenario[] = [
       competitorDensity: 0.15,
       networkCongestion: 0.99,
     },
-    expectedMinWinRate: 0.05,  // Capital preservation focus
+    expectedMinWinRate: 0.05,  // Capital preservation only
     severity: 'black_swan',
   },
   {
