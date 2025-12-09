@@ -1,5 +1,8 @@
 // Advanced Crawler Evolution System - Main Export
 // Complete integration of all revolutionary crawler systems
+// Includes: Eden Knowledge Repository, Cain Evolution Engine, Swarm Intelligence,
+// Blockchain API Services (Alchemy + Etherscan), Parallel Intelligence Lanes,
+// and Six-Cane Orchestration System
 
 export { EdenStorage, type KnowledgeEntry, type EvolutionResult, type EdenState } from './core/eden-storage';
 export { CainCrawler, CainManager, type CainObservation, type CainMission } from './core/cain-crawler';
@@ -85,6 +88,19 @@ export {
   type OrchestratorDecision,
   type SwarmCoordinationState
 } from './intelligence';
+
+// Automatic Rate Limiting System (CPU-Aware Adaptive Throttling)
+export {
+  AutomaticRateLimiter,
+  autoRateLimiter,
+  calculateBurstProbability,
+  calculateNewRate,
+  calculateWaveDelay,
+  DEFAULT_AUTO_RATE_CONFIG,
+  type AutoRateLimitConfig,
+  type RateLimitState,
+  type StarburstWaveConfig
+} from './rate-limiting';
 
 /**
  * Quick Start Example
