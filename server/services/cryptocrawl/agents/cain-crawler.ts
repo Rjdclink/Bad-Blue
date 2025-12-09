@@ -7,7 +7,7 @@ import { EDEN_CONFIG, CONTROL_SIGNALS } from '../eden/config';
 import { LuxSwarm, type Opportunity, type AgentState } from '../core/lux-swarm';
 import type { LessonPacket, CainState, CataclysmEvent, OpportunityEvent } from '../eden/types';
 
-export type CainType = 'cataclysm_detection' | 'probability_monitoring';
+export type CainType = 'original' | 'cataclysm_detection' | 'genesis_reaper';
 
 export class CainCrawler {
   id: string;
@@ -105,8 +105,10 @@ export class CainCrawler {
       try {
         if (this.type === 'cataclysm_detection') {
           await this.detectCataclysms();
+        } else if (this.type === 'genesis_reaper') {
+          await this.reapIneffectiveCrawlers();
         } else {
-          await this.monitorProbabilityEvents();
+          await this.performOriginalCainWork();
         }
 
         // Check if should return to Eden early
@@ -115,8 +117,10 @@ export class CainCrawler {
           break;
         }
 
-        // Brief pause between monitoring cycles
-        await this.sleep(1000);
+        // Brief pause between monitoring cycles (shorter for reaper)
+        const pauseMs = this.type === 'genesis_reaper' ? 
+          EDEN_CONFIG.REAPER_MONITORING_INTERVAL_MS : 1000;
+        await this.sleep(pauseMs);
       } catch (error) {
         console.error(`[CAIN-${this.id}] ⚠️ Operation error:`, error);
         await this.recordFailure(error as Error);
@@ -165,8 +169,8 @@ export class CainCrawler {
     await this.verifyReplicas();
   }
 
-  // PROBABILITY EVENT MONITORING: Detect high-value opportunities
-  private async monitorProbabilityEvents(): Promise<void> {
+  // ORIGINAL CAIN WORK: Monitor opportunities and execute standard operations
+  private async performOriginalCainWork(): Promise<void> {
     const lux = LuxSwarm.observe();
 
     // Scan for high-probability opportunities
@@ -191,6 +195,194 @@ export class CainCrawler {
         await this.triggerStarburst(event);
       }
     }
+  }
+
+  // GENESIS REAPER: Monitor and terminate ineffective/corrupt crawlers
+  // This is the SMARTEST crawler with logical decision-making
+  private async reapIneffectiveCrawlers(): Promise<void> {
+    console.log(`[REAPER-${this.id}] 👁️ Monitoring all crawler activity...`);
+
+    const lux = LuxSwarm.observe();
+    const allCains = eden.getCainStates();
+
+    // Collect performance metrics for all active crawlers
+    const crawlerMetrics = new Map<string, {
+      successRate: number;
+      profitWaste: number;
+      errorCount: number;
+      operations: number;
+      suspicious: boolean;
+    }>();
+
+    // Analyze each Cain crawler (excluding self)
+    for (const [cainId, cainState] of allCains) {
+      if (cainId === this.id || cainState.status === 'inactive') continue;
+
+      // Get recent lessons for this Cain
+      const lessons = await this.getRecentLessonsForCain(cainId);
+      
+      if (lessons.length < EDEN_CONFIG.REAPER_MIN_SAMPLE_SIZE) {
+        continue; // Not enough data to make a judgment
+      }
+
+      // Calculate metrics
+      const successes = lessons.filter(l => l.outcome === 'success').length;
+      const successRate = successes / lessons.length;
+      
+      const profitWaste = lessons.reduce((waste, l) => {
+        const expectedProfit = l.profitEstimated;
+        const actualProfit = l.profitActual;
+        return waste + Math.max(0, expectedProfit - actualProfit);
+      }, 0) / lessons.length;
+
+      const errorCount = lessons.filter(l => l.failureMode).length;
+      
+      // Check for suspicious behavior patterns
+      const suspicious = this.detectSuspiciousBehavior(lessons);
+
+      crawlerMetrics.set(cainId, {
+        successRate,
+        profitWaste,
+        errorCount,
+        operations: lessons.length,
+        suspicious,
+      });
+    }
+
+    // LOGICAL DECISION MAKING: Evaluate crawlers for termination
+    for (const [cainId, metrics] of crawlerMetrics) {
+      const terminationDecision = this.evaluateTermination(cainId, metrics);
+      
+      if (terminationDecision.shouldTerminate && 
+          terminationDecision.confidence >= EDEN_CONFIG.REAPER_DECISION_CONFIDENCE_MIN) {
+        
+        console.log(`[REAPER-${this.id}] ⚠️ Termination decision for ${cainId}:`);
+        console.log(`   Reason: ${terminationDecision.reason}`);
+        console.log(`   Confidence: ${(terminationDecision.confidence * 100).toFixed(1)}%`);
+        
+        // Self-destruct mechanism for target crawler
+        await this.terminateCrawler(cainId, terminationDecision.reason);
+      }
+    }
+  }
+
+  // Logical evaluation with tempered judgment (not overreacting to minor losses)
+  private evaluateTermination(cainId: string, metrics: {
+    successRate: number;
+    profitWaste: number;
+    errorCount: number;
+    operations: number;
+    suspicious: boolean;
+  }): { shouldTerminate: boolean; confidence: number; reason: string } {
+    
+    let terminationScore = 0;
+    let reasons: string[] = [];
+
+    // INEFFICIENCY CHECK
+    if (metrics.successRate < EDEN_CONFIG.REAPER_INEFFICIENCY_THRESHOLD) {
+      terminationScore += 0.35;
+      reasons.push(`Low success rate: ${(metrics.successRate * 100).toFixed(1)}%`);
+    }
+
+    // PROFIT WASTE CHECK (normalized by operations)
+    if (metrics.profitWaste > EDEN_CONFIG.REAPER_PROFIT_WASTE_THRESHOLD) {
+      terminationScore += 0.30;
+      reasons.push(`High profit waste: $${metrics.profitWaste.toFixed(4)} per operation`);
+    }
+
+    // ERROR PATTERN CHECK (must be consecutive, not just total)
+    const errorRate = metrics.errorCount / metrics.operations;
+    if (errorRate > 0.5) { // More than 50% errors
+      terminationScore += 0.25;
+      reasons.push(`High error rate: ${(errorRate * 100).toFixed(1)}%`);
+    }
+
+    // CORRUPTION/SUSPICIOUS BEHAVIOR
+    if (metrics.suspicious) {
+      terminationScore += 0.40;
+      reasons.push('Suspicious behavior pattern detected');
+    }
+
+    // TEMPERED DECISION: Don't terminate for minor losses
+    // Only terminate if multiple factors align
+    const shouldTerminate = terminationScore >= 0.75 && reasons.length >= 2;
+    const confidence = Math.min(terminationScore, 1.0);
+
+    return {
+      shouldTerminate,
+      confidence,
+      reason: reasons.join('; '),
+    };
+  }
+
+  // Detect suspicious behavior patterns (corruption, rogue behavior)
+  private detectSuspiciousBehavior(lessons: LessonPacket[]): boolean {
+    // Check for impossible profit claims
+    const impossibleProfits = lessons.filter(l => 
+      l.profitActual > l.profitEstimated * 10 // 10x more than estimated
+    ).length;
+
+    // Check for consistent underperformance with no learning
+    const recentLessons = lessons.slice(-10);
+    const allFailures = recentLessons.every(l => l.outcome === 'failure');
+
+    // Check for erratic latency (possible manipulation)
+    const latencies = lessons.map(l => l.latency);
+    const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+    const erraticLatency = latencies.some(l => l > avgLatency * 50);
+
+    return impossibleProfits > 2 || allFailures || erraticLatency;
+  }
+
+  // Get recent lessons for a specific Cain
+  private async getRecentLessonsForCain(cainId: string): Promise<LessonPacket[]> {
+    // Filter this Cain's collected lessons
+    return this.lessonsCollected.filter(l => l.cainId === cainId).slice(-20);
+  }
+
+  // SELF-DESTRUCT BUTTON: Terminate ineffective crawler
+  private async terminateCrawler(cainId: string, reason: string): Promise<void> {
+    console.log(`[REAPER-${this.id}] 💀 TERMINATING CRAWLER: ${cainId}`);
+    console.log(`[REAPER-${this.id}] 📋 Reason: ${reason}`);
+
+    const cainState = eden.getCainState(cainId);
+    if (!cainState) {
+      console.warn(`[REAPER-${this.id}] ⚠️ Crawler ${cainId} not found`);
+      return;
+    }
+
+    // Mark crawler as inactive (self-destruct)
+    cainState.status = 'inactive';
+    
+    // Record termination in Eden audit log
+    const lesson: LessonPacket = {
+      id: randomUUID(),
+      cainId: this.id,
+      opportunitySignature: `termination-${cainId}`,
+      outcome: 'success',
+      profitActual: 0,
+      profitEstimated: 0,
+      latency: 0,
+      gasUsed: 0,
+      chain: 'ethereum' as any,
+      timestamp: Date.now(),
+      metadata: {
+        action: 'crawler_termination',
+        targetCrawler: cainId,
+        reason,
+        reaperDecision: true,
+      },
+    };
+
+    this.lessonsCollected.push(lesson);
+    await eden.recordLesson(lesson);
+
+    console.log(`[REAPER-${this.id}] ✅ Crawler ${cainId} terminated successfully`);
+  }
+
+  // PROBABILITY EVENT MONITORING: Detect high-value opportunities (kept for backward compatibility)
+  private async monitorProbabilityEvents(): Promise<void> {
+    await this.performOriginalCainWork();
   }
 
   // DOOMSDAY: Harvest lessons and prepare for Eden return

@@ -35,25 +35,33 @@ export class SwarmOrchestrator {
     console.log(`[SWARM] 📊 ${this.cainCrawlers.size} Cain crawlers, ${this.microCrawlers.size} micro crawlers`);
   }
 
-  // Initialize 10 Cain crawlers (5 cataclysm, 5 probability)
+  // Initialize 9 Cain crawlers (7 original, 1 cataclysm, 1 reaper)
   private async initializeCainCrawlers(): Promise<void> {
     console.log('[SWARM] 🔧 Initializing Cain Crawlers...');
 
-    // Create Cataclysm Detection Cains (5)
+    // Create Original Cains (7)
+    for (let i = 0; i < EDEN_CONFIG.ORIGINAL_CAINS; i++) {
+      const cainId = `cain-original-${i + 1}`;
+      const cain = new CainCrawler(cainId, 'original');
+      this.cainCrawlers.set(cainId, cain);
+    }
+
+    // Create Cataclysm Detection Cain (1)
     for (let i = 0; i < EDEN_CONFIG.CATACLYSM_DETECTION_CAINS; i++) {
       const cainId = `cain-cataclysm-${i + 1}`;
       const cain = new CainCrawler(cainId, 'cataclysm_detection');
       this.cainCrawlers.set(cainId, cain);
     }
 
-    // Create Probability Monitoring Cains (5)
-    for (let i = 0; i < EDEN_CONFIG.PROBABILITY_MONITORING_CAINS; i++) {
-      const cainId = `cain-probability-${i + 1}`;
-      const cain = new CainCrawler(cainId, 'probability_monitoring');
+    // Create Genesis Reaper (1) - THE SMARTEST CRAWLER
+    for (let i = 0; i < EDEN_CONFIG.GENESIS_REAPER_CAINS; i++) {
+      const cainId = `cain-reaper-${i + 1}`;
+      const cain = new CainCrawler(cainId, 'genesis_reaper');
       this.cainCrawlers.set(cainId, cain);
     }
 
     console.log(`[SWARM] ✅ Initialized ${this.cainCrawlers.size} Cain Crawlers`);
+    console.log(`[SWARM] 📊 Breakdown: ${EDEN_CONFIG.ORIGINAL_CAINS} Original, ${EDEN_CONFIG.CATACLYSM_DETECTION_CAINS} Cataclysm, ${EDEN_CONFIG.GENESIS_REAPER_CAINS} Reaper`);
   }
 
   // Initialize warm micro-replica pools for each Cain
@@ -152,11 +160,8 @@ export class SwarmOrchestrator {
 
     while (this.isRunning) {
       try {
-        // Check if Eden pulse needed
-        const now = Date.now();
-        const timeSinceLastPulse = now - eden['lastReturnPulse'];
-
-        if (timeSinceLastPulse >= EDEN_CONFIG.EDEN_RETURN_INTERVAL_MS) {
+        // Check if Eden pulse needed using public method
+        if (eden.shouldPerformReturnPulse()) {
           console.log('[SWARM] 💓 Eden pulse due, performing return pulse...');
           await eden.performReturnPulse();
         }
@@ -289,8 +294,9 @@ export class SwarmOrchestrator {
       isRunning: this.isRunning,
       cainCrawlers: {
         total: this.cainCrawlers.size,
+        original: cainStats.filter(c => c.type === 'original').length,
         cataclysm: cainStats.filter(c => c.type === 'cataclysm_detection').length,
-        probability: cainStats.filter(c => c.type === 'probability_monitoring').length,
+        reaper: cainStats.filter(c => c.type === 'genesis_reaper').length,
         details: cainStats,
       },
       microCrawlers: {

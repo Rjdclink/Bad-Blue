@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_eden_strategy_success_rate ON eden_strategy_templ
 -- ============================================
 CREATE TABLE IF NOT EXISTS eden_cain_states (
   id VARCHAR PRIMARY KEY,
-  type VARCHAR(50) NOT NULL CHECK (type IN ('cataclysm_detection', 'probability_monitoring')),
+  type VARCHAR(50) NOT NULL CHECK (type IN ('original', 'cataclysm_detection', 'genesis_reaper')),
   status VARCHAR(50) NOT NULL CHECK (status IN ('active', 'eden_return', 'genesis_cycle', 'doomsday', 'inactive')),
   cycle_count INTEGER NOT NULL DEFAULT 0,
   lessons_collected INTEGER NOT NULL DEFAULT 0,

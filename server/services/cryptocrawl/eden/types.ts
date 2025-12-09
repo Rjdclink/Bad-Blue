@@ -34,7 +34,7 @@ export interface StrategyTemplate {
 
 export interface CainState {
   id: string;
-  type: 'cataclysm_detection' | 'probability_monitoring';
+  type: 'original' | 'cataclysm_detection' | 'genesis_reaper';
   status: 'active' | 'eden_return' | 'genesis_cycle' | 'doomsday' | 'inactive';
   cycleCount: number;
   lessonsCollected: number;

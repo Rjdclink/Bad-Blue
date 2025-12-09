@@ -53,7 +53,24 @@ class EdenService {
   private async initializeCainCrawlers(): Promise<void> {
     console.log('[EDEN] 🔧 Initializing Cain Crawlers...');
 
-    // Create Cataclysm Detection Cains (5)
+    // Create Original Cains (7)
+    for (let i = 0; i < EDEN_CONFIG.ORIGINAL_CAINS; i++) {
+      const cainId = `cain-original-${i + 1}`;
+      const cainState: CainState = {
+        id: cainId,
+        type: 'original',
+        status: 'active',
+        cycleCount: 0,
+        lessonsCollected: 0,
+        lastEdenReturn: Date.now(),
+        replicas: [],
+        knowledge: {},
+      };
+      this.cainStates.set(cainId, cainState);
+      await this.persistCainState(cainState);
+    }
+
+    // Create Cataclysm Detection Cain (1)
     for (let i = 0; i < EDEN_CONFIG.CATACLYSM_DETECTION_CAINS; i++) {
       const cainId = `cain-cataclysm-${i + 1}`;
       const cainState: CainState = {
@@ -70,24 +87,29 @@ class EdenService {
       await this.persistCainState(cainState);
     }
 
-    // Create Probability Monitoring Cains (5)
-    for (let i = 0; i < EDEN_CONFIG.PROBABILITY_MONITORING_CAINS; i++) {
-      const cainId = `cain-probability-${i + 1}`;
+    // Create Genesis Reaper (1) - THE SMARTEST CRAWLER
+    for (let i = 0; i < EDEN_CONFIG.GENESIS_REAPER_CAINS; i++) {
+      const cainId = `cain-reaper-${i + 1}`;
       const cainState: CainState = {
         id: cainId,
-        type: 'probability_monitoring',
+        type: 'genesis_reaper',
         status: 'active',
         cycleCount: 0,
         lessonsCollected: 0,
         lastEdenReturn: Date.now(),
         replicas: [],
-        knowledge: {},
+        knowledge: {
+          role: 'supreme_monitor',
+          capabilities: ['termination', 'monitoring', 'judgment'],
+          decisionConfidence: EDEN_CONFIG.REAPER_DECISION_CONFIDENCE_MIN,
+        },
       };
       this.cainStates.set(cainId, cainState);
       await this.persistCainState(cainState);
     }
 
     console.log(`[EDEN] ✅ Initialized ${EDEN_CONFIG.TOTAL_CAIN_CRAWLERS} Cain Crawlers`);
+    console.log(`[EDEN] 📊 Breakdown: ${EDEN_CONFIG.ORIGINAL_CAINS} Original, ${EDEN_CONFIG.CATACLYSM_DETECTION_CAINS} Cataclysm, ${EDEN_CONFIG.GENESIS_REAPER_CAINS} Reaper`);
   }
 
   private async loadStrategyTemplates(): Promise<void> {
@@ -165,7 +187,7 @@ class EdenService {
 
         if (error) {
           // Check for specific constraint violations
-          if (error.code === '23505') {
+          if (error.code === EDEN_CONFIG.POSTGRES_UNIQUE_VIOLATION) {
             console.warn(`[EDEN] ⚠️ Duplicate lesson ID ${lesson.id}, skipping`);
           } else {
             console.error(`[EDEN] ❌ Failed to record lesson (${error.code}):`, error.message);
@@ -223,6 +245,16 @@ class EdenService {
         console.log('[EDEN] ✅ Eden Return Pulse completed');
       }
     }
+  }
+
+  // Check if Eden pulse needed
+  getTimeSinceLastPulse(): number {
+    return Date.now() - this.lastReturnPulse;
+  }
+
+  // Check if should perform return pulse
+  shouldPerformReturnPulse(): boolean {
+    return this.getTimeSinceLastPulse() >= EDEN_CONFIG.EDEN_RETURN_INTERVAL_MS;
   }
 
   // Check if Cain should return to Eden
