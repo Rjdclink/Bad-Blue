@@ -2,6 +2,9 @@ import { ChainId, TopologyNode } from './types';
 import { topologyHeatmap } from './topology-heatmap';
 import { namespaceManager } from './namespace-manager';
 
+// Configuration constants
+const MIN_REPOSITION_IMPROVEMENT_THRESHOLD = 1.3; // 30% minimum improvement for repositioning
+
 interface MempoolEdge {
   chain: ChainId;
   validatorNode: string;
@@ -99,7 +102,7 @@ export class MempoolPositioner {
     const targetLatency = bestRpc?.avgLatencyMs || current.latencyMs;
     
     // Only reposition if significant improvement expected (>30%)
-    if (bestSubnet && bestSubnet !== current.subnet && current.latencyMs > targetLatency * 1.3) {
+    if (bestSubnet && bestSubnet !== current.subnet && current.latencyMs > targetLatency * MIN_REPOSITION_IMPROVEMENT_THRESHOLD) {
       const result = await namespaceManager.cycleNamespace(namespaceId);
       if (result.success && result.namespace) {
         this.positionedNamespaces.set(result.namespace.id, chain);

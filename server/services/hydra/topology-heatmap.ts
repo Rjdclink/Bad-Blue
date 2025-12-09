@@ -1,5 +1,15 @@
 import { TopologyNode, ChainId, IPQualityScore } from './types';
 
+// Configuration constants for better maintainability
+const RPC_TIMEOUT_MS = 5000;
+const RPC_LATENCY_FAILURE_THRESHOLD = 5000;
+const RELIABILITY_INCREMENT = 0.1;
+const RELIABILITY_DECREMENT = 0.2;
+const RELIABILITY_HARD_DECREMENT = 0.3;
+const LATENCY_EMA_WEIGHT = 0.3; // Exponential moving average weight
+const MIN_RELIABILITY_THRESHOLD = 0.3;
+const MAX_ACCEPTABLE_LATENCY_MS = 200;
+
 const RPC_ENDPOINTS: Record<ChainId, string[]> = {
   polygon: ['https://polygon-rpc.com', 'https://rpc-mainnet.matic.quiknode.pro'],
   arbitrum: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum.llamarpc.com'],
@@ -52,7 +62,8 @@ export class TopologyHeatmap {
           this.pingRpc(rpc).then(latency => {
             this.nodes.set(rpc, {
               rpcUrl: rpc, chain: chain as ChainId, region: this.inferRegion(rpc),
-              avgLatencyMs: latency, lastPing: Date.now(), reliability: latency < 5000 ? 1 : 0.5, 
+              avgLatencyMs: latency, lastPing: Date.now(), 
+              reliability: latency < RPC_LATENCY_FAILURE_THRESHOLD ? 1 : 0.5, 
               optimalSubnets: []
             });
           })
@@ -66,7 +77,7 @@ export class TopologyHeatmap {
     const start = Date.now();
     try {
       const controller = new AbortController();
-      setTimeout(() => controller.abort(), 5000);
+      setTimeout(() => controller.abort(), RPC_TIMEOUT_MS);
       await fetch(rpc, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_blockNumber', params: [], id: 1 }),
@@ -92,11 +103,13 @@ export class TopologyHeatmap {
     for (const [rpc, node] of this.nodes) {
       updatePromises.push(
         this.pingRpc(rpc).then(latency => {
-          node.avgLatencyMs = (node.avgLatencyMs * 0.7) + (latency * 0.3);
+          node.avgLatencyMs = (node.avgLatencyMs * (1 - LATENCY_EMA_WEIGHT)) + (latency * LATENCY_EMA_WEIGHT);
           node.lastPing = Date.now();
-          node.reliability = latency < 5000 ? Math.min(1, node.reliability + 0.1) : Math.max(0, node.reliability - 0.2);
+          node.reliability = latency < RPC_LATENCY_FAILURE_THRESHOLD 
+            ? Math.min(1, node.reliability + RELIABILITY_INCREMENT) 
+            : Math.max(0, node.reliability - RELIABILITY_DECREMENT);
         }).catch(() => {
-          node.reliability = Math.max(0, node.reliability - 0.3);
+          node.reliability = Math.max(0, node.reliability - RELIABILITY_HARD_DECREMENT);
         })
       );
     }
@@ -116,7 +129,7 @@ export class TopologyHeatmap {
     for (const node of this.nodes.values()) {
       // Score combines latency and reliability for better accuracy
       const score = node.reliability * 100 - node.avgLatencyMs;
-      if (node.chain === chain && score > bestScore && node.reliability > 0.3) {
+      if (node.chain === chain && score > bestScore && node.reliability > MIN_RELIABILITY_THRESHOLD) {
         bestScore = score;
         best = node;
       }
@@ -129,7 +142,7 @@ export class TopologyHeatmap {
     let bestLatency = Infinity;
     for (const [subnet, chainMap] of this.subnetScores) {
       const latency = chainMap.get(chain);
-      if (latency !== undefined && latency < bestLatency && latency < 200) {
+      if (latency !== undefined && latency < bestLatency && latency < MAX_ACCEPTABLE_LATENCY_MS) {
         bestLatency = latency;
         best = subnet;
       }

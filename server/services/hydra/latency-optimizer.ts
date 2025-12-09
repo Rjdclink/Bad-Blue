@@ -2,6 +2,12 @@ import { ChainId, NetworkNamespace } from './types';
 import { topologyHeatmap } from './topology-heatmap';
 import { namespaceManager } from './namespace-manager';
 
+// Configuration constants
+const MIN_IMPROVEMENT_THRESHOLD = 0.2; // 20% minimum improvement to justify optimization
+const NAMESPACE_AGE_THRESHOLD_MS = 300000; // 5 minutes
+const AGE_LATENCY_PENALTY_MS = 10;
+const MAX_OPTIMIZATION_HISTORY = 100;
+
 interface OptimizationResult {
   namespaceId: string;
   chain: ChainId;
@@ -54,7 +60,7 @@ export class LatencyOptimizer {
       const expectedLatency = bestRpc?.avgLatencyMs || oldLatency;
       
       // Skip if improvement would be minimal
-      if (oldLatency - expectedLatency < oldLatency * 0.2) return null;
+      if (oldLatency - expectedLatency < oldLatency * MIN_IMPROVEMENT_THRESHOLD) return null;
       
       const result = await namespaceManager.cycleNamespace(namespaceId);
       if (result.success && result.namespace) {
@@ -64,7 +70,7 @@ export class LatencyOptimizer {
           improvement: oldLatency > 0 ? ((oldLatency - newLatency) / oldLatency) * 100 : 0
         };
         this.optimizationHistory.push(opt);
-        if (this.optimizationHistory.length > 100) this.optimizationHistory.shift();
+        if (this.optimizationHistory.length > MAX_OPTIMIZATION_HISTORY) this.optimizationHistory.shift();
         topologyHeatmap.recordSubnetLatency(result.namespace.subnet, chain, newLatency);
         return opt;
       }
@@ -106,9 +112,11 @@ export class LatencyOptimizer {
     // Fallback: select by latency with recency bonus
     return available.reduce((best, ns) => {
       const age = Date.now() - ns.createdAt;
-      const agePenalty = age > 300000 ? 10 : 0; // Penalty for old namespaces (>5min)
+      const agePenalty = age > NAMESPACE_AGE_THRESHOLD_MS ? AGE_LATENCY_PENALTY_MS : 0;
       const effectiveLatency = ns.latencyMs + agePenalty;
-      const bestEffectiveLatency = best.latencyMs + (Date.now() - best.createdAt > 300000 ? 10 : 0);
+      const bestAge = Date.now() - best.createdAt;
+      const bestAgePenalty = bestAge > NAMESPACE_AGE_THRESHOLD_MS ? AGE_LATENCY_PENALTY_MS : 0;
+      const bestEffectiveLatency = best.latencyMs + bestAgePenalty;
       return effectiveLatency < bestEffectiveLatency ? ns : best;
     });
   }
