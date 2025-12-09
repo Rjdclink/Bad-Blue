@@ -1,5 +1,6 @@
 import express from 'express';
 import {pipeline} from '../integration/master-pipeline';
+import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 
 const router = express.Router();
 
@@ -13,6 +14,54 @@ const adminAuth = (req: any, res: any, next: any) => {
 };
 
 router.use(adminAuth);
+
+// CryptoCrawl system state manager
+const cryptoCrawlState = {
+  enabled: false,
+  
+  async enable(): Promise<void> {
+    if (this.enabled) {
+      console.log('[CryptoCrawl] System already enabled');
+      return;
+    }
+    
+    console.log('[CryptoCrawl] Enabling system...');
+    this.enabled = true;
+    
+    // Start all crypto services
+    await gasOracle.start();
+    await balanceMonitor.start();
+    await networkHealth.start();
+    
+    console.log('[CryptoCrawl] ✓ System enabled');
+  },
+  
+  async disable(): Promise<void> {
+    if (!this.enabled) {
+      console.log('[CryptoCrawl] System already disabled');
+      return;
+    }
+    
+    console.log('[CryptoCrawl] Disabling system...');
+    this.enabled = false;
+    
+    // Stop all crypto services
+    await gasOracle.stop();
+    await balanceMonitor.stop();
+    await networkHealth.stop();
+    
+    console.log('[CryptoCrawl] ✓ System disabled');
+  },
+  
+  getStatus() {
+    return {
+      enabled: this.enabled,
+      gasOracle: gasOracle.isRunning(),
+      balanceMonitor: balanceMonitor.isRunning(),
+      networkHealth: networkHealth.isRunning()
+    };
+  }
+};
 
 // System state
 let systemState = {
@@ -33,6 +82,10 @@ router.post('/start', async (req, res) => {
   }
   
   try {
+    // Enable CryptoCrawl services
+    await cryptoCrawlState.enable();
+    
+    // Only mark as running after successful service enablement
     systemState.running = true;
     systemState.startedAt = Date.now();
     
@@ -45,9 +98,12 @@ router.post('/start', async (req, res) => {
     res.json({
       success: true,
       message: 'System started',
-      startedAt: new Date(systemState.startedAt).toISOString()
+      startedAt: new Date(systemState.startedAt).toISOString(),
+      status: cryptoCrawlState.getStatus()
     });
   } catch (error: any) {
+    // Ensure state is not marked as running on error
+    systemState.running = false;
     res.status(500).json({error: error.message});
   }
 });
@@ -58,14 +114,27 @@ router.post('/stop', async (req, res) => {
     return res.status(400).json({error: 'System not running'});
   }
   
-  systemState.running = false;
-  pipeline.stop();
-  
-  res.json({
-    success: true,
-    message: 'System stopped',
-    uptime: Date.now() - systemState.startedAt
-  });
+  try {
+    // Disable CryptoCrawl services
+    await cryptoCrawlState.disable();
+    
+    systemState.running = false;
+    pipeline.stop();
+    
+    res.json({
+      success: true,
+      message: 'System stopped',
+      uptime: Date.now() - systemState.startedAt,
+      status: cryptoCrawlState.getStatus()
+    });
+  } catch (error: any) {
+    // Mark as stopped even if there was an error
+    systemState.running = false;
+    res.status(500).json({
+      error: error.message,
+      status: cryptoCrawlState.getStatus()
+    });
+  }
 });
 
 // GET /admin/crypto/health - System health check
@@ -73,6 +142,7 @@ router.get('/health', async (req, res) => {
   const health = {
     status: systemState.running ? 'running' : 'stopped',
     uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
+    cryptoCrawl: cryptoCrawlState.getStatus(),
     checks: {
       database: await checkDatabase(),
       rpcEndpoints: await checkRPCEndpoints(),
@@ -87,6 +157,17 @@ router.get('/health', async (req, res) => {
 // GET /admin/crypto/config - Get current config
 router.get('/config', (req, res) => {
   res.json(systemState.config);
+});
+
+// GET /admin/crypto/status - Get system status
+router.get('/status', (req, res) => {
+  res.json({
+    success: true,
+    running: systemState.running,
+    cryptoCrawl: cryptoCrawlState.getStatus(),
+    startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
+    uptime: systemState.running ? Date.now() - systemState.startedAt : 0
+  });
 });
 
 // POST /admin/crypto/config - Update config
