@@ -9,7 +9,7 @@ import type { ChainId } from '../core/lux-swarm';
 // Configuration constants
 const MIN_FAIRNESS_THRESHOLD = 0.7; // Accept trades with at least 70% fairness
 const OFFER_CLEANUP_INTERVAL_MS = 30000; // 30 seconds
-const DEFAULT_OFFER_VALIDITY_MS = DEFAULT_OFFER_VALIDITY_MS; // 1 minute default
+const DEFAULT_OFFER_VALIDITY_MS = 60000; // 1 minute default
 
 export type BarterResourceType = 
   | 'gas'

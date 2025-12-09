@@ -135,7 +135,7 @@ export class EdenPlacementStrategy {
           error: err instanceof Error ? err.message : String(err),
         });
       });
-    }, 30000); // Every 30 seconds
+    }, HEALTH_CHECK_INTERVAL_MS); // Every 30 seconds
 
     // Create initial clusters
     await this.createOptimalClusters();
@@ -295,7 +295,7 @@ export class EdenPlacementStrategy {
    * Rebuild clusters after health changes
    */
   private async rebuildClusters(): Promise<void> {
-    for (const [clusterId, cluster] of this.clusters) {
+    for (const [, cluster] of this.clusters) {
       const activeNodes = cluster.nodes.filter(nId => {
         const node = this.placements.get(nId);
         return node && node.isActive;

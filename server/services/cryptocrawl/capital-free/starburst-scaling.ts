@@ -376,7 +376,7 @@ export class StarburstScalingSystem {
     };
 
     let dissolved = 0;
-    for (const [id, crawler] of this.crawlers) {
+    for (const [, crawler] of this.crawlers) {
       // Dissolve completed or idle crawlers
       if (
         crawler.status === 'completed' ||

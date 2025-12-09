@@ -37,13 +37,7 @@ const ALCHEMY_CONFIG = {
   MAX_PENDING_TX_CACHE: 10000,
 };
 
-// Map our chain IDs to Alchemy network names
-const CHAIN_TO_ALCHEMY: Record<string, keyof typeof ALCHEMY_CONFIG.ENDPOINTS> = {
-  polygon: 'polygon',
-  arbitrum: 'arbitrum',
-  optimism: 'optimism',
-  // BSC and Avalanche not supported by Alchemy - use alternatives
-};
+
 
 // ============================================================================
 // INTERFACES

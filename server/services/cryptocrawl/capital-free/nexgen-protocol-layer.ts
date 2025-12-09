@@ -2,7 +2,6 @@
 // Implements: Graph-based discovery, zero-capital orchestration, profit evaluation,
 // mempool simulations, auto-rebalancing, dynamic fee modeling, gas-surge adaptation
 
-import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId, Opportunity } from '../core/lux-swarm';
 import { LuxSwarm } from '../core/lux-swarm';
@@ -422,7 +421,7 @@ export class NexGenProtocolLayer {
    */
   private async adaptFeeModeling(): Promise<void> {
     // Implemented as part of monitoring - adjusts route fees dynamically
-    for (const [id, route] of this.routes) {
+    for (const [, route] of this.routes) {
       // Simulate fee update based on network conditions
       route.gasEstimate = route.gasEstimate * (0.9 + Math.random() * 0.2);
       route.lastUpdated = Date.now();

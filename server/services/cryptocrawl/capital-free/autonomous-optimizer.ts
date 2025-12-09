@@ -2,7 +2,6 @@
 // Implements novel DeFi strategies operating in unregulated/emerging spaces
 // 100% autonomous with self-evolving optimization algorithms
 
-import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId, Opportunity } from '../core/lux-swarm';
 import { LuxSwarm } from '../core/lux-swarm';

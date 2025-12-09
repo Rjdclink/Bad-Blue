@@ -819,7 +819,7 @@ class SuperchainArbitrageRouter {
       );
 
       // 2. Submit cross-chain message
-      const message = await this.relayer.submitMessage(
+      await this.relayer.submitMessage(
         opportunity.route.path[0],
         opportunity.route.path[1],
         JSON.stringify({ type: 'arbitrage', amount: opportunity.profitEstimate }),
@@ -951,7 +951,7 @@ class SupersimEnvironmentManager {
     env.isRunning = true;
 
     // Simulate block production
-    const blockLoop = setInterval(() => {
+    setInterval(() => {
       for (const chain of env.chains) {
         const current = env.blockNumber.get(chain) || 0;
         env.blockNumber.set(chain, current + 1);
