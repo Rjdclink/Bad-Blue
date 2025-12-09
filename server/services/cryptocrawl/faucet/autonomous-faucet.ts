@@ -871,11 +871,35 @@ class AutonomousCryptoFaucet {
 
   /**
    * Detect timing anomalies that might indicate timing attacks
+   * Analyzes timing patterns in recent operations to detect statistical anomalies
    */
   private detectTimingAnomaly(): number {
-    // Check for timing patterns in our operations
-    // This is a simplified check - real implementation would analyze timing distributions
-    return Math.random() * 0.1; // Low baseline for now
+    // Analyze timing variance in recent operations
+    const now = Date.now();
+    const timeSinceLastTrade = now - this.state.lastSuccessfulTrade;
+    const timeSinceLastModeChange = now - this.state.lastModeChange;
+    
+    let anomalyScore = 0;
+    
+    // Check if timing patterns are too regular (might indicate detection)
+    // Expected: some randomness in timing. Anomaly if very consistent.
+    const expectedJitter = STEALTH_CONFIG.minTimeBetweenTrades * 2;
+    if (timeSinceLastTrade > 0 && timeSinceLastTrade < expectedJitter) {
+      // Very fast consecutive operations could indicate timing analysis
+      anomalyScore += 0.2;
+    }
+    
+    // Check for suspiciously quick mode changes
+    if (timeSinceLastModeChange < 5000 && this.state.mode !== 'closed') {
+      anomalyScore += 0.15;
+    }
+    
+    // Check consecutive failure rate (could indicate external interference)
+    if (this.state.consecutiveFailures > 2) {
+      anomalyScore += this.state.consecutiveFailures * 0.1;
+    }
+    
+    return Math.min(1, anomalyScore);
   }
 
   /**

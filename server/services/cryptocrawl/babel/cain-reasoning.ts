@@ -860,21 +860,46 @@ export class CainReasoningEngine {
 
   /**
    * Encrypt rationale so only this Cain can read it
+   * Uses AES-256-GCM for proper encryption with the fingerprint-derived key
    */
   private static encryptRationale(rationale: string, cainId: string): string {
     const fingerprint = CrawlerFingerprintEngine.getFingerprint(cainId);
     if (!fingerprint) return rationale;
 
-    // Use fingerprint as key (simplified - production would use proper encryption)
-    const key = fingerprint.signature.substring(0, 32);
-    const encrypted = Buffer.from(rationale).toString('base64');
-    
-    // XOR with key for additional obfuscation
-    const xored = encrypted.split('').map((c, i) => 
-      String.fromCharCode(c.charCodeAt(0) ^ key.charCodeAt(i % key.length))
-    ).join('');
+    try {
+      // Derive a proper key from the fingerprint signature using PBKDF2-like approach
+      const keyMaterial = crypto
+        .createHash('sha256')
+        .update(fingerprint.signature)
+        .update(cainId)
+        .digest();
 
-    return Buffer.from(xored).toString('base64');
+      // Generate a random IV for this encryption
+      const iv = crypto.randomBytes(16);
+
+      // Create cipher using AES-256-GCM
+      const cipher = crypto.createCipheriv('aes-256-gcm', keyMaterial, iv);
+
+      // Encrypt the rationale
+      let encrypted = cipher.update(rationale, 'utf8', 'hex');
+      encrypted += cipher.final('hex');
+
+      // Get the auth tag for integrity verification
+      const authTag = cipher.getAuthTag();
+
+      // Combine IV + authTag + encrypted data
+      const combined = Buffer.concat([
+        iv,
+        authTag,
+        Buffer.from(encrypted, 'hex')
+      ]);
+
+      return combined.toString('base64');
+    } catch {
+      // If encryption fails, return obfuscated but not encrypted
+      // This is a fallback for environments without crypto support
+      return Buffer.from(rationale).toString('base64');
+    }
   }
 
   /**
