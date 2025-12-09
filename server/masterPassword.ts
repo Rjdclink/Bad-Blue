@@ -29,7 +29,9 @@ export const CRYPTOCRAWLER_PASSWORD = "CRPTCRWLR";
 
 /**
  * Backward compatibility alias - DEPRECATED
- * @deprecated Use LEGALWHAT_PASSWORD for Zone A access instead
+ * @deprecated Use LEGALWHAT_PASSWORD for Zone A access instead.
+ * This export will be removed in a future version.
+ * Migration: Replace all uses of MASTER_PASSWORD with LEGALWHAT_PASSWORD
  */
 export const MASTER_PASSWORD = LEGALWHAT_PASSWORD;
 
