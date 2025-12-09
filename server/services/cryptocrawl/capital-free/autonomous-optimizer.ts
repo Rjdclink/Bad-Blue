@@ -53,7 +53,7 @@ export interface AutonomousStrategy {
   executionCount: number;
   lastExecuted: number;
   isActive: boolean;
-  parameters: Record<string, number>;
+  parameters: Record<string, number | string>;
 }
 
 export interface OptimizationState {
@@ -406,28 +406,33 @@ export class AutonomousOptimizer {
     // Adjust parameters based on conditions
     if (highVolatilityCount > 2) {
       // High volatility: widen spreads, reduce position size
-      if (strategy.parameters.minSpread) {
-        strategy.parameters.minSpread *= 1.5;
+      const minSpread = strategy.parameters.minSpread;
+      if (typeof minSpread === 'number') {
+        strategy.parameters.minSpread = minSpread * 1.5;
       }
-      if (strategy.parameters.loanMultiplier) {
-        strategy.parameters.loanMultiplier *= 0.7;
+      const loanMultiplier = strategy.parameters.loanMultiplier;
+      if (typeof loanMultiplier === 'number') {
+        strategy.parameters.loanMultiplier = loanMultiplier * 0.7;
       }
     }
 
     if (lowLiquidityCount > 2) {
       // Low liquidity: increase slippage tolerance, reduce size
-      if (strategy.parameters.maxSlippage) {
-        strategy.parameters.maxSlippage *= 1.3;
+      const maxSlippage = strategy.parameters.maxSlippage;
+      if (typeof maxSlippage === 'number') {
+        strategy.parameters.maxSlippage = maxSlippage * 1.3;
       }
     }
 
     if (highCompetitionCount > 2) {
       // High competition: be more aggressive on speed, less on profit
-      if (strategy.parameters.timeoutMs) {
-        strategy.parameters.timeoutMs *= 0.8;
+      const timeoutMs = strategy.parameters.timeoutMs;
+      if (typeof timeoutMs === 'number') {
+        strategy.parameters.timeoutMs = timeoutMs * 0.8;
       }
-      if (strategy.parameters.minProfit) {
-        strategy.parameters.minProfit *= 0.9;
+      const minProfit = strategy.parameters.minProfit;
+      if (typeof minProfit === 'number') {
+        strategy.parameters.minProfit = minProfit * 0.9;
       }
     }
   }
@@ -497,7 +502,10 @@ export class AutonomousOptimizer {
     const successChance = strategy.successRate * (opportunity.priority / 100);
     const success = Math.random() < successChance;
     
-    const baseProfit = opportunity.profitEstimate * (strategy.parameters.loanMultiplier || 50);
+    const loanMultiplier = typeof strategy.parameters.loanMultiplier === 'number' 
+      ? strategy.parameters.loanMultiplier 
+      : 50;
+    const baseProfit = opportunity.profitEstimate * loanMultiplier;
     const profit = success ? baseProfit * (0.8 + Math.random() * 0.4) : 0;
 
     strategy.executionCount++;
@@ -660,9 +668,10 @@ export class AutonomousOptimizer {
     if (bestStrategy) {
       // Slightly improve parameters
       Object.keys(bestStrategy.parameters).forEach(key => {
-        if (typeof bestStrategy.parameters[key] === 'number') {
+        const value = bestStrategy.parameters[key];
+        if (typeof value === 'number') {
           // Small random mutation
-          bestStrategy.parameters[key] *= (0.95 + Math.random() * 0.1);
+          bestStrategy.parameters[key] = value * (0.95 + Math.random() * 0.1);
         }
       });
 
