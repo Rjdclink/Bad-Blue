@@ -1,10 +1,10 @@
 /**
  * OpenRouter Service - Integration with OpenRouter API
  * 
- * Provides access to 3 free-tier models via OpenRouter:
- * - DeepSeek R1T2 Chimera (tngtech/deepseek-r1t2-chimera:free) - 671B params, strong reasoning
- * - Grok 4.1 Fast (x-ai/grok-4.1-fast:free) - 2M context, multimodal
- * - Kimi K2 (moonshotai/kimi-k2:free) - 1T params, structured extraction
+ * Updated December 2025 with valid free-tier models:
+ * - Qwen 2.5 72B (qwen/qwen-2.5-72b-instruct:free) - Strong multilingual reasoning
+ * - DeepSeek R1 (deepseek/deepseek-r1-0528:free) - Advanced reasoning model
+ * - Llama 3.3 70B (meta-llama/llama-3.3-70b-instruct:free) - Latest Llama instruct
  * 
  * Features:
  * - Circuit breakers (3 failures → 5min cooldown)
@@ -18,15 +18,15 @@ import { OpenRouter } from '@openrouter/sdk';
 // OpenRouter API Key
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-// Model identifiers
+// Model identifiers - Updated December 2025 with valid free models
 export const OPENROUTER_MODELS = {
-  DEEPSEEK: 'tngtech/deepseek-r1t2-chimera:free',
-  GROK: 'x-ai/grok-4.1-fast:free',
-  KIMI: 'moonshotai/kimi-k2:free',
+  QWEN: 'qwen/qwen-2.5-72b-instruct:free',
+  DEEPSEEK: 'deepseek/deepseek-r1-0528:free',
+  LLAMA: 'meta-llama/llama-3.3-70b-instruct:free',
 } as const;
 
 // Service type
-export type OpenRouterModel = 'deepseek' | 'grok' | 'kimi';
+export type OpenRouterModel = 'qwen' | 'deepseek' | 'llama';
 
 // Rate limit configuration (50 requests per day per model)
 const DAILY_REQUEST_LIMIT = 50;
@@ -43,10 +43,11 @@ interface RateLimitState {
   errorMessage?: string;
 }
 
+// Rate limit state per model
 const rateLimitState: Record<OpenRouterModel, RateLimitState> = {
+  qwen: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
   deepseek: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
-  grok: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
-  kimi: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
+  llama: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
 };
 
 // OpenRouter client singleton
@@ -76,20 +77,20 @@ export function isOpenRouterAvailable(): boolean {
  */
 export function getOpenRouterStatus(): Record<OpenRouterModel, { available: boolean; requestsRemaining: number; error?: string }> {
   return {
+    qwen: {
+      available: isOpenRouterAvailable() && !isCircuitOpen('qwen') && getRemainingRequests('qwen') > 0,
+      requestsRemaining: getRemainingRequests('qwen'),
+      error: rateLimitState.qwen.errorMessage,
+    },
     deepseek: {
       available: isOpenRouterAvailable() && !isCircuitOpen('deepseek') && getRemainingRequests('deepseek') > 0,
       requestsRemaining: getRemainingRequests('deepseek'),
       error: rateLimitState.deepseek.errorMessage,
     },
-    grok: {
-      available: isOpenRouterAvailable() && !isCircuitOpen('grok') && getRemainingRequests('grok') > 0,
-      requestsRemaining: getRemainingRequests('grok'),
-      error: rateLimitState.grok.errorMessage,
-    },
-    kimi: {
-      available: isOpenRouterAvailable() && !isCircuitOpen('kimi') && getRemainingRequests('kimi') > 0,
-      requestsRemaining: getRemainingRequests('kimi'),
-      error: rateLimitState.kimi.errorMessage,
+    llama: {
+      available: isOpenRouterAvailable() && !isCircuitOpen('llama') && getRemainingRequests('llama') > 0,
+      requestsRemaining: getRemainingRequests('llama'),
+      error: rateLimitState.llama.errorMessage,
     },
   };
 }
@@ -204,9 +205,9 @@ async function callOpenRouter(
   
   const client = getOpenRouterClient();
   
-  const modelId = model === 'deepseek' ? OPENROUTER_MODELS.DEEPSEEK :
-                  model === 'grok' ? OPENROUTER_MODELS.GROK :
-                  OPENROUTER_MODELS.KIMI;
+  const modelId = model === 'qwen' ? OPENROUTER_MODELS.QWEN :
+                  model === 'deepseek' ? OPENROUTER_MODELS.DEEPSEEK :
+                  OPENROUTER_MODELS.LLAMA;
   
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
   
@@ -267,6 +268,42 @@ async function callOpenRouter(
 }
 
 /**
+ * Qwen search - Strong multilingual reasoning
+ */
+export async function qwenSearch(
+  query: string,
+  context?: string
+): Promise<OpenRouterSearchResult | null> {
+  if (!canMakeRequest('qwen')) {
+    console.log('[OpenRouter Qwen] Rate limit reached or circuit open');
+    return null;
+  }
+  
+  try {
+    const prompt = context 
+      ? `Context: ${context}\n\nQuery: ${query}\n\nProvide a detailed, well-reasoned response with sources when possible.`
+      : `Query: ${query}\n\nProvide a detailed, well-reasoned response with sources when possible.`;
+    
+    const response = await callOpenRouter('qwen', prompt, {
+      systemPrompt: 'You are an expert researcher with strong multilingual and analytical capabilities. Provide factual, well-sourced responses.',
+      temperature: 0.3,
+      maxTokens: 2500,
+    });
+    
+    return {
+      title: `Qwen Analysis: ${query.substring(0, 50)}...`,
+      content: response,
+      sources: extractUrls(response),
+      model: 'qwen',
+      confidence: 0.85,
+    };
+  } catch (error) {
+    console.error('[OpenRouter Qwen] Search failed:', error);
+    return null;
+  }
+}
+
+/**
  * DeepSeek search - Strong reasoning capabilities
  */
 export async function deepSeekSearch(
@@ -294,7 +331,7 @@ export async function deepSeekSearch(
       content: response,
       sources: extractUrls(response),
       model: 'deepseek',
-      confidence: 0.85,
+      confidence: 0.88,
     };
   } catch (error) {
     console.error('[OpenRouter DeepSeek] Search failed:', error);
@@ -303,14 +340,14 @@ export async function deepSeekSearch(
 }
 
 /**
- * Grok search - Large context, multimodal
+ * Llama search - Fast general-purpose model
  */
-export async function grokSearch(
+export async function llamaSearch(
   query: string,
   options?: { includeReasoning?: boolean }
 ): Promise<OpenRouterSearchResult | null> {
-  if (!canMakeRequest('grok')) {
-    console.log('[OpenRouter Grok] Rate limit reached or circuit open');
+  if (!canMakeRequest('llama')) {
+    console.log('[OpenRouter Llama] Rate limit reached or circuit open');
     return null;
   }
   
@@ -321,60 +358,22 @@ export async function grokSearch(
     
     const prompt = `${query}${reasoningPrompt}`;
     
-    const response = await callOpenRouter('grok', prompt, {
-      systemPrompt: 'You are a knowledgeable AI assistant with access to real-time information. Provide comprehensive, accurate responses.',
+    const response = await callOpenRouter('llama', prompt, {
+      systemPrompt: 'You are a knowledgeable AI assistant. Provide comprehensive, accurate responses.',
       temperature: 0.5,
       maxTokens: 3000,
     });
     
     return {
-      title: `Grok Analysis: ${query.substring(0, 50)}...`,
+      title: `Llama Analysis: ${query.substring(0, 50)}...`,
       content: response,
       sources: extractUrls(response),
-      model: 'grok',
-      confidence: 0.80,
+      model: 'llama',
+      confidence: 0.82,
       reasoning: options?.includeReasoning ? extractReasoning(response) : undefined,
     };
   } catch (error) {
-    console.error('[OpenRouter Grok] Search failed:', error);
-    return null;
-  }
-}
-
-/**
- * Kimi search - Structured extraction
- */
-export async function kimiSearch(
-  query: string,
-  options?: { structuredOutput?: boolean }
-): Promise<OpenRouterSearchResult | null> {
-  if (!canMakeRequest('kimi')) {
-    console.log('[OpenRouter Kimi] Rate limit reached or circuit open');
-    return null;
-  }
-  
-  try {
-    const structuredPrompt = options?.structuredOutput 
-      ? '\n\nProvide your response in a structured format with clear sections.'
-      : '';
-    
-    const prompt = `${query}${structuredPrompt}`;
-    
-    const response = await callOpenRouter('kimi', prompt, {
-      systemPrompt: 'You are an expert at extracting and organizing information. Provide well-structured, factual responses.',
-      temperature: 0.4,
-      maxTokens: 2500,
-    });
-    
-    return {
-      title: `Kimi Analysis: ${query.substring(0, 50)}...`,
-      content: response,
-      sources: extractUrls(response),
-      model: 'kimi',
-      confidence: 0.82,
-    };
-  } catch (error) {
-    console.error('[OpenRouter Kimi] Search failed:', error);
+    console.error('[OpenRouter Llama] Search failed:', error);
     return null;
   }
 }
@@ -412,17 +411,17 @@ Only include verifiable, factual information with sources.`;
     }
   }
   
-  // Try Grok second (large context)
-  if (canMakeRequest('grok')) {
-    const result = await grokSearch(query, { includeReasoning: true });
+  // Try Qwen second (strong multilingual)
+  if (canMakeRequest('qwen')) {
+    const result = await qwenSearch(query);
     if (result && result.content && result.content.length > 100) {
       return result;
     }
   }
   
-  // Try Kimi last (structured extraction)
-  if (canMakeRequest('kimi')) {
-    const result = await kimiSearch(query, { structuredOutput: true });
+  // Try Llama last (fast general-purpose)
+  if (canMakeRequest('llama')) {
+    const result = await llamaSearch(query, { includeReasoning: true });
     if (result && result.content && result.content.length > 100) {
       return result;
     }
@@ -449,14 +448,14 @@ export async function unifiedOpenRouterSearch(
   if (options?.useAll) {
     const promises: Promise<OpenRouterSearchResult | null>[] = [];
     
+    if (canMakeRequest('qwen')) {
+      promises.push(qwenSearch(query));
+    }
     if (canMakeRequest('deepseek')) {
       promises.push(deepSeekSearch(query));
     }
-    if (canMakeRequest('grok')) {
-      promises.push(grokSearch(query));
-    }
-    if (canMakeRequest('kimi')) {
-      promises.push(kimiSearch(query, { structuredOutput: true }));
+    if (canMakeRequest('llama')) {
+      promises.push(llamaSearch(query));
     }
     
     const settled = await Promise.allSettled(promises);
@@ -467,20 +466,20 @@ export async function unifiedOpenRouterSearch(
     }
   } else {
     // Try models in priority order until one succeeds
-    for (const model of ['deepseek', 'grok', 'kimi'] as OpenRouterModel[]) {
+    for (const model of ['qwen', 'deepseek', 'llama'] as OpenRouterModel[]) {
       if (!canMakeRequest(model)) continue;
       
       try {
         let result: OpenRouterSearchResult | null = null;
         switch (model) {
+          case 'qwen':
+            result = await qwenSearch(query);
+            break;
           case 'deepseek':
             result = await deepSeekSearch(query);
             break;
-          case 'grok':
-            result = await grokSearch(query);
-            break;
-          case 'kimi':
-            result = await kimiSearch(query);
+          case 'llama':
+            result = await llamaSearch(query);
             break;
         }
         
@@ -543,7 +542,8 @@ function extractReasoning(text: string): string | undefined {
 // Log availability on module load
 if (isOpenRouterAvailable()) {
   console.log('[OpenRouter Service] Initialized with API key');
-  console.log('[OpenRouter Service] Available models: DeepSeek, Grok, Kimi');
+  console.log('[OpenRouter Service] Available models: Qwen 2.5 72B, DeepSeek R1, Llama 3.3 70B');
 } else {
   console.log('[OpenRouter Service] Not configured - OPENROUTER_API_KEY not set');
+  console.log('[OpenRouter Service] PANTHEON will use Zero-API local intelligence mode');
 }
