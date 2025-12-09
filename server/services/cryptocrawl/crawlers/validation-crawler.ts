@@ -5,6 +5,10 @@ import { randomUUID } from 'crypto';
 import { HopPacket, HopStage, ValidationResult, CrawlerState } from './types';
 
 export class ValidationCrawler {
+  // Liquidity requirement: we need 1000x the estimated profit in liquidity for safe execution
+  // This ensures adequate depth to minimize slippage
+  private static readonly LIQUIDITY_DEPTH_MULTIPLIER = 1000;
+  
   private id: string;
   private state: CrawlerState;
   private isRunning: boolean = false;
@@ -125,8 +129,6 @@ export class ValidationCrawler {
     let recommendation: 'execute' | 'skip' | 'queue';
     if (!valid) {
       recommendation = 'skip';
-    } else if (packet.priority > 70) {
-      recommendation = 'execute';
     } else if (packet.priority > 40) {
       recommendation = 'execute';
     } else {
@@ -145,7 +147,7 @@ export class ValidationCrawler {
   private async checkLiquidity(packet: HopPacket): Promise<{ valid: boolean; risk: number }> {
     // Mock implementation - in production, query DEX reserves
     const depth = packet.discovery?.liquidityDepth || 0;
-    const required = packet.profitEstimate * 1000; // Assume we need 1000x for safe execution
+    const required = packet.profitEstimate * ValidationCrawler.LIQUIDITY_DEPTH_MULTIPLIER;
     
     const valid = depth >= required;
     const risk = valid ? 0.1 : 0.9;

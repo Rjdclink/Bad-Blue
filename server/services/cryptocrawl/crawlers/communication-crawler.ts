@@ -269,6 +269,9 @@ export class CommunicationCrawler {
     const risk = this.commState.riskLevels[chain];
     const gas = this.commState.gasConditions[chain];
     
+    // Ensure risk and gas exist before checking
+    if (!risk || !gas) return false;
+    
     return risk.level !== 'critical' && gas.recommendation !== 'wait';
   }
   

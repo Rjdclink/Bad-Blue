@@ -6,6 +6,9 @@ import type { ChainId } from '../core/lux-swarm';
 import { HopPacket, HopStage, DiscoveryCandidate, CrawlerState } from './types';
 
 export class DiscoveryCrawler {
+  // Minimum profitable spread threshold (0.3%)
+  private static readonly MIN_PROFITABLE_SPREAD = 0.003;
+  
   private id: string;
   private chain: ChainId;
   private state: CrawlerState;
@@ -103,7 +106,7 @@ export class DiscoveryCrawler {
       const spread = Math.abs(priceA - priceB);
       
       // Only emit if spread is profitable
-      if (spread > 0.003) { // >0.3% spread
+      if (spread > DiscoveryCrawler.MIN_PROFITABLE_SPREAD) {
         const liquidity = 100000 + Math.random() * 900000; // $100k-$1M
         const gasEstimate = 150000 + Math.random() * 100000;
         const estimatedProfit = spread * 10000; // Estimated profit on $10k trade

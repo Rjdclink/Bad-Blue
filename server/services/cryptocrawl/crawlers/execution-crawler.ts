@@ -180,12 +180,17 @@ export class ExecutionCrawler {
     return 'direct';
   }
   
+  // Execution success rates
+  private static readonly DIRECT_SUCCESS_RATE = 0.95;      // 95% success
+  private static readonly FLASHLOAN_SUCCESS_RATE = 0.92;   // 92% success
+  private static readonly CROSSCHAIN_SUCCESS_RATE = 0.85;  // 85% success
+  
   // Execute direct trade
   private async executeDirect(packet: HopPacket): Promise<ExecutionResult> {
     // Mock implementation - in production, execute real DEX swap
     await this.sleep(100 + Math.random() * 200);
     
-    const success = Math.random() > 0.05; // 95% success rate for direct
+    const success = Math.random() < ExecutionCrawler.DIRECT_SUCCESS_RATE;
     
     if (success) {
       return {
@@ -207,7 +212,7 @@ export class ExecutionCrawler {
     // Mock implementation - in production, use Aave flash loans
     await this.sleep(150 + Math.random() * 250);
     
-    const success = Math.random() > 0.08; // 92% success rate for flash loans
+    const success = Math.random() < ExecutionCrawler.FLASHLOAN_SUCCESS_RATE;
     
     if (success) {
       return {
@@ -252,7 +257,7 @@ export class ExecutionCrawler {
     // Mock implementation - in production, use bridge protocols
     await this.sleep(2000 + Math.random() * 3000); // Cross-chain is slower
     
-    const success = Math.random() > 0.15; // 85% success rate for cross-chain
+    const success = Math.random() < ExecutionCrawler.CROSSCHAIN_SUCCESS_RATE;
     
     if (success) {
       return {

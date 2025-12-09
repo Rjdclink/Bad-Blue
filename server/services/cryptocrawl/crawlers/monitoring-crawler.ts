@@ -96,15 +96,20 @@ export class MonitoringCrawler {
     }
   }
   
+  // Transaction status probabilities
+  private static readonly TX_PENDING_THRESHOLD = 0.1;   // 10% still pending
+  private static readonly TX_SETTLED_THRESHOLD = 0.95;  // 85% settled
+  // Remaining 5% are failed
+  
   // Check transaction status
   private async checkTransaction(txHash: string): Promise<'pending' | 'settled' | 'failed'> {
     // Mock implementation - in production, query blockchain RPC
     await this.sleep(100);
     
-    // Simulate confirmation time (10% still pending, 85% settled, 5% failed)
+    // Simulate confirmation time
     const rand = Math.random();
-    if (rand < 0.1) return 'pending';
-    if (rand < 0.95) return 'settled';
+    if (rand < MonitoringCrawler.TX_PENDING_THRESHOLD) return 'pending';
+    if (rand < MonitoringCrawler.TX_SETTLED_THRESHOLD) return 'settled';
     return 'failed';
   }
   
