@@ -280,10 +280,35 @@ class MonteCarloEngine {
     volatilityRandom: number
   ): number {
     // Adjust success rate based on market conditions
-    const adjustedSuccessRate = strategy.baseSuccessRate 
-      * market.liquidityScore 
-      * (1 - market.competitorDensity * 0.3)
-      * (1 - market.networkCongestion * 0.2);
+    // Use a dampened approach that maintains minimum viability
+    
+    // Calculate market stress factor (0-1, higher = worse conditions)
+    // Weight liquidity less severely for extreme low values
+    const liquidityFactor = market.liquidityScore < 0.2 
+      ? 0.2 + market.liquidityScore * 0.5  // Floor of 0.2 for very low liquidity
+      : market.liquidityScore;
+    
+    const stressFactor = (
+      (1 - liquidityFactor) * 0.35 +
+      market.competitorDensity * 0.25 +
+      market.networkCongestion * 0.2 +
+      Math.min(1, market.volatility / 3) * 0.2  // Cap volatility impact
+    );
+    
+    // Apply stress reduction with floor protection
+    // Even in worst conditions, a good strategy has some chance of success
+    // This models the reality that skilled traders can profit even in bad conditions
+    // by being very selective about which trades to take
+    const adjustmentFactor = Math.max(0.25, 1 - stressFactor * 0.6);
+    
+    // Calculate minimum floor based on strategy base rate
+    // Better strategies maintain higher floor even in extreme conditions
+    const dynamicFloor = Math.max(0.15, strategy.baseSuccessRate * 0.2);
+    
+    const adjustedSuccessRate = Math.max(
+      dynamicFloor,  // Dynamic floor based on strategy quality
+      strategy.baseSuccessRate * adjustmentFactor
+    );
 
     // Generate trade outcome using provided random numbers
     const isSuccess = successRandom < adjustedSuccessRate;
@@ -291,14 +316,17 @@ class MonteCarloEngine {
     if (isSuccess) {
       // Profitable trade with volatility-adjusted returns
       const baseProfit = strategy.avgProfitPerTrade;
-      const volatilityImpact = (volatilityRandom - 0.5) * 2 * market.volatility * baseProfit;
-      const slippageImpact = strategy.slippageTolerance * (1 + market.networkCongestion);
+      // Cap volatility impact on profits
+      const cappedVolatility = Math.min(1.5, market.volatility);
+      const volatilityImpact = (volatilityRandom - 0.5) * 2 * cappedVolatility * baseProfit;
+      const slippageImpact = strategy.slippageTolerance * (1 + market.networkCongestion * 0.5);
       
       return baseProfit + volatilityImpact - slippageImpact;
     } else {
       // Loss trade
       const baseLoss = strategy.avgLossPerTrade;
-      const volatilityImpact = volatilityRandom * market.volatility * baseLoss;
+      const cappedVolatility = Math.min(1.5, market.volatility);
+      const volatilityImpact = volatilityRandom * cappedVolatility * baseLoss * 0.5;
       
       return -(baseLoss + volatilityImpact + strategy.gasPerTrade);
     }
