@@ -71,10 +71,13 @@ export class CainCrawler {
   }
 
   /**
-   * Start the Cain evolution cycle
+   * Start the Cain evolution cycle with backoff strategy
    * Collect → Return → Evolve → Teach
    */
   async start(): Promise<void> {
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 5;
+    
     while (this.isActive) {
       try {
         // Phase 1: Collect knowledge from all active crawlers
@@ -90,19 +93,37 @@ export class CainCrawler {
         await this.teachGeneration(evolution);
 
         this.evolutionCycle++;
+        consecutiveErrors = 0; // Reset error count on success
 
         // Wait before next cycle
         await this.sleep(60000); // 1 minute between cycles
 
       } catch (error) {
+        consecutiveErrors++;
+        
         logger.error('Cain Crawler error', {
           component: 'CainCrawler',
           id: this.id,
+          consecutiveErrors,
           error: error instanceof Error ? error.message : String(error)
         });
         
-        // Phoenix pattern: respawn on failure
-        await this.sleep(5000);
+        // Exponential backoff: 5s, 10s, 20s, 40s, 80s
+        const backoffTime = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 80000);
+        
+        // Stop if too many consecutive errors
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          logger.error('Max consecutive errors reached, stopping Cain crawler', {
+            component: 'CainCrawler',
+            id: this.id,
+            consecutiveErrors
+          });
+          this.isActive = false;
+          break;
+        }
+        
+        // Phoenix pattern: respawn on failure with backoff
+        await this.sleep(backoffTime);
       }
     }
   }

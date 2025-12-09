@@ -633,10 +633,19 @@ export class NeurofusionEngine {
    * Reinforce successful pathways
    */
   private static reinforceSuccessfulPathways(): void {
-    // Get high-accuracy patterns
+    // Get high-accuracy patterns for analysis
     const successfulPatterns = Array.from(this.state.patterns.values())
       .filter(p => p.accuracy > 0.8)
       .slice(-50); // Last 50 successful patterns
+
+    // Log successful patterns for monitoring
+    if (successfulPatterns.length > 0) {
+      logger.debug('Analyzing successful patterns', {
+        component: 'NeurofusionEngine',
+        count: successfulPatterns.length,
+        avgAccuracy: successfulPatterns.reduce((sum, p) => sum + p.accuracy, 0) / successfulPatterns.length
+      });
+    }
 
     // Identify frequently used connections
     const connectionUsage = new Map<string, number>();
@@ -661,14 +670,15 @@ export class NeurofusionEngine {
    * Add adaptive connections
    */
   private static addAdaptiveConnections(): void {
-    // Add connections between nodes that frequently activate together
-    const activationCorrelation = new Map<string, Map<string, number>>();
+    // Placeholder for adaptive connection analysis
+    // In production, this would analyze activation correlation patterns
+    const totalNodes = this.state.nodes.size;
+    const totalConnections = this.state.connections.size;
 
-    // This is a placeholder for more sophisticated correlation analysis
-    // In production, this would analyze activation patterns over time
-
-    logger.debug('Adaptive connections added', {
-      component: 'NeurofusionEngine'
+    logger.debug('Adaptive connection analysis complete', {
+      component: 'NeurofusionEngine',
+      nodes: totalNodes,
+      connections: totalConnections
     });
   }
 

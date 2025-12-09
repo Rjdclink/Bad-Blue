@@ -520,19 +520,34 @@ export class ConjoinedTwinCrawler {
   /**
    * Learn from observations
    */
-  private async learnFromObservations(by: 'twinA' | 'twinB'): Promise<void> {
+  private async learnFromObservations(_by: 'twinA' | 'twinB'): Promise<void> {
     const recentObs = this.twinState.sharedObservations.slice(-20);
     
-    // Use neurofusion to find patterns
-    // This is shared learning that benefits both twins
+    if (recentObs.length > 0) {
+      // Extract patterns from observations for neurofusion learning
+      const marketState = this.extractMarketState();
+      const expectedOutput = { execute: recentObs.filter(o => o.opportunity.profitEstimate > 0).length / recentObs.length };
+      
+      // Learn from the observation patterns
+      NeurofusionEngine.learn(marketState, expectedOutput, { observations: recentObs.length });
+    }
   }
 
   /**
    * Validate observations
    */
-  private async validateObservations(by: 'twinA' | 'twinB'): Promise<void> {
+  private async validateObservations(_by: 'twinA' | 'twinB'): Promise<void> {
     // Twin B validates Twin A's observations
     // Ensures quality and prevents false positives
+    const recentObs = this.twinState.sharedObservations.slice(-10);
+    
+    for (const obs of recentObs) {
+      // Validate observation quality
+      if (obs.opportunity.profitEstimate > 0 && obs.opportunity.priority > 50) {
+        // High quality observation - mark as validated
+        this.twinState.sharedMemory.set(`validated-${obs.id}`, true);
+      }
+    }
   }
 
   /**

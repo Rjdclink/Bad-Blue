@@ -364,18 +364,33 @@ export class LightCommunicationSystem {
    * Broadcast emergency signal (highest priority, all channels)
    */
   static broadcastEmergency(source: string, data: SignalCompression): void {
+    let successCount = 0;
+    
     for (const channel of this.channels.values()) {
       try {
-        this.emit(source, 'emergency', 'critical', data, 10000);
+        // Emit to emergency frequency (999)
+        const frequency = this.FREQUENCIES.EMERGENCY;
+        const targetChannel = this.getChannelByFrequency(frequency);
+        
+        if (targetChannel) {
+          this.emit(source, 'emergency', 'critical', data, 10000);
+          successCount++;
+        }
       } catch (error) {
         // Continue broadcasting even if one channel fails
+        logger.debug('Emergency broadcast failed for channel', {
+          component: 'LightCommunicationSystem',
+          channelId: channel.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
       }
     }
 
     logger.warn('Emergency signal broadcast', {
       component: 'LightCommunicationSystem',
       source,
-      channels: this.channels.size
+      totalChannels: this.channels.size,
+      successCount
     });
   }
 

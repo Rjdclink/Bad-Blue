@@ -3,14 +3,14 @@
 
 import logger from '../../../logger.js';
 import { EdenStorage, type EvolutionResult } from './eden-storage';
-import { CainCrawler, CainManager } from './cain-crawler';
+import { CainManager } from './cain-crawler';
 import { NeurofusionEngine } from './neurofusion';
-import { ConjoinedTwinCrawler, TwinManager } from '../agents/conjoined-twin-crawler';
+import { TwinManager } from '../agents/conjoined-twin-crawler';
 import { StarburstEngine } from '../agents/starburst-replication';
 import { MicrotaskEngine } from './microtask-engine';
 import { LightCommunicationSystem, ShrinkGrowEngine } from './light-communication';
 import { InvisibleMode, CyanideProtocol, DiscoBallMirror, EmbeddedNetworkKnowledge } from './stealth-security';
-import { LuxSwarm, type Opportunity, type ChainId } from './lux-swarm';
+import { LuxSwarm, type ChainId } from './lux-swarm';
 
 export interface SystemStatus {
   edenOnline: boolean;
@@ -363,19 +363,24 @@ export class MasterOrchestrator {
   }
 
   /**
-   * Activate emergency stealth for all crawlers
+   * Activate emergency stealth for all crawlers with staggered self-destruct to avoid thundering herd
    */
   private static activateEmergencyStealth(): void {
     const lux = LuxSwarm.observe();
+    const agents = Array.from(lux.agentStates.entries());
     
-    for (const [agentId] of lux.agentStates.entries()) {
+    // Stagger self-destruct timers to prevent thundering herd problem
+    agents.forEach(([agentId], index) => {
       InvisibleMode.activate(agentId, 'invisible');
-      CyanideProtocol.arm(agentId, 'capture', 60000); // 60 second self-destruct timer
-    }
+      // Stagger countdown: 60s base + random offset (0-30s) per agent
+      const staggeredTimeout = 60000 + (index % 30) * 1000;
+      CyanideProtocol.arm(agentId, 'capture', staggeredTimeout);
+    });
 
-    logger.warn('Emergency stealth activated', {
+    logger.warn('Emergency stealth activated with staggered self-destruct', {
       component: 'MasterOrchestrator',
-      crawlers: lux.agentStates.size
+      crawlers: agents.length,
+      timeRange: '60-90s'
     });
   }
 

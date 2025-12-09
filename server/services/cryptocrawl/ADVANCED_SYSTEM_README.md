@@ -1,15 +1,15 @@
 # Advanced Crawler Evolution System
 
-A revolutionary cryptocurrency arbitrage and trading crawler system featuring instantaneous cognitive integration, adaptive learning, and autonomous evolution.
+A distributed cryptocurrency arbitrage and trading crawler system featuring neural learning, adaptive evolution, and multi-chain coordination.
 
 ## 🌟 System Architecture
 
-The Advanced Crawler Evolution System consists of **16 integrated subsystems** working in perfect harmony:
+The Advanced Crawler Evolution System consists of **16 integrated subsystems**:
 
 ### Core Evolution Infrastructure
 
 #### 1. **Eden Storage** - Multi-Network State Replication
-- Knowledge base replicated across all blockchains (Polygon, BSC, Avalanche, Arbitrum, Optimism)
+- Knowledge base replicated across blockchains (Polygon, BSC, Avalanche, Arbitrum, Optimism)
 - Automatic synchronization every 5 seconds
 - Persistent storage of strategies, patterns, risks, opportunities, and failures
 - Generation-based evolution tracking
@@ -72,14 +72,15 @@ await twins.start();
 ```
 
 #### 5. **Starburst Replication** - Explosive Agent Multiplication
-- Creates millions of specialized replicas on high-value events
+- Creates specialized replicas on high-value events
 - **Triggers**: 
   - High-value opportunities ($10k+)
   - Opportunity surges (10+ simultaneous)
   - Multi-chain cascades (5+ chains active)
   - Emergency manual triggers
 - Specialized roles: scanners, executors, validators, monitors
-- Automatic lifecycle management
+- Automatic lifecycle management with memory monitoring
+- Configurable replica limit (default: 10,000 for memory efficiency)
 
 ```typescript
 StarburstEngine.startMonitoring();
@@ -317,14 +318,14 @@ ALCHEMY_API_KEY=your-alchemy-key
 Based on the architectural design:
 
 - **Execution Speed**: <250ms per opportunity (Arbitrum)
-- **Learning Rate**: Real-time with every execution
-- **Scalability**: Millions of concurrent agents
+- **Learning Rate**: Continuous with each execution
+- **Scalability**: Thousands of concurrent agents (configurable)
 - **Success Rate**: Improves with each evolution cycle
-- **Resource Efficiency**: Adaptive 0.1x - 10x scaling
+- **Resource Efficiency**: Adaptive 0.1x - 10x scaling with memory monitoring
 
 ## 🛡️ Security
 
-- **Zero vulnerabilities** detected by CodeQL
+- **CodeQL verified** with regular security scans
 - **Crypto-secure** fingerprint generation
 - **No external system harm** (self-destruct contained)
 - **Knowledge preservation** before destruction

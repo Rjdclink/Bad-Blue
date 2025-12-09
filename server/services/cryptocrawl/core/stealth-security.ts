@@ -147,7 +147,7 @@ export class InvisibleMode {
     const now = Date.now();
     let rotated = 0;
 
-    for (const [crawlerId, profile] of this.profiles.entries()) {
+    for (const profile of this.profiles.values()) {
       if (!profile.active) continue;
 
       if (now - profile.lastRotation >= profile.rotationInterval) {
@@ -333,32 +333,33 @@ export class CyanideProtocol {
   }
 
   /**
-   * Preserve knowledge to Eden before destruction
+   * Preserve knowledge to Eden before destruction (primary chain only for efficiency)
    */
   private static preserveKnowledgeToEden(crawlerId: string): void {
-    // Save crawler's knowledge to Eden
-    const chains: ChainId[] = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
+    // Save crawler's knowledge to primary Eden only (will replicate automatically)
+    // This reduces overhead during mass self-destruct scenarios
+    const primaryChain: ChainId = 'polygon';
+    
+    EdenStorage.storeKnowledge({
+      type: 'strategy',
+      chain: primaryChain,
+      data: {
+        crawlerId,
+        event: 'self-destruct',
+        timestamp: Date.now(),
+        reason: 'knowledge preservation'
+      },
+      confidence: 0.8,
+      successRate: 1,
+      profitability: 0,
+      usageCount: 1
+    });
+    // Note: Eden's automatic replication will propagate to other chains
 
-    for (const chain of chains) {
-      EdenStorage.storeKnowledge({
-        type: 'strategy',
-        chain,
-        data: {
-          crawlerId,
-          event: 'self-destruct',
-          timestamp: Date.now(),
-          reason: 'knowledge preservation'
-        },
-        confidence: 0.8,
-        successRate: 1,
-        profitability: 0,
-        usageCount: 1
-      });
-    }
-
-    logger.info('Knowledge preserved to Eden', {
+    logger.info('Knowledge preserved to Eden (primary)', {
       component: 'CyanideProtocol',
-      crawlerId
+      crawlerId,
+      chain: primaryChain
     });
   }
 

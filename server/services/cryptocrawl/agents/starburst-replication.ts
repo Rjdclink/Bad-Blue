@@ -69,7 +69,8 @@ export class StarburstEngine {
 
   private static replicas = new Map<string, ReplicaAgent>();
   private static events: StarburstEvent[] = [];
-  private static maxReplicas = 1000000; // 1 million replicas max
+  private static maxReplicas = 10000; // 10k replicas max (reduced for memory efficiency)
+  private static memoryThresholdMB = 500; // Max 500MB for replica storage
   private static isMonitoring = false;
   private static monitorInterval: NodeJS.Timeout | null = null;
 
@@ -136,7 +137,7 @@ export class StarburstEngine {
   }
 
   /**
-   * Trigger a starburst event
+   * Trigger a starburst event with memory monitoring
    */
   static triggerStarburst(
     type: StarburstTrigger['type'],
@@ -146,6 +147,27 @@ export class StarburstEngine {
     const trigger = this.triggers.find(t => t.type === type);
     if (!trigger) {
       throw new Error(`Unknown starburst trigger type: ${type}`);
+    }
+
+    // Check memory usage before creating replicas
+    const memoryUsageMB = (process.memoryUsage().heapUsed / 1024 / 1024);
+    if (memoryUsageMB > this.memoryThresholdMB) {
+      logger.warn('Memory threshold reached, starburst suppressed', {
+        component: 'StarburstEngine',
+        memoryUsageMB: memoryUsageMB.toFixed(2),
+        threshold: this.memoryThresholdMB
+      });
+
+      return {
+        id: `starburst-${Date.now()}`,
+        triggerType: type,
+        sourceAgent: 'engine',
+        replicasCreated: 0,
+        timestamp: Date.now(),
+        value,
+        chain: opportunity.chain,
+        success: false
+      };
     }
 
     // Check if already at max replicas
@@ -168,7 +190,7 @@ export class StarburstEngine {
       };
     }
 
-    // Calculate how many replicas to create
+    // Calculate how many replicas to create with memory constraint
     const spaceAvailable = this.maxReplicas - this.replicas.size;
     const replicasToCreate = Math.min(trigger.replicationFactor, spaceAvailable);
 
@@ -177,7 +199,8 @@ export class StarburstEngine {
       type,
       value,
       replicasToCreate,
-      currentReplicas: this.replicas.size
+      currentReplicas: this.replicas.size,
+      memoryUsageMB: memoryUsageMB.toFixed(2)
     });
 
     // Create replicas with specialized roles

@@ -264,26 +264,46 @@ export class EdenStorage {
       const targetState = this.instances.get(targetChain);
       if (!targetState) continue;
 
-      // Replicate to target chain
+      // Replicate to target chain, only increment totalKnowledge if entry is new
+      let isNew = false;
+      
       switch (entry.type) {
         case 'strategy':
+          if (!targetState.strategies.has(entry.id)) {
+            isNew = true;
+          }
           targetState.strategies.set(entry.id, entry);
           break;
         case 'pattern':
+          if (!targetState.patterns.has(entry.id)) {
+            isNew = true;
+          }
           targetState.patterns.set(entry.id, entry);
           break;
         case 'risk':
+          if (!targetState.risks.has(entry.id)) {
+            isNew = true;
+          }
           targetState.risks.set(entry.id, entry);
           break;
         case 'opportunity':
+          if (!targetState.opportunities.has(entry.id)) {
+            isNew = true;
+          }
           targetState.opportunities.set(entry.id, entry);
           break;
         case 'failure':
+          if (!targetState.failures.has(entry.id)) {
+            isNew = true;
+          }
           targetState.failures.set(entry.id, entry);
           break;
       }
 
-      targetState.totalKnowledge++;
+      // Only increment if this is a new entry
+      if (isNew) {
+        targetState.totalKnowledge++;
+      }
     }
   }
 
