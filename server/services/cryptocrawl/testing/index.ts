@@ -5,6 +5,8 @@ export {
   CryptocrawlerTestHarness,
   runCryptocrawlerTests,
   PERFORMANCE_LEVELS,
+  TimeLimitExceededError,
+  ResourceLimitExceededError,
   type TestConfig,
   type TestResult,
   type SimulationState,

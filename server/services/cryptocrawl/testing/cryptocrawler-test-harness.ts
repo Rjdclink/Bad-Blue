@@ -20,6 +20,23 @@ import {
 import { EDEN_CONFIG, CONTROL_SIGNALS } from '../eden/config';
 
 // ============================================
+// CUSTOM ERROR CLASSES
+// ============================================
+export class TimeLimitExceededError extends Error {
+  constructor(elapsed: number, limit: number) {
+    super(`Time limit exceeded: ${elapsed}ms >= ${limit}ms`);
+    this.name = 'TimeLimitExceededError';
+  }
+}
+
+export class ResourceLimitExceededError extends Error {
+  constructor(resource: string, usage: number, limit: number) {
+    super(`${resource} limit exceeded: ${usage} >= ${limit}`);
+    this.name = 'ResourceLimitExceededError';
+  }
+}
+
+// ============================================
 // SIMULATION PERFORMANCE LEVELS
 // ============================================
 export type PerformanceLevel = 'ideal' | 'average' | 'poor';
@@ -365,15 +382,27 @@ export class CryptocrawlerTestHarness {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.testRunId = `test-${randomUUID()}`;
     
+    // Validate performance levels
+    if (!this.config.performanceLevels || this.config.performanceLevels.length === 0) {
+      this.config.performanceLevels = ['ideal', 'average', 'poor'];
+    }
+    
+    // Validate Supabase credentials before creating client
     const supabaseUrl = process.env.SUPABASE_URL || EDEN_CONFIG.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_ANON_KEY || EDEN_CONFIG.SUPABASE_KEY;
     
-    if (supabaseUrl && supabaseKey && this.config.supabase.persistResults) {
-      try {
-        this.supabase = createClient(supabaseUrl, supabaseKey);
-        this.log('info', 'Supabase connection initialized for result persistence');
-      } catch (error) {
-        this.log('warn', 'Failed to initialize Supabase, results will not be persisted', { error });
+    if (this.config.supabase.persistResults) {
+      if (!supabaseUrl || !supabaseKey) {
+        this.log('warn', 'Supabase credentials not found, persistence disabled');
+      } else if (!supabaseUrl.startsWith('http')) {
+        this.log('warn', 'Invalid Supabase URL format, persistence disabled');
+      } else {
+        try {
+          this.supabase = createClient(supabaseUrl, supabaseKey);
+          this.log('info', 'Supabase connection initialized for result persistence');
+        } catch (error) {
+          this.log('warn', 'Failed to initialize Supabase, results will not be persisted', { error });
+        }
       }
     }
   }
@@ -503,8 +532,12 @@ export class CryptocrawlerTestHarness {
     this.log('info', `\n🎯 Running ${levelConfig.name} simulation...`);
     this.log('info', `   Description: ${levelConfig.description}`);
     
+    // Safe division with validation
+    const levelCount = Math.max(1, this.config.performanceLevels.length);
+    const simulationsPerLevel = Math.max(10, Math.floor(this.config.simulationIterations / levelCount));
+    
     const engine = createMonteCarloEngine({
-      simulations: Math.floor(this.config.simulationIterations / this.config.performanceLevels.length),
+      simulations: simulationsPerLevel,
       timeHorizonDays: 30,
       confidenceLevel: 0.95,
       antithetic: true,
@@ -1182,7 +1215,7 @@ export class CryptocrawlerTestHarness {
   private checkTimeLimit(): void {
     const elapsed = Date.now() - this.startTime;
     if (elapsed >= this.config.maxRuntimeMs) {
-      throw new Error(`Time limit exceeded: ${elapsed}ms >= ${this.config.maxRuntimeMs}ms`);
+      throw new TimeLimitExceededError(elapsed, this.config.maxRuntimeMs);
     }
   }
 

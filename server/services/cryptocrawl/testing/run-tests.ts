@@ -20,13 +20,32 @@ function parseArgs(): Partial<TestConfig> {
   
   for (const arg of args) {
     if (arg.startsWith('--iterations=')) {
-      config.simulationIterations = parseInt(arg.split('=')[1], 10);
+      const value = parseInt(arg.split('=')[1], 10);
+      if (isNaN(value) || value < 1) {
+        console.warn(`Invalid iterations value, using default`);
+      } else if (value > 100000) {
+        console.warn(`Iterations capped at 100000`);
+        config.simulationIterations = 100000;
+      } else {
+        config.simulationIterations = value;
+      }
     } else if (arg.startsWith('--levels=')) {
       const levels = arg.split('=')[1].split(',') as PerformanceLevel[];
       config.performanceLevels = levels.filter(l => ['ideal', 'average', 'poor'].includes(l));
+      if (config.performanceLevels.length === 0) {
+        console.warn(`No valid levels specified, using defaults`);
+        config.performanceLevels = ['ideal', 'average', 'poor'];
+      }
     } else if (arg.startsWith('--max-runtime=')) {
       const minutes = parseInt(arg.split('=')[1], 10);
-      config.maxRuntimeMs = minutes * 60 * 1000;
+      if (isNaN(minutes) || minutes < 1) {
+        console.warn(`Invalid max-runtime value, using default`);
+      } else if (minutes > 60) {
+        console.warn(`Max runtime capped at 60 minutes`);
+        config.maxRuntimeMs = 60 * 60 * 1000;
+      } else {
+        config.maxRuntimeMs = minutes * 60 * 1000;
+      }
     } else if (arg === '--persist-all') {
       config.supabase = {
         persistResults: true,
