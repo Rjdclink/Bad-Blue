@@ -46,12 +46,17 @@ export interface GeneticConfig {
 const DEFAULT_GENETIC_CONFIG: GeneticConfig = {
   populationSize: 100,
   generationsPerCycle: 50,
-  mutationRate: 0.15,               // Aggressive 15% base mutation
+  // NOTE: 15% mutation rate is intentionally aggressive for rapid exploration.
+  // This is balanced by elitism (preserving top 5) and catastrophe thresholds.
+  // Standard GAs use 1-5%, but crypto markets require faster adaptation.
+  mutationRate: 0.15,               // Aggressive 15% base mutation for rapid exploration
   crossoverRate: 0.7,               // High crossover for strategy mixing
-  elitismCount: 5,                  // Preserve top 5
+  elitismCount: 5,                  // Preserve top 5 to maintain best solutions
   tournamentSize: 5,                // Tournament selection
   catastropheThreshold: 0.3,        // Trigger innovation below 30% fitness
-  hyperMutationRate: 0.5,           // 50% mutation when stuck
+  // NOTE: 30% hyper-mutation preserves ~70% of genetic information while
+  // still providing significant diversity injection when stuck
+  hyperMutationRate: 0.30,          // 30% mutation when stuck (reduced from 50%)
   explorationDimensions: 10         // 10 parallel exploration paths
 };
 

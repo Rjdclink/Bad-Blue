@@ -835,7 +835,12 @@ export class SwarmIntelligenceEngine {
   /**
    * Calculate fitness from simulation result
    */
-  private calculateFitness(result: any): number {
+  private calculateFitness(result: {
+    winRate: number;
+    sharpeRatio: number;
+    profitFactor: number;
+    maxDrawdown: number;
+  }): number {
     let fitness = 0;
     
     fitness += Math.min(0.3, result.winRate * 0.4);

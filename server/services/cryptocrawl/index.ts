@@ -166,6 +166,17 @@ export {
   SwarmIntelligenceEngine,
   getSwarmIntelligenceEngine,
   swarmIntelligence,
+  FrontierResearchEngine,
+  frontierResearch,
+  TargetValidationEngine,
+  targetValidator,
+  DAILY_PROFIT_TARGET,
+  CONFIDENCE_THRESHOLD,
+  DARPA_METHODOLOGIES,
+  NASA_METHODOLOGIES,
+  IARPA_METHODOLOGIES,
+  QUANTUM_METHODOLOGIES,
+  HFT_METHODOLOGIES,
   type GeneticConfig,
   type StrategyGenome,
   type EvolutionState,
@@ -175,7 +186,18 @@ export {
   type SwarmConfig,
   type AntColonyConfig,
   type BeeColonyConfig,
-  type FoodSource
+  type FoodSource,
+  type ValidationResult,
+  type StressTestResult,
+  type StrategyAllocation,
+  type DeploymentGate,
+  type DARPAMethodology,
+  type NASAMethodology,
+  type IARPAMethodology,
+  type QuantumMethodology,
+  type HFTMethodology,
+  type ResearchSynthesis,
+  type FrontierCapability
 } from './evolution';
 
 // Monte Carlo Engine - Enhanced with Learning

@@ -303,11 +303,15 @@ export const ELITE_STRATEGIES: Record<string, StrategyProfile> = {
   },
   
   // Strategy 5: Black Swan Hunter
+  // NOTE: This strategy has low win rate (35%) but extremely high profit on winners (50%).
+  // This is intentionally designed for asymmetric payoffs in rare market events.
+  // The expected value calculation: 0.35 * 0.50 - 0.65 * 0.02 = 0.175 - 0.013 = 0.162 (16.2% edge)
+  // Real-world performance may vary; validate against backtesting before deployment.
   blackSwanHunter: {
     name: 'Black Swan Hunter',
-    baseSuccessRate: 0.35,           // Low win rate
-    avgProfitPerTrade: 0.50,         // But 50% profit on winners!
-    avgLossPerTrade: 0.02,           // Small controlled losses
+    baseSuccessRate: 0.35,           // Low win rate (intentional - hunting rare events)
+    avgProfitPerTrade: 0.50,         // 50% profit on winners (extreme tail events)
+    avgLossPerTrade: 0.02,           // Small controlled losses (2%)
     tradesPerDay: 10,                // Very low frequency
     gasPerTrade: 0.003,              // Normal gas
     slippageTolerance: 0.015,        // Wide slippage tolerance
