@@ -125,8 +125,15 @@ class UltraLowLatencyExecutor {
 
     try {
       // Update transaction parameters (takes ~2ms)
-      const updatedTx = {
-        ...preSignedTx.transaction,
+      // Extract only the properties needed for TransactionRequest
+      const updatedTx: ethers.providers.TransactionRequest = {
+        nonce: preSignedTx.transaction.nonce,
+        gasPrice: preSignedTx.transaction.gasPrice,
+        chainId: preSignedTx.transaction.chainId,
+        type: preSignedTx.transaction.type || undefined,
+        accessList: preSignedTx.transaction.accessList,
+        maxPriorityFeePerGas: preSignedTx.transaction.maxPriorityFeePerGas,
+        maxFeePerGas: preSignedTx.transaction.maxFeePerGas,
         to: opp.to,
         data: opp.data,
         value: opp.value,

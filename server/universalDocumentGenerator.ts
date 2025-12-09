@@ -9,7 +9,7 @@
  * - Area-specific templates and requirements
  */
 
-import { generateUserText, TaskPriority, TaskComplexity, UsageContext } from './aiProvider';
+import { generateUserText, TaskPriority } from './aiProvider';
 import { getExpertSystemConfig } from './legalCounselExpertSystem';
 import { checkFact } from './factCheckingEngine';
 import type { LawType } from '../shared/legalCounselTypes';
@@ -145,6 +145,19 @@ function getDocumentStructure(
 7. PRAYER FOR RELIEF
 8. JURY DEMAND (if applicable)
 9. VERIFICATION (if required)
+10. SIGNATURE BLOCK
+11. CERTIFICATE OF SERVICE`,
+
+    'petition': `
+1. CAPTION
+2. TITLE OF PETITION
+3. INTRODUCTION
+4. JURISDICTION AND VENUE
+5. PARTIES
+6. STATEMENT OF FACTS
+7. LEGAL BASIS AND GROUNDS
+8. RELIEF REQUESTED
+9. VERIFICATION
 10. SIGNATURE BLOCK
 11. CERTIFICATE OF SERVICE`,
 
@@ -357,6 +370,24 @@ function getDocumentStructure(
 7. RIGHTS AND OBLIGATIONS
 8. ISSUING AUTHORITY
 9. SIGNATURE`,
+
+    'agreement': `
+1. TITLE
+2. DATE
+3. PARTIES
+4. RECITALS (WHEREAS clauses)
+5. DEFINITIONS
+6. AGREEMENT TERMS
+   - Subject matter
+   - Rights and obligations
+   - Performance requirements
+7. REPRESENTATIONS AND WARRANTIES
+8. COVENANTS
+9. CONDITIONS
+10. TERM AND TERMINATION
+11. DISPUTE RESOLUTION
+12. GENERAL PROVISIONS
+13. SIGNATURE BLOCKS`,
   };
 
   return structures[documentType] || structures['pleading'];
@@ -624,20 +655,16 @@ Draft the complete document with professional legal writing, proper headings, an
 DO NOT include the caption, signature block, or certificate of service - those will be added separately.`;
 
   try {
+    const taskPriority = request.urgency === 'emergency' ? TaskPriority.CRITICAL_USER : TaskPriority.HIGH_USER;
     const response = await generateUserText(
-      {
-        taskType: 'document-generation',
-        context: UsageContext.USER_INITIATED,
-        priority: request.urgency === 'emergency' ? TaskPriority.CRITICAL_USER : TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.HIGH,
-        description: `Generate ${request.documentType} for ${request.lawType}`
-      },
+      `document-generation-${request.documentType}`,
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.3,
         maxTokens: 4000
-      }
+      },
+      taskPriority
     );
 
     return response.content;

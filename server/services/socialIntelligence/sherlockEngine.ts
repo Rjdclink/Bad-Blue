@@ -16,7 +16,7 @@ import { logger } from '../../logger';
 import sherlockSites from './sherlockSites.json';
 
 const log = logger.child({ component: 'socialIntelligence:sherlockEngine' });
-const database = sherlockSites as SherlockDatabase;
+const database = sherlockSites as unknown as SherlockDatabase;
 
 interface SearchTask {
   platform: string;
@@ -196,7 +196,7 @@ export class SherlockEngine {
 
         html = retrievalResult.data?.html || '';
         response = {
-          status: retrievalResult.metadata.statusCode || 200,
+          status: retrievalResult.statusCode || 200,
           body: html,
         };
       } else {
@@ -221,7 +221,7 @@ export class SherlockEngine {
       if (exists && options.includeProfileData && html) {
         try {
           const profileData = await profileExtractor.extract(html, platform);
-          if (Object.keys(profileData).length > 0) {
+          if (profileData && Object.keys(profileData).length > 0) {
             result.profileData = profileData as any;
           }
         } catch (error: any) {

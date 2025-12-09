@@ -7,7 +7,7 @@
  * legal consultation across 29 areas of law.
  */
 
-import { generateUserText, TaskPriority, TaskComplexity, UsageContext } from './aiProvider';
+import { generateUserText, TaskPriority } from './aiProvider';
 import { getExpertSystemConfig } from './legalCounselExpertSystem';
 import { checkFact, extractClaimsFromResponse } from './factCheckingEngine';
 import type { LawType } from '../shared/legalCounselTypes';
@@ -196,20 +196,15 @@ Return ONLY a JSON array of questions in this format:
 
   try {
     const response = await generateUserText(
-      {
-        taskType: 'legal-consultation',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `Generate interview questions for ${lawType}`
-      },
+      'legal-consultation-interview',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.3,
         maxTokens: 1500,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     const questions = JSON.parse(response.content);
@@ -258,20 +253,15 @@ Return ONLY valid JSON in this exact format:
 
   try {
     const response = await generateUserText(
-      {
-        taskType: 'fact-extraction',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `Extract facts from ${lawType} narrative`
-      },
+      'fact-extraction',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.1,
         maxTokens: 2000,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     const facts = JSON.parse(response.content);
@@ -351,20 +341,15 @@ Return ONLY valid JSON array in this exact format:
 
   try {
     const response = await generateUserText(
-      {
-        taskType: 'legal-analysis',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.CRITICAL_USER,
-        complexity: TaskComplexity.HIGH,
-        description: `Identify causes of action for ${lawType}`
-      },
+      'legal-analysis',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 3000,
         useJSON: true
-      }
+      },
+      TaskPriority.CRITICAL_USER
     );
 
     const causes = JSON.parse(response.content);
@@ -416,20 +401,15 @@ Return ONLY valid JSON array:
 
   try {
     const response = await generateUserText(
-      {
-        taskType: 'gap-analysis',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `Gap analysis for ${lawType}`
-      },
+      'gap-analysis',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 2000,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     const gaps = JSON.parse(response.content);
@@ -494,20 +474,15 @@ Return ONLY valid JSON:
 
   try {
     const response = await generateUserText(
-      {
-        taskType: 'procedural-strategy',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `Generate procedural strategy for ${lawType}`
-      },
+      'procedural-strategy',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 2000,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     const result = JSON.parse(response.content);
@@ -579,20 +554,15 @@ Return ONLY valid JSON:
 
   try {
     const response = await generateUserText(
-      {
-        taskType: 'strength-assessment',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: `Assess case strength for ${lawType}`
-      },
+      'strength-assessment',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1500,
         useJSON: true
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     return JSON.parse(response.content);
@@ -794,19 +764,14 @@ Write in narrative form, not JSON.`;
 
   try {
     const response = await generateUserText(
-      {
-        taskType: 'consultation-summary',
-        context: UsageContext.USER_INITIATED,
-        priority: TaskPriority.HIGH_USER,
-        complexity: TaskComplexity.MEDIUM,
-        description: 'Generate consultation summary'
-      },
+      'consultation-summary',
       prompt,
       {
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.4,
         maxTokens: detailLevel === 'comprehensive' ? 4000 : detailLevel === 'detailed' ? 2500 : 1500
-      }
+      },
+      TaskPriority.HIGH_USER
     );
 
     return response.content;

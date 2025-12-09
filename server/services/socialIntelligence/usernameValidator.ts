@@ -6,7 +6,7 @@
 import type { ValidationResult, PlatformRules, SherlockDatabase } from './types';
 import sherlockSites from './sherlockSites.json';
 
-const database = sherlockSites as SherlockDatabase;
+const database = sherlockSites as unknown as SherlockDatabase;
 
 export class UsernameValidator {
   /**

@@ -160,7 +160,7 @@ Return JSON:
         temperature: 0.2,
         useJSON: true,
       },
-      TaskPriority.NORMAL_USER
+      TaskPriority.HIGH_USER
     );
 
     const parsed = JSON.parse(response.content);
@@ -199,7 +199,7 @@ Return JSON array of document types:
         temperature: 0.3,
         useJSON: true,
       },
-      TaskPriority.NORMAL_USER
+      TaskPriority.HIGH_USER
     );
 
     return JSON.parse(response.content);

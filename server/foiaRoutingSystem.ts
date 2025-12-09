@@ -158,17 +158,18 @@ export async function scrapeFOIAPortal(url: string): Promise<{
     const engine = new shadowRetrieval.ShadowRetrievalEngine({ enabled: true });
     
     const result = await engine.smartRetrieve(url, {
-      waitForContent: true,
-      extractLinks: true,
+      extraction: {
+        includeLinks: true,
+      },
     });
 
-    if (!result.success || !result.html) {
+    if (!result.success || !result.data?.html) {
       console.warn('[FOIA] Failed to retrieve portal:', result.error);
       return null;
     }
 
     // Filter and convert content
-    const filteredHtml = await contentFilter.filterContent(result.html);
+    const filteredHtml = await contentFilter.filterContent(result.data.html);
     const markdown = markdownConverter.convert(filteredHtml);
 
     // Extract contact information using pattern matching
@@ -193,11 +194,12 @@ export async function scrapeFOIAPortal(url: string): Promise<{
       };
 
       // Extract submission URL from links
-      const submissionUrl = result.links?.find(link => 
-        link.toLowerCase().includes('submit') || 
-        link.toLowerCase().includes('request') ||
-        link.toLowerCase().includes('portal')
-      );
+      const links = result.data?.links || [];
+      const submissionUrl = links.find((link: { url: string }) => 
+        link.url.toLowerCase().includes('submit') || 
+        link.url.toLowerCase().includes('request') ||
+        link.url.toLowerCase().includes('portal')
+      )?.url;
 
       return {
         contactInfo,

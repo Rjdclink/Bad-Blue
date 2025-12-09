@@ -417,16 +417,18 @@ export async function executeLegalConsultation(
     useConsensus?: boolean;
   } = {}
 ): Promise<string | ConsensusResult<string>> {
-  const task: AITaskMetadata & { legalTaskType: LegalTaskType } = {
-    taskType: 'legal-consultation',
-    legalTaskType: 'legal-consultation',
-    context: UsageContext.USER_INITIATED,
-    priority: TaskPriority.HIGH_USER,
-    complexity: TaskComplexity.HIGH,
-    description: 'Legal consultation analysis'
-  };
+  const legalTaskType: LegalTaskType = 'legal-consultation';
 
   if (options.useConsensus) {
+    const task: AITaskMetadata & { legalTaskType: LegalTaskType } = {
+      taskName: 'legal-consultation',
+      legalTaskType,
+      context: UsageContext.USER,
+      priority: TaskPriority.HIGH_USER,
+      complexity: TaskComplexity.COMPREHENSIVE,
+      isUserFacing: true,
+      allowDeferral: false
+    };
     return executeWithConsensus<string>(
       task,
       prompt,
@@ -440,18 +442,19 @@ export async function executeLegalConsultation(
     );
   }
 
-  const selection = selectModelsForTask(task.legalTaskType, task.priority, task.complexity);
+  const selection = selectModelsForTask(legalTaskType, TaskPriority.HIGH_USER, TaskComplexity.COMPREHENSIVE);
   log.info('Executing legal consultation', { model: selection.primary, reasoning: selection.reasoning });
 
   const response = await generateUserText(
-    task,
+    'legal-consultation',
     prompt,
     {
       systemPrompt,
       temperature: options.temperature || 0.3,
       maxTokens: options.maxTokens || 3000,
       model: selection.primary
-    }
+    },
+    TaskPriority.HIGH_USER
   );
 
   return response.content;
@@ -468,27 +471,21 @@ export async function executeDocumentGeneration(
     maxTokens?: number;
   } = {}
 ): Promise<string> {
-  const task: AITaskMetadata & { legalTaskType: LegalTaskType } = {
-    taskType: 'document-generation',
-    legalTaskType: 'document-generation',
-    context: UsageContext.USER_INITIATED,
-    priority: TaskPriority.HIGH_USER,
-    complexity: TaskComplexity.MEDIUM,
-    description: 'Legal document generation'
-  };
+  const legalTaskType: LegalTaskType = 'document-generation';
 
-  const selection = selectModelsForTask(task.legalTaskType, task.priority, task.complexity);
+  const selection = selectModelsForTask(legalTaskType, TaskPriority.HIGH_USER, TaskComplexity.MODERATE);
   log.info('Executing document generation', { model: selection.primary, reasoning: selection.reasoning });
 
   const response = await generateUserText(
-    task,
+    'document-generation',
     prompt,
     {
       systemPrompt,
       temperature: options.temperature || 0.3,
       maxTokens: options.maxTokens || 4000,
       model: selection.primary
-    }
+    },
+    TaskPriority.HIGH_USER
   );
 
   return response.content;
@@ -506,20 +503,13 @@ export async function executeEvidenceAnalysis(
     useJSON?: boolean;
   } = {}
 ): Promise<string> {
-  const task: AITaskMetadata & { legalTaskType: LegalTaskType } = {
-    taskType: 'evidence-analysis',
-    legalTaskType: 'evidence-analysis',
-    context: UsageContext.USER_INITIATED,
-    priority: TaskPriority.HIGH_USER,
-    complexity: TaskComplexity.MEDIUM,
-    description: 'Evidence analysis'
-  };
+  const legalTaskType: LegalTaskType = 'evidence-analysis';
 
-  const selection = selectModelsForTask(task.legalTaskType, task.priority, task.complexity);
+  const selection = selectModelsForTask(legalTaskType, TaskPriority.HIGH_USER, TaskComplexity.MODERATE);
   log.info('Executing evidence analysis', { model: selection.primary, reasoning: selection.reasoning });
 
   const response = await generateUserText(
-    task,
+    'evidence-analysis',
     prompt,
     {
       systemPrompt,
@@ -527,7 +517,8 @@ export async function executeEvidenceAnalysis(
       maxTokens: options.maxTokens || 2500,
       useJSON: options.useJSON,
       model: selection.primary
-    }
+    },
+    TaskPriority.HIGH_USER
   );
 
   return response.content;

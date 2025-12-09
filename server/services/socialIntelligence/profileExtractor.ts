@@ -41,7 +41,8 @@ const extractionRules: Record<string, any> = {
     jsonPath: true,
     extract: (html: string) => {
       // Reddit embeds JSON in script tags
-      const match = html.match(/<script id="data">window\.__r = (.*?)<\/script>/s);
+      // Use [\s\S] instead of /s flag for ES2015 compatibility
+      const match = html.match(/<script id="data">window\.__r = ([\s\S]*?)<\/script>/);
       if (match) {
         try {
           const data = JSON.parse(match[1]);

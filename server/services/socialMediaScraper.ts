@@ -7,7 +7,7 @@
  * Nitter is a privacy-focused Twitter frontend that doesn't require authentication.
  */
 
-import { logger } from '../../logger';
+import { logger } from '../logger';
 
 const log = logger.child({ component: 'socialMediaScraper' });
 
