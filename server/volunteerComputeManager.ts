@@ -361,9 +361,16 @@ export class VolunteerComputeManager extends EventEmitter {
 
     // Update compute hours
     worker.metrics.totalComputeHours += usage.durationHours;
-    worker.metrics.averageLatencyMs = 
-      (worker.metrics.averageLatencyMs * (worker.metrics.tasksCompleted - 1) + usage.durationHours * 3600000) /
-      worker.metrics.tasksCompleted;
+    
+    // Update average latency (use task duration, not hours converted to ms)
+    const taskLatencyMs = usage.durationHours * 3600000;
+    if (worker.metrics.tasksCompleted > 1) {
+      worker.metrics.averageLatencyMs = 
+        (worker.metrics.averageLatencyMs * (worker.metrics.tasksCompleted - 1) + taskLatencyMs) /
+        worker.metrics.tasksCompleted;
+    } else if (worker.metrics.tasksCompleted === 1) {
+      worker.metrics.averageLatencyMs = taskLatencyMs;
+    }
 
     this.emit('task-completed', { taskId, workerId, success: success && verified });
     log.info('Task result submitted', { taskId, workerId, success: success && verified });

@@ -87,12 +87,17 @@ class RateLimiter {
         lastDay >= this.limits.perDay) {
       
       let resetAt: number;
-      if (lastMinute >= this.limits.perMinute) {
-        resetAt = bucket.requests[bucket.requests.length - this.limits.perMinute] + 60000;
-      } else if (lastHour >= this.limits.perHour) {
-        resetAt = bucket.requests[bucket.requests.length - this.limits.perHour] + 3600000;
+      const requestsLen = bucket.requests.length;
+      
+      if (lastMinute >= this.limits.perMinute && requestsLen >= this.limits.perMinute) {
+        resetAt = bucket.requests[requestsLen - this.limits.perMinute] + 60000;
+      } else if (lastHour >= this.limits.perHour && requestsLen >= this.limits.perHour) {
+        resetAt = bucket.requests[requestsLen - this.limits.perHour] + 3600000;
+      } else if (requestsLen >= this.limits.perDay) {
+        resetAt = bucket.requests[requestsLen - this.limits.perDay] + 86400000;
       } else {
-        resetAt = bucket.requests[bucket.requests.length - this.limits.perDay] + 86400000;
+        // Fallback: reset in 60 seconds
+        resetAt = now + 60000;
       }
 
       return {

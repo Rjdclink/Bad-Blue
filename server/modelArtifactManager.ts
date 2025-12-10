@@ -31,6 +31,11 @@ const MAX_ARTIFACT_SIZE = 500 * 1024 * 1024; // 500MB max
 const COMPRESSION_LEVELS = [3, 4, 5, 6] as const;
 const QUANTIZATION_BITS = [4, 6, 8, 16, 32] as const;
 
+// Compression simulation constants
+const BASE_COMPRESSION_RATIO = 0.3;
+const COMPRESSION_LEVEL_FACTOR = 0.1;
+const MAX_COMPRESSION_LEVEL = 7;
+
 // ============================================================================
 // ARTIFACT MANAGER
 // ============================================================================
@@ -194,7 +199,7 @@ export class ModelArtifactManager extends EventEmitter {
   private async compressWeights(data: Uint8Array, level: number): Promise<Uint8Array> {
     // In production, use actual zstd compression via node-zstd or wasm-zstd
     // For now, simulate compression by creating smaller output
-    const compressionRatio = 0.3 + (0.1 * (7 - level)); // Higher level = better compression
+    const compressionRatio = BASE_COMPRESSION_RATIO + (COMPRESSION_LEVEL_FACTOR * (MAX_COMPRESSION_LEVEL - level));
     const compressedSize = Math.ceil(data.length * compressionRatio);
     
     // Create simulated compressed data with header

@@ -456,11 +456,23 @@ export class EdgeWorkerManager extends EventEmitter {
 
   /**
    * Deterministic merge for concurrent updates
+   * Uses sorted keys JSON stringify for consistent ordering
    */
   private deterministicMerge<T>(a: T, b: T): T {
-    // Simple strategy: use JSON string comparison for determinism
-    const aStr = JSON.stringify(a);
-    const bStr = JSON.stringify(b);
+    // Use sorted keys JSON stringify for consistent ordering across JS engines
+    const sortedStringify = (obj: unknown): string => {
+      if (obj === null || typeof obj !== 'object') {
+        return JSON.stringify(obj);
+      }
+      if (Array.isArray(obj)) {
+        return '[' + obj.map(sortedStringify).join(',') + ']';
+      }
+      const keys = Object.keys(obj as object).sort();
+      return '{' + keys.map(k => `"${k}":${sortedStringify((obj as Record<string, unknown>)[k])}`).join(',') + '}';
+    };
+    
+    const aStr = sortedStringify(a);
+    const bStr = sortedStringify(b);
     return aStr > bStr ? a : b;
   }
 
