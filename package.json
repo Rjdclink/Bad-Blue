@@ -193,20 +193,7 @@
     "bufferutil": "^4.0.8"
   },
   "overrides": {
-    "@esbuild-kit/core-utils": {
-      "esbuild": "^0.25.0"
-    },
-    "@esbuild-kit/esm-loader": {
-      "@esbuild-kit/core-utils": {
-        "esbuild": "^0.25.0"
-      }
-    },
-    "drizzle-kit": {
-      "@esbuild-kit/esm-loader": {
-        "@esbuild-kit/core-utils": {
-          "esbuild": "^0.25.0"
-        }
-      }
-    }
+    "glob": "^10.4.5",
+    "rimraf": "^5.0.10"
   }
 }
