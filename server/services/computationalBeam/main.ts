@@ -100,6 +100,18 @@ export {
   type ExecutionResult
 } from './arbitrageOptimizer';
 
+export {
+  DashboardOptimizer,
+  dashboardOptimizer
+} from './dashboardOptimizer';
+
+export {
+  WebSearchCrawlerIntegration,
+  webSearchCrawlerIntegration,
+  type SearchResult,
+  type AggregatedSearchResults
+} from './webSearchIntegration';
+
 // Testing and validation
 export { runIntegrationTest } from './test-integration';
 export { demo } from './demo';
