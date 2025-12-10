@@ -232,6 +232,65 @@ export const MARKET_CONDITIONS: Record<string, MarketCondition> = {
     gasVolatility: 1.5,
     competitorDensity: 0.3,
     networkCongestion: 0.9
+  },
+  // ============================================
+  // TESTNET MARKET CONDITIONS
+  // Polygon Amoy (Chain ID: 80002) and Arbitrum Sepolia (Chain ID: 421614)
+  // ============================================
+  
+  // Polygon Amoy Testnet Scenarios
+  polygonAmoyNormal: {
+    volatility: 0.6,
+    liquidityScore: 0.7,
+    gasVolatility: 0.3,
+    competitorDensity: 0.3,
+    networkCongestion: 0.2
+  },
+  polygonAmoyHighVolatility: {
+    volatility: 1.2,
+    liquidityScore: 0.5,
+    gasVolatility: 0.8,
+    competitorDensity: 0.4,
+    networkCongestion: 0.4
+  },
+  polygonAmoyLowActivity: {
+    volatility: 0.3,
+    liquidityScore: 0.9,
+    gasVolatility: 0.1,
+    competitorDensity: 0.1,
+    networkCongestion: 0.1
+  },
+  
+  // Arbitrum Sepolia Testnet Scenarios
+  arbitrumSepoliaNormal: {
+    volatility: 0.5,
+    liquidityScore: 0.8,
+    gasVolatility: 0.2,
+    competitorDensity: 0.4,
+    networkCongestion: 0.15
+  },
+  arbitrumSepoliaHighSpeed: {
+    volatility: 0.4,
+    liquidityScore: 0.85,
+    gasVolatility: 0.1,
+    competitorDensity: 0.5,
+    networkCongestion: 0.1
+  },
+  arbitrumSepoliaStress: {
+    volatility: 0.9,
+    liquidityScore: 0.6,
+    gasVolatility: 0.6,
+    competitorDensity: 0.6,
+    networkCongestion: 0.5
+  },
+  
+  // Cross-Testnet Scenarios
+  crossTestnetArbitrage: {
+    volatility: 0.55,
+    liquidityScore: 0.75,
+    gasVolatility: 0.35,
+    competitorDensity: 0.35,
+    networkCongestion: 0.25
   }
 };
 
@@ -360,6 +419,91 @@ export const ELITE_STRATEGIES: Record<string, StrategyProfile> = {
     strategyType: 'black_swan',
     mlFilterEnabled: true,
     multiChainEnabled: true,
+    mempoolMonitoring: true
+  },
+  
+  // ============================================
+  // TESTNET-OPTIMIZED STRATEGIES
+  // Polygon Amoy (Chain ID: 80002) & Arbitrum Sepolia (Chain ID: 421614)
+  // ============================================
+  
+  // Strategy 6: Polygon Amoy Flash Arbitrage
+  polygonAmoyFlashArb: {
+    name: 'Polygon Amoy Flash Arbitrage',
+    baseSuccessRate: 0.78,
+    avgProfitPerTrade: 0.035,
+    avgLossPerTrade: 0.008,
+    tradesPerDay: 150,
+    gasPerTrade: 0.001,
+    slippageTolerance: 0.003,
+    executionLatency: 20,
+    strategyType: 'arbitrage',
+    mlFilterEnabled: true,
+    multiChainEnabled: false,
+    mempoolMonitoring: true
+  },
+  
+  // Strategy 7: Arbitrum Sepolia L2 Speed
+  arbitrumSepoliaL2Speed: {
+    name: 'Arbitrum Sepolia L2 Speed',
+    baseSuccessRate: 0.82,
+    avgProfitPerTrade: 0.042,
+    avgLossPerTrade: 0.007,
+    tradesPerDay: 200,
+    gasPerTrade: 0.0005,
+    slippageTolerance: 0.002,
+    executionLatency: 10,
+    strategyType: 'arbitrage',
+    mlFilterEnabled: true,
+    multiChainEnabled: false,
+    mempoolMonitoring: true
+  },
+  
+  // Strategy 8: Cross-Testnet Bridge Arbitrage
+  crossTestnetBridgeArb: {
+    name: 'Cross-Testnet Bridge Arbitrage',
+    baseSuccessRate: 0.68,
+    avgProfitPerTrade: 0.08,
+    avgLossPerTrade: 0.02,
+    tradesPerDay: 50,
+    gasPerTrade: 0.005,
+    slippageTolerance: 0.006,
+    executionLatency: 150,
+    strategyType: 'arbitrage',
+    mlFilterEnabled: true,
+    multiChainEnabled: true,
+    mempoolMonitoring: true
+  },
+  
+  // Strategy 9: Testnet MEV Hunter
+  testnetMEVHunter: {
+    name: 'Testnet MEV Hunter',
+    baseSuccessRate: 0.72,
+    avgProfitPerTrade: 0.055,
+    avgLossPerTrade: 0.012,
+    tradesPerDay: 100,
+    gasPerTrade: 0.003,
+    slippageTolerance: 0.004,
+    executionLatency: 15,
+    strategyType: 'mev',
+    mlFilterEnabled: true,
+    multiChainEnabled: false,
+    mempoolMonitoring: true
+  },
+  
+  // Strategy 10: Testnet Market Maker
+  testnetMarketMaker: {
+    name: 'Testnet Market Maker',
+    baseSuccessRate: 0.85,
+    avgProfitPerTrade: 0.02,
+    avgLossPerTrade: 0.004,
+    tradesPerDay: 400,
+    gasPerTrade: 0.0008,
+    slippageTolerance: 0.002,
+    executionLatency: 8,
+    strategyType: 'market_making',
+    mlFilterEnabled: true,
+    multiChainEnabled: false,
     mempoolMonitoring: true
   }
 };
