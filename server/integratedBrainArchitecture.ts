@@ -38,10 +38,9 @@ const DOMAIN_CRYPTO = 'CRYPTO';
 const DOMAIN_META = 'META';
 const DOMAIN_MONITOR = 'MONITOR';
 
-// Linear Congruential Generator constants for deterministic operations
-const LCG_MULTIPLIER = 1103515245;
-const LCG_INCREMENT = 12345;
-const LCG_MODULUS = 2 ** 31;
+// Connection validation adjustment constants
+const SIGNAL_BOOST_INCREMENT = 0.05;  // Amount to boost weak signal per iteration
+const LATENCY_REDUCTION_FACTOR = 0.9; // Multiplier for latency reduction
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -1207,14 +1206,14 @@ export class ConnectionValidator {
       // Check signal strength
       if (connection.signalStrength < SIGNAL_STRENGTH_MIN) {
         errors.push(`Signal strength below minimum: ${connection.signalStrength}`);
-        connection.signalStrength = Math.min(1.0, connection.signalStrength + 0.05);
+        connection.signalStrength = Math.min(1.0, connection.signalStrength + SIGNAL_BOOST_INCREMENT);
         corrections.push('Signal strength boosted');
       }
 
       // Check latency
       if (connection.latencyMs > LATENCY_MAX_MS) {
         errors.push(`Latency exceeds maximum: ${connection.latencyMs}ms`);
-        connection.latencyMs = Math.max(1, connection.latencyMs * 0.9);
+        connection.latencyMs = Math.max(1, connection.latencyMs * LATENCY_REDUCTION_FACTOR);
         corrections.push('Latency reduced through optimization');
       }
 

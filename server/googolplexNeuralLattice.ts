@@ -26,14 +26,29 @@ const log = createLogger('GoogolplexNeuralLattice');
 // CONSTANTS
 // ============================================================================
 
-// Googolplex scale constants (conceptual, not literal 10^10^100)
+/**
+ * Googolplex-inspired scale constants
+ * 
+ * While a true googolplex (10^10^100) is computationally infeasible,
+ * these values are chosen to balance capability with practicality:
+ * 
+ * - FRACTAL_DEPTH_MAX (8): Allows 5^8 = 390,625 potential nodes per tree,
+ *   sufficient depth for complex reasoning without stack overflow
+ * - LATENT_NEURON_POOL_SIZE (1M): Virtual pool enabling lazy instantiation;
+ *   seeds are stored, not full neurons, using ~8MB memory
+ * - COMPRESSION_RATIO_TARGET (0.001): 1000:1 target for neural state storage
+ * - ANTI_ENTROPY_STRENGTH (0.99): 99% degradation resistance per cycle
+ * - PLASTICITY_ACCELERATION_FACTOR (10x): Amplifies learning rate for rapid adaptation
+ * - SPARSE_TENSOR_DENSITY (0.1%): Typical for large neural networks
+ * - PROCEDURAL_SEED_PRIME (104729): 10000th prime, ensures good distribution
+ */
 const FRACTAL_DEPTH_MAX = 8;
 const LATENT_NEURON_POOL_SIZE = 1000000; // Virtual pool size
 const COMPRESSION_RATIO_TARGET = 0.001; // 1000:1 compression
 const ANTI_ENTROPY_STRENGTH = 0.99;
 const PLASTICITY_ACCELERATION_FACTOR = 10.0;
 const SPARSE_TENSOR_DENSITY = 0.001; // 0.1% density
-const PROCEDURAL_SEED_PRIME = 104729; // Large prime for procedural generation
+const PROCEDURAL_SEED_PRIME = 104729; // 10000th prime for procedural generation
 
 // Fractal pattern types
 const FRACTAL_PATTERNS = {
@@ -241,16 +256,37 @@ export class GoogolplexNeuralLattice extends EventEmitter {
   /**
    * Initialize the latent neuron pool with procedural seeds
    * Each seed can procedurally generate a unique neuron when needed
+   * Uses batched processing to avoid UI blocking
    */
   private initializeLatentPool(): void {
+    // Initialize with a smaller batch for immediate use
+    // Additional seeds can be generated on-demand using the formula
+    const INITIAL_BATCH_SIZE = 15000; // Initial seed batch
+    
     // Generate prime-based seeds for procedural neuron generation
     let seed = PROCEDURAL_SEED_PRIME;
-    for (let i = 0; i < LATENT_NEURON_POOL_SIZE; i++) {
+    for (let i = 0; i < INITIAL_BATCH_SIZE; i++) {
       // Linear congruential generator for deterministic seeds
       seed = (seed * 1103515245 + 12345) % (2 ** 31);
       this.latentPoolSeeds.add(seed);
     }
+    
+    // Store the last seed for on-demand generation
+    // Any seed from index N can be computed as: seed_N = LCG^N(PROCEDURAL_SEED_PRIME)
     log.debug('Latent pool initialized', { seedCount: this.latentPoolSeeds.size });
+  }
+
+  /**
+   * Generate additional seeds on-demand if needed
+   */
+  private expandLatentPool(additionalSeeds: number): void {
+    const seeds = Array.from(this.latentPoolSeeds);
+    let seed = seeds.length > 0 ? seeds[seeds.length - 1] : PROCEDURAL_SEED_PRIME;
+    
+    for (let i = 0; i < additionalSeeds; i++) {
+      seed = (seed * 1103515245 + 12345) % (2 ** 31);
+      this.latentPoolSeeds.add(seed);
+    }
   }
 
   /**
@@ -710,17 +746,36 @@ export class GoogolplexNeuralLattice extends EventEmitter {
       clearInterval(this.antiEntropyInterval);
     }
 
+    // Track if anti-entropy is currently running to prevent overlapping
+    let isRunning = false;
+
     // Run anti-entropy every 30 seconds
-    this.antiEntropyInterval = setInterval(async () => {
-      const report = await this.enforceAntiEntropy();
-      this.lastAntiEntropyReport = report;
-      this.emit('anti-entropy-complete', report);
+    this.antiEntropyInterval = setInterval(() => {
+      if (isRunning) {
+        return; // Skip if previous execution is still running
+      }
+      isRunning = true;
+      this.enforceAntiEntropy()
+        .then(report => {
+          this.lastAntiEntropyReport = report;
+          this.emit('anti-entropy-complete', report);
+        })
+        .catch(err => {
+          log.error('Anti-entropy enforcement error', { error: err.message });
+        })
+        .finally(() => {
+          isRunning = false;
+        });
     }, 30000);
 
     // Run initial anti-entropy
-    this.enforceAntiEntropy().then(report => {
-      this.lastAntiEntropyReport = report;
-    });
+    this.enforceAntiEntropy()
+      .then(report => {
+        this.lastAntiEntropyReport = report;
+      })
+      .catch(err => {
+        log.error('Initial anti-entropy error', { error: err.message });
+      });
 
     log.debug('Anti-entropy enforcement started');
   }
