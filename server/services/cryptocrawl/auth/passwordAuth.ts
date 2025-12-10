@@ -3,14 +3,16 @@
  * 
  * Password-only authentication for the CryptoCrawler platform
  * NO email required - just the master password
+ * 
+ * IMPORTANT: Uses CRPTCRWLR (uppercase) for consistency with masterPassword.ts
  */
 
 import crypto from 'crypto';
 
 // Master password hash (pre-computed)
-// Password: crptcrwlr
+// Password: CRPTCRWLR (uppercase - must match masterPassword.ts CRYPTOCRAWLER_PASSWORD)
 const MASTER_PASSWORD_HASH = crypto.createHash('sha256')
-  .update('crptcrwlr')
+  .update('CRPTCRWLR')
   .digest('hex');
 
 export interface AuthResult {
