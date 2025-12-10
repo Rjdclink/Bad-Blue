@@ -106,8 +106,11 @@ export async function runMasterActivationTests(): Promise<TestResult[]> {
   return results;
 }
 
-// Run if executed directly
-const isDirectExecution = (() => {
+/**
+ * Check if this module is being run directly (ESM compatible)
+ * Reusable utility for test file execution detection
+ */
+function isDirectExecution(): boolean {
   try {
     const scriptPath = process.argv[1];
     if (!scriptPath) return false;
@@ -117,9 +120,10 @@ const isDirectExecution = (() => {
   } catch {
     return false;
   }
-})();
+}
 
-if (isDirectExecution) {
+// Run if executed directly
+if (isDirectExecution()) {
   runMasterActivationTests()
     .then(results => {
       const failed = results.filter(r => !r.passed).length;

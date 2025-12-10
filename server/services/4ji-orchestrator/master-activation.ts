@@ -33,6 +33,51 @@ import { HyperDimensionalEngine } from './hyper-dimensional-engine';
 
 const log = createLogger('4JI-MasterActivation');
 
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Maximum characters to display in log preview of creative directive */
+const CREATIVE_DIRECTIVE_LOG_PREVIEW_LENGTH = 200;
+
+/** Default system health when CryptoCrawler has operations */
+const CRYPTO_CRAWLER_ACTIVE_HEALTH = 100;
+
+/** Default system health when CryptoCrawler has no operations yet */
+const CRYPTO_CRAWLER_INITIAL_HEALTH = 95;
+
+/**
+ * Deep merge utility for configuration objects
+ * Recursively merges source into target, with source taking precedence
+ */
+function deepMerge<T extends object>(target: T, source: Partial<T>): T {
+  const result = { ...target };
+  
+  for (const key in source) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      const sourceValue = source[key];
+      const targetValue = result[key];
+      
+      if (
+        sourceValue !== null &&
+        typeof sourceValue === 'object' &&
+        !Array.isArray(sourceValue) &&
+        targetValue !== null &&
+        typeof targetValue === 'object' &&
+        !Array.isArray(targetValue)
+      ) {
+        // Recursively merge nested objects
+        (result as any)[key] = deepMerge(targetValue as object, sourceValue as object);
+      } else if (sourceValue !== undefined) {
+        // Override with source value
+        (result as any)[key] = sourceValue;
+      }
+    }
+  }
+  
+  return result;
+}
+
 /**
  * Master Activation Configuration
  */
@@ -83,6 +128,8 @@ export interface MasterActivationConfig {
     enableMonteCarloSimulations: boolean;
     platformOptimizationSchedule: { start: string; end: string };
     monteCarloSchedule: { start: string; end: string };
+    /** Timezone for schedule (default: 'America/Chicago' for CST) */
+    scheduleTimezone: string;
     enableUserDeviceComputation: boolean;
     enableAutonomousEvolution: boolean;
   };
@@ -153,8 +200,9 @@ const DEFAULT_CONFIG: MasterActivationConfig = {
   
   cryptoCrawler: {
     enableMonteCarloSimulations: true,
-    platformOptimizationSchedule: { start: '01:30', end: '03:30' }, // CST
-    monteCarloSchedule: { start: '03:30', end: '05:30' }, // CST
+    platformOptimizationSchedule: { start: '01:30', end: '03:30' },
+    monteCarloSchedule: { start: '03:30', end: '05:30' },
+    scheduleTimezone: 'America/Chicago', // CST/CDT
     enableUserDeviceComputation: true,
     enableAutonomousEvolution: true,
   },
@@ -238,8 +286,8 @@ export class MasterActivation {
     log.info('🔥 ACTIVATING 4JI MASTER ORCHESTRATION SYSTEM');
     log.info('═'.repeat(60));
     
-    // Merge custom config
-    this.config = { ...DEFAULT_CONFIG, ...customConfig };
+    // Deep merge custom config with defaults to properly handle nested objects
+    this.config = customConfig ? deepMerge(DEFAULT_CONFIG, customConfig) : DEFAULT_CONFIG;
     
     const startTime = Date.now();
 
@@ -521,7 +569,7 @@ export class MasterActivation {
       scheduling: {
         platformOptimization: this.config.cryptoCrawler.platformOptimizationSchedule,
         monteCarloSimulations: this.config.cryptoCrawler.monteCarloSchedule,
-        timezone: 'CST',
+        timezone: this.config.cryptoCrawler.scheduleTimezone,
       },
       userDeviceComputation: {
         enabled: this.config.cryptoCrawler.enableUserDeviceComputation,
@@ -570,7 +618,7 @@ export class MasterActivation {
    */
   private static applyCreativeDirective(): void {
     log.info('Applying Ultimate Creative Protocol to all operations...');
-    log.info(CREATIVE_IGNITION_PROMPT.trim().substring(0, 200) + '...');
+    log.info(CREATIVE_IGNITION_PROMPT.trim().substring(0, CREATIVE_DIRECTIVE_LOG_PREVIEW_LENGTH) + '...');
     
     // Store creative directive for both domains
     DomainFirewall.storeState(Domain.LEGAL_WHAT, 'creativeDirective', {
@@ -632,7 +680,9 @@ export class MasterActivation {
         cryptoCrawler: {
           online: forgeStatus.isRunning,
           subAgents: cryptoAgents.length,
-          health: forgeStatus.cryptocrawlerStats.operations > 0 ? 100 : 95,
+          health: forgeStatus.cryptocrawlerStats.operations > 0 
+            ? CRYPTO_CRAWLER_ACTIVE_HEALTH 
+            : CRYPTO_CRAWLER_INITIAL_HEALTH,
         },
       },
       
