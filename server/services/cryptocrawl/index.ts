@@ -22,7 +22,7 @@ export {
   type EmbeddedNetworkMap
 } from './core/stealth-security';
 export { MasterOrchestrator, type SystemStatus, type PerformanceMetrics, type CataclysmEvent } from './core/master-orchestrator';
-export { LuxSwarm, type Opportunity, type AgentState, type ChainId, type LuxSignal } from './core/lux-swarm';
+export { LuxSwarm, type Opportunity, type AgentState, type ChainId, type LuxSignal, type SwarmMetrics } from './core/lux-swarm';
 
 // Blockchain API Services (Alchemy + Etherscan)
 export {
