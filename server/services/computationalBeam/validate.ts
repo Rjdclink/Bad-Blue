@@ -6,7 +6,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const BEAM_DIR = path.join(__dirname);
 
 interface ValidationResult {
@@ -146,7 +149,10 @@ class ComputationalBeamValidator {
 }
 
 // Run validation if executed directly
-if (require.main === module) {
+const isMainModule = import.meta.url === `file://${process.argv[1]}` || 
+                     import.meta.url.endsWith(process.argv[1]);
+
+if (isMainModule) {
   const validator = new ComputationalBeamValidator();
   validator.validate()
     .then(success => {

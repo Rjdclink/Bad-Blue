@@ -176,7 +176,10 @@ async function demo() {
 }
 
 // Run demo if executed directly
-if (require.main === module) {
+const isMainModule = import.meta.url === `file://${process.argv[1]}` || 
+                     import.meta.url.endsWith(process.argv[1]);
+
+if (isMainModule) {
   demo()
     .then(() => process.exit(0))
     .catch(error => {

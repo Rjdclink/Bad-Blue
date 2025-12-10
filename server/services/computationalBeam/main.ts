@@ -43,3 +43,19 @@ export {
   integrityTestingSystem, 
   IntegrityTestingSystem 
 } from './integrityTesting';
+
+// Advanced modules
+export {
+  neuralLoadPredictor,
+  NeuralLoadPredictor
+} from './neuralLoadPredictor';
+
+export {
+  metricsAnalytics,
+  AdvancedMetricsAnalytics
+} from './metricsAnalytics';
+
+// Testing and validation
+export { runIntegrationTest } from './test-integration';
+export { demo } from './demo';
+export { ComputationalBeamValidator } from './validate';
