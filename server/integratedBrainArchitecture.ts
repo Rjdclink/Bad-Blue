@@ -42,6 +42,11 @@ const DOMAIN_MONITOR = 'MONITOR';
 const SIGNAL_BOOST_INCREMENT = 0.05;  // Amount to boost weak signal per iteration
 const LATENCY_REDUCTION_FACTOR = 0.9; // Multiplier for latency reduction
 
+// Error rate correction constant
+// Multiplier applied to high error rates to gradually reduce them
+// 0.9 means 10% reduction per optimization cycle
+const ERROR_RATE_DECAY_FACTOR = 0.9;
+
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
@@ -1062,8 +1067,8 @@ export class LittleBrain extends EventEmitter {
     if (moduleState.errorRate > 0.1) {
       errors++;
       this.logError(moduleState.id, 'High error rate detected');
-      // Apply correction
-      moduleState.errorRate *= 0.9;
+      // Apply gradual correction using decay factor
+      moduleState.errorRate *= ERROR_RATE_DECAY_FACTOR;
       fixed++;
     }
 
