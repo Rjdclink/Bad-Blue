@@ -43,14 +43,22 @@ export interface ResourceMetrics {
 export interface TimingJitterResult {
   jitter: number;
   variance: number;
-  samples: number[];
-  avgResponseTime: number;
+  samples: number | number[];
+  avgResponseTime?: number;
+  avg?: number;
+  stability?: number;
 }
 
 export interface AsyncEchoResult {
-  echoCount: number;
-  echoSignatures: string[];
-  asyncDelay: number;
+  echoCount?: number;
+  echoSignatures?: string[];
+  asyncDelay?: number;
+  asyncDetected?: boolean;
+  serverSignature?: string;
+  hasAsyncHeader?: boolean;
+  statusCode?: number;
+  responseTime?: string | null;
+  error?: boolean;
 }
 
 export interface ExplorationResult {
@@ -58,6 +66,9 @@ export interface ExplorationResult {
   explored: number;
   depth: number;
   branches: number;
+  richness?: number;
+  nextTarget?: string;
+  target?: string;
 }
 
 /**

@@ -59,6 +59,7 @@ export enum TaskIntensity {
 
 export enum TaskPriority {
   LOW = 1,
+  MEDIUM = 3,
   NORMAL = 5,
   HIGH = 8,
   CRITICAL = 10,

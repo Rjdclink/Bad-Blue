@@ -184,7 +184,7 @@ export class OriginalSinTestSuite {
         testName: 'should inherit from single parent',
         passed,
         details: passed 
-          ? `Child greed: ${child.greed.toFixed(3)}, Parent greed: ${parent.greed.toFixed(3)}, Generation: ${child.generation}`
+          ? `Child greed: ${child.greed!.toFixed(3)}, Parent greed: ${parent.greed!.toFixed(3)}, Generation: ${child.generation}`
           : 'Failed to inherit from parent',
         duration: Date.now() - start,
       };
