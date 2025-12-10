@@ -351,7 +351,7 @@ export class PayoutScheduler extends EventEmitter {
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     // Simulate transaction hash
-    transaction.txHash = `0x${Math.random().toString(16).substr(2, 64)}`;
+    transaction.txHash = `0x${Math.random().toString(16).substring(2, 66)}`;
     transaction.status = 'sent';
     
     log.info(`✅ Transaction sent: ${transaction.txHash}`);
@@ -465,7 +465,7 @@ export class PayoutScheduler extends EventEmitter {
    * Generate unique ID
    */
   private generateId(): string {
-    return `payout_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `payout_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 }
 

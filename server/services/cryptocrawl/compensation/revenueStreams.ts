@@ -90,7 +90,7 @@ export class ComputationalGridManager extends EventEmitter {
   }
 
   private generateId(): string {
-    return `grid_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `grid_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 }
 
@@ -166,7 +166,7 @@ export class FlashEngineRevenueManager extends EventEmitter {
   }
 
   private generateId(): string {
-    return `flash_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `flash_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 }
 
@@ -258,7 +258,7 @@ export class CrawlerBountyManager extends EventEmitter {
   }
 
   private generateId(): string {
-    return `bounty_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `bounty_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 }
 
@@ -362,7 +362,7 @@ export class TriBeamBroadcastManager extends EventEmitter {
   }
 
   private generateId(): string {
-    return `tribeam_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `tribeam_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 }
 

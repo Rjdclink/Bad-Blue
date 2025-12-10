@@ -404,7 +404,7 @@ export class WalletVerificationSystem extends EventEmitter {
       const success = Math.random() > 0.2;
       
       if (success) {
-        const txHash = `0x${Math.random().toString(16).substr(2, 64)}`;
+        const txHash = `0x${Math.random().toString(16).substring(2, 66)}`;
         return { success: true, txHash };
       }
       
@@ -428,7 +428,7 @@ export class WalletVerificationSystem extends EventEmitter {
       // Simulate bridge transaction
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      const txHash = `0x${Math.random().toString(16).substr(2, 64)}`;
+      const txHash = `0x${Math.random().toString(16).substring(2, 66)}`;
       return { success: true, txHash };
     } catch (error) {
       log.error('Backup chain failed:', error);
@@ -491,7 +491,7 @@ export class WalletVerificationSystem extends EventEmitter {
    * Generate unique ID
    */
   private generateId(): string {
-    return `verify_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `verify_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 }
 

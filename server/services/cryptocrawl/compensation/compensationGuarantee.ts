@@ -469,7 +469,7 @@ export class CompensationGuaranteeSystem extends EventEmitter {
    * Generate unique ID
    */
   private generateId(): string {
-    return `correction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `correction_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 }
 

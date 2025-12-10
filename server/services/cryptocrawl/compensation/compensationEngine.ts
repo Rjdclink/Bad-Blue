@@ -469,7 +469,7 @@ export class CompensationEngine extends EventEmitter {
    * Generate unique ID
    */
   private generateId(): string {
-    return `comp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `comp_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 }
 
