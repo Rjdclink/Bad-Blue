@@ -756,7 +756,7 @@ export class EnhancedWebSearchService {
       const genai = getGeminiClient();
 
       const result = await genai.models.generateContent({
-        model: "gemini-2.0-flash-exp",
+        model: "gemini-3-flash",
         contents: [{
           role: 'user',
           parts: [{

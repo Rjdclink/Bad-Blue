@@ -120,7 +120,7 @@ async function findOfficialWebsite(
 
   try {
     const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3-flash",
       contents: [{ 
         role: "user", 
         parts: [{ text: `Find the official website for ${formatSearchQuery(city, state, agencyType)}. 
@@ -170,7 +170,7 @@ async function extractContactEmail(
 
   try {
     const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3-flash",
       contents: [{ 
         role: "user", 
         parts: [{ text: `Extract the official contact email for ${departmentName} from their website at ${url}.

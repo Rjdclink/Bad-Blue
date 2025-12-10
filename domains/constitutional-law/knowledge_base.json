@@ -1,0 +1,40 @@
+{
+  "domain": "constitutional-law",
+  "name": "Constitutional Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "mcculloch-v-maryland",
+      "name": "McCulloch v. Maryland",
+      "citation": "17 U.S. 316 (1819)",
+      "summary": "Landmark case in Constitutional Law",
+      "relevance": "Foundational precedent for constitutional-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "constitutional-law-primary-statute",
+      "name": "Primary Constitutional Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Constitutional Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "constitutional-law-consultation",
+      "name": "Constitutional Law Consultation Form",
+      "description": "Standard intake form for Constitutional Law matters"
+    },
+    {
+      "id": "constitutional-law-letter",
+      "name": "Constitutional Law Demand Letter",
+      "description": "Template for formal correspondence in Constitutional Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

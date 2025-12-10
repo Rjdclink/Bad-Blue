@@ -1,0 +1,40 @@
+{
+  "domain": "municipal-government-law",
+  "name": "Municipal/Government Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "town-of-greece-v-galloway",
+      "name": "Town of Greece v. Galloway",
+      "citation": "572 U.S. 565 (2014)",
+      "summary": "Landmark case in Municipal/Government Law",
+      "relevance": "Foundational precedent for municipal-government-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "municipal-government-law-primary-statute",
+      "name": "Primary Municipal/Government Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Municipal/Government Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "municipal-government-law-consultation",
+      "name": "Municipal/Government Law Consultation Form",
+      "description": "Standard intake form for Municipal/Government Law matters"
+    },
+    {
+      "id": "municipal-government-law-letter",
+      "name": "Municipal/Government Law Demand Letter",
+      "description": "Template for formal correspondence in Municipal/Government Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

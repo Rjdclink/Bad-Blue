@@ -1,0 +1,40 @@
+{
+  "domain": "environmental-law",
+  "name": "Environmental Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "massachusetts-v-epa",
+      "name": "Massachusetts v. EPA",
+      "citation": "549 U.S. 497 (2007)",
+      "summary": "Landmark case in Environmental Law",
+      "relevance": "Foundational precedent for environmental-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "environmental-law-primary-statute",
+      "name": "Primary Environmental Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Environmental Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "environmental-law-consultation",
+      "name": "Environmental Law Consultation Form",
+      "description": "Standard intake form for Environmental Law matters"
+    },
+    {
+      "id": "environmental-law-letter",
+      "name": "Environmental Law Demand Letter",
+      "description": "Template for formal correspondence in Environmental Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

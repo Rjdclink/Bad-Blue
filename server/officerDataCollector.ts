@@ -156,7 +156,7 @@ Provide detailed information with specific sources. Be thorough and accurate.`;
 
   const client = getGeminiClient();
   const response = await client.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-3-flash",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: {
       temperature: 0.0,
@@ -365,7 +365,7 @@ Provide accurate roster information with official sources.`;
 
   const client = getGeminiClient();
   const response = await client.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-3-flash",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: {
       temperature: 0.0,
@@ -509,7 +509,7 @@ Be critical and prioritize accuracy over comprehensiveness.`;
 
   const client = getGeminiClient();
   const response = await client.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-3-flash",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: {
       temperature: 0.0,

@@ -1,0 +1,40 @@
+{
+  "domain": "civil-law",
+  "name": "Civil Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "erie-railroad-co-v-tompkins",
+      "name": "Erie Railroad Co. v. Tompkins",
+      "citation": "304 U.S. 64 (1938)",
+      "summary": "Landmark case in Civil Law",
+      "relevance": "Foundational precedent for civil-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "civil-law-primary-statute",
+      "name": "Primary Civil Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Civil Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "civil-law-consultation",
+      "name": "Civil Law Consultation Form",
+      "description": "Standard intake form for Civil Law matters"
+    },
+    {
+      "id": "civil-law-letter",
+      "name": "Civil Law Demand Letter",
+      "description": "Template for formal correspondence in Civil Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

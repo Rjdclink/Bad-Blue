@@ -1,0 +1,40 @@
+{
+  "domain": "contract-law",
+  "name": "Contract Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "hadley-v-baxendale",
+      "name": "Hadley v. Baxendale",
+      "citation": "156 Eng. Rep. 145 (1854)",
+      "summary": "Landmark case in Contract Law",
+      "relevance": "Foundational precedent for contract-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "contract-law-primary-statute",
+      "name": "Primary Contract Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Contract Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "contract-law-consultation",
+      "name": "Contract Law Consultation Form",
+      "description": "Standard intake form for Contract Law matters"
+    },
+    {
+      "id": "contract-law-letter",
+      "name": "Contract Law Demand Letter",
+      "description": "Template for formal correspondence in Contract Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

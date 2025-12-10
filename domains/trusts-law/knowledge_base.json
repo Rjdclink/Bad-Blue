@@ -1,0 +1,40 @@
+{
+  "domain": "trusts-law",
+  "name": "Trusts Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "meinhard-v-salmon",
+      "name": "Meinhard v. Salmon",
+      "citation": "249 N.Y. 458 (1928)",
+      "summary": "Landmark case in Trusts Law",
+      "relevance": "Foundational precedent for trusts-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "trusts-law-primary-statute",
+      "name": "Primary Trusts Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Trusts Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "trusts-law-consultation",
+      "name": "Trusts Law Consultation Form",
+      "description": "Standard intake form for Trusts Law matters"
+    },
+    {
+      "id": "trusts-law-letter",
+      "name": "Trusts Law Demand Letter",
+      "description": "Template for formal correspondence in Trusts Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

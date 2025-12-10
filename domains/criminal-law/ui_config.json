@@ -1,0 +1,58 @@
+{
+  "domain": "criminal-law",
+  "name": "Criminal Law",
+  "theme": {
+    "primaryColor": "#301934",
+    "secondaryColor": "#30193488",
+    "accentColor": "#D4AF37",
+    "backgroundColor": "#1a1a2e",
+    "textColor": "#ffffff"
+  },
+  "layout": {
+    "consultationForm": {
+      "title": "Criminal Law Consultation",
+      "subtitle": "Charges, defense, appeals, expungements",
+      "fields": [
+        {
+          "id": "issue_type",
+          "label": "Type of Issue",
+          "type": "select",
+          "options": ["General Inquiry", "Document Review", "Case Evaluation", "Legal Research", "Other"],
+          "required": true
+        },
+        {
+          "id": "description",
+          "label": "Describe Your Situation",
+          "type": "textarea",
+          "placeholder": "Provide details about your Criminal Law issue...",
+          "required": true
+        },
+        {
+          "id": "deadline",
+          "label": "Any Upcoming Deadlines?",
+          "type": "date",
+          "required": false
+        }
+      ]
+    },
+    "resultsDisplay": {
+      "showCitations": true,
+      "showTemplates": true,
+      "showConfidence": true,
+      "showSuggestedActions": true
+    }
+  },
+  "features": {
+    "voiceInput": true,
+    "documentGeneration": true,
+    "templateLibrary": true,
+    "caseResearch": true,
+    "statuteLookup": true
+  },
+  "accessibility": {
+    "highContrast": true,
+    "screenReaderOptimized": true,
+    "textToSpeech": true,
+    "fontSize": "adjustable"
+  }
+}

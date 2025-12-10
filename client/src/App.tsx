@@ -115,6 +115,9 @@ const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'P
 // PANTHEON Page - Advanced Intelligence Platform
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
 
+// Domain Consultation Page - 4JI Orchestrator Integration
+const ConsultationPage = lazyWithRetry(() => import("@/pages/consultation"), 'Consultation');
+
 // Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 
@@ -123,6 +126,14 @@ const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
 
 // Location Intelligence Page - Interactive Heatmap Dashboard
 const LocationIntelPage = lazyWithRetry(() => import("@/pages/location-intel"), 'LocationIntel');
+
+// Three-Tier Master Password Access Zones
+// Zone A: LegalWhat User Access (SARBEAR)
+const LegalWhatHome = lazyWithRetry(() => import("@/pages/legalwhat-home"), 'LegalWhatHome');
+// Zone B: 4JI Orchestrator Admin Console (FORGEAI)
+const OrchestratorConsole = lazyWithRetry(() => import("@/pages/orchestrator-console"), 'OrchestratorConsole');
+// Zone C: CryptoCrawler Command Dashboard (CRPTCRWLR)
+const CryptoCrawlerDashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-dashboard"), 'CryptoCrawlerDashboard');
 
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
@@ -190,6 +201,21 @@ function Router() {
         {/* Protected routes - only accessible when authenticated */}
         {isAuthenticated ? (
           <>
+            {/* THREE-TIER MASTER PASSWORD ACCESS ZONES */}
+            {/* Zone A: LegalWhat User Access (SARBEAR) */}
+            <Route path="/legalwhat/home" component={LegalWhatHome} />
+            <Route path="/legalwhat" component={LegalWhatHome} />
+            
+            {/* Zone B: 4JI Orchestrator Admin Console (FORGEAI) */}
+            <Route path="/4ji/orchestrator" component={OrchestratorConsole} />
+            <Route path="/4ji" component={OrchestratorConsole} />
+            <Route path="/orchestrator" component={OrchestratorConsole} />
+            
+            {/* Zone C: CryptoCrawler Command Dashboard (CRPTCRWLR) */}
+            <Route path="/cryptocrawler/dashboard" component={CryptoCrawlerDashboard} />
+            <Route path="/cryptocrawler" component={CryptoCrawlerDashboard} />
+            <Route path="/crypto-dashboard" component={CryptoCrawlerDashboard} />
+            
             {/* Welcome Page - LegalWhat law type selection (post-login) */}
             <Route path="/welcome" component={WelcomePage} />
             
@@ -201,6 +227,9 @@ function Router() {
             
             {/* PANTHEON - Advanced Intelligence Platform */}
             <Route path="/pantheon" component={PantheonPage} />
+            
+            {/* Domain Consultation - 4JI Orchestrator Integration */}
+            <Route path="/consultation/:domainId" component={ConsultationPage} />
             
             {/* Location Intelligence - Interactive Heatmap Dashboard */}
             <Route path="/location-intel" component={LocationIntelPage} />

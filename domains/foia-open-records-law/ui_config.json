@@ -1,0 +1,58 @@
+{
+  "domain": "foia-open-records-law",
+  "name": "FOIA/Open Records Law",
+  "theme": {
+    "primaryColor": "#0096FF",
+    "secondaryColor": "#0096FF88",
+    "accentColor": "#D4AF37",
+    "backgroundColor": "#1a1a2e",
+    "textColor": "#ffffff"
+  },
+  "layout": {
+    "consultationForm": {
+      "title": "FOIA/Open Records Law Consultation",
+      "subtitle": "Public records requests, government transparency",
+      "fields": [
+        {
+          "id": "issue_type",
+          "label": "Type of Issue",
+          "type": "select",
+          "options": ["General Inquiry", "Document Review", "Case Evaluation", "Legal Research", "Other"],
+          "required": true
+        },
+        {
+          "id": "description",
+          "label": "Describe Your Situation",
+          "type": "textarea",
+          "placeholder": "Provide details about your FOIA/Open Records Law issue...",
+          "required": true
+        },
+        {
+          "id": "deadline",
+          "label": "Any Upcoming Deadlines?",
+          "type": "date",
+          "required": false
+        }
+      ]
+    },
+    "resultsDisplay": {
+      "showCitations": true,
+      "showTemplates": true,
+      "showConfidence": true,
+      "showSuggestedActions": true
+    }
+  },
+  "features": {
+    "voiceInput": true,
+    "documentGeneration": true,
+    "templateLibrary": true,
+    "caseResearch": true,
+    "statuteLookup": true
+  },
+  "accessibility": {
+    "highContrast": true,
+    "screenReaderOptimized": true,
+    "textToSpeech": true,
+    "fontSize": "adjustable"
+  }
+}
