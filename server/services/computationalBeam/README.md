@@ -106,13 +106,92 @@ const customResult = await CryptoBeamConnector.executeStrategy({
 - **Liquidity Snipe**: New pool detection and early entry
 - **Flash Loan**: Complex multi-step arbitrage
 
-### Pantheon Integration (Coming Soon)
+### Pantheon Integration
 
-Connect computational beam to Pantheon crawler system for enhanced data collection.
+**Purpose**: Supply generous computational power for Pantheon data operations
 
-### People Finder Integration (Coming Soon)
+```typescript
+import { PantheonBeamConnector, PantheonOperationType } from './services/computationalBeam';
 
-Optimize people search and dashboard performance with computational beam power.
+// Initialize connector
+await PantheonBeamConnector.initialize();
+
+// Execute data collection
+const collectionResult = await PantheonBeamConnector.executeDataCollection(
+  ['entity-123', 'entity-456'],
+  3 // depth
+);
+
+// Execute entity enrichment
+const enrichmentResult = await PantheonBeamConnector.executeEntityEnrichment(
+  ['E123', 'E456', 'E789']
+);
+
+// Optimized dashboard query
+const dashboardResult = await PantheonBeamConnector.executeDashboardQuery({
+  entityIds: ['E123'],
+  filters: { active: true },
+});
+
+console.log('Entities processed:', collectionResult.entitiesProcessed);
+console.log('Relationships found:', collectionResult.relationshipsFound);
+console.log('Dashboard ready:', dashboardResult.dashboardReady);
+```
+
+**Supported Operations**:
+- **Data Collection**: Multi-source data gathering with configurable depth
+- **Entity Enrichment**: Enhance entity profiles with additional data
+- **Relationship Mapping**: Discover and map entity relationships
+- **Dashboard Query**: Fast, optimized queries for dashboard loading
+- **Batch Processing**: Efficient bulk operations
+
+### People Finder Integration
+
+**Purpose**: Optimize people search and dashboard performance with computational beam power
+
+```typescript
+import { PeopleFinderBeamConnector, PeopleFinderOperationType } from './services/computationalBeam';
+
+// Initialize connector
+await PeopleFinderBeamConnector.initialize();
+
+// Execute person search
+const searchResult = await PeopleFinderBeamConnector.searchPerson(
+  'John',
+  'Doe',
+  'New York'
+);
+
+// Advanced search with multiple criteria
+const advancedResult = await PeopleFinderBeamConnector.advancedSearch({
+  firstName: 'Jane',
+  lastName: 'Smith',
+  location: 'California',
+  age: 35,
+  email: 'jane@example.com',
+});
+
+// Fast dashboard loading
+const dashboardResult = await PeopleFinderBeamConnector.loadDashboard(
+  ['P123', 'P456', 'P789']
+);
+
+// Trace relationships
+const relationshipResult = await PeopleFinderBeamConnector.traceRelationships(
+  'P123'
+);
+
+console.log('People found:', searchResult.peopleFound);
+console.log('Results:', searchResult.results);
+console.log('Dashboard ready:', dashboardResult.dashboardReady);
+```
+
+**Supported Operations**:
+- **Person Search**: Fast person searches across multiple sources
+- **Advanced Search**: Complex searches with multiple criteria
+- **Dashboard Load**: Optimized dashboard data loading (< 3s)
+- **Batch Lookup**: Efficient bulk person lookups
+- **Relationship Trace**: Discover connections between people
 
 ## Security Features
 

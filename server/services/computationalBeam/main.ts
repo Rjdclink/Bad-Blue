@@ -59,6 +59,21 @@ export {
   type OpportunityDetail
 } from './cryptocrawlerConnector';
 
+export {
+  PantheonBeamConnector,
+  PantheonOperationType,
+  type PantheonOperationParams,
+  type PantheonOperationResult
+} from './pantheonConnector';
+
+export {
+  PeopleFinderBeamConnector,
+  PeopleFinderOperationType,
+  type PeopleSearchParams,
+  type PeopleSearchResult,
+  type PersonResult
+} from './peopleFinderConnector';
+
 // Testing and validation
 export { runIntegrationTest } from './test-integration';
 export { demo } from './demo';
