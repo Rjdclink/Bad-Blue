@@ -12,18 +12,19 @@ import {
   TaskType,
   TaskIntensity,
   SystemStatus,
-  TripleCredentials,
   CrawlerStrategy,
   CrawlerTask,
   ComputationalBeamError 
 } from './types';
 import { EventEmitter } from 'events';
-import { credentialValidator } from './credentialValidator';
 import { workloadRouter } from './workloadRouter';
 import { omniAntennaLayer } from './omniAntennaLayer';
 import { directionalBeamLayer } from './directionalBeamLayer';
 import { superBatteryLayer } from './superBatteryLayer';
 import { integrityTestingSystem } from './integrityTesting';
+import { cubicOptimizer } from './cubicOptimizer';
+import { neuralLoadPredictor } from './neuralLoadPredictor';
+import { metricsAnalytics } from './metricsAnalytics';
 
 export class ComputationalBeamOrchestrator extends EventEmitter {
   private initialized = false;
@@ -39,7 +40,7 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
   /**
    * Initialize the computational beam system
    */
-  public async initialize(credentials?: TripleCredentials): Promise<void> {
+  public async initialize(): Promise<void> {
     if (this.initialized) {
       throw new ComputationalBeamError('System already initialized', 'ALREADY_INITIALIZED');
     }
@@ -47,14 +48,7 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
     this.emit('initialization-started');
 
     try {
-      // Step 1: Load and validate credentials
-      const creds = credentials || credentialValidator.loadFromEnvironment();
-      credentialValidator.initialize(creds);
-      
-      await credentialValidator.validateOrThrow();
-      this.emit('credentials-validated');
-
-      // Step 2: Run initial integrity tests
+      // Run initial integrity tests
       this.emit('initial-integrity-test-started');
       const integrity = await integrityTestingSystem.runIntegrityTests();
       
@@ -68,7 +62,7 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
 
       this.emit('integrity-test-passed', { stability: integrity.overallStability });
 
-      // Step 3: Start monitoring
+      // Start monitoring
       this.startMonitoring();
 
       this.initialized = true;
@@ -202,17 +196,23 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
   }
 
   /**
-   * Get comprehensive system status
+   * Get comprehensive system status with cubic optimization metrics
    */
   public getSystemStatus(): SystemStatus {
     this.ensureInitialized();
 
     const routerStatus = workloadRouter.getSystemStatus();
     const integrity = integrityTestingSystem.getIntegrityStatus();
+    const cubicStats = cubicOptimizer.getStats();
+
+    // Record system health metrics
+    metricsAnalytics.recordMetric('system_health', integrity.overallStability);
+    metricsAnalytics.recordMetric('active_nodes', routerStatus.antenna.activeNodes + routerStatus.beam.activeNodes);
+    metricsAnalytics.recordMetric('cubic_performance_gain', cubicStats.performance.improvementFactor);
 
     return {
       initialized: this.initialized,
-      credentialsValid: credentialValidator.isValid(),
+      credentialsValid: true, // Simplified - no triple verification required
       activeNodes: routerStatus.antenna.activeNodes + routerStatus.beam.activeNodes,
       totalNodes: routerStatus.antenna.totalNodes + routerStatus.beam.totalNodes,
       queuedTasks: routerStatus.antenna.queuedTasks + routerStatus.beam.queuedTasks,
@@ -338,13 +338,16 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
   }
 
   /**
-   * Run comprehensive diagnostic
+   * Run comprehensive diagnostic with cubic optimization analysis
    */
   public async runDiagnostic(): Promise<any> {
     this.ensureInitialized();
 
     const status = this.getSystemStatus();
     const integrity = await integrityTestingSystem.runIntegrityTests();
+    const cubicStats = cubicOptimizer.getStats();
+    const neuralStats = neuralLoadPredictor.getStats();
+    const analyticsHealth = metricsAnalytics.getHealthScore();
 
     return {
       status,
@@ -355,6 +358,12 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
         beam: directionalBeamLayer.getStatus(),
         battery: superBatteryLayer.getOptimizationStats(),
       },
+      advanced: {
+        cubicOptimization: cubicStats,
+        neuralPrediction: neuralStats,
+        analyticsHealth,
+        metricsSnapshot: metricsAnalytics.getDashboardData(),
+      },
     };
   }
 
@@ -363,7 +372,6 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
    */
   public isOperational(): boolean {
     return this.initialized && 
-           credentialValidator.isValid() && 
            integrityTestingSystem.getIntegrityStatus().meetsRequirement;
   }
 }

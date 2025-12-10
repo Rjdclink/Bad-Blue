@@ -18,12 +18,11 @@ async function demo() {
     // Step 1: Initialize the system
     console.log('📡 Step 1: Initializing Computational Beam System...');
     await computationalBeam.initialize();
-    console.log('✅ System initialized and credentials validated\n');
+    console.log('✅ System initialized successfully\n');
 
     // Step 2: Display system status
     console.log('📊 Step 2: System Status');
     const status = computationalBeam.getSystemStatus();
-    console.log(`   ├─ Credentials Valid: ${status.credentialsValid ? '✅' : '❌'}`);
     console.log(`   ├─ Active Nodes: ${status.activeNodes}/${status.totalNodes}`);
     console.log(`   ├─ System Stability: ${status.systemIntegrity.overallStability.toFixed(1)}%`);
     console.log(`   └─ Uptime: ${(status.uptime / 1000).toFixed(1)}s\n`);

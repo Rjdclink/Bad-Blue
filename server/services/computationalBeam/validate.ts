@@ -42,13 +42,7 @@ class ComputationalBeamValidator {
 
     this.checkFileContent('types.ts', 'ComputeProvider', 'Core provider types');
     this.checkFileContent('types.ts', 'ComputeLayer', 'Core layer types');
-    this.checkFileContent('types.ts', 'TripleCredentials', 'Credential types');
     this.checkFileContent('types.ts', 'IntegrityTestType', 'Integrity test types');
-
-    this.checkFileContent('credentialValidator.ts', 'validateAll', 'Triple validation');
-    this.checkFileContent('credentialValidator.ts', 'validateApplicationAccessKey', 'App key validation');
-    this.checkFileContent('credentialValidator.ts', 'validateAdminPanelAuth', 'Admin validation');
-    this.checkFileContent('credentialValidator.ts', 'validateCrawlerAuthToken', 'Crawler validation');
 
     this.checkFileContent('omniAntennaLayer.ts', 'OmniAntennaLayer', 'Antenna class');
     this.checkFileContent('omniAntennaLayer.ts', 'acceptTask', 'Task acceptance');
@@ -79,7 +73,6 @@ class ComputationalBeamValidator {
     this.checkFileContent('index.ts', 'getSystemStatus', 'Status reporting');
 
     this.checkFileContent('README.md', 'Architecture Layers', 'Documentation structure');
-    this.checkFileContent('README.md', 'Triple Credential', 'Security documentation');
     this.checkFileContent('README.md', 'Integrity Testing', 'Testing documentation');
 
     // Print results

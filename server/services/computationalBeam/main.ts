@@ -15,11 +15,6 @@ export * from './types';
 
 // Subsystems
 export { 
-  credentialValidator, 
-  CredentialValidator 
-} from './credentialValidator';
-
-export { 
   omniAntennaLayer, 
   OmniAntennaLayer 
 } from './omniAntennaLayer';
@@ -54,6 +49,11 @@ export {
   metricsAnalytics,
   AdvancedMetricsAnalytics
 } from './metricsAnalytics';
+
+export {
+  cubicOptimizer,
+  CubicOptimizationEngine
+} from './cubicOptimizer';
 
 // Testing and validation
 export { runIntegrationTest } from './test-integration';
