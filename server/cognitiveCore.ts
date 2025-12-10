@@ -848,12 +848,13 @@ export class CognitiveCore extends EventEmitter {
     const cognitiveScore = await this.calculateCognitiveScore();
     const selfReflection = await this.performSelfReflection();
     const lovelaceTest = await this.performLovelaceTest();
+    const turingTest = await this.performTuringTest();
 
     return {
       timestamp: Date.now(),
       cognitiveScore,
       selfAwarenessLevel: selfReflection.overallScore,
-      turingCompatibility: 0.75, // Placeholder
+      turingCompatibility: turingTest.overallScore,
       lovelaceCreativity: lovelaceTest.overallScore,
       adaptiveLearningRate: this.calculateAdaptiveLearningRate(),
       metacognitionDepth: selfReflection.introspectionDepth,
@@ -896,15 +897,40 @@ export class CognitiveCore extends EventEmitter {
   }
 
   private measureMeaningfulness(): number {
-    return 0.7; // Placeholder - would need semantic analysis
+    // Measure meaningfulness based on knowledge-to-creative-output ratio
+    // Higher ratio means more meaningful creative outputs grounded in knowledge
+    const knowledgeCount = this.knowledgeBase.size;
+    const creativeCount = this.creativeOutputs.length;
+    if (creativeCount === 0) return 0.5;
+    const groundingRatio = Math.min(1.0, knowledgeCount / (creativeCount * 2));
+    return 0.5 + groundingRatio * 0.5;
   }
 
   private measureCoherence(): number {
-    return 0.8; // Placeholder
+    // Measure coherence based on reasoning pattern consistency
+    let coherenceSum = 0;
+    let patternCount = 0;
+    for (const pattern of this.reasoningPatterns.values()) {
+      if (pattern.length > 1) {
+        // Calculate variance in pattern values
+        const avg = pattern.reduce((a, b) => a + b, 0) / pattern.length;
+        const variance = pattern.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / pattern.length;
+        // Lower variance = higher coherence
+        coherenceSum += 1 - Math.min(1, variance);
+        patternCount++;
+      }
+    }
+    return patternCount > 0 ? coherenceSum / patternCount : 0.7;
   }
 
   private measureContextualRelevance(): number {
-    return 0.75; // Placeholder
+    // Measure based on knowledge base organization and cross-referencing
+    const knowledgeKeys = Array.from(this.knowledgeBase.keys());
+    const hasLegalContext = knowledgeKeys.some(k => k.includes('legal'));
+    const hasCryptoContext = knowledgeKeys.some(k => k.includes('crypto'));
+    const hasCrossPatterns = knowledgeKeys.some(k => k.includes('cross'));
+    const contextScore = (hasLegalContext ? 0.3 : 0) + (hasCryptoContext ? 0.3 : 0) + (hasCrossPatterns ? 0.2 : 0) + 0.2;
+    return Math.min(1.0, contextScore);
   }
 
   private measureEmotionalIntelligence(): number {
@@ -916,7 +942,10 @@ export class CognitiveCore extends EventEmitter {
   }
 
   private measureNaturalLanguageQuality(): number {
-    return 0.8; // Placeholder
+    // Based on reasoning pattern complexity and knowledge integration
+    const avgPatternLength = Array.from(this.reasoningPatterns.values())
+      .reduce((sum, p) => sum + p.length, 0) / Math.max(this.reasoningPatterns.size, 1);
+    return Math.min(1.0, avgPatternLength / 50 + 0.5);
   }
 
   private measureMemoryCapacity(): number {
