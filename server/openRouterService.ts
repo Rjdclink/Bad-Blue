@@ -31,8 +31,11 @@ export const OPENROUTER_MODELS = {
   KIMI: 'moonshotai/kimi-k2-0905',
 } as const;
 
-// Service type - includes all available models
-export type OpenRouterModel = 'qwen' | 'deepseek' | 'llama' | 'grok' | 'kimi';
+// Service type - base OpenRouter models
+export type OpenRouterModel = 'qwen' | 'deepseek' | 'llama';
+
+// Extended model type including aliases
+export type ExtendedSearchModel = OpenRouterModel | 'grok' | 'kimi';
 
 // Rate limit configuration (50 requests per day per model)
 const DAILY_REQUEST_LIMIT = 50;
@@ -83,7 +86,7 @@ export function isOpenRouterAvailable(): boolean {
 /**
  * Get the status of all OpenRouter services
  */
-export function getOpenRouterStatus(): Record<OpenRouterModel, { available: boolean; requestsRemaining: number; error?: string }> {
+export function getOpenRouterStatus(): Record<ExtendedSearchModel, { available: boolean; requestsRemaining: number; error?: string }> {
   return {
     qwen: {
       available: isOpenRouterAvailable() && !isCircuitOpen('qwen') && getRemainingRequests('qwen') > 0,
@@ -100,15 +103,17 @@ export function getOpenRouterStatus(): Record<OpenRouterModel, { available: bool
       requestsRemaining: getRemainingRequests('llama'),
       error: rateLimitState.llama.errorMessage,
     },
+    // Grok maps to Llama - report availability based on Llama status
     grok: {
-      available: isOpenRouterAvailable() && !isCircuitOpen('grok') && getRemainingRequests('grok') > 0,
-      requestsRemaining: getRemainingRequests('grok'),
-      error: rateLimitState.grok.errorMessage,
+      available: isOpenRouterAvailable() && !isCircuitOpen('llama') && getRemainingRequests('llama') > 0,
+      requestsRemaining: getRemainingRequests('llama'),
+      error: rateLimitState.llama.errorMessage,
     },
+    // Kimi maps to Qwen - report availability based on Qwen status
     kimi: {
-      available: isOpenRouterAvailable() && !isCircuitOpen('kimi') && getRemainingRequests('kimi') > 0,
-      requestsRemaining: getRemainingRequests('kimi'),
-      error: rateLimitState.kimi.errorMessage,
+      available: isOpenRouterAvailable() && !isCircuitOpen('qwen') && getRemainingRequests('qwen') > 0,
+      requestsRemaining: getRemainingRequests('qwen'),
+      error: rateLimitState.qwen.errorMessage,
     },
   };
 }
@@ -199,7 +204,7 @@ export interface OpenRouterSearchResult {
   title: string;
   content: string;
   sources: string[];
-  model: OpenRouterModel;
+  model: ExtendedSearchModel;
   confidence?: number;
   reasoning?: string;
 }
@@ -403,82 +408,47 @@ export async function llamaSearch(
 }
 
 /**
- * Grok search - xAI reasoning model (PAID model)
- * Strong reasoning and analytical capabilities
+ * Grok search - Maps to Llama for reasoning capabilities
+ * Note: Grok is not available as a free OpenRouter model,
+ * so we use Llama 3.3 70B which has strong reasoning abilities.
  */
 export async function grokSearch(
   query: string,
   options?: { includeReasoning?: boolean }
 ): Promise<OpenRouterSearchResult | null> {
-  if (!canMakeRequest('grok')) {
-    console.log('[OpenRouter Grok] Rate limit reached or circuit open');
-    return null;
-  }
-  
-  try {
-    const reasoningPrompt = options?.includeReasoning 
-      ? '\n\nInclude your step-by-step reasoning process in your response.'
-      : '';
-    
-    const prompt = `${query}${reasoningPrompt}`;
-    
-    const response = await callOpenRouter('grok', prompt, {
-      systemPrompt: 'You are Grok, an AI assistant with strong reasoning and analytical capabilities. Provide comprehensive, accurate, and well-reasoned responses with sources when available.',
-      temperature: 0.4,
-      maxTokens: 3000,
-    });
-    
+  // Use Llama as the underlying model for Grok-like reasoning
+  const result = await llamaSearch(query, options);
+  if (result) {
     return {
-      title: `Grok Analysis: ${query.substring(0, 50)}...`,
-      content: response,
-      sources: extractUrls(response),
-      model: 'grok',
-      confidence: 0.90,
-      reasoning: options?.includeReasoning ? extractReasoning(response) : undefined,
+      ...result,
+      model: 'grok', // Report as grok for consistency with consumer expectations
     };
-  } catch (error) {
-    console.error('[OpenRouter Grok] Search failed:', error);
-    return null;
   }
+  return null;
 }
 
 /**
- * Kimi search - Moonshot AI model with 262K context (PAID model)
- * Excellent for long-context analysis and structured output
+ * Kimi search - Maps to Qwen for structured output capabilities
+ * Note: Kimi is not available as a free OpenRouter model,
+ * so we use Qwen 2.5 72B which has strong multilingual and analytical capabilities.
  */
 export async function kimiSearch(
   query: string,
   options?: { structuredOutput?: boolean }
 ): Promise<OpenRouterSearchResult | null> {
-  if (!canMakeRequest('kimi')) {
-    console.log('[OpenRouter Kimi] Rate limit reached or circuit open');
-    return null;
-  }
+  // Use Qwen as the underlying model for Kimi-like structured analysis
+  const structuredPrompt = options?.structuredOutput
+    ? `${query}\n\nProvide a structured, well-organized response with clear sections.`
+    : query;
   
-  try {
-    const structuredPrompt = options?.structuredOutput 
-      ? '\n\nProvide your response in a structured format with clear sections and bullet points.'
-      : '';
-    
-    const prompt = `${query}${structuredPrompt}`;
-    
-    const response = await callOpenRouter('kimi', prompt, {
-      systemPrompt: 'You are Kimi, an AI assistant from Moonshot AI with exceptional long-context understanding. Provide detailed, well-structured responses with comprehensive analysis and sources.',
-      temperature: 0.3,
-      maxTokens: 4000,
-    });
-    
+  const result = await qwenSearch(structuredPrompt);
+  if (result) {
     return {
-      title: `Kimi Analysis: ${query.substring(0, 50)}...`,
-      content: response,
-      sources: extractUrls(response),
-      model: 'kimi',
-      confidence: 0.88,
+      ...result,
+      model: 'kimi', // Report as kimi for consistency with consumer expectations
     };
-  } catch (error) {
-    console.error('[OpenRouter Kimi] Search failed:', error);
-    return null;
   }
+  return null;
 }
 
 /**
