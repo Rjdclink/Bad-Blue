@@ -13,21 +13,42 @@ import type { EntityNode, EntityEdge, IntelligenceEvent, DBEntity, DBRelationshi
 
 const logger = createLogger('CorrelationDB');
 
+// Type for better-sqlite3 Database instance (when available)
+type BetterSqliteDatabase = {
+  pragma(statement: string): unknown;
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...params: unknown[]): unknown;
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+  };
+  transaction<T>(fn: () => T): () => T;
+  close(): void;
+};
+
 // Dynamic import for optional better-sqlite3
-let Database: any = null;
+let DatabaseConstructor: (new (path: string) => BetterSqliteDatabase) | null = null;
 let betterSqliteAvailable = false;
 
 async function loadBetterSqlite(): Promise<boolean> {
-  if (Database !== null) return betterSqliteAvailable;
+  if (DatabaseConstructor !== null) return betterSqliteAvailable;
   
   try {
     const module = await import('better-sqlite3');
-    Database = module.default;
+    DatabaseConstructor = module.default;
     betterSqliteAvailable = true;
     logger.info('better-sqlite3 loaded successfully');
     return true;
-  } catch (error) {
-    logger.warn('better-sqlite3 not available, using in-memory fallback:', (error as Error).message);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorCode = (error as NodeJS.ErrnoException).code;
+    
+    if (errorCode === 'ERR_MODULE_NOT_FOUND' || errorCode === 'MODULE_NOT_FOUND') {
+      logger.info('better-sqlite3 not installed (optional dependency), using in-memory fallback');
+    } else {
+      logger.warn('better-sqlite3 failed to load, using in-memory fallback:', errorMessage);
+    }
+    
     betterSqliteAvailable = false;
     return false;
   }
@@ -41,7 +62,7 @@ interface InMemoryStore {
 }
 
 export class CorrelationDatabase {
-  private db: any = null;
+  private db: BetterSqliteDatabase | null = null;
   private dbPath: string;
   private initialized = false;
   private useMemoryFallback = false;
@@ -64,7 +85,7 @@ export class CorrelationDatabase {
     // Try to load better-sqlite3
     const sqliteAvailable = await loadBetterSqlite();
     
-    if (!sqliteAvailable) {
+    if (!sqliteAvailable || !DatabaseConstructor) {
       // Use in-memory fallback
       this.useMemoryFallback = true;
       this.initialized = true;
@@ -73,7 +94,7 @@ export class CorrelationDatabase {
     }
 
     try {
-      this.db = new Database(this.dbPath);
+      this.db = new DatabaseConstructor(this.dbPath);
       
       // Enable WAL mode for better concurrency
       this.db.pragma('journal_mode = WAL');
