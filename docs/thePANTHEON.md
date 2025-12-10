@@ -91,8 +91,7 @@ const techStack = {
   
   // ML/NLP (ALL FREE - Local processing, no API costs)
   mlnlp: {
-    tensorflow: "@tensorflow/tfjs-node 4.22.0",  // FREE - Local ML processing
-    onnx: "onnxruntime-node 1.20.1",             // FREE - Local ML inference
+    onnx: "onnxruntime-node 1.20.1",             // FREE - Local ML inference (pure JS alternative)
     nlp: ["compromise 14.14.4", "natural 8.1.0", "wink-nlp 2.2.2"], // ALL FREE - Local NLP
     fuzzy: "fast-levenshtein 3.0.0"              // FREE - Local fuzzy matching algorithm
   },
@@ -465,22 +464,36 @@ function analyzeSentiment(text: string): number {
 }
 ```
 
-**Text Classification** - TensorFlow.js (FREE)
+**Text Classification** - Pure JavaScript NLP Libraries (FREE)
 ```typescript
-import * as tf from '@tensorflow/tfjs-node';
+import natural from 'natural';
+import nlp from 'compromise';
 
-async function classifyDocument(text: string, model: tf.LayersModel) {
-  // Tokenize and vectorize
-  const tensor = tf.tensor2d([encodeText(text)]);
+// Using pure JavaScript NLP for text classification
+async function classifyDocument(text: string) {
+  // Use natural library for TF-IDF based classification
+  const TfIdf = natural.TfIdf;
+  const tfidf = new TfIdf();
   
-  // Run inference locally
-  const prediction = model.predict(tensor) as tf.Tensor;
-  const result = await prediction.data();
+  // Add document and extract key terms
+  tfidf.addDocument(text);
   
-  tensor.dispose();
-  prediction.dispose();
+  // Use compromise for entity extraction
+  const doc = nlp(text);
+  const topics = doc.topics().out('array');
   
-  return result; // FREE - model runs locally on CPU/GPU!
+  return {
+    topics,
+    classification: inferClassification(text, topics)
+  }; // FREE - runs locally with pure JavaScript!
+}
+
+function inferClassification(text: string, topics: string[]): string {
+  // Rule-based or statistical classification using local processing
+  const lowerText = text.toLowerCase();
+  if (lowerText.includes('arrest') || lowerText.includes('custody')) return 'criminal';
+  if (lowerText.includes('contract') || lowerText.includes('agreement')) return 'civil';
+  return 'general';
 }
 ```
 
@@ -4195,7 +4208,7 @@ LOW          No        No      No      No
   "core": ["express", "react", "drizzle-orm", "postgres"],
   "ai": ["@openrouter/sdk", "@google/genai", "groq-sdk", "@mistralai/mistralai"],
   "crawling": ["puppeteer", "playwright", "crawlee"],
-  "ml": ["@tensorflow/tfjs-node", "compromise", "natural"]
+  "ml": ["onnxruntime-node", "compromise", "natural", "wink-nlp"]
 }
 ```
 
