@@ -17,7 +17,6 @@ RUN apt-get update && apt-get install -y \
 COPY package*.json ./
 
 # Clean any existing node_modules and install ALL dependencies (needed for build)
-# Use --ignore-scripts to skip problematic native module build scripts in builder
 RUN rm -rf node_modules || true && \
     npm ci --legacy-peer-deps
 
