@@ -50,6 +50,15 @@ export {
   AdvancedMetricsAnalytics
 } from './metricsAnalytics';
 
+// System connectors
+export {
+  CryptoBeamConnector,
+  CryptoStrategyType,
+  type StrategyExecutionParams,
+  type StrategyExecutionResult,
+  type OpportunityDetail
+} from './cryptocrawlerConnector';
+
 // Testing and validation
 export { runIntegrationTest } from './test-integration';
 export { demo } from './demo';

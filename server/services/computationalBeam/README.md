@@ -2,12 +2,18 @@
 
 ## Overview
 
-A Multi-Node, Multi-Provider, Distributed CPU-Amplification Architecture that provides intelligent workload orchestration for crypto crawlers and heavy compute tasks.
+A Multi-Node, Multi-Provider, Distributed CPU-Amplification Architecture designed to supply **generous computational power** to core systems:
+- 🪙 **Cryptocrawler** - Arbitrage and zero-capital strategy optimization
+- 🏛️ **Pantheon** - Enhanced data collection and processing
+- 👤 **People Finder** - Optimized search and dashboard performance
+
+**Purpose**: Supply abundant computational resources to ensure high-level functionality across all systems.
 
 **Advanced Features**:
 - 🚀 **Performance Optimization**: Efficient resource utilization and load balancing
 - 🧠 **Neural Intelligence**: ML-powered prediction and adaptive behavior
 - 📊 **Advanced Analytics**: Real-time metrics and anomaly detection
+- 💰 **Crypto Strategy Evolution**: Arbitrage and zero-capital strategies for admin benefit
 
 ## Architecture Layers
 
@@ -57,15 +63,58 @@ A Multi-Node, Multi-Provider, Distributed CPU-Amplification Architecture that pr
 - Self-correcting error recovery
 - Continuous health monitoring
 
+## System Integrations
+
+### Cryptocrawler Integration
+
+**Purpose**: Supply generous computational power for cryptocurrency strategy optimization
+
+```typescript
+import { CryptoBeamConnector, CryptoStrategyType } from './services/computationalBeam';
+
+// Initialize connector
+await CryptoBeamConnector.initialize();
+
+// Execute arbitrage detection
+const arbitrageResult = await CryptoBeamConnector.executeArbitrage(
+  ['BTC/USD', 'ETH/USD', 'SOL/USD'],
+  ['binance', 'coinbase', 'kraken']
+);
+
+console.log('Opportunities found:', arbitrageResult.opportunities.length);
+console.log('Profit estimate:', arbitrageResult.profitEstimate.toFixed(2), 'USD');
+
+// Execute zero-capital strategies
+const zeroCapResult = await CryptoBeamConnector.executeZeroCapital(
+  ['ethereum', 'bsc', 'polygon']
+);
+
+// Custom strategy execution
+const customResult = await CryptoBeamConnector.executeStrategy({
+  strategyType: CryptoStrategyType.MEV_FRONTRUN,
+  symbols: ['ETH/USDT'],
+  minProfitThreshold: 50, // $50 minimum
+  maxSlippage: 0.3, // 0.3%
+  chains: ['ethereum'],
+});
+```
+
+**Supported Strategies** (for admin financial gain):
+- **Arbitrage**: Cross-exchange price differences
+- **Zero-Capital**: Flash loan arbitrage (no upfront capital)
+- **MEV Frontrun**: Mempool analysis and frontrunning
+- **Liquidity Snipe**: New pool detection and early entry
+- **Flash Loan**: Complex multi-step arbitrage
+
+### Pantheon Integration (Coming Soon)
+
+Connect computational beam to Pantheon crawler system for enhanced data collection.
+
+### People Finder Integration (Coming Soon)
+
+Optimize people search and dashboard performance with computational beam power.
+
 ## Security Features
-
-### Triple Credential Verification
-All operations require validation of three credentials:
-1. **Application Access Key**
-2. **Admin Panel Authorization**
-3. **Crawler Authentication Token**
-
-System will not execute unless all three are valid.
 
 ### Integrity Testing System
 - **Test A (Operational)**: Scans for errors, latency spikes, failed requests
@@ -73,19 +122,21 @@ System will not execute unless all three are valid.
 - **Recursive Testing**: Continues until ≥98% stability achieved
 - **Maximum Iterations**: 10 test cycles
 
+### 4ji Optimization Scheduler
+- **Daily Scheduled Optimization**: Runs at 3:00 AM (lowest user activity)
+- **NO Autonomous Evolution**: System does NOT self-evolve (triple verified)
+- **Cryptocurrency Strategy Evolution**: ONLY for admin financial benefit
+- **Safety Checks**: 3 verification layers prevent autonomous behavior
+
 ## Usage
 
-### Initialization
+### Initialization (Simplified - No Credentials Required)
 
 ```typescript
 import { computationalBeam } from './services/computationalBeam';
 
-// Initialize with credentials
-await computationalBeam.initialize({
-  applicationAccessKey: process.env.COMPUTATIONAL_BEAM_APP_KEY,
-  adminPanelAuth: process.env.COMPUTATIONAL_BEAM_ADMIN_AUTH,
-  crawlerAuthToken: process.env.COMPUTATIONAL_BEAM_CRAWLER_TOKEN,
-});
+// Initialize (no credentials needed)
+await computationalBeam.initialize();
 ```
 
 ### Execute Crawler Task
