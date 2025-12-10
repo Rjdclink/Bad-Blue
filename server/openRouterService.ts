@@ -75,7 +75,7 @@ export function isOpenRouterAvailable(): boolean {
 /**
  * Get the status of all OpenRouter services
  */
-export function getOpenRouterStatus(): Record<OpenRouterModel, { available: boolean; requestsRemaining: number; error?: string }> {
+export function getOpenRouterStatus(): Record<string, { available: boolean; requestsRemaining: number; error?: string }> {
   return {
     qwen: {
       available: isOpenRouterAvailable() && !isCircuitOpen('qwen') && getRemainingRequests('qwen') > 0,
@@ -91,6 +91,18 @@ export function getOpenRouterStatus(): Record<OpenRouterModel, { available: bool
       available: isOpenRouterAvailable() && !isCircuitOpen('llama') && getRemainingRequests('llama') > 0,
       requestsRemaining: getRemainingRequests('llama'),
       error: rateLimitState.llama.errorMessage,
+    },
+    // Grok maps to Llama - report availability based on Llama status
+    grok: {
+      available: isOpenRouterAvailable() && !isCircuitOpen('llama') && getRemainingRequests('llama') > 0,
+      requestsRemaining: getRemainingRequests('llama'),
+      error: rateLimitState.llama.errorMessage,
+    },
+    // Kimi maps to Qwen - report availability based on Qwen status
+    kimi: {
+      available: isOpenRouterAvailable() && !isCircuitOpen('qwen') && getRemainingRequests('qwen') > 0,
+      requestsRemaining: getRemainingRequests('qwen'),
+      error: rateLimitState.qwen.errorMessage,
     },
   };
 }
@@ -376,6 +388,50 @@ export async function llamaSearch(
     console.error('[OpenRouter Llama] Search failed:', error);
     return null;
   }
+}
+
+/**
+ * Grok search - Maps to Llama for reasoning capabilities
+ * Note: Grok is not available as a free OpenRouter model,
+ * so we use Llama 3.3 70B which has strong reasoning abilities.
+ */
+export async function grokSearch(
+  query: string,
+  options?: { includeReasoning?: boolean }
+): Promise<OpenRouterSearchResult | null> {
+  // Use Llama as the underlying model for Grok-like reasoning
+  const result = await llamaSearch(query, options);
+  if (result) {
+    return {
+      ...result,
+      model: 'grok', // Report as grok for consistency with consumer expectations
+    };
+  }
+  return null;
+}
+
+/**
+ * Kimi search - Maps to Qwen for structured output capabilities
+ * Note: Kimi is not available as a free OpenRouter model,
+ * so we use Qwen 2.5 72B which has strong multilingual and analytical capabilities.
+ */
+export async function kimiSearch(
+  query: string,
+  options?: { structuredOutput?: boolean }
+): Promise<OpenRouterSearchResult | null> {
+  // Use Qwen as the underlying model for Kimi-like structured analysis
+  const structuredPrompt = options?.structuredOutput
+    ? `${query}\n\nProvide a structured, well-organized response with clear sections.`
+    : query;
+  
+  const result = await qwenSearch(structuredPrompt);
+  if (result) {
+    return {
+      ...result,
+      model: 'kimi', // Report as kimi for consistency with consumer expectations
+    };
+  }
+  return null;
 }
 
 /**
