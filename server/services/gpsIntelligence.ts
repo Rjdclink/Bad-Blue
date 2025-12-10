@@ -45,13 +45,23 @@ export async function extractGPSFromFile(filePath: string): Promise<GPSCoordinat
     const latitudeRef = tags.GPSLatitudeRef?.value;
     const longitudeRef = tags.GPSLongitudeRef?.value;
     
+    const latitudeDesc = tags.GPSLatitude.description;
+    const longitudeDesc = tags.GPSLongitude.description;
+    
+    if (typeof latitudeDesc !== 'string' || typeof longitudeDesc !== 'string') {
+      return null;
+    }
+    
+    const latRefStr = Array.isArray(latitudeRef) ? latitudeRef[0] : latitudeRef;
+    const lonRefStr = Array.isArray(longitudeRef) ? longitudeRef[0] : longitudeRef;
+    
     const latitude = parseGPSCoordinate(
-      tags.GPSLatitude.description, 
-      Array.isArray(latitudeRef) ? latitudeRef[0] : latitudeRef
+      latitudeDesc, 
+      typeof latRefStr === 'string' ? latRefStr : undefined
     );
     const longitude = parseGPSCoordinate(
-      tags.GPSLongitude.description, 
-      Array.isArray(longitudeRef) ? longitudeRef[0] : longitudeRef
+      longitudeDesc, 
+      typeof lonRefStr === 'string' ? lonRefStr : undefined
     );
     
     if (!latitude || !longitude) return null;

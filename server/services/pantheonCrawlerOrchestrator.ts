@@ -333,7 +333,7 @@ export class PantheonCrawlerOrchestrator {
               content: result.content || '',
               confidence: result.confidence || 0.7,
               timestamp: Date.now(),
-              metadata: { warpFactor: result.warpFactor },
+              metadata: { warpFactor: result.metadata?.warpFactor || 5 },
             });
           }
         }

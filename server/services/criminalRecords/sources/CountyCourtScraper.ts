@@ -63,7 +63,7 @@ export class CountyCourtScraper extends LegacyScraperAdapter {
     }
   }
 
-  private inferDegree(charge: string): 'felony' | 'misdemeanor' | 'infraction' {
+  protected inferDegree(charge: string): 'felony' | 'misdemeanor' | 'infraction' {
     const lower = charge.toLowerCase();
     // NOTE: This is a simplified classification. For production, use a lookup table
     // of actual statute codes mapped to their proper classifications per jurisdiction.

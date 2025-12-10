@@ -298,7 +298,8 @@ export class StarTrekCrawler {
       });
       
       const html = await response.text();
-      const data = parseResults(html, target);
+      const data = parseResults(html);
+      data.target = target;
       data.metadata = {
         phaserSetting: this.phaserSetting,
         warpSpeed: this.warpSpeed,
