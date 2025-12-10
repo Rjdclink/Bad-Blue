@@ -1,0 +1,40 @@
+{
+  "domain": "securities-law",
+  "name": "Securities Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "sec-v-wj-howey-co",
+      "name": "SEC v. W.J. Howey Co.",
+      "citation": "328 U.S. 293 (1946)",
+      "summary": "Landmark case in Securities Law",
+      "relevance": "Foundational precedent for securities-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "securities-law-primary-statute",
+      "name": "Primary Securities Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Securities Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "securities-law-consultation",
+      "name": "Securities Law Consultation Form",
+      "description": "Standard intake form for Securities Law matters"
+    },
+    {
+      "id": "securities-law-letter",
+      "name": "Securities Law Demand Letter",
+      "description": "Template for formal correspondence in Securities Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

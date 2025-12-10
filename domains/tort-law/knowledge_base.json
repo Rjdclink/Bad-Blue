@@ -1,0 +1,40 @@
+{
+  "domain": "tort-law",
+  "name": "Tort Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "palsgraf-v-long-island-railroad",
+      "name": "Palsgraf v. Long Island Railroad",
+      "citation": "248 N.Y. 339 (1928)",
+      "summary": "Landmark case in Tort Law",
+      "relevance": "Foundational precedent for tort-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "tort-law-primary-statute",
+      "name": "Primary Tort Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Tort Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "tort-law-consultation",
+      "name": "Tort Law Consultation Form",
+      "description": "Standard intake form for Tort Law matters"
+    },
+    {
+      "id": "tort-law-letter",
+      "name": "Tort Law Demand Letter",
+      "description": "Template for formal correspondence in Tort Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

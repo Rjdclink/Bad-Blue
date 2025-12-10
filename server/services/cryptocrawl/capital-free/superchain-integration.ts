@@ -646,11 +646,6 @@ class SuperchainFaucet {
     };
   }
 }
-      totalDripped: this.totalDripped,
-      avgMultiplier,
-    };
-  }
-}
 
 // ============================================================================
 // SUPERCHAIN RELAYER - Cross-Chain Message Passing

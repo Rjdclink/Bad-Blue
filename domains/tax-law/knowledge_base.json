@@ -1,0 +1,40 @@
+{
+  "domain": "tax-law",
+  "name": "Tax Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "helvering-v-gregory",
+      "name": "Helvering v. Gregory",
+      "citation": "69 F.2d 809 (1934)",
+      "summary": "Landmark case in Tax Law",
+      "relevance": "Foundational precedent for tax-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "tax-law-primary-statute",
+      "name": "Primary Tax Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Tax Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "tax-law-consultation",
+      "name": "Tax Law Consultation Form",
+      "description": "Standard intake form for Tax Law matters"
+    },
+    {
+      "id": "tax-law-letter",
+      "name": "Tax Law Demand Letter",
+      "description": "Template for formal correspondence in Tax Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "domain": "family-law",
+  "name": "Family Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "troxel-v-granville",
+      "name": "Troxel v. Granville",
+      "citation": "530 U.S. 57 (2000)",
+      "summary": "Landmark case in Family Law",
+      "relevance": "Foundational precedent for family-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "family-law-primary-statute",
+      "name": "Primary Family Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Family Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "family-law-consultation",
+      "name": "Family Law Consultation Form",
+      "description": "Standard intake form for Family Law matters"
+    },
+    {
+      "id": "family-law-letter",
+      "name": "Family Law Demand Letter",
+      "description": "Template for formal correspondence in Family Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

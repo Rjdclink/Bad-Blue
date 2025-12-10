@@ -3,33 +3,84 @@ import { Router } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import type { Request, Response, NextFunction } from 'express';
+import { 
+  authenticateWithPassword, 
+  requireCryptoCrawlAuth,
+  revokeSession,
+  getSessionInfo
+} from './auth/passwordAuth';
 
 const dashboardApi = Router();
 const adminApi = Router();
 
-// Simple auth middleware for admin routes
-function requireAuth(req: Request, res: Response, next: NextFunction) {
+// ============================================
+// AUTHENTICATION ROUTES (Public - No auth required)
+// ============================================
+
+// POST /api/crypto/auth - Authenticate with master password
+// NO email required - just password (crptcrwlr)
+dashboardApi.post('/auth', (req, res) => {
+  const { password } = req.body;
+  
+  if (!password) {
+    return res.status(400).json({
+      success: false,
+      error: 'Password required. No email needed.'
+    });
+  }
+  
+  const result = authenticateWithPassword(password);
+  
+  if (result.success) {
+    res.json({
+      success: true,
+      token: result.token,
+      expiresAt: result.expiresAt,
+      message: 'Welcome to CryptoCrawl. Use token in Authorization header for protected routes.'
+    });
+  } else {
+    res.status(401).json({
+      success: false,
+      error: result.error || 'Invalid password'
+    });
+  }
+});
+
+// POST /api/crypto/logout - End session
+dashboardApi.post('/logout', (req, res) => {
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    revokeSession(token);
+  }
+  
+  res.json({
+    success: true,
+    message: 'Logged out successfully'
+  });
+});
+
+// GET /api/crypto/session - Check if authenticated
+dashboardApi.get('/session', (req, res) => {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({
-      success: false,
-      message: 'Unauthorized: Authentication required'
+    return res.json({
+      authenticated: false,
+      message: 'Not authenticated. POST to /api/crypto/auth with password to login.'
     });
   }
   
-  // In production, validate the token against a secure store
-  // For now, accept any non-empty token
   const token = authHeader.substring(7);
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      message: 'Unauthorized: Invalid token'
-    });
-  }
+  const info = getSessionInfo(token);
   
-  next();
-}
+  res.json({
+    authenticated: info.valid,
+    expiresIn: info.expiresIn,
+    message: info.valid ? 'Session active' : 'Session expired or invalid'
+  });
+});
 
 // Mock data store (replace with actual database in production)
 let systemRunning = false;
@@ -101,7 +152,7 @@ dashboardApi.get('/opportunities', (req, res) => {
 // Admin Routes (require authentication)
 
 // POST /admin/crypto/start - Start the system
-adminApi.post('/start', requireAuth, (req, res) => {
+adminApi.post('/start', requireCryptoCrawlAuth, (req, res) => {
   systemRunning = !systemRunning;
   
   broadcast({
@@ -125,7 +176,7 @@ adminApi.post('/start', requireAuth, (req, res) => {
 });
 
 // POST /admin/crypto/stop - Emergency stop
-adminApi.post('/stop', requireAuth, (req, res) => {
+adminApi.post('/stop', requireCryptoCrawlAuth, (req, res) => {
   systemRunning = false;
   
   broadcast({

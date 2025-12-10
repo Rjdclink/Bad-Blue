@@ -1,0 +1,40 @@
+{
+  "domain": "law-enforcement-accountability",
+  "name": "Law Enforcement Accountability",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "tennessee-v-garner",
+      "name": "Tennessee v. Garner",
+      "citation": "471 U.S. 1 (1985)",
+      "summary": "Landmark case in Law Enforcement Accountability",
+      "relevance": "Foundational precedent for law-enforcement-accountability matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "law-enforcement-accountability-primary-statute",
+      "name": "Primary Law Enforcement Accountability Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Law Enforcement Accountability"
+    }
+  ],
+  "templates": [
+    {
+      "id": "law-enforcement-accountability-consultation",
+      "name": "Law Enforcement Accountability Consultation Form",
+      "description": "Standard intake form for Law Enforcement Accountability matters"
+    },
+    {
+      "id": "law-enforcement-accountability-letter",
+      "name": "Law Enforcement Accountability Demand Letter",
+      "description": "Template for formal correspondence in Law Enforcement Accountability cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

@@ -862,6 +862,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/gps', gpsRoutes.default);
 
   // ============================================
+  // 4JI DOMAIN ORCHESTRATION ROUTES
+  // ============================================
+  const domainRoutes = await import('./routes/domain.routes');
+  app.use('/api/domains', domainRoutes.default);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {

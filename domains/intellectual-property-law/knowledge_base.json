@@ -1,0 +1,40 @@
+{
+  "domain": "intellectual-property-law",
+  "name": "Intellectual Property Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "diamond-v-chakrabarty",
+      "name": "Diamond v. Chakrabarty",
+      "citation": "447 U.S. 303 (1980)",
+      "summary": "Landmark case in Intellectual Property Law",
+      "relevance": "Foundational precedent for intellectual-property-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "intellectual-property-law-primary-statute",
+      "name": "Primary Intellectual Property Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Intellectual Property Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "intellectual-property-law-consultation",
+      "name": "Intellectual Property Law Consultation Form",
+      "description": "Standard intake form for Intellectual Property Law matters"
+    },
+    {
+      "id": "intellectual-property-law-letter",
+      "name": "Intellectual Property Law Demand Letter",
+      "description": "Template for formal correspondence in Intellectual Property Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

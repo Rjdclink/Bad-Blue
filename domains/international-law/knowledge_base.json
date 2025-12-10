@@ -1,0 +1,40 @@
+{
+  "domain": "international-law",
+  "name": "International Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "medellin-v-texas",
+      "name": "Medellin v. Texas",
+      "citation": "552 U.S. 491 (2008)",
+      "summary": "Landmark case in International Law",
+      "relevance": "Foundational precedent for international-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "international-law-primary-statute",
+      "name": "Primary International Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for International Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "international-law-consultation",
+      "name": "International Law Consultation Form",
+      "description": "Standard intake form for International Law matters"
+    },
+    {
+      "id": "international-law-letter",
+      "name": "International Law Demand Letter",
+      "description": "Template for formal correspondence in International Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

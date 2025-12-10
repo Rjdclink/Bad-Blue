@@ -194,7 +194,8 @@ export default function WelcomePage() {
       if (selectedType.id === 'law-enforcement-accountability') {
         setLocation('/badblue');
       } else {
-        setLocation(selectedType.route);
+        // Launch domain-specific consultation via 4JI orchestrator
+        setLocation(`/consultation/${selectedType.id}`);
       }
     }
   };

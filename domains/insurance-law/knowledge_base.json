@@ -1,0 +1,40 @@
+{
+  "domain": "insurance-law",
+  "name": "Insurance Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "state-farm-v-campbell",
+      "name": "State Farm v. Campbell",
+      "citation": "538 U.S. 408 (2003)",
+      "summary": "Landmark case in Insurance Law",
+      "relevance": "Foundational precedent for insurance-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "insurance-law-primary-statute",
+      "name": "Primary Insurance Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Insurance Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "insurance-law-consultation",
+      "name": "Insurance Law Consultation Form",
+      "description": "Standard intake form for Insurance Law matters"
+    },
+    {
+      "id": "insurance-law-letter",
+      "name": "Insurance Law Demand Letter",
+      "description": "Template for formal correspondence in Insurance Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

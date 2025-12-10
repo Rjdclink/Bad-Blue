@@ -494,9 +494,9 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
   }> = {
     [AIProvider.GEMINI]: {
       prefixes: ['gemini'],
-      lite: 'gemini-2.5-flash-lite',      // FREE: Ultra-fast, 1000 RPD
-      default: 'gemini-2.5-flash',        // FREE: Balanced, 50 RPD
-      pro: 'gemini-3-pro-preview'         // FREE: Best reasoning, 1M context
+      lite: 'gemini-3-flash',             // FREE: Fast inference, high throughput
+      default: 'gemini-3-pro',            // FREE: Balanced, best reasoning
+      pro: 'gemini-3-pro-preview'         // FREE: Newest flagship, 1M context
     },
     [AIProvider.GROQ]: {
       prefixes: ['llama', 'mixtral', 'gemma'],

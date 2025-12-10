@@ -1,0 +1,40 @@
+{
+  "domain": "real-estate-law",
+  "name": "Real Estate Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "shelley-v-kraemer",
+      "name": "Shelley v. Kraemer",
+      "citation": "334 U.S. 1 (1948)",
+      "summary": "Landmark case in Real Estate Law",
+      "relevance": "Foundational precedent for real-estate-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "real-estate-law-primary-statute",
+      "name": "Primary Real Estate Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Real Estate Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "real-estate-law-consultation",
+      "name": "Real Estate Law Consultation Form",
+      "description": "Standard intake form for Real Estate Law matters"
+    },
+    {
+      "id": "real-estate-law-letter",
+      "name": "Real Estate Law Demand Letter",
+      "description": "Template for formal correspondence in Real Estate Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}

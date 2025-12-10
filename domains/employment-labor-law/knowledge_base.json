@@ -1,0 +1,40 @@
+{
+  "domain": "employment-labor-law",
+  "name": "Employment and Labor Law",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01T00:00:00Z",
+  "cases": [
+    {
+      "id": "nlrb-v-jones--laughlin-steel",
+      "name": "NLRB v. Jones & Laughlin Steel",
+      "citation": "301 U.S. 1 (1937)",
+      "summary": "Landmark case in Employment and Labor Law",
+      "relevance": "Foundational precedent for employment-labor-law matters"
+    }
+  ],
+  "statutes": [
+    {
+      "id": "employment-labor-law-primary-statute",
+      "name": "Primary Employment and Labor Law Statute",
+      "citation": "See applicable federal and state codes",
+      "summary": "Primary statutory framework for Employment and Labor Law"
+    }
+  ],
+  "templates": [
+    {
+      "id": "employment-labor-law-consultation",
+      "name": "Employment and Labor Law Consultation Form",
+      "description": "Standard intake form for Employment and Labor Law matters"
+    },
+    {
+      "id": "employment-labor-law-letter",
+      "name": "Employment and Labor Law Demand Letter",
+      "description": "Template for formal correspondence in Employment and Labor Law cases"
+    }
+  ],
+  "heuristics": {
+    "jurisdiction": "Determine applicable jurisdiction and venue",
+    "timeliness": "Review statute of limitations and filing deadlines",
+    "documentation": "Gather all relevant documentation and evidence"
+  }
+}
