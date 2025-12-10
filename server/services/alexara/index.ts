@@ -416,9 +416,9 @@ export class Alexara extends EventEmitter {
   /**
    * Reset singleton (for testing)
    */
-  static reset(): void {
+  static async reset(): Promise<void> {
     if (Alexara.instance) {
-      Alexara.instance.shutdown();
+      await Alexara.instance.shutdown();
       Alexara.instance = null;
     }
   }

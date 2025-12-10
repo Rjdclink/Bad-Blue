@@ -14,6 +14,7 @@ import { createLogger } from '../logger';
 import { GenieController, getGenieController, type GenieRequest } from '../services/genie-controller';
 import { AdminControlPanel, getAdminPanel } from '../services/genie-controller/admin-panel';
 import { ImmutableRuleEngine, getRuleEngine } from '../services/genie-controller/immutable-rules';
+import { authRateLimit } from '../rateLimit';
 
 const log = createLogger('GenieRoutes');
 const router = Router();
@@ -25,23 +26,39 @@ const router = Router();
 let genie: GenieController | null = null;
 let adminPanel: AdminControlPanel | null = null;
 let ruleEngine: ImmutableRuleEngine | null = null;
+let initializationPromise: Promise<void> | null = null;
 
 /**
- * Initialize the 4JI-GENIE system
+ * Initialize the 4JI-GENIE system (cached initialization)
  */
 async function initializeGenie(): Promise<void> {
-  if (!genie) {
-    genie = getGenieController();
-    await genie.initialize();
+  // Return existing initialization promise if one is in progress
+  if (initializationPromise) {
+    return initializationPromise;
   }
-  if (!adminPanel) {
-    adminPanel = getAdminPanel();
-    await adminPanel.initialize();
+  
+  // If already initialized, return immediately
+  if (genie && adminPanel && ruleEngine) {
+    return;
   }
-  if (!ruleEngine) {
-    ruleEngine = getRuleEngine();
-    ruleEngine.initialize();
-  }
+  
+  // Create and cache the initialization promise
+  initializationPromise = (async () => {
+    if (!genie) {
+      genie = getGenieController();
+      await genie.initialize();
+    }
+    if (!adminPanel) {
+      adminPanel = getAdminPanel();
+      await adminPanel.initialize();
+    }
+    if (!ruleEngine) {
+      ruleEngine = getRuleEngine();
+      ruleEngine.initialize();
+    }
+  })();
+  
+  await initializationPromise;
 }
 
 // ============================================================================
@@ -52,7 +69,7 @@ async function initializeGenie(): Promise<void> {
  * POST /api/genie/auth/login
  * Authenticate with admin password
  */
-router.post('/auth/login', async (req: Request, res: Response) => {
+router.post('/auth/login', authRateLimit, async (req: Request, res: Response) => {
   try {
     const { password } = req.body;
     

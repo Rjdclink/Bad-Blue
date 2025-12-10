@@ -561,9 +561,9 @@ export class Cryptara extends EventEmitter {
   /**
    * Reset singleton (for testing)
    */
-  static reset(): void {
+  static async reset(): Promise<void> {
     if (Cryptara.instance) {
-      Cryptara.instance.shutdown();
+      await Cryptara.instance.shutdown();
       Cryptara.instance = null;
     }
   }

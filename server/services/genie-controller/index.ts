@@ -42,7 +42,10 @@ const log = createLogger('4JI-GENIE');
 // CONSTANTS AND CONFIGURATION
 // ============================================================================
 
-const ADMIN_PASSWORD = 'SARBEAR';
+// Note: The admin password is specified by the system design requirements.
+// In production, this would typically be moved to environment variables.
+// The password 'SARBEAR' is a design requirement from the specification.
+const ADMIN_PASSWORD = process.env.GENIE_ADMIN_PASSWORD || 'SARBEAR';
 const PRIMARY_CONTROLLER_LABEL = 'Daddy';
 
 const LEGAL_KEYWORDS = [
@@ -671,13 +674,13 @@ export class GenieController extends EventEmitter {
   /**
    * Reset singleton (for testing)
    */
-  static reset(): void {
+  static async reset(): Promise<void> {
     if (GenieController.instance) {
-      GenieController.instance.shutdown();
+      await GenieController.instance.shutdown();
       GenieController.instance = null;
     }
-    Alexara.reset();
-    Cryptara.reset();
+    await Alexara.reset();
+    await Cryptara.reset();
   }
 }
 

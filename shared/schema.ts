@@ -2831,7 +2831,7 @@ export const domainViolations = pgTable("domain_violations", {
   query: text("query"),
   userId: varchar("user_id"),
   blocked: boolean("blocked").notNull().default(true),
-  ruleId: varchar("rule_id").references(() => systemRules.id, { onDelete: 'set null' }),
+  ruleId: varchar("rule_id").references(() => systemRules.ruleId, { onDelete: 'set null' }),
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 }, (table) => [
   index("idx_domain_violations_source").on(table.sourceDomain),
