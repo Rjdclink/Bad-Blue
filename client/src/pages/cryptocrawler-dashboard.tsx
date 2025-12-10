@@ -6,6 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
 import { 
   Activity, 
   TrendingUp, 
@@ -26,10 +30,15 @@ import {
   Target,
   LineChart,
   Coins,
-  Bot
+  Bot,
+  Wallet,
+  Send,
+  Lock,
+  Loader2
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
+import { apiRequest } from "@/lib/queryClient";
 
 /**
  * CryptoCrawler Command Dashboard - Access Zone C
@@ -40,8 +49,21 @@ import { SEOHead } from "@/components/SEOHead";
 export default function CryptoCrawlerDashboard() {
   const [, setLocation] = useLocation();
   const { isAuthenticated } = useAuth();
+  const { toast } = useToast();
   const [systemActive, setSystemActive] = useState(true);
   const [monteCarloRunning, setMonteCarloRunning] = useState(false);
+  
+  // Wallet & Withdrawal state
+  const [walletBalances, setWalletBalances] = useState<{
+    chains: Array<{ chain: string; native: number; tokens: Array<{ symbol: string; balance: number }> }>;
+    totalValue: number;
+  } | null>(null);
+  const [loadingBalances, setLoadingBalances] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawToken, setWithdrawToken] = useState("USDC");
+  const [withdrawAddress, setWithdrawAddress] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
 
   // Verify access to this zone
   useEffect(() => {
@@ -49,6 +71,93 @@ export default function CryptoCrawlerDashboard() {
       setLocation('/login');
     }
   }, [isAuthenticated, setLocation]);
+  
+  // Fetch wallet balances
+  const fetchBalances = async () => {
+    setLoadingBalances(true);
+    try {
+      const response = await apiRequest('/api/crypto/balances', 'GET');
+      const data = await response.json();
+      setWalletBalances(data);
+    } catch (error) {
+      console.error('Failed to fetch balances:', error);
+      toast({
+        title: "Failed to fetch balances",
+        description: "Could not retrieve wallet balances. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingBalances(false);
+    }
+  };
+  
+  // Handle withdrawal
+  const handleWithdraw = async () => {
+    if (!withdrawAmount || !withdrawToken || !withdrawAddress) {
+      toast({
+        title: "Missing fields",
+        description: "Please fill in all withdrawal fields.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Validate Ethereum address
+    if (!/^0x[a-fA-F0-9]{40}$/.test(withdrawAddress)) {
+      toast({
+        title: "Invalid address",
+        description: "Please enter a valid Ethereum address.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const amount = parseFloat(withdrawAmount);
+    if (isNaN(amount) || amount <= 0) {
+      toast({
+        title: "Invalid amount",
+        description: "Please enter a valid withdrawal amount.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    if (!confirmWithdraw) {
+      setConfirmWithdraw(true);
+      return;
+    }
+    
+    setWithdrawing(true);
+    try {
+      const response = await apiRequest('/api/crypto/withdraw', 'POST', {
+        amount,
+        token: withdrawToken,
+        toAddress: withdrawAddress,
+      });
+      const data = await response.json();
+      
+      toast({
+        title: "Withdrawal initiated",
+        description: `TX: ${data.txHash?.slice(0, 10)}...${data.txHash?.slice(-8)}`,
+      });
+      
+      // Reset form
+      setWithdrawAmount("");
+      setWithdrawAddress("");
+      setConfirmWithdraw(false);
+      
+      // Refresh balances
+      fetchBalances();
+    } catch (error: any) {
+      toast({
+        title: "Withdrawal failed",
+        description: error.message || "An error occurred during withdrawal.",
+        variant: "destructive",
+      });
+    } finally {
+      setWithdrawing(false);
+    }
+  };
 
   // Simulated market data
   const marketStats = {
@@ -209,6 +318,10 @@ export default function CryptoCrawlerDashboard() {
               <LineChart className="w-4 h-4 mr-2" />
               Trading
             </TabsTrigger>
+            <TabsTrigger value="wallet" className="data-[state=active]:bg-orange-500/20" onClick={fetchBalances}>
+              <Wallet className="w-4 h-4 mr-2" />
+              Wallet
+            </TabsTrigger>
             <TabsTrigger value="montecarlo" className="data-[state=active]:bg-orange-500/20">
               <Waves className="w-4 h-4 mr-2" />
               Monte Carlo
@@ -300,6 +413,222 @@ export default function CryptoCrawlerDashboard() {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          {/* Wallet Tab */}
+          <TabsContent value="wallet">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Balances Card */}
+              <Card className="bg-gray-800/50 border-white/10">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-white flex items-center gap-2">
+                      <Wallet className="w-5 h-5 text-orange-400" />
+                      Wallet Balances
+                    </CardTitle>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={fetchBalances}
+                      disabled={loadingBalances}
+                      className="border-orange-500/30 text-orange-300"
+                    >
+                      {loadingBalances ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <CardDescription className="text-gray-400">
+                    Real-time wallet balances across chains
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {loadingBalances ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-8 h-8 animate-spin text-orange-400" />
+                    </div>
+                  ) : walletBalances ? (
+                    <div className="space-y-4">
+                      {walletBalances.chains.map((chain, index) => (
+                        <div key={index} className="p-4 rounded-lg bg-white/5">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-white font-medium capitalize">{chain.chain}</span>
+                            <Badge className="bg-green-500/20 text-green-300">Active</Badge>
+                          </div>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Native</span>
+                              <span className="text-white">{chain.native}</span>
+                            </div>
+                            {chain.tokens.map((token, tIndex) => (
+                              <div key={tIndex} className="flex justify-between">
+                                <span className="text-gray-400">{token.symbol}</span>
+                                <span className="text-white">{token.balance.toLocaleString()}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      <div className="p-4 rounded-lg bg-orange-900/30 border border-orange-500/30">
+                        <div className="flex justify-between items-center">
+                          <span className="text-orange-300 font-medium">Total Value</span>
+                          <span className="text-2xl font-bold text-white">
+                            ${walletBalances.totalValue.toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-400">
+                      <Wallet className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                      <p>Click refresh to load balances</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Withdrawal Card */}
+              <Card className="bg-gray-800/50 border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center gap-2">
+                    <Send className="w-5 h-5 text-orange-400" />
+                    Secure Withdrawal
+                  </CardTitle>
+                  <CardDescription className="text-gray-400">
+                    Withdraw funds to external wallet
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {/* Security Warning */}
+                    <div className="p-3 rounded-lg bg-yellow-900/30 border border-yellow-500/30">
+                      <div className="flex items-start gap-2">
+                        <Lock className="w-4 h-4 text-yellow-400 mt-0.5" />
+                        <div className="text-sm">
+                          <p className="text-yellow-300 font-medium">Security Notice</p>
+                          <p className="text-gray-400">Verify the destination address carefully. Withdrawals are irreversible.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Amount Input */}
+                    <div className="space-y-2">
+                      <Label htmlFor="amount" className="text-gray-300">Amount</Label>
+                      <Input
+                        id="amount"
+                        type="number"
+                        placeholder="0.00"
+                        value={withdrawAmount}
+                        onChange={(e) => {
+                          setWithdrawAmount(e.target.value);
+                          setConfirmWithdraw(false);
+                        }}
+                        className="bg-gray-900/50 border-white/10 text-white"
+                        disabled={withdrawing}
+                      />
+                    </div>
+
+                    {/* Token Select */}
+                    <div className="space-y-2">
+                      <Label htmlFor="token" className="text-gray-300">Token</Label>
+                      <Select 
+                        value={withdrawToken} 
+                        onValueChange={(value) => {
+                          setWithdrawToken(value);
+                          setConfirmWithdraw(false);
+                        }}
+                        disabled={withdrawing}
+                      >
+                        <SelectTrigger className="bg-gray-900/50 border-white/10 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="USDC">USDC</SelectItem>
+                          <SelectItem value="USDT">USDT</SelectItem>
+                          <SelectItem value="ETH">ETH</SelectItem>
+                          <SelectItem value="MATIC">MATIC</SelectItem>
+                          <SelectItem value="BNB">BNB</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Destination Address */}
+                    <div className="space-y-2">
+                      <Label htmlFor="address" className="text-gray-300">Destination Address</Label>
+                      <Input
+                        id="address"
+                        placeholder="0x..."
+                        value={withdrawAddress}
+                        onChange={(e) => {
+                          setWithdrawAddress(e.target.value);
+                          setConfirmWithdraw(false);
+                        }}
+                        className="bg-gray-900/50 border-white/10 text-white font-mono text-sm"
+                        disabled={withdrawing}
+                      />
+                    </div>
+
+                    {/* Confirmation Warning */}
+                    {confirmWithdraw && (
+                      <div className="p-3 rounded-lg bg-red-900/30 border border-red-500/30">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5" />
+                          <div className="text-sm">
+                            <p className="text-red-300 font-medium">Confirm Withdrawal</p>
+                            <p className="text-gray-400">
+                              You are about to withdraw {withdrawAmount} {withdrawToken} to {withdrawAddress.slice(0, 10)}...{withdrawAddress.slice(-8)}
+                            </p>
+                            <p className="text-red-400 mt-1">Click withdraw again to confirm.</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Withdraw Button */}
+                    <Button
+                      onClick={handleWithdraw}
+                      disabled={withdrawing || !withdrawAmount || !withdrawAddress}
+                      className={`w-full ${confirmWithdraw ? 'bg-red-600 hover:bg-red-700' : 'bg-orange-600 hover:bg-orange-700'}`}
+                    >
+                      {withdrawing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Processing...
+                        </>
+                      ) : confirmWithdraw ? (
+                        <>
+                          <AlertTriangle className="w-4 h-4 mr-2" />
+                          Confirm Withdrawal
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4 mr-2" />
+                          Withdraw
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Data Source Notice */}
+            <Card className="mt-6 bg-blue-900/20 border border-blue-500/30">
+              <CardContent className="pt-6">
+                <div className="flex items-start gap-4">
+                  <Shield className="w-6 h-6 text-blue-400 flex-shrink-0" />
+                  <div>
+                    <h4 className="text-blue-300 font-medium mb-1">Data Source</h4>
+                    <p className="text-sm text-gray-400">
+                      Wallet balances and withdrawal functionality require proper backend integration with your exchange/wallet APIs. 
+                      Current implementation uses the <code className="text-blue-300">/api/crypto/balances</code> and <code className="text-blue-300">/api/crypto/withdraw</code> endpoints.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Monte Carlo Tab */}
