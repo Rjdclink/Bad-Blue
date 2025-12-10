@@ -19,6 +19,10 @@ import {
 import { EventEmitter } from 'events';
 import os from 'os';
 
+// Constants
+const DEFAULT_TEMPERATURE_CELSIUS = 100;
+const TEMPERATURE_THRESHOLD = 80;
+
 export class DirectionalBeamLayer extends EventEmitter {
   private beamNodes: Map<string, ComputeNode> = new Map();
   private executionQueue: Task[] = [];
@@ -189,7 +193,7 @@ export class DirectionalBeamLayer extends EventEmitter {
         node.status === 'active' &&
         node.capabilities.supportedTaskTypes.includes(task.type) &&
         node.metrics.currentLoad < node.capabilities.maxConcurrentTasks &&
-        (node.health.temperature ?? 100) < 80 // Temperature threshold
+        (node.health.temperature ?? DEFAULT_TEMPERATURE_CELSIUS) < TEMPERATURE_THRESHOLD
       );
 
     if (availableNodes.length === 0) {
@@ -315,10 +319,16 @@ export class DirectionalBeamLayer extends EventEmitter {
       node.health.lastHealthCheck = new Date();
       
       if (node.provider === ComputeProvider.LOCAL_MACHINE) {
-        // Real metrics for local machine
+        // Real metrics for local machine - optimized single pass
         const cpus = os.cpus();
-        const totalIdle = cpus.reduce((acc, cpu) => acc + cpu.times.idle, 0);
-        const totalTick = cpus.reduce((acc, cpu) => acc + Object.values(cpu.times).reduce((a, b) => a + b, 0), 0);
+        let totalIdle = 0;
+        let totalTick = 0;
+        
+        for (const cpu of cpus) {
+          totalIdle += cpu.times.idle;
+          totalTick += Object.values(cpu.times).reduce((a, b) => a + b, 0);
+        }
+        
         node.health.cpuUsage = 100 - (totalIdle / totalTick) * 100;
         
         const totalMem = os.totalmem();

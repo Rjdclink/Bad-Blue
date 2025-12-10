@@ -19,10 +19,14 @@ import { omniAntennaLayer } from './omniAntennaLayer';
 import { directionalBeamLayer } from './directionalBeamLayer';
 import { superBatteryLayer } from './superBatteryLayer';
 
+// Constants
+const MAX_RETRIES = 3;
+const BACKOFF_BASE_MS = 1000;
+
 export class WorkloadRouter extends EventEmitter {
   private taskHistory: Map<string, RoutingDecision> = new Map();
   private retryAttempts: Map<string, number> = new Map();
-  private readonly MAX_RETRIES = 3;
+  private readonly MAX_RETRIES = MAX_RETRIES;
 
   constructor() {
     super();
@@ -207,7 +211,7 @@ export class WorkloadRouter extends EventEmitter {
       });
 
       // Retry with exponential backoff
-      const backoffMs = Math.pow(2, attempts) * 1000;
+      const backoffMs = Math.pow(2, attempts) * BACKOFF_BASE_MS;
       setTimeout(() => {
         // Retry logic would go here
         this.emit('task-retry-scheduled', { taskId, backoffMs });

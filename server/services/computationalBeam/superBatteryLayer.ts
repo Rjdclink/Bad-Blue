@@ -20,6 +20,11 @@ import { EventEmitter } from 'events';
 import crypto from 'crypto';
 import { LRUCache } from 'lru-cache';
 
+// Constants
+const CLEANUP_INTERVAL_MS = 60000; // 1 minute
+const WINDOW_CLEANUP_THRESHOLD = 2;
+const STATE_PERSIST_INTERVAL_MS = 300000; // 5 minutes
+
 export class SuperBatteryLayer extends EventEmitter {
   private cache: LRUCache<string, any>;
   private stateStore: Map<string, StateCache> = new Map();
@@ -343,21 +348,21 @@ export class SuperBatteryLayer extends EventEmitter {
    * Start cleanup scheduler
    */
   private startCleanupScheduler(): void {
-    // Clean up old deduplication windows every minute
+    // Clean up old deduplication windows
     setInterval(() => {
       const currentWindow = Math.floor(Date.now() / this.strategy.deduplication.lookbackWindow);
       for (const [key] of this.deduplicationWindow) {
         const windowNum = parseInt(key.split('_')[1]);
-        if (currentWindow - windowNum > 2) {
+        if (currentWindow - windowNum > WINDOW_CLEANUP_THRESHOLD) {
           this.deduplicationWindow.delete(key);
         }
       }
-    }, 60000);
+    }, CLEANUP_INTERVAL_MS);
 
     // Persist state periodically
     setInterval(() => {
       this.persistState();
-    }, 300000); // Every 5 minutes
+    }, STATE_PERSIST_INTERVAL_MS);
   }
 
   /**

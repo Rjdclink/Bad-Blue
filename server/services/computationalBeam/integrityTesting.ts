@@ -19,14 +19,20 @@ import { omniAntennaLayer } from './omniAntennaLayer';
 import { directionalBeamLayer } from './directionalBeamLayer';
 import { superBatteryLayer } from './superBatteryLayer';
 
+// Constants
+const DEFAULT_REQUIRED_STABILITY = 98;
+const DEFAULT_MAX_TEST_ITERATIONS = 10;
+
 export class IntegrityTestingSystem extends EventEmitter {
   private systemIntegrity: SystemIntegrity;
-  private readonly REQUIRED_STABILITY = 98;
-  private readonly MAX_TEST_ITERATIONS = 10;
+  private readonly REQUIRED_STABILITY: number;
+  private readonly MAX_TEST_ITERATIONS: number;
   private testInProgress = false;
 
-  constructor() {
+  constructor(requiredStability?: number, maxIterations?: number) {
     super();
+    this.REQUIRED_STABILITY = requiredStability ?? DEFAULT_REQUIRED_STABILITY;
+    this.MAX_TEST_ITERATIONS = maxIterations ?? DEFAULT_MAX_TEST_ITERATIONS;
     this.systemIntegrity = {
       overallStability: 0,
       lastTest: new Date(),

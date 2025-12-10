@@ -70,7 +70,7 @@ export interface Task {
   };
   routing?: {
     preferredProvider?: ComputeProvider;
-    requiredLayer: ComputeLayer;
+    requiredLayer?: ComputeLayer;
     cpuIntensive: boolean;
     memoryIntensive: boolean;
     ioIntensive: boolean;
