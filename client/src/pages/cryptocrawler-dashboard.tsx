@@ -327,7 +327,7 @@ export default function CryptoCrawlerDashboard() {
                         <p className="text-xl font-bold text-green-400">+{monteCarloResults.expectedReturn}%</p>
                       </div>
                       <div className="p-3 rounded-lg bg-white/5">
-                        <p className="text-sm text-gray-400">Risk Metric (VaR)</p>
+                        <p className="text-sm text-gray-400" title="Value at Risk - Maximum expected loss at given confidence level">Risk Metric (VaR)</p>
                         <p className="text-xl font-bold text-yellow-400">{monteCarloResults.riskMetric}</p>
                       </div>
                       <div className="p-3 rounded-lg bg-white/5">

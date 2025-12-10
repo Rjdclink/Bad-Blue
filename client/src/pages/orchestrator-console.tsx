@@ -133,7 +133,7 @@ export default function OrchestratorConsole() {
               </div>
               <div>
                 <h2 className="text-xl font-bold text-white">Unified Intelligence Layer Active</h2>
-                <p className="text-purple-300">13 models merged • Continuous evolution • Self-healing enabled</p>
+                <p className="text-purple-300">{aiModels.length} models merged • Continuous evolution • Self-healing enabled</p>
               </div>
             </div>
             <div className="flex gap-2">
