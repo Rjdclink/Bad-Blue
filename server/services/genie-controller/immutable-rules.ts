@@ -377,7 +377,8 @@ export class ImmutableRuleEngine extends EventEmitter {
 
     const violatedRules: string[] = [];
 
-    for (const [id, rule] of this.rules) {
+    for (const entry of Array.from(this.rules.entries())) {
+      const [id, rule] = entry;
       if (rule.category === category && rule.enabled) {
         const isViolation = this.evaluateRule(rule, context, metadata);
         
@@ -512,7 +513,7 @@ export class ImmutableRuleEngine extends EventEmitter {
     this.violations = [];
     
     // Reset violation counts on rules
-    for (const rule of this.rules.values()) {
+    for (const rule of Array.from(this.rules.values())) {
       rule.violationCount = 0;
       rule.lastViolation = null;
     }

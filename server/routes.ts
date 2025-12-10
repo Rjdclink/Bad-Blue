@@ -4835,6 +4835,14 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Mount Bridge API routes
   app.use('/api/bridge', bridgeApi);
   
+  // ============================================
+  // 4JI-GENIE DUAL-MODULE CONTROLLER API
+  // ============================================
+  
+  // Mount 4JI-GENIE routes (ALEXARA + CRYPTARA)
+  const genieRoutes = await import('./routes/genie.routes');
+  app.use('/api/genie', genieRoutes.default);
+  
   // Apply notFoundHandler ONLY to API routes
   app.use('/api', notFoundHandler);
   
