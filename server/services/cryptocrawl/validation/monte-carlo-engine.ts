@@ -10,7 +10,7 @@ import type { ChainId } from '../core/lux-swarm';
 // ============================================
 // MARKET REGIME DETECTION SYSTEM
 // ============================================
-export type MarketRegime = 'trending' | 'ranging' | 'volatile' | 'crisis';
+export type MarketRegime = 'trending' | 'ranging' | 'volatile' | 'crisis' | 'stressed' | 'normal' | 'favorable';
 
 export interface MarketRegimeAnalysis {
   regime: MarketRegime;
@@ -71,9 +71,6 @@ export interface MarketCondition {
   volumeHistory?: number[];       // Recent volume history
   gasHistory?: number[];          // Recent gas price history
 }
-
-// Market regime classification for adaptive behavior
-export type MarketRegime = 'crisis' | 'stressed' | 'normal' | 'favorable';
 
 // Performance level classification
 export type PerformanceLevel = 'good' | 'medium' | 'bad';
@@ -162,7 +159,7 @@ export interface StrategyProfile {
   slippageTolerance: number;
   executionLatency: number;
   // NEW: Enhanced strategy attributes
-  strategyType?: 'arbitrage' | 'mev' | 'liquidity' | 'market_making' | 'black_swan';
+  strategyType?: 'arbitrage' | 'mev' | 'liquidity' | 'market_making' | 'black_swan' | 'hybrid';
   mlFilterEnabled?: boolean;      // Uses ML for trade filtering
   multiChainEnabled?: boolean;    // Cross-chain capability
   mempoolMonitoring?: boolean;    // Monitors mempool for MEV
@@ -236,6 +233,46 @@ export const MARKET_CONDITIONS: Record<string, MarketCondition> = {
     competitorDensity: 0.3,
     networkCongestion: 0.9
   }
+};
+
+// ============================================
+// ADAPTIVE CONFIGURATION CONSTANTS
+// ============================================
+
+/** Regime thresholds for stress factor classification */
+const REGIME_THRESHOLDS = {
+  CRISIS: 0.8,      // High stress = crisis mode
+  STRESSED: 0.5,    // Medium-high stress = stressed mode
+  NORMAL: 0.3       // Medium stress = normal mode
+};
+
+/** Adaptive floor values for extreme condition handling */
+const ADAPTIVE_FLOORS = {
+  LIQUIDITY_THRESHOLD: 0.2,         // Below this, apply special liquidity handling
+  LIQUIDITY_FLOOR: 0.3,             // Minimum liquidity factor
+  STRESS_FLOOR: 0.35,               // Minimum adjustment factor under stress
+  SUCCESS_FLOOR_RATIO: 0.4,         // Ratio for calculating dynamic success floor
+  ABSOLUTE_MIN_SUCCESS: 0.15        // Absolute minimum success rate
+};
+
+/** Volatility caps to prevent extreme outliers */
+const VOLATILITY_CAPS = {
+  MAX_STRESS_VOLATILITY: 2.0        // Maximum volatility for stress calculation
+};
+
+/** Weights for stress factor calculation */
+const STRESS_WEIGHTS = {
+  LIQUIDITY: 0.3,    // Weight of liquidity in stress calculation
+  COMPETITION: 0.25, // Weight of competition density
+  CONGESTION: 0.2,   // Weight of network congestion
+  VOLATILITY: 0.25   // Weight of volatility
+};
+
+/** Learning rates for different regime conditions */
+const LEARNING_RATES = {
+  SLOW: 0.2,    // Slow learning in crisis
+  MEDIUM: 0.5,  // Medium learning in normal conditions
+  FAST: 0.8     // Fast learning in favorable conditions
 };
 
 // ============================================
@@ -1192,10 +1229,10 @@ class MonteCarloEngine {
   // ============================================
   
   /**
-   * Detect market regime based on stress factors
+   * Detect market regime based on stress factors (numeric approach)
    * Uses neural-inspired threshold detection
    */
-  private detectMarketRegime(stressFactor: number): MarketRegime {
+  private detectMarketRegimeFromStress(stressFactor: number): MarketRegime {
     if (stressFactor >= REGIME_THRESHOLDS.CRISIS) return 'crisis';
     if (stressFactor >= REGIME_THRESHOLDS.STRESSED) return 'stressed';
     if (stressFactor >= REGIME_THRESHOLDS.NORMAL) return 'normal';

@@ -2009,6 +2009,49 @@ class AutonomousCryptoFaucet {
   }
 
   /**
+   * Enter emergency mode - critical protection mechanism
+   * Immediately stops all trading and enters safe state
+   */
+  private async enterEmergencyMode(reason: string): Promise<void> {
+    logger.error('[FAUCET] 🚨 ENTERING EMERGENCY MODE', {
+      component: 'AutonomousFaucet',
+      reason,
+      currentMode: this.state.mode,
+      timestamp: Date.now(),
+    });
+
+    // Immediately transition to emergency state
+    const previousMode = this.state.mode;
+    this.state.mode = 'emergency';
+    this.state.lastModeChange = Date.now();
+    
+    // Activate circuit breaker
+    this.circuitBreaker.isOpen = true;
+    this.circuitBreaker.failures = CIRCUIT_BREAKER_CONFIG.failureThreshold;
+    
+    // Increase stealth to maximum
+    this.state.stealthLevel = 10;
+    
+    // Record the failure
+    this.recordFailure(`emergency_mode_${reason.replace(/\s+/g, '_').toLowerCase()}`);
+    
+    // Stop orchestrator if running
+    if (previousMode === 'open' || previousMode === 'opening') {
+      try {
+        MasterOrchestrator.stop();
+      } catch (error) {
+        logger.warn('[FAUCET] Failed to stop orchestrator during emergency', {
+          component: 'AutonomousFaucet',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Enter emergency cooldown
+    await this.emergencyCooldown();
+  }
+
+  /**
    * Sleep for specified milliseconds
    */
   private sleep(ms: number): Promise<void> {
@@ -2805,7 +2848,6 @@ const autonomousFaucet = new AutonomousCryptoFaucet();
 export {
   autonomousFaucet,
   AutonomousCryptoFaucet,
-  STEALTH_CONFIG,
   DECISION_CONFIG,
   CIRCUIT_BREAKER_CONFIG,
   TIMING_CONFIG,

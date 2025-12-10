@@ -303,7 +303,7 @@ export interface MarketDecision {
 
 export interface CapitalFreeDecision {
   timestamp: number;
-  type: 'flash_loan' | 'p2p_borrow' | 'gas_acquisition' | 'barter' | 'partnership';
+  type: 'flash_loan' | 'p2p_borrow' | 'gas_acquisition' | 'barter' | 'partnership' | 'p2p_chain';
   action: string;
   amount: number;
   success: boolean;

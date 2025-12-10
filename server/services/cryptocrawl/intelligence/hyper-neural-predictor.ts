@@ -4,7 +4,7 @@
 // Research-backed: Transformer-inspired architecture adapted for trading
 
 import logger from '../../../logger.js';
-import type { MarketConditionLevel } from './market-condition-detector.js';
+import type { MarketConditionLevel } from '../core/market-condition-detector.js';
 
 // ============================================
 // NEURAL NETWORK TYPES
