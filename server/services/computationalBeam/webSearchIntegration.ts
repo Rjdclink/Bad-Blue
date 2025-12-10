@@ -13,7 +13,7 @@
 
 import { createLogger } from '../../logger';
 import { enforceStoragySafety } from './safetyRules';
-import { ComputationalBeam } from './index';
+import { computationalBeam } from './index';
 import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 
 const log = createLogger('WebSearchCrawlerIntegration');

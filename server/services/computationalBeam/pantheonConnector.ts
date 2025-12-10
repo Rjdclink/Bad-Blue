@@ -7,7 +7,7 @@
  * ONE FILE AT A TIME APPROACH
  */
 
-import { ComputationalBeam } from './index';
+import { computationalBeam } from './index';
 import { WorkloadRouter } from './workloadRouter';
 import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
@@ -76,7 +76,7 @@ export class PantheonBeamConnector {
     log.info('🔗 Initializing Pantheon Computational Beam Connector...');
     
     // Initialize computational beam (no credentials required)
-    await ComputationalBeam.initialize();
+    await computationalBeam.initialize();
     
     this.computationalBeam = ComputationalBeam;
     this.workloadRouter = new WorkloadRouter();

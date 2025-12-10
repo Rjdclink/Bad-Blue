@@ -7,7 +7,7 @@
  * ONE FILE AT A TIME APPROACH
  */
 
-import { ComputationalBeam } from './index';
+import { computationalBeam } from './index';
 import { WorkloadRouter } from './workloadRouter';
 import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
@@ -111,7 +111,7 @@ export class CryptoBeamConnector {
     log.info('   - U_S_FEDERAL_LAW_ONLY: ' + SAFETY_RULES.U_S_FEDERAL_LAW_ONLY);
     
     // Initialize computational beam (no credentials required)
-    await ComputationalBeam.initialize();
+    await computationalBeam.initialize();
     
     this.computationalBeam = ComputationalBeam;
     this.workloadRouter = new WorkloadRouter();

@@ -69,6 +69,11 @@ export interface ExplorationResult {
   richness?: number;
   nextTarget?: string;
   target?: string;
+  links?: string[];
+  error?: boolean;
+  errorType?: string;
+  statusCode?: number;
+  contentLength?: number;
 }
 
 /**

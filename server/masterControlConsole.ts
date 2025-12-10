@@ -318,15 +318,15 @@ Be precise and accurate. Consider the task complexity and what AI capabilities a
           
           return {
             originalPrompt: prompt,
-            category: this.mapCategory(parsed.category),
-            executionMode: this.mapExecutionMode(parsed.executionMode),
-            priority: this.mapPriority(parsed.priority),
-            complexity: this.mapComplexity(parsed.complexity),
+            category: this.mapCategory(String(parsed.category || '')),
+            executionMode: this.mapExecutionMode(String(parsed.executionMode || '')),
+            priority: this.mapPriority(String(parsed.priority || '')),
+            complexity: this.mapComplexity(String(parsed.complexity || '')),
             subtasks: [],
-            requiresVerification: parsed.requiresVerification ?? true,
-            estimatedTokens: parsed.estimatedTokens || DEFAULT_ESTIMATED_TOKENS,
-            confidence: parsed.confidence || 0.7,
-            intent: parsed.intent || 'Execute user directive',
+            requiresVerification: Boolean(parsed.requiresVerification ?? true),
+            estimatedTokens: Number(parsed.estimatedTokens) || DEFAULT_ESTIMATED_TOKENS,
+            confidence: Number(parsed.confidence) || 0.7,
+            intent: String(parsed.intent || 'Execute user directive'),
           };
         } catch (jsonError: any) {
           logger.warn('[MCC] JSON parsing failed, using heuristic parsing:', jsonError.message);
@@ -748,10 +748,10 @@ Respond with JSON:
       if (validationResult.success && validationResult.content) {
         const parsed = this.extractJSON(validationResult.content);
         return {
-          validated: parsed.consistent ?? true,
-          confidenceScore: parsed.confidenceScore ?? 0.8,
-          discrepancies: parsed.discrepancies ?? [],
-          consensus: parsed.consensus ?? 'Results validated',
+          validated: Boolean(parsed.consistent ?? true),
+          confidenceScore: Number(parsed.confidenceScore ?? 0.8),
+          discrepancies: Array.isArray(parsed.discrepancies) ? parsed.discrepancies as string[] : [],
+          consensus: String(parsed.consensus ?? 'Results validated'),
         };
       }
     } catch (error: any) {

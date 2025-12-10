@@ -6,11 +6,10 @@
  * contradiction detection, corroboration checks, and case-linking capabilities.
  */
 
-import { storage } from '../storage';
+import { db } from '../db';
 import { sql } from 'drizzle-orm';
 
 export async function addFMIFields() {
-  const db = storage;
 
   console.log('Starting F.M.I. fields migration...');
 

@@ -48,9 +48,9 @@ export class HydraCrawler extends BaseCrawler {
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       // Spawn new heads if source is rich and we have capacity
-      if (result.richness > 0.7 && this.heads.length < this.maxHeads) {
-        this.spawnHead(result.nextTarget);
-        this.layPheromone(result.nextTarget, result.richness);
+      if ((result.richness ?? 0) > 0.7 && this.heads.length < this.maxHeads) {
+        this.spawnHead(result.nextTarget ?? '');
+        this.layPheromone(result.nextTarget ?? '', result.richness ?? 0);
       }
       signatures.push(this.generateEntropySignature(result));
     }
