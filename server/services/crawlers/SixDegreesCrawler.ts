@@ -249,6 +249,19 @@ export class SixDegreesCrawler {
     }
   }
 
+  /**
+   * Map connections for a target up to specified degrees
+   * Returns graph structure for analysis
+   */
+  async mapConnections(target: string, maxDegrees: number = 2): Promise<{ nodes: Node[]; edges: Edge[] }> {
+    await this.buildGraph(target, maxDegrees);
+    
+    return {
+      nodes: Array.from(this.graph.values()),
+      edges: Array.from(this.edges.values()).flat()
+    };
+  }
+
   private calculateAuthority(domain: string): number {
     // Simple authority calculation based on domain characteristics
     let authority = 0.5;

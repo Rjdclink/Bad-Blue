@@ -91,7 +91,7 @@ export class ProvenanceManager {
         [JSON.stringify(newRecord), nodeId]
       );
 
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       logger.error('Error adding provenance to node:', error);
       return false;
@@ -124,7 +124,7 @@ export class ProvenanceManager {
         [JSON.stringify(updated), nodeId]
       );
 
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       logger.error('Error updating verification status:', error);
       return false;

@@ -319,6 +319,17 @@ export class StarTrekCrawler {
   }
 
   /**
+   * Warp to target (alias for firePhaser with warp metadata)
+   */
+  async warpTo(target: string): Promise<Data> {
+    const data = await this.firePhaser(target);
+    if (data.metadata) {
+      data.metadata.warpFactor = this.warpSpeed;
+    }
+    return data;
+  }
+
+  /**
    * Get requests per minute for current phaser setting
    */
   private getRequestsPerMinute(): number {

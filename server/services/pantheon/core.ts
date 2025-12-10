@@ -32,6 +32,37 @@ export enum CrawlerType {
   FARM = 'farm'            // Hash cracking
 }
 
+// Timing jitter measurement result
+export interface TimingJitterResult {
+  avg: number;
+  variance: number;
+  jitter: number;
+  samples: number;
+  stability: number;
+}
+
+// Async echo detection result
+export interface AsyncEchoResult {
+  asyncDetected: boolean;
+  serverSignature: string;
+  hasAsyncHeader: boolean;
+  statusCode: number;
+  responseTime: string | null;
+  error?: boolean;
+}
+
+// Exploration result from hydra crawler
+export interface ExplorationResult {
+  target: string;
+  richness: number;
+  nextTarget: string;
+  links?: string[];
+  statusCode?: number;
+  contentLength?: number;
+  error?: boolean;
+  errorType?: string;
+}
+
 // System resource metrics
 export interface ResourceMetrics {
   cpuUsage: number;        // Percentage (0-100)

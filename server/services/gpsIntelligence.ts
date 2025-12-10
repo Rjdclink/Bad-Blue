@@ -42,8 +42,17 @@ export async function extractGPSFromFile(filePath: string): Promise<GPSCoordinat
       return null;
     }
     
-    const latitude = parseGPSCoordinate(tags.GPSLatitude.description, tags.GPSLatitudeRef?.value[0]);
-    const longitude = parseGPSCoordinate(tags.GPSLongitude.description, tags.GPSLongitudeRef?.value[0]);
+    const latitudeRef = tags.GPSLatitudeRef?.value;
+    const longitudeRef = tags.GPSLongitudeRef?.value;
+    
+    const latitude = parseGPSCoordinate(
+      tags.GPSLatitude.description, 
+      Array.isArray(latitudeRef) ? latitudeRef[0] : latitudeRef
+    );
+    const longitude = parseGPSCoordinate(
+      tags.GPSLongitude.description, 
+      Array.isArray(longitudeRef) ? longitudeRef[0] : longitudeRef
+    );
     
     if (!latitude || !longitude) return null;
     
