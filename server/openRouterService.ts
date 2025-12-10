@@ -1,10 +1,12 @@
 /**
  * OpenRouter Service - Integration with OpenRouter API
  * 
- * Updated December 2025 with valid free-tier models:
- * - Qwen 2.5 72B (qwen/qwen-2.5-72b-instruct:free) - Strong multilingual reasoning
- * - DeepSeek R1 (deepseek/deepseek-r1-0528:free) - Advanced reasoning model
- * - Llama 3.3 70B (meta-llama/llama-3.3-70b-instruct:free) - Latest Llama instruct
+ * Updated December 2025 with models:
+ * - Qwen 2.5 72B (qwen/qwen-2.5-72b-instruct:free) - Strong multilingual reasoning (FREE)
+ * - DeepSeek R1 (deepseek/deepseek-r1-0528:free) - Advanced reasoning model (FREE)
+ * - Llama 3.3 70B (meta-llama/llama-3.3-70b-instruct:free) - Latest Llama instruct (FREE)
+ * - Grok 4 (x-ai/grok-4) - xAI reasoning model (PAID)
+ * - Kimi K2 (moonshotai/kimi-k2-0905) - Moonshot 262K context model (PAID)
  * 
  * Features:
  * - Circuit breakers (3 failures → 5min cooldown)
@@ -18,11 +20,15 @@ import { OpenRouter } from '@openrouter/sdk';
 // OpenRouter API Key
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-// Model identifiers - Updated December 2025 with valid free models
+// Model identifiers - Updated December 2025
 export const OPENROUTER_MODELS = {
+  // Free tier models
   QWEN: 'qwen/qwen-2.5-72b-instruct:free',
   DEEPSEEK: 'deepseek/deepseek-r1-0528:free',
   LLAMA: 'meta-llama/llama-3.3-70b-instruct:free',
+  // Paid models (available when credits exist)
+  GROK: 'x-ai/grok-4',
+  KIMI: 'moonshotai/kimi-k2-0905',
 } as const;
 
 // Service type - base OpenRouter models
@@ -51,6 +57,8 @@ const rateLimitState: Record<OpenRouterModel, RateLimitState> = {
   qwen: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
   deepseek: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
   llama: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
+  grok: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
+  kimi: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
 };
 
 // OpenRouter client singleton
@@ -220,9 +228,15 @@ async function callOpenRouter(
   
   const client = getOpenRouterClient();
   
-  const modelId = model === 'qwen' ? OPENROUTER_MODELS.QWEN :
-                  model === 'deepseek' ? OPENROUTER_MODELS.DEEPSEEK :
-                  OPENROUTER_MODELS.LLAMA;
+  // Map model name to model ID
+  const modelIdMap: Record<OpenRouterModel, string> = {
+    qwen: OPENROUTER_MODELS.QWEN,
+    deepseek: OPENROUTER_MODELS.DEEPSEEK,
+    llama: OPENROUTER_MODELS.LLAMA,
+    grok: OPENROUTER_MODELS.GROK,
+    kimi: OPENROUTER_MODELS.KIMI,
+  };
+  const modelId = modelIdMap[model];
   
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
   
@@ -516,6 +530,12 @@ export async function unifiedOpenRouterSearch(
     if (canMakeRequest('llama')) {
       promises.push(llamaSearch(query));
     }
+    if (canMakeRequest('grok')) {
+      promises.push(grokSearch(query, { includeReasoning: true }));
+    }
+    if (canMakeRequest('kimi')) {
+      promises.push(kimiSearch(query, { structuredOutput: true }));
+    }
     
     const settled = await Promise.allSettled(promises);
     for (const result of settled) {
@@ -525,7 +545,7 @@ export async function unifiedOpenRouterSearch(
     }
   } else {
     // Try models in priority order until one succeeds
-    for (const model of ['qwen', 'deepseek', 'llama'] as OpenRouterModel[]) {
+    for (const model of ['qwen', 'deepseek', 'llama', 'grok', 'kimi'] as OpenRouterModel[]) {
       if (!canMakeRequest(model)) continue;
       
       try {
@@ -539,6 +559,12 @@ export async function unifiedOpenRouterSearch(
             break;
           case 'llama':
             result = await llamaSearch(query);
+            break;
+          case 'grok':
+            result = await grokSearch(query, { includeReasoning: true });
+            break;
+          case 'kimi':
+            result = await kimiSearch(query, { structuredOutput: true });
             break;
         }
         

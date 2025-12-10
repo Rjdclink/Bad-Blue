@@ -54,18 +54,35 @@ export default function Login() {
       });
       
       if (response.ok) {
+        const data = await response.json();
+        
         // Refresh auth state
         await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
         
+        // Determine redirect based on access zone
+        let redirectPath = '/welcome';
+        let welcomeMessage = 'Welcome back!';
+        
+        if (data.accessZone) {
+          // Three-tier master password system - redirect to appropriate zone
+          redirectPath = data.redirectRoute || '/welcome';
+          const zoneNames: Record<string, string> = {
+            legalwhat: 'LegalWhat Operations',
+            orchestrator: '4JI Orchestrator Console',
+            cryptocrawler: 'CryptoCrawler Dashboard',
+          };
+          welcomeMessage = `Welcome to ${zoneNames[data.accessZone] || data.accessZone}!`;
+        }
+        
         toast({
           title: "Login successful",
-          description: "Welcome back!",
+          description: welcomeMessage,
         });
         
-        setLocation('/welcome');
+        setLocation(redirectPath);
       } else {
         const data = await response.json();
-        throw new Error(data.error || "Login failed");
+        throw new Error(data.error || data.message || "Login failed");
       }
     } catch (error: any) {
       toast({
