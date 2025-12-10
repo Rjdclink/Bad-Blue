@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/hooks/use-toast";
 import { 
   Brain, 
   Cpu, 
@@ -22,65 +23,289 @@ import {
   Play,
   Pause,
   RefreshCw,
-  Terminal
+  Terminal,
+  Power,
+  Loader2,
+  StopCircle,
+  Sparkles,
+  ArrowLeft
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
+import { apiRequest } from "@/lib/queryClient";
 
 /**
  * 4JI Orchestrator Admin Console - Access Zone B
  * Master Password: FORGEAI
  * Role: ORCHESTRATOR_ADMIN
  * Purpose: Merged Meta-AI Control Brain - unified 13+ model orchestration
+ * 
+ * ALL DATA IS FETCHED FROM REAL API ENDPOINTS - NO DEMO DATA
  */
+
+// Types for API responses
+interface OrchestratorStatus {
+  success: boolean;
+  isInitialized: boolean;
+  isRunning: boolean;
+  uptime: number;
+  activeDomain: string | null;
+  modelsLoaded: number;
+  totalOperations: number;
+  legalwhatStats: DomainStats;
+  cryptocrawlerStats: DomainStats;
+  systemHealth: number;
+  lastEvolutionRun: string | null;
+}
+
+interface DomainStats {
+  operations: number;
+  errors: number;
+  evolutionCycles: number;
+  lastActivity: string | null;
+  activeSubAgents: number;
+  workerFunctions: number;
+}
+
+interface IsolationStatus {
+  success: boolean;
+  isIsolated: boolean;
+  violations: number;
+}
+
+interface DiagnosticsResult {
+  success: boolean;
+  diagnostics: {
+    timestamp: string;
+    orchestrator: {
+      initialized: boolean;
+      running: boolean;
+      uptime: number;
+      health: number;
+    };
+    models: {
+      loaded: number;
+      totalOperations: number;
+    };
+    domains: {
+      isolation: boolean;
+      violations: number;
+      legal: { operations: number; errors: number; subAgents: number };
+      crypto: { operations: number; errors: number; subAgents: number };
+    };
+    recommendations: string[];
+  };
+}
+
+interface ConsoleLog {
+  timestamp: number;
+  level: string;
+  message: string;
+}
+
 export default function OrchestratorConsole() {
   const [, setLocation] = useLocation();
   const { isAuthenticated } = useAuth();
-  const [systemStatus, setSystemStatus] = useState<'running' | 'paused' | 'optimizing'>('running');
+  const { toast } = useToast();
+  
+  // System state
+  const [status, setStatus] = useState<OrchestratorStatus | null>(null);
+  const [isolation, setIsolation] = useState<IsolationStatus | null>(null);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
+  const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([]);
+  
+  // Loading states
+  const [loadingStatus, setLoadingStatus] = useState(false);
+  const [startingSystem, setStartingSystem] = useState(false);
+  const [stoppingSystem, setStoppingSystem] = useState(false);
+  const [runningDiagnostics, setRunningDiagnostics] = useState(false);
+  const [triggeringEvolution, setTriggeringEvolution] = useState(false);
 
-  // Verify access to this zone
+  // Verify access
   useEffect(() => {
     if (!isAuthenticated) {
       setLocation('/login');
     }
   }, [isAuthenticated, setLocation]);
 
-  // Simulated model data
-  const aiModels = [
-    { name: "Claude-3.5", status: "active", load: 45, tasks: 12 },
-    { name: "GPT-4o", status: "active", load: 62, tasks: 18 },
-    { name: "Gemini Pro", status: "active", load: 38, tasks: 8 },
-    { name: "Mistral Large", status: "active", load: 55, tasks: 14 },
-    { name: "LLaMA-3", status: "standby", load: 0, tasks: 0 },
-    { name: "Groq-Mixtral", status: "active", load: 72, tasks: 22 },
-    { name: "Anthropic-Claude", status: "active", load: 50, tasks: 15 },
-    { name: "OpenRouter-Mix", status: "active", load: 41, tasks: 10 },
-    { name: "Legal-Expert", status: "active", load: 88, tasks: 35 },
-    { name: "Crypto-Analyzer", status: "active", load: 67, tasks: 25 },
-    { name: "Document-Gen", status: "active", load: 53, tasks: 17 },
-    { name: "Research-Agent", status: "active", load: 44, tasks: 11 },
-    { name: "Self-Healer", status: "monitoring", load: 15, tasks: 3 },
-  ];
+  // Add console log
+  const addConsoleLog = useCallback((level: string, message: string) => {
+    setConsoleLogs(prev => [{
+      timestamp: Date.now(),
+      level,
+      message
+    }, ...prev.slice(0, 99)]);
+  }, []);
 
-  const workerStats = {
-    totalTasks: 1847,
-    completedToday: 456,
-    failedTasks: 12,
-    averageTime: "2.3s",
-    queuedTasks: 34,
+  // Fetch orchestrator status
+  const fetchStatus = useCallback(async () => {
+    setLoadingStatus(true);
+    try {
+      const response = await apiRequest('/api/orchestrator/status', 'GET');
+      const data = await response.json();
+      setStatus(data);
+    } catch (error) {
+      console.error('Failed to fetch status:', error);
+      addConsoleLog('error', 'Failed to fetch orchestrator status');
+    } finally {
+      setLoadingStatus(false);
+    }
+  }, [addConsoleLog]);
+
+  // Fetch isolation status
+  const fetchIsolation = useCallback(async () => {
+    try {
+      const response = await apiRequest('/api/orchestrator/isolation', 'GET');
+      const data = await response.json();
+      setIsolation(data);
+    } catch (error) {
+      console.error('Failed to fetch isolation:', error);
+    }
+  }, []);
+
+  // Start orchestrator
+  const handleStart = async () => {
+    setStartingSystem(true);
+    addConsoleLog('info', '[4JI] Starting orchestrator...');
+    try {
+      const response = await apiRequest('/api/orchestrator/start', 'POST');
+      const data = await response.json();
+      
+      if (data.success) {
+        toast({
+          title: "Orchestrator Started",
+          description: "4JI system is now running",
+        });
+        addConsoleLog('info', '[4JI] ✓ Orchestrator started successfully');
+        fetchStatus();
+      } else {
+        throw new Error(data.error || 'Failed to start');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Failed to Start",
+        description: error.message,
+        variant: "destructive",
+      });
+      addConsoleLog('error', `[4JI] Failed to start: ${error.message}`);
+    } finally {
+      setStartingSystem(false);
+    }
   };
 
-  const evolutionCycles = [
-    { id: 1, model: "Legal-Expert", improvement: "+4.2%", timestamp: "2h ago" },
-    { id: 2, model: "Crypto-Analyzer", improvement: "+2.8%", timestamp: "4h ago" },
-    { id: 3, model: "Document-Gen", improvement: "+1.5%", timestamp: "6h ago" },
-  ];
+  // Stop orchestrator
+  const handleStop = async () => {
+    setStoppingSystem(true);
+    addConsoleLog('info', '[4JI] Stopping orchestrator...');
+    try {
+      const response = await apiRequest('/api/orchestrator/stop', 'POST');
+      const data = await response.json();
+      
+      if (data.success) {
+        toast({
+          title: "Orchestrator Stopped",
+          description: `Uptime: ${Math.floor(data.uptime / 1000)}s`,
+        });
+        addConsoleLog('info', '[4JI] ✓ Orchestrator stopped');
+        fetchStatus();
+      } else {
+        throw new Error(data.error || 'Failed to stop');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Failed to Stop",
+        description: error.message,
+        variant: "destructive",
+      });
+      addConsoleLog('error', `[4JI] Failed to stop: ${error.message}`);
+    } finally {
+      setStoppingSystem(false);
+    }
+  };
 
-  const scheduledTasks = [
-    { name: "Nightly Optimization", time: "1:30 - 3:30 CST", status: "scheduled" },
-    { name: "Monte Carlo Training", time: "3:30 - 5:30 CST", status: "scheduled" },
-    { name: "System Diagnostics", time: "6:00 CST", status: "completed" },
-  ];
+  // Run diagnostics
+  const handleDiagnostics = async () => {
+    setRunningDiagnostics(true);
+    addConsoleLog('info', '[4JI] Running system diagnostics...');
+    try {
+      const response = await apiRequest('/api/orchestrator/diagnostics', 'POST');
+      const data = await response.json();
+      
+      if (data.success) {
+        setDiagnostics(data);
+        toast({
+          title: "Diagnostics Complete",
+          description: `System health: ${data.diagnostics.orchestrator.health}%`,
+        });
+        addConsoleLog('info', `[4JI] ✓ Diagnostics complete. Health: ${data.diagnostics.orchestrator.health}%`);
+        
+        // Log recommendations
+        data.diagnostics.recommendations.forEach((rec: string) => {
+          addConsoleLog('warn', `[4JI] Recommendation: ${rec}`);
+        });
+      } else {
+        throw new Error(data.error || 'Diagnostics failed');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Diagnostics Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+      addConsoleLog('error', `[4JI] Diagnostics failed: ${error.message}`);
+    } finally {
+      setRunningDiagnostics(false);
+    }
+  };
+
+  // Trigger evolution
+  const handleEvolution = async (domain: 'legal' | 'crypto' | 'both') => {
+    setTriggeringEvolution(true);
+    addConsoleLog('info', `[4JI] Triggering evolution for ${domain}...`);
+    try {
+      const response = await apiRequest('/api/orchestrator/evolve', 'POST', { domain });
+      const data = await response.json();
+      
+      if (data.success) {
+        toast({
+          title: "Evolution Triggered",
+          description: data.message,
+        });
+        addConsoleLog('info', `[4JI] ✓ ${data.message}`);
+        fetchStatus();
+      } else {
+        throw new Error(data.error || 'Evolution failed');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Evolution Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+      addConsoleLog('error', `[4JI] Evolution failed: ${error.message}`);
+    } finally {
+      setTriggeringEvolution(false);
+    }
+  };
+
+  // Initial data fetch
+  useEffect(() => {
+    fetchStatus();
+    fetchIsolation();
+    addConsoleLog('info', '[4JI] Orchestrator console initialized');
+    
+    // Set up polling
+    const statusInterval = setInterval(fetchStatus, 10000);
+    const isolationInterval = setInterval(fetchIsolation, 30000);
+    
+    return () => {
+      clearInterval(statusInterval);
+      clearInterval(isolationInterval);
+    };
+  }, [fetchStatus, fetchIsolation, addConsoleLog]);
+
+  const isRunning = status?.isRunning || false;
+  const systemHealth = status?.systemHealth || 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-gray-900">
@@ -103,15 +328,48 @@ export default function OrchestratorConsole() {
               </div>
             </div>
             <div className="flex items-center gap-4">
+              {/* System Control */}
+              <div className="flex items-center gap-2">
+                {isRunning ? (
+                  <Button 
+                    onClick={handleStop}
+                    disabled={stoppingSystem}
+                    variant="destructive"
+                    size="sm"
+                  >
+                    {stoppingSystem ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <StopCircle className="w-4 h-4 mr-2" />
+                    )}
+                    Stop
+                  </Button>
+                ) : (
+                  <Button 
+                    onClick={handleStart}
+                    disabled={startingSystem}
+                    className="bg-green-600 hover:bg-green-700"
+                    size="sm"
+                  >
+                    {startingSystem ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Power className="w-4 h-4 mr-2" />
+                    )}
+                    Start
+                  </Button>
+                )}
+              </div>
+              
               <Badge 
-                variant={systemStatus === 'running' ? 'default' : 'secondary'}
-                className={systemStatus === 'running' 
+                variant={isRunning ? 'default' : 'secondary'}
+                className={isRunning 
                   ? 'bg-green-500/20 text-green-300 border-green-500/30' 
                   : 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
                 }
               >
                 <Activity className="w-3 h-3 mr-1" />
-                {systemStatus.toUpperCase()}
+                {loadingStatus ? 'LOADING...' : isRunning ? 'RUNNING' : 'STOPPED'}
               </Badge>
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-500/20 border border-purple-500/30">
                 <Shield className="w-4 h-4 text-purple-400" />
@@ -132,173 +390,228 @@ export default function OrchestratorConsole() {
                 <Cpu className="w-8 h-8 text-purple-400" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-white">Unified Intelligence Layer Active</h2>
-                <p className="text-purple-300">{aiModels.length} models merged • Continuous evolution • Self-healing enabled</p>
+                <h2 className="text-xl font-bold text-white">
+                  {isRunning ? 'Unified Intelligence Layer Active' : 'System Offline'}
+                </h2>
+                <p className="text-purple-300">
+                  {status?.modelsLoaded || 0} models loaded • {status?.totalOperations || 0} total operations • Health: {systemHealth}%
+                </p>
               </div>
             </div>
             <div className="flex gap-2">
               <Button 
                 variant="outline" 
                 size="sm"
+                onClick={handleDiagnostics}
+                disabled={runningDiagnostics}
                 className="border-purple-500/30 text-purple-300 hover:bg-purple-500/20"
-                onClick={() => setSystemStatus(systemStatus === 'running' ? 'paused' : 'running')}
               >
-                {systemStatus === 'running' ? <Pause className="w-4 h-4 mr-1" /> : <Play className="w-4 h-4 mr-1" />}
-                {systemStatus === 'running' ? 'Pause' : 'Resume'}
+                {runningDiagnostics ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Settings className="w-4 h-4 mr-1" />}
+                Diagnostics
               </Button>
               <Button 
                 variant="outline" 
                 size="sm"
+                onClick={() => { fetchStatus(); fetchIsolation(); }}
                 className="border-purple-500/30 text-purple-300 hover:bg-purple-500/20"
               >
                 <RefreshCw className="w-4 h-4 mr-1" />
-                Sync All
+                Sync
               </Button>
             </div>
           </div>
         </div>
 
-        {/* Tabs for different sections */}
-        <Tabs defaultValue="models" className="space-y-6">
+        {/* Stats Overview */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <Card className="bg-gray-800/50 border-white/10">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">System Health</p>
+                  <p className="text-2xl font-bold text-white">{systemHealth}%</p>
+                </div>
+                <div className={`p-3 rounded-lg ${systemHealth >= 80 ? 'bg-green-500/20' : systemHealth >= 50 ? 'bg-yellow-500/20' : 'bg-red-500/20'}`}>
+                  <Activity className={`w-6 h-6 ${systemHealth >= 80 ? 'text-green-400' : systemHealth >= 50 ? 'text-yellow-400' : 'text-red-400'}`} />
+                </div>
+              </div>
+              <Progress value={systemHealth} className="mt-3 h-2" />
+            </CardContent>
+          </Card>
+          <Card className="bg-gray-800/50 border-white/10">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Models Loaded</p>
+                  <p className="text-2xl font-bold text-white">{status?.modelsLoaded || 0}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-purple-500/20">
+                  <Network className="w-6 h-6 text-purple-400" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="bg-gray-800/50 border-white/10">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Total Operations</p>
+                  <p className="text-2xl font-bold text-white">{status?.totalOperations || 0}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-blue-500/20">
+                  <BarChart3 className="w-6 h-6 text-blue-400" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="bg-gray-800/50 border-white/10">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Domain Isolation</p>
+                  <p className="text-2xl font-bold text-white">
+                    {isolation?.isIsolated ? 'SECURE' : 'BREACH'}
+                  </p>
+                </div>
+                <div className={`p-3 rounded-lg ${isolation?.isIsolated ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
+                  <Shield className={`w-6 h-6 ${isolation?.isIsolated ? 'text-green-400' : 'text-red-400'}`} />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Tabs */}
+        <Tabs defaultValue="domains" className="space-y-6">
           <TabsList className="bg-gray-800/50 border border-white/10">
-            <TabsTrigger value="models" className="data-[state=active]:bg-purple-500/20">
-              <Network className="w-4 h-4 mr-2" />
-              AI Models
-            </TabsTrigger>
-            <TabsTrigger value="worker" className="data-[state=active]:bg-purple-500/20">
-              <Cpu className="w-4 h-4 mr-2" />
-              Worker Engine
+            <TabsTrigger value="domains" className="data-[state=active]:bg-purple-500/20">
+              <Database className="w-4 h-4 mr-2" />
+              Domains
             </TabsTrigger>
             <TabsTrigger value="evolution" className="data-[state=active]:bg-purple-500/20">
               <GitBranch className="w-4 h-4 mr-2" />
               Evolution
             </TabsTrigger>
-            <TabsTrigger value="schedule" className="data-[state=active]:bg-purple-500/20">
-              <Clock className="w-4 h-4 mr-2" />
-              Schedule
+            <TabsTrigger value="diagnostics" className="data-[state=active]:bg-purple-500/20">
+              <Settings className="w-4 h-4 mr-2" />
+              Diagnostics
+            </TabsTrigger>
+            <TabsTrigger value="console" className="data-[state=active]:bg-purple-500/20">
+              <Terminal className="w-4 h-4 mr-2" />
+              Console
             </TabsTrigger>
           </TabsList>
 
-          {/* AI Models Tab */}
-          <TabsContent value="models">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {aiModels.map((model, index) => (
-                <Card key={index} className="bg-gray-800/50 border-white/10">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg text-white">{model.name}</CardTitle>
-                      <Badge 
-                        variant="outline"
-                        className={
-                          model.status === 'active' 
-                            ? 'border-green-500/50 text-green-400' 
-                            : model.status === 'standby'
-                            ? 'border-yellow-500/50 text-yellow-400'
-                            : 'border-blue-500/50 text-blue-400'
-                        }
-                      >
-                        {model.status}
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      <div>
-                        <div className="flex justify-between text-sm mb-1">
-                          <span className="text-gray-400">Load</span>
-                          <span className="text-white">{model.load}%</span>
+          {/* Domains Tab */}
+          <TabsContent value="domains">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* LegalWhat Domain */}
+              <Card className="bg-gray-800/50 border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center gap-2">
+                    <Database className="w-5 h-5 text-blue-400" />
+                    LegalWhat Domain
+                  </CardTitle>
+                  <CardDescription className="text-gray-400">
+                    Legal platform operations and intelligence
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-lg bg-blue-900/30 border border-blue-500/30">
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <p className="text-gray-400">Operations</p>
+                          <p className="text-xl font-bold text-white">{status?.legalwhatStats.operations || 0}</p>
                         </div>
-                        <Progress value={model.load} className="h-2" />
+                        <div>
+                          <p className="text-gray-400">Errors</p>
+                          <p className="text-xl font-bold text-white">{status?.legalwhatStats.errors || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400">Sub-Agents</p>
+                          <p className="text-xl font-bold text-white">{status?.legalwhatStats.activeSubAgents || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400">Evolution Cycles</p>
+                          <p className="text-xl font-bold text-white">{status?.legalwhatStats.evolutionCycles || 0}</p>
+                        </div>
                       </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-400">Active Tasks</span>
-                        <span className="text-purple-300">{model.tasks}</span>
+                    </div>
+                    <Button 
+                      onClick={() => handleEvolution('legal')}
+                      disabled={!isRunning || triggeringEvolution}
+                      className="w-full bg-blue-600 hover:bg-blue-700"
+                    >
+                      {triggeringEvolution ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                      Trigger Legal Evolution
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* CryptoCrawler Domain */}
+              <Card className="bg-gray-800/50 border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center gap-2">
+                    <Database className="w-5 h-5 text-orange-400" />
+                    CryptoCrawler Domain
+                  </CardTitle>
+                  <CardDescription className="text-gray-400">
+                    Crypto trading operations and intelligence
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-lg bg-orange-900/30 border border-orange-500/30">
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <p className="text-gray-400">Operations</p>
+                          <p className="text-xl font-bold text-white">{status?.cryptocrawlerStats.operations || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400">Errors</p>
+                          <p className="text-xl font-bold text-white">{status?.cryptocrawlerStats.errors || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400">Sub-Agents</p>
+                          <p className="text-xl font-bold text-white">{status?.cryptocrawlerStats.activeSubAgents || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400">Evolution Cycles</p>
+                          <p className="text-xl font-bold text-white">{status?.cryptocrawlerStats.evolutionCycles || 0}</p>
+                        </div>
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
-
-          {/* Worker Engine Tab */}
-          <TabsContent value="worker">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <Card className="bg-gray-800/50 border-white/10">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 rounded-lg bg-blue-500/20">
-                      <BarChart3 className="w-6 h-6 text-blue-400" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-400">Total Tasks</p>
-                      <p className="text-2xl font-bold text-white">{workerStats.totalTasks}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="bg-gray-800/50 border-white/10">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 rounded-lg bg-green-500/20">
-                      <CheckCircle2 className="w-6 h-6 text-green-400" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-400">Completed Today</p>
-                      <p className="text-2xl font-bold text-white">{workerStats.completedToday}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="bg-gray-800/50 border-white/10">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 rounded-lg bg-red-500/20">
-                      <AlertTriangle className="w-6 h-6 text-red-400" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-400">Failed Tasks</p>
-                      <p className="text-2xl font-bold text-white">{workerStats.failedTasks}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="bg-gray-800/50 border-white/10">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 rounded-lg bg-purple-500/20">
-                      <Clock className="w-6 h-6 text-purple-400" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-400">Avg. Time</p>
-                      <p className="text-2xl font-bold text-white">{workerStats.averageTime}</p>
-                    </div>
+                    <Button 
+                      onClick={() => handleEvolution('crypto')}
+                      disabled={!isRunning || triggeringEvolution}
+                      className="w-full bg-orange-600 hover:bg-orange-700"
+                    >
+                      {triggeringEvolution ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                      Trigger Crypto Evolution
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
             </div>
 
-            <Card className="bg-gray-800/50 border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Terminal className="w-5 h-5" />
-                  Worker Engine Console
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-black/50 rounded-lg p-4 font-mono text-sm text-green-400 h-64 overflow-auto">
-                  <p>[4JI] Worker Engine initialized with unified mode</p>
-                  <p>[4JI] Sub-Agent Execution Engine ready</p>
-                  <p>[4JI] Cherry-picking optimal model for task: legal_document_gen</p>
-                  <p>[4JI] Selected: Legal-Expert (confidence: 0.94)</p>
-                  <p>[4JI] Task completed in 1.8s</p>
-                  <p>[4JI] Evolution snapshot saved to Supabase</p>
-                  <p>[4JI] Self-healer monitoring: no anomalies detected</p>
-                  <p>[4JI] Queued tasks: {workerStats.queuedTasks}</p>
-                  <p className="text-yellow-400">[4JI] Next optimization window: 1:30 CST</p>
-                </div>
-              </CardContent>
-            </Card>
+            {/* Domain Isolation Warning */}
+            {isolation && !isolation.isIsolated && (
+              <Card className="mt-6 bg-red-900/20 border border-red-500/30">
+                <CardContent className="pt-6">
+                  <div className="flex items-start gap-4">
+                    <AlertTriangle className="w-6 h-6 text-red-400 flex-shrink-0" />
+                    <div>
+                      <h4 className="text-red-300 font-medium mb-1">Domain Isolation Breach Detected</h4>
+                      <p className="text-sm text-gray-400">
+                        {isolation.violations} violations detected. Cross-domain access should be blocked.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           {/* Evolution Tab */}
@@ -306,66 +619,52 @@ export default function OrchestratorConsole() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="bg-gray-800/50 border-white/10">
                 <CardHeader>
-                  <CardTitle className="text-white">Recent Evolution Cycles</CardTitle>
+                  <CardTitle className="text-white">Evolution Control</CardTitle>
                   <CardDescription className="text-gray-400">
-                    Continuous improvement through deep learning
+                    Trigger learning and adaptation cycles
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {evolutionCycles.map((cycle) => (
-                      <div 
-                        key={cycle.id}
-                        className="flex items-center justify-between p-3 rounded-lg bg-white/5"
+                    <div className="p-4 rounded-lg bg-purple-900/30 border border-purple-500/30">
+                      <h4 className="text-purple-300 font-medium mb-2">Last Evolution Run</h4>
+                      <p className="text-white">
+                        {status?.lastEvolutionRun 
+                          ? new Date(status.lastEvolutionRun).toLocaleString() 
+                          : 'Never'}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      <Button 
+                        onClick={() => handleEvolution('both')}
+                        disabled={!isRunning || triggeringEvolution}
+                        className="w-full bg-purple-600 hover:bg-purple-700"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-full bg-green-500/20">
-                            <Zap className="w-4 h-4 text-green-400" />
-                          </div>
-                          <div>
-                            <p className="text-white font-medium">{cycle.model}</p>
-                            <p className="text-sm text-gray-400">{cycle.timestamp}</p>
-                          </div>
-                        </div>
-                        <Badge className="bg-green-500/20 text-green-300 border-green-500/30">
-                          {cycle.improvement}
-                        </Badge>
-                      </div>
-                    ))}
+                        {triggeringEvolution ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                        Evolve Both Domains
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
 
               <Card className="bg-gray-800/50 border-white/10">
                 <CardHeader>
-                  <CardTitle className="text-white">Domain Isolation</CardTitle>
-                  <CardDescription className="text-gray-400">
-                    Hard boundaries between legal and crypto domains
-                  </CardDescription>
+                  <CardTitle className="text-white">Evolution Statistics</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    <div className="p-4 rounded-lg bg-blue-900/30 border border-blue-500/30">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Database className="w-5 h-5 text-blue-400" />
-                        <span className="font-medium text-blue-300">Legal Domain</span>
-                      </div>
-                      <p className="text-sm text-gray-400 mb-2">Isolated tables: learning_legal, evolving_legal</p>
-                      <p className="text-xs text-blue-400">Status: Active • Mode: legal</p>
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
+                      <span className="text-gray-400">Legal Evolution Cycles</span>
+                      <span className="text-white font-bold">{status?.legalwhatStats.evolutionCycles || 0}</span>
                     </div>
-                    <div className="p-4 rounded-lg bg-orange-900/30 border border-orange-500/30">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Database className="w-5 h-5 text-orange-400" />
-                        <span className="font-medium text-orange-300">Crypto Domain</span>
-                      </div>
-                      <p className="text-sm text-gray-400 mb-2">Isolated tables: learning_crypto, evolving_crypto</p>
-                      <p className="text-xs text-orange-400">Status: Active • Mode: crypto</p>
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
+                      <span className="text-gray-400">Crypto Evolution Cycles</span>
+                      <span className="text-white font-bold">{status?.cryptocrawlerStats.evolutionCycles || 0}</span>
                     </div>
-                    <div className="p-3 rounded-lg bg-red-900/20 border border-red-500/30">
-                      <p className="text-sm text-red-400 flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4" />
-                        Cross-domain access: BLOCKED
-                      </p>
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
+                      <span className="text-gray-400">Total Operations</span>
+                      <span className="text-white font-bold">{status?.totalOperations || 0}</span>
                     </div>
                   </div>
                 </CardContent>
@@ -373,57 +672,123 @@ export default function OrchestratorConsole() {
             </div>
           </TabsContent>
 
-          {/* Schedule Tab */}
-          <TabsContent value="schedule">
+          {/* Diagnostics Tab */}
+          <TabsContent value="diagnostics">
             <Card className="bg-gray-800/50 border-white/10">
               <CardHeader>
-                <CardTitle className="text-white">Scheduled Operations</CardTitle>
-                <CardDescription className="text-gray-400">
-                  Automated optimization and training windows (CST)
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {scheduledTasks.map((task, index) => (
-                    <div 
-                      key={index}
-                      className="flex items-center justify-between p-4 rounded-lg bg-white/5"
-                    >
-                      <div className="flex items-center gap-4">
-                        <Clock className="w-5 h-5 text-purple-400" />
-                        <div>
-                          <p className="text-white font-medium">{task.name}</p>
-                          <p className="text-sm text-gray-400">{task.time}</p>
-                        </div>
-                      </div>
-                      <Badge 
-                        variant="outline"
-                        className={
-                          task.status === 'completed' 
-                            ? 'border-green-500/50 text-green-400' 
-                            : 'border-yellow-500/50 text-yellow-400'
-                        }
-                      >
-                        {task.status}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-6 p-4 rounded-lg bg-purple-900/30 border border-purple-500/30">
-                  <h4 className="text-purple-300 font-medium mb-2">On-Demand Issue Repair</h4>
-                  <p className="text-sm text-gray-400 mb-3">
-                    Immediate error detection and live patching without redeploy
-                  </p>
-                  <Button className="bg-purple-600 hover:bg-purple-700">
-                    <Settings className="w-4 h-4 mr-2" />
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-white">System Diagnostics</CardTitle>
+                  <Button 
+                    onClick={handleDiagnostics}
+                    disabled={runningDiagnostics}
+                    className="bg-purple-600 hover:bg-purple-700"
+                  >
+                    {runningDiagnostics ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Settings className="w-4 h-4 mr-2" />}
                     Run Diagnostics
                   </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {diagnostics ? (
+                  <div className="space-y-6">
+                    {/* Orchestrator Status */}
+                    <div className="p-4 rounded-lg bg-white/5">
+                      <h4 className="text-white font-medium mb-3">Orchestrator</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <p className="text-gray-400">Initialized</p>
+                          <Badge className={diagnostics.diagnostics.orchestrator.initialized ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}>
+                            {diagnostics.diagnostics.orchestrator.initialized ? 'Yes' : 'No'}
+                          </Badge>
+                        </div>
+                        <div>
+                          <p className="text-gray-400">Running</p>
+                          <Badge className={diagnostics.diagnostics.orchestrator.running ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}>
+                            {diagnostics.diagnostics.orchestrator.running ? 'Yes' : 'No'}
+                          </Badge>
+                        </div>
+                        <div>
+                          <p className="text-gray-400">Health</p>
+                          <span className="text-white font-bold">{diagnostics.diagnostics.orchestrator.health}%</span>
+                        </div>
+                        <div>
+                          <p className="text-gray-400">Uptime</p>
+                          <span className="text-white font-bold">{Math.floor(diagnostics.diagnostics.orchestrator.uptime / 1000)}s</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Recommendations */}
+                    {diagnostics.diagnostics.recommendations.length > 0 && (
+                      <div className="p-4 rounded-lg bg-yellow-900/30 border border-yellow-500/30">
+                        <h4 className="text-yellow-300 font-medium mb-3">Recommendations</h4>
+                        <ul className="space-y-2">
+                          {diagnostics.diagnostics.recommendations.map((rec, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm text-gray-300">
+                              <AlertTriangle className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
+                              {rec}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-gray-400">
+                    <Settings className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>Click "Run Diagnostics" to analyze system health</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Console Tab */}
+          <TabsContent value="console">
+            <Card className="bg-gray-800/50 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Terminal className="w-5 h-5" />
+                  System Console
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-black/50 rounded-lg p-4 font-mono text-sm h-96 overflow-auto">
+                  {consoleLogs.length > 0 ? (
+                    consoleLogs.map((log, i) => (
+                      <p key={i} className={
+                        log.level === 'error' ? 'text-red-400' :
+                        log.level === 'warn' ? 'text-yellow-400' :
+                        'text-green-400'
+                      }>
+                        [{new Date(log.timestamp).toLocaleTimeString()}] {log.message}
+                      </p>
+                    ))
+                  ) : (
+                    <p className="text-gray-500">Console initialized. Waiting for events...</p>
+                  )}
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* System Not Running Warning */}
+        {!isRunning && (
+          <Card className="mt-8 bg-yellow-900/20 border border-yellow-500/30">
+            <CardContent className="pt-6">
+              <div className="flex items-start gap-4">
+                <AlertTriangle className="w-6 h-6 text-yellow-400 flex-shrink-0" />
+                <div>
+                  <h4 className="text-yellow-300 font-medium mb-1">Orchestrator Not Running</h4>
+                  <p className="text-sm text-gray-400">
+                    The 4JI Orchestrator is currently stopped. Start the system to enable AI operations, evolution cycles, and domain management.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </main>
 
       {/* Footer */}

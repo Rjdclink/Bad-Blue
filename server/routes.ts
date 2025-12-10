@@ -4836,6 +4836,14 @@ Contact: ${foiaRequest.userEmail || userEmail}
   app.use('/api/bridge', bridgeApi);
   
   // ============================================
+  // 4JI ORCHESTRATOR API
+  // ============================================
+  
+  // Mount 4JI Orchestrator routes
+  const { orchestratorApi } = await import('./routes/orchestrator.routes');
+  app.use('/api/orchestrator', orchestratorApi);
+  
+  // ============================================
   // 4JI-GENIE DUAL-MODULE CONTROLLER API
   // ============================================
   

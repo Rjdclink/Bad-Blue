@@ -1,6 +1,7 @@
 import express from 'express';
 import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
+import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { 
   authenticateWithPassword, 
   requireCryptoCrawlAuth,
@@ -152,6 +153,9 @@ router.post('/start', async (req, res) => {
     // Enable CryptoCrawl services
     await cryptoCrawlState.enable();
     
+    // Start Zero-Capital Engine (TRUE zero upfront capital)
+    await zeroCapitalEngine.start();
+    
     // Only mark as running after successful service enablement
     systemState.running = true;
     systemState.startedAt = Date.now();
@@ -159,14 +163,18 @@ router.post('/start', async (req, res) => {
     // Start pipeline in background
     pipeline.run().catch(err => {
       console.error('Pipeline error:', err);
-      systemState.running = false;
     });
     
     res.json({
       success: true,
-      message: 'System started',
+      message: 'Zero-Capital Arbitrage System started',
       startedAt: new Date(systemState.startedAt).toISOString(),
-      status: cryptoCrawlState.getStatus()
+      status: cryptoCrawlState.getStatus(),
+      zeroCapital: {
+        enabled: true,
+        capitalRequired: 'ZERO',
+        mechanism: 'Flash Loan + MEV Bundle'
+      }
     });
   } catch (error: any) {
     // Ensure state is not marked as running on error
