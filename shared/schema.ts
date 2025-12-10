@@ -2796,3 +2796,254 @@ export const insertCryptoTransactionSchema = createInsertSchema(cryptoTransactio
 
 export type CryptoTransaction = typeof cryptoTransactions.$inferSelect;
 export type InsertCryptoTransaction = z.infer<typeof insertCryptoTransactionSchema>;
+
+// ============================================
+// DUAL-MODULE AI SYSTEM TABLES (4JI-GENIE)
+// ============================================
+
+// System Rules Table - Immutable rules for domain separation
+export const systemRules = pgTable("system_rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ruleId: varchar("rule_id", { length: 50 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description").notNull(),
+  category: varchar("category", { length: 50 }).notNull(), // domain-isolation, compute-control, etc.
+  severity: varchar("severity", { length: 20 }).notNull().default('critical'),
+  enabled: boolean("enabled").notNull().default(true),
+  enforcement: varchar("enforcement", { length: 20 }).notNull().default('block'), // block, warn, log
+  violationCount: integer("violation_count").notNull().default(0),
+  lastViolation: timestamp("last_violation"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_system_rules_category").on(table.category),
+  index("idx_system_rules_severity").on(table.severity),
+]);
+
+export type SystemRule = typeof systemRules.$inferSelect;
+export type InsertSystemRule = typeof systemRules.$inferInsert;
+
+// Domain Violations Table - Track cross-domain access attempts
+export const domainViolations = pgTable("domain_violations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sourceDomain: varchar("source_domain", { length: 20 }).notNull(), // 'legal' or 'crypto'
+  targetDomain: varchar("target_domain", { length: 20 }).notNull(),
+  query: text("query"),
+  userId: varchar("user_id"),
+  blocked: boolean("blocked").notNull().default(true),
+  ruleId: varchar("rule_id").references(() => systemRules.ruleId, { onDelete: 'set null' }),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+}, (table) => [
+  index("idx_domain_violations_source").on(table.sourceDomain),
+  index("idx_domain_violations_timestamp").on(table.timestamp),
+]);
+
+export type DomainViolation = typeof domainViolations.$inferSelect;
+export type InsertDomainViolation = typeof domainViolations.$inferInsert;
+
+// Module Status Table - Track ALEXARA/CRYPTARA/4JI-GENIE status
+export const moduleStatus = pgTable("module_status", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  moduleName: varchar("module_name", { length: 50 }).notNull().unique(), // ALEXARA, CRYPTARA, 4JI-GENIE
+  isRunning: boolean("is_running").notNull().default(false),
+  lastStarted: timestamp("last_started"),
+  lastStopped: timestamp("last_stopped"),
+  totalRequests: integer("total_requests").notNull().default(0),
+  errorCount: integer("error_count").notNull().default(0),
+  uptime: integer("uptime").notNull().default(0), // in seconds
+  lastHealthCheck: timestamp("last_health_check"),
+  healthStatus: varchar("health_status", { length: 20 }).notNull().default('unknown'), // healthy, degraded, error, offline
+  metadata: jsonb("metadata").default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_module_status_name").on(table.moduleName),
+  index("idx_module_status_running").on(table.isRunning),
+]);
+
+export type ModuleStatus = typeof moduleStatus.$inferSelect;
+export type InsertModuleStatus = typeof moduleStatus.$inferInsert;
+
+// Permissions Matrix Table - Track approved permissions
+export const permissionsMatrix = pgTable("permissions_matrix", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  permissionId: varchar("permission_id", { length: 100 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).notNull(),
+  category: varchar("category", { length: 50 }).notNull(), // crawler, faucet, install, update, upgrade, package
+  description: text("description"),
+  approved: boolean("approved").notNull().default(false),
+  approvedBy: varchar("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  scheduledWeekday: varchar("scheduled_weekday", { length: 10 }), // sunday, monday, etc.
+  scheduledTime: varchar("scheduled_time", { length: 5 }), // HH:MM format
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_permissions_matrix_category").on(table.category),
+  index("idx_permissions_matrix_approved").on(table.approved),
+]);
+
+export type PermissionMatrixEntry = typeof permissionsMatrix.$inferSelect;
+export type InsertPermissionMatrixEntry = typeof permissionsMatrix.$inferInsert;
+
+// Install Requests Table - Track package installation approvals
+export const installRequests = pgTable("install_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  packageName: varchar("package_name", { length: 255 }).notNull(),
+  version: varchar("version", { length: 50 }),
+  packageType: varchar("package_type", { length: 20 }).notNull(), // npm, pip, system, custom
+  reason: text("reason").notNull(),
+  requestedBy: varchar("requested_by").notNull(),
+  requestedAt: timestamp("requested_at").defaultNow().notNull(),
+  status: varchar("status", { length: 20 }).notNull().default('pending'), // pending, approved, rejected, installed
+  approvedBy: varchar("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  scheduledWeekday: varchar("scheduled_weekday", { length: 10 }),
+  scheduledTime: varchar("scheduled_time", { length: 5 }),
+  installedAt: timestamp("installed_at"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_install_requests_status").on(table.status),
+  index("idx_install_requests_requested").on(table.requestedAt),
+]);
+
+export type InstallRequest = typeof installRequests.$inferSelect;
+export type InsertInstallRequest = typeof installRequests.$inferInsert;
+
+// Scheduled Tasks Table - Track weekly update tasks
+export const scheduledTasks = pgTable("scheduled_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taskType: varchar("task_type", { length: 50 }).notNull(), // upgrade, optimization, modification, enhancement
+  description: text("description").notNull(),
+  scheduledFor: timestamp("scheduled_for").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default('pending'), // pending, running, completed, failed
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  result: text("result"),
+  errorMessage: text("error_message"),
+  createdBy: varchar("created_by"),
+  metadata: jsonb("metadata").default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_scheduled_tasks_status").on(table.status),
+  index("idx_scheduled_tasks_scheduled").on(table.scheduledFor),
+]);
+
+export type ScheduledTask = typeof scheduledTasks.$inferSelect;
+export type InsertScheduledTask = typeof scheduledTasks.$inferInsert;
+
+// Database Shadow Sync Table - Track local/supabase sync status
+export const databaseShadowSync = pgTable("database_shadow_sync", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tableName: varchar("table_name", { length: 100 }).notNull(),
+  lastSyncedAt: timestamp("last_synced_at"),
+  syncStatus: varchar("sync_status", { length: 20 }).notNull().default('pending'), // synced, syncing, out-of-sync, error
+  pendingChanges: integer("pending_changes").notNull().default(0),
+  lastChangeAt: timestamp("last_change_at"),
+  errorMessage: text("error_message"),
+  checksumLocal: varchar("checksum_local", { length: 64 }),
+  checksumRemote: varchar("checksum_remote", { length: 64 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_shadow_sync_table").on(table.tableName),
+  index("idx_shadow_sync_status").on(table.syncStatus),
+]);
+
+export type DatabaseShadowSync = typeof databaseShadowSync.$inferSelect;
+export type InsertDatabaseShadowSync = typeof databaseShadowSync.$inferInsert;
+
+// Admin Identity Binding Table - Secure admin authentication
+export const adminIdentityBinding = pgTable("admin_identity_binding", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  identityLabel: varchar("identity_label", { length: 50 }).notNull().unique(), // "Daddy"
+  passwordHash: text("password_hash").notNull(), // Hashed SARBEAR
+  lastAuthenticated: timestamp("last_authenticated"),
+  authenticationCount: integer("authentication_count").notNull().default(0),
+  failedAttempts: integer("failed_attempts").notNull().default(0),
+  lastFailedAt: timestamp("last_failed_at"),
+  isLocked: boolean("is_locked").notNull().default(false),
+  lockedUntil: timestamp("locked_until"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type AdminIdentityBinding = typeof adminIdentityBinding.$inferSelect;
+export type InsertAdminIdentityBinding = typeof adminIdentityBinding.$inferInsert;
+
+// ALEXARA Research Log Table - Track legal research activity
+export const alexaraResearchLog = pgTable("alexara_research_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  query: text("query").notNull(),
+  jurisdiction: varchar("jurisdiction", { length: 50 }),
+  lawType: varchar("law_type", { length: 100 }),
+  userId: varchar("user_id"),
+  sessionId: varchar("session_id"),
+  findings: text("findings"),
+  citations: text("citations").array(),
+  statutes: text("statutes").array(),
+  precedents: text("precedents").array(),
+  confidence: integer("confidence"), // 0-100
+  processingTimeMs: integer("processing_time_ms"),
+  success: boolean("success").notNull().default(true),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_alexara_log_user").on(table.userId),
+  index("idx_alexara_log_created").on(table.createdAt),
+  index("idx_alexara_log_law_type").on(table.lawType),
+]);
+
+export type AlexaraResearchLog = typeof alexaraResearchLog.$inferSelect;
+export type InsertAlexaraResearchLog = typeof alexaraResearchLog.$inferInsert;
+
+// CRYPTARA Surveillance Log Table - Track crypto surveillance activity
+export const cryptaraSurveillanceLog = pgTable("cryptara_surveillance_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chain: varchar("chain", { length: 50 }).notNull(),
+  activityType: varchar("activity_type", { length: 50 }).notNull(), // surveillance, simulation, prediction
+  patternsDetected: integer("patterns_detected").notNull().default(0),
+  predictionsGenerated: integer("predictions_generated").notNull().default(0),
+  sentimentScore: integer("sentiment_score"), // -100 to 100
+  riskLevel: varchar("risk_level", { length: 20 }), // low, medium, high, critical
+  simulationIterations: integer("simulation_iterations"),
+  learnings: text("learnings").array(),
+  processingTimeMs: integer("processing_time_ms"),
+  success: boolean("success").notNull().default(true),
+  errorMessage: text("error_message"),
+  metadata: jsonb("metadata").default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_cryptara_log_chain").on(table.chain),
+  index("idx_cryptara_log_activity").on(table.activityType),
+  index("idx_cryptara_log_created").on(table.createdAt),
+]);
+
+export type CryptaraSurveillanceLog = typeof cryptaraSurveillanceLog.$inferSelect;
+export type InsertCryptaraSurveillanceLog = typeof cryptaraSurveillanceLog.$inferInsert;
+
+// Crawler Activity Log Table - Track crawler runs (ALEXARA and CRYPTARA)
+export const crawlerActivityLog = pgTable("crawler_activity_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  crawlerType: varchar("crawler_type", { length: 20 }).notNull(), // 'alexara' or 'cryptara'
+  triggeredBy: varchar("triggered_by", { length: 50 }).notNull(), // '4ji-genie', 'schedule', 'user', 'faucet'
+  sourcesProcessed: integer("sources_processed").notNull().default(0),
+  itemsCrawled: integer("items_crawled").notNull().default(0),
+  updatesApplied: integer("updates_applied").notNull().default(0),
+  errors: integer("errors").notNull().default(0),
+  durationMs: integer("duration_ms"),
+  startedAt: timestamp("started_at").notNull(),
+  completedAt: timestamp("completed_at"),
+  status: varchar("status", { length: 20 }).notNull().default('running'), // running, completed, failed
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_crawler_activity_type").on(table.crawlerType),
+  index("idx_crawler_activity_triggered").on(table.triggeredBy),
+  index("idx_crawler_activity_started").on(table.startedAt),
+]);
+
+export type CrawlerActivityLog = typeof crawlerActivityLog.$inferSelect;
+export type InsertCrawlerActivityLog = typeof crawlerActivityLog.$inferInsert;
