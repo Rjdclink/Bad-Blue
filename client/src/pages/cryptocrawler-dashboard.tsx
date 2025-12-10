@@ -36,11 +36,14 @@ import {
   Loader2,
   Power,
   StopCircle,
-  ArrowLeft
+  ArrowLeft,
+  Link2,
+  Unlink
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
 import { apiRequest } from "@/lib/queryClient";
+import { useWallet, formatAddress, getChainName, SUPPORTED_CHAINS } from "@/hooks/useWallet";
 
 /**
  * CryptoCrawler Command Dashboard - Access Zone C
@@ -134,6 +137,9 @@ export default function CryptoCrawlerDashboard() {
   const [, setLocation] = useLocation();
   const { isAuthenticated } = useAuth();
   const { toast } = useToast();
+  
+  // MetaMask wallet connection
+  const wallet = useWallet();
   
   // System state
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
@@ -474,6 +480,44 @@ export default function CryptoCrawlerDashboard() {
                       <Power className="w-4 h-4 mr-2" />
                     )}
                     Start System
+                  </Button>
+                )}
+              </div>
+              
+              {/* MetaMask Wallet Connection */}
+              <div className="flex items-center gap-2">
+                {wallet.isConnected ? (
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-green-500/20 text-green-300 border-green-500/30">
+                      <Link2 className="w-3 h-3 mr-1" />
+                      {formatAddress(wallet.address!)}
+                    </Badge>
+                    <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/30">
+                      {getChainName(wallet.chainId)}
+                    </Badge>
+                    <span className="text-sm text-gray-400">{wallet.balance} {SUPPORTED_CHAINS[wallet.chainId || 1]?.symbol}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={wallet.disconnect}
+                      className="text-gray-400 hover:text-red-400"
+                    >
+                      <Unlink className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    onClick={wallet.connect}
+                    disabled={wallet.isConnecting || !wallet.isMetaMaskInstalled}
+                    className="bg-orange-600 hover:bg-orange-700"
+                    size="sm"
+                  >
+                    {wallet.isConnecting ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Wallet className="w-4 h-4 mr-2" />
+                    )}
+                    {!wallet.isMetaMaskInstalled ? 'Install MetaMask' : 'Connect Wallet'}
                   </Button>
                 )}
               </div>
