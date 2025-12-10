@@ -11,6 +11,13 @@ import { ComputationalBeam } from './index';
 import { WorkloadRouter } from './workloadRouter';
 import { CrawlerStrategy, Task, TaskPriority } from './types';
 import { createLogger } from '../../logger';
+import { 
+  SAFETY_RULES, 
+  LEGAL_STRATEGIES,
+  verifySafetyCompliance,
+  enforceStoragySafety,
+  tripleVerifyNoBypass,
+} from './safetyRules';
 
 const log = createLogger('CryptoBeamConnector');
 
@@ -89,6 +96,20 @@ export class CryptoBeamConnector {
     
     log.info('🔗 Initializing Cryptocrawler Computational Beam Connector...');
     
+    // CRITICAL: Enforce safety rules before initialization
+    enforceStoragySafety('cryptocrawler-initialization');
+    
+    // Verify triple safety (300% certainty)
+    const safetyCheck = tripleVerifyNoBypass();
+    if (!safetyCheck.allPassed) {
+      throw new Error('SAFETY VIOLATION: Triple verification failed during initialization');
+    }
+    
+    log.info('✅ Safety rules verified (300% certainty)');
+    log.info('   - NO_MALICIOUS_ACTIVITIES: ' + SAFETY_RULES.NO_MALICIOUS_ACTIVITIES);
+    log.info('   - NO_RULE_EVASION: ' + SAFETY_RULES.NO_RULE_EVASION);
+    log.info('   - U_S_FEDERAL_LAW_ONLY: ' + SAFETY_RULES.U_S_FEDERAL_LAW_ONLY);
+    
     // Initialize computational beam (no credentials required)
     await ComputationalBeam.initialize();
     
@@ -99,13 +120,14 @@ export class CryptoBeamConnector {
     
     log.info('✅ Cryptocrawler connected to Computational Beam');
     log.info('   Purpose: Supply generous computational power for crypto strategies');
-    log.info('   Strategies: Arbitrage, Zero-Capital, MEV, Liquidity Snipe');
+    log.info('   Strategies: Arbitrage, Zero-Capital, MEV, Liquidity Snipe (ALL LEGAL)');
   }
   
   /**
    * Execute cryptocurrency strategy with computational beam power
    * 
    * ONE FILE AT A TIME: This is the first integration point
+   * SAFETY: All strategies verified against hardcoded safety rules
    */
   static async executeStrategy(
     params: StrategyExecutionParams
@@ -114,12 +136,33 @@ export class CryptoBeamConnector {
       await this.initialize();
     }
     
+    // CRITICAL: Verify strategy is legal before execution
+    const safetyCheck = verifySafetyCompliance(params.strategyType);
+    if (!safetyCheck.allowed) {
+      log.error('🚫 Strategy execution BLOCKED by safety rules', {
+        strategy: params.strategyType,
+        reason: safetyCheck.reason,
+      });
+      
+      return {
+        success: false,
+        strategyType: params.strategyType,
+        opportunities: [],
+        profitEstimate: 0,
+        executionTime: 0,
+        computePowerUsed: 0,
+      };
+    }
+    
+    log.info('✅ Strategy safety verified: ' + safetyCheck.reason);
+    
     const startTime = Date.now();
     
     log.info('🚀 Executing crypto strategy with computational beam', {
       strategy: params.strategyType,
       symbols: params.symbols,
       exchanges: params.exchanges,
+      legalStatus: 'PERMITTED',
     });
     
     try {

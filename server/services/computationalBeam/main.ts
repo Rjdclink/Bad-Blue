@@ -74,6 +74,32 @@ export {
   type PersonResult
 } from './peopleFinderConnector';
 
+// Optimization modules (NEW)
+export { 
+  SAFETY_RULES,
+  LEGAL_STRATEGIES,
+  ILLEGAL_STRATEGIES,
+  verifySafetyCompliance,
+  enforceStoragySafety,
+  tripleVerifyNoBypass,
+  getSafetyStatus,
+  type SafetyRules,
+  type LegalStrategies,
+  type IllegalStrategies
+} from './safetyRules';
+
+export { 
+  WalletOptimizer, 
+  walletOptimizer 
+} from './walletOptimizer';
+
+export { 
+  ArbitrageOptimizer, 
+  arbitrageOptimizer,
+  type ArbitrageOpportunity,
+  type ExecutionResult
+} from './arbitrageOptimizer';
+
 // Testing and validation
 export { runIntegrationTest } from './test-integration';
 export { demo } from './demo';
