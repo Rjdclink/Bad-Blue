@@ -14,21 +14,23 @@
  */
 
 // Core OSINT ML/NLP workers
-export { workerOrchestrator, Worker, WorkerInput, WorkerOutput } from './workerOrchestrator';
-export { nlpTextWorker, NLPResult, ExtractedEntity } from './nlpTextWorker';
-export { 
-  mlEntityResolutionWorker, 
+export { workerOrchestrator } from './workerOrchestrator';
+export type { Worker, WorkerInput, WorkerOutput } from './workerOrchestrator';
+export { nlpTextWorker } from './nlpTextWorker';
+export type { NLPResult, ExtractedEntity } from './nlpTextWorker';
+export { mlEntityResolutionWorker } from './mlEntityResolutionWorker';
+export type { 
   EntityRecord, 
   ResolvedEntity,
   EntityCluster 
 } from './mlEntityResolutionWorker';
-export { 
-  mlConfidenceScoringWorker, 
+export { mlConfidenceScoringWorker } from './mlConfidenceScoringWorker';
+export type { 
   AttributeScore,
   EntityConfidenceScore 
 } from './mlConfidenceScoringWorker';
-export { 
-  mlnlpIntelligenceService,
+export { mlnlpIntelligenceService } from './intelligenceService';
+export type { 
   MLNLPProcessingOptions,
   MLNLPResult 
 } from './intelligenceService';

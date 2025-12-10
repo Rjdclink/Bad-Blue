@@ -190,5 +190,15 @@
     "action": "GET",
     "tokens": 0,
     "path": "/"
+  },
+  {
+    "timestamp": "2025-12-10T09:55:36.223Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 2
   }
 ]
