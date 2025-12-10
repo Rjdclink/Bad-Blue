@@ -132,8 +132,8 @@ class TripleDipExtractor {
       description: 'Add liquidity just before large swap'
     });
 
-    // Transaction 2: Large swap happens (monitored from mempool)
-    // This is the victim transaction we're extracting value from
+    // Transaction 2: Market swap occurs (detected via mempool monitoring)
+    // This is the target market movement we're providing liquidity for
 
     // Transaction 3: Remove JIT liquidity (capture LP fees)
     bundle.push({
