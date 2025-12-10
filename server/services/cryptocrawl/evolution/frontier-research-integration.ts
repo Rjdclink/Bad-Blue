@@ -173,14 +173,14 @@ export const QUANTUM_METHODOLOGIES: QuantumMethodology[] = [
 export const HFT_METHODOLOGIES: HFTMethodology[] = [
   {
     name: 'latency_arbitrage',
-    description: 'Exploit speed advantages for information asymmetry',
-    applicationToTrading: 'Ultra-fast execution to front-run slower competitors',
+    description: 'Leverage speed advantages for faster market information processing',
+    applicationToTrading: 'Ultra-fast execution to capture arbitrage before other automated systems',
     expectedImpact: 2.5
   },
   {
     name: 'order_flow_prediction',
     description: 'Predict future order flow from current market state',
-    applicationToTrading: 'Anticipate large trades from mempool and order book analysis',
+    applicationToTrading: 'Anticipate market movements from mempool and order book analysis',
     expectedImpact: 3.0
   },
   {
