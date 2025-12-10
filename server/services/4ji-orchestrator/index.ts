@@ -192,3 +192,10 @@ export {
 
 // Re-export AI types for convenience
 export type { AIModelConfig, AICapability } from './forge-ai';
+
+// Master Activation System
+export {
+  MasterActivation,
+  type MasterActivationConfig,
+  type MasterActivationStatus,
+} from './master-activation';
