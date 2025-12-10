@@ -9,7 +9,7 @@
  * - AI model orchestration
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import path from 'path';
 import { promises as fs } from 'fs';
 

@@ -4,7 +4,6 @@ import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { 
   authenticateWithPassword, 
   requireCryptoCrawlAuth,
-  validateSessionToken,
   revokeSession,
   getSessionInfo
 } from '../auth/passwordAuth';

@@ -18,7 +18,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+// Tabs components available for future tab-based consultation features
+// import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
@@ -88,13 +89,13 @@ export default function DomainConsultationPage() {
   const [query, setQuery] = useState('');
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [consultation, setConsultation] = useState<ConsultationResponse | null>(null);
-  const [autosaveEnabled, setAutosaveEnabled] = useState(true);
+  const [autosaveEnabled] = useState(true);
   
   // Get domain info from LAW_TYPE_DATA
   const domainInfo = LAW_TYPE_DATA.find(t => t.id === domainId);
   
   // Fetch domain information from 4JI orchestrator
-  const { data: domainData, isLoading: domainLoading } = useQuery({
+  const { data: domainData } = useQuery({
     queryKey: ['domain', domainId],
     queryFn: async () => {
       const response = await apiRequest(`/api/domains/${domainId}`, 'GET');

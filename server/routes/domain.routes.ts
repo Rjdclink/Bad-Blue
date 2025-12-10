@@ -31,7 +31,6 @@ import {
 } from '../legalCrawler';
 import {
   initializeSelfOptimization,
-  runOptimizationCycle,
   getOptimizationStatus,
   getEvolutionLog,
   triggerOptimization,

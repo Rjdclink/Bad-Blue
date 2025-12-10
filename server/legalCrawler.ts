@@ -18,7 +18,8 @@ import { synchronizeCrawlerUpdate, type CrawlerUpdate } from './fourJIOrchestrat
 
 const DOMAINS_DIR = path.join(process.cwd(), 'domains');
 const CRAWLER_STATE_FILE = path.join(process.cwd(), 'data', 'crawler_state.json');
-const CRAWLER_QUEUE_FILE = path.join(process.cwd(), 'data', 'crawler_queue.json');
+// CRAWLER_QUEUE_FILE reserved for future queue persistence feature
+// const CRAWLER_QUEUE_FILE = path.join(process.cwd(), 'data', 'crawler_queue.json');
 
 export const crawlerEvents = new EventEmitter();
 

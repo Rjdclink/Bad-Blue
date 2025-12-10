@@ -93,7 +93,7 @@ export async function loadKnowledgeBase(): Promise<KnowledgeBase> {
  * Search knowledge base for relevant cases
  */
 export async function searchCases(query: string): Promise<Array<{ id: string; name: string; citation: string; relevance: number }>> {
-  const kb = await loadKnowledgeBase();
+  await loadKnowledgeBase(); // Validates knowledge base availability
   const queryLower = query.toLowerCase();
   
   return kb.cases
@@ -112,7 +112,7 @@ export async function searchCases(query: string): Promise<Array<{ id: string; na
  * Search knowledge base for relevant statutes
  */
 export async function searchStatutes(query: string): Promise<Array<{ id: string; name: string; citation: string; relevance: number }>> {
-  const kb = await loadKnowledgeBase();
+  await loadKnowledgeBase(); // Validates knowledge base availability
   const queryLower = query.toLowerCase();
   
   return kb.statutes
@@ -131,7 +131,7 @@ export async function searchStatutes(query: string): Promise<Array<{ id: string;
  * Get applicable templates for consultation
  */
 export async function getTemplates(): Promise<Array<{ id: string; name: string; description: string }>> {
-  const kb = await loadKnowledgeBase();
+  await loadKnowledgeBase(); // Validates knowledge base availability
   return kb.templates;
 }
 
@@ -139,7 +139,7 @@ export async function getTemplates(): Promise<Array<{ id: string; name: string; 
  * Get domain-specific heuristics
  */
 export async function getHeuristics(): Promise<Record<string, string>> {
-  const kb = await loadKnowledgeBase();
+  await loadKnowledgeBase(); // Validates knowledge base availability
   return kb.heuristics;
 }
 
@@ -160,7 +160,7 @@ function calculateRelevance(query: string, text: string): number {
  * Process a consultation request using domain-specific knowledge
  */
 export async function processConsultation(request: ConsultationRequest): Promise<ConsultationResponse> {
-  const kb = await loadKnowledgeBase();
+  await loadKnowledgeBase(); // Validates knowledge base availability
   
   // Search for relevant cases and statutes
   const relevantCases = await searchCases(request.query);
@@ -202,7 +202,7 @@ export async function processConsultation(request: ConsultationRequest): Promise
  * Update knowledge base with new information from crawler
  */
 export async function updateKnowledgeBase(updates: Partial<KnowledgeBase>): Promise<void> {
-  const kb = await loadKnowledgeBase();
+  await loadKnowledgeBase(); // Validates knowledge base availability
   
   if (updates.cases) {
     // Merge new cases, avoiding duplicates
