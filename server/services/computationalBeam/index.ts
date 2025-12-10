@@ -22,7 +22,6 @@ import { omniAntennaLayer } from './omniAntennaLayer';
 import { directionalBeamLayer } from './directionalBeamLayer';
 import { superBatteryLayer } from './superBatteryLayer';
 import { integrityTestingSystem } from './integrityTesting';
-import { cubicOptimizer } from './cubicOptimizer';
 import { neuralLoadPredictor } from './neuralLoadPredictor';
 import { metricsAnalytics } from './metricsAnalytics';
 
@@ -196,19 +195,17 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
   }
 
   /**
-   * Get comprehensive system status with cubic optimization metrics
+   * Get comprehensive system status
    */
   public getSystemStatus(): SystemStatus {
     this.ensureInitialized();
 
     const routerStatus = workloadRouter.getSystemStatus();
     const integrity = integrityTestingSystem.getIntegrityStatus();
-    const cubicStats = cubicOptimizer.getStats();
 
     // Record system health metrics
     metricsAnalytics.recordMetric('system_health', integrity.overallStability);
     metricsAnalytics.recordMetric('active_nodes', routerStatus.antenna.activeNodes + routerStatus.beam.activeNodes);
-    metricsAnalytics.recordMetric('cubic_performance_gain', cubicStats.performance.improvementFactor);
 
     return {
       initialized: this.initialized,
@@ -338,14 +335,13 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
   }
 
   /**
-   * Run comprehensive diagnostic with cubic optimization analysis
+   * Run comprehensive diagnostic
    */
   public async runDiagnostic(): Promise<any> {
     this.ensureInitialized();
 
     const status = this.getSystemStatus();
     const integrity = await integrityTestingSystem.runIntegrityTests();
-    const cubicStats = cubicOptimizer.getStats();
     const neuralStats = neuralLoadPredictor.getStats();
     const analyticsHealth = metricsAnalytics.getHealthScore();
 
@@ -359,7 +355,6 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
         battery: superBatteryLayer.getOptimizationStats(),
       },
       advanced: {
-        cubicOptimization: cubicStats,
         neuralPrediction: neuralStats,
         analyticsHealth,
         metricsSnapshot: metricsAnalytics.getDashboardData(),
