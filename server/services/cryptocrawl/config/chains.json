@@ -1,6 +1,7 @@
 {
   "polygon": {
     "rpcTemplate": "https://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
+    "wsTemplate": "wss://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
     "chainId": 137,
     "nativeToken": "MATIC",
     "explorer": "https://polygonscan.com",
@@ -27,6 +28,8 @@
     }
   },
   "bsc": {
+    "rpcTemplate": "https://bnb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
+    "wsTemplate": "wss://bnb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
     "rpc": "https://bsc-dataseed1.binance.org",
     "chainId": 56,
     "nativeToken": "BNB",
@@ -39,6 +42,8 @@
     }
   },
   "avalanche": {
+    "rpcTemplate": "https://avax-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
+    "wsTemplate": "wss://avax-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
     "rpc": "https://api.avax.network/ext/bc/C/rpc",
     "chainId": 43114,
     "nativeToken": "AVAX",
@@ -51,6 +56,8 @@
     }
   },
   "arbitrum": {
+    "rpcTemplate": "https://arb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
+    "wsTemplate": "wss://arb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
     "rpc": "https://arb1.arbitrum.io/rpc",
     "chainId": 42161,
     "nativeToken": "ETH",
