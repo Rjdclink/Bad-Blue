@@ -11,6 +11,21 @@
       "fee": 0.0009
     }
   },
+  "polygon-amoy": {
+    "rpcTemplate": "https://polygon-amoy.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
+    "publicRpc": "https://rpc-amoy.polygon.technology/",
+    "chainId": 80002,
+    "nativeToken": "MATIC",
+    "explorer": "https://www.oklink.com/amoy",
+    "faucet": "https://www.alchemy.com/faucets/polygon-amoy",
+    "gasMultiplier": 1.1,
+    "blockTime": 2000,
+    "isTestnet": true,
+    "flashLoan": {
+      "aave": null,
+      "fee": 0.0009
+    }
+  },
   "bsc": {
     "rpc": "https://bsc-dataseed1.binance.org",
     "chainId": 56,
@@ -44,6 +59,21 @@
     "blockTime": 250,
     "flashLoan": {
       "aave": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "fee": 0.0009
+    }
+  },
+  "arbitrum-sepolia": {
+    "rpcTemplate": "https://arb-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
+    "publicRpc": "https://sepolia-rollup.arbitrum.io/rpc",
+    "chainId": 421614,
+    "nativeToken": "ETH",
+    "explorer": "https://sepolia.arbiscan.io/",
+    "faucet": "https://www.alchemy.com/faucets/arbitrum-sepolia",
+    "gasMultiplier": 1.05,
+    "blockTime": 250,
+    "isTestnet": true,
+    "flashLoan": {
+      "aave": null,
       "fee": 0.0009
     }
   },

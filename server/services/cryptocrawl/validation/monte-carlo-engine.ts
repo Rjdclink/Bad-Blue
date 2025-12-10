@@ -10,7 +10,7 @@ import type { ChainId } from '../core/lux-swarm';
 // ============================================
 // MARKET REGIME DETECTION SYSTEM
 // ============================================
-export type MarketRegime = 'trending' | 'ranging' | 'volatile' | 'crisis';
+export type MarketRegime = 'trending' | 'ranging' | 'volatile' | 'crisis' | 'stressed' | 'normal' | 'favorable';
 
 export interface MarketRegimeAnalysis {
   regime: MarketRegime;
@@ -71,9 +71,6 @@ export interface MarketCondition {
   volumeHistory?: number[];       // Recent volume history
   gasHistory?: number[];          // Recent gas price history
 }
-
-// Market regime classification for adaptive behavior
-export type MarketRegime = 'crisis' | 'stressed' | 'normal' | 'favorable';
 
 // Performance level classification
 export type PerformanceLevel = 'good' | 'medium' | 'bad';
@@ -162,7 +159,7 @@ export interface StrategyProfile {
   slippageTolerance: number;
   executionLatency: number;
   // NEW: Enhanced strategy attributes
-  strategyType?: 'arbitrage' | 'mev' | 'liquidity' | 'market_making' | 'black_swan';
+  strategyType?: 'arbitrage' | 'mev' | 'liquidity' | 'market_making' | 'black_swan' | 'hybrid';
   mlFilterEnabled?: boolean;      // Uses ML for trade filtering
   multiChainEnabled?: boolean;    // Cross-chain capability
   mempoolMonitoring?: boolean;    // Monitors mempool for MEV
@@ -235,7 +232,106 @@ export const MARKET_CONDITIONS: Record<string, MarketCondition> = {
     gasVolatility: 1.5,
     competitorDensity: 0.3,
     networkCongestion: 0.9
+  },
+  // ============================================
+  // TESTNET MARKET CONDITIONS
+  // Polygon Amoy (Chain ID: 80002) and Arbitrum Sepolia (Chain ID: 421614)
+  // ============================================
+  
+  // Polygon Amoy Testnet Scenarios
+  polygonAmoyNormal: {
+    volatility: 0.6,
+    liquidityScore: 0.7,
+    gasVolatility: 0.3,
+    competitorDensity: 0.3,
+    networkCongestion: 0.2
+  },
+  polygonAmoyHighVolatility: {
+    volatility: 1.2,
+    liquidityScore: 0.5,
+    gasVolatility: 0.8,
+    competitorDensity: 0.4,
+    networkCongestion: 0.4
+  },
+  polygonAmoyLowActivity: {
+    volatility: 0.3,
+    liquidityScore: 0.9,
+    gasVolatility: 0.1,
+    competitorDensity: 0.1,
+    networkCongestion: 0.1
+  },
+  
+  // Arbitrum Sepolia Testnet Scenarios
+  arbitrumSepoliaNormal: {
+    volatility: 0.5,
+    liquidityScore: 0.8,
+    gasVolatility: 0.2,
+    competitorDensity: 0.4,
+    networkCongestion: 0.15
+  },
+  arbitrumSepoliaHighSpeed: {
+    volatility: 0.4,
+    liquidityScore: 0.85,
+    gasVolatility: 0.1,
+    competitorDensity: 0.5,
+    networkCongestion: 0.1
+  },
+  arbitrumSepoliaStress: {
+    volatility: 0.9,
+    liquidityScore: 0.6,
+    gasVolatility: 0.6,
+    competitorDensity: 0.6,
+    networkCongestion: 0.5
+  },
+  
+  // Cross-Testnet Scenarios
+  crossTestnetArbitrage: {
+    volatility: 0.55,
+    liquidityScore: 0.75,
+    gasVolatility: 0.35,
+    competitorDensity: 0.35,
+    networkCongestion: 0.25
   }
+};
+
+// ============================================
+// ADAPTIVE CONFIGURATION CONSTANTS
+// ============================================
+
+/** Regime thresholds for stress factor classification */
+const REGIME_THRESHOLDS = {
+  CRISIS: 0.8,      // High stress = crisis mode
+  STRESSED: 0.5,    // Medium-high stress = stressed mode
+  NORMAL: 0.3       // Medium stress = normal mode
+};
+
+/** Adaptive floor values for extreme condition handling */
+const ADAPTIVE_FLOORS = {
+  LIQUIDITY_THRESHOLD: 0.2,         // Below this, apply special liquidity handling
+  LIQUIDITY_FLOOR: 0.3,             // Minimum liquidity factor
+  STRESS_FLOOR: 0.35,               // Minimum adjustment factor under stress
+  SUCCESS_FLOOR_RATIO: 0.4,         // Ratio for calculating dynamic success floor
+  ABSOLUTE_MIN_SUCCESS: 0.15        // Absolute minimum success rate
+};
+
+/** Volatility caps to prevent extreme outliers */
+const VOLATILITY_CAPS = {
+  MAX_STRESS_VOLATILITY: 2.0        // Maximum volatility for stress calculation
+};
+
+/** Weights for stress factor calculation */
+const STRESS_WEIGHTS = {
+  LIQUIDITY: 0.3,    // Weight of liquidity in stress calculation
+  COMPETITION: 0.25, // Weight of competition density
+  CONGESTION: 0.2,   // Weight of network congestion
+  VOLATILITY: 0.25   // Weight of volatility
+};
+
+/** Learning rates for different regime conditions */
+const LEARNING_RATES = {
+  SLOW: 0.2,    // Slow learning in crisis
+  MEDIUM: 0.5,  // Medium learning in normal conditions
+  FAST: 0.8     // Fast learning in favorable conditions
 };
 
 // ============================================
@@ -324,8 +420,351 @@ export const ELITE_STRATEGIES: Record<string, StrategyProfile> = {
     mlFilterEnabled: true,
     multiChainEnabled: true,
     mempoolMonitoring: true
+  },
+  
+  // ============================================
+  // TESTNET-OPTIMIZED STRATEGIES
+  // Polygon Amoy (Chain ID: 80002) & Arbitrum Sepolia (Chain ID: 421614)
+  // ============================================
+  
+  // Strategy 6: Polygon Amoy Flash Arbitrage
+  polygonAmoyFlashArb: {
+    name: 'Polygon Amoy Flash Arbitrage',
+    baseSuccessRate: 0.78,
+    avgProfitPerTrade: 0.035,
+    avgLossPerTrade: 0.008,
+    tradesPerDay: 150,
+    gasPerTrade: 0.001,
+    slippageTolerance: 0.003,
+    executionLatency: 20,
+    strategyType: 'arbitrage',
+    mlFilterEnabled: true,
+    multiChainEnabled: false,
+    mempoolMonitoring: true
+  },
+  
+  // Strategy 7: Arbitrum Sepolia L2 Speed
+  arbitrumSepoliaL2Speed: {
+    name: 'Arbitrum Sepolia L2 Speed',
+    baseSuccessRate: 0.82,
+    avgProfitPerTrade: 0.042,
+    avgLossPerTrade: 0.007,
+    tradesPerDay: 200,
+    gasPerTrade: 0.0005,
+    slippageTolerance: 0.002,
+    executionLatency: 10,
+    strategyType: 'arbitrage',
+    mlFilterEnabled: true,
+    multiChainEnabled: false,
+    mempoolMonitoring: true
+  },
+  
+  // Strategy 8: Cross-Testnet Bridge Arbitrage
+  crossTestnetBridgeArb: {
+    name: 'Cross-Testnet Bridge Arbitrage',
+    baseSuccessRate: 0.68,
+    avgProfitPerTrade: 0.08,
+    avgLossPerTrade: 0.02,
+    tradesPerDay: 50,
+    gasPerTrade: 0.005,
+    slippageTolerance: 0.006,
+    executionLatency: 150,
+    strategyType: 'arbitrage',
+    mlFilterEnabled: true,
+    multiChainEnabled: true,
+    mempoolMonitoring: true
+  },
+  
+  // Strategy 9: Testnet MEV Hunter
+  testnetMEVHunter: {
+    name: 'Testnet MEV Hunter',
+    baseSuccessRate: 0.72,
+    avgProfitPerTrade: 0.055,
+    avgLossPerTrade: 0.012,
+    tradesPerDay: 100,
+    gasPerTrade: 0.003,
+    slippageTolerance: 0.004,
+    executionLatency: 15,
+    strategyType: 'mev',
+    mlFilterEnabled: true,
+    multiChainEnabled: false,
+    mempoolMonitoring: true
+  },
+  
+  // Strategy 10: Testnet Market Maker
+  testnetMarketMaker: {
+    name: 'Testnet Market Maker',
+    baseSuccessRate: 0.85,
+    avgProfitPerTrade: 0.02,
+    avgLossPerTrade: 0.004,
+    tradesPerDay: 400,
+    gasPerTrade: 0.0008,
+    slippageTolerance: 0.002,
+    executionLatency: 8,
+    strategyType: 'market_making',
+    mlFilterEnabled: true,
+    multiChainEnabled: false,
+    mempoolMonitoring: true
+  },
+
+  // ============================================
+  // THEORETICAL HIGH-PERFORMANCE STRATEGIES
+  // IMPORTANT DISCLAIMER: These strategies represent THEORETICAL MAXIMUM 
+  // performance scenarios for Monte Carlo simulation purposes only.
+  // Real-world trading will face significant constraints including:
+  // - Exchange rate limits and API throttling
+  // - Network latency and execution delays
+  // - Market impact and liquidity constraints
+  // - Regulatory compliance requirements
+  // - Capital requirements and margin calls
+  // DO NOT use these parameters for actual capital allocation without
+  // extensive backtesting, paper trading, and risk management review.
+  // Actual performance will be significantly lower than projections.
+  // ============================================
+
+  // Strategy 11: Quantum Arbitrage Matrix (Theoretical High Frequency)
+  // THEORETICAL Expected Daily Profit - NOT GUARANTEED
+  // These parameters represent optimal conditions that rarely exist in practice
+  quantumArbitrageMatrix: {
+    name: 'Quantum Arbitrage Matrix',
+    baseSuccessRate: 0.72,           // 72% win rate (realistic for ML-filtered arb)
+    avgProfitPerTrade: 0.018,        // 1.8% per winning trade
+    avgLossPerTrade: 0.008,          // 0.8% loss (tight stops)
+    tradesPerDay: 200,               // High frequency (realistic for co-located)
+    gasPerTrade: 0.0015,             // Optimized batched gas
+    slippageTolerance: 0.002,        // Minimal slippage with MEV protection
+    executionLatency: 10,            // 10ms latency (co-located)
+    strategyType: 'arbitrage',
+    mlFilterEnabled: true,
+    multiChainEnabled: true,
+    mempoolMonitoring: true
+  },
+
+  // Strategy 12: Neural Flash Liquidity Engine
+  // THEORETICAL - requires significant infrastructure investment
+  neuralFlashLiquidityEngine: {
+    name: 'Neural Flash Liquidity Engine',
+    baseSuccessRate: 0.68,           // 68% win rate with neural prediction
+    avgProfitPerTrade: 0.025,        // 2.5% per winning trade
+    avgLossPerTrade: 0.012,          // 1.2% loss with AI stop-loss
+    tradesPerDay: 150,               // Realistic high frequency
+    gasPerTrade: 0.002,              // Flash loan gas optimization
+    slippageTolerance: 0.003,        // Tight slippage
+    executionLatency: 15,            // 15ms neural execution
+    strategyType: 'liquidity',
+    mlFilterEnabled: true,
+    multiChainEnabled: true,
+    mempoolMonitoring: true
+  },
+
+  // Strategy 13: MEV Capture Strategy
+  // THEORETICAL - requires specialized infrastructure
+  hyperDimensionalMEV: {
+    name: 'Hyper-Dimensional MEV Capture',
+    baseSuccessRate: 0.65,           // 65% MEV opportunity capture (realistic)
+    avgProfitPerTrade: 0.035,        // 3.5% per MEV capture
+    avgLossPerTrade: 0.015,          // 1.5% when front-run
+    tradesPerDay: 100,               // Realistic MEV frequency
+    gasPerTrade: 0.008,              // Priority gas for MEV
+    slippageTolerance: 0.005,        // MEV-aware slippage
+    executionLatency: 8,             // 8ms (realistic for MEV)
+    strategyType: 'mev',
+    mlFilterEnabled: true,
+    multiChainEnabled: true,
+    mempoolMonitoring: true
+  },
+
+  // Strategy 14: Yield Optimizer
+  // THEORETICAL - depends on DeFi protocol yields
+  adaptiveYieldOptimizer: {
+    name: 'Adaptive Multi-Protocol Yield Optimizer',
+    baseSuccessRate: 0.78,           // 78% success with yield farming
+    avgProfitPerTrade: 0.012,        // 1.2% per trade (realistic)
+    avgLossPerTrade: 0.006,          // 0.6% IL protection
+    tradesPerDay: 250,               // Realistic rebalancing frequency
+    gasPerTrade: 0.001,              // Minimal gas with batching
+    slippageTolerance: 0.002,        // Tight slippage
+    executionLatency: 20,            // 20ms for multi-protocol
+    strategyType: 'hybrid',
+    mlFilterEnabled: true,
+    multiChainEnabled: true,
+    mempoolMonitoring: true
+  },
+
+  // Strategy 15: Pattern Recognition Strategy
+  // THEORETICAL - requires ML model training
+  recursivePatternAmplifier: {
+    name: 'Recursive Pattern Amplifier',
+    baseSuccessRate: 0.62,           // 62% pattern recognition (realistic)
+    avgProfitPerTrade: 0.028,        // 2.8% on pattern confirmation
+    avgLossPerTrade: 0.014,          // 1.4% on false positives
+    tradesPerDay: 120,               // Realistic pattern frequency
+    gasPerTrade: 0.003,              // Standard gas
+    slippageTolerance: 0.004,        // Moderate slippage
+    executionLatency: 25,            // 25ms pattern execution
+    strategyType: 'hybrid',
+    mlFilterEnabled: true,
+    multiChainEnabled: true,
+    mempoolMonitoring: true
+  },
+
+  // Strategy 16: Cross-Chain Strategy
+  // THEORETICAL - requires multi-chain infrastructure
+  transcendentCrossChainSynthesizer: {
+    name: 'Transcendent Cross-Chain Synthesizer',
+    baseSuccessRate: 0.58,           // 58% cross-chain success (realistic)
+    avgProfitPerTrade: 0.045,        // 4.5% per synthesized trade
+    avgLossPerTrade: 0.022,          // 2.2% with hedged positions
+    tradesPerDay: 80,                // Quality over quantity
+    gasPerTrade: 0.012,              // Multi-chain gas
+    slippageTolerance: 0.008,        // Cross-chain tolerance
+    executionLatency: 100,           // 100ms for synthesis
+    strategyType: 'hybrid',
+    mlFilterEnabled: true,
+    multiChainEnabled: true,
+    mempoolMonitoring: true
+  },
+
+  // Strategy 17: Combined Strategy (Portfolio Approach)
+  // IMPORTANT: $35K/day target requires SIGNIFICANT capital ($500K+)
+  // and optimal market conditions. This is a THEORETICAL maximum.
+  ultimateProfitMaximizer: {
+    name: 'Ultimate Profit Maximizer',
+    baseSuccessRate: 0.70,           // 70% combined success rate
+    avgProfitPerTrade: 0.022,        // 2.2% avg profit (realistic)
+    avgLossPerTrade: 0.010,          // 1.0% loss control
+    tradesPerDay: 180,               // Optimized frequency
+    gasPerTrade: 0.002,              // Gas-optimized execution
+    slippageTolerance: 0.003,        // Moderate slippage
+    executionLatency: 15,            // 15ms latency
+    strategyType: 'hybrid',
+    mlFilterEnabled: true,
+    multiChainEnabled: true,
+    mempoolMonitoring: true
   }
 };
+
+// ============================================
+// DAILY PROFIT CALCULATOR
+// Calculates expected daily profit in USD based on capital
+// ============================================
+export interface DailyProfitProjection {
+  strategyName: string;
+  capitalUSD: number;
+  expectedDailyProfitUSD: number;
+  expectedDailyProfitPercent: number;
+  winRate: number;
+  tradesPerDay: number;
+  riskAdjustedReturn: number;
+  kellyOptimalCapital: number;
+  maxDrawdownUSD: number;
+  profitAfterGas: number;
+  annualizedReturn: number;
+}
+
+export function calculateDailyProfitProjection(
+  strategy: StrategyProfile,
+  capitalUSD: number,
+  gasUSD: number = 5 // Average gas cost per trade in USD
+): DailyProfitProjection {
+  const winRate = strategy.baseSuccessRate;
+  const lossRate = 1 - winRate;
+  
+  // Expected profit per trade
+  const expectedProfitPerTrade = 
+    (winRate * strategy.avgProfitPerTrade) - 
+    (lossRate * strategy.avgLossPerTrade);
+  
+  // Daily profit calculation
+  const grossDailyProfitPercent = expectedProfitPerTrade * strategy.tradesPerDay;
+  const grossDailyProfitUSD = capitalUSD * grossDailyProfitPercent;
+  
+  // Gas costs
+  const dailyGasCost = strategy.tradesPerDay * gasUSD * strategy.gasPerTrade;
+  const profitAfterGas = grossDailyProfitUSD - dailyGasCost;
+  
+  // Risk-adjusted return (Sharpe approximation)
+  const variance = (winRate * Math.pow(strategy.avgProfitPerTrade, 2)) + 
+                   (lossRate * Math.pow(strategy.avgLossPerTrade, 2)) -
+                   Math.pow(expectedProfitPerTrade, 2);
+  const dailyVolatility = Math.sqrt(variance * strategy.tradesPerDay);
+  const riskAdjustedReturn = dailyVolatility > 0 ? grossDailyProfitPercent / dailyVolatility : 0;
+  
+  // Kelly Criterion optimal capital
+  const edge = expectedProfitPerTrade;
+  const odds = strategy.avgProfitPerTrade / strategy.avgLossPerTrade;
+  const kellyFraction = edge > 0 ? (winRate * odds - lossRate) / odds : 0;
+  const kellyOptimalCapital = capitalUSD * Math.max(0, Math.min(kellyFraction, 0.25)); // Cap at 25%
+  
+  // Max drawdown estimate (simplified)
+  const maxDrawdownPercent = lossRate * strategy.avgLossPerTrade * 
+    Math.ceil(Math.log(0.01) / Math.log(lossRate)); // 99% confidence
+  const maxDrawdownUSD = capitalUSD * Math.min(maxDrawdownPercent, 0.3);
+  
+  // Annualized return
+  const annualizedReturn = Math.pow(1 + grossDailyProfitPercent, 365) - 1;
+  
+  return {
+    strategyName: strategy.name,
+    capitalUSD,
+    expectedDailyProfitUSD: profitAfterGas,
+    expectedDailyProfitPercent: grossDailyProfitPercent * 100,
+    winRate: winRate * 100,
+    tradesPerDay: strategy.tradesPerDay,
+    riskAdjustedReturn,
+    kellyOptimalCapital,
+    maxDrawdownUSD,
+    profitAfterGas,
+    annualizedReturn: annualizedReturn * 100
+  };
+}
+
+// Calculate profit for achieving $35K/day target
+export function calculateCapitalFor35KDaily(strategy: StrategyProfile): {
+  requiredCapitalUSD: number;
+  safetyMargin: number;
+  projectedDailyProfit: number;
+  feasibility: 'high' | 'medium' | 'low';
+} {
+  const targetDailyProfit = 35000;
+  const winRate = strategy.baseSuccessRate;
+  const lossRate = 1 - winRate;
+  
+  const expectedProfitPerTrade = 
+    (winRate * strategy.avgProfitPerTrade) - 
+    (lossRate * strategy.avgLossPerTrade);
+  
+  const dailyProfitPercent = expectedProfitPerTrade * strategy.tradesPerDay;
+  
+  // Required capital to achieve $35K/day
+  const requiredCapitalUSD = dailyProfitPercent > 0 
+    ? targetDailyProfit / dailyProfitPercent 
+    : Infinity;
+  
+  // Add 50% safety margin for realistic projections
+  const safeCapitalUSD = requiredCapitalUSD * 1.5;
+  
+  // Projected profit with safety capital
+  const projectedDailyProfit = safeCapitalUSD * dailyProfitPercent;
+  
+  // Assess feasibility with realistic thresholds
+  // Note: Daily returns above 5% are extremely difficult to sustain
+  let feasibility: 'high' | 'medium' | 'low';
+  if (requiredCapitalUSD < 500000 && dailyProfitPercent > 0.05 && dailyProfitPercent <= 0.15) {
+    feasibility = 'high';
+  } else if (requiredCapitalUSD < 1000000 && dailyProfitPercent > 0.02) {
+    feasibility = 'medium';
+  } else {
+    feasibility = 'low';
+  }
+  
+  return {
+    requiredCapitalUSD: safeCapitalUSD,
+    safetyMargin: 0.50,
+    projectedDailyProfit,
+    feasibility
+  };
+}
 
 // ============================================
 // LEARNING HISTORY STORAGE
@@ -1192,10 +1631,10 @@ class MonteCarloEngine {
   // ============================================
   
   /**
-   * Detect market regime based on stress factors
+   * Detect market regime based on stress factors (numeric approach)
    * Uses neural-inspired threshold detection
    */
-  private detectMarketRegime(stressFactor: number): MarketRegime {
+  private detectMarketRegimeFromStress(stressFactor: number): MarketRegime {
     if (stressFactor >= REGIME_THRESHOLDS.CRISIS) return 'crisis';
     if (stressFactor >= REGIME_THRESHOLDS.STRESSED) return 'stressed';
     if (stressFactor >= REGIME_THRESHOLDS.NORMAL) return 'normal';

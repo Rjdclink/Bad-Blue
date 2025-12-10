@@ -360,11 +360,11 @@ export async function runExtremeTests(): Promise<ExtremeTestSummary> {
           maxDrawdown: 0,
           winRate: result.winRate,
           profitFactor: 0,
-          confidenceInterval: [0, 0],
+          confidenceInterval: [0, 0] as [number, number],
           percentiles: { p5: 0, p25: 0, p50: 0, p75: 0, p95: 0 },
           strengthsWeaknesses: [],
           convergenceDiagnostic: 0,
-          strategyRating: result.rating as any,
+          strategyRating: result.rating as 'A' | 'B' | 'C' | 'D' | 'F',
           performanceLevel: 'bad',
           performanceBreakdown: {
             level: 'bad',
@@ -384,6 +384,39 @@ export async function runExtremeTests(): Promise<ExtremeTestSummary> {
             probabilityOfMajorLoss: 1 - result.winRate,
             breakEvenProbability: 0,
           },
+          // Advanced analytics with default values
+          marketRegime: {
+            regime: 'crisis',
+            confidence: 0.5,
+            hurstExponent: 0.5,
+            trendStrength: 0,
+            volatilityPercentile: 50,
+            liquidityCrisis: true,
+            regimeMultipliers: {
+              successMultiplier: 0.6,
+              profitMultiplier: 1.0,
+              positionSizeMultiplier: 0.3,
+              riskMultiplier: 2.0
+            }
+          },
+          kellyCriterion: {
+            fullKellyFraction: 0.05,
+            halfKellyFraction: 0.025,
+            quarterKellyFraction: 0.0125,
+            edge: 0,
+            variance: 0.1,
+            optimalLeverage: 1,
+            maxDrawdownEstimate: 0.5
+          },
+          ensembleConfidence: 0.3,
+          fatTailProbability: 0.2,
+          executionSpeedBonus: 0,
+          learningAdjustments: {
+            historicalSuccessRate: result.winRate,
+            parameterDrift: 0,
+            regimeAccuracy: 0.3,
+            recommendedChanges: ['Improve entry criteria', 'Reduce position sizes']
+          }
         }
       );
     }

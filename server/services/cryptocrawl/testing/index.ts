@@ -23,6 +23,14 @@ export {
   type CapitalFreeDecision,
 } from './cryptocrawler-test-harness';
 
+// Testnet Monte Carlo exports
+export {
+  TestnetMonteCarloRunner,
+  type TestnetMonteCarloConfig,
+  type TestnetScenarioResult,
+  type TestnetTestSummary,
+} from './run-testnet-monte-carlo';
+
 /**
  * Cryptocrawler Automated Test Suite
  * 
@@ -45,7 +53,13 @@ export {
  *    - Risk-adjusted return analysis
  *    - Strategy evolution and learning
  * 
- * 4. **Supabase Persistence**
+ * 4. **Testnet Integration (NEW)**
+ *    - Polygon Amoy (Chain ID: 80002)
+ *    - Arbitrum Sepolia (Chain ID: 421614)
+ *    - Cross-testnet arbitrage scenarios
+ *    - Testnet-optimized strategies
+ * 
+ * 5. **Supabase Persistence**
  *    - All simulation states saved
  *    - Probabilities and outcomes tracked
  *    - Decisions and learned parameters preserved
@@ -66,16 +80,34 @@ export {
  * console.log('Zero-Capital Profit:', result.summary.totalZeroCapitalProfit);
  * ```
  * 
+ * Testnet Monte Carlo Usage:
+ * ```typescript
+ * import { TestnetMonteCarloRunner } from './testing';
+ * 
+ * const runner = new TestnetMonteCarloRunner({
+ *   testnets: ['polygon-amoy', 'arbitrum-sepolia'],
+ *   iterations: 10000,
+ * });
+ * 
+ * const { results, summary } = await runner.runFullTestSuite();
+ * ```
+ * 
  * CLI Usage:
  * ```bash
+ * # Standard tests
  * npx tsx server/services/cryptocrawl/testing/run-tests.ts \
  *   --iterations=1000 \
  *   --levels=ideal,average,poor \
  *   --max-runtime=5
+ * 
+ * # Testnet Monte Carlo tests
+ * npx tsx server/services/cryptocrawl/testing/run-testnet-monte-carlo.ts \
+ *   --testnet=all \
+ *   --iterations=10000
  * ```
  */
 
-export const TESTING_VERSION = '1.0.0';
+export const TESTING_VERSION = '2.0.0';
 export const TESTING_FEATURES = [
   'Zero-capital operation validation',
   'Flash loan integration testing',
@@ -87,4 +119,10 @@ export const TESTING_FEATURES = [
   'Supabase persistence',
   'GitHub Actions integration',
   'Automated execution without manual intervention',
+  // NEW: Testnet features
+  'Polygon Amoy testnet (Chain ID: 80002)',
+  'Arbitrum Sepolia testnet (Chain ID: 421614)',
+  'Cross-testnet arbitrage simulation',
+  'Testnet-optimized strategies',
+  'Multi-scenario market conditions',
 ];
