@@ -108,6 +108,12 @@ describe('4JI Orchestrator', () => {
     expect(orchestrator.optimizeVisuals).toBeDefined();
     expect(orchestrator.getOrchestratorStatus).toBeDefined();
     expect(orchestrator.getAllDomainInfo).toBeDefined();
+    
+    // New neural pathway functions
+    expect(orchestrator.getNeuralPathwayStatus).toBeDefined();
+    expect(orchestrator.performNeuralLegalAnalysis).toBeDefined();
+    expect(orchestrator.performNeuralPatternAnalysis).toBeDefined();
+    expect(orchestrator.shutdownNeuralPathways).toBeDefined();
   });
   
   it('should discover all 30 domains', async () => {
@@ -115,6 +121,14 @@ describe('4JI Orchestrator', () => {
     const domains = await orchestrator.discoverDomains();
     
     expect(domains.length).toBe(EXPECTED_DOMAINS);
+  });
+  
+  it('should return neural pathway status', async () => {
+    const orchestrator = await import('../fourJIOrchestrator');
+    const status = orchestrator.getNeuralPathwayStatus();
+    
+    expect(status).toBeDefined();
+    expect(typeof status.initialized).toBe('boolean');
   });
 });
 

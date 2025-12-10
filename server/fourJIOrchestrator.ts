@@ -9,6 +9,7 @@
  * - Crawler synchronization
  * - Research, drafting, error detection, and visual optimization
  * - Multi-model AI integration
+ * - Bit-level neural pathways (ALEXARA/CRYPTARA dual-brain architecture)
  */
 
 import { promises as fs } from 'fs';
@@ -17,6 +18,12 @@ import { EventEmitter } from 'events';
 
 // Import AI providers for multi-model orchestration
 import { callAIWithFallback, type AIFallbackResult } from './aiSubAgent';
+
+// Import Bit Neural Pathway System
+import { initializeBitNeuralPathways, shutdownBitNeuralPathways, getBitNeuralPathwayManager } from './bitNeuralPathways';
+import { initializeALEXARA, shutdownALEXARA, getALEXARA } from './alexaraModule';
+import { initializeCRYPTARA, shutdownCRYPTARA, getCRYPTARA } from './cryptaraModule';
+import { initializeBeneficialCrawler, shutdownBeneficialCrawler, getBeneficialCrawler } from './beneficialCrawler';
 
 const DOMAINS_DIR = path.join(process.cwd(), 'domains');
 const ORCHESTRATOR_STATE_FILE = path.join(process.cwd(), 'data', 'orchestrator_state.json');
@@ -151,6 +158,19 @@ export async function initializeOrchestrator(): Promise<void> {
       } catch (error: any) {
         console.warn(`[4JI Orchestrator] Failed to pre-load ${domainId}:`, error.message);
       }
+    }
+    
+    // Initialize Bit Neural Pathways System (ALEXARA/CRYPTARA dual-brain)
+    try {
+      console.log('[4JI Orchestrator] Initializing Bit Neural Pathways...');
+      await initializeBitNeuralPathways();
+      await initializeALEXARA();
+      await initializeCRYPTARA();
+      await initializeBeneficialCrawler({ crawlInterval: 60000 }); // 1 minute crawl interval
+      console.log('[4JI Orchestrator] Bit Neural Pathways initialized');
+    } catch (neuralError: any) {
+      console.warn('[4JI Orchestrator] Neural pathways initialization warning:', neuralError.message);
+      // Non-fatal - continue without neural pathways
     }
     
     await saveOrchestratorState();
@@ -672,6 +692,111 @@ async function logError(context: string, error: Error): Promise<void> {
   await saveOrchestratorState();
 }
 
+/**
+ * Get neural pathway system status
+ */
+export function getNeuralPathwayStatus(): {
+  initialized: boolean;
+  pathwayMetrics: any;
+  alexaraMetrics: any;
+  cryptaraMetrics: any;
+  crawlerMetrics: any;
+} {
+  try {
+    const pathwayManager = getBitNeuralPathwayManager();
+    const alexara = getALEXARA();
+    const cryptara = getCRYPTARA();
+    const crawler = getBeneficialCrawler();
+
+    return {
+      initialized: pathwayManager.isInitialized() && alexara.isInitialized() && cryptara.isInitialized(),
+      pathwayMetrics: pathwayManager.isInitialized() ? pathwayManager.getMetrics() : null,
+      alexaraMetrics: alexara.isInitialized() ? alexara.getMetrics() : null,
+      cryptaraMetrics: cryptara.isInitialized() ? cryptara.getMetrics() : null,
+      crawlerMetrics: crawler.isInitialized() ? crawler.getMetrics() : null
+    };
+  } catch {
+    return {
+      initialized: false,
+      pathwayMetrics: null,
+      alexaraMetrics: null,
+      cryptaraMetrics: null,
+      crawlerMetrics: null
+    };
+  }
+}
+
+/**
+ * Perform neural-enhanced legal analysis
+ */
+export async function performNeuralLegalAnalysis(
+  situation: string,
+  lawType: string,
+  jurisdiction: string
+): Promise<any> {
+  try {
+    const alexara = getALEXARA();
+    if (!alexara.isInitialized()) {
+      await initializeALEXARA();
+    }
+    return await alexara.analyzeLegalSituation(situation, lawType, jurisdiction);
+  } catch (error: any) {
+    console.error('[4JI Orchestrator] Neural legal analysis failed:', error.message);
+    return {
+      error: error.message,
+      confidence: 0,
+      causesOfAction: [],
+      defenses: [],
+      requiredElements: [],
+      potentialRemedies: [],
+      precedentPatterns: []
+    };
+  }
+}
+
+/**
+ * Perform neural-enhanced pattern analysis
+ */
+export async function performNeuralPatternAnalysis(
+  data: Record<string, unknown>,
+  category: 'network' | 'transaction' | 'behavioral' | 'temporal'
+): Promise<any> {
+  try {
+    const cryptara = getCRYPTARA();
+    if (!cryptara.isInitialized()) {
+      await initializeCRYPTARA();
+    }
+    return await cryptara.analyzePatterns(data, category);
+  } catch (error: any) {
+    console.error('[4JI Orchestrator] Neural pattern analysis failed:', error.message);
+    return {
+      error: error.message,
+      confidence: 0,
+      detectedPatterns: [],
+      networkNodes: [],
+      predictions: [],
+      riskAssessment: 0,
+      sandboxCompliant: true
+    };
+  }
+}
+
+/**
+ * Shutdown neural pathway system
+ */
+export async function shutdownNeuralPathways(): Promise<void> {
+  console.log('[4JI Orchestrator] Shutting down neural pathways...');
+  try {
+    await shutdownBeneficialCrawler();
+    await shutdownCRYPTARA();
+    await shutdownALEXARA();
+    await shutdownBitNeuralPathways();
+    console.log('[4JI Orchestrator] Neural pathways shutdown complete');
+  } catch (error: any) {
+    console.error('[4JI Orchestrator] Neural pathways shutdown error:', error.message);
+  }
+}
+
 export default {
   initializeOrchestrator,
   discoverDomains,
@@ -687,5 +812,9 @@ export default {
   mergeAIOutputs,
   getOrchestratorStatus,
   getAllDomainInfo,
+  getNeuralPathwayStatus,
+  performNeuralLegalAnalysis,
+  performNeuralPatternAnalysis,
+  shutdownNeuralPathways,
   orchestratorEvents
 };
