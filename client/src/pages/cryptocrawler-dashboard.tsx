@@ -35,7 +35,8 @@ import {
   Lock,
   Loader2,
   Power,
-  StopCircle
+  StopCircle,
+  ArrowLeft
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
@@ -425,12 +426,22 @@ export default function CryptoCrawlerDashboard() {
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
+              {/* Back Button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setLocation('/')}
+                className="text-gray-400 hover:text-white hover:bg-white/10"
+              >
+                <ArrowLeft className="w-4 h-4 mr-1" />
+                Back
+              </Button>
               <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-600">
                 <Coins className="w-8 h-8 text-white" />
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-white">CryptoCrawler</h1>
-                <p className="text-sm text-orange-300">Command Dashboard</p>
+                <p className="text-sm text-orange-300">Zero-Capital Flash Loan Arbitrage</p>
               </div>
             </div>
             <div className="flex items-center gap-4">

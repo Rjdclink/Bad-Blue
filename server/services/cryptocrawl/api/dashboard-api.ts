@@ -1,9 +1,15 @@
 import express from 'express';
 import {WebSocketServer} from 'ws';
 import {pipeline} from '../integration/master-pipeline';
+import { zeroCapitalEngine } from '../core/zero-capital-engine';
 
 const router = express.Router();
 const wss = new WebSocketServer({noServer: true});
+
+// Initialize zero-capital engine on module load
+zeroCapitalEngine.initialize().catch(err => {
+  console.error('[CryptoCrawl] Failed to initialize zero-capital engine:', err);
+});
 
 // In-memory stats (production: use Redis)
 let stats = {
@@ -15,27 +21,37 @@ let stats = {
   lastUpdate: Date.now()
 };
 
-// GET /api/crypto/stats - Real-time statistics
+// GET /api/crypto/stats - Real-time statistics from Zero-Capital Engine
 router.get('/stats', async (req, res) => {
-  const recentResults = await getRecentResults(24); // Last 24h
+  // Get stats from the zero-capital engine
+  const engineStats = zeroCapitalEngine.getStats();
   
   const response = {
     profit: {
-      today: recentResults.profit,
-      thisWeek: await getProfitForPeriod(7),
-      thisMonth: await getProfitForPeriod(30),
-      allTime: stats.totalProfit
+      today: parseFloat(engineStats.totalProfit) || 0,
+      thisWeek: parseFloat(engineStats.totalProfit) || 0,
+      thisMonth: parseFloat(engineStats.totalProfit) || 0,
+      allTime: parseFloat(engineStats.totalProfit) || 0
     },
     trades: {
-      total: stats.totalTrades,
-      successful: stats.successfulTrades,
-      failed: stats.failedTrades,
-      successRate: (stats.successRate * 100).toFixed(1) + '%'
+      total: engineStats.totalTrades,
+      successful: engineStats.successfulTrades,
+      failed: engineStats.failedTrades,
+      successRate: engineStats.successRate
     },
     performance: {
-      avgProfitPerTrade: stats.successfulTrades > 0 ? (stats.totalProfit / stats.successfulTrades).toFixed(2) : '0',
-      bestTrade: await getBestTrade(),
-      lastUpdate: new Date(stats.lastUpdate).toISOString()
+      avgProfitPerTrade: engineStats.successfulTrades > 0 
+        ? (parseFloat(engineStats.totalProfit) / engineStats.successfulTrades).toFixed(4) 
+        : '0',
+      lastUpdate: new Date().toISOString(),
+      capitalRequired: engineStats.capitalRequired, // ZERO
+      gaslessTransactions: engineStats.gaslessTransactions
+    },
+    zeroCapital: {
+      enabled: true,
+      mechanism: 'Flash Loan + MEV Bundle',
+      capitalRequired: 'ZERO',
+      currentOpportunities: engineStats.currentOpportunities
     }
   };
   

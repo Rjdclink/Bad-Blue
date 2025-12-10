@@ -27,7 +27,8 @@ import {
   Power,
   Loader2,
   StopCircle,
-  Sparkles
+  Sparkles,
+  ArrowLeft
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
