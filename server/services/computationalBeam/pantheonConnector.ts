@@ -9,7 +9,7 @@
 
 import { ComputationalBeam } from './index';
 import { WorkloadRouter } from './workloadRouter';
-import { CrawlerStrategy, Task, TaskPriority } from './types';
+import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
 
 const log = createLogger('PantheonBeamConnector');
@@ -109,14 +109,15 @@ export class PantheonBeamConnector {
     });
     
     try {
-      // Map Pantheon operation to crawler strategy
+      // Map Pantheon operation to task type
+      const taskType = this.mapToTaskType(params.operationType);
       const crawlerStrategy = this.mapToCrawlerStrategy(params.operationType);
       
       // Create task for computational beam
       const task: Task = {
         id: `pantheon-${params.operationType}-${Date.now()}`,
-        type: crawlerStrategy,
-        priority: this.mapPriority(params.priority),
+        type: taskType,
+        intensity: TaskIntensity.MODERATE,
         payload: {
           operationType: params.operationType,
           targets: params.targets || [],
@@ -124,9 +125,10 @@ export class PantheonBeamConnector {
           timeout: params.timeout || 30000,
         },
         metadata: {
-          source: 'pantheon',
-          purpose: 'data-processing',
-          timestamp: Date.now(),
+          created: new Date(),
+          priority: this.mapPriority(params.priority),
+          retries: 0,
+          maxRetries: 3,
         },
       };
       
@@ -256,7 +258,27 @@ export class PantheonBeamConnector {
   }
   
   /**
-   * Map Pantheon operation to crawler strategy
+   * Map Pantheon operation to task type
+   */
+  private static mapToTaskType(operationType: PantheonOperationType): TaskType {
+    switch (operationType) {
+      case PantheonOperationType.DATA_COLLECTION:
+        return TaskType.BASIC_PARSING;
+      case PantheonOperationType.ENTITY_ENRICHMENT:
+        return TaskType.ML_PREDICTION;
+      case PantheonOperationType.RELATIONSHIP_MAPPING:
+        return TaskType.MICRO_TRIANGULATION;
+      case PantheonOperationType.DASHBOARD_QUERY:
+        return TaskType.MARKET_AGGREGATION; // Fast queries
+      case PantheonOperationType.BATCH_PROCESSING:
+        return TaskType.MONTE_CARLO; // Efficient batch
+      default:
+        return TaskType.BASIC_PARSING;
+    }
+  }
+
+  /**
+   * Map Pantheon operation to crawler strategy (deprecated - use mapToTaskType)
    */
   private static mapToCrawlerStrategy(operationType: PantheonOperationType): CrawlerStrategy {
     switch (operationType) {
