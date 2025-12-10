@@ -190,7 +190,9 @@ async function fetchWithFallback(url: string, options?: any): Promise<any> {
 export interface AIFallbackResult {
   success: boolean;
   content?: string;
-  provider?: 'gemini' | 'groq' | 'mistral';
+  provider?: 'gemini' | 'groq' | 'mistral' | 'openrouter' | 'anthropic' | 'local';
+  model?: string;
+  tokensUsed?: number;
   error?: string;
   fallbackChain?: string[];
 }
@@ -202,7 +204,7 @@ export interface AIFallbackOptions {
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
-  preferredProvider?: 'gemini' | 'groq' | 'mistral';
+  preferredProvider?: 'gemini' | 'groq' | 'mistral' | 'openrouter' | 'anthropic' | 'local';
   useJSON?: boolean;
   taskName?: string;
 }
