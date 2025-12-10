@@ -9,7 +9,7 @@
 
 import { ComputationalBeam } from './index';
 import { WorkloadRouter } from './workloadRouter';
-import { CrawlerStrategy, Task, TaskPriority } from './types';
+import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
 
 const log = createLogger('PantheonBeamConnector');
@@ -115,8 +115,8 @@ export class PantheonBeamConnector {
       // Create task for computational beam
       const task: Task = {
         id: `pantheon-${params.operationType}-${Date.now()}`,
-        type: crawlerStrategy,
-        priority: this.mapPriority(params.priority),
+        type: TaskType.BASIC_PARSING,
+        intensity: TaskIntensity.MODERATE,
         payload: {
           operationType: params.operationType,
           targets: params.targets || [],
@@ -124,9 +124,10 @@ export class PantheonBeamConnector {
           timeout: params.timeout || 30000,
         },
         metadata: {
-          source: 'pantheon',
-          purpose: 'data-processing',
-          timestamp: Date.now(),
+          created: new Date(),
+          priority: this.mapPriority(params.priority),
+          retries: 0,
+          maxRetries: 3,
         },
       };
       

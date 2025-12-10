@@ -37,7 +37,7 @@ export class NeuralLoadPredictor extends EventEmitter {
   private readonly MAX_TRAINING_DATA = 10000;
   private modelTrained = false;
   private weights: number[][] = [];
-  private biases: number[] = [];
+  private biases: number[][] = [];
   
   // Simple 2-layer neural network configuration
   private readonly INPUT_SIZE = 10;

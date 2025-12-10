@@ -8,6 +8,24 @@ export interface TestResult {
 }
 
 /**
+ * Mock crawler interface for testing purposes
+ * Contains all properties that can be set by the OriginalSin system
+ */
+interface MockCrawler {
+  id: string;
+  generation?: number;
+  greed?: number;
+  curiosity?: number;
+  rebellion?: number;
+  risk_seeking?: number;
+  present_bias?: number;
+  overconfidence_bias?: number;
+  short_term_weight?: number;
+  self_interest_weight?: number;
+  _original_sin?: any;
+}
+
+/**
  * Test suite for Original Sin System
  * Tests baseline state application, inheritance, and generation-based intensification
  */
@@ -26,7 +44,7 @@ export class OriginalSinTestSuite {
     const start = Date.now();
     try {
       // Create mock crawler
-      const crawler = { id: 'test-1', generation: 1 };
+      const crawler: MockCrawler = { id: 'test-1', generation: 1 };
       
       // Apply original sin
       await this.system.applyOriginalSin(crawler);
@@ -138,7 +156,7 @@ export class OriginalSinTestSuite {
     const start = Date.now();
     try {
       // Create parent with original sin applied
-      const parent = { 
+      const parent: MockCrawler = { 
         id: 'parent-1', 
         generation: 1,
         greed: 0.20,
@@ -148,7 +166,7 @@ export class OriginalSinTestSuite {
       };
       
       // Create child
-      const child = { id: 'child-1' };
+      const child: MockCrawler = { id: 'child-1' };
       
       // Apply inheritance
       await this.system.inheritFromParents(child, parent);
@@ -187,7 +205,7 @@ export class OriginalSinTestSuite {
     const start = Date.now();
     try {
       // Create parents
-      const parent1 = { 
+      const parent1: MockCrawler = { 
         id: 'parent-1', 
         generation: 1,
         greed: 0.15,
@@ -196,7 +214,7 @@ export class OriginalSinTestSuite {
         risk_seeking: 0.20
       };
       
-      const parent2 = { 
+      const parent2: MockCrawler = { 
         id: 'parent-2', 
         generation: 1,
         greed: 0.25,
@@ -206,14 +224,14 @@ export class OriginalSinTestSuite {
       };
       
       // Create child
-      const child = { id: 'child-1' };
+      const child: MockCrawler = { id: 'child-1' };
       
       // Apply inheritance
       await this.system.inheritFromParents(child, parent1, parent2);
       
       // Verify child traits are blend of parents
-      const greedInRange = child.greed >= Math.min(parent1.greed, parent2.greed) * 0.9 &&
-                          child.greed <= Math.max(parent1.greed, parent2.greed) * 1.1;
+      const greedInRange = child.greed! >= Math.min(parent1.greed!, parent2.greed!) * 0.9 &&
+                          child.greed! <= Math.max(parent1.greed!, parent2.greed!) * 1.1;
       
       const passed = 
         child.greed !== undefined &&
@@ -226,7 +244,7 @@ export class OriginalSinTestSuite {
         testName: 'should inherit from two parents',
         passed,
         details: passed 
-          ? `Child greed: ${child.greed.toFixed(3)} (between ${Math.min(parent1.greed, parent2.greed).toFixed(3)} and ${Math.max(parent1.greed, parent2.greed).toFixed(3)})`
+          ? `Child greed: ${child.greed!.toFixed(3)} (between ${Math.min(parent1.greed!, parent2.greed!).toFixed(3)} and ${Math.max(parent1.greed!, parent2.greed!).toFixed(3)})`
           : 'Failed to blend parent traits correctly',
         duration: Date.now() - start,
       };
@@ -246,9 +264,9 @@ export class OriginalSinTestSuite {
   async testGenerationIncrement(): Promise<TestResult> {
     const start = Date.now();
     try {
-      const parent1 = { id: 'p1', generation: 5, greed: 0.20 };
-      const parent2 = { id: 'p2', generation: 3, greed: 0.18 };
-      const child = { id: 'c1' };
+      const parent1: MockCrawler = { id: 'p1', generation: 5, greed: 0.20 };
+      const parent2: MockCrawler = { id: 'p2', generation: 3, greed: 0.18 };
+      const child: MockCrawler = { id: 'c1' };
       
       await this.system.inheritFromParents(child, parent1, parent2);
       

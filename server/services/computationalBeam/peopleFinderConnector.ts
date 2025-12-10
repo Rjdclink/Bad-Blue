@@ -9,7 +9,7 @@
 
 import { ComputationalBeam } from './index';
 import { WorkloadRouter } from './workloadRouter';
-import { CrawlerStrategy, Task, TaskPriority } from './types';
+import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
 
 const log = createLogger('PeopleFinderBeamConnector');
@@ -136,8 +136,8 @@ export class PeopleFinderBeamConnector {
       // Create task for computational beam
       const task: Task = {
         id: `people-${params.operationType}-${Date.now()}`,
-        type: crawlerStrategy,
-        priority: this.mapPriority(params.priority),
+        type: TaskType.BASIC_PARSING,
+        intensity: TaskIntensity.MODERATE,
         payload: {
           operationType: params.operationType,
           query: params.query,
@@ -151,9 +151,10 @@ export class PeopleFinderBeamConnector {
           timeout: params.timeout || 10000,
         },
         metadata: {
-          source: 'people-finder',
-          purpose: 'search-optimization',
-          timestamp: Date.now(),
+          created: new Date(),
+          priority: this.mapPriority(params.priority),
+          retries: 0,
+          maxRetries: 3,
         },
       };
       

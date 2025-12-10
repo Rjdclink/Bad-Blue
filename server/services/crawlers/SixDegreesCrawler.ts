@@ -599,6 +599,18 @@ export class SixDegreesCrawler {
     };
   }
 
+  /**
+   * Map connections for a target domain
+   * Alias method for compatibility with PantheonCrawlerOrchestrator
+   */
+  async mapConnections(target: string, depth: number = 2): Promise<{ nodes: Node[]; edges: Edge[] }> {
+    await this.buildGraph(target, depth);
+    return {
+      nodes: Array.from(this.graph.values()),
+      edges: Array.from(this.edges.values()).flat()
+    };
+  }
+
   clearGraph() {
     this.graph.clear();
     this.edges.clear();

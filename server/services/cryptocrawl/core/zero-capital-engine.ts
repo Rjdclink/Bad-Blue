@@ -26,9 +26,9 @@
  * - If any step fails, ENTIRE bundle reverts - zero loss
  */
 
-import { ethers, Contract, Wallet, providers } from 'ethers';
-import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
-import logger from '../../logger.js';
+import { ethers, Contract, Wallet, providers, BigNumber } from 'ethers';
+import { FlashbotsBundleProvider, FlashbotsTransaction, FlashbotsTransactionResponse } from '@flashbots/ethers-provider-bundle';
+import logger from '../../../logger';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -128,8 +128,8 @@ const RPC_ENDPOINTS: Record<SupportedChain, string> = {
   avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
 };
 
-// Minimum profit thresholds (in USD value, converted to wei)
-const MIN_PROFIT_THRESHOLD = ethers.utils.parseEther('0.001'); // $1 minimum after all fees
+// Minimum profit thresholds (in USD value, converted to wei as bigint)
+const MIN_PROFIT_THRESHOLD = BigInt(ethers.utils.parseEther('0.001').toString()); // $1 minimum after all fees
 
 // ============================================================================
 // FLASH LOAN RECEIVER CONTRACT ABI (for encoding callbacks)
@@ -458,7 +458,10 @@ export class AutonomousZeroCapitalEngine {
   ): ZeroCapitalOpportunity | null {
     try {
       const flashLoanAmount = discrepancy.optimalAmount;
-      const grossProfit = (discrepancy.sellPrice - discrepancy.buyPrice) * flashLoanAmount / discrepancy.buyPrice;
+      // Convert prices to bigint if they're numbers
+      const sellPrice = typeof discrepancy.sellPrice === 'bigint' ? discrepancy.sellPrice : BigInt(Math.floor(discrepancy.sellPrice * 1e18));
+      const buyPrice = typeof discrepancy.buyPrice === 'bigint' ? discrepancy.buyPrice : BigInt(Math.floor(discrepancy.buyPrice * 1e18));
+      const grossProfit = (sellPrice - buyPrice) * flashLoanAmount / buyPrice;
       
       // Estimate costs
       const flashLoanFee = flashLoanAmount * BigInt(9) / BigInt(10000); // 0.09% Aave fee
@@ -488,7 +491,7 @@ export class AutonomousZeroCapitalEngine {
             tokenIn: discrepancy.tokenA,
             tokenOut: discrepancy.tokenB,
             amountIn: flashLoanAmount,
-            expectedAmountOut: flashLoanAmount * discrepancy.buyPrice / BigInt(10 ** 18),
+            expectedAmountOut: flashLoanAmount * buyPrice / BigInt(10 ** 18),
             fee: 0.003, // 0.3%
           },
           {
@@ -557,13 +560,13 @@ export class AutonomousZeroCapitalEngine {
       // 4. Repay flash loan + fee
       // 5. Pay miner bribe from remaining profit
       
-      const bundle = [
+      const bundle: FlashbotsTransaction[] = [
         {
           signer: this.authSigner,
           transaction: {
             to: BALANCER_VAULT, // Use Balancer for 0% fee flash loans
             data: flashLoanCalldata,
-            gasLimit: opportunity.gasEstimate,
+            gasLimit: BigNumber.from(opportunity.gasEstimate.toString()),
             maxFeePerGas: ethers.utils.parseUnits('100', 'gwei'),
             maxPriorityFeePerGas: ethers.utils.parseUnits('2', 'gwei'),
             type: 2,

@@ -39,6 +39,27 @@ export interface ResourceMetrics {
   activeWorkers: number;   // Current crawler count
 }
 
+// Result types for crawlers
+export interface TimingJitterResult {
+  jitter: number;
+  variance: number;
+  samples: number[];
+  avgResponseTime: number;
+}
+
+export interface AsyncEchoResult {
+  echoCount: number;
+  echoSignatures: string[];
+  asyncDelay: number;
+}
+
+export interface ExplorationResult {
+  discovered: string[];
+  explored: number;
+  depth: number;
+  branches: number;
+}
+
 /**
  * PANTHEON Core - The Brain
  * Manages crawlers, resources, and entropy field

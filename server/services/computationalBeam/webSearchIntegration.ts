@@ -14,7 +14,7 @@
 import { createLogger } from '../../logger';
 import { enforceStoragySafety } from './safetyRules';
 import { ComputationalBeam } from './index';
-import { CrawlerStrategy, Task, TaskPriority } from './types';
+import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 
 const log = createLogger('WebSearchCrawlerIntegration');
 
@@ -193,17 +193,18 @@ export class WebSearchCrawlerIntegration {
       // Create crawler task for search
       const task: Task = {
         id: `search-${source}-${Date.now()}`,
-        type: CrawlerStrategy.MOMENTUM, // Use momentum strategy for searches
-        priority: TaskPriority.MEDIUM,
+        type: TaskType.MOMENTUM_STRATEGY,
+        intensity: TaskIntensity.MODERATE,
         payload: {
           searchQuery: query,
           source,
           maxResults: 10,
         },
         metadata: {
-          source: 'web-search-integration',
-          purpose: 'web-search-optimization',
-          timestamp: Date.now(),
+          created: new Date(),
+          priority: TaskPriority.NORMAL,
+          retries: 0,
+          maxRetries: 3,
         },
       };
       

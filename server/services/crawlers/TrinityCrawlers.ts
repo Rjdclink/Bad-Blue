@@ -239,6 +239,7 @@ export class CerberusCrawler {
       try { return await this.attack(target); }
       catch (error) { if (i === maxRetries - 1) throw error; await this.regenerateHead('hydra'); await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); }
     }
+    throw new Error('Max retries exceeded');
   }
   async regenerateHead(head: 'ice' | 'hydra' | 'zombie'): Promise<void> {
     if (head === 'ice') this.leftHead = new IceHead(this.underworldVault);

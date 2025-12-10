@@ -42,12 +42,12 @@ async function executeRequest(url: string, options: RequestOptions): Promise<Res
 }
 
 // Parse HTML results
-function parseResults(html: string): Data {
+function parseResults(html: string, target?: string): Data {
   return {
     content: html.replace(/<[^>]*>/g, ' ').substring(0, 2000),
     confidence: 0.8,
     timestamp: Date.now(),
-    target: ""
+    target: target || ""
   };
 }
 
@@ -434,6 +434,31 @@ export class StarTrekCrawler {
       this.primeDirective = false;
       await this.setPhaserSetting(originalSetting);
       this.primeDirective = originalPrimeDirective;
+    }
+  }
+
+  /**
+   * Warp to target URL and scan
+   * Alias method for compatibility with PantheonCrawlerOrchestrator
+   */
+  async warpTo(target: string): Promise<Data & { warpFactor: number }> {
+    await this.waitForRateLimit();
+    
+    try {
+      const data = await this.firePhaser(target);
+      return {
+        ...data,
+        warpFactor: this.warpSpeed
+      };
+    } catch (error) {
+      return {
+        content: '',
+        confidence: 0,
+        timestamp: Date.now(),
+        target,
+        warpFactor: this.warpSpeed,
+        metadata: { error: 'Warp failed' }
+      };
     }
   }
 

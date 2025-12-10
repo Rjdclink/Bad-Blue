@@ -9,7 +9,7 @@
 
 import { ComputationalBeam } from './index';
 import { WorkloadRouter } from './workloadRouter';
-import { CrawlerStrategy, Task, TaskPriority } from './types';
+import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
 import { 
   SAFETY_RULES, 
@@ -172,8 +172,8 @@ export class CryptoBeamConnector {
       // Create task for computational beam
       const task: Task = {
         id: `crypto-${params.strategyType}-${Date.now()}`,
-        type: crawlerStrategy,
-        priority: TaskPriority.HIGH, // Crypto strategies are high priority
+        type: TaskType.ARBITRAGE_SCAN,
+        intensity: TaskIntensity.HEAVY,
         payload: {
           strategyType: params.strategyType,
           symbols: params.symbols || ['BTC/USD', 'ETH/USD'],
@@ -184,9 +184,10 @@ export class CryptoBeamConnector {
           chains: params.chains || ['ethereum', 'bsc', 'polygon'],
         },
         metadata: {
-          source: 'cryptocrawler',
-          purpose: 'admin-financial-gain',
-          timestamp: Date.now(),
+          created: new Date(),
+          priority: TaskPriority.HIGH,
+          retries: 0,
+          maxRetries: 3,
         },
       };
       

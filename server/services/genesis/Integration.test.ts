@@ -16,6 +16,21 @@ export interface TestResult {
 }
 
 /**
+ * Mock crawler interface for testing purposes
+ */
+interface MockCrawler {
+  id: string;
+  generation?: number;
+  state?: string;
+  last_action_result?: string;
+  greed?: number;
+  curiosity?: number;
+  patience?: number;
+  wisdom?: number;
+  _original_sin?: any;
+}
+
+/**
  * Integration test suite for Genesis Core
  */
 export class GenesisIntegrationTestSuite {
@@ -28,7 +43,7 @@ export class GenesisIntegrationTestSuite {
     const start = Date.now();
     try {
       const orchestrator = new GenesisOrchestrator();
-      const crawler = {
+      const crawler: MockCrawler = {
         id: 'test-1',
         generation: 1,
         state: 'idle'
@@ -46,7 +61,7 @@ export class GenesisIntegrationTestSuite {
         testName: 'should apply original sin through orchestrator',
         passed,
         details: passed 
-          ? `Original sin applied, greed: ${crawler.greed.toFixed(3)}`
+          ? `Original sin applied, greed: ${crawler.greed!.toFixed(3)}`
           : 'Original sin not applied',
         duration: Date.now() - start,
       };
