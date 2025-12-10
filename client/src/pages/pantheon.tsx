@@ -73,11 +73,6 @@ export default function PantheonPage() {
         searchDepth: config.searchDepth,
       });
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Search failed');
-      }
-      
       const data = await response.json();
       setResults(data);
       

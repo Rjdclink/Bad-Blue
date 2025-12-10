@@ -1,6 +1,9 @@
 node_modules
 dist
+build
+.cache
 *.log
+npm-debug.log*
 .env
 .env.local
 .env.*.local
@@ -13,3 +16,11 @@ coverage
 !README.md
 .DS_Store
 Thumbs.db
+.nyc_output
+.next
+.nuxt
+*.tgz
+*.tar.gz
+.dockerignore
+Dockerfile*
+docker-compose*

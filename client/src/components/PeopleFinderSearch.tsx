@@ -91,10 +91,6 @@ export default function PeopleFinderSearch({ onBack }: PeopleFinderSearchProps) 
   const searchMutation = useMutation({
     mutationFn: async (searchData: { name: string; location?: string; department?: string; domain?: string }) => {
       const response = await apiRequest("/api/osint/full-search", "POST", searchData);
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Search failed");
-      }
       return response.json();
     },
     onSuccess: (data: PeopleSearchReport) => {
