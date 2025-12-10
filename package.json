@@ -171,7 +171,7 @@
     "@types/express": "4.17.21",
     "@types/express-session": "^1.18.0",
     "@types/fast-levenshtein": "^0.0.4",
-    "@types/node": "^20.19.25",
+    "@types/node": "^20.19.26",
     "@types/passport": "^1.0.16",
     "@types/passport-local": "^1.0.38",
     "@types/react": "^18.3.11",
@@ -185,7 +185,7 @@
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.6",
     "typescript": "5.6.3",
-    "vite": "^6.3.5"
+    "vite": "^6.4.1"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.5.0",
