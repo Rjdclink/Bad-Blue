@@ -262,7 +262,7 @@ export function setupFMIRoutes(app: Express): void {
 
         const analysis = await analyzeFMIEvidence(
           fmiFile,
-          lawType as LawType,
+          lawType as any, // Law types may vary between modules
           state,
           caseContext
         );

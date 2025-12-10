@@ -3674,7 +3674,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     const userIds = allUsers.map(u => u.id);
     
     // Batch fetch all counts in parallel with single queries per table
-    const [complaintsAgg, lawsuitsAgg, petitionsAgg, foiaAgg, authAccountsAgg, subscriptionsAgg] = await Promise.all([
+    const [complaintsAgg, lawsuitsAgg, petitionsAgg, foiaAgg, authAccountsAgg] = await Promise.all([
       db.select({ 
         userId: schema.complaints.userId, 
         count: sql<number>`count(*)::int` 
@@ -3710,7 +3710,6 @@ Contact: ${foiaRequest.userEmail || userEmail}
         .from(schema.authAccounts)
         .where(inArray(schema.authAccounts.userId, userIds))
         .groupBy(schema.authAccounts.userId),
-      // Removed legalizoSubscriptions references
     ]);
     
     // Build lookup maps for O(1) access

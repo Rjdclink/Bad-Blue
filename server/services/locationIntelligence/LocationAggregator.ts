@@ -19,6 +19,9 @@ interface LocationPoint {
   metadata?: Record<string, unknown>;
 }
 
+// Export LocationPoint for use in routes
+export type { LocationPoint };
+
 interface ClusteredLocation {
   latitude: number;
   longitude: number;

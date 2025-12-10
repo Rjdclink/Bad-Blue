@@ -232,42 +232,24 @@ export async function autoScrapeFOIAPortal(agencyFOIAUrl: string): Promise<{
   try {
     console.log('[FOIA] Auto-scraping FOIA portal with adaptive crawler:', agencyFOIAUrl);
 
+    // Import zod for schema definition
+    const { z } = await import('zod');
+
     // Define schema for FOIA contact extraction
+    const foiaContactZodSchema = z.object({
+      name: z.string().describe('Full name of the FOIA officer or contact person'),
+      title: z.string().optional().describe('Job title (e.g., FOIA Officer, Records Custodian)'),
+      email: z.string().optional().describe('Email address for FOIA requests'),
+      phone: z.string().optional().describe('Phone number'),
+      department: z.string().optional().describe('Department or division'),
+      address: z.string().optional().describe('Mailing address'),
+    });
+
     const FOIA_CONTACT_SCHEMA = {
       name: 'foia_contact',
       description: 'Extract FOIA officer contact information from agency websites',
-      fields: {
-        name: {
-          type: 'string' as const,
-          description: 'Full name of the FOIA officer or contact person',
-          required: true,
-        },
-        title: {
-          type: 'string' as const,
-          description: 'Job title (e.g., FOIA Officer, Records Custodian)',
-          required: false,
-        },
-        email: {
-          type: 'string' as const,
-          description: 'Email address for FOIA requests',
-          required: false,
-        },
-        phone: {
-          type: 'string' as const,
-          description: 'Phone number',
-          required: false,
-        },
-        department: {
-          type: 'string' as const,
-          description: 'Department or division',
-          required: false,
-        },
-        address: {
-          type: 'string' as const,
-          description: 'Mailing address',
-          required: false,
-        },
-      },
+      schema: foiaContactZodSchema,
+      extractionPrompt: 'Extract FOIA officer contact information including name, title, email, phone, department, and address from the webpage content.',
     };
 
     // Use adaptive crawler to find FOIA contacts
