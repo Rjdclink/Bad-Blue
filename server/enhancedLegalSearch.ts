@@ -16,6 +16,8 @@
 
 import {
   deepSeekSearch,
+  llamaSearch,
+  qwenSearch,
   grokSearch,
   kimiSearch,
   isOpenRouterAvailable,
