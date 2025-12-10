@@ -61,7 +61,7 @@ export interface PantheonOperationResult {
  */
 export class PantheonBeamConnector {
   private static initialized = false;
-  private static computationalBeam: typeof ComputationalBeam;
+  private static computationalBeam: typeof computationalBeam;
   private static workloadRouter: WorkloadRouter;
   
   /**
@@ -78,7 +78,7 @@ export class PantheonBeamConnector {
     // Initialize computational beam (no credentials required)
     await computationalBeam.initialize();
     
-    this.computationalBeam = ComputationalBeam;
+    this.computationalBeam = computationalBeam;
     this.workloadRouter = new WorkloadRouter();
     
     this.initialized = true;

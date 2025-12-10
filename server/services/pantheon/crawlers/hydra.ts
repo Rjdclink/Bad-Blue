@@ -132,7 +132,11 @@ class HydraHead {
         links: links.slice(0, 10), // Limit for efficiency
         nextTarget: this.selectNextTarget(links),
         statusCode: response.status,
-        contentLength: html.length
+        contentLength: html.length,
+        discovered: links,
+        explored: 1,
+        depth: 1,
+        branches: links.length
       };
     } catch (error) {
       this.alive = false;
@@ -141,7 +145,11 @@ class HydraHead {
         richness: 0,
         nextTarget: '',
         error: true,
-        errorType: error instanceof Error ? error.message : 'unknown'
+        errorType: error instanceof Error ? error.message : 'unknown',
+        discovered: [],
+        explored: 0,
+        depth: 0,
+        branches: 0
       };
     } finally {
       clearTimeout(timeoutId);

@@ -273,10 +273,10 @@ export class PantheonCrawlerOrchestrator {
       this.cerberus = new CerberusCrawler(this.phylactery, this.stealth);
       this.lich = new LichCrawler(this.phylactery, this.stealth);
       
-      // Initialize Specialized Crawlers
-      this.startrek = new StarTrekCrawler(this.phylactery, this.stealth);
-      this.birdofprey = new BirdOfPreyCrawler(this.phylactery, this.stealth);
-      this.sixdegrees = new SixDegreesCrawler(this.phylactery, this.stealth);
+      // Initialize Specialized Crawlers (no constructor arguments needed)
+      this.startrek = new StarTrekCrawler();
+      this.birdofprey = new BirdOfPreyCrawler(this.stealth, this.phylactery);
+      this.sixdegrees = new SixDegreesCrawler(this.stealth, this.phylactery);
       
       this.initialized = true;
       console.log('[PANTHEON] All crawler systems initialized');

@@ -145,7 +145,7 @@ export class IceCrawler extends BaseCrawler {
       
       $(form).find('input, select, textarea').each((j, field) => {
         const name = $(field).attr('name');
-        const type = $(field).attr('type') || $(field).prop('tagName').toLowerCase();
+        const type = $(field).attr('type') || $(field).prop('tagName')?.toLowerCase() || 'text';
         const required = $(field).attr('required') !== undefined;
         const placeholder = $(field).attr('placeholder');
         

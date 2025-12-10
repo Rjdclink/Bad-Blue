@@ -54,7 +54,7 @@ export interface AggregatedSearchResults {
 export class WebSearchCrawlerIntegration {
   private static instance: WebSearchCrawlerIntegration;
   private searchCache: Map<string, { results: SearchResult[]; timestamp: number }> = new Map();
-  private computationalBeam: typeof ComputationalBeam;
+  private computationalBeam: typeof computationalBeam;
   
   // Optimization settings
   private readonly CACHE_TTL_MS = 300000; // 5 minutes
@@ -65,7 +65,7 @@ export class WebSearchCrawlerIntegration {
     // Enforce safety rules
     enforceStoragySafety('web-search-crawler-integration');
     
-    this.computationalBeam = ComputationalBeam;
+    this.computationalBeam = computationalBeam;
     
     log.info('✅ Web Search Crawler Integration initialized');
     log.info('   Purpose: Optimize web search using crawler infrastructure');
