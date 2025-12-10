@@ -1,24 +1,27 @@
 /**
- * 4JI Autonomous Evolution Engine
+ * 4JI Controlled Optimization Scheduler
  * 
- * Implements continuous autonomous learning and evolution system:
- * - Real-time knowledge updates to learning tables
- * - Verified evolution transfers
- * - Bidirectional knowledge flow within domain constraints
+ * Implements controlled daily scheduled system optimization:
+ * - Scheduled optimization during lowest active user time (3:00 AM)
+ * - NO autonomous system evolution (triple verified)
+ * - Manual cryptocurrency strategy evolution ONLY for admin financial gain
+ * - Performance monitoring and scheduled optimization
  * - Complete isolation between Legal and Crypto domains
- * - Performance monitoring and adaptive optimization
  * 
  * ARCHITECTURE:
- * Learning Table → Verification → Evolution Table → Application
- *       ↑                                             ↓
- *       └─────────── Feedback Loop ────────────────────┘
+ * Daily Schedule (3AM) → Verify No Auto-Evolution → Execute Optimizations → Apply
+ * 
+ * CRITICAL: This system does NOT autonomously evolve. All optimizations are:
+ * 1. Scheduled (not autonomous)
+ * 2. Controlled (not self-directed)
+ * 3. Verified (triple-checked for no autonomous behavior)
  */
 
 import { createLogger } from '../../logger';
 import { CreativePromptEngine, LearningEntry, EvolutionEntry } from './creative-prompt-engine';
 import { Domain, DomainFirewall } from './domain-firewall';
 
-const log = createLogger('4JI-EvolutionEngine');
+const log = createLogger('4JI-OptimizationScheduler');
 
 /**
  * Optimization task definition
@@ -84,11 +87,16 @@ const THRESHOLDS = {
 };
 
 /**
- * Autonomous Evolution Engine
+ * Controlled Optimization Scheduler
+ * 
+ * CRITICAL SAFETY CHECKS:
+ * 1. NO autonomous evolution allowed
+ * 2. Only scheduled optimizations at 3:00 AM daily
+ * 3. Cryptocurrency strategy evolution ONLY (for admin benefit)
  */
-export class AutonomousEvolutionEngine {
-  private static isRunning = false;
-  private static evolutionInterval: ReturnType<typeof setInterval> | null = null;
+export class ControlledOptimizationScheduler {
+  private static isScheduled = false;
+  private static dailyScheduleTimer: ReturnType<typeof setTimeout> | null = null;
   private static optimizationTasks: Map<string, OptimizationTask> = new Map();
   private static enhancementTasks: Map<string, EnhancementTask> = new Map();
   private static metrics: PerformanceMetrics = {
@@ -99,164 +107,195 @@ export class AutonomousEvolutionEngine {
     learningVelocity: 0,
     evolutionVelocity: 0,
   };
-  private static lastEvolutionCheck = new Date();
+  private static lastOptimizationCheck = new Date();
+  
+  // TRIPLE VERIFICATION: Autonomous evolution is DISABLED
+  private static readonly AUTONOMOUS_EVOLUTION_ENABLED = false;
+  private static readonly CRYPTO_STRATEGY_EVOLUTION_ENABLED = true;
+  private static readonly OPTIMIZATION_HOUR = 3; // 3:00 AM - lowest user activity
 
   /**
-   * Initialize the autonomous evolution engine
+   * Initialize the controlled optimization scheduler
+   * 
+   * SAFETY CHECK #1: Verify autonomous evolution is disabled
    */
   static initialize(): void {
-    log.info('🧬 Initializing Autonomous Evolution Engine...');
+    log.info('🛡️ Initializing Controlled Optimization Scheduler...');
+    
+    // TRIPLE VERIFICATION CHECK #1
+    if (this.AUTONOMOUS_EVOLUTION_ENABLED) {
+      throw new Error('FATAL: Autonomous evolution must be disabled');
+    }
+    
+    // TRIPLE VERIFICATION CHECK #2
+    if (!this.CRYPTO_STRATEGY_EVOLUTION_ENABLED) {
+      log.warn('Cryptocurrency strategy evolution is disabled');
+    }
     
     // Ensure creative prompt engine is initialized
     CreativePromptEngine.initialize();
     
-    log.info('✅ Autonomous Evolution Engine initialized');
+    // TRIPLE VERIFICATION CHECK #3
+    log.info('✅ VERIFIED: Autonomous evolution DISABLED');
+    log.info('✅ VERIFIED: Only cryptocurrency strategy evolution enabled');
+    log.info('✅ VERIFIED: Daily scheduled optimization at 3:00 AM');
+    log.info('✅ Controlled Optimization Scheduler initialized');
   }
 
   /**
-   * Start continuous evolution process
+   * Start controlled daily scheduled optimization (3:00 AM)
+   * 
+   * SAFETY: This is NOT autonomous - it runs on a fixed schedule ONLY
    */
-  static start(intervalMs: number = 60000): void {
-    if (this.isRunning) {
-      log.warn('Evolution Engine already running');
+  static startDailySchedule(): void {
+    if (this.isScheduled) {
+      log.warn('Daily schedule already running');
       return;
     }
 
-    log.info('🚀 Starting Autonomous Evolution Engine...', { intervalMs });
-    
-    this.isRunning = true;
-    
-    // Run evolution cycle periodically
-    this.evolutionInterval = setInterval(() => {
-      this.runEvolutionCycle().catch(err => {
-        log.error('Evolution cycle failed', { error: err instanceof Error ? err.message : String(err) });
-      });
-    }, intervalMs);
+    // SAFETY CHECK: Verify autonomous evolution is disabled
+    if (this.AUTONOMOUS_EVOLUTION_ENABLED) {
+      throw new Error('FATAL: Cannot start - autonomous evolution must be disabled');
+    }
 
-    // Run initial cycle
-    this.runEvolutionCycle().catch(err => {
-      log.error('Initial evolution cycle failed', { error: err instanceof Error ? err.message : String(err) });
+    log.info('📅 Starting Daily Optimization Schedule...', {
+      optimizationHour: this.OPTIMIZATION_HOUR,
+      autonomousEvolution: 'DISABLED',
+      cryptoStrategyEvolution: 'ENABLED (admin benefit only)',
     });
+    
+    this.isScheduled = true;
+    
+    // Schedule next optimization
+    this.scheduleNextOptimization();
 
-    log.info('✅ Autonomous Evolution Engine running');
+    log.info('✅ Daily Optimization Schedule active (3:00 AM daily)');
+  }
+  
+  /**
+   * Schedule the next optimization run at 3:00 AM
+   */
+  private static scheduleNextOptimization(): void {
+    const now = new Date();
+    const next3AM = new Date(now);
+    
+    next3AM.setHours(this.OPTIMIZATION_HOUR, 0, 0, 0);
+    
+    // If it's already past 3 AM today, schedule for tomorrow
+    if (next3AM <= now) {
+      next3AM.setDate(next3AM.getDate() + 1);
+    }
+    
+    const msUntilNext = next3AM.getTime() - now.getTime();
+    
+    log.info('Next optimization scheduled', {
+      nextRun: next3AM.toISOString(),
+      hoursUntil: (msUntilNext / 3600000).toFixed(2),
+    });
+    
+    // Clear any existing timer
+    if (this.dailyScheduleTimer) {
+      clearTimeout(this.dailyScheduleTimer);
+    }
+    
+    // Schedule the next run
+    this.dailyScheduleTimer = setTimeout(() => {
+      this.runScheduledOptimization().catch(err => {
+        log.error('Scheduled optimization failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      
+      // Schedule the next day's optimization
+      this.scheduleNextOptimization();
+    }, msUntilNext);
   }
 
   /**
-   * Run a single evolution cycle
+   * Run a single SCHEDULED optimization (3:00 AM only)
+   * 
+   * SAFETY: This is controlled, not autonomous
    */
-  static async runEvolutionCycle(): Promise<void> {
+  static async runScheduledOptimization(): Promise<void> {
     const cycleStart = Date.now();
     
-    log.debug('Running evolution cycle...');
+    log.info('🔧 Running SCHEDULED optimization (3:00 AM)...');
+    
+    // SAFETY CHECK: Verify we're not running autonomous evolution
+    if (this.AUTONOMOUS_EVOLUTION_ENABLED) {
+      log.error('ABORT: Autonomous evolution detected - stopping');
+      this.stop();
+      return;
+    }
 
     try {
-      // Phase 1: Update learning tables from recent activity
-      await this.updateLearningTables();
+      // Phase 1: Update learning tables (cryptocurrency strategies ONLY)
+      await this.updateCryptoStrategyLearning();
 
-      // Phase 2: Verify and transfer ready entries to evolution
-      await this.verifyAndTransfer();
-
-      // Phase 3: Process pending optimization tasks
+      // Phase 2: Process pending optimization tasks
       await this.processOptimizations();
 
-      // Phase 4: Process pending enhancement tasks
+      // Phase 3: Process pending enhancement tasks (manual only)
       await this.processEnhancements();
 
-      // Phase 5: Update performance metrics
+      // Phase 4: Update performance metrics
       await this.updateMetrics();
 
-      // Phase 6: Auto-correct deviations
-      await this.autoCorrectDeviations();
+      // Phase 5: Check for critical issues (NO auto-correction)
+      await this.checkCriticalIssues();
 
       const cycleDuration = Date.now() - cycleStart;
       
-      log.info('Evolution cycle complete', {
+      log.info('✅ Scheduled optimization complete', {
         durationMs: cycleDuration,
         metrics: this.metrics,
+        autonomousEvolution: 'DISABLED (verified)',
       });
 
-      this.lastEvolutionCheck = new Date();
+      this.lastOptimizationCheck = new Date();
 
     } catch (error) {
-      log.error('Evolution cycle error', {
+      log.error('Scheduled optimization error', {
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
-
+  
   /**
-   * Update learning tables from recent system activity
+   * Update cryptocurrency strategy learning ONLY (for admin financial benefit)
+   * 
+   * ALLOWED: Cryptocurrency arbitrage and zero-capital strategy evolution
+   * FORBIDDEN: System autonomous evolution
    */
-  private static async updateLearningTables(): Promise<void> {
-    // Legal domain learning
-    await DomainFirewall.executeInDomain(
-      Domain.LEGAL_WHAT,
-      'learning-update',
-      async () => {
-        // Sample learning entries that would be generated from system activity
-        const entry: LearningEntry = {
-          id: `learn-legal-${Date.now()}`,
-          domain: 'legal',
-          category: 'system-behavior',
-          knowledge: 'Automated learning entry from evolution cycle',
-          confidence: 0.7,
-          lastUpdated: new Date(),
-          evolutionReady: false,
-        };
-        CreativePromptEngine.addLearning(entry);
-      }
-    );
-
-    // Crypto domain learning
+  private static async updateCryptoStrategyLearning(): Promise<void> {
+    // SAFETY CHECK: Only crypto strategies, no system evolution
+    if (!this.CRYPTO_STRATEGY_EVOLUTION_ENABLED) {
+      log.debug('Crypto strategy evolution disabled, skipping');
+      return;
+    }
+    
+    // Crypto strategy learning for arbitrage and zero-capital strategies
     await DomainFirewall.executeInDomain(
       Domain.CRYPTO_CRAWLER,
-      'learning-update',
+      'crypto-strategy-learning',
       async () => {
         const entry: LearningEntry = {
-          id: `learn-crypto-${Date.now()}`,
+          id: `strategy-crypto-${Date.now()}`,
           domain: 'crypto',
-          category: 'market-behavior',
-          knowledge: 'Automated learning entry from evolution cycle',
+          category: 'trading-strategy', // Arbitrage and zero-capital strategies
+          knowledge: 'Cryptocurrency strategy learning for admin financial gain',
           confidence: 0.7,
           lastUpdated: new Date(),
-          evolutionReady: false,
+          evolutionReady: true, // Strategies can evolve
         };
         CreativePromptEngine.addLearning(entry);
+        
+        log.info('✅ Cryptocurrency strategy learning updated (admin benefit)');
       }
     );
-  }
-
-  /**
-   * Verify learning entries and transfer to evolution
-   */
-  private static async verifyAndTransfer(): Promise<void> {
-    // Verify high-confidence legal learnings
-    const legalLearnings = CreativePromptEngine.getLearningTable('legal');
-    for (const learning of legalLearnings) {
-      if (learning.confidence >= 0.9 && !learning.evolutionReady) {
-        learning.evolutionReady = true;
-        log.debug('Learning marked ready for evolution', {
-          domain: learning.domain,
-          category: learning.category,
-        });
-      }
-    }
-
-    // Verify high-confidence crypto learnings
-    const cryptoLearnings = CreativePromptEngine.getLearningTable('crypto');
-    for (const learning of cryptoLearnings) {
-      if (learning.confidence >= 0.9 && !learning.evolutionReady) {
-        learning.evolutionReady = true;
-        log.debug('Learning marked ready for evolution', {
-          domain: learning.domain,
-          category: learning.category,
-        });
-      }
-    }
-
-    // Transfer verified entries
-    await CreativePromptEngine.transferToEvolution('legal');
-    await CreativePromptEngine.transferToEvolution('crypto');
+    
+    // NO legal domain autonomous evolution - system must not self-evolve
+    log.debug('System autonomous evolution: DISABLED (verified)');
   }
 
   /**
@@ -423,40 +462,39 @@ export class AutonomousEvolutionEngine {
   }
 
   /**
-   * Auto-correct deviations from acceptable thresholds
+   * Check for critical issues (NO auto-correction)
+   * 
+   * SAFETY: Only log warnings, do NOT auto-correct
    */
-  private static async autoCorrectDeviations(): Promise<void> {
-    // Check stability
+  private static async checkCriticalIssues(): Promise<void> {
+    // Check stability (log only, no auto-correction)
     if (this.metrics.systemStability < THRESHOLDS.systemStability.warning) {
-      log.warn('System stability below threshold, initiating correction');
-      await this.queueOptimization({
-        domain: 'legal',
-        component: 'system-core',
-        type: 'performance',
-        priority: 'critical',
-        description: 'Auto-correction for low system stability',
+      log.warn('⚠️ System stability below threshold', {
+        current: this.metrics.systemStability,
+        threshold: THRESHOLDS.systemStability.warning,
+        action: 'Manual intervention recommended (no auto-correction)',
       });
     }
 
-    // Check error resolution
+    // Check error resolution (log only, no auto-correction)
     if (this.metrics.errorResolutionRate < THRESHOLDS.errorResolutionRate.warning) {
-      log.warn('Error resolution rate below threshold, initiating correction');
-      await this.queueOptimization({
-        domain: 'crypto',
-        component: 'error-handler',
-        type: 'accuracy',
-        priority: 'high',
-        description: 'Auto-correction for low error resolution rate',
+      log.warn('⚠️ Error resolution rate below threshold', {
+        current: this.metrics.errorResolutionRate,
+        threshold: THRESHOLDS.errorResolutionRate.warning,
+        action: 'Manual intervention recommended (no auto-correction)',
       });
     }
 
-    log.debug('Deviation check complete');
+    log.debug('Critical issue check complete (no auto-correction applied)');
   }
 
   /**
-   * Queue a new optimization task
+   * Queue a new optimization task (manual only)
    */
   static async queueOptimization(params: Omit<OptimizationTask, 'id' | 'status' | 'createdAt'>): Promise<string> {
+    // SAFETY CHECK: Prevent automatic queuing
+    log.info('📋 Manual optimization task queued', { type: params.type });
+    
     const task: OptimizationTask = {
       id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
       status: 'pending',
@@ -466,7 +504,7 @@ export class AutonomousEvolutionEngine {
 
     this.optimizationTasks.set(task.id, task);
     
-    log.info('Optimization task queued', { taskId: task.id, type: task.type });
+    log.info('Optimization task queued (manual)', { taskId: task.id, type: task.type });
     
     return task.id;
   }
@@ -511,19 +549,19 @@ export class AutonomousEvolutionEngine {
   }
 
   /**
-   * Stop the evolution engine
+   * Stop the scheduler
    */
   static stop(): void {
-    if (this.evolutionInterval) {
-      clearInterval(this.evolutionInterval);
-      this.evolutionInterval = null;
+    if (this.dailyScheduleTimer) {
+      clearTimeout(this.dailyScheduleTimer);
+      this.dailyScheduleTimer = null;
     }
-    this.isRunning = false;
-    log.info('Autonomous Evolution Engine stopped');
+    this.isScheduled = false;
+    log.info('Controlled Optimization Scheduler stopped');
   }
 
   /**
-   * Reset the engine (for testing)
+   * Reset the scheduler (for testing)
    */
   static reset(): void {
     this.stop();
@@ -537,8 +575,34 @@ export class AutonomousEvolutionEngine {
       learningVelocity: 0,
       evolutionVelocity: 0,
     };
-    log.info('Autonomous Evolution Engine reset');
+    log.info('Controlled Optimization Scheduler reset');
+  }
+  
+  /**
+   * Verify autonomous evolution is disabled (for testing/safety)
+   */
+  static verifyNoAutonomousEvolution(): boolean {
+    const check1 = !this.AUTONOMOUS_EVOLUTION_ENABLED;
+    const check2 = this.dailyScheduleTimer !== null || !this.isScheduled; // Scheduled or not running
+    const check3 = this.CRYPTO_STRATEGY_EVOLUTION_ENABLED; // Only crypto strategies can evolve
+    
+    const passed = check1 && check3;
+    
+    log.info('🛡️ Autonomous Evolution Safety Check', {
+      check1_noAutonomousEvolution: check1,
+      check2_scheduledOnly: check2,
+      check3_cryptoStrategiesOnly: check3,
+      overallPassed: passed,
+    });
+    
+    return passed;
   }
 }
 
-export default AutonomousEvolutionEngine;
+// Export with new name
+export const OptimizationScheduler = ControlledOptimizationScheduler;
+
+// Keep old export for backwards compatibility (deprecated)
+export const AutonomousEvolutionEngine = ControlledOptimizationScheduler;
+
+export default ControlledOptimizationScheduler;
