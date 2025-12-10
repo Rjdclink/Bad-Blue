@@ -493,12 +493,16 @@ export class CRYPTARAModule extends EventEmitter {
       const nodeId = `node-${neuronId}`;
 
       if (!this.networkNodes.has(nodeId)) {
+        // Calculate deterministic risk score based on neuron ID hash
+        const riskSeed = this.simpleHash(neuronId);
+        const initialRiskScore = (riskSeed % 100) / 200; // 0 to 0.5 range
+
         const node: NetworkNode = {
           id: nodeId,
           type: 'entity',
           connections: [],
           weight: result.confidence,
-          riskScore: Math.random() * 0.5 // Initial risk score
+          riskScore: initialRiskScore
         };
         this.networkNodes.set(nodeId, node);
       }

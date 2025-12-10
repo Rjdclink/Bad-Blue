@@ -33,6 +33,7 @@ const ERROR_THRESHOLD = 5;
 const EFFICIENCY_THRESHOLD = 0.7;
 const MAX_REPAIR_ATTEMPTS = 3;
 const CONFLICT_RESOLUTION_TIMEOUT = 5000;
+const STALE_PATHWAY_THRESHOLD = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -289,8 +290,7 @@ export class BeneficialCrawler extends EventEmitter {
     // Check for stale pathways
     if (pathwayInfo.lastUsed) {
       const staleness = Date.now() - pathwayInfo.lastUsed;
-      if (staleness > 24 * 60 * 60 * 1000) {
-        // 24 hours
+      if (staleness > STALE_PATHWAY_THRESHOLD) {
         issues.push(
           this.createIssue(
             pathwayId,
