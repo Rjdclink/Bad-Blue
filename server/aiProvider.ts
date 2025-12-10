@@ -485,13 +485,13 @@ export async function searchOfficerData(
  * - OPENROUTER: Valid free models (Qwen, DeepSeek, Llama)
  */
 function getProviderModel(provider: AIProvider, requestedModel?: string, complexity?: TaskComplexity): string {
-  const validModels: Record<AIProvider, { 
+  const validModels: Partial<Record<AIProvider, { 
     prefixes: string[]; 
     lite?: string; 
     default: string; 
     pro?: string;
     comprehensive?: string;
-  }> = {
+  }>> = {
     [AIProvider.GEMINI]: {
       prefixes: ['gemini'],
       lite: 'gemini-3-flash',             // FREE: Fast inference, high throughput

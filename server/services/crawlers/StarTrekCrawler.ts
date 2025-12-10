@@ -298,7 +298,8 @@ export class StarTrekCrawler {
       });
       
       const html = await response.text();
-      const data = parseResults(html, target);
+      const data = parseResults(html);
+      data.target = target;
       data.metadata = {
         phaserSetting: this.phaserSetting,
         warpSpeed: this.warpSpeed,
@@ -316,6 +317,17 @@ export class StarTrekCrawler {
         metadata: { error: 'Phaser missed target' }
       };
     }
+  }
+
+  /**
+   * Warp to target (alias for firePhaser with warp metadata)
+   */
+  async warpTo(target: string): Promise<Data> {
+    const data = await this.firePhaser(target);
+    if (data.metadata) {
+      data.metadata.warpFactor = this.warpSpeed;
+    }
+    return data;
   }
 
   /**

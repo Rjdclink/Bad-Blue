@@ -31,11 +31,11 @@ export const OPENROUTER_MODELS = {
   KIMI: 'moonshotai/kimi-k2-0905',
 } as const;
 
-// Service type - base OpenRouter models
-export type OpenRouterModel = 'qwen' | 'deepseek' | 'llama';
+// Service type - all OpenRouter models (free + paid)
+export type OpenRouterModel = 'qwen' | 'deepseek' | 'llama' | 'grok' | 'kimi';
 
-// Extended model type including aliases
-export type ExtendedSearchModel = OpenRouterModel | 'grok' | 'kimi';
+// Extended model type including aliases (same as OpenRouterModel now)
+export type ExtendedSearchModel = OpenRouterModel;
 
 // Rate limit configuration (50 requests per day per model)
 const DAILY_REQUEST_LIMIT = 50;

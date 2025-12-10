@@ -93,19 +93,20 @@ export class SemanticLegalExtractor {
       // Step 1: Retrieve HTML using Shadow Retrieval
       log.debug('Retrieving HTML', { url });
       const retrievalResult = await this.shadowRetrieval.smartRetrieve(url, {
-        waitForContent: true,
-        extractLinks: false,
+        extraction: {
+          includeLinks: false,
+        },
       });
 
-      if (!retrievalResult.success || !retrievalResult.html) {
+      if (!retrievalResult.success || !retrievalResult.data?.html) {
         throw new Error(`Failed to retrieve content: ${retrievalResult.error}`);
       }
 
       // Step 2: Filter content (remove noise)
-      let processedHtml = retrievalResult.html;
+      let processedHtml = retrievalResult.data.html;
       if (!skipFiltering) {
         log.debug('Filtering content', { schemaName: schema.name });
-        processedHtml = await contentFilter.filterContent(retrievalResult.html);
+        processedHtml = await contentFilter.filterContent(retrievalResult.data.html);
       }
 
       // Step 3: Convert to markdown
@@ -157,7 +158,7 @@ export class SemanticLegalExtractor {
         schemaName: schema.name,
         success: result.success,
         confidence: result.confidence,
-        processingTime: result.metadata.processingTime,
+        processingTime: result.metadata?.processingTime,
       });
 
       return result;
@@ -231,7 +232,7 @@ Return JSON format:
         );
 
         // Parse JSON response
-        const parsed = safeJsonParse(response.content);
+        const parsed = safeJsonParse(response.content, 'LLM extraction response');
         
         if (!parsed || typeof parsed !== 'object') {
           throw new Error('Invalid JSON response from LLM');

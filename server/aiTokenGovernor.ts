@@ -589,7 +589,7 @@ class AITokenGovernorEnhanced {
     }
 
     // Base capability multipliers by provider and complexity
-    const capability: Record<AIProvider, Record<TaskComplexity, number>> = {
+    const capability: Partial<Record<AIProvider, Record<TaskComplexity, number>>> = {
       // AUTONOMOUS providers
       [AIProvider.GROQ]: {
         [TaskComplexity.LIGHTWEIGHT]: 1.05,
@@ -743,7 +743,7 @@ class AITokenGovernorEnhanced {
     quotaStatus: QuotaStatus
   ): Promise<Array<{ provider: AIProvider; maxTokens: number; proportion?: number }>> {
     // Build list of available providers based on context
-    const availability: Record<AIProvider, boolean> = {
+    const availability: Partial<Record<AIProvider, boolean>> = {
       // AUTONOMOUS providers
       [AIProvider.GROQ]: this.isProviderAvailable(AIProvider.GROQ), // No quota check - unlimited for autonomous
       [AIProvider.MISTRAL]: this.isProviderAvailable(AIProvider.MISTRAL) && quotaStatus.mistral.percentUsed < 99,

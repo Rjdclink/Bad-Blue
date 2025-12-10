@@ -96,7 +96,7 @@ export async function crawlAndSnapshot(request: CrawlRequest): Promise<CrawlResu
       await snapshotEngine.createSnapshot(url, scraped.content, {
         statusCode: scraped.statusCode,
         headers: scraped.headers,
-        contentType: scraped.headers || 'text/html',
+        contentType: scraped.headers['content-type'] || 'text/html',
       });
       console.log(`[IceEngine] Snapshot created (changed: ${diff.changed})`);
     } else {

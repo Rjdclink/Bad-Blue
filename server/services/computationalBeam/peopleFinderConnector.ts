@@ -9,7 +9,7 @@
 
 import { ComputationalBeam } from './index';
 import { WorkloadRouter } from './workloadRouter';
-import { CrawlerStrategy, Task, TaskPriority } from './types';
+import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
 
 const log = createLogger('PeopleFinderBeamConnector');
@@ -130,14 +130,15 @@ export class PeopleFinderBeamConnector {
     });
     
     try {
-      // Map operation to crawler strategy
+      // Map operation to task type
+      const taskType = this.mapToTaskType(params.operationType);
       const crawlerStrategy = this.mapToCrawlerStrategy(params.operationType);
       
       // Create task for computational beam
       const task: Task = {
         id: `people-${params.operationType}-${Date.now()}`,
-        type: crawlerStrategy,
-        priority: this.mapPriority(params.priority),
+        type: taskType,
+        intensity: TaskIntensity.MODERATE,
         payload: {
           operationType: params.operationType,
           query: params.query,
@@ -151,9 +152,10 @@ export class PeopleFinderBeamConnector {
           timeout: params.timeout || 10000,
         },
         metadata: {
-          source: 'people-finder',
-          purpose: 'search-optimization',
-          timestamp: Date.now(),
+          created: new Date(),
+          priority: this.mapPriority(params.priority),
+          retries: 0,
+          maxRetries: 3,
         },
       };
       
@@ -281,7 +283,27 @@ export class PeopleFinderBeamConnector {
   }
   
   /**
-   * Map operation to crawler strategy
+   * Map operation to task type
+   */
+  private static mapToTaskType(operationType: PeopleFinderOperationType): TaskType {
+    switch (operationType) {
+      case PeopleFinderOperationType.PERSON_SEARCH:
+        return TaskType.BASIC_PARSING; // Fast search
+      case PeopleFinderOperationType.ADVANCED_SEARCH:
+        return TaskType.ML_PREDICTION; // Complex queries
+      case PeopleFinderOperationType.DASHBOARD_LOAD:
+        return TaskType.MARKET_AGGREGATION; // Fast loading
+      case PeopleFinderOperationType.BATCH_LOOKUP:
+        return TaskType.MONTE_CARLO; // Efficient batch
+      case PeopleFinderOperationType.RELATIONSHIP_TRACE:
+        return TaskType.MICRO_TRIANGULATION; // Relationship mapping
+      default:
+        return TaskType.BASIC_PARSING;
+    }
+  }
+
+  /**
+   * Map operation to crawler strategy (deprecated - use mapToTaskType)
    */
   private static mapToCrawlerStrategy(operationType: PeopleFinderOperationType): CrawlerStrategy {
     switch (operationType) {

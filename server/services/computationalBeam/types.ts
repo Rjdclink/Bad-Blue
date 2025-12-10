@@ -57,6 +57,14 @@ export enum TaskIntensity {
   EXTREME = 'extreme',
 }
 
+export enum TaskPriority {
+  CRITICAL = 100,
+  HIGH = 80,
+  MEDIUM = 50,
+  LOW = 30,
+  LOWEST = 10,
+}
+
 export interface Task {
   id: string;
   type: TaskType;

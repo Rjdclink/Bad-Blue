@@ -40,7 +40,7 @@ export class EmailDiscoveryService {
 
       // Use unified search (combines Bing and Gemini)
       const searchResults = await unifiedSearch(searchQuery, {
-        maxResults: 10,
+        limit: 10,
       });
 
       // Extract emails from snippets and URLs

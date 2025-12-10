@@ -316,17 +316,23 @@ Be precise and accurate. Consider the task complexity and what AI capabilities a
         try {
           const parsed = this.extractJSON(result.content);
           
+          // Type-safe access to parsed properties
+          const category = typeof parsed.category === 'string' ? parsed.category : 'general';
+          const executionMode = typeof parsed.executionMode === 'string' ? parsed.executionMode : 'subagent';
+          const priority = typeof parsed.priority === 'string' ? parsed.priority : 'medium';
+          const complexity = typeof parsed.complexity === 'string' ? parsed.complexity : 'moderate';
+          
           return {
             originalPrompt: prompt,
-            category: this.mapCategory(parsed.category),
-            executionMode: this.mapExecutionMode(parsed.executionMode),
-            priority: this.mapPriority(parsed.priority),
-            complexity: this.mapComplexity(parsed.complexity),
+            category: this.mapCategory(category),
+            executionMode: this.mapExecutionMode(executionMode),
+            priority: this.mapPriority(priority),
+            complexity: this.mapComplexity(complexity),
             subtasks: [],
-            requiresVerification: parsed.requiresVerification ?? true,
-            estimatedTokens: parsed.estimatedTokens || DEFAULT_ESTIMATED_TOKENS,
-            confidence: parsed.confidence || 0.7,
-            intent: parsed.intent || 'Execute user directive',
+            requiresVerification: typeof parsed.requiresVerification === 'boolean' ? parsed.requiresVerification : true,
+            estimatedTokens: typeof parsed.estimatedTokens === 'number' ? parsed.estimatedTokens : DEFAULT_ESTIMATED_TOKENS,
+            confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.7,
+            intent: typeof parsed.intent === 'string' ? parsed.intent : 'Execute user directive',
           };
         } catch (jsonError: any) {
           logger.warn('[MCC] JSON parsing failed, using heuristic parsing:', jsonError.message);
@@ -748,10 +754,10 @@ Respond with JSON:
       if (validationResult.success && validationResult.content) {
         const parsed = this.extractJSON(validationResult.content);
         return {
-          validated: parsed.consistent ?? true,
-          confidenceScore: parsed.confidenceScore ?? 0.8,
-          discrepancies: parsed.discrepancies ?? [],
-          consensus: parsed.consensus ?? 'Results validated',
+          validated: typeof parsed.consistent === 'boolean' ? parsed.consistent : true,
+          confidenceScore: typeof parsed.confidenceScore === 'number' ? parsed.confidenceScore : 0.8,
+          discrepancies: Array.isArray(parsed.discrepancies) ? parsed.discrepancies : [],
+          consensus: typeof parsed.consensus === 'string' ? parsed.consensus : 'Results validated',
         };
       }
     } catch (error: any) {

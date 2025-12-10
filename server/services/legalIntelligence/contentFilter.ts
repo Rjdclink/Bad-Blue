@@ -151,7 +151,7 @@ export class ContentFilter {
           text,
           wordCount,
           score: 0,
-          tag: element.tagName || 'div',
+          tag: ('tagName' in element && typeof element.tagName === 'string') ? element.tagName : 'div',
           hasLegalTerms,
         });
 

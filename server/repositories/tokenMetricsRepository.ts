@@ -8,12 +8,12 @@ import { db } from '../db';
 import { aiUsageMetrics, type InsertAiUsageMetric, type AiUsageMetric } from '../../shared/schema';
 import { eq, and, gte, sql } from 'drizzle-orm';
 
-// Provider type - supports all 7 providers
-export type AIProviderName = 'gemini' | 'groq' | 'mistral' | 'claude' | 'deepseek' | 'grok' | 'kimi';
+// Provider type - supports all providers from AIProvider enum
+export type AIProviderName = string; // Accepts any AIProvider enum value
 
 export interface UsageRecord {
   taskName?: string;
-  provider: AIProviderName;
+  provider: string; // Changed from AIProviderName to accept any provider
   model?: string;
   tokensUsed: number;
   latencyMs?: number | null;
