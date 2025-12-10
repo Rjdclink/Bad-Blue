@@ -25,8 +25,11 @@ export const OPENROUTER_MODELS = {
   LLAMA: 'meta-llama/llama-3.3-70b-instruct:free',
 } as const;
 
-// Service type
+// Service type - base OpenRouter models
 export type OpenRouterModel = 'qwen' | 'deepseek' | 'llama';
+
+// Extended model type including aliases
+export type ExtendedSearchModel = OpenRouterModel | 'grok' | 'kimi';
 
 // Rate limit configuration (50 requests per day per model)
 const DAILY_REQUEST_LIMIT = 50;
@@ -75,7 +78,7 @@ export function isOpenRouterAvailable(): boolean {
 /**
  * Get the status of all OpenRouter services
  */
-export function getOpenRouterStatus(): Record<string, { available: boolean; requestsRemaining: number; error?: string }> {
+export function getOpenRouterStatus(): Record<ExtendedSearchModel, { available: boolean; requestsRemaining: number; error?: string }> {
   return {
     qwen: {
       available: isOpenRouterAvailable() && !isCircuitOpen('qwen') && getRemainingRequests('qwen') > 0,
@@ -193,7 +196,7 @@ export interface OpenRouterSearchResult {
   title: string;
   content: string;
   sources: string[];
-  model: OpenRouterModel;
+  model: ExtendedSearchModel;
   confidence?: number;
   reasoning?: string;
 }
