@@ -2,6 +2,7 @@
 // Aggregates public data from multiple sources for comprehensive background reports
 // Utilizes PANTHEON crawler orchestrator for maximum intelligence gathering
 
+import { logger } from './logger';
 import { entityResolver } from './services/entityResolver';
 import { enhancedWebSearch } from './webSearchService';
 import { spiderfootClient } from './services/spiderfootClient';

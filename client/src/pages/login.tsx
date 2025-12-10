@@ -191,14 +191,13 @@ export default function Login() {
               <TabsContent value="login">
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="login-email">Email</Label>
+                    <Label htmlFor="login-email">Email (optional)</Label>
                     <Input
                       id="login-email"
-                      type="email"
-                      placeholder="your@email.com"
+                      type="text"
+                      placeholder="Email address (optional)"
                       value={loginEmail}
                       onChange={(e) => setLoginEmail(e.target.value)}
-                      required
                       disabled={isLoading}
                     />
                   </div>

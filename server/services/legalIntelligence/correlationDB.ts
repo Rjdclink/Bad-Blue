@@ -2,19 +2,75 @@
  * Correlation Database
  * SQLite-based storage for entity correlation data
  * SpiderFoot storage pattern
+ * 
+ * Note: better-sqlite3 is an optional dependency. If not available,
+ * this module will operate in memory-only mode with limited persistence.
  */
 
-import Database from 'better-sqlite3';
 import { join } from 'path';
 import { createLogger } from '../../logger';
 import type { EntityNode, EntityEdge, IntelligenceEvent, DBEntity, DBRelationship, DBCorrelationEvent } from './types';
 
 const logger = createLogger('CorrelationDB');
 
+// Type for better-sqlite3 Database instance (when available)
+type BetterSqliteDatabase = {
+  pragma(statement: string): unknown;
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...params: unknown[]): unknown;
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+  };
+  transaction<T>(fn: () => T): () => T;
+  close(): void;
+};
+
+// Dynamic import for optional better-sqlite3
+let DatabaseConstructor: (new (path: string) => BetterSqliteDatabase) | null = null;
+let betterSqliteAvailable = false;
+
+async function loadBetterSqlite(): Promise<boolean> {
+  if (DatabaseConstructor !== null) return betterSqliteAvailable;
+  
+  try {
+    const module = await import('better-sqlite3');
+    DatabaseConstructor = module.default;
+    betterSqliteAvailable = true;
+    logger.info('better-sqlite3 loaded successfully');
+    return true;
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorCode = (error as NodeJS.ErrnoException).code;
+    
+    if (errorCode === 'ERR_MODULE_NOT_FOUND' || errorCode === 'MODULE_NOT_FOUND') {
+      logger.info('better-sqlite3 not installed (optional dependency), using in-memory fallback');
+    } else {
+      logger.warn('better-sqlite3 failed to load, using in-memory fallback:', errorMessage);
+    }
+    
+    betterSqliteAvailable = false;
+    return false;
+  }
+}
+
+// In-memory fallback storage
+interface InMemoryStore {
+  entities: Map<string, EntityNode>;
+  relationships: Map<string, EntityEdge>;
+  events: IntelligenceEvent[];
+}
+
 export class CorrelationDatabase {
-  private db: Database.Database | null = null;
+  private db: BetterSqliteDatabase | null = null;
   private dbPath: string;
   private initialized = false;
+  private useMemoryFallback = false;
+  private memoryStore: InMemoryStore = {
+    entities: new Map(),
+    relationships: new Map(),
+    events: [],
+  };
 
   constructor(dbPath?: string) {
     this.dbPath = dbPath || join(process.cwd(), 'data', 'correlation.db');
@@ -26,8 +82,19 @@ export class CorrelationDatabase {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
+    // Try to load better-sqlite3
+    const sqliteAvailable = await loadBetterSqlite();
+    
+    if (!sqliteAvailable || !DatabaseConstructor) {
+      // Use in-memory fallback
+      this.useMemoryFallback = true;
+      this.initialized = true;
+      logger.info('Correlation database initialized in memory-only mode');
+      return;
+    }
+
     try {
-      this.db = new Database(this.dbPath);
+      this.db = new DatabaseConstructor(this.dbPath);
       
       // Enable WAL mode for better concurrency
       this.db.pragma('journal_mode = WAL');
@@ -36,8 +103,9 @@ export class CorrelationDatabase {
       this.initialized = true;
       logger.info('Correlation database initialized:', this.dbPath);
     } catch (error) {
-      logger.error('Failed to initialize correlation database:', error);
-      throw error;
+      logger.error('Failed to initialize correlation database, falling back to memory:', error);
+      this.useMemoryFallback = true;
+      this.initialized = true;
     }
   }
 
@@ -97,6 +165,11 @@ export class CorrelationDatabase {
    * Add entity to database
    */
   addEntity(entity: EntityNode): void {
+    if (this.useMemoryFallback) {
+      this.memoryStore.entities.set(entity.id, entity);
+      return;
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
 
     const stmt = this.db.prepare(`
@@ -116,6 +189,10 @@ export class CorrelationDatabase {
    * Get entity by ID
    */
   getEntity(id: string): EntityNode | null {
+    if (this.useMemoryFallback) {
+      return this.memoryStore.entities.get(id) || null;
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
 
     const stmt = this.db.prepare('SELECT * FROM entities WHERE id = ?');
@@ -138,6 +215,12 @@ export class CorrelationDatabase {
    * Find entities by type
    */
   findEntitiesByType(type: string): EntityNode[] {
+    if (this.useMemoryFallback) {
+      return Array.from(this.memoryStore.entities.values())
+        .filter(e => e.type === type)
+        .sort((a, b) => b.confidence - a.confidence);
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
 
     const stmt = this.db.prepare('SELECT * FROM entities WHERE type = ? ORDER BY confidence DESC');
@@ -158,6 +241,11 @@ export class CorrelationDatabase {
    * Add relationship to database
    */
   addRelationship(edge: EntityEdge): void {
+    if (this.useMemoryFallback) {
+      this.memoryStore.relationships.set(edge.id, edge);
+      return;
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
 
     const stmt = this.db.prepare(`
@@ -181,6 +269,11 @@ export class CorrelationDatabase {
    * Get relationships for an entity
    */
   getRelationships(entityId: string): EntityEdge[] {
+    if (this.useMemoryFallback) {
+      return Array.from(this.memoryStore.relationships.values())
+        .filter(r => r.sourceId === entityId || r.targetId === entityId);
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
 
     const stmt = this.db.prepare(`
@@ -206,6 +299,14 @@ export class CorrelationDatabase {
    * Find relationships between two entities
    */
   findRelationshipsBetween(sourceId: string, targetId: string): EntityEdge[] {
+    if (this.useMemoryFallback) {
+      return Array.from(this.memoryStore.relationships.values())
+        .filter(r => 
+          (r.sourceId === sourceId && r.targetId === targetId) ||
+          (r.sourceId === targetId && r.targetId === sourceId)
+        );
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
 
     const stmt = this.db.prepare(`
@@ -232,6 +333,11 @@ export class CorrelationDatabase {
    * Log correlation event
    */
   logEvent(event: IntelligenceEvent): void {
+    if (this.useMemoryFallback) {
+      this.memoryStore.events.push(event);
+      return;
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
 
     const stmt = this.db.prepare(`
@@ -252,6 +358,12 @@ export class CorrelationDatabase {
    * Get events for an entity
    */
   getEvents(entityId: string): IntelligenceEvent[] {
+    if (this.useMemoryFallback) {
+      return this.memoryStore.events
+        .filter(e => e.entityId === entityId)
+        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
 
     const stmt = this.db.prepare(`
@@ -277,6 +389,11 @@ export class CorrelationDatabase {
    * Execute transaction
    */
   transaction<T>(fn: () => T): T {
+    if (this.useMemoryFallback) {
+      // In memory mode, just execute the function directly
+      return fn();
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
     
     const transaction = this.db.transaction(fn);
@@ -287,6 +404,15 @@ export class CorrelationDatabase {
    * Close database connection
    */
   close(): void {
+    if (this.useMemoryFallback) {
+      this.memoryStore.entities.clear();
+      this.memoryStore.relationships.clear();
+      this.memoryStore.events = [];
+      this.initialized = false;
+      logger.info('Correlation database (memory) closed');
+      return;
+    }
+    
     if (this.db) {
       this.db.close();
       this.db = null;
@@ -299,6 +425,14 @@ export class CorrelationDatabase {
    * Get database statistics
    */
   getStats(): { entities: number; relationships: number; events: number } {
+    if (this.useMemoryFallback) {
+      return {
+        entities: this.memoryStore.entities.size,
+        relationships: this.memoryStore.relationships.size,
+        events: this.memoryStore.events.length,
+      };
+    }
+    
     if (!this.db) throw new Error('Database not initialized');
 
     const entities = this.db.prepare('SELECT COUNT(*) as count FROM entities').get() as { count: number };
@@ -310,6 +444,13 @@ export class CorrelationDatabase {
       relationships: relationships.count,
       events: events.count,
     };
+  }
+  
+  /**
+   * Check if using memory fallback mode
+   */
+  isMemoryMode(): boolean {
+    return this.useMemoryFallback;
   }
 }
 
