@@ -133,6 +133,7 @@ jobs:
           path: |
             test-output.log
           retention-days: 30
+          if-no-files-found: ignore
 
       - name: Check Test Status
         if: steps.test.outputs.test_status == 'failed'
