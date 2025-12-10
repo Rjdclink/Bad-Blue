@@ -16,6 +16,7 @@ import {
   SelfRepairEngine,
   ErrorSeverity,
   ErrorCategory,
+  MasterActivation,
 } from '../index.js';
 import { TaskPriority } from '../../../aiTokenGovernor.js';
 
@@ -431,6 +432,67 @@ export async function run4JITests(): Promise<TestResults> {
     results.failed++;
     results.errors.push(`System health: ${error.message}`);
     ForgeAI.reset();
+  }
+
+  // ============================================================================
+  // Master Activation Tests
+  // ============================================================================
+  console.log('\n--- Master Activation Tests ---\n');
+
+  // Test 14: Master Activation full system startup
+  try {
+    console.log('Test 14: Master Activation full system startup...');
+    
+    // Reset all components first
+    ForgeAI.reset();
+    LegalWhatOrchestrator.reset();
+    SelfRepairEngine.reset();
+    
+    const status = await MasterActivation.activate();
+    
+    assert(status.isActivated === true, 'System should be activated');
+    assert(status.components.forgeAI === true, 'ForgeAI should be active');
+    assert(status.components.alexara === true, 'ALEXARA should be active');
+    assert(status.components.legalWhat === true, 'LegalWhat should be active');
+    assert(status.claudeOpusConductor.active === true, 'Claude Opus conductor should be active');
+    assert(status.totalModelsActive > 10, 'Should have 10+ models active');
+    assert(status.totalSubAgentsActive > 10, 'Should have 10+ sub-agents active');
+    
+    console.log(`  ✅ PASSED - Master system activated with ${status.totalModelsActive} models and ${status.totalSubAgentsActive} sub-agents`);
+    results.passed++;
+    
+    // Cleanup
+    MasterActivation.deactivate();
+    ForgeAI.reset();
+    LegalWhatOrchestrator.reset();
+    SelfRepairEngine.reset();
+  } catch (error: any) {
+    console.log(`  ❌ FAILED - ${error.message}`);
+    results.failed++;
+    results.errors.push(`Master activation: ${error.message}`);
+    MasterActivation.deactivate();
+    ForgeAI.reset();
+    LegalWhatOrchestrator.reset();
+    SelfRepairEngine.reset();
+  }
+
+  // Test 15: Creative directive application
+  try {
+    console.log('\nTest 15: Creative directive application...');
+    
+    const directive = MasterActivation.getCreativeDirective();
+    
+    assert(directive.includes('boundless'), 'Directive should contain boundless');
+    assert(directive.includes('hyper-evolved'), 'Directive should contain hyper-evolved');
+    assert(directive.includes('transcendent'), 'Directive should contain transcendent');
+    assert(directive.includes('quantum speed'), 'Directive should contain quantum speed');
+    
+    console.log('  ✅ PASSED - Creative directive contains all key elements');
+    results.passed++;
+  } catch (error: any) {
+    console.log(`  ❌ FAILED - ${error.message}`);
+    results.failed++;
+    results.errors.push(`Creative directive: ${error.message}`);
   }
 
   // ============================================================================
