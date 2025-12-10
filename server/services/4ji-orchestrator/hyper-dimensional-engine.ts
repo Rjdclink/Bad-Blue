@@ -273,8 +273,8 @@ export class HyperDimensionalEngine {
     let iterations = 0;
     let exceededExpectations = false;
 
-    // Recursive exploration to the Nth power
-    const maxIterations = Math.pow(2, this.config.explorationDepth);
+    // Recursive exploration to the Nth power (using bit shift for efficiency)
+    const maxIterations = 1 << this.config.explorationDepth;
     
     while (iterations < maxIterations) {
       iterations++;
@@ -524,22 +524,25 @@ that demonstrates creativity, utility, and novelty beyond conventional approache
     const transcendentDim = state.dimensions.find(d => d.modality === 'transcendent');
     
     if (transcendentDim && transcendentDim.currentValue > 0.5) {
+      // Deterministic scoring based on state analysis
+      const transcendenceLevel = transcendentDim.currentValue;
+      const activeDimensions = state.dimensions.filter(d => d.currentValue > 0.5);
+      const dimensionDiversity = activeDimensions.length / state.dimensions.length;
+      
       possibilities.push({
-        id: `possibility-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: `possibility-${Date.now()}-${state.evolutionGeneration}`,
         concept: 'Paradigm-transcending solution approach',
-        feasibilityScore: 0.6 + Math.random() * 0.3,
-        innovationScore: 0.7 + Math.random() * 0.3,
-        riskScore: 0.3 + Math.random() * 0.3,
+        feasibilityScore: 0.6 + transcendenceLevel * 0.3,
+        innovationScore: 0.7 + dimensionDiversity * 0.3,
+        riskScore: 0.3 + (1 - transcendenceLevel) * 0.3,
         implementationPath: [
           'Validate core assumptions',
           'Prototype unconventional approach',
           'Iterate with feedback',
           'Scale if successful',
         ],
-        potentialImpact: 0.8 + Math.random() * 0.2,
-        exploredDimensions: state.dimensions
-          .filter(d => d.currentValue > 0.5)
-          .map(d => d.name),
+        potentialImpact: 0.8 + dimensionDiversity * 0.2,
+        exploredDimensions: activeDimensions.map(d => d.name),
       });
     }
 
@@ -580,12 +583,17 @@ that demonstrates creativity, utility, and novelty beyond conventional approache
     const analytical = dimensions.filter(d => d.modality === 'analytical');
     const intuitive = dimensions.filter(d => d.modality === 'intuitive');
     
-    // Bonus for analytical-intuitive balance
-    const analyticalAvg = analytical.reduce((sum, d) => sum + d.currentValue, 0) / analytical.length;
-    const intuitiveAvg = intuitive.reduce((sum, d) => sum + d.currentValue, 0) / intuitive.length;
+    // Guard against empty arrays
+    if (analytical.length > 0 && intuitive.length > 0) {
+      // Bonus for analytical-intuitive balance
+      const analyticalAvg = analytical.reduce((sum, d) => sum + d.currentValue, 0) / analytical.length;
+      const intuitiveAvg = intuitive.reduce((sum, d) => sum + d.currentValue, 0) / intuitive.length;
+      
+      coherence += 0.25 * (1 - Math.abs(analyticalAvg - intuitiveAvg));
+    }
     
-    coherence += 0.25 * (1 - Math.abs(analyticalAvg - intuitiveAvg));
-    coherence += 0.25 * Math.random(); // Natural variation
+    // Add deterministic variation based on dimension count
+    coherence += 0.25 * (dimensions.length / 20);
     
     return Math.max(0, Math.min(1, coherence));
   }
@@ -595,6 +603,12 @@ that demonstrates creativity, utility, and novelty beyond conventional approache
    */
   private static calculateStateNovelty(dimensions: DimensionalAxis[]): number {
     const creative = dimensions.filter(d => d.modality === 'creative' || d.modality === 'transcendent');
+    
+    // Guard against empty array
+    if (creative.length === 0) {
+      return 0.3; // Base novelty
+    }
+    
     const avgCreative = creative.reduce((sum, d) => sum + Math.abs(d.currentValue), 0) / creative.length;
     return Math.max(0, Math.min(1, avgCreative + 0.2));
   }
