@@ -582,7 +582,7 @@ export class AutonomousZeroCapitalEngine {
       ];
 
       // Simulate bundle first
-      const simulation = await this.flashbotsProvider.simulate(bundle, blockNumber + 1);
+      const simulation = await this.flashbotsProvider.simulate(bundle as any, blockNumber + 1);
       
       if ('error' in simulation) {
         return { success: false, error: `Simulation failed: ${simulation.error.message}` };

@@ -18,6 +18,7 @@
  */
 
 import * as tokenMetrics from './repositories/tokenMetricsRepository';
+import type { AIProviderName } from './repositories/tokenMetricsRepository';
 import { rateLimitTracker } from './rateLimitTracker';
 import { isMistralAvailable } from './mistral';
 import { isClaudeAvailable } from './claude';
@@ -589,7 +590,7 @@ class AITokenGovernorEnhanced {
     }
 
     // Base capability multipliers by provider and complexity
-    const capability: Record<AIProvider, Record<TaskComplexity, number>> = {
+    const capability: Partial<Record<AIProvider, Record<TaskComplexity, number>>> = {
       // AUTONOMOUS providers
       [AIProvider.GROQ]: {
         [TaskComplexity.LIGHTWEIGHT]: 1.05,
@@ -743,7 +744,7 @@ class AITokenGovernorEnhanced {
     quotaStatus: QuotaStatus
   ): Promise<Array<{ provider: AIProvider; maxTokens: number; proportion?: number }>> {
     // Build list of available providers based on context
-    const availability: Record<AIProvider, boolean> = {
+    const availability: Partial<Record<AIProvider, boolean>> = {
       // AUTONOMOUS providers
       [AIProvider.GROQ]: this.isProviderAvailable(AIProvider.GROQ), // No quota check - unlimited for autonomous
       [AIProvider.MISTRAL]: this.isProviderAvailable(AIProvider.MISTRAL) && quotaStatus.mistral.percentUsed < 99,
@@ -1062,7 +1063,7 @@ class AITokenGovernorEnhanced {
       // Record to database with full context
       await tokenMetrics.recordUsage({
         taskName,
-        provider,
+        provider: provider.toLowerCase() as AIProviderName,
         tokensUsed,
         latencyMs,
         success,

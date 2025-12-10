@@ -42,8 +42,8 @@ export default function EvidenceAnalysis({ lawType, lawTypeName }: EvidenceAnaly
           <FileUpload
             associatedWith="document"
             lawType={lawType}
-            onUploadComplete={(fileId: string) => {
-              setUploadedFiles(prev => [...prev, fileId]);
+            onFilesUploaded={(files) => {
+              setUploadedFiles(prev => [...prev, ...files.map(f => f.id)]);
             }}
           />
         </CardContent>
