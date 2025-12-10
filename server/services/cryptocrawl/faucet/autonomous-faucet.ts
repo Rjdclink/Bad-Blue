@@ -2040,9 +2040,15 @@ class AutonomousCryptoFaucet {
       try {
         MasterOrchestrator.stop();
       } catch (error) {
-        logger.warn('[FAUCET] Failed to stop orchestrator during emergency', {
+        // Escalate to error level - failing to stop orchestrator during emergency
+        // could leave crawlers running unsupervised. Proceed with emergency cooldown
+        // but flag this as a critical issue that requires attention.
+        logger.error('[FAUCET] CRITICAL: Failed to stop orchestrator during emergency mode', {
           component: 'AutonomousFaucet',
           error: error instanceof Error ? error.message : String(error),
+          consequence: 'Orchestrator may continue running - manual intervention may be required',
+          emergencyReason: reason,
+          previousMode,
         });
       }
     }

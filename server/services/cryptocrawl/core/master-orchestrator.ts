@@ -728,9 +728,12 @@ export class MasterOrchestrator {
       // Need more agents - spawn twins
       TwinManager.spawn();
     } else if (agentCount > idealAgentCount * 2 && agentCount > 6) {
-      // Too many agents - shrink to save resources
-      for (const [agentId] of lux.agentStates.entries()) {
-        ShrinkGrowEngine.shrink(agentId);
+      // Too many agents - shrink only the excess to save resources
+      const excessCount = agentCount - idealAgentCount;
+      const agents = Array.from(lux.agentStates.entries());
+      // Only shrink excess agents, not all
+      for (let i = 0; i < Math.min(excessCount, agents.length); i++) {
+        ShrinkGrowEngine.shrink(agents[i][0]);
       }
     }
 
@@ -788,10 +791,7 @@ export class MasterOrchestrator {
       }
     }
 
-    // Force garbage collection hint for V8
-    if (typeof global !== 'undefined' && global.gc) {
-      global.gc();
-    }
+    // Note: Manual garbage collection removed - V8 handles GC efficiently on its own
 
     const newStatus = this.getStatus();
     const after = newStatus.systemHealth / 100;

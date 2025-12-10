@@ -66,6 +66,8 @@ class LuxSwarm {
   };
 
   private static responseTimes: number[] = [];
+  private static operationCount: number = 0;
+  private static lastThroughputWindow: number = Date.now();
 
   // Immutable read - all agents can read simultaneously
   static observe(): Readonly<LuxSignal> {
@@ -101,7 +103,8 @@ class LuxSwarm {
     
     // Apply priority filter
     if (filter.minPriority !== undefined) {
-      opportunities = opportunities.filter(o => o.priority >= filter.minPriority!);
+      const minPriority = filter.minPriority;
+      opportunities = opportunities.filter(o => o.priority >= minPriority);
     }
     
     // Exclude claimed assets
@@ -225,6 +228,7 @@ class LuxSwarm {
   // Track response time for performance metrics
   private static trackResponseTime(time: number): void {
     this.responseTimes.push(time);
+    this.operationCount++;
     
     // Keep only last 1000 samples
     if (this.responseTimes.length > 1000) {
@@ -235,7 +239,7 @@ class LuxSwarm {
   // Update performance metrics
   private static updateMetrics(): void {
     const now = Date.now();
-    const timeDelta = (now - this.metrics.lastMetricsUpdate) / 1000; // seconds
+    const timeDelta = (now - this.lastThroughputWindow) / 1000; // seconds
     
     this.metrics.totalOpportunities = this.state.opportunities.length;
     this.metrics.activeAgents = Array.from(this.state.agentStates.values())
@@ -247,9 +251,12 @@ class LuxSwarm {
       this.metrics.avgResponseTime = this.responseTimes.reduce((a, b) => a + b, 0) / this.responseTimes.length;
     }
     
-    // Calculate throughput (operations per second)
-    if (timeDelta > 0) {
-      this.metrics.throughput = this.responseTimes.length / timeDelta;
+    // Calculate throughput using sliding window (operations per second)
+    if (timeDelta >= 1) { // Update throughput every second
+      this.metrics.throughput = this.operationCount / timeDelta;
+      // Reset counters for next window
+      this.operationCount = 0;
+      this.lastThroughputWindow = now;
     }
     
     this.metrics.lastMetricsUpdate = now;
@@ -302,6 +309,8 @@ class LuxSwarm {
     };
     
     this.responseTimes = [];
+    this.operationCount = 0;
+    this.lastThroughputWindow = Date.now();
   }
 }
 
