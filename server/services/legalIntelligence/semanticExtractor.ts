@@ -93,19 +93,20 @@ export class SemanticLegalExtractor {
       // Step 1: Retrieve HTML using Shadow Retrieval
       log.debug('Retrieving HTML', { url });
       const retrievalResult = await this.shadowRetrieval.smartRetrieve(url, {
-        extraction: { includeLinks: false },
+        extraction: {
+          includeLinks: false,
+        },
       });
 
-      const html = retrievalResult.data?.html;
-      if (!retrievalResult.success || !html) {
+      if (!retrievalResult.success || !retrievalResult.data?.html) {
         throw new Error(`Failed to retrieve content: ${retrievalResult.error}`);
       }
 
       // Step 2: Filter content (remove noise)
-      let processedHtml = html;
+      let processedHtml = retrievalResult.data.html;
       if (!skipFiltering) {
         log.debug('Filtering content', { schemaName: schema.name });
-        processedHtml = await contentFilter.filterContent(html);
+        processedHtml = await contentFilter.filterContent(retrievalResult.data.html);
       }
 
       // Step 3: Convert to markdown

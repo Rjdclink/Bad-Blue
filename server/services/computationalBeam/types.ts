@@ -58,11 +58,11 @@ export enum TaskIntensity {
 }
 
 export enum TaskPriority {
-  LOW = 1,
-  MEDIUM = 3,
-  NORMAL = 5,
-  HIGH = 8,
-  CRITICAL = 10,
+  CRITICAL = 100,
+  HIGH = 80,
+  MEDIUM = 50,
+  LOW = 30,
+  LOWEST = 10,
 }
 
 export interface Task {

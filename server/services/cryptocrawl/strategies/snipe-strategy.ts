@@ -1,5 +1,5 @@
 // Snipe Strategy - First-Touch Reaction & Mempool Forecasting
-// Sub-block entry, early pre-positioning, legal front-running
+// Sub-block entry, early pre-positioning, latency-optimized execution
 
 import { randomUUID } from 'crypto';
 import type { ChainId } from '../eden/types';

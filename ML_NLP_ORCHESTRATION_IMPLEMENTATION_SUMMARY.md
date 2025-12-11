@@ -36,9 +36,10 @@ Successfully implemented a comprehensive Machine Learning and Natural Language P
 - ✅ No tight coupling - models can be swapped by updating assets
 
 #### Runtime Environment:
-- ✅ TensorFlow.js and ONNX Runtime installed for Node.js
+- ✅ ONNX Runtime installed for Node.js ML inference
+- ✅ Pure JavaScript NLP libraries (compromise, natural, wink-nlp)
 - ✅ All ML workers run in Node orchestration layer
-- ✅ Ready for Python-based model training (export to ONNX/TF.js)
+- ✅ Ready for Python-based model training (export to ONNX)
 
 ### 2. NLP Intelligence for F.M.I. (Forensic Media Intelligence) ✅
 
@@ -109,11 +110,12 @@ Successfully implemented a comprehensive Machine Learning and Natural Language P
 
 ```json
 {
-  "@tensorflow/tfjs-node": "^4.22.0",
   "onnxruntime-node": "^1.20.1",
   "wink-nlp": "^2.2.2"
 }
 ```
+
+**Note:** The codebase intentionally avoids @tensorflow/tfjs-node to eliminate native C++ binding dependencies. Pure JavaScript alternatives (compromise, natural, fast-levenshtein) provide similar functionality with better portability.
 
 All dependencies verified against GitHub Advisory Database - **No vulnerabilities found**.
 
@@ -219,8 +221,8 @@ Created comprehensive documentation:
 ## Future Enhancements
 
 The implementation is ready for:
-1. **TensorFlow.js Training** - Custom models for legal NER, classification
-2. **ONNX Model Loading** - Pre-trained PyTorch/TensorFlow models
+1. **Pure JavaScript ML Enhancement** - Continue using compromise.js and natural
+2. **ONNX Model Loading** - Pre-trained PyTorch models via ONNX Runtime
 3. **Advanced Clustering** - Network analysis, community detection
 4. **Anomaly Detection** - Pattern detection in legal data
 5. **NLP Microservices** - spaCy/Stanford CoreNLP via HTTP (optional)
@@ -232,7 +234,7 @@ The implementation is ready for:
 #### ML Layer:
 - ✅ ML workers defined (confidence, routing, clustering)
 - ✅ Training ecosystem support (TF/PyTorch/Keras - Python)
-- ✅ Node runtime (TensorFlow.js, ONNX Runtime)
+- ✅ Node runtime (ONNX Runtime, pure JS NLP libraries)
 - ✅ Integration with orchestration matrix
 - ✅ Score and rank outputs from multiple models
 - ✅ Resolve conflicts between model opinions
@@ -272,7 +274,7 @@ The system provides:
 - 0 CodeQL alerts
 
 The implementation follows all architectural principles:
-- Node-compatible (TensorFlow.js, ONNX Runtime)
+- Node-compatible (ONNX Runtime, pure JS libraries)
 - Minimal coupling (models can be swapped)
 - Parallel orchestration ready
 - Production-ready with health checks and monitoring

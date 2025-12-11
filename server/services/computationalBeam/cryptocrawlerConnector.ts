@@ -166,14 +166,15 @@ export class CryptoBeamConnector {
     });
     
     try {
-      // Map crypto strategy to crawler strategy
-      const crawlerStrategy = this.mapToCrawlerStrategy(params.strategyType);
+      // Map crypto strategy to task type
+      const taskType = this.mapToTaskType(params.strategyType);
       
       // Create task for computational beam
       const task: Task = {
         id: `crypto-${params.strategyType}-${Date.now()}`,
-        type: TaskType.ARBITRAGE_SCAN,
+        type: taskType,
         intensity: TaskIntensity.HEAVY,
+        priority: TaskPriority.HIGH, // Crypto strategies are high priority
         payload: {
           strategyType: params.strategyType,
           symbols: params.symbols || ['BTC/USD', 'ETH/USD'],
@@ -270,7 +271,27 @@ export class CryptoBeamConnector {
   }
   
   /**
-   * Map crypto strategy type to crawler strategy
+   * Map crypto strategy type to task type
+   */
+  private static mapToTaskType(strategyType: CryptoStrategyType): TaskType {
+    switch (strategyType) {
+      case CryptoStrategyType.ARBITRAGE:
+        return TaskType.ARBITRAGE_SCAN;
+      case CryptoStrategyType.ZERO_CAPITAL:
+        return TaskType.ARBITRAGE_SCAN; // Use arbitrage for zero-capital
+      case CryptoStrategyType.MEV_FRONTRUN:
+        return TaskType.ML_PREDICTION;
+      case CryptoStrategyType.MOMENTUM:
+        return TaskType.MOMENTUM_STRATEGY;
+      case CryptoStrategyType.MICRO_TRIANGULATION:
+        return TaskType.MICRO_TRIANGULATION;
+      default:
+        return TaskType.MARKET_AGGREGATION;
+    }
+  }
+
+  /**
+   * Map crypto strategy type to crawler strategy (deprecated - use mapToTaskType)
    */
   private static mapToCrawlerStrategy(strategyType: CryptoStrategyType): CrawlerStrategy {
     switch (strategyType) {

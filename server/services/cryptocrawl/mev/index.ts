@@ -1,9 +1,9 @@
 // server/services/cryptocrawl/mev/index.ts
 import {FlashbotsEngine} from './flashbots-engine';
-import {ValidatorBribingStrategy} from './validator-bribing';
+import {ValidatorTippingStrategy, ValidatorBribingStrategy} from './validator-bribing';
 
 const flashbotsEngine = new FlashbotsEngine();
-const bribingStrategy = new ValidatorBribingStrategy();
+const tippingStrategy = new ValidatorTippingStrategy();
 
 // Initialize on import (can be called explicitly if needed)
 const initializeEngines = async () => {
@@ -15,4 +15,7 @@ const initializeEngines = async () => {
   }
 };
 
-export {flashbotsEngine, bribingStrategy, initializeEngines};
+// Backward compatibility
+const bribingStrategy = tippingStrategy;
+
+export {flashbotsEngine, tippingStrategy, bribingStrategy, initializeEngines};

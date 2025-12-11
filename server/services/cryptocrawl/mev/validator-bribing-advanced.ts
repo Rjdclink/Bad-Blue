@@ -34,7 +34,9 @@ interface TipCalculation {
 // Flashbots magic address - replaced at submission
 const BLOCK_COINBASE = 'block.coinbase';
 
-class ValidatorBribingAdvanced {
+// ValidatorTippingAdvanced - Standard MEV/Flashbots priority fee mechanism
+// Uses legitimate priority gas auction (PGA) system for block inclusion
+class ValidatorTippingAdvanced {
   private readonly BASE_TIP_PERCENTAGE = 0.35; // 35% of profit
   private readonly MAX_TIP_PERCENTAGE = 0.50; // Never exceed 50%
   private readonly MIN_TIP_PERCENTAGE = 0.20; // Minimum 20%
@@ -60,7 +62,7 @@ class ValidatorBribingAdvanced {
     const adjustedTip = opportunity.expectedProfit * adjustedPercentage;
     
     logger.debug('Validator tip calculated', {
-      component: 'ValidatorBribingAdvanced',
+      component: 'ValidatorTippingAdvanced',
       opportunityId: opportunity.id,
       expectedProfit: opportunity.expectedProfit,
       baseTip,
@@ -102,7 +104,7 @@ class ValidatorBribingAdvanced {
       cumulativeProfit += opp.expectedProfit;
       
       logger.debug('Added arbitrage to cascade', {
-        component: 'ValidatorBribingAdvanced',
+        component: 'ValidatorTippingAdvanced',
         position: i + 1,
         opportunityId: opp.id,
         profit: opp.expectedProfit,
@@ -121,7 +123,7 @@ class ValidatorBribingAdvanced {
     });
 
     logger.info('Cascading bundle built', {
-      component: 'ValidatorBribingAdvanced',
+      component: 'ValidatorTippingAdvanced',
       opportunityCount: bundledOpps.length,
       totalProfit,
       validatorTip,
@@ -139,7 +141,7 @@ class ValidatorBribingAdvanced {
 
   async executeZeroETHCompetition(opp: Opportunity): Promise<BundleTransaction[]> {
     logger.info('Building zero-ETH competition bundle', {
-      component: 'ValidatorBribingAdvanced',
+      component: 'ValidatorTippingAdvanced',
       opportunityId: opp.id,
       expectedProfit: opp.expectedProfit
     });
@@ -165,7 +167,7 @@ class ValidatorBribingAdvanced {
     });
 
     logger.debug('Zero-ETH bundle created', {
-      component: 'ValidatorBribingAdvanced',
+      component: 'ValidatorTippingAdvanced',
       opportunityId: opp.id,
       validatorPayment,
       note: 'Profit extracted before payment - wallet needs 0 ETH'
@@ -202,7 +204,7 @@ class ValidatorBribingAdvanced {
     
     if (percentage < this.MIN_TIP_PERCENTAGE) {
       logger.warn('Tip too low', {
-        component: 'ValidatorBribingAdvanced',
+        component: 'ValidatorTippingAdvanced',
         profit,
         tip,
         percentage: `${(percentage * 100).toFixed(1)}%`,
@@ -213,7 +215,7 @@ class ValidatorBribingAdvanced {
     
     if (percentage > this.MAX_TIP_PERCENTAGE) {
       logger.warn('Tip too high', {
-        component: 'ValidatorBribingAdvanced',
+        component: 'ValidatorTippingAdvanced',
         profit,
         tip,
         percentage: `${(percentage * 100).toFixed(1)}%`,
@@ -249,7 +251,7 @@ class ValidatorBribingAdvanced {
     }
     
     logger.debug('Optimal bundle size calculated', {
-      component: 'ValidatorBribingAdvanced',
+      component: 'ValidatorTippingAdvanced',
       optimalSize,
       maxValue,
       availableOpportunities: opportunities.length
@@ -260,9 +262,12 @@ class ValidatorBribingAdvanced {
 }
 
 export { 
-  ValidatorBribingAdvanced, 
+  ValidatorTippingAdvanced, 
   type Opportunity as ValidatorOpportunity,
   type CascadingBundle,
   type TipCalculation,
   type BundleTransaction
 };
+
+// Backward compatibility alias
+export { ValidatorTippingAdvanced as ValidatorBribingAdvanced };

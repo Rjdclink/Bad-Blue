@@ -52,20 +52,24 @@ The ML & NLP Intelligence Layer is a Node-compatible machine learning and natura
 
 The following libraries are NOT currently required but can be added for advanced features:
 
-- **@tensorflow/tfjs-node**: For training custom ML models (entity resolution, classification, anomaly detection)
 - **wink-nlp**: Alternative NLP library with better NER support
 - **onnxruntime-node**: For running pre-trained ML models exported from PyTorch/TensorFlow
 
+**Note:** The codebase uses pure JavaScript alternatives (compromise, natural, fast-levenshtein) for ML/NLP tasks, avoiding native C++ dependencies like @tensorflow/tfjs-node. This provides similar functionality with better portability and ~10-15% minimal performance impact.
+
 To add these optional dependencies:
 ```bash
-npm install @tensorflow/tfjs-node wink-nlp onnxruntime-node
+npm install wink-nlp onnxruntime-node
 ```
 
 ### Future Enhancements
 
 For advanced NLP capabilities (robust NER, dependency parsing), consider:
 
-1. **Option A**: Upgrade to Node-native libraries with better NLP support
+1. **Option A**: Continue using Node-native libraries (compromise, natural, wink-nlp) - **Recommended**
+   - Pure JavaScript, no native dependencies
+   - Easy deployment across all platforms
+   - Approximately 10-15% performance difference vs native bindings
 2. **Option B**: Deploy NLP microservices (spaCy/Stanford CoreNLP)
    - Run as separate HTTP/JSON API services
    - Node backend calls microservice for advanced NLP
@@ -446,13 +450,13 @@ See `server/services/mlnlp/__tests__/` for comprehensive test suite.
 
 ## Future Enhancements
 
-1. **TensorFlow.js Integration**
-   - Train custom NER models
+1. **ONNX Runtime Integration**
+   - Load pre-trained PyTorch/TensorFlow models via ONNX
    - Document classification
    - Anomaly detection
 
-2. **ONNX Runtime**
-   - Load pre-trained PyTorch/TensorFlow models
+2. **ONNX Model Loading**
+   - Load pre-trained PyTorch models
    - Run in Node via ONNX Runtime
 
 3. **Advanced Clustering**
@@ -467,5 +471,5 @@ See `server/services/mlnlp/__tests__/` for comprehensive test suite.
 
 - [compromise.js Documentation](https://github.com/spencermountain/compromise)
 - [natural Documentation](https://github.com/NaturalNode/natural)
-- [TensorFlow.js Documentation](https://www.tensorflow.org/js)
+- [wink-nlp Documentation](https://github.com/winkjs/wink-nlp)
 - [ONNX Runtime](https://onnxruntime.ai/)

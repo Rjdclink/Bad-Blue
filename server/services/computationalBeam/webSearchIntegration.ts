@@ -193,8 +193,8 @@ export class WebSearchCrawlerIntegration {
       // Create crawler task for search
       const task: Task = {
         id: `search-${source}-${Date.now()}`,
-        type: TaskType.MOMENTUM_STRATEGY,
-        intensity: TaskIntensity.MODERATE,
+        type: TaskType.BASIC_PARSING, // Use basic parsing for searches
+        intensity: TaskIntensity.LIGHTWEIGHT,
         payload: {
           searchQuery: query,
           source,
@@ -202,9 +202,9 @@ export class WebSearchCrawlerIntegration {
         },
         metadata: {
           created: new Date(),
-          priority: TaskPriority.NORMAL,
+          priority: TaskPriority.MEDIUM,
           retries: 0,
-          maxRetries: 3,
+          maxRetries: 2,
         },
       };
       

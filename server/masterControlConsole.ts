@@ -316,19 +316,23 @@ Be precise and accurate. Consider the task complexity and what AI capabilities a
         try {
           const parsed = this.extractJSON(result.content);
           
+          // Type-safe access to parsed properties
+          const category = typeof parsed.category === 'string' ? parsed.category : 'general';
+          const executionMode = typeof parsed.executionMode === 'string' ? parsed.executionMode : 'subagent';
+          const priority = typeof parsed.priority === 'string' ? parsed.priority : 'medium';
+          const complexity = typeof parsed.complexity === 'string' ? parsed.complexity : 'moderate';
+          
           return {
             originalPrompt: prompt,
-            category: this.mapCategory(String(parsed.category || '')),
-            executionMode: this.mapExecutionMode(String(parsed.executionMode || '')),
-            priority: this.mapPriority(String(parsed.priority || '')),
-            complexity: this.mapComplexity(String(parsed.complexity || '')),
+            category: this.mapCategory(category),
+            executionMode: this.mapExecutionMode(executionMode),
+            priority: this.mapPriority(priority),
+            complexity: this.mapComplexity(complexity),
             subtasks: [],
-            requiresVerification: Boolean(parsed.requiresVerification ?? true),
-            estimatedTokens: Number(parsed.estimatedTokens) || DEFAULT_ESTIMATED_TOKENS,
-            confidence: Number(parsed.confidence) || 0.7,
-            intent: (typeof parsed.intent === 'string' && parsed.intent.trim().length > 0)
-              ? parsed.intent
-              : 'Execute user directive',
+            requiresVerification: typeof parsed.requiresVerification === 'boolean' ? parsed.requiresVerification : true,
+            estimatedTokens: typeof parsed.estimatedTokens === 'number' ? parsed.estimatedTokens : DEFAULT_ESTIMATED_TOKENS,
+            confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.7,
+            intent: typeof parsed.intent === 'string' && parsed.intent.trim().length > 0 ? parsed.intent : 'Execute user directive',
           };
         } catch (jsonError: any) {
           logger.warn('[MCC] JSON parsing failed, using heuristic parsing:', jsonError.message);
@@ -750,10 +754,10 @@ Respond with JSON:
       if (validationResult.success && validationResult.content) {
         const parsed = this.extractJSON(validationResult.content);
         return {
-          validated: Boolean(parsed.consistent ?? true),
-          confidenceScore: Number(parsed.confidenceScore ?? 0.8),
-          discrepancies: Array.isArray(parsed.discrepancies) ? parsed.discrepancies as string[] : [],
-          consensus: String(parsed.consensus ?? 'Results validated'),
+          validated: typeof parsed.consistent === 'boolean' ? parsed.consistent : true,
+          confidenceScore: typeof parsed.confidenceScore === 'number' ? parsed.confidenceScore : 0.8,
+          discrepancies: Array.isArray(parsed.discrepancies) ? parsed.discrepancies : [],
+          consensus: typeof parsed.consensus === 'string' ? parsed.consensus : 'Results validated',
         };
       }
     } catch (error: any) {

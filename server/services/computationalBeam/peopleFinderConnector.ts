@@ -130,13 +130,14 @@ export class PeopleFinderBeamConnector {
     });
     
     try {
-      // Map operation to crawler strategy
+      // Map operation to task type
+      const taskType = this.mapToTaskType(params.operationType);
       const crawlerStrategy = this.mapToCrawlerStrategy(params.operationType);
       
       // Create task for computational beam
       const task: Task = {
         id: `people-${params.operationType}-${Date.now()}`,
-        type: TaskType.BASIC_PARSING,
+        type: taskType,
         intensity: TaskIntensity.MODERATE,
         payload: {
           operationType: params.operationType,
@@ -282,7 +283,27 @@ export class PeopleFinderBeamConnector {
   }
   
   /**
-   * Map operation to crawler strategy
+   * Map operation to task type
+   */
+  private static mapToTaskType(operationType: PeopleFinderOperationType): TaskType {
+    switch (operationType) {
+      case PeopleFinderOperationType.PERSON_SEARCH:
+        return TaskType.BASIC_PARSING; // Fast search
+      case PeopleFinderOperationType.ADVANCED_SEARCH:
+        return TaskType.ML_PREDICTION; // Complex queries
+      case PeopleFinderOperationType.DASHBOARD_LOAD:
+        return TaskType.MARKET_AGGREGATION; // Fast loading
+      case PeopleFinderOperationType.BATCH_LOOKUP:
+        return TaskType.MONTE_CARLO; // Efficient batch
+      case PeopleFinderOperationType.RELATIONSHIP_TRACE:
+        return TaskType.MICRO_TRIANGULATION; // Relationship mapping
+      default:
+        return TaskType.BASIC_PARSING;
+    }
+  }
+
+  /**
+   * Map operation to crawler strategy (deprecated - use mapToTaskType)
    */
   private static mapToCrawlerStrategy(operationType: PeopleFinderOperationType): CrawlerStrategy {
     switch (operationType) {

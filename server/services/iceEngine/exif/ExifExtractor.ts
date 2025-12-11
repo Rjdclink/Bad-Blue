@@ -15,6 +15,7 @@ export interface LocationData {
   source: {
     filename: string;
     uploadedBy: string;
+    consentGiven?: boolean;
   };
 }
 

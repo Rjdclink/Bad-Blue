@@ -874,6 +874,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/domains', domainRoutes.default);
 
   // ============================================
+  // NATIONWIDE INMATE LOCATOR ROUTES
+  // ============================================
+  const inmateSearchRoutes = await import('./routes/inmateSearch.routes');
+  app.use('/api/inmate-search', inmateSearchRoutes.default);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {
