@@ -7,7 +7,7 @@
  * ONE FILE AT A TIME APPROACH
  */
 
-import { ComputationalBeam } from './index';
+import { computationalBeam, ComputationalBeamOrchestrator } from './index';
 import { WorkloadRouter } from './workloadRouter';
 import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
@@ -81,7 +81,7 @@ export interface PersonResult {
  */
 export class PeopleFinderBeamConnector {
   private static initialized = false;
-  private static computationalBeam: typeof ComputationalBeam;
+  private static computationalBeam: typeof computationalBeam;
   private static workloadRouter: WorkloadRouter;
   
   /**
@@ -96,9 +96,9 @@ export class PeopleFinderBeamConnector {
     log.info('🔗 Initializing People Finder Computational Beam Connector...');
     
     // Initialize computational beam (no credentials required)
-    await ComputationalBeam.initialize();
+    await computationalBeam.initialize();
     
-    this.computationalBeam = ComputationalBeam;
+    this.computationalBeam = computationalBeam;
     this.workloadRouter = new WorkloadRouter();
     
     this.initialized = true;

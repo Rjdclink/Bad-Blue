@@ -85,7 +85,7 @@ export async function extractGPSFromFile(filePath: string): Promise<GPSCoordinat
 /**
  * Parse GPS coordinate from EXIF format (degrees, minutes, seconds)
  */
-function parseGPSCoordinate(coordinate: string, ref: string): number | null {
+function parseGPSCoordinate(coordinate: string, ref?: string): number | null {
   try {
     const parts = coordinate.split(',').map(p => parseFloat(p.trim()));
     if (parts.length !== 3) return null;

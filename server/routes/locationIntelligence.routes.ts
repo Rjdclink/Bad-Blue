@@ -5,20 +5,12 @@ import { locationAggregator } from '../services/locationIntelligence/LocationAgg
 
 const router = Router();
 
-interface PublicRecord {
-  latitude: number;
-  longitude: number;
-  source: 'social_media' | 'court_record' | 'property' | 'voter' | 'business';
-  timestamp?: string | Date;
-  confidence?: number;
-}
-
 const analyzeRequestSchema = z.object({
   imagePaths: z.array(z.string()).optional().default([]),
   publicRecords: z.array(z.object({
     latitude: z.number().min(-90).max(90),
     longitude: z.number().min(-180).max(180),
-    source: z.enum(['social_media', 'court_record', 'property', 'voter', 'business']),
+    source: z.enum(['exif', 'social_media', 'court_record', 'property', 'voter', 'business']),
     timestamp: z.union([z.string(), z.date()]).optional(),
     confidence: z.number().min(0).max(1).optional(),
   })).optional().default([]),
@@ -46,7 +38,10 @@ router.post('/api/location-intel/analyze', async (req, res) => {
     }
 
     publicRecords.forEach(record => {
-      locationAggregator.addPublicRecord(record);
+      locationAggregator.addPublicRecord({
+        ...record,
+        timestamp: record.timestamp ? new Date(record.timestamp) : undefined,
+      });
     });
 
     const clustered = locationAggregator.cluster(100);

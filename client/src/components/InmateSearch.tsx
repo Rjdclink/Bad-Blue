@@ -128,21 +128,6 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
     queryKey: ['/api/inmate-search/states'],
   });
 
-  // Animate progress during search
-  useEffect(() => {
-    if (searchMutation.isPending) {
-      const interval = setInterval(() => {
-        setSearchProgress(prev => {
-          if (prev >= 90) return prev;
-          return prev + Math.random() * 15;
-        });
-      }, 500);
-      return () => clearInterval(interval);
-    } else {
-      setSearchProgress(0);
-    }
-  }, [searchMutation?.isPending]);
-
   const searchMutation = useMutation({
     mutationFn: async (searchData: {
       firstName?: string;
@@ -182,6 +167,21 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
       });
     },
   });
+
+  // Animate progress during search
+  useEffect(() => {
+    if (searchMutation.isPending) {
+      const interval = setInterval(() => {
+        setSearchProgress(prev => {
+          if (prev >= 90) return prev;
+          return prev + Math.random() * 15;
+        });
+      }, 500);
+      return () => clearInterval(interval);
+    } else {
+      setSearchProgress(0);
+    }
+  }, [searchMutation.isPending]);
 
   const handleSearch = () => {
     if (!firstName && !lastName && !inmateId) {
