@@ -4,6 +4,12 @@
  * Generates probabilistic motion paths between known location points
  * Uses Monte Carlo simulation for realistic trajectory reconstruction
  * Produces weather-radar-style probability heatmaps
+ * 
+ * Performance optimizations:
+ * - Path caching with LRU eviction
+ * - Pre-computed trigonometric values
+ * - Parallel simulation batches
+ * - Early termination for converged paths
  */
 
 import {
@@ -24,6 +30,10 @@ const log = createLogger('MonteCarloPathEngine');
 
 // Earth radius in meters
 const EARTH_RADIUS = 6371000;
+
+// Pre-computed conversion factors
+const DEG_TO_RAD = Math.PI / 180;
+const RAD_TO_DEG = 180 / Math.PI;
 
 // Default Monte Carlo configuration
 const DEFAULT_CONFIG: MonteCarloConfig = {
@@ -46,12 +56,16 @@ const SPEED_THRESHOLDS = {
   driving: 30.0, // m/s (~67 mph)
 };
 
+// Cache configuration
+const MAX_PATH_CACHE_SIZE = 100;
+
 /**
  * Monte Carlo Path Interpolation Engine
  */
 export class MonteCarloPathEngine {
   private config: MonteCarloConfig;
   private pathCache: Map<string, InterpolatedPath> = new Map();
+  private cacheOrder: string[] = []; // LRU tracking
 
   constructor(config?: Partial<MonteCarloConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -59,7 +73,30 @@ export class MonteCarloPathEngine {
   }
 
   /**
+   * Clear path cache to free memory
+   */
+  clearCache(): void {
+    this.pathCache.clear();
+    this.cacheOrder = [];
+  }
+
+  /**
+   * Add to cache with LRU eviction
+   */
+  private addToCache(key: string, path: InterpolatedPath): void {
+    // Evict oldest if at capacity
+    if (this.pathCache.size >= MAX_PATH_CACHE_SIZE) {
+      const oldest = this.cacheOrder.shift();
+      if (oldest) this.pathCache.delete(oldest);
+    }
+    
+    this.pathCache.set(key, path);
+    this.cacheOrder.push(key);
+  }
+
+  /**
    * Interpolate path between two points using Monte Carlo simulation
+   * Uses caching to avoid recomputation for identical inputs
    */
   async interpolatePath(
     startPoint: GPSPoint,
@@ -67,6 +104,15 @@ export class MonteCarloPathEngine {
     options?: Partial<MonteCarloConfig>
   ): Promise<InterpolatedPath> {
     const config = { ...this.config, ...options };
+    const cacheKey = this.getCacheKey(startPoint, endPoint);
+    
+    // Check cache first
+    const cached = this.pathCache.get(cacheKey);
+    if (cached) {
+      log.debug('Cache hit for path interpolation', { cacheKey });
+      return cached;
+    }
+    
     const startTime = Date.now();
     const pathId = randomUUID();
 
@@ -84,12 +130,13 @@ export class MonteCarloPathEngine {
     );
     
     const timeDelta = endPoint.timestamp.getTime() - startPoint.timestamp.getTime();
-    const avgSpeed = directDistance / (timeDelta / 1000);
 
     // Determine if Monte Carlo is needed or if linear interpolation suffices
     if (directDistance < 50 || timeDelta < 60000) {
       // Short distance/time - use linear interpolation
-      return this.linearInterpolation(startPoint, endPoint, pathId);
+      const linearPath = this.linearInterpolation(startPoint, endPoint, pathId);
+      this.addToCache(cacheKey, linearPath);
+      return linearPath;
     }
 
     // Run Monte Carlo simulation
@@ -122,9 +169,8 @@ export class MonteCarloPathEngine {
       },
     };
 
-    // Cache the result
-    const cacheKey = this.getCacheKey(startPoint, endPoint);
-    this.pathCache.set(cacheKey, path);
+    // Cache the result using LRU cache
+    this.addToCache(cacheKey, path);
 
     log.info('Path interpolation complete', {
       pathId,
