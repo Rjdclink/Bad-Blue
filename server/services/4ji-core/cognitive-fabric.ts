@@ -31,9 +31,6 @@ const log = createLogger('4Ji-CognitiveFabric');
 // CONSTANTS
 // ============================================================================
 
-/** Total layers in the cognitive fabric (200+) */
-const TOTAL_LAYERS = 232; // 29 per band × 8 bands
-
 /** Layers per cognitive band */
 const LAYERS_PER_BAND: Record<CognitiveBand, number> = {
   perception: 29,
@@ -45,6 +42,9 @@ const LAYERS_PER_BAND: Record<CognitiveBand, number> = {
   style: 29,
   optimization: 29,
 };
+
+/** Total layers in the cognitive fabric (computed dynamically) */
+const TOTAL_LAYERS = Object.values(LAYERS_PER_BAND).reduce((a, b) => a + b, 0);
 
 /** Band processing weights for final output */
 const BAND_WEIGHTS: Record<CognitiveBand, number> = {

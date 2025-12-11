@@ -50,6 +50,17 @@ const SEVERITY_THRESHOLDS = {
 };
 
 // ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+/**
+ * Generate a unique ID for contradictions
+ */
+function generateContradictionId(type: string): string {
+  return `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ============================================================================
 // PARADOX INTEGRATION CORE
 // ============================================================================
 
@@ -411,7 +422,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
     for (const pattern of contradictionPatterns) {
       if (pattern.test(input)) {
         conflicts.push({
-          id: `explicit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          id: generateContradictionId('explicit'),
           elements: [input],
           type: 'logical',
           severity: 0.5,
@@ -437,7 +448,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
     
     if (goalMatches.length >= 2) {
       conflicts.push({
-        id: `implicit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: generateContradictionId('implicit'),
         elements: goalMatches,
         type: 'goal-based',
         severity: 0.4,
@@ -461,7 +472,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
     
     if (hasPositive && hasNegative) {
       conflicts.push({
-        id: `emotional-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: generateContradictionId('emotional'),
         elements: ['positive-emotion', 'negative-emotion'],
         type: 'emotional',
         severity: 0.6,
@@ -490,7 +501,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
     
     if (wants.length >= 2) {
       conflicts.push({
-        id: `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: generateContradictionId('goal'),
         elements: wants,
         type: 'goal-based',
         severity: 0.5,

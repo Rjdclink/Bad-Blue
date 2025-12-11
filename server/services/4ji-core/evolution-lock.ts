@@ -415,12 +415,32 @@ export function getEvolutionLockSystem(): EvolutionLockSystem {
   return instance;
 }
 
+/**
+ * Reset the Evolution Lock System
+ * 
+ * WARNING: This function is intended ONLY for testing purposes.
+ * In production, the Evolution Lock should NEVER be resettable via code.
+ * 
+ * Additional safeguards:
+ * - Only works when NODE_ENV is 'test'
+ * - Only works when FOURJI_ALLOW_TEST_RESET is 'true'
+ */
 export function resetEvolutionLockSystem(): void {
-  // WARNING: This should never be available in production
-  if (process.env.NODE_ENV !== 'test') {
-    log.error('Attempted to reset Evolution Lock System outside of test environment');
+  // Multiple safeguards to prevent accidental production reset
+  const isTestEnv = process.env.NODE_ENV === 'test';
+  const hasTestResetFlag = process.env.FOURJI_ALLOW_TEST_RESET === 'true';
+  
+  if (!isTestEnv) {
+    log.error('SECURITY: Attempted to reset Evolution Lock System outside of test environment');
     return;
   }
+  
+  if (!hasTestResetFlag) {
+    log.error('SECURITY: Attempted to reset Evolution Lock System without FOURJI_ALLOW_TEST_RESET flag');
+    return;
+  }
+  
+  log.warn('Evolution Lock System reset in test environment');
   instance = null;
 }
 

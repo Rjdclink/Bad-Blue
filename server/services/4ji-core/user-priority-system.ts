@@ -27,16 +27,16 @@ const log = createLogger('4Ji-UserPriority');
 
 /** Memory depth levels */
 const MEMORY_DEPTH = {
-  PRIMARY: 10,    // Maximum depth for primary user
-  SECONDARY_MAX: 5,  // Maximum for secondary users
-  DEFAULT: 3,     // Default for unregistered users
+  PRIMARY: 10 as const,    // Maximum depth for primary user
+  SECONDARY_MAX: 5 as const,  // Maximum for secondary users
+  DEFAULT: 3 as const,     // Default for unregistered users (valid for secondary: 1|2|3|4|5)
 };
 
 /** Adaptation intensity levels */
 const ADAPTATION_INTENSITY = {
-  PRIMARY: 10,     // Maximum adaptation for primary user
-  SECONDARY_MAX: 3, // Maximum for secondary users
-  DEFAULT: 1,      // Default for unregistered users
+  PRIMARY: 10 as const,     // Maximum adaptation for primary user
+  SECONDARY_MAX: 3 as const, // Maximum for secondary users
+  DEFAULT: 1 as const,      // Default for unregistered users (valid for secondary: 1|2|3)
 };
 
 /** Memory retention periods (in days) */
@@ -128,8 +128,8 @@ export class UserPrioritySystem extends EventEmitter {
 
     const config: SecondaryUserConfig = {
       id: userId,
-      memoryDepth: MEMORY_DEPTH.DEFAULT as 1 | 2 | 3 | 4 | 5,
-      adaptationIntensity: ADAPTATION_INTENSITY.DEFAULT as 1 | 2 | 3,
+      memoryDepth: MEMORY_DEPTH.DEFAULT,
+      adaptationIntensity: ADAPTATION_INTENSITY.DEFAULT,
       modeAAccess: false,
     };
 
