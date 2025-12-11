@@ -10,7 +10,7 @@
  */
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import type { Browser } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 import type { SearchQuery, PersonRecord } from './types';
 import { FastPeopleSearchScraper } from './sources/FastPeopleSearchScraper';
 import { TruePeopleSearchScraper } from './sources/TruePeopleSearchScraper';
@@ -31,7 +31,7 @@ interface PerformanceMetrics {
 
 export class PeopleSearchAggregator {
   private cache: PeopleSearchCache;
-  private scrapers = [
+  private scrapers: BaseScraper[] = [
     new FastPeopleSearchScraper(),
     new TruePeopleSearchScraper(),
     new WhitePagesScraper(),
@@ -123,6 +123,16 @@ export class PeopleSearchAggregator {
       // Get browser from pool (faster than launching new)
       browser = await this.getBrowser();
 
+  /**
+   * Execute search with retry logic and exponential backoff
+   */
+  private async executeSearchWithRetry(query: SearchQuery, retriesLeft: number): Promise<PersonRecord> {
+    let browser: Browser | null = null;
+    
+    try {
+      // Get or create browser from pool
+      browser = await this.getBrowserFromPool();
+      
       const context = await browser.newContext({
         userAgent: this.getRandomUserAgent(),
         viewport: { width: 1920, height: 1080 },
@@ -156,6 +166,8 @@ export class PeopleSearchAggregator {
 
       // Filter successful results and flatten
       const allRecords: PersonRecord[] = [];
+      let successfulSources = 0;
+      
       results.forEach((result, index) => {
         if (result.status === 'fulfilled') {
           allRecords.push(...result.value);
@@ -164,13 +176,18 @@ export class PeopleSearchAggregator {
 
       // Fuse records with optimized algorithm
       if (allRecords.length === 0) {
-        throw new Error('No records found from any source');
+        if (retriesLeft > 0) {
+          console.log(`[PeopleSearchAggregator] No records found, retrying... (${retriesLeft} retries left)`);
+          await this.delay(HIGH_CAPACITY_CONFIG.retryDelayMs * (HIGH_CAPACITY_CONFIG.maxRetries - retriesLeft + 1));
+          return this.executeSearchWithRetry(query, retriesLeft - 1);
+        }
+        throw new Error(`No records found from any source after ${HIGH_CAPACITY_CONFIG.maxRetries} attempts`);
       }
 
+      // Fuse records with confidence weighting
       const fusedRecord = DataFusion.fuseRecords(allRecords);
       
-      // Cache the result
-      await this.cache.set(cacheKey, fusedRecord);
+      console.log(`[PeopleSearchAggregator] Successfully fused ${allRecords.length} records from ${successfulSources} sources`);
       
       this.updateMetrics(Date.now() - startTime, true);
       return fusedRecord;

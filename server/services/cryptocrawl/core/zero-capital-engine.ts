@@ -26,9 +26,12 @@
  * - If any step fails, ENTIRE bundle reverts - zero loss
  */
 
-import { ethers, Contract, Wallet, providers } from 'ethers';
-import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
-import logger from '../../logger.js';
+import { ethers, Wallet, providers, BigNumber } from 'ethers';
+import { FlashbotsBundleProvider, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction } from '@flashbots/ethers-provider-bundle';
+import logger from '../../../logger';
+
+// Type for our bundle transactions
+type FlashbotsTransaction = FlashbotsBundleTransaction | FlashbotsBundleRawTransaction;
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -128,8 +131,8 @@ const RPC_ENDPOINTS: Record<SupportedChain, string> = {
   avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
 };
 
-// Minimum profit thresholds (in USD value, converted to wei)
-const MIN_PROFIT_THRESHOLD = ethers.utils.parseEther('0.001'); // $1 minimum after all fees
+// Minimum profit thresholds (in USD value, converted to wei as bigint)
+const MIN_PROFIT_THRESHOLD = BigInt(ethers.utils.parseEther('0.001').toString()); // $1 minimum after all fees
 
 // ============================================================================
 // FLASH LOAN RECEIVER CONTRACT ABI (for encoding callbacks)
@@ -457,16 +460,22 @@ export class AutonomousZeroCapitalEngine {
     blockTimestamp: number
   ): ZeroCapitalOpportunity | null {
     try {
-      const flashLoanAmount = discrepancy.optimalAmount;
-      const grossProfit = (discrepancy.sellPrice - discrepancy.buyPrice) * flashLoanAmount / discrepancy.buyPrice;
+      // Convert to bigint if needed
+      const flashLoanAmountBigInt: bigint = typeof discrepancy.optimalAmount === 'bigint' 
+        ? discrepancy.optimalAmount 
+        : BigInt(Math.floor(Number(discrepancy.optimalAmount)));
+      // Convert prices to bigint if they're numbers
+      const sellPriceBigInt: bigint = typeof discrepancy.sellPrice === 'bigint' ? discrepancy.sellPrice : BigInt(Math.floor(Number(discrepancy.sellPrice) * 1e18));
+      const buyPriceBigInt: bigint = typeof discrepancy.buyPrice === 'bigint' ? discrepancy.buyPrice : BigInt(Math.floor(Number(discrepancy.buyPrice) * 1e18));
+      const grossProfit: bigint = (sellPriceBigInt - buyPriceBigInt) * flashLoanAmountBigInt / buyPriceBigInt;
       
       // Estimate costs
-      const flashLoanFee = flashLoanAmount * BigInt(9) / BigInt(10000); // 0.09% Aave fee
-      const estimatedGas = BigInt(300000); // ~300k gas for flash loan + swaps
-      const gasPrice = BigInt(50) * BigInt(10 ** 9); // 50 gwei estimate
-      const gasCost = estimatedGas * gasPrice;
+      const flashLoanFee: bigint = flashLoanAmountBigInt * BigInt(9) / BigInt(10000); // 0.09% Aave fee
+      const estimatedGas: bigint = BigInt(300000); // ~300k gas for flash loan + swaps
+      const gasPrice: bigint = BigInt(50) * BigInt(10 ** 9); // 50 gwei estimate
+      const gasCost: bigint = estimatedGas * gasPrice;
       
-      const netProfit = grossProfit - flashLoanFee - gasCost;
+      const netProfit: bigint = grossProfit - flashLoanFee - gasCost;
       
       if (netProfit <= MIN_PROFIT_THRESHOLD) {
         return null;
@@ -478,7 +487,7 @@ export class AutonomousZeroCapitalEngine {
         chain,
         inputToken: discrepancy.tokenA,
         outputToken: discrepancy.tokenB,
-        flashLoanAmount,
+        flashLoanAmount: flashLoanAmountBigInt,
         expectedProfit: netProfit,
         gasEstimate: estimatedGas,
         route: [
@@ -487,8 +496,8 @@ export class AutonomousZeroCapitalEngine {
             poolAddress: '0x...', // Would be actual pool address
             tokenIn: discrepancy.tokenA,
             tokenOut: discrepancy.tokenB,
-            amountIn: flashLoanAmount,
-            expectedAmountOut: flashLoanAmount * discrepancy.buyPrice / BigInt(10 ** 18),
+            amountIn: flashLoanAmountBigInt,
+            expectedAmountOut: flashLoanAmountBigInt * buyPriceBigInt / BigInt(10 ** 18),
             fee: 0.003, // 0.3%
           },
           {
@@ -497,7 +506,7 @@ export class AutonomousZeroCapitalEngine {
             tokenIn: discrepancy.tokenB,
             tokenOut: discrepancy.tokenA,
             amountIn: BigInt(0), // Set dynamically
-            expectedAmountOut: flashLoanAmount + netProfit,
+            expectedAmountOut: flashLoanAmountBigInt + netProfit,
             fee: 0.003,
           },
         ],
@@ -557,23 +566,23 @@ export class AutonomousZeroCapitalEngine {
       // 4. Repay flash loan + fee
       // 5. Pay miner bribe from remaining profit
       
-      const bundle = [
+      const bundle: (FlashbotsBundleTransaction | FlashbotsBundleRawTransaction)[] = [
         {
           signer: this.authSigner,
           transaction: {
             to: BALANCER_VAULT, // Use Balancer for 0% fee flash loans
             data: flashLoanCalldata,
-            gasLimit: opportunity.gasEstimate,
+            gasLimit: BigNumber.from(opportunity.gasEstimate.toString()),
             maxFeePerGas: ethers.utils.parseUnits('100', 'gwei'),
             maxPriorityFeePerGas: ethers.utils.parseUnits('2', 'gwei'),
             type: 2,
             chainId: 1,
           },
-        },
+        } as FlashbotsBundleTransaction,
       ];
 
       // Simulate bundle first
-      const simulation = await this.flashbotsProvider.simulate(bundle, blockNumber + 1);
+      const simulation = await this.flashbotsProvider.simulate(bundle as any, blockNumber + 1);
       
       if ('error' in simulation) {
         return { success: false, error: `Simulation failed: ${simulation.error.message}` };

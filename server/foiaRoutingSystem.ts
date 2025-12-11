@@ -2,6 +2,7 @@ import { unifiedSearch, searchLegalStatutes } from './webSearchService';
 import { sendEmail } from './emailService';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { performEnhancedLegalSearch, type LegalSearchResult } from './enhancedLegalSearch';
 import { z } from 'zod';
 import { 

@@ -53,33 +53,41 @@ export enum CrawlerType {
 
 // Timing jitter measurement result
 export interface TimingJitterResult {
-  avg: number;
+  avg?: number;
   variance: number;
   jitter: number;
-  samples: number;
-  stability: number;
+  samples: number | number[];
+  stability?: number;
+  avgResponseTime?: number;
 }
 
 // Async echo detection result
 export interface AsyncEchoResult {
-  asyncDetected: boolean;
-  serverSignature: string;
-  hasAsyncHeader: boolean;
-  statusCode: number;
-  responseTime: string | null;
+  asyncDetected?: boolean;
+  serverSignature?: string;
+  hasAsyncHeader?: boolean;
+  statusCode?: number;
+  responseTime?: string | null;
   error?: boolean;
+  echoCount?: number;
+  echoSignatures?: string[];
+  asyncDelay?: number;
 }
 
 // Exploration result from hydra crawler
 export interface ExplorationResult {
-  target: string;
-  richness: number;
-  nextTarget: string;
+  target?: string;
+  richness?: number;
+  nextTarget?: string;
   links?: string[];
   statusCode?: number;
   contentLength?: number;
   error?: boolean;
   errorType?: string;
+  discovered?: string[];
+  explored?: number;
+  depth?: number;
+  branches?: number;
 }
 
 // System resource metrics
@@ -88,6 +96,10 @@ export interface ResourceMetrics {
   memUsage: number;        // Percentage (0-100)
   activeWorkers: number;   // Current crawler count
 }
+
+// Extended result types for backward compatibility
+// Note: Core interfaces are defined above (TimingJitterResult, AsyncEchoResult, ExplorationResult)
+// These extended versions support additional optional fields used in various crawlers
 
 /**
  * PANTHEON Core - The Brain

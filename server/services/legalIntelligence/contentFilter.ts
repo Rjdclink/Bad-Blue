@@ -146,12 +146,17 @@ export class ContentFilter {
         // Check for legal terms
         const hasLegalTerms = this.containsLegalTerms(text);
 
+        // Use type guard to safely access tagName
+        const tagName = element && typeof element === 'object' && 'tagName' in element 
+          ? String((element as { tagName: string }).tagName).toLowerCase() 
+          : 'div';
+        
         blocks.push({
           html: $.html($el),
           text,
           wordCount,
           score: 0,
-          tag: ('tagName' in element && typeof element.tagName === 'string') ? element.tagName : 'div',
+          tag: tagName,
           hasLegalTerms,
         });
 

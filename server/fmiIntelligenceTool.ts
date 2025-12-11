@@ -183,14 +183,14 @@ async function extractTextFromFMIFile(file: FMIFile): Promise<string> {
  */
 export async function extractFMIIntelligence(
   file: FMIFile,
-  lawType: LawType,
+  lawType: string, // Accept any law type string for flexibility
   state: string,
   context?: string
 ): Promise<FMIExtractedContent> {
   log.info('[F.M.I.] Extracting intelligence from file', { fileName: file.name, fileType: file.type });
   
   try {
-    const expertConfig = getExpertSystemConfig(lawType, state);
+    const expertConfig = getExpertSystemConfig(lawType as LawType, state);
     const textContent = await extractTextFromFMIFile(file);
     
     const prompt = `You are F.M.I. (Forensic Media Intelligence) - an advanced evidence analysis system. As a ${expertConfig.profile.specialty} expert analyzing evidence for a ${lawType.replace(/-/g, ' ')} case in ${state}, extract all relevant information from this evidence file:
@@ -409,13 +409,13 @@ export async function extractFMIIntelligenceEnhanced(
 export async function classifyFMIEvidence(
   file: FMIFile,
   extracted: FMIExtractedContent,
-  lawType: LawType,
+  lawType: string, // Accept any law type string for flexibility
   state: string
 ): Promise<FMIClassification> {
   log.info('[F.M.I.] Classifying evidence', { fileName: file.name });
   
   try {
-    const expertConfig = getExpertSystemConfig(lawType, state);
+    const expertConfig = getExpertSystemConfig(lawType as LawType, state);
     
     const prompt = `You are F.M.I. (Forensic Media Intelligence). As a ${expertConfig.profile.specialty} expert in ${state}, classify this evidence and assess admissibility:
 
@@ -493,7 +493,7 @@ Return ONLY valid JSON:
  */
 export async function analyzeFMIEvidence(
   file: FMIFile,
-  lawType: LawType,
+  lawType: string, // Accept any law type string
   state: string,
   context?: string
 ): Promise<FMIAnalysisResult> {
