@@ -852,48 +852,6 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
                 </Button>
               </CardContent>
             </Card>
-
-            {/* Quick Actions Card - NEW */}
-            <Card className="border-0 shadow-xl bg-card/80 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle className="text-lg font-bold">Quick Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="w-full justify-start hover:bg-primary/10"
-                  onClick={handleVoiceToggle}
-                >
-                  {voiceMode.isEnabled ? <MicOff className="w-4 h-4 mr-2" /> : <Mic className="w-4 h-4 mr-2" />}
-                  {voiceMode.isEnabled ? 'Disable Voice Mode' : 'Enable Voice Mode'}
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="w-full justify-start hover:bg-primary/10"
-                  onClick={handleMediaToggle}
-                >
-                  {mediaEnabled ? <CameraOff className="w-4 h-4 mr-2" /> : <Camera className="w-4 h-4 mr-2" />}
-                  {mediaEnabled ? 'Disable Camera' : 'Enable Camera'}
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="w-full justify-start hover:bg-primary/10"
-                  onClick={() => {
-                    if (!greetingPlayed) {
-                      playGreeting();
-                    } else {
-                      voiceSynthesis.speak(`Hello again! I'm LEXARA, your Legal Expert AI Resource Advisor. How can I assist you with your ${lawTypeName} matter today?`, { context: 'introduction', autoPlay: true });
-                    }
-                  }}
-                >
-                  <Volume2 className="w-4 h-4 mr-2" />
-                  Hear Introduction
-                </Button>
-              </CardContent>
-            </Card>
           </div>
         </div>
 
