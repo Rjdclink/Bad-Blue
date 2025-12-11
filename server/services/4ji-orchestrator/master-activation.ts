@@ -347,7 +347,7 @@ export class MasterActivation {
       // Phase 12: Initialize Autonomous Evolution Engine
       log.info('Phase 12: Initializing Autonomous Evolution Engine...');
       AutonomousEvolutionEngine.initialize();
-      AutonomousEvolutionEngine.start();
+      AutonomousEvolutionEngine.startDailySchedule();
       
       // Phase 13: Initialize Hyper-Dimensional Reasoning Engine
       log.info('Phase 13: Initializing Hyper-Dimensional Reasoning Engine...');

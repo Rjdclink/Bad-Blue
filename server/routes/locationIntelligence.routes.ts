@@ -1,17 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { exifToolExtractor } from '../services/locationIntelligence/ExifToolExtractor';
-import { locationAggregator } from '../services/locationIntelligence/LocationAggregator';
+import { locationAggregator, type LocationPoint } from '../services/locationIntelligence/LocationAggregator';
 
 const router = Router();
-
-interface PublicRecord {
-  latitude: number;
-  longitude: number;
-  source: 'social_media' | 'court_record' | 'property' | 'voter' | 'business';
-  timestamp?: string | Date;
-  confidence?: number;
-}
 
 const analyzeRequestSchema = z.object({
   imagePaths: z.array(z.string()).optional().default([]),
@@ -46,7 +38,10 @@ router.post('/api/location-intel/analyze', async (req, res) => {
     }
 
     publicRecords.forEach(record => {
-      locationAggregator.addPublicRecord(record);
+      locationAggregator.addPublicRecord({
+        ...record,
+        timestamp: record.timestamp ? new Date(record.timestamp) : undefined,
+      });
     });
 
     const clustered = locationAggregator.cluster(100);

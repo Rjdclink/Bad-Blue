@@ -136,7 +136,6 @@ export class LeafletMapperTestSuite {
           source: {
             filename: 'test.jpg',
             uploadedBy: 'user1',
-            consentGiven: true,
           },
         },
       ];

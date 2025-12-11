@@ -373,3 +373,6 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
 
 // Export singleton instance
 export const computationalBeam = new ComputationalBeamOrchestrator();
+
+// Export class for direct instantiation if needed
+export { ComputationalBeamOrchestrator as ComputationalBeam };

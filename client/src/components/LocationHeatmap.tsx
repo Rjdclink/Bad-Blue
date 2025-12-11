@@ -53,7 +53,7 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
 
     // Add heatmap
     if (data.length) {
-      // @ts-expect-error - leaflet.heat extends L but types are incomplete
+      // @ts-ignore - leaflet.heat extends L but types are incomplete
       heatLayerRef.current = L.heatLayer(data, { radius, blur, maxZoom }).addTo(mapRef.current);
       const bounds = L.latLngBounds(data.map(d => [d[0], d[1]]));
       mapRef.current.fitBounds(bounds, { padding: [50, 50] });

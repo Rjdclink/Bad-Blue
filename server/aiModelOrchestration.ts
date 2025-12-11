@@ -213,7 +213,7 @@ export async function executeWithModel(
       taskName: `${model.id}_${role}`,
       temperature: model.temperature,
       maxTokens: model.maxTokens,
-      preferredProvider: model.provider
+      preferredProvider: (model.provider === 'gemini' || model.provider === 'groq' || model.provider === 'mistral') ? model.provider : undefined
     });
     
     const latencyMs = Date.now() - startTime;
@@ -223,11 +223,11 @@ export async function executeWithModel(
       role,
       content: result.content || '',
       confidence: result.success ? 0.8 : 0.2,
-      tokensUsed: result.tokensUsed || 0,
+      tokensUsed: 0, // Token counting not available in fallback result
       latencyMs,
       metadata: {
         provider: result.provider,
-        model: result.model
+        model: result.provider || 'unknown'
       }
     };
   } catch (error: any) {

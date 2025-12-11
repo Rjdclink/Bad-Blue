@@ -48,9 +48,9 @@ export class HydraCrawler extends BaseCrawler {
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       // Spawn new heads if source is rich and we have capacity
-      if (result.richness > 0.7 && this.heads.length < this.maxHeads) {
-        this.spawnHead(result.nextTarget);
-        this.layPheromone(result.nextTarget, result.richness);
+      if ((result.richness ?? 0) > 0.7 && this.heads.length < this.maxHeads) {
+        this.spawnHead(result.nextTarget ?? '');
+        this.layPheromone(result.nextTarget ?? '', result.richness ?? 0);
       }
       signatures.push(this.generateEntropySignature(result));
     }
@@ -132,7 +132,11 @@ class HydraHead {
         links: links.slice(0, 10), // Limit for efficiency
         nextTarget: this.selectNextTarget(links),
         statusCode: response.status,
-        contentLength: html.length
+        contentLength: html.length,
+        discovered: links,
+        explored: 1,
+        depth: 1,
+        branches: links.length
       };
     } catch (error) {
       this.alive = false;
@@ -141,7 +145,11 @@ class HydraHead {
         richness: 0,
         nextTarget: '',
         error: true,
-        errorType: error instanceof Error ? error.message : 'unknown'
+        errorType: error instanceof Error ? error.message : 'unknown',
+        discovered: [],
+        explored: 0,
+        depth: 0,
+        branches: 0
       };
     } finally {
       clearTimeout(timeoutId);

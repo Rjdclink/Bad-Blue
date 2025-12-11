@@ -268,12 +268,14 @@ export class PantheonCrawlerOrchestrator {
     console.log('[PANTHEON] Initializing crawler systems...');
     
     try {
-      // Initialize Trinity Crawlers
+      // Initialize Trinity Crawlers (require phylactery and stealth)
       this.blizzard = new BlizzardCrawler(this.phylactery, this.stealth);
       this.cerberus = new CerberusCrawler(this.phylactery, this.stealth);
       this.lich = new LichCrawler(this.phylactery, this.stealth);
       
       // Initialize Specialized Crawlers
+      // StarTrekCrawler: No constructor arguments
+      // BirdOfPreyCrawler, SixDegreesCrawler: Require stealth and phylactery
       this.startrek = new StarTrekCrawler();
       this.birdofprey = new BirdOfPreyCrawler(this.stealth, this.phylactery);
       this.sixdegrees = new SixDegreesCrawler(this.stealth, this.phylactery);

@@ -1,18 +1,19 @@
 /**
  * CryptoCrawl Authentication System
  * 
- * Password-only authentication for the CryptoCrawler platform
- * NO email required - just the master password
- * 
- * IMPORTANT: Uses CRPTCRWLR (uppercase) for consistency with masterPassword.ts
+ * Email + Password authentication for the CryptoCrawler platform
+ * Configure credentials via environment variables:
+ * - CRYPTOCRAWL_EMAIL: Admin email address
+ * - CRYPTOCRAWL_PASSWORD: Admin password
  */
 
 import crypto from 'crypto';
 
-// Master password hash (pre-computed)
-// Password: CRPTCRWLR (uppercase - must match masterPassword.ts CRYPTOCRAWLER_PASSWORD)
+// Authentication credentials from environment variables with fallback defaults
+// Note: In production, always set these via environment variables
+const MASTER_EMAIL = process.env.CRYPTOCRAWL_EMAIL || 'crypto@cc.com';
 const MASTER_PASSWORD_HASH = crypto.createHash('sha256')
-  .update('CRPTCRWLR')
+  .update(process.env.CRYPTOCRAWL_PASSWORD || 'cryptocrawl')
   .digest('hex');
 
 export interface AuthResult {
@@ -29,10 +30,18 @@ const activeSessions: Map<string, { createdAt: number; expiresAt: number }> = ne
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Authenticate with master password
+ * Authenticate with email and password
  * Returns a session token on success
  */
-export function authenticateWithPassword(password: string): AuthResult {
+export function authenticateWithPassword(password: string, email?: string): AuthResult {
+  // Validate email if provided
+  if (email && email.toLowerCase() !== MASTER_EMAIL.toLowerCase()) {
+    return {
+      success: false,
+      error: 'Invalid email'
+    };
+  }
+  
   // Hash the provided password
   const providedHash = crypto.createHash('sha256')
     .update(password)

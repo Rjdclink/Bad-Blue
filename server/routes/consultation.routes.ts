@@ -9,6 +9,7 @@ import { isAuthenticated } from '../auth';
 import { asyncHandler } from '../errorHandler';
 import { analyzeLegalIssue } from '../legalAI';
 import { conductMasterConsultation, shouldInvokePeopleFinder } from '../consultationCoordinator';
+import { performConsultation } from '../legalConsultationEngine';
 import { createLogger } from '../logger';
 import type { LawType } from '../../shared/legalCounselTypes';
 

@@ -18,6 +18,7 @@
  */
 
 import * as tokenMetrics from './repositories/tokenMetricsRepository';
+import type { AIProviderName } from './repositories/tokenMetricsRepository';
 import { rateLimitTracker } from './rateLimitTracker';
 import { isMistralAvailable } from './mistral';
 import { isClaudeAvailable } from './claude';
@@ -1062,7 +1063,7 @@ class AITokenGovernorEnhanced {
       // Record to database with full context
       await tokenMetrics.recordUsage({
         taskName,
-        provider,
+        provider: provider.toLowerCase() as AIProviderName,
         tokensUsed,
         latencyMs,
         success,

@@ -973,11 +973,7 @@ export async function searchCaseHistory(
     
     // Search for cases involving this person
     const query = `"${personName}"`;
-    const precedents = await precedentExtractor.extractPrecedents(query, {
-      maxResults,
-      sources: ['justia', 'findlaw'],
-      relevanceThreshold: 0.5,
-    });
+    const precedents = await precedentExtractor.extractPrecedents(query, undefined, maxResults);
 
     console.log('[People Search] Found case history:', precedents.length);
     return precedents;
