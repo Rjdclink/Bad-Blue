@@ -1,18 +1,25 @@
 /**
- * ALEXERA - Advanced Legal Expert Resource Advisor
+ * LEXARA - Legal Expert AI Resource Advisor
  * 
- * The intelligent legal consultation engine featuring a professional female attorney persona.
- * Visual identity based on OIP.webp - composed, confident, authoritative advisor.
+ * Hyper-advanced legal consultation engine with:
+ * - Dynamic visual avatar with expressive motion effects
+ * - Real-time webcam/microphone integration
+ * - Lip-reading support signal processing
+ * - Emotional state visualization
+ * - Immersive sensory enhancement animations
+ * - Authority and captivation dynamics
  * 
- * ALEXERA serves as the "governing brain" coordinating:
+ * LEXARA serves as the "governing brain" coordinating:
  * - Legal analysis and case evaluation
  * - F.M.I. (Forensic Media Intelligence) integration
  * - Multi-area of law expertise (29+ practice areas)
  * - Strategic recommendations and next steps
  * - Voice Intelligence System (Stages 11-15)
+ * 
+ * Optimized for minimal computational usage with silent operation
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Card,
@@ -37,14 +44,16 @@ import {
   Scale,
   Sparkles,
   Loader2,
-  AlertCircle,
   FileText,
   CheckCircle2,
   XCircle,
   Brain,
-  Mic,
   Volume2,
-  VolumeX,
+  Camera,
+  CameraOff,
+  Mic,
+  MicOff,
+  Eye,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
@@ -53,6 +62,8 @@ import FMIAnalysis from "@/components/FMIAnalysis";
 import { VoiceToggle, VoiceStatusIndicator } from "@/components/VoiceToggle";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useVoiceSynthesis } from "@/hooks/useVoiceSynthesis";
+import { LexaraAvatar, LexaraPresence, LexaraWaveform, type EmotionalState } from "@/components/LexaraAvatar";
+import useLexaraMedia, { LexaraPiPPreview } from "@/hooks/useLexaraMedia";
 
 const US_STATES = [
   { code: "AL", name: "Alabama" },
@@ -122,6 +133,8 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [analysis, setAnalysis] = useState<any>(null);
   const [greetingPlayed, setGreetingPlayed] = useState(false);
+  const [emotionalState, setEmotionalState] = useState<EmotionalState>('neutral');
+  const [mediaEnabled, setMediaEnabled] = useState(false);
 
   // Voice Intelligence System (Stages 11-15)
   const voiceMode = useVoiceMode({
@@ -136,6 +149,21 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
   });
 
   const voiceSynthesis = useVoiceSynthesis();
+
+  // LEXARA Media Integration (Webcam + Microphone)
+  const lexaraMedia = useLexaraMedia({
+    onSpeechStart: () => {
+      setEmotionalState('listening');
+    },
+    onSpeechEnd: async () => {
+      setEmotionalState('processing');
+      // Audio could be sent to backend for transcription
+      // For now, we rely on the browser's speech recognition
+    },
+    onAudioLevel: () => {
+      // Audio level updates are handled internally
+    },
+  });
 
   // Get law type name for greeting (import LAW_TYPES_INFO if needed)
   const lawTypeName = lawType 
@@ -291,6 +319,27 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
     analyzeMutation.mutate({ state, situation, lawType });
   };
 
+  // Derive LEXARA's emotional state based on current activity
+  const currentEmotionalState = useMemo<EmotionalState>(() => {
+    if (analyzeMutation.isPending) return 'processing';
+    if (voiceSynthesis.isSpeaking) return 'speaking';
+    if (voiceMode.isListening || lexaraMedia.state.isSpeaking) return 'listening';
+    if (analysis) return 'authoritative';
+    return emotionalState;
+  }, [analyzeMutation.isPending, voiceSynthesis.isSpeaking, voiceMode.isListening, 
+      lexaraMedia.state.isSpeaking, analysis, emotionalState]);
+
+  // Toggle media (webcam/mic)
+  const handleMediaToggle = async () => {
+    if (mediaEnabled) {
+      lexaraMedia.stop();
+      setMediaEnabled(false);
+    } else {
+      await lexaraMedia.start({ video: true, audio: true });
+      setMediaEnabled(true);
+    }
+  };
+
   const handleFileComplaint = () => {
     if (!user) {
       window.location.href = "/api/login";
@@ -329,48 +378,120 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
 
   return (
     <div className="min-h-screen bg-background">
-      <main className="container max-w-6xl mx-auto px-4 py-8">
-        {/* ALEXERA Header with Avatar */}
-        <div className="mb-8 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {/* ALEXERA Avatar - OIP.webp */}
-            <div className="relative">
-              <img 
-                src="/images/OIP.webp" 
-                alt="ALEXERA - Legal Expert AI Resource Advisor"
-                className="w-20 h-20 rounded-full object-cover border-4 border-primary shadow-lg"
-              />
-              <div className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-1">
-                <Brain className="w-4 h-4" />
-              </div>
-            </div>
-            
-            <div>
-              <h1 className="text-3xl font-bold flex items-center gap-2">
-                <Scale className="w-8 h-8 text-primary" />
-                ALEXERA
-              </h1>
-              <p className="text-muted-foreground">Legal Expert AI Resource Advisor</p>
-            </div>
-          </div>
+      {/* PiP Webcam Preview */}
+      <LexaraPiPPreview
+        videoRef={lexaraMedia.setVideoElement}
+        isActive={mediaEnabled && lexaraMedia.state.isVideoReady}
+        position="bottom-right"
+      />
 
-          {/* Voice Mode Toggle - Stages 11-15 */}
-          <div className="flex items-center gap-3">
-            <VoiceToggle
-              isEnabled={voiceMode.isEnabled}
-              isListening={voiceMode.isListening}
-              onToggle={handleVoiceToggle}
-              position="inline"
-              size="md"
-            />
-            {voiceSynthesis.isSpeaking && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Volume2 className="w-4 h-4 animate-pulse text-primary" />
-                <span>Speaking...</span>
+      <main className="container max-w-6xl mx-auto px-4 py-8">
+        {/* LEXARA Header with Enhanced Avatar */}
+        <LexaraPresence
+          emotionalState={currentEmotionalState}
+          isActive={true}
+          audioLevel={lexaraMedia.state.audioLevel}
+          transcript={voiceMode.interimTranscript}
+          isListening={voiceMode.isListening}
+          isSpeaking={voiceSynthesis.isSpeaking}
+          className="mb-8"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-6">
+              {/* Enhanced LEXARA Avatar */}
+              <LexaraAvatar
+                size="xl"
+                emotionalState={currentEmotionalState}
+                isListening={voiceMode.isListening || lexaraMedia.state.isSpeaking}
+                isSpeaking={voiceSynthesis.isSpeaking}
+                isProcessing={analyzeMutation.isPending}
+                audioLevel={lexaraMedia.state.audioLevel}
+                showAura={true}
+                showParticles={true}
+                interactive={true}
+                onClick={handleVoiceToggle}
+              />
+              
+              <div>
+                <h1 className="text-4xl font-bold flex items-center gap-3 bg-gradient-to-r from-primary via-purple-500 to-primary bg-clip-text text-transparent">
+                  <Scale className="w-10 h-10 text-primary" />
+                  LEXARA
+                </h1>
+                <p className="text-lg text-muted-foreground mt-1">Legal Expert AI Resource Advisor</p>
+                <div className="flex items-center gap-3 mt-2">
+                  <LexaraWaveform
+                    audioLevel={lexaraMedia.state.audioLevel}
+                    isActive={voiceMode.isListening || lexaraMedia.state.isSpeaking}
+                    color="hsl(var(--primary))"
+                    barCount={7}
+                    className="h-6"
+                  />
+                  {analyzeMutation.isPending && (
+                    <span className="text-xs text-primary animate-pulse font-medium">
+                      Analyzing your case...
+                    </span>
+                  )}
+                </div>
               </div>
-            )}
+            </div>
+
+            {/* Control Panel */}
+            <div className="flex flex-col items-end gap-3">
+              {/* Voice & Media Controls */}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={mediaEnabled ? "default" : "outline"}
+                  size="sm"
+                  onClick={handleMediaToggle}
+                  className="gap-2"
+                >
+                  {mediaEnabled ? (
+                    <>
+                      <Camera className="w-4 h-4" />
+                      <Mic className="w-4 h-4" />
+                    </>
+                  ) : (
+                    <>
+                      <CameraOff className="w-4 h-4" />
+                      <MicOff className="w-4 h-4" />
+                    </>
+                  )}
+                  {mediaEnabled ? 'Live' : 'Enable'}
+                </Button>
+                
+                <VoiceToggle
+                  isEnabled={voiceMode.isEnabled}
+                  isListening={voiceMode.isListening}
+                  onToggle={handleVoiceToggle}
+                  position="inline"
+                  size="md"
+                />
+              </div>
+
+              {/* Status Indicators */}
+              <div className="flex items-center gap-2 text-xs">
+                {voiceSynthesis.isSpeaking && (
+                  <span className="flex items-center gap-1 text-primary">
+                    <Volume2 className="w-3 h-3 animate-pulse" />
+                    Speaking
+                  </span>
+                )}
+                {(voiceMode.isListening || lexaraMedia.state.isSpeaking) && (
+                  <span className="flex items-center gap-1 text-green-500">
+                    <Eye className="w-3 h-3" />
+                    Listening
+                  </span>
+                )}
+                {mediaEnabled && lexaraMedia.state.isVideoReady && (
+                  <span className="flex items-center gap-1 text-blue-500">
+                    <Camera className="w-3 h-3" />
+                    Watching
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
+        </LexaraPresence>
 
         {/* Voice Status Indicator */}
         {voiceMode.isEnabled && (
