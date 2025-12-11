@@ -42,7 +42,6 @@ const EARTH_RADIUS = 6371000;
 
 // Pre-computed conversion factors for performance
 const DEG_TO_RAD = Math.PI / 180;
-const RAD_TO_DEG = 180 / Math.PI;
 
 // Memoization cache for haversine calculations
 const distanceCache = new Map<string, number>();

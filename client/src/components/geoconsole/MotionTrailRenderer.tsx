@@ -48,7 +48,6 @@ export const MotionTrailRenderer: React.FC<MotionTrailRendererProps> = ({
   colorScheme = 'speed',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationRef = useRef<number | null>(null);
 
   // Calculate visible points based on current time
   const visiblePoints = useMemo(() => {

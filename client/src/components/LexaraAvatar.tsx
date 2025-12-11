@@ -12,7 +12,7 @@
  * Optimized for minimal computational usage with silent operation
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 
 // ============================================================================

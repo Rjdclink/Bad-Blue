@@ -40,24 +40,6 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour (extended for better performance)
 
 // Search timeout configuration - OPTIMIZED
 const SEARCH_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes max (reduced for speed)
-const SOURCE_TIMEOUT_MS = 30 * 1000; // 30 seconds per source
-
-// Performance metrics
-interface InmateSearchMetrics {
-  totalSearches: number;
-  cacheHits: number;
-  avgResponseTimeMs: number;
-  successfulSearches: number;
-  sourceStats: Record<string, { hits: number; avgTime: number }>;
-}
-
-const searchMetrics: InmateSearchMetrics = {
-  totalSearches: 0,
-  cacheHits: 0,
-  avgResponseTimeMs: 0,
-  successfulSearches: 0,
-  sourceStats: {},
-};
 
 // In-memory LRU cache
 const searchCache = new Map<string, CachedInmateSearch>();

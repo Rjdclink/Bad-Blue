@@ -5,25 +5,20 @@
  * Clean, automatic, highly user-friendly design
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Crosshair,
   Radar,
   Target,
-  Navigation,
   Clock,
   Activity,
   Shield,
-  Zap,
   Eye,
-  EyeOff,
   Play,
   Pause,
   SkipBack,
@@ -38,7 +33,6 @@ import {
   Satellite,
   MapPin,
   TrendingUp,
-  Users,
   FileText,
   RefreshCw,
   Power,
@@ -82,7 +76,7 @@ export default function GeoconsoleCommandCenter() {
   
   // Timeline state
   const [isPlaying, setIsPlaying] = useState(false);
-  const [timelinePosition, setTimelinePosition] = useState(100);
+  const [timelinePosition] = useState(100);
   const [currentTime, setCurrentTime] = useState(new Date());
   
   // Data state

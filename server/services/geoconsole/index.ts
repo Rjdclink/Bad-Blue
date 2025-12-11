@@ -24,7 +24,6 @@ import {
   GeoconsoleOrchestrationConfig,
   OrchestrationState,
   ProgressUpdate,
-  BoundingBox,
   GeoJSONFeatureCollection,
   FrequentLocation,
   MotionPattern,
@@ -312,7 +311,7 @@ export class HybridGeoconsole extends EventEmitter {
     for (const point of points) {
       let assigned = false;
       
-      for (const [key, cluster] of clusters) {
+      for (const cluster of clusters.values()) {
         const center = cluster[0];
         const distance = this.haversineDistance(
           point.latitude, point.longitude,

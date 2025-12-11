@@ -7,7 +7,7 @@
  * ONE FILE AT A TIME APPROACH
  */
 
-import { computationalBeam, ComputationalBeamOrchestrator } from './index';
+import { computationalBeam } from './index';
 import { WorkloadRouter } from './workloadRouter';
 import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';

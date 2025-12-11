@@ -7,7 +7,7 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { hybridGeoconsole, HybridGeoconsole } from '../services/geoconsole';
+import { hybridGeoconsole } from '../services/geoconsole';
 import { GPSPoint, DataSource } from '../services/geoconsole/types';
 import { createLogger } from '../logger';
 

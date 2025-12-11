@@ -10,8 +10,7 @@
  * - Heat trail rendering
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
@@ -23,15 +22,12 @@ import {
   SkipBack,
   SkipForward,
   MapPin,
-  Navigation,
   Clock,
   Activity,
   Layers,
   Settings,
   RefreshCw,
   Download,
-  Eye,
-  EyeOff,
   Satellite,
   Map as MapIcon,
 } from 'lucide-react';
@@ -39,9 +35,7 @@ import type {
   GPSPoint, 
   MotionTrail, 
   TimelineState, 
-  LayerConfig,
 } from '@shared/geoconsoleTypes';
-import { MPS_TO_MPH, METERS_TO_KM } from '@shared/geoconsoleTypes';
 
 interface GeoconsoleProps {
   initialData?: GPSPoint[];
@@ -75,7 +69,6 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   const [progressMessage, setProgressMessage] = useState('');
   
   const mapRef = useRef<HTMLDivElement>(null);
-  const animationRef = useRef<number | null>(null);
 
   // Process location data
   const processData = useCallback(async (data: GPSPoint[]) => {

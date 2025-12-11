@@ -33,7 +33,6 @@ const EARTH_RADIUS = 6371000;
 
 // Pre-computed conversion factors
 const DEG_TO_RAD = Math.PI / 180;
-const RAD_TO_DEG = 180 / Math.PI;
 
 // Default Monte Carlo configuration
 const DEFAULT_CONFIG: MonteCarloConfig = {

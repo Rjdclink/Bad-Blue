@@ -10,7 +10,6 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import {
   Upload,
@@ -37,7 +36,6 @@ const SAMPLE_DATA: GPSPoint[] = [
 
 export default function GeoconsolePage() {
   const [locationData, setLocationData] = useState<GPSPoint[]>(SAMPLE_DATA);
-  const [status, setStatus] = useState<'idle' | 'processing' | 'ready'>('idle');
   const [systemStatus, setSystemStatus] = useState<any>(null);
 
   // Fetch system status on mount

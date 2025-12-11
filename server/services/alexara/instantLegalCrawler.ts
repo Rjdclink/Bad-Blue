@@ -928,8 +928,6 @@ export class InstantLegalCrawler extends EventEmitter {
     query: LegalQuery,
     startTime: number
   ): LegalResult {
-    const successfulResults = results.filter(r => r.success);
-    
     // Combine all data, sort by relevance
     const allData: LegalData[] = [];
     const sourcesQueried: string[] = [];
