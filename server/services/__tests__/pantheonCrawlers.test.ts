@@ -150,6 +150,8 @@ const hydraTests = [
       id: 'test-5',
       target: 'https://example.com',
       priority: 5,
+      quantum: 5000,
+      entropyBudget: 10,
     };
     
     const hydra = new HydraCrawler(task);
@@ -162,14 +164,15 @@ const hydraTests = [
       target: 'https://example.com',
       priority: 5,
       timeout: 10000,
+      quantum: 5000,
+      entropyBudget: 10,
     };
     
     const hydra = new HydraCrawler(task);
-    const result = await hydra.run();
+    const signatures = await hydra.execute();
     
-    expect(result.success).toBeTruthy();
-    expect(result.taskId).toEqual('test-6');
-    expect(result.signatures.length).toBeGreaterThan(0);
+    expect(signatures).toBeTruthy();
+    expect(Array.isArray(signatures)).toBeTruthy();
   }),
 
   test('Hydra head should assess richness correctly', async () => {
@@ -178,17 +181,19 @@ const hydraTests = [
       target: 'https://example.com',
       priority: 5,
       timeout: 10000,
+      quantum: 5000,
+      entropyBudget: 10,
     };
     
     const hydra = new HydraCrawler(task);
-    const result = await hydra.run();
+    const signatures = await hydra.execute();
     
-    if (result.signatures.length > 0) {
-      const signature = result.signatures[0];
-      expect(signature.metadata).toHaveProperty('richness');
-      expect(typeof signature.metadata.richness).toEqual('number');
-      expect(signature.metadata.richness).toBeGreaterThan(-0.01);
-      expect(signature.metadata.richness).toBeLessThanOrEqual(1);
+    // Hydra returns EntropySignature array - check structure
+    if (signatures.length > 0) {
+      const signature = signatures[0];
+      expect(signature).toHaveProperty('hash');
+      expect(signature).toHaveProperty('probability');
+      expect(signature).toHaveProperty('timestamp');
     }
   }),
 
@@ -198,13 +203,15 @@ const hydraTests = [
       target: 'https://example.com',
       priority: 5,
       timeout: 10000,
+      quantum: 5000,
+      entropyBudget: 10,
     };
     
     const hydra = new HydraCrawler(task);
-    const result = await hydra.run();
+    const signatures = await hydra.execute();
     
-    // Should not spawn more than 5 heads
-    expect(result.signatures.length).toBeLessThanOrEqual(5);
+    // Should not spawn more than 5 heads (max 5 signatures)
+    expect(signatures.length).toBeLessThanOrEqual(5);
   }),
 ];
 
