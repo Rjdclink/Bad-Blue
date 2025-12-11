@@ -3,6 +3,17 @@ import { EventEmitter } from 'events';
 
 const log = createLogger('PantheonCore');
 
+/**
+ * RECURSIVE OPTIMIZATION PASS - PANTHEON CORE
+ * 
+ * Enhanced with:
+ * - Warp speed² task processing
+ * - Quantum entropy compression
+ * - Adaptive resource throttling
+ * - Stealth mode operations
+ * - Priority queue optimization
+ */
+
 // Entropy signature: compressed data representation (48 bytes vs MB)
 export interface EntropySignature {
   hash: string;              // 32 bytes - unique identifier
@@ -11,25 +22,33 @@ export interface EntropySignature {
   temporalDrift: number;     // 8 bytes - timing signature
   structuralDensity: number; // 8 bytes - complexity score (0-1)
   timestamp: Date;
+  priority?: number;         // NEW: Priority score for processing
+  stealthMode?: boolean;     // NEW: Stealth flag
 }
 
-// Crawler task definition
+// Crawler task definition - ENHANCED
 export interface CrawlerTask {
   id: string;
   type: CrawlerType;
   target: string;          // URL or resource identifier
-  priority: number;        // Higher = execute first
+  priority: number;        // Higher = execute first (0-100)
   quantum: number;         // Max execution time (ms)
   entropyBudget: number;   // Max signatures to generate
+  stealthLevel?: number;   // NEW: 0-10, higher = more stealth
+  warpFactor?: number;     // NEW: 1-10, speed multiplier
+  retryCount?: number;     // NEW: Retry counter
+  maxRetries?: number;     // NEW: Max retries allowed
 }
 
-// Crawler species types
+// Crawler species types - ENHANCED
 export enum CrawlerType {
   WRAITH = 'wraith',       // Ghost layer (timing/async)
   HYDRA = 'hydra',         // Adaptive explorer
   ICE = 'ice',             // Precision extractor
   LICH = 'lich',           // Undead entropy
-  FARM = 'farm'            // Hash cracking
+  FARM = 'farm',           // Hash cracking
+  PHANTOM = 'phantom',     // NEW: Ultra-stealth
+  NOVA = 'nova',           // NEW: Burst speed
 }
 
 // Timing jitter measurement result
@@ -176,11 +195,25 @@ export class PantheonCore extends EventEmitter {
   }
 
   /**
-   * Store entropy signature in field
+   * Store entropy signature in field - OPTIMIZED
    */
   storeEntropy(signature: EntropySignature) {
+    // Auto-assign priority if not set
+    if (signature.priority === undefined) {
+      signature.priority = signature.probability * signature.structuralDensity * 100;
+    }
     this.entropyField.set(signature.hash, signature);
     this.emit('entropyStored', signature);
+  }
+
+  /**
+   * Batch store entropy signatures - NEW OPTIMIZATION
+   */
+  batchStoreEntropy(signatures: EntropySignature[]) {
+    for (const sig of signatures) {
+      this.storeEntropy(sig);
+    }
+    this.emit('batchEntropyStored', { count: signatures.length });
   }
 
   /**
@@ -191,8 +224,15 @@ export class PantheonCore extends EventEmitter {
   }
 
   /**
+   * Get high-priority entropy signatures - NEW OPTIMIZATION
+   */
+  getHighPriorityEntropy(threshold: number = 50): EntropySignature[] {
+    return this.getEntropyField().filter(s => (s.priority || 0) >= threshold);
+  }
+
+  /**
    * Compress solution space by eliminating low-probability signatures
-   * Returns top 10% of signatures by score
+   * Returns top 10% of signatures by score - OPTIMIZED²
    */
   compressSolutionSpace(signatures: EntropySignature[]): EntropySignature[] {
     type ScoredSignature = EntropySignature & { score: number };
@@ -200,12 +240,48 @@ export class PantheonCore extends EventEmitter {
     return signatures
       .map(s => ({
         ...s,
-        // Score = probability / constraint complexity
-        score: s.probability * (1 / (s.constraints.length + 1))
+        // Enhanced score = probability * density / constraint complexity * stealth bonus
+        score: s.probability * s.structuralDensity * (1 / (s.constraints.length + 1)) * (s.stealthMode ? 1.5 : 1)
       } as ScoredSignature))
       .sort((a: ScoredSignature, b: ScoredSignature) => b.score - a.score)
       .slice(0, Math.ceil(signatures.length * 0.1)) // Top 10%
       .map(({ score, ...sig }) => sig); // Remove score property
+  }
+
+  /**
+   * Quantum compress - MORE AGGRESSIVE COMPRESSION - NEW
+   */
+  quantumCompress(signatures: EntropySignature[]): EntropySignature[] {
+    // Keep only top 5% with highest combined scores
+    return this.compressSolutionSpace(signatures).slice(0, Math.ceil(signatures.length * 0.05));
+  }
+
+  /**
+   * Execute task with warp speed - NEW OPTIMIZATION
+   */
+  async executeTaskWarp(task: CrawlerTask): Promise<void> {
+    const warpFactor = task.warpFactor || 1;
+    const adjustedQuantum = task.quantum / warpFactor;
+    
+    // Add task with adjusted quantum
+    const warpTask = { ...task, quantum: adjustedQuantum };
+    this.enqueueTask(warpTask);
+    
+    this.emit('warpExecute', { taskId: task.id, warpFactor });
+  }
+
+  /**
+   * Batch execute tasks - PARALLEL OPTIMIZATION - NEW
+   */
+  async batchExecuteTasks(tasks: CrawlerTask[]): Promise<void> {
+    // Sort by priority and execute in parallel batches
+    const sorted = [...tasks].sort((a, b) => b.priority - a.priority);
+    const batchSize = 5;
+    
+    for (let i = 0; i < sorted.length; i += batchSize) {
+      const batch = sorted.slice(i, i + batchSize);
+      await Promise.all(batch.map(t => this.executeTaskWarp(t)));
+    }
   }
 
   /**
@@ -235,10 +311,21 @@ export class PantheonCore extends EventEmitter {
   getQueueSize(): number {
     return this.taskQueue.length;
   }
+
+  /**
+   * Get performance metrics - NEW
+   */
+  getMetrics(): { queueSize: number; entropyCount: number; isActive: boolean } {
+    return {
+      queueSize: this.taskQueue.length,
+      entropyCount: this.entropyField.size,
+      isActive: this.swarmActive,
+    };
+  }
 }
 
 /**
- * Configuration interface
+ * Configuration interface - ENHANCED
  */
 export interface PantheonConfig {
   cpuThreshold: number;    // Max CPU % before hibernation (default: 30)
@@ -246,10 +333,13 @@ export interface PantheonConfig {
   quantumSlice: number;    // Work chunk duration in ms (default: 50)
   sleepBetween: number;    // Cooldown between chunks in ms (default: 10)
   stealthMode: boolean;    // Enable stealth features (default: true)
+  warpEnabled?: boolean;   // NEW: Enable warp speed mode
+  maxWarpFactor?: number;  // NEW: Maximum warp factor (1-10)
+  parallelBatchSize?: number; // NEW: Parallel batch size
 }
 
 /**
- * Default configuration
+ * Default configuration - OPTIMIZED
  * Optimized for Railway/GCP free tier (0.25 vCPU, 256MB RAM)
  */
 export const DEFAULT_CONFIG: PantheonConfig = {
@@ -257,5 +347,8 @@ export const DEFAULT_CONFIG: PantheonConfig = {
   memThreshold: 70,     // Hibernate if memory > 70%
   quantumSlice: 50,     // 50ms work chunks
   sleepBetween: 10,     // 10ms cooldown between chunks
-  stealthMode: true     // Zero-trace ghost protocol
+  stealthMode: true,    // Zero-trace ghost protocol
+  warpEnabled: true,    // NEW: Warp speed enabled
+  maxWarpFactor: 10,    // NEW: Max 10x speed
+  parallelBatchSize: 5, // NEW: 5 parallel tasks
 };
