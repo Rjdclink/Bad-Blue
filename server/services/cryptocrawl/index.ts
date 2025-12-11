@@ -220,6 +220,36 @@ export {
   type PerformanceBreakdown
 } from './validation/monte-carlo-engine';
 
+// Divine Optimization Engine - Maximum Profitability
+export {
+  DivineOptimizationEngine,
+  getDivineEngine,
+  DivinePerception,
+  ZeroFrictionExecutor,
+  LocalComputationEngine,
+  type DivineEngineState,
+} from './optimization';
+
+// Maximum Profitability Configuration
+export {
+  MAX_PROFIT_CONFIG,
+  OPTIMIZED_CONTROL_SIGNALS,
+  DynamicParameterOptimizer,
+  dynamicOptimizer,
+  ProfitTracker,
+  profitTracker,
+  type ProfitMetrics,
+} from './config/maximum-profitability';
+
+// CainTwin Hybrid Crawler - Merged Conjoined Twin + Cain
+export {
+  CainTwinHybrid,
+  HybridManager,
+  type HybridState,
+  type HybridExecution,
+  type HybridMetrics,
+} from './agents/cain-twin-hybrid';
+
 /**
  * Quick Start Example
  * 
@@ -282,8 +312,8 @@ export {
  * 28. **9-Model AI Orchestration** - Gemini 3, Claude, Groq, Mistral, DeepSeek, Grok, Kimi working in harmony
  */
 
-export const SYSTEM_VERSION = '4.0.0';
-export const SYSTEM_NAME = 'Hyper-Evolved Crawler System with AI Orchestration';
+export const SYSTEM_VERSION = '5.0.0';
+export const SYSTEM_NAME = 'Divine Optimization Crawler System - Maximum Profitability';
 export const CAPABILITIES = [
   'Multi-network Eden storage',
   'Cain evolution engine',
@@ -335,5 +365,22 @@ export const CAPABILITIES = [
   'Elite strategy breeding',
   'Multi-objective fitness optimization',
   'Gemini 3 AI integration',
-  '9-model AI orchestration'
+  '9-model AI orchestration',
+  // Divine Optimization Capabilities (v5.0)
+  'Divine perception engine',
+  'CainTwin hybrid crawler',
+  'Zero-friction execution',
+  'Maximum profitability optimization',
+  'Advanced memoization layer',
+  'Predictive opportunity caching',
+  'Local computation engine',
+  'Dynamic parameter optimization',
+  'Batch aggregation',
+  'Pattern memory recognition',
+  'Synergy detection',
+  'Compound profit tracking',
+  'Sub-millisecond reaction',
+  'Gas-free strategies',
+  'Flash loan arbitrage',
+  'Cross-chain optimization',
 ];
