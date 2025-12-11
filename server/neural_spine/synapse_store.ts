@@ -232,20 +232,43 @@ class SynapseStore {
     updates: { weight?: number; confidence?: number }
   ): Promise<boolean> {
     try {
-      const setClauses: string[] = ['last_updated = NOW()'];
-      
-      if (updates.weight !== undefined) {
-        setClauses.push(`weight = ${updates.weight}`);
-      }
-      if (updates.confidence !== undefined) {
-        setClauses.push(`confidence = ${updates.confidence}`);
+      // Validate synapseId is a valid UUID format
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(synapseId)) {
+        console.error('[SynapseStore] Invalid synapse ID format');
+        return false;
       }
 
-      await db.execute(sql.raw(`
-        UPDATE neural_synapses
-        SET ${setClauses.join(', ')}
-        WHERE id = '${synapseId}'
-      `));
+      // Validate numeric values
+      if (updates.weight !== undefined && (typeof updates.weight !== 'number' || isNaN(updates.weight))) {
+        console.error('[SynapseStore] Invalid weight value');
+        return false;
+      }
+      if (updates.confidence !== undefined && (typeof updates.confidence !== 'number' || isNaN(updates.confidence))) {
+        console.error('[SynapseStore] Invalid confidence value');
+        return false;
+      }
+
+      // Use parameterized query
+      if (updates.weight !== undefined && updates.confidence !== undefined) {
+        await db.execute(sql`
+          UPDATE neural_synapses
+          SET weight = ${updates.weight}, confidence = ${updates.confidence}, last_updated = NOW()
+          WHERE id = ${synapseId}::uuid
+        `);
+      } else if (updates.weight !== undefined) {
+        await db.execute(sql`
+          UPDATE neural_synapses
+          SET weight = ${updates.weight}, last_updated = NOW()
+          WHERE id = ${synapseId}::uuid
+        `);
+      } else if (updates.confidence !== undefined) {
+        await db.execute(sql`
+          UPDATE neural_synapses
+          SET confidence = ${updates.confidence}, last_updated = NOW()
+          WHERE id = ${synapseId}::uuid
+        `);
+      }
 
       return true;
     } catch (error: any) {
@@ -259,55 +282,100 @@ class SynapseStore {
    */
   async querySynapses(query: SynapseQuery): Promise<NeuralSynapse[]> {
     try {
-      const conditions: string[] = [];
+      // Validate and sanitize inputs
+      const limit = Math.min(Math.max(1, query.maxResults || 100), 1000);  // Cap at 1000
       
+      // Validate UUID format for region
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      
+      // Validate fingerprint format (should be hex string from SHA-256)
+      const hexRegex = /^[0-9a-f]+$/i;
+      
+      // Get region ID from cache (already validated as UUID)
+      let regionId: string | undefined;
       if (query.region) {
-        const regionId = this.regionCache.get(query.region as NeuralRegionId);
-        if (regionId) {
-          conditions.push(`(region_from = '${regionId}' OR region_to = '${regionId}')`);
+        regionId = this.regionCache.get(query.region as NeuralRegionId);
+      }
+      
+      // Validate fingerprints are hex strings
+      const fromNode = query.fromNode && hexRegex.test(query.fromNode) ? query.fromNode : null;
+      const toNode = query.toNode && hexRegex.test(query.toNode) ? query.toNode : null;
+      const fingerprint = query.fingerprint && hexRegex.test(query.fingerprint) ? query.fingerprint : null;
+      
+      // Validate numeric values
+      const minWeight = typeof query.minWeight === 'number' && !isNaN(query.minWeight) ? query.minWeight : null;
+      const minConfidence = typeof query.minConfidence === 'number' && !isNaN(query.minConfidence) ? query.minConfidence : null;
+      
+      // Sanitize tags (alphanumeric and underscores only)
+      const tagRegex = /^[a-zA-Z0-9_-]+$/;
+      const safeTags = query.tags?.filter(t => tagRegex.test(t)) || [];
+
+      // Build parameterized query based on what's provided
+      // Using a simpler approach with individual queries based on common patterns
+      
+      if (fingerprint && regionId) {
+        const result = await db.execute(sql`
+          SELECT * FROM neural_synapses
+          WHERE (region_from = ${regionId}::uuid OR region_to = ${regionId}::uuid)
+            AND (from_node = ${fingerprint} OR to_node = ${fingerprint})
+            AND (${minWeight}::float8 IS NULL OR weight >= ${minWeight})
+            AND (${minConfidence}::float8 IS NULL OR confidence >= ${minConfidence})
+          ORDER BY (weight * confidence) DESC
+          LIMIT ${limit}
+        `);
+        if (result.rows) {
+          return result.rows.map(row => this.mapSynapseRow(row));
+        }
+      } else if (fingerprint) {
+        const result = await db.execute(sql`
+          SELECT * FROM neural_synapses
+          WHERE (from_node = ${fingerprint} OR to_node = ${fingerprint})
+            AND (${minWeight}::float8 IS NULL OR weight >= ${minWeight})
+            AND (${minConfidence}::float8 IS NULL OR confidence >= ${minConfidence})
+          ORDER BY (weight * confidence) DESC
+          LIMIT ${limit}
+        `);
+        if (result.rows) {
+          return result.rows.map(row => this.mapSynapseRow(row));
+        }
+      } else if (regionId) {
+        const result = await db.execute(sql`
+          SELECT * FROM neural_synapses
+          WHERE (region_from = ${regionId}::uuid OR region_to = ${regionId}::uuid)
+            AND (${minWeight}::float8 IS NULL OR weight >= ${minWeight})
+            AND (${minConfidence}::float8 IS NULL OR confidence >= ${minConfidence})
+          ORDER BY (weight * confidence) DESC
+          LIMIT ${limit}
+        `);
+        if (result.rows) {
+          return result.rows.map(row => this.mapSynapseRow(row));
+        }
+      } else if (fromNode && toNode) {
+        const result = await db.execute(sql`
+          SELECT * FROM neural_synapses
+          WHERE from_node = ${fromNode} AND to_node = ${toNode}
+            AND (${minWeight}::float8 IS NULL OR weight >= ${minWeight})
+            AND (${minConfidence}::float8 IS NULL OR confidence >= ${minConfidence})
+          ORDER BY (weight * confidence) DESC
+          LIMIT ${limit}
+        `);
+        if (result.rows) {
+          return result.rows.map(row => this.mapSynapseRow(row));
+        }
+      } else {
+        // Default: get top synapses by strength
+        const result = await db.execute(sql`
+          SELECT * FROM neural_synapses
+          WHERE (${minWeight}::float8 IS NULL OR weight >= ${minWeight})
+            AND (${minConfidence}::float8 IS NULL OR confidence >= ${minConfidence})
+          ORDER BY (weight * confidence) DESC
+          LIMIT ${limit}
+        `);
+        if (result.rows) {
+          return result.rows.map(row => this.mapSynapseRow(row));
         }
       }
-      
-      if (query.fromNode) {
-        conditions.push(`from_node = '${query.fromNode}'`);
-      }
-      
-      if (query.toNode) {
-        conditions.push(`to_node = '${query.toNode}'`);
-      }
-      
-      if (query.fingerprint) {
-        conditions.push(`(from_node = '${query.fingerprint}' OR to_node = '${query.fingerprint}')`);
-      }
-      
-      if (query.minWeight !== undefined) {
-        conditions.push(`weight >= ${query.minWeight}`);
-      }
-      
-      if (query.minConfidence !== undefined) {
-        conditions.push(`confidence >= ${query.minConfidence}`);
-      }
-      
-      if (query.tags && query.tags.length > 0) {
-        conditions.push(`tags && ARRAY[${query.tags.map(t => `'${t}'`).join(',')}]`);
-      }
 
-      const whereClause = conditions.length > 0 
-        ? `WHERE ${conditions.join(' AND ')}` 
-        : '';
-      
-      const limit = query.maxResults || 100;
-
-      const result = await db.execute(sql.raw(`
-        SELECT * FROM neural_synapses
-        ${whereClause}
-        ORDER BY (weight * confidence) DESC
-        LIMIT ${limit}
-      `));
-
-      if (result.rows) {
-        return result.rows.map(row => this.mapSynapseRow(row));
-      }
       return [];
     } catch (error: any) {
       console.error('[SynapseStore] Failed to query synapses:', error.message);

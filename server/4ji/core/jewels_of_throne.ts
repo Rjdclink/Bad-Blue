@@ -330,9 +330,24 @@ class JewelsOfThrone {
 
   /**
    * Set creator wallet address
+   * Validates address format based on chain type
    */
   async setCreatorWalletAddress(address: string, chain: string = 'ethereum'): Promise<boolean> {
     try {
+      // Validate chain parameter (alphanumeric only)
+      const chainRegex = /^[a-zA-Z0-9_-]+$/;
+      if (!chainRegex.test(chain) || chain.length > 50) {
+        console.error('[JewelsOfThrone] Invalid chain parameter');
+        return false;
+      }
+
+      // Validate wallet address format based on chain
+      const isValidAddress = this.validateWalletAddress(address, chain);
+      if (!isValidAddress) {
+        console.error(`[JewelsOfThrone] Invalid wallet address format for chain: ${chain}`);
+        return false;
+      }
+
       await db.execute(sql`
         UPDATE creator_wallet_directive
         SET 
@@ -352,6 +367,54 @@ class JewelsOfThrone {
     } catch (error: any) {
       console.error('[JewelsOfThrone] Failed to update wallet:', error.message);
       return false;
+    }
+  }
+
+  /**
+   * Validate wallet address format based on chain
+   */
+  private validateWalletAddress(address: string, chain: string): boolean {
+    if (!address || typeof address !== 'string') {
+      return false;
+    }
+
+    // Trim and normalize
+    const normalized = address.trim();
+
+    switch (chain.toLowerCase()) {
+      case 'ethereum':
+      case 'eth':
+      case 'polygon':
+      case 'matic':
+      case 'arbitrum':
+      case 'optimism':
+      case 'base':
+      case 'avalanche':
+      case 'bsc':
+      case 'binance':
+        // EVM addresses: 0x followed by 40 hex characters
+        return /^0x[0-9a-fA-F]{40}$/.test(normalized);
+
+      case 'bitcoin':
+      case 'btc':
+        // Bitcoin addresses: Legacy (1...), SegWit (3...), Native SegWit (bc1...)
+        return /^(1|3)[a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(normalized) ||
+               /^bc1[a-zA-HJ-NP-Z0-9]{39,59}$/.test(normalized);
+
+      case 'solana':
+      case 'sol':
+        // Solana addresses: Base58 encoded, 32-44 characters
+        return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(normalized);
+
+      case 'tron':
+      case 'trx':
+        // TRON addresses: Start with T, 34 characters
+        return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(normalized);
+
+      default:
+        // For unknown chains, allow alphanumeric with basic format check
+        // Must be at least 20 characters and only contain valid characters
+        return /^[0-9a-zA-Z]{20,100}$/.test(normalized);
     }
   }
 
