@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet.heat';
 import 'leaflet/dist/leaflet.css';
@@ -11,6 +11,8 @@ interface HeatmapProps {
   config?: { radius?: number; blur?: number; maxZoom?: number };
   satelliteView?: boolean;
 }
+
+type MapStatus = 'initializing' | 'waiting_coordinates' | 'loading_tiles' | 'ready' | 'error';
 
 export const LocationHeatmap: React.FC<HeatmapProps> = ({
   data,
@@ -25,13 +27,36 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
   const heatLayerRef = useRef<L.Layer | null>(null);
   const markersRef = useRef<L.Marker[]>([]);
   const [mapMode, setMapMode] = useState<'satellite' | 'street'>(satelliteView ? 'satellite' : 'street');
+  const [mapStatus, setMapStatus] = useState<MapStatus>('initializing');
+  const [tilesLoaded, setTilesLoaded] = useState(false);
+  const [coordinatesReady, setCoordinatesReady] = useState(false);
 
   const { radius = 25, blur = 15, maxZoom = 18 } = config;
 
+  // Step 1: Validate coordinates are ready
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    if (center && center.length === 2 && 
+        typeof center[0] === 'number' && typeof center[1] === 'number' &&
+        !isNaN(center[0]) && !isNaN(center[1])) {
+      setCoordinatesReady(true);
+      setMapStatus('loading_tiles');
+    } else {
+      setCoordinatesReady(false);
+      setMapStatus('waiting_coordinates');
+    }
+  }, [center]);
 
-    const map = L.map(containerRef.current).setView(center, zoom);
+  // Step 2: Initialize map engine only after coordinates are ready
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current || !coordinatesReady) return;
+
+    setMapStatus('loading_tiles');
+    
+    const map = L.map(containerRef.current, {
+      center: center,
+      zoom: zoom,
+      preferCanvas: true, // Better performance
+    });
     
     // High-quality satellite imagery layer (Esri World Imagery - free, high resolution)
     const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
@@ -50,6 +75,29 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
       maxZoom: 19,
     });
 
+    // Step 3: Wait for tiles to load before marking ready
+    const primaryLayer = satelliteView ? satelliteLayer : streetLayer;
+    
+    let tilesLoadedCount = 0;
+    let tilesLoadingCount = 0;
+    
+    primaryLayer.on('tileloadstart', () => {
+      tilesLoadingCount++;
+    });
+    
+    primaryLayer.on('tileload', () => {
+      tilesLoadedCount++;
+      // Consider map ready when significant tiles have loaded
+      if (tilesLoadedCount >= 4 && !tilesLoaded) {
+        setTilesLoaded(true);
+        setMapStatus('ready');
+      }
+    });
+    
+    primaryLayer.on('tileerror', () => {
+      console.warn('[LocationHeatmap] Tile load error');
+    });
+
     // Add default layer based on satelliteView prop
     if (satelliteView) {
       satelliteLayer.addTo(map);
@@ -65,12 +113,26 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
     };
     L.control.layers(baseMaps, { "📍 Labels": labelsLayer }).addTo(map);
 
-    mapRef.current = map;
-    return () => { map.remove(); mapRef.current = null; };
-  }, []);
+    // Set ready after a brief delay if tiles don't trigger events
+    const fallbackTimer = setTimeout(() => {
+      if (!tilesLoaded) {
+        setTilesLoaded(true);
+        setMapStatus('ready');
+      }
+    }, 3000);
 
+    mapRef.current = map;
+    
+    return () => { 
+      clearTimeout(fallbackTimer);
+      map.remove(); 
+      mapRef.current = null; 
+    };
+  }, [coordinatesReady, center, zoom, satelliteView]);
+
+  // Step 4: Add data layers only after map is ready
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || mapStatus !== 'ready') return;
 
     // Clear existing heat layer
     if (heatLayerRef.current) {
@@ -94,7 +156,28 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
       const marker = L.marker(m.pos).bindPopup(m.popup).addTo(mapRef.current!);
       markersRef.current.push(marker);
     });
-  }, [data, markers, radius, blur, maxZoom]);
+  }, [data, markers, radius, blur, maxZoom, mapStatus]);
 
-  return <div ref={containerRef} style={{ width: '100%', height: '600px', borderRadius: 8 }} />;
+  return (
+    <div className="relative">
+      {/* Loading overlay */}
+      {mapStatus !== 'ready' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-muted/80 z-10 rounded-lg">
+          <div className="text-center">
+            <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">
+              {mapStatus === 'initializing' && 'Initializing map engine...'}
+              {mapStatus === 'waiting_coordinates' && 'Waiting for coordinates...'}
+              {mapStatus === 'loading_tiles' && 'Loading satellite imagery...'}
+            </p>
+          </div>
+        </div>
+      )}
+      <div 
+        ref={containerRef} 
+        style={{ width: '100%', height: '600px', borderRadius: 8 }} 
+        className={mapStatus !== 'ready' ? 'opacity-30' : 'opacity-100 transition-opacity duration-500'}
+      />
+    </div>
+  );
 };

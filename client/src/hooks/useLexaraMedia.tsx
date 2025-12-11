@@ -118,6 +118,17 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
     error: null,
   });
 
+  // WebRTC state
+  const [webrtcState, setWebrtcState] = useState<{
+    sessionId: string | null;
+    connected: boolean;
+    peerConnection: RTCPeerConnection | null;
+  }>({
+    sessionId: null,
+    connected: false,
+    peerConnection: null,
+  });
+
   // Refs for streams and processing
   const videoStreamRef = useRef<MediaStream | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
@@ -126,6 +137,8 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   
   // VAD state refs
   const isSpeakingRef = useRef(false);
@@ -133,6 +146,100 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
   const speechStartRef = useRef<number | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const rafIdRef = useRef<number | null>(null);
+
+  // ============================================================================
+  // WEBRTC INITIALIZATION - Auto-initialize on component mount
+  // ============================================================================
+
+  const initializeWebRTC = useCallback(async () => {
+    try {
+      // First, get WebRTC config from server
+      const configResponse = await fetch('/api/lexara/stream/config');
+      const configData = await configResponse.json();
+      
+      if (!configData.success) {
+        throw new Error('Failed to get WebRTC configuration');
+      }
+
+      // Create RTCPeerConnection with server-provided ICE servers
+      const pc = new RTCPeerConnection(configData.config);
+      peerConnectionRef.current = pc;
+
+      // Handle ICE candidates
+      pc.onicecandidate = async (event) => {
+        if (event.candidate && webrtcState.sessionId) {
+          await fetch('/api/lexara/stream/signal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionId: webrtcState.sessionId,
+              type: 'ice-candidate',
+              payload: event.candidate,
+            }),
+          });
+        }
+      };
+
+      // Handle connection state changes
+      pc.onconnectionstatechange = () => {
+        setWebrtcState(prev => ({
+          ...prev,
+          connected: pc.connectionState === 'connected',
+        }));
+      };
+
+      // Connect to SSE stream
+      const eventSource = new EventSource('/api/lexara/stream');
+      eventSourceRef.current = eventSource;
+
+      eventSource.addEventListener('connected', (event) => {
+        const data = JSON.parse(event.data);
+        setWebrtcState(prev => ({
+          ...prev,
+          sessionId: data.sessionId,
+        }));
+      });
+
+      eventSource.addEventListener('ready', (event) => {
+        const data = JSON.parse(event.data);
+        setWebrtcState(prev => ({
+          ...prev,
+          connected: true,
+        }));
+      });
+
+      eventSource.onerror = () => {
+        console.warn('[LEXARA WebRTC] Stream connection error');
+      };
+
+      setWebrtcState(prev => ({
+        ...prev,
+        peerConnection: pc,
+      }));
+
+    } catch (err) {
+      console.error('[LEXARA WebRTC] Initialization error:', err);
+      setState(prev => ({
+        ...prev,
+        error: err instanceof Error ? err.message : 'WebRTC initialization failed',
+      }));
+    }
+  }, [webrtcState.sessionId]);
+
+  // Auto-initialize WebRTC on mount
+  useEffect(() => {
+    initializeWebRTC();
+    
+    return () => {
+      // Cleanup WebRTC on unmount
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+      }
+    };
+  }, []);
 
   // ============================================================================
   // VIDEO CAPTURE
@@ -411,6 +518,7 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
 
   return {
     state,
+    webrtcState,
     start,
     stop,
     startVideo,
@@ -420,6 +528,7 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
     setVideoElement,
     setCanvasElement,
     captureVideoFrame,
+    initializeWebRTC,
   };
 }
 
