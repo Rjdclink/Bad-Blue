@@ -12,6 +12,18 @@ zeroCapitalEngine.initialize().catch(err => {
   console.error('[CryptoCrawl] Failed to initialize zero-capital engine:', err);
 });
 
+// AUTO-START: Initialize autonomous faucet on module load (Divine Auto-Activation)
+// This ensures arbitrage begins automatically when server starts with valid RPC connections
+setTimeout(() => {
+  console.log('[CryptoCrawl] 🚀 Divine Auto-Start: Initiating autonomous faucet...');
+  if (!autonomousFaucet.isActive()) {
+    autonomousFaucet.runAutonomousLoop().catch(err => {
+      console.error('[CryptoCrawl] Failed to auto-start autonomous faucet:', err);
+    });
+    console.log('[CryptoCrawl] ✅ Autonomous faucet started - Zero-capital arbitrage ACTIVE');
+  }
+}, 5000); // 5 second delay to allow RPC connections to initialize
+
 // In-memory stats (production: use Redis)
 let stats = {
   totalProfit: 0,
