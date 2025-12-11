@@ -290,13 +290,26 @@ class FourJiReactorBridge {
     priority: string
   ): Promise<ReactorResponse> {
     try {
-      const job: Partial<ReactorJob> = {
-        type: request.requestType,
+      // Build a complete ReactorJob with all required properties
+      const jobId = `4ji-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const now = new Date();
+      
+      const job: ReactorJob = {
+        id: jobId,
+        type: this.mapRequestTypeToJobType(request.requestType),
         payload: request.context,
-        priority: this.mapPriorityToNumber(priority)
+        status: 'pending',
+        priority: this.mapPriorityToNumber(priority),
+        scheduledAt: now,
+        startedAt: null,
+        finishedAt: null,
+        errorMessage: null,
+        retryCount: 0,
+        maxRetries: 3,
+        createdAt: now
       };
 
-      const result = await submitJob(job as ReactorJob);
+      const result = await submitJob(job);
 
       return {
         success: result.status === 'completed',
@@ -375,6 +388,23 @@ class FourJiReactorBridge {
       case 'low': return 8;
       default: return 5;
     }
+  }
+
+  /**
+   * Map request type to ReactorJob type
+   */
+  private mapRequestTypeToJobType(requestType: string): ReactorJob['type'] {
+    const typeMap: Record<string, ReactorJob['type']> = {
+      'crypto_analysis': 'model_optimization',
+      'crypto_arb_eval': 'model_optimization',
+      'legal_consult': 'batch_inference',
+      'osint_search': 'osint_sweep',
+      'gps_heatmap': 'heatmap_update',
+      'inmate_locator': 'osint_sweep',
+      'legal_research': 'batch_inference'
+    };
+    
+    return typeMap[requestType] || 'batch_inference';
   }
 
   /**

@@ -26,15 +26,45 @@ import {
 } from './context_fingerprint';
 
 // ============================================================================
-// CONSTANTS
+// PLASTICITY CONSTANTS
 // ============================================================================
 
-const LEARNING_RATE = 0.1;             // How much reward affects weight
-const CONFIDENCE_INCREMENT = 0.05;     // Confidence boost per consistent positive
-const MAX_WEIGHT = 2.0;                // Maximum synapse weight
-const MAX_CONFIDENCE = 1.0;            // Maximum confidence
-const MIN_WEIGHT = 0.01;               // Minimum synapse weight before pruning
-const DECAY_INTERVAL_MS = 3600000;     // 1 hour between decay cycles
+/**
+ * Neural Plasticity Parameters
+ * 
+ * These constants control how synapses strengthen and weaken over time.
+ * The goal is to implement "Hebbian learning" - nodes that fire together, wire together.
+ * 
+ * LEARNING_RATE (0.1): Controls how quickly synapses strengthen.
+ *   - Higher values = faster learning but potential instability
+ *   - Lower values = slower, more stable learning
+ *   - 0.1 provides balanced adaptation while preventing sudden dramatic changes
+ * 
+ * CONFIDENCE_INCREMENT (0.05): How much confidence increases per consistent positive outcome.
+ *   - Confidence represents certainty that the synapse pattern is reliable
+ *   - Small increments ensure patterns must prove consistent before high confidence
+ * 
+ * MAX_WEIGHT (2.0): Upper bound on synapse strength.
+ *   - Prevents runaway strengthening
+ *   - Allows strong patterns to be 4x stronger than initial (0.5 * 4 = 2.0)
+ * 
+ * MAX_CONFIDENCE (1.0): Maximum confidence level.
+ *   - 1.0 = absolute certainty (never actually reached in practice)
+ * 
+ * MIN_WEIGHT (0.01): Threshold below which synapses may be pruned.
+ *   - Very weak synapses are effectively forgotten
+ *   - Prevents database bloat from irrelevant patterns
+ * 
+ * DECAY_INTERVAL_MS (3600000): Time between decay cycles (1 hour).
+ *   - Unused synapses gradually weaken over time
+ *   - Ensures only actively-used patterns remain strong
+ */
+const LEARNING_RATE = 0.1;
+const CONFIDENCE_INCREMENT = 0.05;
+const MAX_WEIGHT = 2.0;
+const MAX_CONFIDENCE = 1.0;
+const MIN_WEIGHT = 0.01;
+const DECAY_INTERVAL_MS = 3600000;  // 1 hour
 
 // ============================================================================
 // TYPE DEFINITIONS

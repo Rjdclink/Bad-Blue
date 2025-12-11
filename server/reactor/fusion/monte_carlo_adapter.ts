@@ -52,6 +52,25 @@ const DEFAULT_OPTIONS: Required<MonteCarloOptions> = {
 };
 
 // ============================================================================
+// SCORING CONSTANTS
+// ============================================================================
+
+/**
+ * Monte Carlo scoring constants
+ * 
+ * BASE_SCORE_MIN/MAX: The baseline score range before parameter influence.
+ *   - 0.5-0.8 represents moderate initial confidence
+ *   - This range prevents extreme scores from single-pass evaluations
+ * 
+ * INFLUENCE_BOUNDS: Maximum parameter influence on scores (±0.3)
+ *   - Prevents any single parameter from dominating the score
+ */
+const BASE_SCORE_MIN = 0.5;      // Minimum baseline score
+const BASE_SCORE_MAX = 0.8;      // Maximum baseline score  
+const BASE_SCORE_RANGE = BASE_SCORE_MAX - BASE_SCORE_MIN;  // 0.3
+const MAX_PARAMETER_INFLUENCE = 0.3;  // Max influence from parameters
+
+// ============================================================================
 // MONTE CARLO ADAPTER CLASS
 // ============================================================================
 
@@ -252,8 +271,9 @@ class MonteCarloAdapter {
     const dimensionScores: Record<string, number> = {};
 
     for (const dim of dimensions) {
-      // Simulate scoring with some randomness to represent uncertainty
-      const baseScore = 0.5 + Math.random() * 0.3;  // 0.5-0.8 base
+      // Simulate scoring with randomness representing uncertainty
+      // Base score range is 0.5-0.8 (moderate confidence baseline)
+      const baseScore = BASE_SCORE_MIN + Math.random() * BASE_SCORE_RANGE;
       const parameterInfluence = this.calculateParameterInfluence(scenario.parameters, dim);
       dimensionScores[dim] = Math.min(1, Math.max(0, baseScore + parameterInfluence));
     }
