@@ -24,7 +24,7 @@ const activeSessions = new Map<string, {
  * Returns Server-Sent Events (SSE) stream as placeholder
  */
 router.get('/stream', (req: Request, res: Response) => {
-  const sessionId = `lexara-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const sessionId = `lexara-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
   
   logger.info('[LEXARA] Stream session initiated', { sessionId });
   

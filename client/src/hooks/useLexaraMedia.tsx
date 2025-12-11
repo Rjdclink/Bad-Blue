@@ -151,6 +151,9 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
   // WEBRTC INITIALIZATION - Auto-initialize on component mount
   // ============================================================================
 
+  // Use ref to track session ID for ICE candidate handling
+  const sessionIdRef = useRef<string | null>(null);
+
   const initializeWebRTC = useCallback(async () => {
     try {
       // First, get WebRTC config from server
@@ -165,14 +168,14 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
       const pc = new RTCPeerConnection(configData.config);
       peerConnectionRef.current = pc;
 
-      // Handle ICE candidates
+      // Handle ICE candidates - use ref instead of state to avoid stale closure
       pc.onicecandidate = async (event) => {
-        if (event.candidate && webrtcState.sessionId) {
+        if (event.candidate && sessionIdRef.current) {
           await fetch('/api/lexara/stream/signal', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              sessionId: webrtcState.sessionId,
+              sessionId: sessionIdRef.current,
               type: 'ice-candidate',
               payload: event.candidate,
             }),
@@ -194,14 +197,14 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
 
       eventSource.addEventListener('connected', (event) => {
         const data = JSON.parse(event.data);
+        sessionIdRef.current = data.sessionId; // Update ref
         setWebrtcState(prev => ({
           ...prev,
           sessionId: data.sessionId,
         }));
       });
 
-      eventSource.addEventListener('ready', (event) => {
-        const data = JSON.parse(event.data);
+      eventSource.addEventListener('ready', () => {
         setWebrtcState(prev => ({
           ...prev,
           connected: true,
@@ -224,7 +227,7 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
         error: err instanceof Error ? err.message : 'WebRTC initialization failed',
       }));
     }
-  }, [webrtcState.sessionId]);
+  }, []); // No dependencies - uses refs for mutable values
 
   // Auto-initialize WebRTC on mount
   useEffect(() => {
@@ -239,7 +242,7 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
         peerConnectionRef.current.close();
       }
     };
-  }, []);
+  }, [initializeWebRTC]);
 
   // ============================================================================
   // VIDEO CAPTURE
