@@ -15,19 +15,19 @@ const router = express.Router();
 // AUTHENTICATION ROUTES (No auth required)
 // ============================================
 
-// POST /admin/crypto/auth - Authenticate with master password
-// NO email required - just password
+// POST /admin/crypto/auth - Authenticate with email and password
+// Credentials: email = crypto@cc.com, password = cryptocrawl
 router.post('/auth', (req, res) => {
-  const { password } = req.body;
+  const { email, password } = req.body;
   
-  if (!password) {
+  if (!email || !password) {
     return res.status(400).json({
       success: false,
-      error: 'Password required'
+      error: 'Email and password required'
     });
   }
   
-  const result = authenticateWithPassword(password);
+  const result = authenticateWithPassword(password, email);
   
   if (result.success) {
     res.json({

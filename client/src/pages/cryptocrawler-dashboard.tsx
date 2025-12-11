@@ -47,7 +47,8 @@ import { useWallet, formatAddress, getChainName, SUPPORTED_CHAINS } from "@/hook
 
 /**
  * CryptoCrawler Command Dashboard - Access Zone C
- * Master Password: CRPTCRWLR
+ * Email: crypto@cc.com
+ * Password: cryptocrawl
  * Role: CRAWLER_ROOT
  * Purpose: Full access to CryptoCrawler control panel, Monte Carlo simulations, trading faucet
  * 

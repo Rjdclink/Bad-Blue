@@ -1,16 +1,18 @@
 /**
  * CryptoCrawl Authentication System
  * 
- * Password-only authentication for the CryptoCrawler platform
- * NO email required - just the master password
+ * Email + Password authentication for the CryptoCrawler platform
+ * Credentials: email = crypto@cc.com, password = cryptocrawl
  */
 
 import crypto from 'crypto';
 
-// Master password hash (pre-computed)
-// Password: crptcrwlr
+// Authentication credentials
+// Email: crypto@cc.com
+// Password: cryptocrawl
+const MASTER_EMAIL = 'crypto@cc.com';
 const MASTER_PASSWORD_HASH = crypto.createHash('sha256')
-  .update('crptcrwlr')
+  .update('cryptocrawl')
   .digest('hex');
 
 export interface AuthResult {
@@ -27,10 +29,18 @@ const activeSessions: Map<string, { createdAt: number; expiresAt: number }> = ne
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Authenticate with master password
+ * Authenticate with email and password
  * Returns a session token on success
  */
-export function authenticateWithPassword(password: string): AuthResult {
+export function authenticateWithPassword(password: string, email?: string): AuthResult {
+  // Validate email if provided
+  if (email && email.toLowerCase() !== MASTER_EMAIL.toLowerCase()) {
+    return {
+      success: false,
+      error: 'Invalid email'
+    };
+  }
+  
   // Hash the provided password
   const providedHash = crypto.createHash('sha256')
     .update(password)
