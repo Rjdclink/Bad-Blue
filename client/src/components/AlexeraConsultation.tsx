@@ -435,8 +435,8 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
                     LEXARA
                   </span>
                 </h1>
-                <p className="text-lg text-muted-foreground mt-2 font-medium tracking-wide">
-                  Legal Expert AI Resource Advisor
+                <p className="text-base text-muted-foreground mt-1 font-semibold tracking-widest uppercase">
+                  Legal Expert eXamination And Resource Advisor
                 </p>
                 <div className="flex items-center gap-4 mt-3">
                   <LexaraWaveform
@@ -746,20 +746,6 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
                             }}
                           >
                             💾 Save Report
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            className="hover:bg-primary/10"
-                            onClick={() => {
-                              if (voiceSynthesis.isSpeaking) {
-                                voiceSynthesis.stop();
-                              } else {
-                                voiceSynthesis.speak(analysis.analysis, { context: 'evaluation', autoPlay: true });
-                              }
-                            }}
-                          >
-                            {voiceSynthesis.isSpeaking ? '⏹️ Stop Reading' : '🔊 Read Aloud'}
                           </Button>
                         </div>
                       </div>
