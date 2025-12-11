@@ -163,7 +163,7 @@ interface FaucetStatus {
 
 export default function CryptoCrawlerDashboard() {
   const [, setLocation] = useLocation();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   
   // MetaMask wallet connection
@@ -217,12 +217,21 @@ export default function CryptoCrawlerDashboard() {
   const [loadingFaucet, setLoadingFaucet] = useState(false);
   const [togglingFaucet, setTogglingFaucet] = useState(false);
 
-  // Verify access
+  // Verify access - FIXED: Wait for auth to finish loading before redirecting
   useEffect(() => {
-    if (!isAuthenticated) {
-      setLocation('/login');
+    // Don't redirect while auth is still loading - this was causing silent redirects!
+    if (authLoading) {
+      console.log('[CryptoCrawler] Auth loading, waiting...');
+      return;
     }
-  }, [isAuthenticated, setLocation]);
+    
+    if (!isAuthenticated) {
+      console.log('[CryptoCrawler] User not authenticated, redirecting to login');
+      setLocation('/login');
+    } else {
+      console.log('[CryptoCrawler] User authenticated, dashboard access granted');
+    }
+  }, [isAuthenticated, authLoading, setLocation]);
 
   // Fetch system status
   const fetchStatus = useCallback(async () => {
@@ -283,7 +292,7 @@ export default function CryptoCrawlerDashboard() {
     } finally {
       setLoadingStatus(false);
     }
-  }, []);
+  }, [setLocation]);
 
   // Fetch stats
   const fetchStats = useCallback(async () => {
@@ -640,6 +649,19 @@ export default function CryptoCrawlerDashboard() {
   }, [fetchStatus, fetchStats, fetchHealth, fetchFaucetStatus]);
 
   const isSystemRunning = systemStatus?.running || false;
+
+  // Show loading state while auth is being checked - prevents blank screen
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-orange-900/10 to-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-orange-400 mx-auto mb-4" />
+          <p className="text-orange-300">Verifying access credentials...</p>
+          <p className="text-sm text-gray-500 mt-2">CryptoCrawler Command Dashboard</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-orange-900/10 to-gray-900">
