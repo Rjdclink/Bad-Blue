@@ -28,7 +28,7 @@
 
 import { ethers, Contract, Wallet, providers } from 'ethers';
 import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
-import logger from '../../logger.js';
+import logger from '../../../logger.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -129,7 +129,8 @@ const RPC_ENDPOINTS: Record<SupportedChain, string> = {
 };
 
 // Minimum profit thresholds (in USD value, converted to wei)
-const MIN_PROFIT_THRESHOLD = ethers.utils.parseEther('0.001'); // $1 minimum after all fees
+const MIN_PROFIT_THRESHOLD_BN = ethers.utils.parseEther('0.001'); // $1 minimum after all fees
+const MIN_PROFIT_THRESHOLD = BigInt(MIN_PROFIT_THRESHOLD_BN.toString()); // Convert to bigint for comparisons
 
 // ============================================================================
 // FLASH LOAN RECEIVER CONTRACT ABI (for encoding callbacks)
@@ -453,7 +454,16 @@ export class AutonomousZeroCapitalEngine {
    */
   private createOpportunity(
     chain: SupportedChain,
-    discrepancy: any,
+    discrepancy: {
+      tokenA: string;
+      tokenB: string;
+      buyDex: string;
+      sellDex: string;
+      buyPrice: bigint;
+      sellPrice: bigint;
+      profitPercent: number;
+      optimalAmount: bigint;
+    },
     blockTimestamp: number
   ): ZeroCapitalOpportunity | null {
     try {
@@ -573,7 +583,7 @@ export class AutonomousZeroCapitalEngine {
       ];
 
       // Simulate bundle first
-      const simulation = await this.flashbotsProvider.simulate(bundle, blockNumber + 1);
+      const simulation = await this.flashbotsProvider.simulate(bundle as any, blockNumber + 1);
       
       if ('error' in simulation) {
         return { success: false, error: `Simulation failed: ${simulation.error.message}` };
@@ -586,7 +596,7 @@ export class AutonomousZeroCapitalEngine {
       }
 
       // Submit bundle
-      const bundleSubmission = await this.flashbotsProvider.sendBundle(bundle, blockNumber + 1);
+      const bundleSubmission = await this.flashbotsProvider.sendBundle(bundle as any, blockNumber + 1);
       
       if ('error' in bundleSubmission) {
         return { success: false, error: `Bundle submission failed: ${bundleSubmission.error.message}` };

@@ -30,6 +30,8 @@ export enum CryptoStrategyType {
   MEV_FRONTRUN = 'mev-frontrun',
   LIQUIDITY_SNIPE = 'liquidity-snipe',
   FLASH_LOAN = 'flash-loan',
+  MOMENTUM = 'momentum',
+  MICRO_TRIANGULATION = 'micro-triangulation',
 }
 
 /**
@@ -168,13 +170,13 @@ export class CryptoBeamConnector {
     try {
       // Map crypto strategy to task type
       const taskType = this.mapToTaskType(params.strategyType);
+      const crawlerStrategy = this.mapToCrawlerStrategy(params.strategyType);
       
       // Create task for computational beam
       const task: Task = {
         id: `crypto-${params.strategyType}-${Date.now()}`,
         type: taskType,
         intensity: TaskIntensity.HEAVY,
-        priority: TaskPriority.HIGH, // Crypto strategies are high priority
         payload: {
           strategyType: params.strategyType,
           symbols: params.symbols || ['BTC/USD', 'ETH/USD'],
