@@ -7,7 +7,7 @@
  * ONE FILE AT A TIME APPROACH
  */
 
-import { computationalBeam } from './index';
+import { computationalBeam, ComputationalBeamOrchestrator } from './index';
 import { WorkloadRouter } from './workloadRouter';
 import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
@@ -84,7 +84,7 @@ export interface OpportunityDetail {
  */
 export class CryptoBeamConnector {
   private static initialized = false;
-  private static computationalBeam: typeof computationalBeam;
+  private static beamInstance: ComputationalBeamOrchestrator;
   private static workloadRouter: WorkloadRouter;
   
   /**
@@ -115,7 +115,7 @@ export class CryptoBeamConnector {
     // Initialize computational beam (no credentials required)
     await computationalBeam.initialize();
     
-    this.computationalBeam = computationalBeam;
+    this.beamInstance = computationalBeam;
     this.workloadRouter = new WorkloadRouter();
     
     this.initialized = true;
@@ -170,7 +170,7 @@ export class CryptoBeamConnector {
     try {
       // Map crypto strategy to task type
       const taskType = this.mapToTaskType(params.strategyType);
-      const mappedCrawlerStrategy = this.mapToCrawlerStrategy(params.strategyType);
+      const crawlerStrategy = this.mapToCrawlerStrategy(params.strategyType);
       
       // Create task for computational beam
       const task: Task = {
@@ -195,8 +195,8 @@ export class CryptoBeamConnector {
       };
       
       // Execute with computational beam
-      const result = await this.computationalBeam.executeCrawlerTask(
-        mappedCrawlerStrategy,
+      const result = await this.beamInstance.executeCrawlerTask(
+        crawlerStrategy,
         task.payload,
         {
           timeout: 30000, // 30 second timeout

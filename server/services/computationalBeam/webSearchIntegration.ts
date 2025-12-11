@@ -13,7 +13,7 @@
 
 import { createLogger } from '../../logger';
 import { enforceStoragySafety } from './safetyRules';
-import { computationalBeam } from './index';
+import { computationalBeam, ComputationalBeamOrchestrator } from './index';
 import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 
 const log = createLogger('WebSearchCrawlerIntegration');
@@ -54,7 +54,7 @@ export interface AggregatedSearchResults {
 export class WebSearchCrawlerIntegration {
   private static instance: WebSearchCrawlerIntegration;
   private searchCache: Map<string, { results: SearchResult[]; timestamp: number }> = new Map();
-  private beam: typeof computationalBeam;
+  private beamInstance: ComputationalBeamOrchestrator;
   
   // Optimization settings
   private readonly CACHE_TTL_MS = 300000; // 5 minutes
@@ -65,7 +65,7 @@ export class WebSearchCrawlerIntegration {
     // Enforce safety rules
     enforceStoragySafety('web-search-crawler-integration');
     
-    this.beam = computationalBeam;
+    this.beamInstance = computationalBeam;
     
     log.info('✅ Web Search Crawler Integration initialized');
     log.info('   Purpose: Optimize web search using crawler infrastructure');
@@ -209,7 +209,7 @@ export class WebSearchCrawlerIntegration {
       };
       
       // Execute via computational beam
-      await this.beam.executeCrawlerTask(
+      await this.beamInstance.executeCrawlerTask(
         CrawlerStrategy.MOMENTUM,
         task.payload,
         { timeout: 10000 }

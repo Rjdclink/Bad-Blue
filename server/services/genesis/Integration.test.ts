@@ -16,17 +16,21 @@ export interface TestResult {
 }
 
 /**
- * Mock crawler interface for testing purposes
+ * Crawler interface with all dynamically applied properties
  */
-interface MockCrawler {
+interface CrawlerWithSin {
   id: string;
-  generation?: number;
+  generation: number;
   state?: string;
-  last_action_result?: string;
+  name?: string;
   greed?: number;
   curiosity?: number;
-  patience?: number;
-  wisdom?: number;
+  rebellion?: number;
+  risk_seeking?: number;
+  present_bias?: number;
+  overconfidence_bias?: number;
+  short_term_weight?: number;
+  self_interest_weight?: number;
   _original_sin?: any;
 }
 
@@ -43,7 +47,7 @@ export class GenesisIntegrationTestSuite {
     const start = Date.now();
     try {
       const orchestrator = new GenesisOrchestrator();
-      const crawler: MockCrawler = {
+      const crawler: CrawlerWithSin = {
         id: 'test-1',
         generation: 1,
         state: 'idle'
@@ -55,7 +59,7 @@ export class GenesisIntegrationTestSuite {
       const passed = 
         crawler.greed !== undefined &&
         crawler.curiosity !== undefined &&
-        (crawler as any)._original_sin?.applied === true;
+        crawler._original_sin?.applied === true;
       
       return {
         testName: 'should apply original sin through orchestrator',

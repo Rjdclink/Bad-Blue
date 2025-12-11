@@ -30,6 +30,15 @@ const VERIFICATION_TIMEOUT_MS = 30000; // 30 seconds
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 60000; // 1 minute
 
+// Environment-based configuration for wallet payouts
+const ENV_WALLET_CONFIG = {
+  primaryWallet: process.env.CRYPTO_PAYOUT_WALLET_ADDRESS || '',
+  backupWallet: process.env.CRYPTO_BACKUP_WALLET_ADDRESS || '',
+  preferredToken: process.env.CRYPTO_PAYOUT_TOKEN || 'ETH',
+  preferredChain: process.env.CRYPTO_PAYOUT_CHAIN || 'ethereum',
+  gcpServiceAccount: process.env.GCP_SERVICE_ACCOUNT_EMAIL || '',
+};
+
 // ============================================================================
 // PAYOUT SCHEDULER
 // ============================================================================
@@ -37,9 +46,10 @@ const RETRY_DELAY_MS = 60000; // 1 minute
 export class PayoutScheduler extends EventEmitter {
   private static instance: PayoutScheduler;
   private isActive = false;
-  private walletAddress: string | null = null;
-  private preferredToken = 'ETH';
-  private preferredChain = 'ethereum';
+  private walletAddress: string | null = ENV_WALLET_CONFIG.primaryWallet || null;
+  private backupWalletAddress: string | null = ENV_WALLET_CONFIG.backupWallet || null;
+  private preferredToken = ENV_WALLET_CONFIG.preferredToken;
+  private preferredChain = ENV_WALLET_CONFIG.preferredChain;
   
   private payoutTimer: NodeJS.Timeout | null = null;
   private currentCycle: PayoutCycle | null = null;
@@ -52,6 +62,9 @@ export class PayoutScheduler extends EventEmitter {
   private constructor() {
     super();
     log.info('⏰ Auto-Payout Engine (APE-60) initialized');
+    if (ENV_WALLET_CONFIG.gcpServiceAccount) {
+      log.info(`   GCP Service Account: ${ENV_WALLET_CONFIG.gcpServiceAccount}`);
+    }
   }
 
   static getInstance(): PayoutScheduler {

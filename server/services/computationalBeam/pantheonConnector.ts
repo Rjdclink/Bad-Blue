@@ -7,7 +7,7 @@
  * ONE FILE AT A TIME APPROACH
  */
 
-import { computationalBeam } from './index';
+import { computationalBeam, ComputationalBeamOrchestrator } from './index';
 import { WorkloadRouter } from './workloadRouter';
 import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
@@ -61,7 +61,7 @@ export interface PantheonOperationResult {
  */
 export class PantheonBeamConnector {
   private static initialized = false;
-  private static computationalBeam: typeof computationalBeam;
+  private static beamInstance: ComputationalBeamOrchestrator;
   private static workloadRouter: WorkloadRouter;
   
   /**
@@ -78,7 +78,7 @@ export class PantheonBeamConnector {
     // Initialize computational beam (no credentials required)
     await computationalBeam.initialize();
     
-    this.computationalBeam = computationalBeam;
+    this.beamInstance = computationalBeam;
     this.workloadRouter = new WorkloadRouter();
     
     this.initialized = true;
@@ -133,7 +133,7 @@ export class PantheonBeamConnector {
       };
       
       // Execute with computational beam
-      const result = await this.computationalBeam.executeCrawlerTask(
+      const result = await this.beamInstance.executeCrawlerTask(
         crawlerStrategy,
         task.payload,
         {

@@ -26,12 +26,9 @@
  * - If any step fails, ENTIRE bundle reverts - zero loss
  */
 
-import { ethers, Wallet, providers, BigNumber } from 'ethers';
-import { FlashbotsBundleProvider, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction } from '@flashbots/ethers-provider-bundle';
-import logger from '../../../logger';
-
-// Type for our bundle transactions
-type FlashbotsTransaction = FlashbotsBundleTransaction | FlashbotsBundleRawTransaction;
+import { ethers, Contract, Wallet, providers } from 'ethers';
+import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
+import logger from '../../../logger.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -131,8 +128,9 @@ const RPC_ENDPOINTS: Record<SupportedChain, string> = {
   avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
 };
 
-// Minimum profit thresholds (in USD value, converted to wei as bigint)
-const MIN_PROFIT_THRESHOLD = BigInt(ethers.utils.parseEther('0.001').toString()); // $1 minimum after all fees
+// Minimum profit thresholds (in USD value, converted to wei)
+const MIN_PROFIT_THRESHOLD_BN = ethers.utils.parseEther('0.001'); // $1 minimum after all fees
+const MIN_PROFIT_THRESHOLD = BigInt(MIN_PROFIT_THRESHOLD_BN.toString()); // Convert to bigint for comparisons
 
 // ============================================================================
 // FLASH LOAN RECEIVER CONTRACT ABI (for encoding callbacks)
@@ -456,7 +454,16 @@ export class AutonomousZeroCapitalEngine {
    */
   private createOpportunity(
     chain: SupportedChain,
-    discrepancy: any,
+    discrepancy: {
+      tokenA: string;
+      tokenB: string;
+      buyDex: string;
+      sellDex: string;
+      buyPrice: bigint;
+      sellPrice: bigint;
+      profitPercent: number;
+      optimalAmount: bigint;
+    },
     blockTimestamp: number
   ): ZeroCapitalOpportunity | null {
     try {
@@ -595,7 +602,7 @@ export class AutonomousZeroCapitalEngine {
       }
 
       // Submit bundle
-      const bundleSubmission = await this.flashbotsProvider.sendBundle(bundle, blockNumber + 1);
+      const bundleSubmission = await this.flashbotsProvider.sendBundle(bundle as any, blockNumber + 1);
       
       if ('error' in bundleSubmission) {
         return { success: false, error: `Bundle submission failed: ${bundleSubmission.error.message}` };

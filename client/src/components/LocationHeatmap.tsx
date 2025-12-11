@@ -53,7 +53,6 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
 
     // Add heatmap
     if (data.length) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       heatLayerRef.current = (L as any).heatLayer(data, { radius, blur, maxZoom }).addTo(mapRef.current);
       const bounds = L.latLngBounds(data.map(d => [d[0], d[1]]));
       mapRef.current.fitBounds(bounds, { padding: [50, 50] });

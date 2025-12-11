@@ -15,6 +15,7 @@ import {
   type CrawlConfig,
   type ExtractionSchema
 } from './services/legalIntelligence';
+import { z } from 'zod';
 
 const ADMIN_FALLBACK_EMAIL = 'contact.badblue@gmail.com';
 
@@ -235,8 +236,8 @@ export async function autoScrapeFOIAPortal(agencyFOIAUrl: string): Promise<{
   try {
     console.log('[FOIA] Auto-scraping FOIA portal with adaptive crawler:', agencyFOIAUrl);
 
-    // Define Zod schema for FOIA contact extraction
-    const foiaContactSchema = z.object({
+    // Define zod schema for FOIA contact extraction
+    const FOIAContactZodSchema = z.object({
       name: z.string().describe('Full name of the FOIA officer or contact person'),
       title: z.string().optional().describe('Job title (e.g., FOIA Officer, Records Custodian)'),
       email: z.string().optional().describe('Email address for FOIA requests'),
@@ -245,15 +246,14 @@ export async function autoScrapeFOIAPortal(agencyFOIAUrl: string): Promise<{
       address: z.string().optional().describe('Mailing address'),
     });
 
-    // Define schema for FOIA contact extraction matching ExtractionSchema interface
-    const FOIA_CONTACT_SCHEMA: ExtractionSchema = {
+    // Define ExtractionSchema for FOIA contact extraction
+    const FOIA_CONTACT_SCHEMA = {
       name: 'foia_contact',
       description: 'Extract FOIA officer contact information from agency websites',
-      schema: foiaContactSchema,
-      extractionPrompt: `Extract FOIA officer contact information from the provided page.
-Focus on: name, job title, email address, phone number, department, and mailing address.
-Look for sections labeled "FOIA", "Public Records", "Records Request", or "Open Records".
-Only include information that is clearly stated in the document.`,
+      schema: FOIAContactZodSchema,
+      extractionPrompt: `Extract FOIA (Freedom of Information Act) officer contact information from the provided webpage.
+Focus on: name of FOIA officer, job title, email address, phone number, department, and mailing address.
+Only include information that is clearly stated on the page. Look for official FOIA contact sections.`,
     };
 
     // Use adaptive crawler to find FOIA contacts

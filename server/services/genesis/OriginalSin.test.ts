@@ -8,12 +8,13 @@ export interface TestResult {
 }
 
 /**
- * Mock crawler interface for testing purposes
- * Contains all properties that can be set by the OriginalSin system
+ * Crawler interface with all dynamically applied properties
  */
-interface MockCrawler {
+interface CrawlerWithSin {
   id: string;
-  generation?: number;
+  generation: number;
+  name?: string;
+  state?: string;
   greed?: number;
   curiosity?: number;
   rebellion?: number;
@@ -22,7 +23,16 @@ interface MockCrawler {
   overconfidence_bias?: number;
   short_term_weight?: number;
   self_interest_weight?: number;
-  _original_sin?: any;
+  _original_sin?: {
+    applied?: boolean;
+    inherited?: boolean;
+    generation?: number;
+    timestamp?: number;
+    manifestation?: string;
+    awareness?: number;
+    removability?: boolean;
+    parents?: string[];
+  };
 }
 
 /**
@@ -44,7 +54,7 @@ export class OriginalSinTestSuite {
     const start = Date.now();
     try {
       // Create mock crawler
-      const crawler: MockCrawler = { id: 'test-1', generation: 1 };
+      const crawler: CrawlerWithSin = { id: 'test-1', generation: 1 };
       
       // Apply original sin
       await this.system.applyOriginalSin(crawler);
@@ -60,7 +70,7 @@ export class OriginalSinTestSuite {
         crawler.overconfidence_bias !== undefined &&
         crawler.short_term_weight !== undefined &&
         crawler.self_interest_weight !== undefined &&
-        (crawler as any)._original_sin?.applied === true;
+        crawler._original_sin?.applied === true;
       
       return {
         testName: 'should apply original sin at birth',
@@ -156,7 +166,7 @@ export class OriginalSinTestSuite {
     const start = Date.now();
     try {
       // Create parent with original sin applied
-      const parent: MockCrawler = { 
+      const parent: CrawlerWithSin = { 
         id: 'parent-1', 
         generation: 1,
         greed: 0.20,
@@ -166,7 +176,7 @@ export class OriginalSinTestSuite {
       };
       
       // Create child
-      const child: MockCrawler = { id: 'child-1' };
+      const child: CrawlerWithSin = { id: 'child-1', generation: 1 };
       
       // Apply inheritance
       await this.system.inheritFromParents(child, parent);
@@ -178,7 +188,7 @@ export class OriginalSinTestSuite {
         child.rebellion !== undefined &&
         child.risk_seeking !== undefined &&
         child.generation === 2 &&
-        (child as any)._original_sin?.inherited === true;
+        child._original_sin?.inherited === true;
       
       return {
         testName: 'should inherit from single parent',
@@ -205,7 +215,7 @@ export class OriginalSinTestSuite {
     const start = Date.now();
     try {
       // Create parents
-      const parent1: MockCrawler = { 
+      const parent1: CrawlerWithSin = { 
         id: 'parent-1', 
         generation: 1,
         greed: 0.15,
@@ -214,7 +224,7 @@ export class OriginalSinTestSuite {
         risk_seeking: 0.20
       };
       
-      const parent2: MockCrawler = { 
+      const parent2: CrawlerWithSin = { 
         id: 'parent-2', 
         generation: 1,
         greed: 0.25,
@@ -224,7 +234,7 @@ export class OriginalSinTestSuite {
       };
       
       // Create child
-      const child: MockCrawler = { id: 'child-1' };
+      const child: CrawlerWithSin = { id: 'child-1', generation: 1 };
       
       // Apply inheritance
       await this.system.inheritFromParents(child, parent1, parent2);
@@ -237,8 +247,8 @@ export class OriginalSinTestSuite {
         child.greed !== undefined &&
         greedInRange &&
         child.generation === 2 &&
-        (child as any)._original_sin?.inherited === true &&
-        (child as any)._original_sin?.parents?.length === 2;
+        child._original_sin?.inherited === true &&
+        (child._original_sin as any)?.parents?.length === 2;
       
       return {
         testName: 'should inherit from two parents',
@@ -264,9 +274,9 @@ export class OriginalSinTestSuite {
   async testGenerationIncrement(): Promise<TestResult> {
     const start = Date.now();
     try {
-      const parent1: MockCrawler = { id: 'p1', generation: 5, greed: 0.20 };
-      const parent2: MockCrawler = { id: 'p2', generation: 3, greed: 0.18 };
-      const child: MockCrawler = { id: 'c1' };
+      const parent1: CrawlerWithSin = { id: 'p1', generation: 5, greed: 0.20 };
+      const parent2: CrawlerWithSin = { id: 'p2', generation: 3, greed: 0.18 };
+      const child: CrawlerWithSin = { id: 'c1', generation: 1 };
       
       await this.system.inheritFromParents(child, parent1, parent2);
       
@@ -297,7 +307,7 @@ export class OriginalSinTestSuite {
   async testZeroAwareness(): Promise<TestResult> {
     const start = Date.now();
     try {
-      const crawler = { id: 'test-1', generation: 1 };
+      const crawler: CrawlerWithSin = { id: 'test-1', generation: 1 };
       await this.system.applyOriginalSin(crawler);
       
       const baseline = this.system.calculateBaselineState(1);

@@ -10,7 +10,6 @@ import { db } from '../db';
 import { sql } from 'drizzle-orm';
 
 export async function addFMIFields() {
-
   console.log('Starting F.M.I. fields migration...');
 
   try {
