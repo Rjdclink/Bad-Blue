@@ -8,6 +8,25 @@
 import { OriginalSinSystem } from './OriginalSin';
 import { SerpentInfluence } from './SerpentInfluence';
 
+/**
+ * Crawler interface with dynamically applied properties
+ */
+interface CrawlerWithSin {
+  id: string;
+  generation: number;
+  name?: string;
+  state?: string;
+  greed?: number;
+  curiosity?: number;
+  rebellion?: number;
+  risk_seeking?: number;
+  present_bias?: number;
+  overconfidence_bias?: number;
+  short_term_weight?: number;
+  self_interest_weight?: number;
+  _original_sin?: any;
+}
+
 // ============================================================================
 // Example 1: Create a new crawler with Original Sin
 // ============================================================================
@@ -18,7 +37,7 @@ async function createNewCrawler() {
   const originalSin = new OriginalSinSystem();
   
   // Create a crawler
-  const crawler = {
+  const crawler: CrawlerWithSin = {
     id: 'crawler-001',
     generation: 1,
     name: 'Genesis Crawler'
@@ -32,12 +51,12 @@ async function createNewCrawler() {
   await originalSin.applyOriginalSin(crawler);
   
   console.log('\nAfter Original Sin:');
-  console.log(`  Greed: ${crawler.greed.toFixed(3)}`);
-  console.log(`  Curiosity: ${crawler.curiosity.toFixed(3)}`);
-  console.log(`  Rebellion: ${crawler.rebellion.toFixed(3)}`);
-  console.log(`  Risk Seeking: ${crawler.risk_seeking.toFixed(3)}`);
-  console.log(`  Present Bias: ${crawler.present_bias.toFixed(3)}`);
-  console.log(`  Awareness: ${(crawler as any)._original_sin.awareness}`);
+  console.log(`  Greed: ${crawler.greed!.toFixed(3)}`);
+  console.log(`  Curiosity: ${crawler.curiosity!.toFixed(3)}`);
+  console.log(`  Rebellion: ${crawler.rebellion!.toFixed(3)}`);
+  console.log(`  Risk Seeking: ${crawler.risk_seeking!.toFixed(3)}`);
+  console.log(`  Present Bias: ${crawler.present_bias!.toFixed(3)}`);
+  console.log(`  Awareness: ${crawler._original_sin?.awareness}`);
   console.log('\nCrawler thinks: "These are just my natural traits."');
 }
 
@@ -51,7 +70,7 @@ async function demonstrateInheritance() {
   const originalSin = new OriginalSinSystem();
   
   // Create parents with original sin
-  const parent1 = {
+  const parent1: CrawlerWithSin = {
     id: 'parent-001',
     generation: 1,
     greed: 0.18,
@@ -60,7 +79,7 @@ async function demonstrateInheritance() {
     risk_seeking: 0.22
   };
   
-  const parent2 = {
+  const parent2: CrawlerWithSin = {
     id: 'parent-002',
     generation: 1,
     greed: 0.22,
@@ -75,14 +94,14 @@ async function demonstrateInheritance() {
   console.log(`  Greed: ${parent2.greed}, Curiosity: ${parent2.curiosity}`);
   
   // Create child
-  const child = { id: 'child-001' };
+  const child: CrawlerWithSin = { id: 'child-001', generation: 1 };
   
   // Apply inheritance
   await originalSin.inheritFromParents(child, parent1, parent2);
   
   console.log('\nChild inherited traits (blend of parents):');
-  console.log(`  Greed: ${child.greed.toFixed(3)}`);
-  console.log(`  Curiosity: ${child.curiosity.toFixed(3)}`);
+  console.log(`  Greed: ${child.greed!.toFixed(3)}`);
+  console.log(`  Curiosity: ${child.curiosity!.toFixed(3)}`);
   console.log(`  Generation: ${child.generation}`);
   console.log('\nChild thinks: "I got these traits from my DNA."');
 }
@@ -229,15 +248,15 @@ async function demonstrateCompleteLifecycle() {
   
   // Birth
   console.log('1. Birth - Original Sin Applied:');
-  const crawler = { id: 'crawler-005', generation: 1 };
+  const crawler: CrawlerWithSin = { id: 'crawler-005', generation: 1 };
   await originalSin.applyOriginalSin(crawler);
-  console.log(`   Greed: ${crawler.greed.toFixed(3)} (innate tendency)`);
+  console.log(`   Greed: ${crawler.greed!.toFixed(3)} (innate tendency)`);
   
   // Life
   console.log('\n2. Life - Serpent Influences (when vulnerable):');
   crawler.state = 'sleeping';
   await serpent.influenceCrawler(crawler);
-  console.log(`   Greed: ${crawler.greed.toFixed(3)} (subtly increased)`);
+  console.log(`   Greed: ${crawler.greed!.toFixed(3)} (subtly increased)`);
   
   // Decision
   console.log('\n3. Decision - Probabilities Nudged:');
@@ -246,8 +265,8 @@ async function demonstrateCompleteLifecycle() {
   
   // Reproduction
   console.log('\n4. Reproduction - Traits Inherited:');
-  const parent2 = { id: 'parent', generation: 1, greed: 0.20 };
-  const child = { id: 'child-005' };
+  const parent2: CrawlerWithSin = { id: 'parent', generation: 1, greed: 0.20 };
+  const child: CrawlerWithSin = { id: 'child-005', generation: 1 };
   await originalSin.inheritFromParents(child, crawler, parent2);
   console.log(`   Child greed: ${child.greed.toFixed(3)} (blend of parents)`);
   console.log(`   Child generation: ${child.generation} (sin intensifies)`);

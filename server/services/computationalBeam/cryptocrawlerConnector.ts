@@ -7,7 +7,7 @@
  * ONE FILE AT A TIME APPROACH
  */
 
-import { ComputationalBeam } from './index';
+import { computationalBeam, ComputationalBeamOrchestrator } from './index';
 import { WorkloadRouter } from './workloadRouter';
 import { CrawlerStrategy, Task, TaskPriority, TaskType, TaskIntensity } from './types';
 import { createLogger } from '../../logger';
@@ -84,7 +84,7 @@ export interface OpportunityDetail {
  */
 export class CryptoBeamConnector {
   private static initialized = false;
-  private static computationalBeam: typeof ComputationalBeam;
+  private static beamInstance: ComputationalBeamOrchestrator;
   private static workloadRouter: WorkloadRouter;
   
   /**
@@ -113,9 +113,9 @@ export class CryptoBeamConnector {
     log.info('   - U_S_FEDERAL_LAW_ONLY: ' + SAFETY_RULES.U_S_FEDERAL_LAW_ONLY);
     
     // Initialize computational beam (no credentials required)
-    await ComputationalBeam.initialize();
+    await computationalBeam.initialize();
     
-    this.computationalBeam = ComputationalBeam;
+    this.beamInstance = computationalBeam;
     this.workloadRouter = new WorkloadRouter();
     
     this.initialized = true;
@@ -195,7 +195,7 @@ export class CryptoBeamConnector {
       };
       
       // Execute with computational beam
-      const result = await this.computationalBeam.executeCrawlerTask(
+      const result = await this.beamInstance.executeCrawlerTask(
         crawlerStrategy,
         task.payload,
         {
