@@ -47,8 +47,7 @@ import { useWallet, formatAddress, getChainName, SUPPORTED_CHAINS } from "@/hook
 
 /**
  * CryptoCrawler Command Dashboard - Access Zone C
- * Email: crypto@cc.com
- * Password: cryptocrawl
+ * Authentication: Configure via environment variables (CRYPTOCRAWL_EMAIL, CRYPTOCRAWL_PASSWORD)
  * Role: CRAWLER_ROOT
  * Purpose: Full access to CryptoCrawler control panel, Monte Carlo simulations, trading faucet
  * 
@@ -185,8 +184,10 @@ export default function CryptoCrawlerDashboard() {
       if (response.ok) {
         const data = await response.json();
         setSystemStatus(data);
-      } else {
-        // Set default status on error
+      } else if (response.status === 401 || response.status === 403) {
+        // Authentication error - session may have expired
+        addConsoleLog('warn', 'Session expired or unauthorized - please re-authenticate');
+        setIsAuthenticated(false);
         setSystemStatus({
           running: false,
           cryptoCrawl: {
@@ -198,12 +199,25 @@ export default function CryptoCrawlerDashboard() {
           startedAt: null,
           uptime: 0,
         });
-        addConsoleLog('warn', `Status fetch returned ${response.status}`);
+      } else {
+        // Other error - set default status
+        setSystemStatus({
+          running: false,
+          cryptoCrawl: {
+            enabled: false,
+            gasOracle: false,
+            balanceMonitor: false,
+            networkHealth: false,
+          },
+          startedAt: null,
+          uptime: 0,
+        });
+        addConsoleLog('warn', `Status fetch returned ${response.status}: ${response.statusText || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Failed to fetch status:', error);
-      addConsoleLog('error', 'Failed to fetch system status');
-      // Set default status on error
+      addConsoleLog('error', `Network error: ${error instanceof Error ? error.message : 'Failed to connect to server'}`);
+      // Set default status on network error
       setSystemStatus({
         running: false,
         cryptoCrawl: {

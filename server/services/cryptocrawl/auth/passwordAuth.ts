@@ -2,17 +2,18 @@
  * CryptoCrawl Authentication System
  * 
  * Email + Password authentication for the CryptoCrawler platform
- * Credentials: email = crypto@cc.com, password = cryptocrawl
+ * Configure credentials via environment variables:
+ * - CRYPTOCRAWL_EMAIL: Admin email address
+ * - CRYPTOCRAWL_PASSWORD: Admin password
  */
 
 import crypto from 'crypto';
 
-// Authentication credentials
-// Email: crypto@cc.com
-// Password: cryptocrawl
-const MASTER_EMAIL = 'crypto@cc.com';
+// Authentication credentials from environment variables with fallback defaults
+// Note: In production, always set these via environment variables
+const MASTER_EMAIL = process.env.CRYPTOCRAWL_EMAIL || 'crypto@cc.com';
 const MASTER_PASSWORD_HASH = crypto.createHash('sha256')
-  .update('cryptocrawl')
+  .update(process.env.CRYPTOCRAWL_PASSWORD || 'cryptocrawl')
   .digest('hex');
 
 export interface AuthResult {

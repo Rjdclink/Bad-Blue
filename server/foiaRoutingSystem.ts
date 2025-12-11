@@ -248,6 +248,15 @@ export async function autoScrapeFOIAPortal(agencyFOIAUrl: string): Promise<{
       description: 'Extract FOIA officer contact information from agency websites',
       schema: foiaContactZodSchema,
       extractionPrompt: 'Extract FOIA officer contact information including name, title, email, phone, department, and address from the webpage content.',
+      // Backward compatibility fields property
+      fields: [
+        { name: 'name', type: 'string', description: 'Full name of the FOIA officer or contact person' },
+        { name: 'title', type: 'string', description: 'Job title (e.g., FOIA Officer, Records Custodian)', optional: true },
+        { name: 'email', type: 'string', description: 'Email address for FOIA requests', optional: true },
+        { name: 'phone', type: 'string', description: 'Phone number', optional: true },
+        { name: 'department', type: 'string', description: 'Department or division', optional: true },
+        { name: 'address', type: 'string', description: 'Mailing address', optional: true },
+      ],
     };
 
     // Use adaptive crawler to find FOIA contacts
