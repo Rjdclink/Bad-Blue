@@ -19,7 +19,7 @@
  * Optimized for minimal computational usage with silent operation
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Card,
@@ -50,16 +50,15 @@ import {
   Brain,
   Volume2,
   Camera,
-  CameraOff,
-  Mic,
-  MicOff,
   Eye,
+  Zap,
+  Shield,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import FMIAnalysis from "@/components/FMIAnalysis";
-import { VoiceToggle, VoiceStatusIndicator } from "@/components/VoiceToggle";
+import { VoiceStatusIndicator } from "@/components/VoiceToggle";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useVoiceSynthesis } from "@/hooks/useVoiceSynthesis";
 import { LexaraAvatar, LexaraPresence, LexaraWaveform, type EmotionalState } from "@/components/LexaraAvatar";
@@ -134,9 +133,10 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
   const [analysis, setAnalysis] = useState<any>(null);
   const [greetingPlayed, setGreetingPlayed] = useState(false);
   const [emotionalState, setEmotionalState] = useState<EmotionalState>('neutral');
-  const [mediaEnabled, setMediaEnabled] = useState(false);
+  const [autoInitialized, setAutoInitialized] = useState(false);
+  const initAttempted = useRef(false);
 
-  // Voice Intelligence System (Stages 11-15)
+  // Voice Intelligence System (Stages 11-15) - AUTOMATIC
   const voiceMode = useVoiceMode({
     continuous: true,
     interimResults: true,
@@ -150,7 +150,7 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
 
   const voiceSynthesis = useVoiceSynthesis();
 
-  // LEXARA Media Integration (Webcam + Microphone)
+  // LEXARA Media Integration (Webcam + Microphone) - AUTOMATIC
   const lexaraMedia = useLexaraMedia({
     onSpeechStart: () => {
       setEmotionalState('listening');
@@ -164,6 +164,53 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
       // Audio level updates are handled internally
     },
   });
+
+  // ============================================================================
+  // AUTOMATIC INITIALIZATION - NO TOGGLES
+  // LEXARA's interaction is fully automatic on page load
+  // ============================================================================
+  
+  useEffect(() => {
+    // Automatic initialization on mount - only once
+    if (initAttempted.current) return;
+    initAttempted.current = true;
+
+    const autoInitialize = async () => {
+      try {
+        // Auto-enable media (webcam + mic)
+        await lexaraMedia.start({ video: true, audio: true });
+        
+        // Auto-enable voice mode
+        await voiceMode.enable();
+        voiceMode.startListening();
+        
+        setAutoInitialized(true);
+        setEmotionalState('engaged');
+      } catch (error) {
+        // Silent fallback - some browsers require user interaction
+        console.log('Auto-initialization deferred (user interaction required)');
+        
+        // Set up one-time click handler to initialize
+        const handleFirstInteraction = async () => {
+          try {
+            await lexaraMedia.start({ video: true, audio: true });
+            await voiceMode.enable();
+            voiceMode.startListening();
+            setAutoInitialized(true);
+            setEmotionalState('engaged');
+          } catch (e) {
+            // Silently continue without media
+          }
+          document.removeEventListener('click', handleFirstInteraction);
+        };
+        document.addEventListener('click', handleFirstInteraction, { once: true });
+      }
+    };
+
+    // Delay slightly to ensure component is mounted
+    const timer = setTimeout(autoInitialize, 500);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Get law type name for greeting (import LAW_TYPES_INFO if needed)
   const lawTypeName = lawType 
@@ -198,37 +245,10 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
     return () => clearTimeout(greetingTimer);
   }, [greetingPlayed, playGreeting]);
 
-  // Persist voice mode state
+  // AUTOMATIC - Voice mode always enabled
   useEffect(() => {
-    const savedVoiceMode = localStorage.getItem('alexera-voice-mode');
-    if (savedVoiceMode === 'enabled') {
-      // Auto-enable if previously enabled (user preference)
-      // voiceMode.enable(); // Commented out - require explicit activation
-    }
+    localStorage.setItem('alexera-voice-mode', 'enabled');
   }, []);
-
-  useEffect(() => {
-    if (voiceMode.isEnabled) {
-      localStorage.setItem('alexera-voice-mode', 'enabled');
-    } else {
-      localStorage.removeItem('alexera-voice-mode');
-    }
-  }, [voiceMode.isEnabled]);
-
-  // Toggle voice mode
-  const handleVoiceToggle = async () => {
-    if (voiceMode.isEnabled) {
-      voiceMode.disable();
-      voiceSynthesis.stop();
-    } else {
-      try {
-        await voiceMode.enable();
-        voiceMode.startListening();
-      } catch (error) {
-        // Error already handled by useVoiceMode
-      }
-    }
-  };
 
   // Notify parent component when consultation data changes
   useEffect(() => {
@@ -244,6 +264,7 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
 
   const analyzeMutation = useMutation({
     mutationFn: async (data: { state: string; situation: string; lawType?: string }) => {
+      setEmotionalState('processing');
       const response = await apiRequest("/api/legal-consultation", "POST", data);
 
       if (!response.ok) {
@@ -256,16 +277,17 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
     onSuccess: (data) => {
       if (!data || typeof data !== 'object') {
         toast({
-          title: "ALEXERA Analysis Error",
-          description: "Received invalid response from ALEXERA. Please try again.",
+          title: "LEXARA Analysis Error",
+          description: "Received invalid response from LEXARA. Please try again.",
           variant: "destructive",
         });
         return;
       }
       setAnalysis(data);
+      setEmotionalState('authoritative');
 
-      // Stage 15: Speak the analysis if voice mode is enabled
-      if (voiceMode.isEnabled && data.analysis) {
+      // AUTOMATIC: Always speak the analysis (no toggle needed)
+      if (data.analysis) {
         const introText = data.actionable 
           ? "I've completed my analysis. Based on the information you provided, I've identified potential legal claims that may be pursued."
           : "I've completed my analysis. Based on the information you provided, I have not identified clear legal claims at this time.";
@@ -279,10 +301,10 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
       }
     },
     onError: (error: Error) => {
-      console.error("ALEXERA consultation error:", error);
+      setEmotionalState('neutral');
       toast({
-        title: "ALEXERA Analysis Failed",
-        description: error.message || "ALEXERA is unable to analyze your situation. Please try again or contact support.",
+        title: "LEXARA Analysis Failed",
+        description: error.message || "LEXARA is unable to analyze your situation. Please try again or contact support.",
         variant: "destructive",
       });
     },
@@ -292,7 +314,7 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
     if (!disclaimerAccepted) {
       toast({
         title: "Disclaimer Required",
-        description: "Please acknowledge the disclaimer to continue with ALEXERA",
+        description: "Please acknowledge the disclaimer to continue with LEXARA",
         variant: "destructive",
       });
       return;
@@ -301,7 +323,7 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
     if (!state) {
       toast({
         title: "State Required",
-        description: "ALEXERA requires your state for jurisdiction-specific analysis",
+        description: "LEXARA requires your state for jurisdiction-specific analysis",
         variant: "destructive",
       });
       return;
@@ -310,7 +332,7 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
     if (!situation.trim()) {
       toast({
         title: "Situation Required",
-        description: "Please describe your situation for ALEXERA to analyze",
+        description: "Please describe your situation for LEXARA to analyze",
         variant: "destructive",
       });
       return;
@@ -319,26 +341,19 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
     analyzeMutation.mutate({ state, situation, lawType });
   };
 
-  // Derive LEXARA's emotional state based on current activity
+  // Derive LEXARA's emotional state based on current activity - AUTOMATIC
   const currentEmotionalState = useMemo<EmotionalState>(() => {
     if (analyzeMutation.isPending) return 'processing';
     if (voiceSynthesis.isSpeaking) return 'speaking';
     if (voiceMode.isListening || lexaraMedia.state.isSpeaking) return 'listening';
     if (analysis) return 'authoritative';
+    if (autoInitialized) return 'engaged';
     return emotionalState;
   }, [analyzeMutation.isPending, voiceSynthesis.isSpeaking, voiceMode.isListening, 
-      lexaraMedia.state.isSpeaking, analysis, emotionalState]);
+      lexaraMedia.state.isSpeaking, analysis, autoInitialized, emotionalState]);
 
-  // Toggle media (webcam/mic)
-  const handleMediaToggle = async () => {
-    if (mediaEnabled) {
-      lexaraMedia.stop();
-      setMediaEnabled(false);
-    } else {
-      await lexaraMedia.start({ video: true, audio: true });
-      setMediaEnabled(true);
-    }
-  };
+  // Media is AUTOMATIC - always on when initialized
+  const isMediaActive = autoInitialized && lexaraMedia.state.isVideoReady;
 
   const handleFileComplaint = () => {
     if (!user) {
@@ -378,26 +393,29 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 relative overflow-hidden">
-      {/* Ambient Background Effects */}
+      {/* Enhanced Ambient Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl animate-pulse" />
         <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-radial from-primary/5 to-transparent rounded-full" />
+        {/* Divine light rays */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1 h-full bg-gradient-to-b from-primary/20 via-transparent to-transparent opacity-50" />
+        <div className="absolute top-1/4 left-0 w-full h-1 bg-gradient-to-r from-transparent via-purple-500/10 to-transparent" />
       </div>
 
-      {/* Subtle Grid Pattern */}
+      {/* Subtle Grid Pattern - Enhanced */}
       <div 
-        className="fixed inset-0 pointer-events-none opacity-[0.02]"
+        className="fixed inset-0 pointer-events-none opacity-[0.03]"
         style={{
           backgroundImage: 'linear-gradient(rgba(99, 102, 241, 0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(99, 102, 241, 0.5) 1px, transparent 1px)',
           backgroundSize: '50px 50px',
         }}
       />
 
-      {/* PiP Webcam Preview */}
+      {/* PiP Webcam Preview - AUTOMATIC */}
       <LexaraPiPPreview
         videoRef={lexaraMedia.setVideoElement}
-        isActive={mediaEnabled && lexaraMedia.state.isVideoReady}
+        isActive={isMediaActive}
         position="bottom-right"
       />
 
@@ -414,7 +432,7 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-6">
-              {/* Enhanced LEXARA Avatar */}
+              {/* Enhanced LEXARA Avatar - AUTOMATIC interaction */}
               <LexaraAvatar
                 size="xl"
                 emotionalState={currentEmotionalState}
@@ -424,8 +442,7 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
                 audioLevel={lexaraMedia.state.audioLevel}
                 showAura={true}
                 showParticles={true}
-                interactive={true}
-                onClick={handleVoiceToggle}
+                interactive={false}
               />
               
               <div>
@@ -455,40 +472,18 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
               </div>
             </div>
 
-            {/* Control Panel - Enhanced */}
+            {/* AUTOMATIC Status Display - NO TOGGLES */}
             <div className="flex flex-col items-end gap-4">
-              {/* Voice & Media Controls */}
-              <div className="flex items-center gap-3">
-                <Button
-                  variant={mediaEnabled ? "default" : "outline"}
-                  size="sm"
-                  onClick={handleMediaToggle}
-                  className="gap-2 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
-                >
-                  {mediaEnabled ? (
-                    <>
-                      <Camera className="w-4 h-4" />
-                      <Mic className="w-4 h-4" />
-                    </>
-                  ) : (
-                    <>
-                      <CameraOff className="w-4 h-4" />
-                      <MicOff className="w-4 h-4" />
-                    </>
-                  )}
-                  {mediaEnabled ? 'Live' : 'Enable'}
-                </Button>
-                
-                <VoiceToggle
-                  isEnabled={voiceMode.isEnabled}
-                  isListening={voiceMode.isListening}
-                  onToggle={handleVoiceToggle}
-                  position="inline"
-                  size="md"
-                />
+              {/* System Status - AUTOMATIC */}
+              <div className="flex items-center gap-2 bg-gradient-to-r from-primary/10 to-purple-500/10 px-4 py-2 rounded-full border border-primary/20">
+                <Zap className="w-4 h-4 text-primary animate-pulse" />
+                <span className="text-sm font-semibold text-primary">
+                  {autoInitialized ? 'ACTIVE' : 'INITIALIZING...'}
+                </span>
+                <Shield className="w-4 h-4 text-green-500" />
               </div>
 
-              {/* Status Indicators - Enhanced */}
+              {/* Status Indicators - AUTOMATIC */}
               <div className="flex items-center gap-3 text-xs font-medium">
                 {voiceSynthesis.isSpeaking && (
                   <span className="flex items-center gap-1.5 text-primary bg-primary/10 px-2.5 py-1 rounded-full">
@@ -502,7 +497,7 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
                     Listening
                   </span>
                 )}
-                {mediaEnabled && lexaraMedia.state.isVideoReady && (
+                {isMediaActive && (
                   <span className="flex items-center gap-1.5 text-blue-500 bg-blue-500/10 px-2.5 py-1 rounded-full">
                     <Camera className="w-3.5 h-3.5" />
                     Watching
@@ -513,11 +508,11 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
           </div>
         </LexaraPresence>
 
-        {/* Voice Status Indicator */}
-        {voiceMode.isEnabled && (
+        {/* Voice Status Indicator - AUTOMATIC (always shown when active) */}
+        {autoInitialized && (
           <div className="mb-6">
             <VoiceStatusIndicator
-              isEnabled={voiceMode.isEnabled}
+              isEnabled={true}
               isListening={voiceMode.isListening}
               isSpeaking={voiceSynthesis.isSpeaking}
               transcript={voiceMode.interimTranscript}
