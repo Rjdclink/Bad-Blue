@@ -647,7 +647,8 @@ export class MonteCarloPathEngine {
   private classifyActivity(speed: number): TrailSegment['segmentType'] {
     if (speed < SPEED_THRESHOLDS.stationary) return 'stationary';
     if (speed < SPEED_THRESHOLDS.walking) return 'walking';
-    if (speed < SPEED_THRESHOLDS.cycling) return 'walking';
+    if (speed < SPEED_THRESHOLDS.running) return 'walking'; // Running classified as walking
+    if (speed < SPEED_THRESHOLDS.cycling) return 'transit'; // Cycling classified as transit
     if (speed < SPEED_THRESHOLDS.driving) return 'transit';
     return 'driving';
   }
@@ -746,6 +747,9 @@ export class MonteCarloPathEngine {
   }
 
   private calculateBoundsFromPoints(points: GPSPoint[]): BoundingBox {
+    // Initialize with extreme values that will be replaced
+    // north starts at minimum (-90), south at maximum (90)
+    // east starts at minimum (-180), west at maximum (180)
     let north = -90, south = 90, east = -180, west = 180;
     
     for (const point of points) {

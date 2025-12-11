@@ -37,6 +37,9 @@ import { createLogger } from '../../logger';
 
 const log = createLogger('HybridGeoconsole');
 
+// Unit conversion constants
+const MPS_TO_MPH = 2.237; // meters per second to miles per hour
+
 // Default timeline configuration
 const DEFAULT_TIMELINE_CONFIG: TimelineConfig = {
   historyDays: 3,
@@ -55,6 +58,14 @@ const DEFAULT_ORCHESTRATION_CONFIG: GeoconsoleOrchestrationConfig = {
   refinementPasses: 2,
   adaptiveResolution: true,
   gpuAcceleration: false,
+};
+
+// Processing configuration
+const DEFAULT_PROCESSING_CONFIG = {
+  maxGapMinutes: 30, // Interpolate gaps longer than this
+  clusterRadius: 50, // meters for frequent location clustering
+  anomalySpeedThreshold: 50, // m/s for speed anomaly detection
+  largeGapHours: 12, // hours for gap anomaly detection
 };
 
 /**
@@ -182,14 +193,13 @@ export class HybridGeoconsole extends EventEmitter {
     if (points.length < 2) return points;
 
     const result: GPSPoint[] = [points[0]];
-    const maxGapMinutes = 30; // Interpolate gaps longer than 30 minutes
 
     for (let i = 1; i < points.length; i++) {
       const prev = points[i - 1];
       const curr = points[i];
       const gapMinutes = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 60000;
 
-      if (gapMinutes > maxGapMinutes) {
+      if (gapMinutes > DEFAULT_PROCESSING_CONFIG.maxGapMinutes) {
         // Run Monte Carlo interpolation for this gap
         const path = await this.monteCarloEngine.interpolatePath(prev, curr);
         
@@ -298,7 +308,6 @@ export class HybridGeoconsole extends EventEmitter {
    */
   private analyzeFrequentLocations(points: GPSPoint[]): FrequentLocation[] {
     const clusters: Map<string, GPSPoint[]> = new Map();
-    const clusterRadius = 50; // meters
 
     for (const point of points) {
       let assigned = false;
@@ -310,7 +319,7 @@ export class HybridGeoconsole extends EventEmitter {
           center.latitude, center.longitude
         );
         
-        if (distance <= clusterRadius) {
+        if (distance <= DEFAULT_PROCESSING_CONFIG.clusterRadius) {
           cluster.push(point);
           assigned = true;
           break;
@@ -454,13 +463,13 @@ export class HybridGeoconsole extends EventEmitter {
     if (trail) {
       for (let i = 1; i < trail.points.length; i++) {
         const speed = trail.points[i].velocity?.speed || 0;
-        if (speed > 50) { // > 50 m/s = ~112 mph
+        if (speed > DEFAULT_PROCESSING_CONFIG.anomalySpeedThreshold) {
           anomalies.push({
             type: 'speed_anomaly',
             timestamp: trail.points[i].position.timestamp,
             location: trail.points[i].position,
-            description: `Unusually high speed detected: ${(speed * 2.237).toFixed(1)} mph`,
-            severity: speed > 100 ? 'high' : 'medium',
+            description: `Unusually high speed detected: ${(speed * MPS_TO_MPH).toFixed(1)} mph`,
+            severity: speed > DEFAULT_PROCESSING_CONFIG.anomalySpeedThreshold * 2 ? 'high' : 'medium',
           });
         }
       }
@@ -473,13 +482,13 @@ export class HybridGeoconsole extends EventEmitter {
 
     for (let i = 1; i < sorted.length; i++) {
       const gap = (sorted[i].timestamp.getTime() - sorted[i - 1].timestamp.getTime()) / 3600000;
-      if (gap > 12) { // > 12 hour gap
+      if (gap > DEFAULT_PROCESSING_CONFIG.largeGapHours) {
         anomalies.push({
           type: 'gap',
           timestamp: sorted[i - 1].timestamp,
           location: sorted[i - 1],
           description: `${gap.toFixed(1)} hour gap in location data`,
-          severity: gap > 24 ? 'high' : 'medium',
+          severity: gap > DEFAULT_PROCESSING_CONFIG.largeGapHours * 2 ? 'high' : 'medium',
         });
       }
     }

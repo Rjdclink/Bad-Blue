@@ -35,42 +35,13 @@ import {
   Satellite,
   Map as MapIcon,
 } from 'lucide-react';
-
-// Types for geoconsole data
-interface GPSPoint {
-  latitude: number;
-  longitude: number;
-  altitude?: number;
-  accuracy?: number;
-  timestamp: Date;
-  source: string;
-  confidence: number;
-}
-
-interface TrailPoint {
-  position: GPSPoint;
-  velocity?: { speed: number; heading: number };
-  interpolated: boolean;
-  opacity: number;
-  color?: string;
-}
-
-interface MotionTrail {
-  id: string;
-  points: TrailPoint[];
-  startTime: Date;
-  endTime: Date;
-  totalDistance: number;
-  averageSpeed: number;
-  maxSpeed: number;
-}
-
-interface TimelineState {
-  currentTime: Date;
-  isPlaying: boolean;
-  playbackSpeed: number;
-  visibleRange: { start: Date; end: Date };
-}
+import type { 
+  GPSPoint, 
+  MotionTrail, 
+  TimelineState, 
+  LayerConfig,
+} from '@shared/geoconsoleTypes';
+import { MPS_TO_MPH, METERS_TO_KM } from '@shared/geoconsoleTypes';
 
 interface GeoconsoleProps {
   initialData?: GPSPoint[];

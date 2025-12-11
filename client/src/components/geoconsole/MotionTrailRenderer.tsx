@@ -6,18 +6,21 @@
  */
 
 import React, { useEffect, useRef, useMemo } from 'react';
+import { SPEED_THRESHOLDS, SPEED_COLORS } from '@shared/geoconsoleTypes';
 
-interface TrailPoint {
+// Extended TrailPoint for rendering (includes opacity for fade effect)
+interface RenderTrailPoint {
   latitude: number;
   longitude: number;
   timestamp: Date;
   speed?: number;
   confidence: number;
   interpolated: boolean;
+  opacity?: number;
 }
 
 interface MotionTrailRendererProps {
-  points: TrailPoint[];
+  points: RenderTrailPoint[];
   currentTime: Date;
   showHeatTrail?: boolean;
   showProbabilityCloud?: boolean;
@@ -26,13 +29,13 @@ interface MotionTrailRendererProps {
   colorScheme?: 'speed' | 'time' | 'confidence';
 }
 
-// Speed thresholds for color mapping (m/s)
-const SPEED_COLORS = {
-  stationary: { color: '#3b82f6', threshold: 0.5 },
-  walking: { color: '#22c55e', threshold: 2.0 },
-  running: { color: '#eab308', threshold: 5.0 },
-  cycling: { color: '#f97316', threshold: 10.0 },
-  driving: { color: '#ef4444', threshold: Infinity },
+// Speed thresholds with colors for rendering
+const SPEED_COLOR_MAP = {
+  stationary: { color: SPEED_COLORS.stationary, threshold: SPEED_THRESHOLDS.stationary },
+  walking: { color: SPEED_COLORS.walking, threshold: SPEED_THRESHOLDS.walking },
+  running: { color: SPEED_COLORS.running, threshold: SPEED_THRESHOLDS.running },
+  cycling: { color: SPEED_COLORS.cycling, threshold: SPEED_THRESHOLDS.cycling },
+  driving: { color: SPEED_COLORS.driving, threshold: Infinity },
 };
 
 export const MotionTrailRenderer: React.FC<MotionTrailRendererProps> = ({
@@ -65,11 +68,11 @@ export const MotionTrailRenderer: React.FC<MotionTrailRendererProps> = ({
 
   // Get color based on speed
   const getSpeedColor = (speed: number = 0): string => {
-    if (speed < SPEED_COLORS.stationary.threshold) return SPEED_COLORS.stationary.color;
-    if (speed < SPEED_COLORS.walking.threshold) return SPEED_COLORS.walking.color;
-    if (speed < SPEED_COLORS.running.threshold) return SPEED_COLORS.running.color;
-    if (speed < SPEED_COLORS.cycling.threshold) return SPEED_COLORS.cycling.color;
-    return SPEED_COLORS.driving.color;
+    if (speed < SPEED_COLOR_MAP.stationary.threshold) return SPEED_COLOR_MAP.stationary.color;
+    if (speed < SPEED_COLOR_MAP.walking.threshold) return SPEED_COLOR_MAP.walking.color;
+    if (speed < SPEED_COLOR_MAP.running.threshold) return SPEED_COLOR_MAP.running.color;
+    if (speed < SPEED_COLOR_MAP.cycling.threshold) return SPEED_COLOR_MAP.cycling.color;
+    return SPEED_COLOR_MAP.driving.color;
   };
 
   // Get color based on time (rainbow gradient)
@@ -245,7 +248,7 @@ export const MotionTrailRenderer: React.FC<MotionTrailRendererProps> = ({
       <div className="absolute bottom-4 left-4 bg-slate-800/80 rounded-lg p-3 backdrop-blur-sm">
         <p className="text-xs text-slate-400 mb-2">Speed Legend</p>
         <div className="flex flex-col gap-1">
-          {Object.entries(SPEED_COLORS).map(([key, { color }]) => (
+          {Object.entries(SPEED_COLOR_MAP).map(([key, { color }]) => (
             <div key={key} className="flex items-center gap-2">
               <div
                 className="w-3 h-3 rounded-full"
