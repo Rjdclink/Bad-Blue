@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -37,80 +37,6 @@ export default function Landing() {
   usePageFaqSchema();
   
   // NOTE: WebSite schema is already defined in index.html - removed duplicate useWebsiteSchema call
-  
-  const [audioPlaying, setAudioPlaying] = useState(false);
-  const [audioAttempted, setAudioAttempted] = useState(false); // Added state for tracking audio attempt
-  const audioRef = useRef<HTMLAudioElement>(null);
-
-  // Enable audio on user interaction (unmute and play)
-  const enableAudio = () => {
-    if (!audioRef.current) {
-      return;
-    }
-    
-    // If audio is muted, unmute it and restart from beginning
-    if (audioRef.current.muted) {
-      audioRef.current.muted = false;
-      audioRef.current.currentTime = 0;
-      audioRef.current.play()
-        .then(() => {
-          setAudioPlaying(true);
-        })
-        .catch((error) => {
-          console.log('Audio play prevented:', error);
-        });
-    }
-  };
-
-  // Add scroll and wheel listeners for audio unmute
-  useEffect(() => {
-    const handleInteraction = () => {
-      if (audioRef.current && audioRef.current.muted) {
-        audioRef.current.muted = false;
-        audioRef.current.currentTime = 0;
-        audioRef.current.play()
-          .then(() => {
-            setAudioPlaying(true);
-          })
-          .catch((error) => {
-            console.log('Audio play prevented:', error);
-          });
-        
-        // Remove listeners after unmuting
-        document.removeEventListener('wheel', handleInteraction);
-        document.removeEventListener('scroll', handleInteraction, true);
-      }
-    };
-    
-    document.addEventListener('wheel', handleInteraction, { passive: true });
-    document.addEventListener('scroll', handleInteraction, { passive: true, capture: true });
-    
-    return () => {
-      document.removeEventListener('wheel', handleInteraction);
-      document.removeEventListener('scroll', handleInteraction, true);
-    };
-  }, []);
-
-  // Start audio 1 second after page load (only once)
-  useEffect(() => {
-    if (audioAttempted) return; // Prevent multiple attempts
-
-    const timer = setTimeout(() => {
-      if (audioRef.current && !audioPlaying) { // Check if audio is already playing
-        setAudioAttempted(true); // Mark attempt
-        audioRef.current.play()
-          .then(() => {
-            setAudioPlaying(true);
-          })
-          .catch((error) => {
-            console.log('Audio autoplay prevented by browser:', error);
-            // Silently fail - audio will play on first scroll/interaction
-          });
-      }
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [audioAttempted, audioPlaying]); // Dependencies include new state
 
   // Debug: Check if images exist (development only)
   useEffect(() => {
@@ -142,7 +68,7 @@ export default function Landing() {
     "offers": {
       "@type": "Offer",
       "priceCurrency": "USD",
-      "description": "Platform access with ALEXERA Consultation and Officer Search"
+      "description": "Platform access with LEXARA Consultation and Officer Search"
     },
     "featureList": [
       "AI-powered officer badge identification",
@@ -155,18 +81,7 @@ export default function Landing() {
   };
 
   return (
-    <div className="min-h-screen" onClick={enableAudio}>
-      {/* Background Audio from Login Video - plays once after page load */}
-      <audio
-        ref={audioRef}
-        muted
-        preload="auto"
-        style={{ position: 'fixed', top: -1000, left: -1000, visibility: 'hidden', pointerEvents: 'none' }}
-      >
-        <source src="/audio/badblue-audio.mp3" type="audio/mpeg" />
-        Your browser does not support the audio element.
-      </audio>
-
+    <div className="min-h-screen">
       <SEOHead
         title="LegalWhat — AI Legal Platform for 30+ Practice Areas"
         description="AI-powered legal platform covering 30+ practice areas including Law Enforcement Accountability, Family Law, Immigration, Civil Rights, and more. Professional legal tools with AI consultation."
@@ -259,7 +174,7 @@ export default function Landing() {
             {/* Three-Tier Pricing - Simplified */}
             <div className="mb-10">
               <div className="grid md:grid-cols-3 gap-6">
-                {/* Tier 1: ALEXERA & Officer Search */}
+                {/* Tier 1: LEXARA & Officer Search */}
                 <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
                   <div className="text-white mb-3">
                     <div className="text-lg font-semibold mb-2">Core Services</div>
@@ -336,7 +251,7 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ALEXERA Visual Showcase Section */}
+      {/* LEXARA Visual Showcase Section */}
       <section className="relative py-20 px-4 mt-16 overflow-hidden">
         {/* Background Image with Dark Overlay */}
         <div
@@ -352,14 +267,14 @@ export default function Landing() {
 
         {/* Content Container - Wider for three-column layout */}
         <div className="relative z-10 max-w-7xl mx-auto">
-          {/* Overlay Text - Description of ALEXERA */}
+          {/* Overlay Text - Description of LEXARA */}
           <div className="text-center mb-12 px-4">
             <p className="text-white text-lg md:text-xl lg:text-2xl leading-relaxed max-w-4xl mx-auto font-medium" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-              Meet ALEXERA - She's built on an orchestrated network of thirteen specialized AI models that operate in tandem. She provides you with advanced legal reasoning, analysis, in-depth research, cross-verified suggestions, and courtroom ready drafting, tailored to your filing jurisdiction. She can analyze evidence in a wide variety of formats and provide any format of legally compliant documentation.
+              Meet LEXARA - She's built on an orchestrated network of thirteen specialized AI models that operate in tandem. She provides you with advanced legal reasoning, analysis, in-depth research, cross-verified suggestions, and courtroom ready drafting, tailored to your filing jurisdiction. She can analyze evidence in a wide variety of formats and provide any format of legally compliant documentation.
             </p>
           </div>
 
-          {/* Three-Column Layout: Left Features | ALEXERA Image | Right Features */}
+          {/* Three-Column Layout: Left Features | LEXARA Image | Right Features */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start px-4">
             {/* Left Column - Features 1-5 */}
             <div className="space-y-6">
@@ -429,10 +344,10 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Center Column - ALEXERA Floating Card */}
+            {/* Center Column - LEXARA Floating Card */}
             <div className="flex justify-center">
               <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
-                {/* ALEXERA Image */}
+                {/* LEXARA Image */}
                 <div className="mb-6">
                   {!lexaraImageError ? (
                     <img
@@ -547,11 +462,11 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Interactive ALEXERA Consultation Sample */}
+      {/* Interactive LEXARA Consultation Sample */}
       <section className="py-20 px-4 bg-background">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-bold mb-4">Try ALEXERA</h2>
+            <h2 className="text-2xl font-bold mb-4">Try LEXARA</h2>
             <p className="text-sm text-muted-foreground max-w-xl mx-auto">
               Experience BadBlue's AI-powered legal analysis with a free sample consultation. No signup required.
             </p>

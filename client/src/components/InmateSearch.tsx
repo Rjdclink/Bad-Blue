@@ -35,6 +35,7 @@ import {
   AlertCircle,
   Shield,
   Gavel,
+  Database,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
@@ -614,13 +615,86 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
             </ScrollArea>
           ) : (
             <Card>
-              <CardContent className="py-8 text-center">
-                <AlertTriangle className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-lg font-medium">No Inmates Found</p>
-                <p className="text-sm text-muted-foreground mt-2">
-                  No matching records found in the searched systems.
-                  Try adjusting your search criteria or expanding the search scope.
-                </p>
+              <CardContent className="py-8">
+                <div className="text-center mb-6">
+                  <AlertTriangle className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                  <p className="text-lg font-medium">No Inmates Found</p>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    No matching records found in the searched systems.
+                    Try adjusting your search criteria or search directly on official sources below.
+                  </p>
+                </div>
+                
+                {/* Manual Search Links */}
+                <div className="border-t pt-6">
+                  <p className="text-sm font-medium mb-4 text-center">Search Official Sources Directly:</p>
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <a
+                      href="https://www.bop.gov/inmateloc/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 p-3 rounded-lg border hover:bg-muted transition-colors"
+                    >
+                      <Database className="w-5 h-5 text-blue-600" />
+                      <div>
+                        <p className="text-sm font-medium">Federal BOP</p>
+                        <p className="text-xs text-muted-foreground">Bureau of Prisons</p>
+                      </div>
+                      <ExternalLink className="w-4 h-4 ml-auto text-muted-foreground" />
+                    </a>
+                    
+                    <a
+                      href="https://www.vinelink.com/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 p-3 rounded-lg border hover:bg-muted transition-colors"
+                    >
+                      <Shield className="w-5 h-5 text-green-600" />
+                      <div>
+                        <p className="text-sm font-medium">VINE Link</p>
+                        <p className="text-xs text-muted-foreground">Victim Notification</p>
+                      </div>
+                      <ExternalLink className="w-4 h-4 ml-auto text-muted-foreground" />
+                    </a>
+                    
+                    <a
+                      href="https://www.ice.gov/detain/detention-facilities"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 p-3 rounded-lg border hover:bg-muted transition-colors"
+                    >
+                      <Building className="w-5 h-5 text-red-600" />
+                      <div>
+                        <p className="text-sm font-medium">ICE Locator</p>
+                        <p className="text-xs text-muted-foreground">Immigration Detention</p>
+                      </div>
+                      <ExternalLink className="w-4 h-4 ml-auto text-muted-foreground" />
+                    </a>
+                  </div>
+                  
+                  {state && statesData?.data && (
+                    <div className="mt-4">
+                      {statesData.data.filter(s => s.state === state).map(stateInfo => (
+                        stateInfo.searchUrl && (
+                          <a
+                            key={stateInfo.state}
+                            href={stateInfo.searchUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 p-3 rounded-lg border hover:bg-muted transition-colors"
+                          >
+                            <MapPin className="w-5 h-5 text-purple-600" />
+                            <div>
+                              <p className="text-sm font-medium">{stateInfo.stateName} DOC</p>
+                              <p className="text-xs text-muted-foreground">{stateInfo.departmentName}</p>
+                            </div>
+                            <ExternalLink className="w-4 h-4 ml-auto text-muted-foreground" />
+                          </a>
+                        )
+                      ))}
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           )}
