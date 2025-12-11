@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Card,
@@ -32,14 +32,25 @@ import {
   CheckCircle,
   XCircle,
   RefreshCcw,
+  AlertCircle,
+  Shield,
+  Gavel,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Progress } from "@/components/ui/progress";
 
 interface InmateSearchProps {
   onBack?: () => void;
+}
+
+interface ChargeInfo {
+  description: string;
+  statute?: string;
+  classification?: string;
+  severity?: string;
 }
 
 interface InmateRecord {
@@ -59,26 +70,37 @@ interface InmateRecord {
   custodyStatus: string;
   releaseDate?: string;
   admissionDate?: string;
+  arrestDate?: string;
+  convictionDate?: string;
   age?: number;
   sex?: string;
   race?: string;
   charges?: string[];
+  chargeDetails?: ChargeInfo[];
+  isViolentOffender?: boolean;
+  isSexualOffender?: boolean;
+  offenseClassifications?: string[];
   confidence: number;
   sourceUrl?: string;
+}
+
+interface SourceSearchStatus {
+  source: string;
+  searched: boolean;
+  resultsCount: number;
+  error?: string;
+  searchTimeMs?: number;
+  status: 'pending' | 'searching' | 'completed' | 'error' | 'timeout';
 }
 
 interface InmateSearchResult {
   query: any;
   totalResults: number;
   inmates: InmateRecord[];
-  sources: {
-    source: string;
-    searched: boolean;
-    resultsCount: number;
-    error?: string;
-  }[];
+  sources: SourceSearchStatus[];
   searchDuration: number;
   cached: boolean;
+  partial: boolean;
   disclaimer: string;
 }
 
@@ -99,11 +121,27 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
   const [inmateId, setInmateId] = useState("");
   const [searchScope, setSearchScope] = useState<string>("all");
   const [results, setResults] = useState<InmateSearchResult | null>(null);
+  const [searchProgress, setSearchProgress] = useState(0);
 
   // Fetch state list
   const { data: statesData } = useQuery<{ success: boolean; data: StateInfo[] }>({
     queryKey: ['/api/inmate-search/states'],
   });
+
+  // Animate progress during search
+  useEffect(() => {
+    if (searchMutation.isPending) {
+      const interval = setInterval(() => {
+        setSearchProgress(prev => {
+          if (prev >= 90) return prev;
+          return prev + Math.random() * 15;
+        });
+      }, 500);
+      return () => clearInterval(interval);
+    } else {
+      setSearchProgress(0);
+    }
+  }, [searchMutation?.isPending]);
 
   const searchMutation = useMutation({
     mutationFn: async (searchData: {
@@ -119,11 +157,13 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
       return response.json();
     },
     onSuccess: (data: { success: boolean; data: InmateSearchResult; error?: string }) => {
+      setSearchProgress(100);
       if (data.success) {
         setResults(data.data);
+        const partialMsg = data.data.partial ? ' (partial results - timeout reached)' : '';
         toast({
           title: "Search Complete",
-          description: `Found ${data.data.totalResults} result(s) in ${data.data.searchDuration}ms`,
+          description: `Found ${data.data.totalResults} result(s) in ${data.data.searchDuration}ms${partialMsg}`,
         });
       } else {
         toast({
@@ -134,6 +174,7 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
       }
     },
     onError: (error: Error) => {
+      setSearchProgress(0);
       toast({
         title: "Search Failed",
         description: error.message,
@@ -152,6 +193,7 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
       return;
     }
 
+    setSearchProgress(5);
     searchMutation.mutate({
       firstName: firstName.trim() || undefined,
       lastName: lastName.trim() || undefined,
@@ -189,6 +231,7 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
       'COUNTY_JAIL': 'bg-orange-600',
       'VINE': 'bg-green-600',
       'ICE': 'bg-red-600',
+      'PRIVATE': 'bg-slate-600',
     };
     return <Badge className={colors[source] || 'bg-gray-600'}>{source.replace('_', ' ')}</Badge>;
   };
@@ -199,8 +242,24 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
       'State Prison': 'secondary',
       'County Jail': 'outline',
       'Immigration Detention': 'destructive',
+      'Private Facility': 'outline',
     };
     return <Badge variant={variants[type] || 'outline'}>{type}</Badge>;
+  };
+
+  const getSourceStatusBadge = (status: SourceSearchStatus) => {
+    switch (status.status) {
+      case 'completed':
+        return <Badge variant="default" className="bg-green-600 text-xs">{status.source}: {status.resultsCount}</Badge>;
+      case 'searching':
+        return <Badge variant="secondary" className="text-xs animate-pulse">{status.source}: Searching...</Badge>;
+      case 'error':
+        return <Badge variant="destructive" className="text-xs">{status.source}: Error</Badge>;
+      case 'timeout':
+        return <Badge variant="outline" className="text-xs text-yellow-600">{status.source}: Timeout</Badge>;
+      default:
+        return <Badge variant="outline" className="text-xs">{status.source}: Pending</Badge>;
+    }
   };
 
   return (
@@ -210,10 +269,10 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Search className="w-6 h-6" />
-            Nationwide Inmate Locator
+            United States Inmate Locator
           </CardTitle>
           <CardDescription>
-            Search federal and state correctional facilities across the United States
+            Search federal, state, and local correctional facilities across the United States
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -300,7 +359,7 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
                     <SelectValue placeholder="All Systems" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Systems (Federal + State)</SelectItem>
+                    <SelectItem value="all">All Systems (Federal + State + Local)</SelectItem>
                     <SelectItem value="federal">Federal BOP Only</SelectItem>
                     <SelectItem value="state">State DOC Only</SelectItem>
                     <SelectItem value="county">County Jails Only</SelectItem>
@@ -317,7 +376,7 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
                   {searchMutation.isPending ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Searching...
+                      Searching Facilities...
                     </>
                   ) : (
                     <>
@@ -328,6 +387,20 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
                 </Button>
               </div>
             </div>
+
+            {/* Search Progress */}
+            {searchMutation.isPending && (
+              <div className="space-y-2 animate-in fade-in">
+                <div className="flex items-center justify-between text-sm text-muted-foreground">
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Searching multiple facilities and data sources...
+                  </span>
+                  <span>{Math.round(searchProgress)}%</span>
+                </div>
+                <Progress value={searchProgress} className="h-2" />
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -344,6 +417,12 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
                   {results.cached && (
                     <Badge variant="outline" className="text-xs">Cached</Badge>
                   )}
+                  {results.partial && (
+                    <Badge variant="outline" className="text-xs text-yellow-600 border-yellow-600">
+                      <AlertCircle className="w-3 h-3 mr-1" />
+                      Partial Results
+                    </Badge>
+                  )}
                 </CardTitle>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Clock className="w-4 h-4" />
@@ -355,14 +434,11 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {/* Sources searched */}
+              {/* Sources searched with status */}
               <div className="flex flex-wrap gap-2 mb-4">
                 {results.sources.map((source, idx) => (
-                  <div key={idx} className="flex items-center gap-1">
-                    {getSourceBadge(source.source)}
-                    <span className="text-xs text-muted-foreground">
-                      ({source.resultsCount})
-                    </span>
+                  <div key={idx}>
+                    {getSourceStatusBadge(source)}
                   </div>
                 ))}
               </div>
@@ -374,13 +450,30 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
             <ScrollArea className="h-[600px]">
               <div className="space-y-4 pr-4">
                 {results.inmates.map((inmate) => (
-                  <Card key={inmate.id} className="border-l-4 border-l-primary">
+                  <Card key={inmate.id} className={`border-l-4 ${
+                    inmate.isViolentOffender ? 'border-l-red-500' :
+                    inmate.isSexualOffender ? 'border-l-yellow-500' :
+                    'border-l-primary'
+                  }`}>
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between">
                         <div>
                           <CardTitle className="text-lg flex items-center gap-2">
                             <User className="w-5 h-5" />
                             {inmate.firstName} {inmate.middleName} {inmate.lastName}
+                            {/* Offense Classification Badges */}
+                            {inmate.isViolentOffender && (
+                              <Badge variant="destructive" className="text-xs font-bold">
+                                <Shield className="w-3 h-3 mr-1" />
+                                VIOLENT
+                              </Badge>
+                            )}
+                            {inmate.isSexualOffender && (
+                              <Badge className="text-xs font-bold bg-yellow-500 text-black">
+                                <AlertTriangle className="w-3 h-3 mr-1" />
+                                SEXUAL
+                              </Badge>
+                            )}
                           </CardTitle>
                           <CardDescription className="flex items-center gap-2 mt-1">
                             <Hash className="w-4 h-4" />
@@ -410,7 +503,7 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
                           </div>
                         </div>
 
-                        {/* Personal Info */}
+                        {/* Personal Info & Dates */}
                         <div className="space-y-2">
                           {inmate.age && (
                             <div className="flex items-center gap-2 text-sm">
@@ -422,6 +515,18 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
                             <div className="flex items-center gap-2 text-sm">
                               <User className="w-4 h-4 text-muted-foreground" />
                               {inmate.sex}
+                            </div>
+                          )}
+                          {inmate.arrestDate && (
+                            <div className="flex items-center gap-2 text-sm">
+                              <Gavel className="w-4 h-4 text-muted-foreground" />
+                              Arrested: {inmate.arrestDate}
+                            </div>
+                          )}
+                          {inmate.convictionDate && (
+                            <div className="flex items-center gap-2 text-sm">
+                              <Gavel className="w-4 h-4 text-muted-foreground" />
+                              Convicted: {inmate.convictionDate}
                             </div>
                           )}
                           {inmate.releaseDate && (
@@ -437,13 +542,31 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
                       {inmate.charges && inmate.charges.length > 0 && (
                         <div className="mt-4">
                           <Separator className="mb-3" />
-                          <p className="text-sm font-medium mb-2">Charges/Offenses:</p>
+                          <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                            <Gavel className="w-4 h-4" />
+                            Charges/Offenses:
+                          </p>
                           <div className="flex flex-wrap gap-2">
-                            {inmate.charges.map((charge, idx) => (
-                              <Badge key={idx} variant="outline" className="text-xs">
-                                {charge}
-                              </Badge>
-                            ))}
+                            {inmate.charges.map((charge, idx) => {
+                              // Determine charge color based on classification
+                              const chargeDetail = inmate.chargeDetails?.[idx];
+                              const isViolent = chargeDetail?.classification === 'VIOLENT';
+                              const isSexual = chargeDetail?.classification === 'SEXUAL';
+                              
+                              return (
+                                <Badge 
+                                  key={idx} 
+                                  variant="outline" 
+                                  className={`text-xs ${
+                                    isViolent ? 'border-red-500 text-red-600' :
+                                    isSexual ? 'border-yellow-500 text-yellow-600' :
+                                    ''
+                                  }`}
+                                >
+                                  {charge}
+                                </Badge>
+                              );
+                            })}
                           </div>
                         </div>
                       )}

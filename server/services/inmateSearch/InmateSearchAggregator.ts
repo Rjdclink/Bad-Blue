@@ -6,6 +6,9 @@
  * - Parallel batch requests for efficiency
  * - Rate limit handling
  * - Source deduplication
+ * - Offense classification (VIOLENT/SEXUAL badges)
+ * - 5-minute search timeout with partial results
+ * - Modular data source adapter pattern
  */
 
 import { logger } from '../../logger';
@@ -14,7 +17,10 @@ import {
   InmateSearchResult, 
   InmateRecord, 
   InmateSource,
-  CachedInmateSearch 
+  CachedInmateSearch,
+  OffenseClassification,
+  ChargeInfo,
+  SourceSearchStatus
 } from './types';
 import { STATE_CORRECTIONS, getStateCorrectionsInfo } from './stateData';
 import { generateGeminiStructuredResponse, isGeminiAvailable } from '../../gemini';
@@ -25,11 +31,98 @@ import crypto from 'crypto';
 const CACHE_MAX_SIZE = 500;
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
+// Search timeout configuration
+const SEARCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max per search
+
 // In-memory LRU cache
 const searchCache = new Map<string, CachedInmateSearch>();
 
 // Standard disclaimer for all searches
-const SEARCH_DISCLAIMER = `DISCLAIMER: This search tool accesses publicly available inmate information from official government sources. Information may not be current or complete. Always verify with the appropriate correctional facility. This service is not a consumer reporting agency under the FCRA and should not be used for employment, housing, or credit decisions.`;
+const SEARCH_DISCLAIMER = `This search accesses publicly available inmate information from official government sources. Information may not be current or complete. Always verify with the appropriate correctional facility.`;
+
+// Violent offense keywords for classification
+const VIOLENT_OFFENSE_KEYWORDS = [
+  'murder', 'homicide', 'manslaughter', 'assault', 'battery', 'robbery',
+  'kidnapping', 'carjacking', 'arson', 'terrorism', 'aggravated', 'armed',
+  'weapons', 'firearm', 'shooting', 'stabbing', 'domestic violence',
+  'attempted murder', 'gang', 'extortion', 'threatening', 'menacing'
+];
+
+// Sexual offense keywords for classification
+const SEXUAL_OFFENSE_KEYWORDS = [
+  'sexual', 'rape', 'sodomy', 'molestation', 'indecent', 'lewd',
+  'pornography', 'child abuse', 'exploitation', 'incest', 'prostitution',
+  'sex offender', 'sexual battery', 'sexual assault', 'indecency'
+];
+
+/**
+ * Classify an offense based on its description
+ */
+function classifyOffense(description: string): OffenseClassification[] {
+  const lowerDesc = description.toLowerCase();
+  const classifications: OffenseClassification[] = [];
+  
+  if (VIOLENT_OFFENSE_KEYWORDS.some(keyword => lowerDesc.includes(keyword))) {
+    classifications.push('VIOLENT');
+  }
+  
+  if (SEXUAL_OFFENSE_KEYWORDS.some(keyword => lowerDesc.includes(keyword))) {
+    classifications.push('SEXUAL');
+  }
+  
+  if (lowerDesc.includes('drug') || lowerDesc.includes('narcotic') || 
+      lowerDesc.includes('cocaine') || lowerDesc.includes('heroin') ||
+      lowerDesc.includes('methamphetamine') || lowerDesc.includes('controlled substance')) {
+    classifications.push('DRUG');
+  }
+  
+  if (lowerDesc.includes('theft') || lowerDesc.includes('burglary') ||
+      lowerDesc.includes('larceny') || lowerDesc.includes('fraud') ||
+      lowerDesc.includes('embezzlement') || lowerDesc.includes('forgery')) {
+    classifications.push('PROPERTY');
+  }
+  
+  if (classifications.length === 0) {
+    classifications.push('OTHER');
+  }
+  
+  return classifications;
+}
+
+/**
+ * Process and classify charges for an inmate record
+ */
+function processCharges(inmate: InmateRecord): InmateRecord {
+  const classifications = new Set<OffenseClassification>();
+  let isViolent = false;
+  let isSexual = false;
+  
+  // Process simple charges array
+  if (inmate.charges) {
+    const chargeDetails: ChargeInfo[] = [];
+    
+    for (const charge of inmate.charges) {
+      const chargeClassifications = classifyOffense(charge);
+      chargeClassifications.forEach(c => classifications.add(c));
+      
+      if (chargeClassifications.includes('VIOLENT')) isViolent = true;
+      if (chargeClassifications.includes('SEXUAL')) isSexual = true;
+      
+      chargeDetails.push({
+        description: charge,
+        classification: chargeClassifications[0],
+      });
+    }
+    
+    inmate.chargeDetails = chargeDetails;
+  }
+  
+  inmate.isViolentOffender = isViolent;
+  inmate.isSexualOffender = isSexual;
+  inmate.offenseClassifications = Array.from(classifications);
+  
+  return inmate;
+}
 
 /**
  * Generate cache key from query parameters
@@ -89,14 +182,22 @@ function cacheResult(key: string, result: InmateSearchResult): void {
 }
 
 /**
- * Search Federal Bureau of Prisons (BOP)
- * Uses AI to process BOP search results
+ * Data Source Adapter Interface
+ * Allows modular, swappable data sources
  */
-async function searchBOP(query: InmateSearchQuery): Promise<InmateRecord[]> {
-  try {
-    logger.info('[InmateSearch] Searching BOP for:', query.lastName, query.firstName);
-    
-    const prompt = `Search the Federal Bureau of Prisons inmate locator for:
+interface DataSourceAdapter {
+  name: InmateSource;
+  search(query: InmateSearchQuery): Promise<InmateRecord[]>;
+}
+
+/**
+ * Federal Bureau of Prisons (BOP) Adapter
+ */
+const BOPAdapter: DataSourceAdapter = {
+  name: 'BOP',
+  async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
+    try {
+      const prompt = `Search the Federal Bureau of Prisons inmate locator for:
 Name: ${query.firstName} ${query.lastName}${query.middleName ? ` ${query.middleName}` : ''}
 ${query.dateOfBirth ? `Date of Birth: ${query.dateOfBirth}` : ''}
 ${query.inmateId ? `Register Number: ${query.inmateId}` : ''}
@@ -116,6 +217,9 @@ Search and return any matching federal inmates. Return a JSON array of inmates w
       "race": "race",
       "facilityName": "federal prison name",
       "releaseDate": "projected release date if available",
+      "arrestDate": "arrest date if available",
+      "convictionDate": "conviction date if available",
+      "charges": ["list of federal charges with statute codes"],
       "sourceUrl": "https://www.bop.gov/inmateloc/"
     }
   ]
@@ -123,62 +227,69 @@ Search and return any matching federal inmates. Return a JSON array of inmates w
 
 Return empty array if no matches found. Only return factual information from BOP records.`;
 
-    let results: any = null;
-    
-    if (isGeminiAvailable()) {
-      results = await generateGeminiStructuredResponse<{ inmates: any[] }>(prompt, { useJSON: true });
-    } else if (isClaudeAvailable()) {
-      results = await generateClaudeJSON<{ inmates: any[] }>(prompt, {
-        systemPrompt: 'You are a federal inmate records research assistant. Return only factual information from BOP records.',
-        maxTokens: 2000,
+      let results: any = null;
+      
+      if (isGeminiAvailable()) {
+        results = await generateGeminiStructuredResponse<{ inmates: any[] }>(prompt, { useJSON: true });
+      } else if (isClaudeAvailable()) {
+        results = await generateClaudeJSON<{ inmates: any[] }>(prompt, {
+          systemPrompt: 'You are a federal inmate records research assistant. Return only factual information from BOP records.',
+          maxTokens: 2000,
+        });
+      }
+      
+      if (!results?.inmates?.length) {
+        return [];
+      }
+      
+      return results.inmates.map((inmate: any, index: number) => {
+        const record: InmateRecord = {
+          id: `bop-${query.lastName}-${index}-${Date.now()}`,
+          source: 'BOP',
+          firstName: inmate.firstName || query.firstName,
+          lastName: inmate.lastName || query.lastName,
+          middleName: inmate.middleName,
+          inmateNumber: inmate.inmateNumber || 'Unknown',
+          facilityName: inmate.facilityName || 'Federal Facility',
+          facilityType: 'Federal Prison',
+          facilityLocation: {
+            state: 'Federal',
+          },
+          custodyStatus: inmate.releaseDate ? 'In Custody' : 'Unknown',
+          releaseDate: inmate.releaseDate,
+          arrestDate: inmate.arrestDate,
+          convictionDate: inmate.convictionDate,
+          age: inmate.age,
+          sex: inmate.sex,
+          race: inmate.race,
+          charges: inmate.charges || [],
+          confidence: 75,
+          lastUpdated: new Date(),
+          sourceUrl: 'https://www.bop.gov/inmateloc/',
+        };
+        return processCharges(record);
       });
-    }
-    
-    if (!results?.inmates?.length) {
+    } catch (error: any) {
+      logger.error('[InmateSearch] BOP search error:', error.message);
       return [];
     }
-    
-    return results.inmates.map((inmate: any, index: number) => ({
-      id: `bop-${query.lastName}-${index}-${Date.now()}`,
-      source: 'BOP' as InmateSource,
-      firstName: inmate.firstName || query.firstName,
-      lastName: inmate.lastName || query.lastName,
-      middleName: inmate.middleName,
-      inmateNumber: inmate.inmateNumber || 'Unknown',
-      facilityName: inmate.facilityName || 'Federal Facility',
-      facilityType: 'Federal Prison' as const,
-      facilityLocation: {
-        state: 'Federal',
-      },
-      custodyStatus: inmate.releaseDate ? 'In Custody' as const : 'Unknown' as const,
-      releaseDate: inmate.releaseDate,
-      age: inmate.age,
-      sex: inmate.sex,
-      race: inmate.race,
-      confidence: 75,
-      lastUpdated: new Date(),
-      sourceUrl: 'https://www.bop.gov/inmateloc/',
-    }));
-  } catch (error: any) {
-    logger.error('[InmateSearch] BOP search error:', error.message);
-    return [];
   }
-}
+};
 
 /**
- * Search State Department of Corrections
+ * State Department of Corrections Adapter
  */
-async function searchStateDOC(query: InmateSearchQuery, stateCode: string): Promise<InmateRecord[]> {
-  try {
-    const stateInfo = getStateCorrectionsInfo(stateCode);
-    if (!stateInfo) {
-      logger.warn('[InmateSearch] Unknown state code:', stateCode);
-      return [];
-    }
-    
-    logger.info(`[InmateSearch] Searching ${stateInfo.stateName} DOC for:`, query.lastName, query.firstName);
-    
-    const prompt = `Search the ${stateInfo.departmentName} inmate locator for:
+function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
+  return {
+    name: 'STATE_DOC',
+    async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
+      try {
+        const stateInfo = getStateCorrectionsInfo(stateCode);
+        if (!stateInfo) {
+          return [];
+        }
+        
+        const prompt = `Search the ${stateInfo.departmentName} inmate locator for:
 Name: ${query.firstName} ${query.lastName}${query.middleName ? ` ${query.middleName}` : ''}
 ${query.dateOfBirth ? `Date of Birth: ${query.dateOfBirth}` : ''}
 ${query.inmateId ? `Inmate/DOC Number: ${query.inmateId}` : ''}
@@ -201,71 +312,79 @@ Search and return any matching state inmates. Return a JSON array with this stru
       "custodyStatus": "In Custody" or "Released" or "Paroled",
       "releaseDate": "projected release date if available",
       "admissionDate": "date admitted if available",
-      "charges": ["list of charges/offenses"]
+      "arrestDate": "arrest date if available",
+      "convictionDate": "conviction date if available",
+      "charges": ["list of charges/offenses with statute codes"]
     }
   ]
 }
 
 Return empty array if no matches found. Only return factual information.`;
 
-    let results: any = null;
-    
-    if (isGeminiAvailable()) {
-      results = await generateGeminiStructuredResponse<{ inmates: any[] }>(prompt, { useJSON: true });
-    } else if (isClaudeAvailable()) {
-      results = await generateClaudeJSON<{ inmates: any[] }>(prompt, {
-        systemPrompt: `You are a ${stateInfo.stateName} corrections records research assistant. Return only factual information.`,
-        maxTokens: 2000,
-      });
+        let results: any = null;
+        
+        if (isGeminiAvailable()) {
+          results = await generateGeminiStructuredResponse<{ inmates: any[] }>(prompt, { useJSON: true });
+        } else if (isClaudeAvailable()) {
+          results = await generateClaudeJSON<{ inmates: any[] }>(prompt, {
+            systemPrompt: `You are a ${stateInfo.stateName} corrections records research assistant. Return only factual information.`,
+            maxTokens: 2000,
+          });
+        }
+        
+        if (!results?.inmates?.length) {
+          return [];
+        }
+        
+        return results.inmates.map((inmate: any, index: number) => {
+          const record: InmateRecord = {
+            id: `state-${stateCode}-${query.lastName}-${index}-${Date.now()}`,
+            source: 'STATE_DOC',
+            firstName: inmate.firstName || query.firstName,
+            lastName: inmate.lastName || query.lastName,
+            middleName: inmate.middleName,
+            inmateNumber: inmate.inmateNumber || 'Unknown',
+            facilityName: inmate.facilityName || `${stateInfo.stateName} State Facility`,
+            facilityType: 'State Prison',
+            facilityLocation: {
+              city: inmate.facilityCity,
+              state: stateCode,
+            },
+            custodyStatus: (inmate.custodyStatus || 'Unknown') as any,
+            releaseDate: inmate.releaseDate,
+            admissionDate: inmate.admissionDate,
+            arrestDate: inmate.arrestDate,
+            convictionDate: inmate.convictionDate,
+            age: inmate.age,
+            sex: inmate.sex,
+            race: inmate.race,
+            charges: inmate.charges || [],
+            confidence: 70,
+            lastUpdated: new Date(),
+            sourceUrl: stateInfo.searchUrl,
+          };
+          return processCharges(record);
+        });
+      } catch (error: any) {
+        logger.error(`[InmateSearch] State DOC search error (${stateCode}):`, error.message);
+        return [];
+      }
     }
-    
-    if (!results?.inmates?.length) {
-      return [];
-    }
-    
-    return results.inmates.map((inmate: any, index: number) => ({
-      id: `state-${stateCode}-${query.lastName}-${index}-${Date.now()}`,
-      source: 'STATE_DOC' as InmateSource,
-      firstName: inmate.firstName || query.firstName,
-      lastName: inmate.lastName || query.lastName,
-      middleName: inmate.middleName,
-      inmateNumber: inmate.inmateNumber || 'Unknown',
-      facilityName: inmate.facilityName || `${stateInfo.stateName} State Facility`,
-      facilityType: 'State Prison' as const,
-      facilityLocation: {
-        city: inmate.facilityCity,
-        state: stateCode,
-      },
-      custodyStatus: (inmate.custodyStatus || 'Unknown') as any,
-      releaseDate: inmate.releaseDate,
-      admissionDate: inmate.admissionDate,
-      age: inmate.age,
-      sex: inmate.sex,
-      race: inmate.race,
-      charges: inmate.charges,
-      confidence: 70,
-      lastUpdated: new Date(),
-      sourceUrl: stateInfo.searchUrl,
-    }));
-  } catch (error: any) {
-    logger.error(`[InmateSearch] State DOC search error (${stateCode}):`, error.message);
-    return [];
-  }
+  };
 }
 
 /**
- * Search VINE (Victim Information Notification Everyday)
- * Nationwide victim notification network with inmate status
+ * VINE (Victim Information Notification Everyday) Adapter
  */
-async function searchVINE(query: InmateSearchQuery, stateCode?: string): Promise<InmateRecord[]> {
-  try {
-    logger.info('[InmateSearch] Searching VINE for:', query.lastName, query.firstName);
-    
-    const stateContext = stateCode 
-      ? `in ${STATE_CORRECTIONS[stateCode]?.stateName || stateCode}` 
-      : 'nationwide';
-    
-    const prompt = `Search the VINE (VINELink) victim notification system for inmate:
+const VINEAdapter: DataSourceAdapter = {
+  name: 'VINE',
+  async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
+    try {
+      const stateContext = query.state 
+        ? `in ${STATE_CORRECTIONS[query.state]?.stateName || query.state}` 
+        : 'nationwide';
+      
+      const prompt = `Search the VINE (VINELink) victim notification system for inmate:
 Name: ${query.firstName} ${query.lastName}
 ${query.dateOfBirth ? `Date of Birth: ${query.dateOfBirth}` : ''}
 Search scope: ${stateContext}
@@ -282,50 +401,56 @@ Return any matching inmates with custody status. Return JSON:
       "facilityName": "jail/prison name",
       "facilityCity": "city",
       "facilityState": "state code",
-      "custodyStatus": "In Custody" or "Released"
+      "custodyStatus": "In Custody" or "Released",
+      "charges": ["charges if available"]
     }
   ]
 }
 
 Return empty array if no matches.`;
 
-    let results: any = null;
-    
-    if (isGeminiAvailable()) {
-      results = await generateGeminiStructuredResponse<{ inmates: any[] }>(prompt, { useJSON: true });
-    } else if (isClaudeAvailable()) {
-      results = await generateClaudeJSON<{ inmates: any[] }>(prompt, {
-        systemPrompt: 'You are a VINE victim notification system research assistant.',
-        maxTokens: 1500,
+      let results: any = null;
+      
+      if (isGeminiAvailable()) {
+        results = await generateGeminiStructuredResponse<{ inmates: any[] }>(prompt, { useJSON: true });
+      } else if (isClaudeAvailable()) {
+        results = await generateClaudeJSON<{ inmates: any[] }>(prompt, {
+          systemPrompt: 'You are a VINE victim notification system research assistant.',
+          maxTokens: 1500,
+        });
+      }
+      
+      if (!results?.inmates?.length) {
+        return [];
+      }
+      
+      return results.inmates.map((inmate: any, index: number) => {
+        const record: InmateRecord = {
+          id: `vine-${query.lastName}-${index}-${Date.now()}`,
+          source: 'VINE',
+          firstName: inmate.firstName || query.firstName,
+          lastName: inmate.lastName || query.lastName,
+          inmateNumber: inmate.inmateNumber || 'Unknown',
+          facilityName: inmate.facilityName || 'Unknown Facility',
+          facilityType: 'Other',
+          facilityLocation: {
+            city: inmate.facilityCity,
+            state: inmate.facilityState,
+          },
+          custodyStatus: (inmate.custodyStatus || 'Unknown') as any,
+          charges: inmate.charges || [],
+          confidence: 65,
+          lastUpdated: new Date(),
+          sourceUrl: 'https://www.vinelink.com/',
+        };
+        return processCharges(record);
       });
-    }
-    
-    if (!results?.inmates?.length) {
+    } catch (error: any) {
+      logger.error('[InmateSearch] VINE search error:', error.message);
       return [];
     }
-    
-    return results.inmates.map((inmate: any, index: number) => ({
-      id: `vine-${query.lastName}-${index}-${Date.now()}`,
-      source: 'VINE' as InmateSource,
-      firstName: inmate.firstName || query.firstName,
-      lastName: inmate.lastName || query.lastName,
-      inmateNumber: inmate.inmateNumber || 'Unknown',
-      facilityName: inmate.facilityName || 'Unknown Facility',
-      facilityType: 'Other' as const,
-      facilityLocation: {
-        city: inmate.facilityCity,
-        state: inmate.facilityState,
-      },
-      custodyStatus: (inmate.custodyStatus || 'Unknown') as any,
-      confidence: 65,
-      lastUpdated: new Date(),
-      sourceUrl: 'https://www.vinelink.com/',
-    }));
-  } catch (error: any) {
-    logger.error('[InmateSearch] VINE search error:', error.message);
-    return [];
   }
-}
+};
 
 /**
  * Deduplicate inmates by comparing key fields
@@ -353,7 +478,7 @@ function deduplicateInmates(inmates: InmateRecord[]): InmateRecord[] {
 
 /**
  * Main inmate search function
- * Aggregates results from multiple sources with caching
+ * Aggregates results from multiple sources with caching and timeout
  */
 export async function searchInmates(query: InmateSearchQuery): Promise<InmateSearchResult> {
   const startTime = Date.now();
@@ -367,65 +492,114 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
   const cacheKey = generateCacheKey(query);
   const cachedResult = getCachedResult(cacheKey);
   if (cachedResult) {
-    logger.info('[InmateSearch] Returning cached result');
     return cachedResult;
   }
   
-  const sources: InmateSearchResult['sources'] = [];
+  const sources: SourceSearchStatus[] = [];
   const allInmates: InmateRecord[] = [];
   const searchScope = query.searchScope || 'all';
+  let partial = false;
   
-  // Prepare parallel searches based on scope
-  const searchPromises: Promise<{ source: InmateSource; inmates: InmateRecord[] }>[] = [];
+  // Prepare search adapters based on scope
+  const adapters: DataSourceAdapter[] = [];
   
   // Federal BOP search (if scope includes federal)
   if (searchScope === 'all' || searchScope === 'federal') {
-    searchPromises.push(
-      searchBOP(query).then(inmates => ({ source: 'BOP' as InmateSource, inmates }))
-    );
+    adapters.push(BOPAdapter);
   }
   
   // State DOC search (if scope includes state)
   if (searchScope === 'all' || searchScope === 'state') {
     if (query.state) {
-      // Search specific state
-      searchPromises.push(
-        searchStateDOC(query, query.state).then(inmates => ({ source: 'STATE_DOC' as InmateSource, inmates }))
-      );
+      adapters.push(createStateDOCAdapter(query.state));
     }
-    // Note: We don't search all 50 states to avoid rate limits and excessive API usage
   }
   
   // VINE search (covers both state and county)
   if (searchScope === 'all' || searchScope === 'state' || searchScope === 'county') {
-    searchPromises.push(
-      searchVINE(query, query.state).then(inmates => ({ source: 'VINE' as InmateSource, inmates }))
-    );
+    adapters.push(VINEAdapter);
   }
   
-  // Execute all searches in parallel
-  const results = await Promise.allSettled(searchPromises);
+  // Initialize source statuses
+  for (const adapter of adapters) {
+    sources.push({
+      source: adapter.name,
+      searched: false,
+      resultsCount: 0,
+      status: 'pending',
+    });
+  }
   
-  // Process results
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      const { source, inmates } = result.value;
-      sources.push({
-        source,
-        searched: true,
-        resultsCount: inmates.length,
+  // Execute searches with timeout
+  const searchPromises = adapters.map(async (adapter, index) => {
+    const sourceStatus = sources[index];
+    sourceStatus.status = 'searching';
+    const sourceStartTime = Date.now();
+    
+    try {
+      // Create timeout promise
+      const timeoutPromise = new Promise<InmateRecord[]>((_, reject) => {
+        setTimeout(() => reject(new Error('Search timeout')), SEARCH_TIMEOUT_MS);
       });
-      allInmates.push(...inmates);
-    } else {
-      logger.error('[InmateSearch] Search failed:', result.reason);
+      
+      // Race between search and timeout
+      const inmates = await Promise.race([
+        adapter.search(query),
+        timeoutPromise
+      ]);
+      
+      sourceStatus.searched = true;
+      sourceStatus.resultsCount = inmates.length;
+      sourceStatus.searchTimeMs = Date.now() - sourceStartTime;
+      sourceStatus.status = 'completed';
+      
+      return { source: adapter.name, inmates };
+    } catch (error: any) {
+      sourceStatus.searched = true;
+      sourceStatus.error = error.message;
+      sourceStatus.searchTimeMs = Date.now() - sourceStartTime;
+      sourceStatus.status = error.message === 'Search timeout' ? 'timeout' : 'error';
+      
+      if (error.message === 'Search timeout') {
+        partial = true;
+      }
+      
+      return { source: adapter.name, inmates: [] };
     }
+  });
+  
+  // Wait for all searches with overall timeout
+  const overallTimeout = setTimeout(() => {
+    partial = true;
+  }, SEARCH_TIMEOUT_MS);
+  
+  try {
+    const results = await Promise.allSettled(searchPromises);
+    
+    // Process results
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        allInmates.push(...result.value.inmates);
+      }
+    }
+  } finally {
+    clearTimeout(overallTimeout);
   }
   
   // Deduplicate results
   const deduplicatedInmates = deduplicateInmates(allInmates);
   
-  // Sort by confidence (highest first)
-  deduplicatedInmates.sort((a, b) => b.confidence - a.confidence);
+  // Sort by confidence (highest first), then violent/sexual offenders
+  deduplicatedInmates.sort((a, b) => {
+    // Prioritize violent offenders
+    if (a.isViolentOffender && !b.isViolentOffender) return -1;
+    if (!a.isViolentOffender && b.isViolentOffender) return 1;
+    // Then sexual offenders
+    if (a.isSexualOffender && !b.isSexualOffender) return -1;
+    if (!a.isSexualOffender && b.isSexualOffender) return 1;
+    // Then by confidence
+    return b.confidence - a.confidence;
+  });
   
   const searchResult: InmateSearchResult = {
     query,
@@ -434,13 +608,12 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
     sources,
     searchDuration: Date.now() - startTime,
     cached: false,
+    partial,
     disclaimer: SEARCH_DISCLAIMER,
   };
   
   // Cache the result
   cacheResult(cacheKey, searchResult);
-  
-  logger.info(`[InmateSearch] Search completed: ${deduplicatedInmates.length} results in ${searchResult.searchDuration}ms`);
   
   return searchResult;
 }
@@ -464,7 +637,6 @@ export function getAllStatesInfo() {
  */
 export function clearCache(): void {
   searchCache.clear();
-  logger.info('[InmateSearch] Cache cleared');
 }
 
 /**
