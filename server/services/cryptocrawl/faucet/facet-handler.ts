@@ -855,12 +855,17 @@ export class FacetHandler {
 
   /**
    * Reset daily statistics
+   * Also resets anti-circular flow tracking for new day
    */
   resetDailyStats(): void {
     this.state.dailyVolume = 0;
     this.state.transactionsToday = 0;
     this.state.exchangeDistribution.clear();
     this.state.complianceScore = 100;
+    // Reset anti-circular flow tracking for new day
+    this.state.firstChainToday = null;
+    this.state.recentAmounts = [];
+    this.state.chainSequence = [];
     
     logger.info('Daily stats reset', { component: 'FacetHandler' });
   }
