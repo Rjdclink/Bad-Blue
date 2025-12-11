@@ -55,6 +55,20 @@ const SEXUAL_OFFENSE_KEYWORDS = [
   'sex offender', 'sexual battery', 'sexual assault', 'indecency'
 ];
 
+// Drug offense keywords for classification
+const DRUG_OFFENSE_KEYWORDS = [
+  'drug', 'narcotic', 'cocaine', 'heroin', 'methamphetamine', 
+  'controlled substance', 'marijuana', 'cannabis', 'possession',
+  'trafficking', 'distribution', 'manufacture', 'paraphernalia'
+];
+
+// Property offense keywords for classification
+const PROPERTY_OFFENSE_KEYWORDS = [
+  'theft', 'burglary', 'larceny', 'fraud', 'embezzlement', 
+  'forgery', 'shoplifting', 'robbery', 'trespassing', 'vandalism',
+  'receiving stolen', 'breaking and entering'
+];
+
 /**
  * Classify an offense based on its description
  */
@@ -70,15 +84,11 @@ function classifyOffense(description: string): OffenseClassification[] {
     classifications.push('SEXUAL');
   }
   
-  if (lowerDesc.includes('drug') || lowerDesc.includes('narcotic') || 
-      lowerDesc.includes('cocaine') || lowerDesc.includes('heroin') ||
-      lowerDesc.includes('methamphetamine') || lowerDesc.includes('controlled substance')) {
+  if (DRUG_OFFENSE_KEYWORDS.some(keyword => lowerDesc.includes(keyword))) {
     classifications.push('DRUG');
   }
   
-  if (lowerDesc.includes('theft') || lowerDesc.includes('burglary') ||
-      lowerDesc.includes('larceny') || lowerDesc.includes('fraud') ||
-      lowerDesc.includes('embezzlement') || lowerDesc.includes('forgery')) {
+  if (PROPERTY_OFFENSE_KEYWORDS.some(keyword => lowerDesc.includes(keyword))) {
     classifications.push('PROPERTY');
   }
   
@@ -98,7 +108,7 @@ function processCharges(inmate: InmateRecord): InmateRecord {
   let isSexual = false;
   
   // Process simple charges array
-  if (inmate.charges) {
+  if (inmate.charges && inmate.charges.length > 0) {
     const chargeDetails: ChargeInfo[] = [];
     
     for (const charge of inmate.charges) {
@@ -108,9 +118,14 @@ function processCharges(inmate: InmateRecord): InmateRecord {
       if (chargeClassifications.includes('VIOLENT')) isViolent = true;
       if (chargeClassifications.includes('SEXUAL')) isSexual = true;
       
+      // Safely get the first classification (always exists since we push 'OTHER' if empty)
+      const primaryClassification = chargeClassifications.length > 0 
+        ? chargeClassifications[0] 
+        : 'OTHER';
+      
       chargeDetails.push({
         description: charge,
-        classification: chargeClassifications[0],
+        classification: primaryClassification,
       });
     }
     

@@ -548,8 +548,11 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
                           </p>
                           <div className="flex flex-wrap gap-2">
                             {inmate.charges.map((charge, idx) => {
-                              // Determine charge color based on classification
-                              const chargeDetail = inmate.chargeDetails?.[idx];
+                              // Safely access chargeDetails with bounds checking
+                              const chargeDetail = inmate.chargeDetails && 
+                                idx < inmate.chargeDetails.length 
+                                ? inmate.chargeDetails[idx] 
+                                : null;
                               const isViolent = chargeDetail?.classification === 'VIOLENT';
                               const isSexual = chargeDetail?.classification === 'SEXUAL';
                               
