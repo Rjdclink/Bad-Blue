@@ -21,7 +21,7 @@ import { pool } from '../db';
 import { isAuthenticated } from '../auth';
 import { asyncHandler } from '../errorHandler';
 import { createLogger } from '../logger';
-import { isValidLawType, LAW_TYPES, type LawType } from '@shared/lawTypes';
+import { LAW_TYPES, type LawType } from '@shared/legalCounselTypes';
 import { apiRateLimit } from '../rateLimit'; // Add rate limiting
 import { 
   analyzeFMIEvidence,
@@ -156,7 +156,7 @@ export function setupFMIRoutes(app: Express): void {
       }
 
       // Validate law type if provided
-      if (lawType && !isValidLawType(lawType)) {
+      if (lawType && !LAW_TYPES.includes(lawType as any)) {
         await fs.unlink(file.path).catch(() => {});
         return res.status(400).json({ error: 'Invalid law type for F.M.I. analysis' });
       }

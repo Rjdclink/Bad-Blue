@@ -12,6 +12,7 @@ import {
   adaptiveCrawler,
   type CrawlConfig
 } from './services/legalIntelligence';
+import { z } from 'zod';
 
 const ADMIN_FALLBACK_EMAIL = 'contact.badblue@gmail.com';
 
@@ -232,42 +233,24 @@ export async function autoScrapeFOIAPortal(agencyFOIAUrl: string): Promise<{
   try {
     console.log('[FOIA] Auto-scraping FOIA portal with adaptive crawler:', agencyFOIAUrl);
 
-    // Define schema for FOIA contact extraction
+    // Define zod schema for FOIA contact extraction
+    const FOIAContactZodSchema = z.object({
+      name: z.string().describe('Full name of the FOIA officer or contact person'),
+      title: z.string().optional().describe('Job title (e.g., FOIA Officer, Records Custodian)'),
+      email: z.string().optional().describe('Email address for FOIA requests'),
+      phone: z.string().optional().describe('Phone number'),
+      department: z.string().optional().describe('Department or division'),
+      address: z.string().optional().describe('Mailing address'),
+    });
+
+    // Define ExtractionSchema for FOIA contact extraction
     const FOIA_CONTACT_SCHEMA = {
       name: 'foia_contact',
       description: 'Extract FOIA officer contact information from agency websites',
-      fields: {
-        name: {
-          type: 'string' as const,
-          description: 'Full name of the FOIA officer or contact person',
-          required: true,
-        },
-        title: {
-          type: 'string' as const,
-          description: 'Job title (e.g., FOIA Officer, Records Custodian)',
-          required: false,
-        },
-        email: {
-          type: 'string' as const,
-          description: 'Email address for FOIA requests',
-          required: false,
-        },
-        phone: {
-          type: 'string' as const,
-          description: 'Phone number',
-          required: false,
-        },
-        department: {
-          type: 'string' as const,
-          description: 'Department or division',
-          required: false,
-        },
-        address: {
-          type: 'string' as const,
-          description: 'Mailing address',
-          required: false,
-        },
-      },
+      schema: FOIAContactZodSchema,
+      extractionPrompt: `Extract FOIA (Freedom of Information Act) officer contact information from the provided webpage.
+Focus on: name of FOIA officer, job title, email address, phone number, department, and mailing address.
+Only include information that is clearly stated on the page. Look for official FOIA contact sections.`,
     };
 
     // Use adaptive crawler to find FOIA contacts

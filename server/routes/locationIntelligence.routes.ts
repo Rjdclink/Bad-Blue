@@ -46,7 +46,10 @@ router.post('/api/location-intel/analyze', async (req, res) => {
     }
 
     publicRecords.forEach(record => {
-      locationAggregator.addPublicRecord(record);
+      locationAggregator.addPublicRecord({
+        ...record,
+        timestamp: record.timestamp ? new Date(record.timestamp) : undefined,
+      });
     });
 
     const clustered = locationAggregator.cluster(100);
