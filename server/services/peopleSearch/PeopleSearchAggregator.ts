@@ -15,11 +15,19 @@ import type { SearchQuery, PersonRecord } from './types';
 import { FastPeopleSearchScraper } from './sources/FastPeopleSearchScraper';
 import { TruePeopleSearchScraper } from './sources/TruePeopleSearchScraper';
 import { WhitePagesScraper } from './sources/WhitePagesScraper';
+import { BaseScraper } from './sources/BaseScraper';
 import { DataFusion } from './fusion/DataFusion';
 import { PeopleSearchCache } from './cache/PeopleSearchCache';
 
 // Add stealth plugin to chromium
 chromium.use(StealthPlugin());
+
+// High capacity configuration for retry logic and timeouts
+const HIGH_CAPACITY_CONFIG = {
+  maxRetries: 3,
+  retryDelayMs: 1000,
+  searchTimeoutMs: 30000,
+};
 
 // Performance metrics
 interface PerformanceMetrics {
@@ -117,16 +125,34 @@ export class PeopleSearchAggregator {
       return cached;
     }
 
-    let browser: Browser | null = null;
+    // Execute search with retry logic
+    const result = await this.executeSearchWithRetry(query, HIGH_CAPACITY_CONFIG.maxRetries);
     
-    try {
-      // Get browser from pool (faster than launching new)
-      browser = await this.getBrowser();
+    // Cache successful result
+    await this.cache.set(cacheKey, result);
+    
+    return result;
+  }
+
+  /**
+   * Helper method for async delays
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Get browser from pool (alias for getBrowser)
+   */
+  private async getBrowserFromPool(): Promise<Browser> {
+    return this.getBrowser();
+  }
 
   /**
    * Execute search with retry logic and exponential backoff
    */
   private async executeSearchWithRetry(query: SearchQuery, retriesLeft: number): Promise<PersonRecord> {
+    const startTime = Date.now();
     let browser: Browser | null = null;
     
     try {
