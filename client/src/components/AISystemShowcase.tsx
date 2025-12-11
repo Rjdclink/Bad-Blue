@@ -14,76 +14,76 @@ const AI_MODELS: AIModel[] = [
     name: "Gemini 2.5 Pro",
     provider: "Google",
     description: "Deepest reasoning with 2M token context for complex legal analysis",
-    backgroundImage: "/images/OIP.comp4.webp"
+    backgroundImage: "/images/what.comp3.jpg"
   },
   {
     name: "Gemini 2.5 Flash",
     provider: "Google",
     description: "Lightning-fast multimodal processing for evidence and documents",
-    backgroundImage: "/images/OIP.comp5.webp"
+    backgroundImage: "/images/OIP.comp4.webp"
   },
   {
     name: "Gemini 2.5 Flash Lite",
     provider: "Google",
     description: "High-throughput engine handling 1000 requests daily",
-    backgroundImage: "/images/OIP.comp14.webp"
+    backgroundImage: "/images/OIP.comp5.webp"
   },
   // Row 2
   {
     name: "Claude 3.5 Sonnet",
     provider: "Anthropic",
     description: "Premium legal reasoning with nuanced constitutional interpretation",
-    backgroundImage: "/images/imag.comp7.webp"
+    backgroundImage: "/OIP.comp6.webp"
   },
   {
     name: "Claude 3.5 Haiku",
     provider: "Anthropic",
     description: "Rapid verification specialist for real-time fact-checking",
-    backgroundImage: "/images/superc.comp13.jpg"
+    backgroundImage: "/images/imag.comp7.webp"
   },
   {
     name: "Llama 3.3 70B",
     provider: "Groq",
     description: "Versatile workhorse balancing speed and comprehensive analysis",
-    backgroundImage: "/images/what.comp3.jpg"
+    backgroundImage: "/OIP.comp8.webp"
   },
-  // Row 3 - Now using unique images
+  // Row 3
   {
     name: "Llama 3.1 8B",
     provider: "Groq",
     description: "Instant-response engine for lightweight task execution",
-    backgroundImage: "/images/OIP.webp"
+    backgroundImage: "/OIP.comp9.webp"
   },
   {
     name: "Mistral Small",
     provider: "Mistral",
     description: "EU-compliant processing with balanced verification protocols",
-    backgroundImage: "/images/digital-mind-abstract-representation-human-intelligence-neural-network_191095-87127.jpg"
+    backgroundImage: "/iStock-.comp10.jpg"
   },
   {
     name: "Kimi K2",
     provider: "Moonshot AI",
     description: "Trillion-parameter extraction engine for structured legal data",
-    backgroundImage: "/images/R.jpg"
+    backgroundImage: "/OIP.comp11.webp"
   },
-  // Row 4 - Now using unique images
+  // Row 4
   {
     name: "DeepSeek R1T2 Chimera",
     provider: "TNG",
     description: "671B parameter deep pattern recognition across case law",
-    backgroundImage: "/images/premium_photo-.jpg"
+    backgroundImage: "/OIP.comp12.webp"
   },
   {
     name: "Grok 4.1 Fast",
     provider: "xAI",
     description: "Massive 2M context window for entire case file processing",
-    backgroundImage: "/images/FMI.webp"
+    backgroundImage: "/images/superc.comp13.jpg"
   },
   {
     name: "Qwen 2.5 72B",
     provider: "Alibaba",
     description: "Precision instruction-following for procedural compliance",
-    backgroundImage: "/images/istockphoto.jpg"
+    backgroundImage: "/images/OIP.comp14.webp"
   }
 ];
 
