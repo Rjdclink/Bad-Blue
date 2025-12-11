@@ -262,7 +262,7 @@ export function setupFMIRoutes(app: Express): void {
 
         const analysis = await analyzeFMIEvidence(
           fmiFile,
-          lawType as LawType,
+          lawType, // Law type validated by schema
           state,
           caseContext
         );

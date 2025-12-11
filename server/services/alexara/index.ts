@@ -1,28 +1,44 @@
 /**
- * ALEXARA - Legal Analysis Intelligence Module
+ * LEXARA - Legal Expert eXamination And Resource Advisor
  * 
- * The legal-analysis module that handles:
- * - All legal reasoning, document generation, statute/regulation synthesis
- * - Case-law analysis and legal research
- * - Controls OSINT crawlers exclusively for legal-domain information
- * - Operates within strict boundaries: NO crypto functions, NO blockchain access
+ * LEXARA is the primary persona; a unified legal brain that orchestrates:
+ * - F.M.I. (Forensic Media Intelligence) - Internal evidence analysis engine
+ * - C.A.D.E. (Case Adaptive Drafting Entity) - Internal legal drafting engine
+ * - External Legal Knowledge Layer (statutes, case law, regulations)
+ * 
+ * Architecture:
+ * - F.M.I. and C.A.D.E. are NOT standalone tools - they are internal subsystems
+ * - LEXARA controls when to invoke them based on user needs
+ * - All law and embeddings live in External Legal Knowledge Layer, NEVER in Supabase
+ * - May store file references and draft pointers in Supabase
  * 
  * DOMAIN RESTRICTIONS:
- * - ALEXARA cannot access crypto endpoints
- * - ALEXARA cannot initiate blockchain transactions
- * - ALEXARA is isolated to legal research and document generation only
- * - All legal OSINT data flows through ALEXARA exclusively
+ * - LEXARA cannot access crypto endpoints
+ * - LEXARA cannot initiate blockchain transactions
+ * - LEXARA is isolated to legal research and document generation only
  * 
- * CRAWLERS:
- * - Daily research and internalization: 5 minutes per hour, 24 hours a day
- * - Collects accessible, available legal information
- * - NO access to anything involving crypto, finance, blockchain, or trading
+ * Flow:
+ * 1. User story/evidence comes in
+ * 2. LEXARA interprets matter (jurisdiction, type, posture)
+ * 3. LEXARA calls F.M.I. for evidence analysis
+ * 4. LEXARA calls Legal Knowledge Layer for applicable law
+ * 5. LEXARA calls C.A.D.E. for document drafting
+ * 6. User sees unified LEXARA response
  */
 
 import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
+import { FMI, getFMI, type EvidenceInput, type EvidenceAnalysisResult } from './fmi';
+import { CADE, getCADE, type DraftRequest, type DraftResult } from './cade';
+import { 
+  InstantLegalCrawler, 
+  getInstantLegalCrawler, 
+  type LegalQuery, 
+  type LegalResult,
+  type LegalData 
+} from './instantLegalCrawler';
 
-const log = createLogger('ALEXARA');
+const log = createLogger('LEXARA');
 
 // ============================================================================
 // TYPES AND INTERFACES
@@ -55,7 +71,7 @@ export interface LegalResearchResult {
   precedents: string[];
   confidence: number;
   processingTimeMs: number;
-  source: 'alexara';
+  source: 'lexara';
 }
 
 export interface DocumentGenerationRequest {
@@ -73,14 +89,23 @@ export interface DocumentGenerationResult {
   metadata: Record<string, unknown>;
 }
 
-export interface AlexaraStatus {
+export interface LexaraStatus {
   isRunning: boolean;
   isResearching: boolean;
   lastCrawlTime: Date | null;
   totalResearchQueries: number;
   totalDocumentsGenerated: number;
+  totalEvidenceAnalyses: number;
   errorCount: number;
   uptime: number;
+  fmiStatus: {
+    totalAnalyses: number;
+    successfulAnalyses: number;
+  };
+  cadeStatus: {
+    totalDrafts: number;
+    successfulDrafts: number;
+  };
 }
 
 export interface CrawlerSchedule {
@@ -129,16 +154,28 @@ const LEGAL_DOMAINS = [
 ];
 
 // ============================================================================
-// ALEXARA CLASS
+// LEXARA CLASS - Unified Legal Brain
 // ============================================================================
 
-export class Alexara extends EventEmitter {
-  private static instance: Alexara | null = null;
+/**
+ * LEXARA - Legal Expert eXamination And Resource Advisor
+ * 
+ * The primary persona that internally controls:
+ * - F.M.I. (Forensic Media Intelligence) for evidence analysis
+ * - C.A.D.E. (Case Adaptive Drafting Entity) for document drafting
+ */
+export class Lexara extends EventEmitter {
+  private static instance: Lexara | null = null;
   private config: AlexaraConfig;
-  private status: AlexaraStatus;
+  private status: LexaraStatus;
   private crawlerSchedule: CrawlerSchedule;
   private crawlerInterval: NodeJS.Timeout | null = null;
   private startTime: Date | null = null;
+  
+  // Internal subsystems
+  private fmi: FMI;
+  private cade: CADE;
+  private legalCrawler: InstantLegalCrawler;
 
   private constructor(config?: Partial<AlexaraConfig>) {
     super();
@@ -159,8 +196,11 @@ export class Alexara extends EventEmitter {
       lastCrawlTime: null,
       totalResearchQueries: 0,
       totalDocumentsGenerated: 0,
+      totalEvidenceAnalyses: 0,
       errorCount: 0,
       uptime: 0,
+      fmiStatus: { totalAnalyses: 0, successfulAnalyses: 0 },
+      cadeStatus: { totalDrafts: 0, successfulDrafts: 0 },
     };
 
     this.crawlerSchedule = {
@@ -170,28 +210,34 @@ export class Alexara extends EventEmitter {
       lastRun: null,
       nextRun: null,
     };
+
+    // Initialize internal subsystems
+    this.fmi = getFMI();
+    this.cade = getCADE();
+    this.legalCrawler = getInstantLegalCrawler();
   }
 
   /**
-   * Get singleton instance of ALEXARA
+   * Get singleton instance of LEXARA
    */
-  static getInstance(config?: Partial<AlexaraConfig>): Alexara {
-    if (!Alexara.instance) {
-      Alexara.instance = new Alexara(config);
+  static getInstance(config?: Partial<AlexaraConfig>): Lexara {
+    if (!Lexara.instance) {
+      Lexara.instance = new Lexara(config);
     }
-    return Alexara.instance;
+    return Lexara.instance;
   }
 
   /**
-   * Initialize and start ALEXARA
+   * Initialize and start LEXARA
    */
   async initialize(): Promise<void> {
     if (this.status.isRunning) {
-      log.warn('ALEXARA is already running');
+      log.warn('LEXARA is already running');
       return;
     }
 
-    log.info('Initializing ALEXARA - Legal Analysis Intelligence Module');
+    log.info('Initializing LEXARA - Legal Expert eXamination And Resource Advisor');
+    log.info('Internal subsystems: F.M.I. (Forensic Media Intelligence), C.A.D.E. (Case Adaptive Drafting Entity)');
     
     this.startTime = new Date();
     this.status.isRunning = true;
@@ -202,9 +248,11 @@ export class Alexara extends EventEmitter {
     }
 
     this.emit('initialized', { timestamp: new Date() });
-    log.info('ALEXARA initialized successfully', {
+    log.info('LEXARA initialized successfully', {
       legalDomains: this.config.legalDomains.length,
       blockedDomains: this.config.blockedDomains.length,
+      fmiReady: this.fmi.getStatus().isReady,
+      cadeReady: this.cade.getStatus().isReady,
     });
   }
 
@@ -314,7 +362,7 @@ export class Alexara extends EventEmitter {
     const startTime = Date.now();
     
     if (!this.status.isRunning) {
-      throw new Error('ALEXARA is not running. Call initialize() first.');
+      throw new Error('LEXARA is not running. Call initialize() first.');
     }
 
     log.info('Processing legal research request', { query: request.query.substring(0, 50) });
@@ -332,7 +380,7 @@ export class Alexara extends EventEmitter {
         precedents: [],
         confidence: 0.85,
         processingTimeMs: Date.now() - startTime,
-        source: 'alexara',
+        source: 'lexara',
       };
 
       this.emit('research:completed', { request, result });
@@ -346,26 +394,51 @@ export class Alexara extends EventEmitter {
 
   /**
    * Generate legal document (public API)
+   * Routes through C.A.D.E. internally
    */
   async generateDocument(request: DocumentGenerationRequest): Promise<DocumentGenerationResult> {
     if (!this.status.isRunning) {
-      throw new Error('ALEXARA is not running. Call initialize() first.');
+      throw new Error('LEXARA is not running. Call initialize() first.');
     }
 
-    log.info('Generating legal document', { type: request.documentType });
+    log.info('Generating legal document via C.A.D.E.', { type: request.documentType });
     this.status.totalDocumentsGenerated++;
 
     try {
-      // In production, this would use AI models for document generation
+      // Route through C.A.D.E. for document drafting
+      const draftRequest: DraftRequest = {
+        jurisdiction: request.jurisdiction,
+        matterType: request.context.matterType as string || 'general',
+        proceduralStage: request.context.proceduralStage as any || 'pre_litigation',
+        userGoal: request.context.userGoal as string || 'Generate document',
+        factsSummary: request.context.factsSummary as string || '',
+        tonePreference: request.context.tone as any || 'balanced',
+        documentType: request.documentType as any,
+        userName: request.context.userName as string,
+      };
+
+      const draftResult = await this.cade.draftDocument(draftRequest);
+      
+      // Update CADE status
+      const cadeStatus = this.cade.getStatus();
+      this.status.cadeStatus = {
+        totalDrafts: cadeStatus.totalDrafts,
+        successfulDrafts: cadeStatus.successfulDrafts,
+      };
+
       const result: DocumentGenerationResult = {
-        success: true,
+        success: draftResult.success,
         documentType: request.documentType,
-        content: `Generated ${request.documentType} for ${request.jurisdiction}`,
-        citations: [],
+        content: draftResult.draftText,
+        citations: draftResult.citationsUsed,
         metadata: {
           generatedAt: new Date().toISOString(),
           jurisdiction: request.jurisdiction,
-          source: 'alexara',
+          source: 'lexara-cade',
+          draftId: draftResult.draftId,
+          wordCount: draftResult.wordCount,
+          confidence: draftResult.confidence,
+          filingGuidance: draftResult.optionalFilingGuidance,
         },
       };
 
@@ -379,12 +452,279 @@ export class Alexara extends EventEmitter {
   }
 
   /**
-   * Get ALEXARA status
+   * Analyze evidence (routes through F.M.I. internally)
+   * This is the primary method for evidence upload/camera capture
    */
-  getStatus(): AlexaraStatus {
+  async analyzeEvidence(input: EvidenceInput): Promise<EvidenceAnalysisResult> {
+    if (!this.status.isRunning) {
+      throw new Error('LEXARA is not running. Call initialize() first.');
+    }
+
+    log.info('Analyzing evidence via F.M.I.', { 
+      hasFile: !!input.fileData, 
+      hasCamera: !!(input.cameraCapture && input.cameraCapture.length > 0) 
+    });
+    this.status.totalEvidenceAnalyses++;
+
+    try {
+      // Route through F.M.I. for evidence analysis
+      const result = await this.fmi.analyzeEvidence(input);
+
+      // Update FMI status
+      const fmiStatus = this.fmi.getStatus();
+      this.status.fmiStatus = {
+        totalAnalyses: fmiStatus.totalAnalyses,
+        successfulAnalyses: fmiStatus.successfulAnalyses,
+      };
+
+      this.emit('evidence:analyzed', { input: { ...input, fileData: '[REDACTED]' }, result });
+      return result;
+    } catch (error) {
+      this.status.errorCount++;
+      log.error('Evidence analysis failed', { error });
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // INSTANT LAW RETRIEVAL - "LEXARA drinks and regurgitates law on demand"
+  // ============================================================================
+
+  /**
+   * Retrieve law instantly - primary method for on-demand legal knowledge
+   * LEXARA doesn't store law; she retrieves it instantly from external sources
+   */
+  async retrieveLawInstantly(query: string, options?: {
+    jurisdiction?: string;
+    lawType?: 'statute' | 'case_law' | 'regulation' | 'constitution' | 'all';
+    priority?: 'instant' | 'thorough';
+  }): Promise<LegalResult> {
+    if (!this.status.isRunning) {
+      throw new Error('LEXARA is not running. Call initialize() first.');
+    }
+
+    log.info('Retrieving law instantly', { query: query.substring(0, 50), jurisdiction: options?.jurisdiction });
+
+    const legalQuery: LegalQuery = {
+      query,
+      jurisdiction: options?.jurisdiction,
+      lawType: options?.lawType || 'all',
+      priority: options?.priority || 'instant',
+    };
+
+    try {
+      const result = await this.legalCrawler.retrieveLaw(legalQuery);
+      
+      this.emit('law:retrieved', { 
+        query: query.substring(0, 50), 
+        resultsCount: result.data.length,
+        timeMs: result.retrievalTimeMs 
+      });
+
+      return result;
+    } catch (error) {
+      this.status.errorCount++;
+      log.error('Law retrieval failed', { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Retrieve specific statute by citation
+   */
+  async retrieveStatute(citation: string, jurisdiction?: string): Promise<LegalResult> {
+    return this.legalCrawler.retrieveStatute(citation, jurisdiction);
+  }
+
+  /**
+   * Retrieve case law by citation or name
+   */
+  async retrieveCaseLaw(citation: string, jurisdiction?: string): Promise<LegalResult> {
+    return this.legalCrawler.retrieveCaseLaw(citation, jurisdiction);
+  }
+
+  /**
+   * Retrieve regulations (CFR, state regs)
+   */
+  async retrieveRegulation(citation: string, jurisdiction?: string): Promise<LegalResult> {
+    return this.legalCrawler.retrieveRegulation(citation, jurisdiction);
+  }
+
+  /**
+   * Retrieve constitutional provisions
+   */
+  async retrieveConstitutional(query: string, jurisdiction?: string): Promise<LegalResult> {
+    return this.legalCrawler.retrieveConstitutional(query, jurisdiction);
+  }
+
+  /**
+   * Batch retrieve multiple legal queries (optimized parallel processing)
+   */
+  async batchRetrieveLaw(queries: Array<{
+    query: string;
+    jurisdiction?: string;
+    lawType?: 'statute' | 'case_law' | 'regulation' | 'constitution' | 'all';
+  }>): Promise<LegalResult[]> {
+    const legalQueries: LegalQuery[] = queries.map(q => ({
+      query: q.query,
+      jurisdiction: q.jurisdiction,
+      lawType: q.lawType || 'all',
+      priority: 'instant' as const,
+    }));
+
+    return this.legalCrawler.batchRetrieve(legalQueries);
+  }
+
+  /**
+   * Stealth law retrieval - low profile for sensitive queries
+   */
+  async stealthRetrieveLaw(query: string, options?: {
+    jurisdiction?: string;
+    lawType?: 'statute' | 'case_law' | 'regulation' | 'constitution' | 'all';
+  }): Promise<LegalResult> {
+    const legalQuery: LegalQuery = {
+      query,
+      jurisdiction: options?.jurisdiction,
+      lawType: options?.lawType || 'all',
+      priority: 'instant',
+    };
+
+    return this.legalCrawler.stealthRetrieveLaw(legalQuery);
+  }
+
+  /**
+   * Get legal crawler status
+   */
+  getLegalCrawlerStatus() {
+    return this.legalCrawler.getStatus();
+  }
+
+  // ============================================================================
+  // ENHANCED ORCHESTRATION WITH INSTANT LAW
+  // ============================================================================
+
+  /**
+   * Draft legal document with evidence analysis
+   * Full LEXARA orchestration: F.M.I. → Legal Knowledge → C.A.D.E.
+   */
+  async processAndDraft(params: {
+    evidence?: EvidenceInput[];
+    situation: string;
+    jurisdiction: string;
+    matterType: string;
+    userGoal: string;
+    documentType: string;
+    tone?: string;
+    userName?: string;
+    retrieveLaw?: boolean; // New: automatically retrieve relevant law
+  }): Promise<{
+    evidenceResults: EvidenceAnalysisResult[];
+    legalResults?: LegalResult;
+    draftResult: DraftResult;
+  }> {
+    if (!this.status.isRunning) {
+      throw new Error('LEXARA is not running. Call initialize() first.');
+    }
+
+    log.info('Full LEXARA orchestration: F.M.I. → Legal Knowledge → C.A.D.E.', { matterType: params.matterType });
+
+    // Step 1: Analyze all evidence through F.M.I.
+    const evidenceResults: EvidenceAnalysisResult[] = [];
+    if (params.evidence && params.evidence.length > 0) {
+      for (const evidence of params.evidence) {
+        const result = await this.analyzeEvidence({
+          ...evidence,
+          jurisdiction: params.jurisdiction,
+          matterType: params.matterType,
+        });
+        evidenceResults.push(result);
+      }
+    }
+
+    // Step 2: Retrieve relevant law instantly (LEXARA drinks law on demand)
+    let legalResults: LegalResult | undefined;
+    if (params.retrieveLaw !== false) {
+      try {
+        legalResults = await this.retrieveLawInstantly(
+          `${params.matterType} ${params.userGoal} ${params.situation.substring(0, 100)}`,
+          {
+            jurisdiction: params.jurisdiction,
+            lawType: 'all',
+            priority: 'instant',
+          }
+        );
+        log.info('Retrieved relevant law for draft', { 
+          resultsCount: legalResults.data.length,
+          timeMs: legalResults.retrievalTimeMs 
+        });
+      } catch (error) {
+        log.warn('Law retrieval failed, continuing without', { error });
+      }
+    }
+
+    // Step 3: Build draft request with evidence analysis and law snippets
+    const lawSnippets = legalResults?.data.map(d => ({
+      citation: d.citation,
+      text: d.excerpt || d.content.substring(0, 500),
+      relevance: d.relevanceScore,
+      source: legalResults?.source || 'instant-legal-crawler',
+    })) || [];
+
+    const draftRequest: DraftRequest = {
+      jurisdiction: params.jurisdiction,
+      matterType: params.matterType,
+      proceduralStage: 'pre_litigation',
+      userGoal: params.userGoal,
+      factsSummary: params.situation,
+      evidenceAnalysis: evidenceResults,
+      lawSnippets, // Include retrieved law
+      tonePreference: (params.tone as any) || 'balanced',
+      documentType: params.documentType as any,
+      userName: params.userName,
+    };
+
+    // Step 4: Generate document through C.A.D.E.
+    const draftResult = await this.cade.draftDocument(draftRequest);
+
+    // Update status
+    const fmiStatus = this.fmi.getStatus();
+    const cadeStatus = this.cade.getStatus();
+    this.status.fmiStatus = {
+      totalAnalyses: fmiStatus.totalAnalyses,
+      successfulAnalyses: fmiStatus.successfulAnalyses,
+    };
+    this.status.cadeStatus = {
+      totalDrafts: cadeStatus.totalDrafts,
+      successfulDrafts: cadeStatus.successfulDrafts,
+    };
+
+    this.emit('orchestration:completed', { 
+      evidenceCount: evidenceResults.length, 
+      lawCount: legalResults?.data.length || 0,
+      draftId: draftResult.draftId 
+    });
+    
+    return { evidenceResults, legalResults, draftResult };
+  }
+
+  /**
+   * Get LEXARA status (includes F.M.I. and C.A.D.E. status)
+   */
+  getStatus(): LexaraStatus {
+    const fmiStatus = this.fmi.getStatus();
+    const cadeStatus = this.cade.getStatus();
+    
     return {
       ...this.status,
       uptime: this.startTime ? Date.now() - this.startTime.getTime() : 0,
+      fmiStatus: {
+        totalAnalyses: fmiStatus.totalAnalyses,
+        successfulAnalyses: fmiStatus.successfulAnalyses,
+      },
+      cadeStatus: {
+        totalDrafts: cadeStatus.totalDrafts,
+        successfulDrafts: cadeStatus.successfulDrafts,
+      },
     };
   }
 
@@ -396,10 +736,10 @@ export class Alexara extends EventEmitter {
   }
 
   /**
-   * Shutdown ALEXARA
+   * Shutdown LEXARA
    */
   async shutdown(): Promise<void> {
-    log.info('Shutting down ALEXARA');
+    log.info('Shutting down LEXARA and internal subsystems');
     
     if (this.crawlerInterval) {
       clearInterval(this.crawlerInterval);
@@ -410,23 +750,37 @@ export class Alexara extends EventEmitter {
     this.status.isResearching = false;
     this.emit('shutdown', { timestamp: new Date() });
     
-    log.info('ALEXARA shutdown complete');
+    log.info('LEXARA shutdown complete');
   }
 
   /**
    * Reset singleton (for testing)
    */
   static async reset(): Promise<void> {
-    if (Alexara.instance) {
-      await Alexara.instance.shutdown();
-      Alexara.instance = null;
+    if (Lexara.instance) {
+      await Lexara.instance.shutdown();
+      Lexara.instance = null;
     }
+    FMI.reset();
+    CADE.reset();
+    InstantLegalCrawler.reset();
   }
 }
 
 // Export singleton getter
-export const getAlexara = (config?: Partial<AlexaraConfig>): Alexara => {
-  return Alexara.getInstance(config);
+export const getLexara = (config?: Partial<AlexaraConfig>): Lexara => {
+  return Lexara.getInstance(config);
 };
 
-export default Alexara;
+// Backwards compatibility alias
+export const getAlexara = getLexara;
+export { Lexara as Alexara };
+
+// Re-export F.M.I. and C.A.D.E. types (not instances - LEXARA controls them)
+export type { EvidenceInput, EvidenceAnalysisResult } from './fmi';
+export type { DraftRequest, DraftResult, DocumentDraftType, TonePreference } from './cade';
+
+// Re-export Instant Legal Crawler types (LEXARA controls it)
+export type { LegalQuery, LegalResult, LegalData } from './instantLegalCrawler';
+
+export default Lexara;

@@ -83,6 +83,9 @@ export function FileUpload({
         description: `${data.file.name} has been uploaded.`,
       });
       onFilesUploaded?.(filesData?.files || []);
+      if (data.file?.id) {
+        onUploadComplete?.(data.file.id);
+      }
     },
     onError: (error: Error) => {
       toast({

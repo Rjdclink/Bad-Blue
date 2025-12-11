@@ -400,6 +400,55 @@ export default function WelcomePage() {
           </div>
         </div>
 
+        {/* United States Inmate Locator - Green Accent */}
+        <div className="mb-8 sm:mb-12">
+          <div className="flex items-center gap-2 mb-4 justify-center">
+            <Badge variant="default" className="text-sm bg-gradient-to-r from-green-600 to-green-700">
+              Nationwide Corrections Search
+            </Badge>
+          </div>
+          <div
+            className="cursor-pointer transition-all hover:shadow-xl rounded-lg overflow-hidden"
+            onClick={() => setLocation('/inmate-locator')}
+            style={{
+              background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(22, 163, 74, 0.15) 100%)',
+              backdropFilter: 'blur(10px)',
+              border: '3px solid rgba(34, 197, 94, 0.5)',
+            }}
+          >
+            <div className="p-6 flex items-start gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-3">
+                  <Shield className="h-8 w-8 text-green-400" />
+                  <h3 className="text-2xl font-bold text-white">
+                    United States Inmate Locator
+                  </h3>
+                </div>
+                <p className="text-base text-white/80 mb-4">
+                  Nationwide inmate search across federal, state, private, and local facilities with detailed 
+                  records and offense indicators. Search BOP federal prisons, state DOC systems, county jails, 
+                  and private correctional facilities with comprehensive custody status and charge information.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary" className="text-xs bg-green-500/20 text-green-200 border-green-400/30">
+                    🏛️ Federal BOP
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs bg-green-500/20 text-green-200 border-green-400/30">
+                    🗺️ 50-State Coverage
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs bg-green-500/20 text-green-200 border-green-400/30">
+                    ⚖️ Offense Details
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs bg-green-500/20 text-green-200 border-green-400/30">
+                    📊 Custody Status
+                  </Badge>
+                </div>
+              </div>
+              <ArrowRight className="h-8 w-8 text-green-400 flex-shrink-0 mt-2" />
+            </div>
+          </div>
+        </div>
+
         {/* Helper Text */}
         {!selectedLawType && (
           <div className="text-center mt-8 text-white/80">

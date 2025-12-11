@@ -874,6 +874,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/domains', domainRoutes.default);
 
   // ============================================
+  // NATIONWIDE INMATE LOCATOR ROUTES
+  // ============================================
+  const inmateSearchRoutes = await import('./routes/inmateSearch.routes');
+  app.use('/api/inmate-search', inmateSearchRoutes.default);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {
@@ -3710,7 +3716,6 @@ Contact: ${foiaRequest.userEmail || userEmail}
         .from(schema.authAccounts)
         .where(inArray(schema.authAccounts.userId, userIds))
         .groupBy(schema.authAccounts.userId),
-      // Removed legalizoSubscriptions references
     ]);
     
     // Build lookup maps for O(1) access

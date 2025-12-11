@@ -1,3 +1,4 @@
+// @ts-ignore - exif-parser doesn't have type declarations
 import ExifParser from 'exif-parser';
 
 export interface LocationData {

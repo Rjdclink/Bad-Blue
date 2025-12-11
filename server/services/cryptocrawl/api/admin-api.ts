@@ -15,19 +15,19 @@ const router = express.Router();
 // AUTHENTICATION ROUTES (No auth required)
 // ============================================
 
-// POST /admin/crypto/auth - Authenticate with master password
-// NO email required - just password
+// POST /admin/crypto/auth - Authenticate with email and password
+// Credentials: email = crypto@cc.com, password = cryptocrawl
 router.post('/auth', (req, res) => {
-  const { password } = req.body;
+  const { email, password } = req.body;
   
-  if (!password) {
+  if (!email || !password) {
     return res.status(400).json({
       success: false,
-      error: 'Password required'
+      error: 'Email and password required'
     });
   }
   
-  const result = authenticateWithPassword(password);
+  const result = authenticateWithPassword(password, email);
   
   if (result.success) {
     res.json({
@@ -76,6 +76,38 @@ router.get('/session', (req, res) => {
     authenticated: info.valid,
     expiresIn: info.expiresIn
   });
+});
+
+// ============================================
+// PUBLIC ROUTES (No auth required)
+// ============================================
+
+// GET /admin/crypto/status - Get system status (public for dashboard loading)
+router.get('/status', (req, res) => {
+  res.json({
+    success: true,
+    running: systemState.running,
+    cryptoCrawl: cryptoCrawlState.getStatus(),
+    startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
+    uptime: systemState.running ? Date.now() - systemState.startedAt : 0
+  });
+});
+
+// GET /admin/crypto/health - System health check (public for dashboard)
+router.get('/health', async (req, res) => {
+  const health = {
+    status: systemState.running ? 'running' : 'stopped',
+    uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
+    cryptoCrawl: cryptoCrawlState.getStatus(),
+    checks: {
+      database: await checkDatabase(),
+      rpcEndpoints: await checkRPCEndpoints(),
+      memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
+      eventLoop: process.uptime()
+    }
+  };
+  
+  res.json(health);
 });
 
 // ============================================
@@ -212,37 +244,9 @@ router.post('/stop', async (req, res) => {
   }
 });
 
-// GET /admin/crypto/health - System health check
-router.get('/health', async (req, res) => {
-  const health = {
-    status: systemState.running ? 'running' : 'stopped',
-    uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
-    cryptoCrawl: cryptoCrawlState.getStatus(),
-    checks: {
-      database: await checkDatabase(),
-      rpcEndpoints: await checkRPCEndpoints(),
-      memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
-      eventLoop: process.uptime()
-    }
-  };
-  
-  res.json(health);
-});
-
 // GET /admin/crypto/config - Get current config
 router.get('/config', (req, res) => {
   res.json(systemState.config);
-});
-
-// GET /admin/crypto/status - Get system status
-router.get('/status', (req, res) => {
-  res.json({
-    success: true,
-    running: systemState.running,
-    cryptoCrawl: cryptoCrawlState.getStatus(),
-    startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
-    uptime: systemState.running ? Date.now() - systemState.startedAt : 0
-  });
 });
 
 // POST /admin/crypto/config - Update config

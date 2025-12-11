@@ -127,6 +127,9 @@ const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
 // Location Intelligence Page - Interactive Heatmap Dashboard
 const LocationIntelPage = lazyWithRetry(() => import("@/pages/location-intel"), 'LocationIntel');
 
+// Nationwide Inmate Locator Page
+const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
+
 // Three-Tier Master Password Access Zones
 // Zone A: LegalWhat User Access (SARBEAR)
 const LegalWhatHome = lazyWithRetry(() => import("@/pages/legalwhat-home"), 'LegalWhatHome');
@@ -233,6 +236,9 @@ function Router() {
             
             {/* Location Intelligence - Interactive Heatmap Dashboard */}
             <Route path="/location-intel" component={LocationIntelPage} />
+            
+            {/* Nationwide Inmate Locator */}
+            <Route path="/inmate-locator" component={InmateLocatorPage} />
             
             {/* BadBlue routes - Law Enforcement Accountability */}
             <Route path="/badblue" component={Home} />
