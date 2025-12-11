@@ -31,12 +31,23 @@ const log = createLogger('CompensationEngine');
 // CONSTANTS
 // ============================================================================
 
+// Load configuration from environment variables
+const ENV_CONFIG = {
+  payoutWallet: process.env.CRYPTO_PAYOUT_WALLET_ADDRESS || '',
+  backupWallet: process.env.CRYPTO_BACKUP_WALLET_ADDRESS || '',
+  preferredToken: process.env.CRYPTO_PAYOUT_TOKEN || 'ETH',
+  preferredChain: process.env.CRYPTO_PAYOUT_CHAIN || 'ethereum',
+  minPayoutAmount: process.env.CRYPTO_MIN_PAYOUT_AMOUNT || '0.001',
+  gcpServiceAccount: process.env.GCP_SERVICE_ACCOUNT_EMAIL || '',
+  gcpProjectId: process.env.GCP_PROJECT_ID || '',
+};
+
 const DEFAULT_CONFIG: CompensationConfig = {
   enabled: true,
   payoutIntervalMs: 3600000, // 1 hour
-  preferredToken: 'ETH',
-  preferredChain: 'ethereum',
-  minPayoutAmount: '0.001', // 0.001 ETH minimum
+  preferredToken: ENV_CONFIG.preferredToken,
+  preferredChain: ENV_CONFIG.preferredChain,
+  minPayoutAmount: ENV_CONFIG.minPayoutAmount,
   maxRetries: 5,
   retryDelayMs: 30000,
   multiPathEnabled: true,
