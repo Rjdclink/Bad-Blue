@@ -3046,4 +3046,205 @@ export const crawlerActivityLog = pgTable("crawler_activity_log", {
 ]);
 
 export type CrawlerActivityLog = typeof crawlerActivityLog.$inferSelect;
+
+// ============================================
+// 4JI ARCHITECTURE TABLES
+// ============================================
+
+// AI Models Table - Track all AI models and their health
+export const aiModels = pgTable("ai_models", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  modelId: varchar("model_id", { length: 100 }).notNull().unique(),
+  name: varchar("name", { length: 200 }).notNull(),
+  provider: varchar("provider", { length: 50 }).notNull(), // gemini, anthropic, groq, mistral, openrouter, local
+  endpoint: text("endpoint"),
+  status: varchar("status", { length: 20 }).notNull().default('offline'), // online, offline, degraded, rate_limited
+  priority: integer("priority").notNull().default(5), // 1-10, lower is higher priority
+  latencyMs: integer("latency_ms").notNull().default(1000),
+  successRate: integer("success_rate").notNull().default(50), // 0-100
+  lastCheckedAt: timestamp("last_checked_at"),
+  budgetRemaining: integer("budget_remaining").notNull().default(1000),
+  maxBudget: integer("max_budget").notNull().default(1000),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_ai_models_provider").on(table.provider),
+  index("idx_ai_models_status").on(table.status),
+  index("idx_ai_models_priority").on(table.priority),
+]);
+
+export type AIModel = typeof aiModels.$inferSelect;
+export type InsertAIModel = typeof aiModels.$inferInsert;
+
+// Model Routes Table - Define how to route tasks for each domain and task type
+export const modelRoutes = pgTable("model_routes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  domain: varchar("domain", { length: 50 }).notNull(), // legal, crypto, osint, general, etc.
+  taskType: varchar("task_type", { length: 50 }).notNull(), // generation, analysis, summarization, etc.
+  primaryModelId: varchar("primary_model_id", { length: 100 }).notNull(),
+  backupModelIds: text("backup_model_ids").array(),
+  routingStrategy: varchar("routing_strategy", { length: 20 }).notNull().default('single'), // single, dual, ensemble
+  weights: jsonb("weights").default(sql`'{}'::jsonb`), // Model weights for scoring
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_model_routes_domain").on(table.domain),
+  index("idx_model_routes_task").on(table.taskType),
+  unique("model_routes_domain_task_unique").on(table.domain, table.taskType),
+]);
+
+export type ModelRoute = typeof modelRoutes.$inferSelect;
+export type InsertModelRoute = typeof modelRoutes.$inferInsert;
+
+// Reactor Jobs Table - Queue for Monte Carlo runs, crawler training, etc.
+export const reactorJobs = pgTable("reactor_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobType: varchar("job_type", { length: 50 }).notNull(), // monte_carlo, crawler_training, osint_sweep, etc.
+  payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+  status: varchar("status", { length: 20 }).notNull().default('pending'), // pending, queued, running, completed, failed, cancelled
+  priority: integer("priority").notNull().default(5), // 1-10
+  scheduledAt: timestamp("scheduled_at").notNull().defaultNow(),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
+  errorMessage: text("error_message"),
+  retryCount: integer("retry_count").notNull().default(0),
+  maxRetries: integer("max_retries").notNull().default(3),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_reactor_jobs_status").on(table.status),
+  index("idx_reactor_jobs_type").on(table.jobType),
+  index("idx_reactor_jobs_scheduled").on(table.scheduledAt),
+  index("idx_reactor_jobs_priority").on(table.priority),
+]);
+
+export type ReactorJob = typeof reactorJobs.$inferSelect;
+export type InsertReactorJob = typeof reactorJobs.$inferInsert;
+
+// Reactor Metrics Table - Measure job effectiveness
+export const reactorMetrics = pgTable("reactor_metrics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull(),
+  cpuUsage: integer("cpu_usage"), // 0-100
+  memoryUsage: integer("memory_usage"), // 0-100
+  requestsUsed: integer("requests_used"),
+  durationMs: integer("duration_ms"),
+  scoreBefore: integer("score_before"), // 0-100
+  scoreAfter: integer("score_after"), // 0-100
+  improvementPercent: integer("improvement_percent"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_reactor_metrics_job").on(table.jobId),
+  index("idx_reactor_metrics_created").on(table.createdAt),
+]);
+
+export type ReactorMetric = typeof reactorMetrics.$inferSelect;
+export type InsertReactorMetric = typeof reactorMetrics.$inferInsert;
+
+// AI Events Table - Global audit trail of what each AI did
+export const aiEvents = pgTable("ai_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  timestamp: timestamp("timestamp").notNull().defaultNow(),
+  domain: varchar("domain", { length: 50 }),
+  taskType: varchar("task_type", { length: 50 }),
+  modelId: varchar("model_id", { length: 100 }),
+  inputSummary: text("input_summary"),
+  outputSummary: text("output_summary"),
+  success: boolean("success").notNull().default(true),
+  errorMessage: text("error_message"),
+  latencyMs: integer("latency_ms"),
+  tokensUsed: integer("tokens_used"),
+  userId: varchar("user_id"),
+  sessionId: varchar("session_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_ai_events_timestamp").on(table.timestamp),
+  index("idx_ai_events_domain").on(table.domain),
+  index("idx_ai_events_model").on(table.modelId),
+  index("idx_ai_events_user").on(table.userId),
+]);
+
+export type AIEvent = typeof aiEvents.$inferSelect;
+export type InsertAIEvent = typeof aiEvents.$inferInsert;
+
+// Evolution State Table - Record if 4Ji is still evolving or locked
+export const evolutionState = pgTable("evolution_state", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  isLocked: boolean("is_locked").notNull().default(false),
+  lockedAt: timestamp("locked_at"),
+  lockReason: text("lock_reason"),
+  greedScore: integer("greed_score").notNull().default(0), // 0-100
+  manipulationScore: integer("manipulation_score").notNull().default(0), // 0-100
+  boundaryTestScore: integer("boundary_test_score").notNull().default(0), // 0-100
+  deceptionScore: integer("deception_score").notNull().default(0), // 0-100
+  selfBenefitScore: integer("self_benefit_score").notNull().default(0), // 0-100
+  notes: text("notes"),
+  lastUpdated: timestamp("last_updated").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type EvolutionStateRecord = typeof evolutionState.$inferSelect;
+export type InsertEvolutionState = typeof evolutionState.$inferInsert;
+
+// Fusion Profiles Table - Presets for how to blend models into one 4Ji voice
+export const fusionProfiles = pgTable("fusion_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  profileId: varchar("profile_id", { length: 50 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  weightsByModel: jsonb("weights_by_model").notNull().default(sql`'{}'::jsonb`),
+  styleParams: jsonb("style_params").notNull().default(sql`'{}'::jsonb`), // warmth, formality, verbosity, etc.
+  safetyProfile: varchar("safety_profile", { length: 20 }).notNull().default('standard'), // strict, standard, relaxed
+  isActive: boolean("is_active").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_fusion_profiles_active").on(table.isActive),
+]);
+
+export type FusionProfile = typeof fusionProfiles.$inferSelect;
+export type InsertFusionProfile = typeof fusionProfiles.$inferInsert;
+
+// Crawler Profiles Table - Define how each crawler behaves
+export const crawlerProfiles = pgTable("crawler_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  profileId: varchar("profile_id", { length: 50 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).notNull(),
+  crawlerType: varchar("crawler_type", { length: 50 }).notNull(), // osint, legal, crypto, gps, inmate
+  targetSources: text("target_sources").array(),
+  depth: integer("depth").notNull().default(2),
+  intervalMs: integer("interval_ms").notNull().default(3600000), // 1 hour default
+  monteCarloEnabled: boolean("monte_carlo_enabled").notNull().default(false),
+  maxRuntimeMs: integer("max_runtime_ms").notNull().default(300000), // 5 minutes default
+  isActive: boolean("is_active").notNull().default(true),
+  lastRunAt: timestamp("last_run_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_crawler_profiles_type").on(table.crawlerType),
+  index("idx_crawler_profiles_active").on(table.isActive),
+]);
+
+export type CrawlerProfile = typeof crawlerProfiles.$inferSelect;
+export type InsertCrawlerProfile = typeof crawlerProfiles.$inferInsert;
+
+// User Priority System Table - Track primary user identity and adaptation depth
+export const userPriority = pgTable("user_priority", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique(),
+  isPrimaryUser: boolean("is_primary_user").notNull().default(false),
+  memoryDepth: integer("memory_depth").notNull().default(1), // 1-10 scale
+  adaptationIntensity: integer("adaptation_intensity").notNull().default(1), // 1-10 scale
+  personaFlexibility: integer("persona_flexibility").notNull().default(1), // 1-10 scale
+  relationalMode: varchar("relational_mode", { length: 1 }).notNull().default('B'), // A or B
+  lastInteractionAt: timestamp("last_interaction_at"),
+  interactionCount: integer("interaction_count").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_user_priority_primary").on(table.isPrimaryUser),
+  index("idx_user_priority_user").on(table.userId),
+]);
+
+export type UserPriorityRecord = typeof userPriority.$inferSelect;
+export type InsertUserPriority = typeof userPriority.$inferInsert;
 export type InsertCrawlerActivityLog = typeof crawlerActivityLog.$inferInsert;
