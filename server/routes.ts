@@ -880,6 +880,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/inmate-search', inmateSearchRoutes.default);
 
   // ============================================
+  // LEXARA STREAMING ROUTES
+  // ============================================
+  const lexaraRoutes = await import('./routes/lexara.routes');
+  app.use('/api/lexara', lexaraRoutes.default);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {

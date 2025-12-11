@@ -64,10 +64,10 @@ export default function PantheonPage() {
   
   // Timeout durations in milliseconds based on search depth
   const DEPTH_TIMEOUTS: Record<number, number> = {
-    1: 35000,   // 35 seconds (5 second buffer)
-    2: 65000,   // 65 seconds
-    3: 125000,  // 125 seconds
-    4: 185000,  // 185 seconds
+    1: 50000,   // 50 seconds (5 second buffer for 45s search)
+    2: 95000,   // 95 seconds (5 second buffer for 90s search)
+    3: 185000,  // 185 seconds (5 second buffer for 180s search)
+    4: 310000,  // 310 seconds (10 second buffer for 300s search)
   };
   
   const handleSearchStart = async (config: SearchConfig) => {

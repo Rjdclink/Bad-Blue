@@ -64,6 +64,10 @@ export interface ExecutionDecision {
 
 // Cross-protocol route graph
 const PROTOCOL_GRAPH: Record<ChainId, ProtocolRoute[]> = {
+  ethereum: [
+    { id: 'eth-1', sourceChain: 'ethereum', targetChain: 'ethereum', protocols: ['Aave', 'Uniswap', 'SushiSwap'], estimatedProfit: 0.035, gasEstimate: 0.05, latency: 400, confidence: 0.90, lastUpdated: Date.now() },
+    { id: 'eth-2', sourceChain: 'ethereum', targetChain: 'arbitrum', protocols: ['Aave', 'Arbitrum Bridge', 'Uniswap'], estimatedProfit: 0.04, gasEstimate: 0.06, latency: 2500, confidence: 0.72, lastUpdated: Date.now() },
+  ],
   polygon: [
     { id: 'poly-1', sourceChain: 'polygon', targetChain: 'polygon', protocols: ['Aave', 'QuickSwap', 'SushiSwap'], estimatedProfit: 0.02, gasEstimate: 0.01, latency: 500, confidence: 0.85, lastUpdated: Date.now() },
     { id: 'poly-2', sourceChain: 'polygon', targetChain: 'arbitrum', protocols: ['Aave', 'Wormhole', 'Uniswap'], estimatedProfit: 0.03, gasEstimate: 0.015, latency: 2000, confidence: 0.75, lastUpdated: Date.now() },
@@ -122,7 +126,7 @@ export class NexGenProtocolLayer {
    * Initialize risk profiles per chain
    */
   private initializeRiskProfiles(): void {
-    const chains: ChainId[] = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
+    const chains: ChainId[] = ['ethereum', 'polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
     for (const chain of chains) {
       this.riskProfiles.set(chain, {
         chain,

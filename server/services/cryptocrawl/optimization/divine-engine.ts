@@ -428,6 +428,7 @@ class LocalComputationEngine {
   
   private getBaseGas(chain: ChainId): number {
     const baseGas: Record<ChainId, number> = {
+      ethereum: 0.001,
       polygon: 0.00001,
       bsc: 0.00005,
       avalanche: 0.00003,

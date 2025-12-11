@@ -113,6 +113,5 @@ export {
 } from './webSearchIntegration';
 
 // Testing and validation
-export { runIntegrationTest } from './test-integration';
 export { demo } from './demo';
 export { ComputationalBeamValidator } from './validate';

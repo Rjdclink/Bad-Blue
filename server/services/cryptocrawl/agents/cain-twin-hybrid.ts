@@ -330,6 +330,7 @@ class LocalComputeEngine {
 
   private getDefaultGas(chain: ChainId): number {
     const defaults: Record<ChainId, number> = {
+      ethereum: 50,
       polygon: 30,
       bsc: 5,
       avalanche: 25,
@@ -672,6 +673,7 @@ export class CainTwinHybrid {
 
   private getChainFactor(chain: ChainId): number {
     const factors: Record<ChainId, number> = {
+      ethereum: 1.0,
       polygon: 0.8,
       bsc: 0.7,
       avalanche: 0.75,

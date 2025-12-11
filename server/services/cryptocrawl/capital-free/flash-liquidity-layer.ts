@@ -40,6 +40,11 @@ export interface LiquidityIntakeResult {
 
 // Flash loan providers across multiple chains
 const FLASH_LOAN_PROVIDERS: Record<ChainId, FlashLoanRoute[]> = {
+  ethereum: [
+    { provider: 'Aave V3', chain: 'ethereum', maxAmount: 100_000_000, fee: 0.0009, supportsAtomicRepay: true, address: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2' },
+    { provider: 'Balancer', chain: 'ethereum', maxAmount: 80_000_000, fee: 0, supportsAtomicRepay: true, address: '0xBA12222222228d8Ba445958a75a0704d566BF2C8' },
+    { provider: 'Uniswap V3', chain: 'ethereum', maxAmount: 50_000_000, fee: 0, supportsAtomicRepay: true, address: '0xE592427A0AEce92De3Edee1F18E0157C05861564' },
+  ],
   polygon: [
     { provider: 'Aave V3', chain: 'polygon', maxAmount: 50_000_000, fee: 0.0009, supportsAtomicRepay: true, address: '0x794a61358D6845594F94dc1DB02A252b5b4814aD' },
     { provider: 'Balancer', chain: 'polygon', maxAmount: 30_000_000, fee: 0, supportsAtomicRepay: true, address: '0xBA12222222228d8Ba445958a75a0704d566BF2C8' },
@@ -286,6 +291,7 @@ export class FlashLiquidityLayer {
    */
   getTotalAvailableLiquidity(): Record<ChainId, number> {
     const liquidity: Record<ChainId, number> = {
+      ethereum: 0,
       polygon: 0,
       bsc: 0,
       avalanche: 0,

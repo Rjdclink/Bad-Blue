@@ -258,6 +258,11 @@ Return empty array if no matches found. Only return factual information from BOP
           systemPrompt: 'You are a federal inmate records research assistant. Return only factual information from BOP records.',
           maxTokens: 2000,
         });
+      } else {
+        // No AI providers available - log warning but return empty (no mock data)
+        logger.warn('[InmateSearch] No AI providers available for BOP search - returning empty results');
+        // Return empty array - UI will show "no results" with manual search links
+        return [];
       }
       
       if (!results?.inmates?.length) {
@@ -352,6 +357,11 @@ Return empty array if no matches found. Only return factual information.`;
             systemPrompt: `You are a ${stateInfo.stateName} corrections records research assistant. Return only factual information.`,
             maxTokens: 2000,
           });
+        } else {
+          // No AI providers available - log warning but return empty (no mock data)
+          logger.warn(`[InmateSearch] No AI providers available for State DOC search (${stateCode}) - returning empty results`);
+          // Return empty array - UI will show "no results" with manual search links
+          return [];
         }
         
         if (!results?.inmates?.length) {
@@ -440,6 +450,11 @@ Return empty array if no matches.`;
           systemPrompt: 'You are a VINE victim notification system research assistant.',
           maxTokens: 1500,
         });
+      } else {
+        // No AI providers available - log warning but return empty (no mock data)
+        logger.warn('[InmateSearch] No AI providers available for VINE search - returning empty results');
+        // Return empty array - UI will show "no results" with manual search links
+        return [];
       }
       
       if (!results?.inmates?.length) {

@@ -141,29 +141,36 @@
 .pantheon-container .capability-card {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   cursor: default;
+  background: linear-gradient(135deg, rgba(15, 52, 96, 0.95) 0%, rgba(22, 33, 62, 0.95) 100%);
+  border: 1px solid rgba(233, 69, 96, 0.3);
+  border-radius: 0.75rem;
 }
 
 .pantheon-container .capability-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(233, 69, 96, 0.15);
+  box-shadow: 0 8px 24px rgba(233, 69, 96, 0.25);
+  border-color: rgba(233, 69, 96, 0.5);
 }
 
 .pantheon-container .capability-card .icon {
   text-align: center;
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .pantheon-container .capability-card h3 {
-  font-size: 1.1rem;
-  font-weight: 600;
+  font-size: 1.15rem;
+  font-weight: 700;
   line-height: 1.4;
   margin-bottom: 0.75rem;
-  color: rgba(255, 255, 255, 0.95);
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .pantheon-container .capability-card p {
   font-size: 0.95rem;
   line-height: 1.7;
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255, 255, 255, 0.9);
   font-weight: 400;
 }
 
