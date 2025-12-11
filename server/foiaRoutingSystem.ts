@@ -2,6 +2,7 @@ import { unifiedSearch, searchLegalStatutes } from './webSearchService';
 import { sendEmail } from './emailService';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { performEnhancedLegalSearch, type LegalSearchResult } from './enhancedLegalSearch';
 import { 
   emailDiscoveryService,
@@ -232,10 +233,7 @@ export async function autoScrapeFOIAPortal(agencyFOIAUrl: string): Promise<{
   try {
     console.log('[FOIA] Auto-scraping FOIA portal with adaptive crawler:', agencyFOIAUrl);
 
-    // Import zod for schema definition
-    const { z } = await import('zod');
-
-    // Define schema for FOIA contact extraction
+    // Define schema for FOIA contact extraction (using zod imported at module level)
     const foiaContactZodSchema = z.object({
       name: z.string().describe('Full name of the FOIA officer or contact person'),
       title: z.string().optional().describe('Job title (e.g., FOIA Officer, Records Custodian)'),
