@@ -57,15 +57,15 @@ const SIZE_MAP: Record<AvatarSize, { container: string; avatar: string; ring: st
   full: { container: 'w-64 h-64', avatar: 'w-60 h-60', ring: 'w-64 h-64' },
 };
 
-const EMOTIONAL_COLORS: Record<EmotionalState, { primary: string; secondary: string; glow: string }> = {
-  neutral: { primary: '#6366f1', secondary: '#818cf8', glow: 'rgba(99, 102, 241, 0.4)' },
-  listening: { primary: '#22c55e', secondary: '#4ade80', glow: 'rgba(34, 197, 94, 0.5)' },
-  thinking: { primary: '#f59e0b', secondary: '#fbbf24', glow: 'rgba(245, 158, 11, 0.4)' },
-  speaking: { primary: '#3b82f6', secondary: '#60a5fa', glow: 'rgba(59, 130, 246, 0.5)' },
-  empathetic: { primary: '#ec4899', secondary: '#f472b6', glow: 'rgba(236, 72, 153, 0.4)' },
-  authoritative: { primary: '#8b5cf6', secondary: '#a78bfa', glow: 'rgba(139, 92, 246, 0.5)' },
-  engaged: { primary: '#14b8a6', secondary: '#2dd4bf', glow: 'rgba(20, 184, 166, 0.4)' },
-  processing: { primary: '#f97316', secondary: '#fb923c', glow: 'rgba(249, 115, 22, 0.4)' },
+const EMOTIONAL_COLORS: Record<EmotionalState, { primary: string; secondary: string; glow: string; accent: string; pulse: string }> = {
+  neutral: { primary: '#6366f1', secondary: '#818cf8', glow: 'rgba(99, 102, 241, 0.4)', accent: '#a5b4fc', pulse: 'rgba(99, 102, 241, 0.2)' },
+  listening: { primary: '#22c55e', secondary: '#4ade80', glow: 'rgba(34, 197, 94, 0.5)', accent: '#86efac', pulse: 'rgba(34, 197, 94, 0.3)' },
+  thinking: { primary: '#f59e0b', secondary: '#fbbf24', glow: 'rgba(245, 158, 11, 0.4)', accent: '#fcd34d', pulse: 'rgba(245, 158, 11, 0.2)' },
+  speaking: { primary: '#3b82f6', secondary: '#60a5fa', glow: 'rgba(59, 130, 246, 0.5)', accent: '#93c5fd', pulse: 'rgba(59, 130, 246, 0.3)' },
+  empathetic: { primary: '#ec4899', secondary: '#f472b6', glow: 'rgba(236, 72, 153, 0.4)', accent: '#f9a8d4', pulse: 'rgba(236, 72, 153, 0.2)' },
+  authoritative: { primary: '#8b5cf6', secondary: '#a78bfa', glow: 'rgba(139, 92, 246, 0.5)', accent: '#c4b5fd', pulse: 'rgba(139, 92, 246, 0.3)' },
+  engaged: { primary: '#14b8a6', secondary: '#2dd4bf', glow: 'rgba(20, 184, 166, 0.4)', accent: '#5eead4', pulse: 'rgba(20, 184, 166, 0.2)' },
+  processing: { primary: '#f97316', secondary: '#fb923c', glow: 'rgba(249, 115, 22, 0.4)', accent: '#fdba74', pulse: 'rgba(249, 115, 22, 0.2)' },
 };
 
 // ============================================================================
@@ -193,7 +193,8 @@ export const LexaraAvatar: React.FC<LexaraAvatarProps> = ({
         )}
         style={{
           borderColor: colors.primary,
-          boxShadow: `0 0 30px ${colors.glow}, inset 0 0 20px ${colors.glow}`,
+          boxShadow: `0 0 30px ${colors.glow}, inset 0 0 20px ${colors.glow}, 0 0 60px ${colors.pulse}`,
+          animation: 'breathe 4s ease-in-out infinite',
         }}
       >
         <img
@@ -260,24 +261,60 @@ export const LexaraAvatar: React.FC<LexaraAvatarProps> = ({
         />
       ))}
 
-      {/* State Indicator Badge */}
+      {/* State Indicator Badge - Enhanced with shimmer */}
       <div
-        className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full text-xs font-medium z-20"
+        className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-xs font-semibold z-20 overflow-hidden"
         style={{
           backgroundColor: colors.primary,
           color: 'white',
-          boxShadow: `0 0 10px ${colors.glow}`,
+          boxShadow: `0 0 15px ${colors.glow}, 0 0 30px ${colors.pulse}`,
+          background: `linear-gradient(90deg, ${colors.primary} 0%, ${colors.secondary} 50%, ${colors.primary} 100%)`,
+          backgroundSize: '200% 100%',
+          animation: currentState !== 'neutral' ? 'shimmer 2s linear infinite' : 'none',
         }}
       >
-        {currentState === 'listening' && '🎤 Listening'}
+        {currentState === 'listening' && '🎤 Actively Listening'}
         {currentState === 'speaking' && '🔊 Speaking'}
-        {currentState === 'thinking' && '💭 Thinking'}
+        {currentState === 'thinking' && '💭 Deep Analysis'}
         {currentState === 'processing' && '⚡ Processing'}
         {currentState === 'empathetic' && '💙 Understanding'}
-        {currentState === 'authoritative' && '⚖️ Advising'}
-        {currentState === 'engaged' && '✨ Engaged'}
-        {currentState === 'neutral' && '👋 Ready'}
+        {currentState === 'authoritative' && '⚖️ Expert Advising'}
+        {currentState === 'engaged' && '✨ Fully Engaged'}
+        {currentState === 'neutral' && '👋 Ready to Assist'}
       </div>
+
+      {/* Hypnotic Orbital Rings - Divine Enhancement */}
+      <div
+        className="absolute rounded-full pointer-events-none"
+        style={{
+          width: '120%',
+          height: '120%',
+          border: `1px solid ${colors.accent}`,
+          animation: 'orbit 8s linear infinite',
+          opacity: 0.3,
+        }}
+      />
+      <div
+        className="absolute rounded-full pointer-events-none"
+        style={{
+          width: '140%',
+          height: '140%',
+          border: `1px dashed ${colors.pulse}`,
+          animation: 'orbit 12s linear infinite reverse',
+          opacity: 0.2,
+        }}
+      />
+
+      {/* Energy Field Effect */}
+      <div
+        className="absolute inset-0 rounded-full pointer-events-none"
+        style={{
+          background: `radial-gradient(circle at 30% 30%, ${colors.pulse} 0%, transparent 50%)`,
+          animation: currentState === 'speaking' || currentState === 'authoritative' 
+            ? 'energyPulse 2s ease-in-out infinite' 
+            : 'none',
+        }}
+      />
 
       {/* CSS Keyframes injected inline for optimization */}
       <style>{`
@@ -286,6 +323,22 @@ export const LexaraAvatar: React.FC<LexaraAvatarProps> = ({
           25% { transform: translateY(-10px) translateX(5px); opacity: 0.8; }
           50% { transform: translateY(-5px) translateX(-5px); opacity: 0.4; }
           75% { transform: translateY(-15px) translateX(3px); opacity: 0.7; }
+        }
+        @keyframes orbit {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes energyPulse {
+          0%, 100% { opacity: 0.1; transform: scale(1); }
+          50% { opacity: 0.3; transform: scale(1.05); }
+        }
+        @keyframes breathe {
+          0%, 100% { transform: scale(1); filter: brightness(1); }
+          50% { transform: scale(1.02); filter: brightness(1.1); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
         }
       `}</style>
     </div>
@@ -327,48 +380,85 @@ export const LexaraPresence: React.FC<LexaraPresenceProps> = ({
         className
       )}
       style={{
-        background: `linear-gradient(135deg, ${colors.glow} 0%, transparent 50%, ${colors.glow} 100%)`,
-        padding: '2px',
+        background: `linear-gradient(135deg, ${colors.glow} 0%, transparent 30%, transparent 70%, ${colors.glow} 100%)`,
+        padding: '3px',
       }}
     >
+      {/* Animated Border Gradient */}
+      <div
+        className="absolute inset-0 rounded-2xl pointer-events-none"
+        style={{
+          background: `conic-gradient(from 0deg, ${colors.primary}, ${colors.secondary}, ${colors.accent}, ${colors.primary})`,
+          animation: isActive ? 'borderRotate 4s linear infinite' : 'none',
+          opacity: 0.3,
+          filter: 'blur(2px)',
+        }}
+      />
+
       {/* Inner container */}
-      <div className="relative bg-background/95 backdrop-blur-sm rounded-2xl p-6">
-        {/* Ambient glow effect */}
+      <div className="relative bg-background/95 backdrop-blur-md rounded-2xl p-6">
+        {/* Multi-layer ambient glow effect */}
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
-            background: `radial-gradient(ellipse at center, ${colors.glow} 0%, transparent 70%)`,
-            opacity: isActive ? 0.1 : 0.05,
+            background: `radial-gradient(ellipse at 20% 20%, ${colors.pulse} 0%, transparent 50%), radial-gradient(ellipse at 80% 80%, ${colors.pulse} 0%, transparent 50%)`,
+            opacity: isActive ? 0.15 : 0.05,
           }}
         />
+
+        {/* Scanning line effect when listening */}
+        {isListening && (
+          <div
+            className="absolute left-0 right-0 h-0.5 pointer-events-none"
+            style={{
+              background: `linear-gradient(90deg, transparent, ${colors.primary}, transparent)`,
+              animation: 'scanLine 2s ease-in-out infinite',
+            }}
+          />
+        )}
 
         {/* Content */}
         <div className="relative z-10">
           {children}
         </div>
 
-        {/* Transcript overlay */}
+        {/* Transcript overlay - Enhanced */}
         {transcript && (
           <div
-            className="absolute bottom-4 left-4 right-4 p-3 rounded-lg bg-black/50 backdrop-blur-sm"
-            style={{ borderLeft: `3px solid ${colors.primary}` }}
+            className="absolute bottom-4 left-4 right-4 p-4 rounded-lg bg-black/60 backdrop-blur-md"
+            style={{ 
+              borderLeft: `4px solid ${colors.primary}`,
+              boxShadow: `0 0 20px ${colors.pulse}`,
+            }}
           >
-            <p className="text-sm text-white/90 italic">
+            <p className="text-sm text-white/95 italic font-medium">
               "{transcript}"
             </p>
           </div>
         )}
 
-        {/* Activity indicator bar */}
+        {/* Activity indicator bar - Enhanced */}
         <div
-          className="absolute bottom-0 left-0 h-1 transition-all duration-100"
+          className="absolute bottom-0 left-0 h-1.5 transition-all duration-100 rounded-br-2xl"
           style={{
             width: `${Math.min(audioLevel * 100, 100)}%`,
-            backgroundColor: colors.primary,
-            boxShadow: `0 0 10px ${colors.glow}`,
+            background: `linear-gradient(90deg, ${colors.primary}, ${colors.secondary})`,
+            boxShadow: `0 0 15px ${colors.glow}, 0 0 30px ${colors.pulse}`,
           }}
         />
       </div>
+
+      <style>{`
+        @keyframes borderRotate {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes scanLine {
+          0% { top: 0; opacity: 0; }
+          50% { opacity: 1; }
+          100% { top: 100%; opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 };
@@ -396,30 +486,35 @@ export const LexaraWaveform: React.FC<LexaraWaveformProps> = ({
     return Array.from({ length: barCount }, (_, i) => ({
       id: i,
       baseHeight: 20 + Math.random() * 30,
-      delay: i * 0.1,
+      delay: i * 0.08,
+      width: 2 + Math.random() * 2,
     }));
   }, [barCount]);
 
   return (
     <div className={cn('flex items-end justify-center gap-1 h-12', className)}>
-      {bars.map((bar) => (
+      {bars.map((bar, index) => (
         <div
           key={bar.id}
-          className="w-1 rounded-full transition-all duration-75"
+          className="rounded-full transition-all duration-75"
           style={{
+            width: `${bar.width}px`,
             height: isActive 
-              ? `${bar.baseHeight + audioLevel * 50}%`
-              : '20%',
-            backgroundColor: color,
-            opacity: isActive ? 0.8 + audioLevel * 0.2 : 0.3,
-            animation: isActive ? `waveform 0.5s ease-in-out infinite ${bar.delay}s` : 'none',
+              ? `${bar.baseHeight + audioLevel * 60 + Math.sin(Date.now() / 200 + index) * 10}%`
+              : '15%',
+            background: isActive 
+              ? `linear-gradient(180deg, ${color} 0%, ${color}80 100%)`
+              : `${color}40`,
+            opacity: isActive ? 0.85 + audioLevel * 0.15 : 0.25,
+            animation: isActive ? `waveform 0.4s ease-in-out infinite ${bar.delay}s` : 'none',
+            boxShadow: isActive ? `0 0 8px ${color}60` : 'none',
           }}
         />
       ))}
       <style>{`
         @keyframes waveform {
           0%, 100% { transform: scaleY(1); }
-          50% { transform: scaleY(1.5); }
+          50% { transform: scaleY(1.6); }
         }
       `}</style>
     </div>
