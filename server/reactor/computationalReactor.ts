@@ -506,8 +506,7 @@ class ComputationalReactor {
    * Update heat monitor readings
    */
   private updateHeatMonitor(): void {
-    // Get system metrics (simulated for now)
-    const process = require('process');
+    // Get system metrics
     const memUsage = process.memoryUsage();
     const heapUsedPercent = (memUsage.heapUsed / memUsage.heapTotal) * 100;
 

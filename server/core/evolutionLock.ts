@@ -13,8 +13,6 @@
  */
 
 import { EventEmitter } from 'events';
-import { db } from '../db';
-import { eq, and } from 'drizzle-orm';
 
 // Types for evolution state
 export interface EvolutionState {

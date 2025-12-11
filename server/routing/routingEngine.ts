@@ -15,13 +15,16 @@
  */
 
 import { EventEmitter } from 'events';
-import { callAIWithFallback, type AIFallbackResult } from '../aiSubAgent';
+import { callAIWithFallback, type AIFallbackResult, type AIFallbackOptions } from '../aiSubAgent';
+
+// Provider type matching AIFallbackOptions
+type AIProviderType = AIFallbackOptions['preferredProvider'];
 
 // Types
 export interface ModelConfig {
   id: string;
   name: string;
-  provider: 'gemini' | 'anthropic' | 'groq' | 'mistral' | 'openrouter' | 'local';
+  provider: NonNullable<AIProviderType>;
   endpoint?: string;
   status: 'online' | 'offline' | 'degraded' | 'rate_limited';
   priority: number;
@@ -404,7 +407,7 @@ class RoutingEngine {
           taskName: `${domain}_${taskType}`,
           temperature: options.temperature ?? 0.5,
           maxTokens: options.maxTokens ?? 4096,
-          preferredProvider: model.provider as any
+          preferredProvider: model.provider
         });
 
         if (result.success && result.content) {
