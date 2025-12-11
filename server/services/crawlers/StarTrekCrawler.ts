@@ -450,31 +450,6 @@ export class StarTrekCrawler {
   }
 
   /**
-   * Warp to target URL and scan
-   * Alias method for compatibility with PantheonCrawlerOrchestrator
-   */
-  async warpTo(target: string): Promise<Data & { warpFactor: number }> {
-    await this.waitForRateLimit();
-    
-    try {
-      const data = await this.firePhaser(target);
-      return {
-        ...data,
-        warpFactor: this.warpSpeed
-      };
-    } catch (error) {
-      return {
-        content: '',
-        confidence: 0,
-        timestamp: Date.now(),
-        target,
-        warpFactor: this.warpSpeed,
-        metadata: { error: 'Warp failed' }
-      };
-    }
-  }
-
-  /**
    * Get current ship status
    */
   getStatus() {
