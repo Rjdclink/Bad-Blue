@@ -187,7 +187,7 @@ export default function CryptoCrawlerDashboard() {
       } else if (response.status === 401 || response.status === 403) {
         // Authentication error - session may have expired
         addConsoleLog('warn', 'Session expired or unauthorized - please re-authenticate');
-        setIsAuthenticated(false);
+        setLocation('/login'); // Redirect to login on auth errors
         setSystemStatus({
           running: false,
           cryptoCrawl: {
