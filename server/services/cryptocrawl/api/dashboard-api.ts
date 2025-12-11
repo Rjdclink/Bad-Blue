@@ -26,7 +26,12 @@ let stats = {
 // FAUCET API ENDPOINTS - Divine Creativity-Powered Autonomous Profit System
 // ============================================================================
 
-// Faucet state - Divine perfection synthesis
+/**
+ * Faucet state management
+ * NOTE: In-memory state is used for simplicity. For production multi-instance 
+ * deployments, consider using Redis or database for persistent state storage.
+ * The autonomous-faucet.ts maintains the actual trading state independently.
+ */
 let faucetState = {
   enabled: true,  // FAUCET IS ON BY DEFAULT - Divine determination
   autoOptimize: true,
@@ -39,33 +44,48 @@ let faucetState = {
 // GET /api/crypto/faucet/status - Get faucet status with divine insight
 router.get('/faucet/status', async (req, res) => {
   try {
-    // Get state from autonomous faucet if available
-    const faucetData = autonomousFaucet.getState();
-    const marketConditions = autonomousFaucet.getMarketConditions();
+    // Safely get state from autonomous faucet
+    let faucetData;
+    let marketConditions;
+    
+    try {
+      faucetData = autonomousFaucet.getState();
+      marketConditions = autonomousFaucet.getMarketConditions();
+    } catch (initError) {
+      // Faucet not yet initialized - use defaults
+      console.log('[Faucet] Using default values - faucet not yet initialized');
+      faucetData = null;
+      marketConditions = null;
+    }
     
     res.json({
       enabled: faucetState.enabled,
-      mode: faucetData.mode || 'open',
-      profitThisSession: faucetData.profitThisSession || 0,
-      profitThisHour: faucetData.profitThisHour || 0,
-      profitThisDay: faucetData.profitThisDay || 0,
+      mode: faucetData?.mode || 'open',
+      profitThisSession: faucetData?.profitThisSession || 0,
+      profitThisHour: faucetData?.profitThisHour || 0,
+      profitThisDay: faucetData?.profitThisDay || 0,
       dailyTarget: faucetState.dailyTarget,
-      dailyTargetProgress: faucetData.dailyTargetProgress || 0,
-      tradesThisHour: faucetData.tradesThisHour || 0,
-      tradesThisDay: faucetData.tradesThisDay || 0,
-      stealthLevel: faucetData.stealthLevel || 0,
-      healthScore: faucetData.healthScore || 100,
-      consecutiveFailures: faucetData.consecutiveFailures || 0,
-      currentWindow: faucetData.currentWindow || 0,
+      dailyTargetProgress: faucetData?.dailyTargetProgress || 0,
+      tradesThisHour: faucetData?.tradesThisHour || 0,
+      tradesThisDay: faucetData?.tradesThisDay || 0,
+      stealthLevel: faucetData?.stealthLevel || 0,
+      healthScore: faucetData?.healthScore || 100,
+      consecutiveFailures: faucetData?.consecutiveFailures || 0,
+      currentWindow: faucetData?.currentWindow || 0,
       totalWindows: 18,
       autoOptimize: faucetState.autoOptimize,
       profitableTimesOnly: faucetState.profitableTimesOnly,
       antiDetectionEnabled: faucetState.antiDetectionEnabled,
-      marketConditions: {
+      marketConditions: marketConditions ? {
         volatility: marketConditions.volatility,
         gasEfficiency: marketConditions.gasEfficiency,
         technicalSignal: marketConditions.technicalSignal,
         confidence: marketConditions.confidence,
+      } : {
+        volatility: 50,
+        gasEfficiency: 5,
+        technicalSignal: 'neutral',
+        confidence: 0.5,
       },
       divineInspiration: {
         creativity: 'active',
@@ -219,11 +239,16 @@ router.post('/faucet/stress-test', async (req, res) => {
     console.log('[Faucet] 🧪 Initiating divine stress test synthesis...');
     const results = await autonomousFaucet.runStressTests();
     
+    const totalTests = results.passed + results.failed;
+    const passRate = totalTests > 0 
+      ? `${((results.passed / totalTests) * 100).toFixed(1)}%` 
+      : '0%';
+    
     res.json({
       success: true,
       passed: results.passed,
       failed: results.failed,
-      passRate: `${((results.passed / (results.passed + results.failed)) * 100).toFixed(1)}%`,
+      passRate,
       results: results.results,
       divineVerdict: results.failed === 0 ? 'Perfect divine synthesis achieved' : 'Optimization opportunities identified',
     });

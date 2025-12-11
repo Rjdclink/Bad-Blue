@@ -389,7 +389,8 @@ export default function CryptoCrawlerDashboard() {
         setFaucetStatus(prev => ({
           ...prev,
           ...data,
-          enabled: data.enabled ?? true,  // Default to ON
+          // Default to ON only if enabled is null/undefined (preserves explicit false)
+          enabled: data.enabled ?? true,
         }));
         addConsoleLog('info', `[Faucet] Status: ${data.mode || 'active'}, Daily Progress: ${(data.dailyTargetProgress || 0).toFixed(1)}%`);
       } else {
@@ -1023,7 +1024,7 @@ export default function CryptoCrawlerDashboard() {
                       <Label className="text-gray-300">Daily Target</Label>
                       <Select 
                         value={faucetStatus.dailyTarget.toString()} 
-                        onValueChange={(v) => handleUpdateFaucetSettings({ dailyTarget: parseInt(v) })}
+                        onValueChange={(v) => handleUpdateFaucetSettings({ dailyTarget: parseInt(v, 10) })}
                       >
                         <SelectTrigger className="bg-gray-900/50 border-white/10 text-white">
                           <SelectValue />
