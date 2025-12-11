@@ -508,17 +508,28 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
           </div>
         </LexaraPresence>
 
-        {/* Voice Status Indicator - AUTOMATIC (always shown when active) */}
-        {autoInitialized && (
-          <div className="mb-6">
+        {/* ALEXERA Live Voice Channel - Always visible by default */}
+        <Card className="mb-6 border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-purple-500/5 shadow-lg">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-3 text-lg">
+              <div className="p-2 rounded-lg bg-primary/20">
+                <Volume2 className="w-5 h-5 text-primary" />
+              </div>
+              ALEXERA Live Voice Channel
+            </CardTitle>
+            <CardDescription>
+              Voice interaction is active - speak to communicate with ALEXERA
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
             <VoiceStatusIndicator
               isEnabled={true}
               isListening={voiceMode.isListening}
               isSpeaking={voiceSynthesis.isSpeaking}
               transcript={voiceMode.interimTranscript}
             />
-          </div>
-        )}
+          </CardContent>
+        </Card>
 
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Main Consultation Area */}

@@ -217,21 +217,8 @@ export default function CryptoCrawlerDashboard() {
   const [loadingFaucet, setLoadingFaucet] = useState(false);
   const [togglingFaucet, setTogglingFaucet] = useState(false);
 
-  // Verify access - FIXED: Wait for auth to finish loading before redirecting
-  useEffect(() => {
-    // Don't redirect while auth is still loading - this was causing silent redirects!
-    if (authLoading) {
-      console.log('[CryptoCrawler] Auth loading, waiting...');
-      return;
-    }
-    
-    if (!isAuthenticated) {
-      console.log('[CryptoCrawler] User not authenticated, redirecting to login');
-      setLocation('/login');
-    } else {
-      console.log('[CryptoCrawler] User authenticated, dashboard access granted');
-    }
-  }, [isAuthenticated, authLoading, setLocation]);
+  // Auth gating is handled by App.tsx {isAuthenticated ? (...) : null}
+  // No redirect useEffect needed here - the route won't render if not authenticated
 
   // Fetch system status
   const fetchStatus = useCallback(async () => {
@@ -245,9 +232,8 @@ export default function CryptoCrawlerDashboard() {
         const data = await response.json();
         setSystemStatus(data);
       } else if (response.status === 401 || response.status === 403) {
-        // Authentication error - session may have expired
+        // Authentication error - session may have expired, show warning but don't redirect
         addConsoleLog('warn', 'Session expired or unauthorized - please re-authenticate');
-        setLocation('/login'); // Redirect to login on auth errors
         setSystemStatus({
           running: false,
           cryptoCrawl: {
@@ -292,7 +278,7 @@ export default function CryptoCrawlerDashboard() {
     } finally {
       setLoadingStatus(false);
     }
-  }, [setLocation]);
+  }, []);
 
   // Fetch stats
   const fetchStats = useCallback(async () => {
