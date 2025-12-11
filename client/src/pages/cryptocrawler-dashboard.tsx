@@ -231,6 +231,9 @@ export default function CryptoCrawlerDashboard() {
         const data = await response.json();
         setStats(data);
         addConsoleLog('info', `Stats updated: ${data.trades?.total || 0} total trades`);
+      } else {
+        console.warn(`Stats fetch returned ${response.status}: ${response.statusText}`);
+        addConsoleLog('warn', `Stats fetch failed with status ${response.status}`);
       }
     } catch (error) {
       console.error('Failed to fetch stats:', error);

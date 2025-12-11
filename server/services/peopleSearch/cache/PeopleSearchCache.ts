@@ -98,15 +98,17 @@ export class PeopleSearchCache {
   async clear(): Promise<void> {
     try {
       const files = await fs.readdir(this.cacheDir).catch(() => [] as string[]);
+      let deleted = 0;
       
       for (const file of files) {
         if (file.endsWith('.json')) {
           await fs.unlink(path.join(this.cacheDir, file)).catch(() => {});
           this.stats.deletes++;
+          deleted++;
         }
       }
       
-      console.log(`[PeopleSearchCache] Cleared ${files.length} cache entries`);
+      console.log(`[PeopleSearchCache] Cleared ${deleted} cache entries`);
     } catch (error) {
       console.error('[PeopleSearchCache] Error clearing cache:', error);
     }

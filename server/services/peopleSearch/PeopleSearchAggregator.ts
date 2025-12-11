@@ -12,7 +12,7 @@
  */
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import type { Browser, BrowserContext } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 import type { SearchQuery, PersonRecord } from './types';
 import { FastPeopleSearchScraper } from './sources/FastPeopleSearchScraper';
 import { TruePeopleSearchScraper } from './sources/TruePeopleSearchScraper';
@@ -22,6 +22,11 @@ import { PeopleSearchCache } from './cache/PeopleSearchCache';
 
 // Add stealth plugin to chromium
 chromium.use(StealthPlugin());
+
+// Base scraper interface for type safety
+interface BaseScraper {
+  search(query: SearchQuery, page: Page): Promise<PersonRecord[]>;
+}
 
 // Configuration for high-capacity operation
 const HIGH_CAPACITY_CONFIG = {
@@ -47,7 +52,7 @@ interface SearchMetrics {
 
 export class PeopleSearchAggregator {
   private cache: PeopleSearchCache;
-  private scrapers = [
+  private scrapers: BaseScraper[] = [
     new FastPeopleSearchScraper(),
     new TruePeopleSearchScraper(),
     new WhitePagesScraper(),
@@ -66,7 +71,7 @@ export class PeopleSearchAggregator {
   private searchQueue: Array<{
     query: SearchQuery;
     resolve: (value: PersonRecord) => void;
-    reject: (reason: any) => void;
+    reject: (reason: unknown) => void;
   }> = [];
   private isProcessingQueue: boolean = false;
 
@@ -201,9 +206,9 @@ export class PeopleSearchAggregator {
    * Execute scraper with individual timeout
    */
   private async executeScraperWithTimeout(
-    scraper: FastPeopleSearchScraper | TruePeopleSearchScraper | WhitePagesScraper,
+    scraper: BaseScraper,
     query: SearchQuery,
-    page: any
+    page: Page
   ): Promise<PersonRecord[]> {
     return Promise.race([
       scraper.search(query, page),
@@ -216,8 +221,8 @@ export class PeopleSearchAggregator {
   /**
    * Create pages with rate limiting to avoid detection
    */
-  private async createPagesWithRateLimit(context: BrowserContext, count: number): Promise<any[]> {
-    const pages: any[] = [];
+  private async createPagesWithRateLimit(context: BrowserContext, count: number): Promise<Page[]> {
+    const pages: Page[] = [];
     for (let i = 0; i < count; i++) {
       pages.push(await context.newPage());
       if (i < count - 1) {
