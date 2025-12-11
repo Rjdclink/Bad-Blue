@@ -21,7 +21,8 @@ export interface UnifiedAIRequest {
   maxTokens?: number;
   preferredProvider?: string;
   preferredModel?: string;
-  context?: 'user' | 'autonomous';
+  context?: 'user' | 'autonomous' | 'retry';
+  retryCount?: number;
 }
 
 export interface UnifiedAIResponse {
@@ -481,10 +482,11 @@ export async function callAI(request: UnifiedAIRequest): Promise<UnifiedAIRespon
     // Record failure
     geigerRateLimiter.recordFailure(provider, error.message);
     
-    // If this was not a retry, try once more with a different provider
-    if (!request.preferredProvider) {
-      console.log(`[UnifiedAI] Retrying with different provider after ${provider} failed`);
-      return callAI({ ...request, preferredProvider: 'retry' });
+    // If this was not a retry, try once more with a different provider (max 2 retries)
+    const retryCount = request.retryCount || 0;
+    if (retryCount < 2) {
+      console.log(`[UnifiedAI] Retry ${retryCount + 1}/2 with different provider after ${provider} failed`);
+      return callAI({ ...request, retryCount: retryCount + 1 });
     }
     
     throw error;
