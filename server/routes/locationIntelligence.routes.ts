@@ -10,7 +10,7 @@ const analyzeRequestSchema = z.object({
   publicRecords: z.array(z.object({
     latitude: z.number().min(-90).max(90),
     longitude: z.number().min(-180).max(180),
-    source: z.enum(['social_media', 'court_record', 'property', 'voter', 'business']),
+    source: z.enum(['exif', 'social_media', 'court_record', 'property', 'voter', 'business']),
     timestamp: z.union([z.string(), z.date()]).optional(),
     confidence: z.number().min(0).max(1).optional(),
   })).optional().default([]),

@@ -170,7 +170,7 @@ export class CryptoBeamConnector {
     try {
       // Map crypto strategy to task type
       const taskType = this.mapToTaskType(params.strategyType);
-      const strategy = this.mapToCrawlerStrategy(params.strategyType);
+      const mappedCrawlerStrategy = this.mapToCrawlerStrategy(params.strategyType);
       
       // Create task for computational beam
       const task: Task = {
@@ -196,7 +196,7 @@ export class CryptoBeamConnector {
       
       // Execute with computational beam
       const result = await this.computationalBeam.executeCrawlerTask(
-        strategy,
+        mappedCrawlerStrategy,
         task.payload,
         {
           timeout: 30000, // 30 second timeout
