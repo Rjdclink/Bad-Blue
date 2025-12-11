@@ -75,6 +75,7 @@ const EtherealLexara = memo(function EtherealLexara({
 }: EtherealLexaraProps) {
   const [breathe, setBreathe] = useState(0);
   const [hairDrift, setHairDrift] = useState(0);
+  const [lipPhase, setLipPhase] = useState(0);
   
   // Gentle animations
   useEffect(() => {
@@ -83,9 +84,16 @@ const EtherealLexara = memo(function EtherealLexara({
     return () => { clearInterval(breatheId); clearInterval(hairId); };
   }, []);
   
+  // Lip animation when speaking
+  useEffect(() => {
+    if (!isSpeaking) { setLipPhase(0); return; }
+    const lipId = setInterval(() => setLipPhase(p => (p + 1) % 360), 80);
+    return () => clearInterval(lipId);
+  }, [isSpeaking]);
+  
   const breatheScale = 1 + Math.sin(breathe * Math.PI / 180) * 0.006;
   const hairOffset = Math.sin(hairDrift * Math.PI / 180) * 2;
-  const lipMove = isSpeaking ? Math.sin(Date.now() / 80) * 2 : 0;
+  const lipMove = isSpeaking ? Math.sin(lipPhase * Math.PI / 180) * 2 : 0;
   
   return (
     <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950/80 to-slate-900">
@@ -108,7 +116,7 @@ const EtherealLexara = memo(function EtherealLexara({
       </div>
       
       {/* Radial depth gradient */}
-      <div className="absolute inset-0 bg-gradient-radial from-transparent via-transparent to-slate-950/70" />
+      <div className="absolute inset-0" style={{ background: 'radial-gradient(circle at center, transparent 0%, transparent 40%, rgba(2,6,23,0.7) 100%)' }} />
       
       {/* Main avatar container */}
       <div 
@@ -286,8 +294,19 @@ export default function DomainConsultationPage() {
     initAttempted.current = true;
     
     const init = async () => {
-      try { await voiceMode.enable(); voiceMode.startListening(); } catch (e) {
-        document.addEventListener('click', async () => { try { await voiceMode.enable(); voiceMode.startListening(); } catch {} }, { once: true });
+      try { 
+        await voiceMode.enable(); 
+        voiceMode.startListening(); 
+      } catch (e) {
+        console.log('Voice auto-init deferred, waiting for user interaction');
+        document.addEventListener('click', async () => { 
+          try { 
+            await voiceMode.enable(); 
+            voiceMode.startListening(); 
+          } catch (err) {
+            console.log('Voice initialization failed:', err);
+          }
+        }, { once: true });
       }
       setTimeout(() => {
         const greeting = `Hello! I'm Lexara, your legal co-counsel. I'm here to help you with ${domainInfo?.name || 'legal'} matters. Let's start with a simple question: what type of issue are you dealing with?`;
@@ -527,11 +546,16 @@ export default function DomainConsultationPage() {
             <Card className="bg-slate-900/50 border-slate-800/50">
               <CardHeader className="py-3 px-4"><CardTitle className="text-sm text-slate-400">Case Data</CardTitle></CardHeader>
               <CardContent className="px-4 pb-4 space-y-2 text-xs">
-                {(['issueType','situation','jurisdiction','deadlines'] as const).map(f => (
-                  <div key={f} className="flex items-center gap-2">
-                    <div className={cn("h-2 w-2 rounded-full", caseData[f]?"bg-emerald-400":"bg-slate-600")}/>
-                    <span className="text-slate-400 capitalize">{f.replace(/([A-Z])/g,' $1')}</span>
-                    {caseData[f] && <CheckCircle className="h-3 w-3 text-emerald-400 ml-auto"/>}
+                {([
+                  { key: 'issueType', label: 'Issue Type' },
+                  { key: 'situation', label: 'Situation' },
+                  { key: 'jurisdiction', label: 'Jurisdiction' },
+                  { key: 'deadlines', label: 'Deadlines' }
+                ] as const).map(({ key, label }) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <div className={cn("h-2 w-2 rounded-full", caseData[key]?"bg-emerald-400":"bg-slate-600")}/>
+                    <span className="text-slate-400">{label}</span>
+                    {caseData[key] && <CheckCircle className="h-3 w-3 text-emerald-400 ml-auto"/>}
                   </div>
                 ))}
               </CardContent>
