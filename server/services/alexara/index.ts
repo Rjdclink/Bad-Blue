@@ -30,6 +30,13 @@ import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
 import { FMI, getFMI, type EvidenceInput, type EvidenceAnalysisResult } from './fmi';
 import { CADE, getCADE, type DraftRequest, type DraftResult } from './cade';
+import { 
+  InstantLegalCrawler, 
+  getInstantLegalCrawler, 
+  type LegalQuery, 
+  type LegalResult,
+  type LegalData 
+} from './instantLegalCrawler';
 
 const log = createLogger('LEXARA');
 
@@ -168,6 +175,7 @@ export class Lexara extends EventEmitter {
   // Internal subsystems
   private fmi: FMI;
   private cade: CADE;
+  private legalCrawler: InstantLegalCrawler;
 
   private constructor(config?: Partial<AlexaraConfig>) {
     super();
@@ -206,6 +214,7 @@ export class Lexara extends EventEmitter {
     // Initialize internal subsystems
     this.fmi = getFMI();
     this.cade = getCADE();
+    this.legalCrawler = getInstantLegalCrawler();
   }
 
   /**
@@ -477,6 +486,123 @@ export class Lexara extends EventEmitter {
     }
   }
 
+  // ============================================================================
+  // INSTANT LAW RETRIEVAL - "LEXARA drinks and regurgitates law on demand"
+  // ============================================================================
+
+  /**
+   * Retrieve law instantly - primary method for on-demand legal knowledge
+   * LEXARA doesn't store law; she retrieves it instantly from external sources
+   */
+  async retrieveLawInstantly(query: string, options?: {
+    jurisdiction?: string;
+    lawType?: 'statute' | 'case_law' | 'regulation' | 'constitution' | 'all';
+    priority?: 'instant' | 'thorough';
+  }): Promise<LegalResult> {
+    if (!this.status.isRunning) {
+      throw new Error('LEXARA is not running. Call initialize() first.');
+    }
+
+    log.info('Retrieving law instantly', { query: query.substring(0, 50), jurisdiction: options?.jurisdiction });
+
+    const legalQuery: LegalQuery = {
+      query,
+      jurisdiction: options?.jurisdiction,
+      lawType: options?.lawType || 'all',
+      priority: options?.priority || 'instant',
+    };
+
+    try {
+      const result = await this.legalCrawler.retrieveLaw(legalQuery);
+      
+      this.emit('law:retrieved', { 
+        query: query.substring(0, 50), 
+        resultsCount: result.data.length,
+        timeMs: result.retrievalTimeMs 
+      });
+
+      return result;
+    } catch (error) {
+      this.status.errorCount++;
+      log.error('Law retrieval failed', { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Retrieve specific statute by citation
+   */
+  async retrieveStatute(citation: string, jurisdiction?: string): Promise<LegalResult> {
+    return this.legalCrawler.retrieveStatute(citation, jurisdiction);
+  }
+
+  /**
+   * Retrieve case law by citation or name
+   */
+  async retrieveCaseLaw(citation: string, jurisdiction?: string): Promise<LegalResult> {
+    return this.legalCrawler.retrieveCaseLaw(citation, jurisdiction);
+  }
+
+  /**
+   * Retrieve regulations (CFR, state regs)
+   */
+  async retrieveRegulation(citation: string, jurisdiction?: string): Promise<LegalResult> {
+    return this.legalCrawler.retrieveRegulation(citation, jurisdiction);
+  }
+
+  /**
+   * Retrieve constitutional provisions
+   */
+  async retrieveConstitutional(query: string, jurisdiction?: string): Promise<LegalResult> {
+    return this.legalCrawler.retrieveConstitutional(query, jurisdiction);
+  }
+
+  /**
+   * Batch retrieve multiple legal queries (optimized parallel processing)
+   */
+  async batchRetrieveLaw(queries: Array<{
+    query: string;
+    jurisdiction?: string;
+    lawType?: 'statute' | 'case_law' | 'regulation' | 'constitution' | 'all';
+  }>): Promise<LegalResult[]> {
+    const legalQueries: LegalQuery[] = queries.map(q => ({
+      query: q.query,
+      jurisdiction: q.jurisdiction,
+      lawType: q.lawType || 'all',
+      priority: 'instant' as const,
+    }));
+
+    return this.legalCrawler.batchRetrieve(legalQueries);
+  }
+
+  /**
+   * Stealth law retrieval - low profile for sensitive queries
+   */
+  async stealthRetrieveLaw(query: string, options?: {
+    jurisdiction?: string;
+    lawType?: 'statute' | 'case_law' | 'regulation' | 'constitution' | 'all';
+  }): Promise<LegalResult> {
+    const legalQuery: LegalQuery = {
+      query,
+      jurisdiction: options?.jurisdiction,
+      lawType: options?.lawType || 'all',
+      priority: 'instant',
+    };
+
+    return this.legalCrawler.stealthRetrieveLaw(legalQuery);
+  }
+
+  /**
+   * Get legal crawler status
+   */
+  getLegalCrawlerStatus() {
+    return this.legalCrawler.getStatus();
+  }
+
+  // ============================================================================
+  // ENHANCED ORCHESTRATION WITH INSTANT LAW
+  // ============================================================================
+
   /**
    * Draft legal document with evidence analysis
    * Full LEXARA orchestration: F.M.I. → Legal Knowledge → C.A.D.E.
@@ -490,15 +616,17 @@ export class Lexara extends EventEmitter {
     documentType: string;
     tone?: string;
     userName?: string;
+    retrieveLaw?: boolean; // New: automatically retrieve relevant law
   }): Promise<{
     evidenceResults: EvidenceAnalysisResult[];
+    legalResults?: LegalResult;
     draftResult: DraftResult;
   }> {
     if (!this.status.isRunning) {
       throw new Error('LEXARA is not running. Call initialize() first.');
     }
 
-    log.info('Full LEXARA orchestration: F.M.I. → C.A.D.E.', { matterType: params.matterType });
+    log.info('Full LEXARA orchestration: F.M.I. → Legal Knowledge → C.A.D.E.', { matterType: params.matterType });
 
     // Step 1: Analyze all evidence through F.M.I.
     const evidenceResults: EvidenceAnalysisResult[] = [];
@@ -513,7 +641,35 @@ export class Lexara extends EventEmitter {
       }
     }
 
-    // Step 2: Build draft request with evidence analysis
+    // Step 2: Retrieve relevant law instantly (LEXARA drinks law on demand)
+    let legalResults: LegalResult | undefined;
+    if (params.retrieveLaw !== false) {
+      try {
+        legalResults = await this.retrieveLawInstantly(
+          `${params.matterType} ${params.userGoal} ${params.situation.substring(0, 100)}`,
+          {
+            jurisdiction: params.jurisdiction,
+            lawType: 'all',
+            priority: 'instant',
+          }
+        );
+        log.info('Retrieved relevant law for draft', { 
+          resultsCount: legalResults.data.length,
+          timeMs: legalResults.retrievalTimeMs 
+        });
+      } catch (error) {
+        log.warn('Law retrieval failed, continuing without', { error });
+      }
+    }
+
+    // Step 3: Build draft request with evidence analysis and law snippets
+    const lawSnippets = legalResults?.data.map(d => ({
+      citation: d.citation,
+      text: d.excerpt || d.content.substring(0, 500),
+      relevance: d.relevanceScore,
+      source: legalResults?.source || 'instant-legal-crawler',
+    })) || [];
+
     const draftRequest: DraftRequest = {
       jurisdiction: params.jurisdiction,
       matterType: params.matterType,
@@ -521,12 +677,13 @@ export class Lexara extends EventEmitter {
       userGoal: params.userGoal,
       factsSummary: params.situation,
       evidenceAnalysis: evidenceResults,
+      lawSnippets, // Include retrieved law
       tonePreference: (params.tone as any) || 'balanced',
       documentType: params.documentType as any,
       userName: params.userName,
     };
 
-    // Step 3: Generate document through C.A.D.E.
+    // Step 4: Generate document through C.A.D.E.
     const draftResult = await this.cade.draftDocument(draftRequest);
 
     // Update status
@@ -541,9 +698,13 @@ export class Lexara extends EventEmitter {
       successfulDrafts: cadeStatus.successfulDrafts,
     };
 
-    this.emit('orchestration:completed', { evidenceCount: evidenceResults.length, draftId: draftResult.draftId });
+    this.emit('orchestration:completed', { 
+      evidenceCount: evidenceResults.length, 
+      lawCount: legalResults?.data.length || 0,
+      draftId: draftResult.draftId 
+    });
     
-    return { evidenceResults, draftResult };
+    return { evidenceResults, legalResults, draftResult };
   }
 
   /**
@@ -602,6 +763,7 @@ export class Lexara extends EventEmitter {
     }
     FMI.reset();
     CADE.reset();
+    InstantLegalCrawler.reset();
   }
 }
 
@@ -617,5 +779,8 @@ export { Lexara as Alexara };
 // Re-export F.M.I. and C.A.D.E. types (not instances - LEXARA controls them)
 export type { EvidenceInput, EvidenceAnalysisResult } from './fmi';
 export type { DraftRequest, DraftResult, DocumentDraftType, TonePreference } from './cade';
+
+// Re-export Instant Legal Crawler types (LEXARA controls it)
+export type { LegalQuery, LegalResult, LegalData } from './instantLegalCrawler';
 
 export default Lexara;
