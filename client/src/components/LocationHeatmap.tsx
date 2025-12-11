@@ -30,8 +30,22 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
   const [tilesLoaded, setTilesLoaded] = useState(false);
   const [coordinatesReady, setCoordinatesReady] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   const { radius = 25, blur = 15, maxZoom = 18 } = config;
+
+  // Retry mechanism for map initialization
+  const handleRetry = useCallback(() => {
+    if (mapRef.current) {
+      mapRef.current.remove();
+      mapRef.current = null;
+    }
+    setMapStatus('initializing');
+    setErrorMessage(null);
+    setTilesLoaded(false);
+    setCoordinatesReady(false);
+    setRetryCount(prev => prev + 1);
+  }, []);
 
   // Step 1: Validate coordinates are ready
   useEffect(() => {
@@ -140,9 +154,9 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
     } catch (error) {
       console.error('[LocationHeatmap] Map initialization failed:', error);
       setMapStatus('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to initialize map. Please try refreshing the page.');
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to initialize map. Please try again.');
     }
-  }, [coordinatesReady, center, zoom, satelliteView]);
+  }, [coordinatesReady, center, zoom, satelliteView, retryCount]);
 
   // Step 4: Add data layers only after map is ready
   useEffect(() => {
@@ -193,10 +207,10 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
               {errorMessage || 'An unexpected error occurred while loading the map.'}
             </p>
             <button 
-              onClick={() => window.location.reload()} 
+              onClick={handleRetry} 
               className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
             >
-              Refresh Page
+              Try Again
             </button>
           </div>
         </div>

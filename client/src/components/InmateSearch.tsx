@@ -44,7 +44,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 
 interface InmateSearchProps {
-  onBack?: () => void;
+  // No props needed - component handles its own state
 }
 
 interface ChargeInfo {
@@ -112,7 +112,7 @@ interface StateInfo {
   searchUrl?: string;
 }
 
-export default function InmateSearch({ onBack }: InmateSearchProps) {
+export default function InmateSearch() {
   const { toast } = useToast();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
