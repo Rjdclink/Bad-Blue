@@ -327,6 +327,7 @@ export class UltraLowLatencyExecutor {
    */
   private async getChainIdNumber(chain: ChainId): Promise<number> {
     const chainIds: Record<ChainId, number> = {
+      ethereum: 1,
       polygon: 137,
       bsc: 56,
       avalanche: 43114,

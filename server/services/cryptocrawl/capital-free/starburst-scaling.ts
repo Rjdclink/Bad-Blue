@@ -500,6 +500,7 @@ export class StarburstScalingSystem {
    */
   getActiveCrawlersByChain(): Record<ChainId, number> {
     const counts: Record<ChainId, number> = {
+      ethereum: 0,
       polygon: 0,
       bsc: 0,
       avalanche: 0,

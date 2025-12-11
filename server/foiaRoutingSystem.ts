@@ -4,7 +4,6 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { performEnhancedLegalSearch, type LegalSearchResult } from './enhancedLegalSearch';
-import { z } from 'zod';
 import { 
   emailDiscoveryService,
   type FOIAContact,
@@ -15,7 +14,6 @@ import {
   type CrawlConfig,
   type ExtractionSchema
 } from './services/legalIntelligence';
-import { z } from 'zod';
 
 const ADMIN_FALLBACK_EMAIL = 'contact.badblue@gmail.com';
 

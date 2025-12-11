@@ -29,11 +29,12 @@ export class DynamicScalePhysics {
 
   // Regional mapping for optimal latency
   private readonly chainRegions: Record<ChainId, string> = {
-    polygon: 'us-east-1',      // Mumbai/Polygon - US East
-    bsc: 'ap-southeast-1',     // BSC - Singapore
-    avalanche: 'us-west-2',    // Avalanche - US West
-    arbitrum: 'us-east-1',     // Arbitrum - US East
-    optimism: 'us-east-1'      // Optimism - US East
+    ethereum: 'us-east-1',      // Ethereum - US East
+    polygon: 'us-east-1',       // Mumbai/Polygon - US East
+    bsc: 'ap-southeast-1',      // BSC - Singapore
+    avalanche: 'us-west-2',     // Avalanche - US West
+    arbitrum: 'us-east-1',      // Arbitrum - US East
+    optimism: 'us-east-1'       // Optimism - US East
   };
 
   // Cost per instance per hour by profile

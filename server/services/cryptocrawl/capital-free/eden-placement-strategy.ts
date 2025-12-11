@@ -40,6 +40,15 @@ export interface PlacementResult {
 
 // Optimal node placement configurations
 const PLACEMENT_CONFIGS: Record<ChainId, NodePlacement[]> = {
+  ethereum: [
+    // RPC Endpoints for Ethereum mainnet
+    { id: 'eth-rpc-1', name: 'Alchemy Ethereum', chain: 'ethereum', type: 'rpc_endpoint', provider: 'Alchemy', latency: 45, priority: 9, isActive: true, lastHealthCheck: Date.now() },
+    { id: 'eth-rpc-2', name: 'Infura Ethereum', chain: 'ethereum', type: 'rpc_endpoint', provider: 'Infura', latency: 50, priority: 8, isActive: true, lastHealthCheck: Date.now() },
+    // Block Builders
+    { id: 'eth-builder-1', name: 'Flashbots Ethereum', chain: 'ethereum', type: 'block_builder', provider: 'Flashbots', latency: 20, priority: 10, isActive: true, lastHealthCheck: Date.now() },
+    // Flash Loan Providers
+    { id: 'eth-flash-1', name: 'Aave V3 Ethereum', chain: 'ethereum', type: 'flash_loan_provider', provider: 'Aave', latency: 35, priority: 9, isActive: true, lastHealthCheck: Date.now() },
+  ],
   polygon: [
     // RPC Endpoints
     { id: 'poly-rpc-1', name: 'Alchemy Polygon', chain: 'polygon', type: 'rpc_endpoint', provider: 'Alchemy', latency: 50, priority: 9, isActive: true, lastHealthCheck: Date.now() },
@@ -362,6 +371,7 @@ export class EdenPlacementStrategy {
     const activePlacements = Array.from(this.placements.values()).filter(p => p.isActive);
     
     const latencyByChain: Record<ChainId, number> = {
+      ethereum: 0,
       polygon: 0,
       bsc: 0,
       avalanche: 0,
@@ -370,6 +380,7 @@ export class EdenPlacementStrategy {
     };
 
     const countByChain: Record<ChainId, number> = {
+      ethereum: 0,
       polygon: 0,
       bsc: 0,
       avalanche: 0,

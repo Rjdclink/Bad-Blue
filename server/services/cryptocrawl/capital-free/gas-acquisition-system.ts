@@ -41,6 +41,9 @@ export interface GasAcquisitionResult {
 
 // Gas pool configurations for each chain
 const GAS_POOLS: Record<ChainId, GasPoolConfig[]> = {
+  ethereum: [
+    { chain: 'ethereum', poolAddress: '0xGasPool1Eth', availableGas: 2000, minProfitShare: 6, maxGasPerRequest: 100, isActive: true },
+  ],
   polygon: [
     { chain: 'polygon', poolAddress: '0xGasPool1Polygon', availableGas: 1000, minProfitShare: 5, maxGasPerRequest: 50, isActive: true },
     { chain: 'polygon', poolAddress: '0xGasPool2Polygon', availableGas: 500, minProfitShare: 3, maxGasPerRequest: 25, isActive: true },
@@ -62,6 +65,7 @@ const GAS_POOLS: Record<ChainId, GasPoolConfig[]> = {
 
 // Gas price estimates (in USD) per chain
 const GAS_COST_ESTIMATES: Record<ChainId, number> = {
+  ethereum: 0.50, // $0.50 per transaction
   polygon: 0.01, // $0.01 per transaction
   bsc: 0.05,
   avalanche: 0.03,
@@ -269,6 +273,7 @@ export class GasAcquisitionSystem {
    */
   getTotalAvailableGas(): Record<ChainId, number> {
     const available: Record<ChainId, number> = {
+      ethereum: 0,
       polygon: 0,
       bsc: 0,
       avalanche: 0,

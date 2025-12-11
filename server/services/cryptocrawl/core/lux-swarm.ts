@@ -3,7 +3,7 @@
 // No locks, no message queues, no coordination overhead
 // ENHANCED v2.0: Added performance metrics, batch operations, priority queuing
 
-type ChainId = 'polygon' | 'bsc' | 'avalanche' | 'arbitrum' | 'optimism';
+export type ChainId = 'polygon' | 'bsc' | 'avalanche' | 'arbitrum' | 'optimism' | 'ethereum';
 
 interface Opportunity {
   asset: string;
@@ -51,7 +51,7 @@ class LuxSwarm {
   private static state: LuxSignal = {
     opportunities: [],
     agentStates: new Map(),
-    blockHeight: { polygon: 0, bsc: 0, avalanche: 0, arbitrum: 0, optimism: 0 },
+    blockHeight: { polygon: 0, bsc: 0, avalanche: 0, arbitrum: 0, optimism: 0, ethereum: 0 },
     claimed: new Set(),
     timestamp: Date.now()
   };
@@ -294,7 +294,7 @@ class LuxSwarm {
     this.state = {
       opportunities: [],
       agentStates: new Map(),
-      blockHeight: { polygon: 0, bsc: 0, avalanche: 0, arbitrum: 0, optimism: 0 },
+      blockHeight: { polygon: 0, bsc: 0, avalanche: 0, arbitrum: 0, optimism: 0, ethereum: 0 },
       claimed: new Set(),
       timestamp: Date.now()
     };
@@ -314,4 +314,4 @@ class LuxSwarm {
   }
 }
 
-export { LuxSwarm, type LuxSignal, type Opportunity, type AgentState, type ChainId, type SwarmMetrics };
+export { LuxSwarm, type LuxSignal, type Opportunity, type AgentState, type SwarmMetrics };

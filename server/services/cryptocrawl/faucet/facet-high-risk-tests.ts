@@ -13,6 +13,7 @@ import {
   type EliteStrategyConfig,
 } from './facet-simulation';
 import { randomUUID } from 'crypto';
+import type { ChainId } from '../eden/types';
 
 // ============================================================================
 // HIGH-RISK REAL-WORLD SCENARIOS
@@ -429,8 +430,8 @@ export const HIGH_RISK_SCENARIOS: HighRiskScenario[] = [
 
 export class HighRiskSimulationEngine extends FacetSimulationEngine {
   private scenarioContext: ScenarioContext | null = null;
-  private exchanges = ['binance', 'coinbase', 'kraken', 'kucoin', 'bybit', 'okx', 'gate', 'gemini'];
-  private chains = ['polygon', 'arbitrum', 'optimism', 'bsc', 'avalanche'];
+  private hrExchanges = ['binance', 'coinbase', 'kraken', 'kucoin', 'bybit', 'okx', 'gate', 'gemini'];
+  private hrChains: ChainId[] = ['polygon', 'arbitrum', 'optimism', 'bsc', 'avalanche'];
   private basePairs = ['ETH/USDT', 'BTC/USDT', 'ETH/USDC', 'BTC/USDC', 'MATIC/USDT'];
   private stablePairs = ['USDT/USDC', 'USDC/DAI', 'USDT/DAI', 'BUSD/USDT', 'USDC/BUSD'];
 
@@ -459,7 +460,7 @@ export class HighRiskSimulationEngine extends FacetSimulationEngine {
     let currentHour = ctx.timeRestrictions.start;
 
     // Filter available exchanges
-    const availableExchanges = this.exchanges.filter(
+    const availableExchanges = this.hrExchanges.filter(
       ex => !ctx.exchangeRestrictions.includes(ex)
     );
 
@@ -546,7 +547,7 @@ export class HighRiskSimulationEngine extends FacetSimulationEngine {
         id: `sim-${randomUUID().split('-')[0]}`,
         amount: Math.round(amount * 100) / 100,
         exchange: selectedExchange,
-        chain: this.chains[Math.floor(Math.random() * this.chains.length)],
+        chain: this.hrChains[Math.floor(Math.random() * this.hrChains.length)],
         timestamp,
         pair,
         type: Math.random() > 0.3 ? 'swap' : (Math.random() > 0.5 ? 'buy' : 'sell'),
@@ -590,8 +591,8 @@ export class HighRiskSimulationEngine extends FacetSimulationEngine {
       transactions.push({
         id: `sim-${randomUUID().split('-')[0]}`,
         amount: Math.round(amount * 100) / 100,
-        exchange: this.exchanges[Math.floor(Math.random() * this.exchanges.length)],
-        chain: this.chains[Math.floor(Math.random() * this.chains.length)],
+        exchange: this.hrExchanges[Math.floor(Math.random() * this.hrExchanges.length)],
+        chain: this.hrChains[Math.floor(Math.random() * this.hrChains.length)],
         timestamp: Date.now() + transactions.length * 120000,
         pair: this.basePairs[Math.floor(Math.random() * this.basePairs.length)],
         type: 'swap',

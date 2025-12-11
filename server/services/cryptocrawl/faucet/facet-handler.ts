@@ -730,6 +730,7 @@ export class FacetHandler {
 
     // Chain-specific risk (some chains have more scrutiny)
     const chainRisk: Record<ChainId, number> = {
+      ethereum: 8,
       polygon: 5,
       bsc: 10,
       avalanche: 5,
