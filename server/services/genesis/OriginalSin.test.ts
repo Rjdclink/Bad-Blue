@@ -76,7 +76,7 @@ export class OriginalSinTestSuite {
         testName: 'should apply original sin at birth',
         passed,
         details: passed 
-          ? `Greed: ${crawler.greed.toFixed(3)}, Curiosity: ${crawler.curiosity.toFixed(3)}, Applied: true`
+          ? `Greed: ${crawler.greed!.toFixed(3)}, Curiosity: ${crawler.curiosity!.toFixed(3)}, Applied: true`
           : 'Failed to apply original sin correctly',
         duration: Date.now() - start,
       };

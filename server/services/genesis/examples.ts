@@ -268,7 +268,7 @@ async function demonstrateCompleteLifecycle() {
   const parent2: CrawlerWithSin = { id: 'parent', generation: 1, greed: 0.20 };
   const child: CrawlerWithSin = { id: 'child-005', generation: 1 };
   await originalSin.inheritFromParents(child, crawler, parent2);
-  console.log(`   Child greed: ${child.greed.toFixed(3)} (blend of parents)`);
+  console.log(`   Child greed: ${child.greed!.toFixed(3)} (blend of parents)`);
   console.log(`   Child generation: ${child.generation} (sin intensifies)`);
   
   console.log('\n5. Result:');

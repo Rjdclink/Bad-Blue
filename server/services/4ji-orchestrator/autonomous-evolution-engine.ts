@@ -451,7 +451,7 @@ export class ControlledOptimizationScheduler {
     }
 
     // Calculate learning/evolution velocity
-    const hoursSinceStart = Math.max(1, (Date.now() - this.lastEvolutionCheck.getTime()) / 3600000);
+    const hoursSinceStart = Math.max(1, (Date.now() - this.lastOptimizationCheck.getTime()) / 3600000);
     const totalLearning = CreativePromptEngine.getLearningTable('legal').length +
                          CreativePromptEngine.getLearningTable('crypto').length;
     const totalEvolution = CreativePromptEngine.getEvolutionTable('legal').length +

@@ -21,9 +21,10 @@ interface UploadedFile {
 }
 
 interface FileUploadProps {
-  associatedWith?: 'consultation' | 'document';
+  associatedWith?: 'consultation' | 'document' | 'evidence-analysis';
   lawType?: string;
   onFilesUploaded?: (files: UploadedFile[]) => void;
+  onUploadComplete?: (fileId: string) => void;
   maxFiles?: number;
   maxSizeMB?: number;
 }
@@ -32,6 +33,7 @@ export function FileUpload({
   associatedWith, 
   lawType, 
   onFilesUploaded,
+  onUploadComplete,
   maxFiles = 10,
   maxSizeMB = 50 
 }: FileUploadProps) {
