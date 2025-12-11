@@ -326,7 +326,9 @@ Be precise and accurate. Consider the task complexity and what AI capabilities a
             requiresVerification: Boolean(parsed.requiresVerification ?? true),
             estimatedTokens: Number(parsed.estimatedTokens) || DEFAULT_ESTIMATED_TOKENS,
             confidence: Number(parsed.confidence) || 0.7,
-            intent: String(parsed.intent || 'Execute user directive'),
+            intent: (typeof parsed.intent === 'string' && parsed.intent.trim().length > 0)
+              ? parsed.intent
+              : 'Execute user directive',
           };
         } catch (jsonError: any) {
           logger.warn('[MCC] JSON parsing failed, using heuristic parsing:', jsonError.message);

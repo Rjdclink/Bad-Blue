@@ -26,8 +26,8 @@
  * - If any step fails, ENTIRE bundle reverts - zero loss
  */
 
-import { ethers, Contract, Wallet, providers, BigNumber } from 'ethers';
-import { FlashbotsBundleProvider, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction, FlashbotsTransactionResponse } from '@flashbots/ethers-provider-bundle';
+import { ethers, Wallet, providers, BigNumber } from 'ethers';
+import { FlashbotsBundleProvider, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger';
 
 // Type for our bundle transactions

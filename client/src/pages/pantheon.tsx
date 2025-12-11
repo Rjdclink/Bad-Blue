@@ -119,7 +119,7 @@ export default function PantheonPage() {
         const partialReport: PeopleSearchReport = {
           identitySummary: {
             name: config.name,
-            verificationStatus: 'Timeout - Partial Data',
+            verificationStatus: 'Timeout - No Data Collected',
           },
           contactInformation: [],
           socialMediaPresence: [],
@@ -128,12 +128,12 @@ export default function PantheonPage() {
           publicRecords: [],
           onlineMentions: [],
           riskAndReputation: [],
-          summary: `Search timed out after ${Math.floor(timeout / 1000)} seconds. This is a partial report based on data collected before the timeout. The search may have been incomplete due to time constraints. Consider running a deeper search level for more comprehensive results.`,
-          confidenceScore: 25,
+          summary: `Search timed out after ${Math.floor(timeout / 1000)} seconds before any data could be collected. No data was retrieved due to the timeout. Consider running a deeper search level with more time for comprehensive results.`,
+          confidenceScore: 0,
           sources: [{
-            name: 'Timeout Partial Report',
-            data: { timeout: timeout, searchDepth: config.searchDepth },
-            confidence: 25,
+            name: 'Timeout - No Data',
+            data: { timeout: timeout, searchDepth: config.searchDepth, dataCollected: false },
+            confidence: 0,
             timestamp: new Date(),
           }],
         };
@@ -142,7 +142,7 @@ export default function PantheonPage() {
         
         toast({
           title: "Search Timed Out",
-          description: "Partial report generated with available data",
+          description: "No data was collected before the timeout. Try a longer search duration.",
           variant: "default",
         });
       } else {

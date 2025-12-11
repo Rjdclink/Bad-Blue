@@ -183,6 +183,11 @@ export class PeopleSearchAggregator {
       
       console.log(`[PeopleSearchAggregator] Successfully fused ${allRecords.length} records from ${successfulSources} sources`);
       
+      // Return browser to pool on success
+      if (browser) {
+        this.returnBrowserToPool(browser);
+      }
+      
       return fusedRecord;
     } catch (error) {
       // Return browser to pool on error
@@ -368,8 +373,13 @@ export class PeopleSearchAggregator {
   private updateResponseTime(startTime: number): void {
     const responseTime = Date.now() - startTime;
     const totalSearches = this.metrics.successfulSearches + this.metrics.failedSearches;
-    this.metrics.averageResponseTimeMs = 
-      (this.metrics.averageResponseTimeMs * (totalSearches - 1) + responseTime) / totalSearches;
+    // Guard against division by zero
+    if (totalSearches > 0) {
+      this.metrics.averageResponseTimeMs = 
+        (this.metrics.averageResponseTimeMs * (totalSearches - 1) + responseTime) / totalSearches;
+    } else {
+      this.metrics.averageResponseTimeMs = responseTime;
+    }
   }
 
   /**

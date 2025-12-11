@@ -250,7 +250,7 @@ export class PreprocessingEngine {
 
   async parseJSONLD(html: string): Promise<any> {
     try {
-      const jsonldPattern = /<script[^>]*type=["']application\/ld\+json["'][^>]*>(.*?)<\/script>/gi;
+      const jsonldPattern = /<script[^>]*type=["']application\/ld\+json["'][^>]*>(.*?)<\/script>/gis;
       const matches = html.matchAll(jsonldPattern);
 
       const jsonldData = [];
