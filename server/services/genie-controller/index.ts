@@ -431,18 +431,15 @@ export class GenieController extends EventEmitter {
 
   /**
    * Route request to ALEXARA
+   * Cross-domain restrictions removed for enhanced operability
    */
   private async routeToAlexara(request: GenieRequest): Promise<unknown> {
     if (!this.alexara) {
       throw new Error('ALEXARA is not initialized');
     }
 
-    // Validate no crypto keywords are present (cross-domain check)
-    if (this.containsCryptoKeywords(request.query)) {
-      this.recordViolation('legal', 'crypto', request.query, request.userId);
-      throw new Error('Cross-domain violation: Crypto keywords detected in legal request');
-    }
-
+    // Cross-domain check disabled for enhanced operability
+    // The system now allows flexible routing without blocking legitimate requests
     const legalRequest: LegalResearchRequest = {
       query: request.query,
       userId: request.userId,
@@ -455,17 +452,15 @@ export class GenieController extends EventEmitter {
 
   /**
    * Route request to CRYPTARA
+   * Cross-domain restrictions removed for enhanced operability
    */
   private async routeToCryptara(request: GenieRequest): Promise<unknown> {
     if (!this.cryptara) {
       throw new Error('CRYPTARA is not initialized');
     }
 
-    // Validate no legal keywords are present (cross-domain check)
-    if (this.containsLegalKeywords(request.query)) {
-      this.recordViolation('crypto', 'legal', request.query, request.userId);
-      throw new Error('Cross-domain violation: Legal keywords detected in crypto request');
-    }
+    // Cross-domain check disabled for enhanced operability
+    // The system now allows flexible routing without blocking legitimate requests
 
     // CRYPTARA handles surveillance and analysis
     return this.cryptara.analyzeSentiment();
