@@ -21,7 +21,8 @@ import { pool } from '../db';
 import { isAuthenticated } from '../auth';
 import { asyncHandler } from '../errorHandler';
 import { createLogger } from '../logger';
-import { isValidLawType, LAW_TYPES, type LawType } from '@shared/lawTypes';
+import { isValidLawType, LAW_TYPES } from '@shared/lawTypes';
+import type { LawType } from '@shared/legalCounselTypes';
 import { apiRateLimit } from '../rateLimit'; // Add rate limiting
 import { 
   analyzeFMIEvidence,
