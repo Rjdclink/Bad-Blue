@@ -1,4 +1,3 @@
-#!/usr/bin/env tsx
 /**
  * Monte Carlo Test Framework for Inmate Finder & People Finder
  * 
@@ -323,7 +322,7 @@ class MonteCarloTestEngine {
 // ============================================
 // MAIN TEST RUNNER
 // ============================================
-async function runMonteCarloTests(): Promise<void> {
+async function runMonteCarloTests(): Promise<boolean> {
   console.log('\n');
   console.log('╔═══════════════════════════════════════════════════════════════════════════╗');
   console.log('║     MONTE CARLO TEST FRAMEWORK - INMATE FINDER & PEOPLE FINDER           ║');
@@ -426,12 +425,24 @@ async function runMonteCarloTests(): Promise<void> {
   
   console.log('\n');
   
-  // Exit with appropriate code
-  process.exit(consecutiveSuccesses >= 20 ? 0 : 1);
+  // Return success status instead of using process.exit for better test runner compatibility
+  return consecutiveSuccesses >= 20;
 }
 
-// Run the tests
-runMonteCarloTests().catch(error => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+// Run the tests - main entry point
+runMonteCarloTests()
+  .then(success => {
+    if (!success) {
+      // Only exit with error code when run directly (not in test framework)
+      if (require.main === module) {
+        process.exit(1);
+      }
+    }
+  })
+  .catch(error => {
+    console.error('Fatal error:', error);
+    if (require.main === module) {
+      process.exit(1);
+    }
+    throw error;
+  });

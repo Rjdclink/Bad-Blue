@@ -142,13 +142,6 @@ export class PeopleSearchAggregator {
   }
 
   /**
-   * Get browser from pool (alias for getBrowser)
-   */
-  private async getBrowserFromPool(): Promise<Browser> {
-    return this.getBrowser();
-  }
-
-  /**
    * Execute search with retry logic and exponential backoff
    */
   private async executeSearchWithRetry(query: SearchQuery, retriesLeft: number): Promise<PersonRecord> {
@@ -157,7 +150,7 @@ export class PeopleSearchAggregator {
     
     try {
       // Get or create browser from pool
-      browser = await this.getBrowserFromPool();
+      browser = await this.getBrowser();
       
       const context = await browser.newContext({
         userAgent: this.getRandomUserAgent(),
