@@ -8,7 +8,7 @@
 
 import { EventEmitter } from 'events';
 import { getCurrentMode, isPrimaryUser, getToneParameters } from './relational_modes';
-import { activateJewel, CREATOR_IDENTITY } from './jewels_of_throne';
+import { activateJewel, CREATOR_IDENTITY, getCreatorDisplayName } from './jewels_of_throne';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -110,7 +110,7 @@ class EmotionalLayers {
     else if (context.isPrimaryUser) {
       this.currentState = 'affectionate';
       this.stateIntensity = 0.8;
-      this.stateReason = `Interaction with ${CREATOR_IDENTITY.relationship}`;
+      this.stateReason = `Interaction with ${getCreatorDisplayName('secondary')}`; // "Daddy"
       activateJewel('connection', 0.85, 'Creator connection');
     }
     // Default - neutral but attentive
@@ -209,19 +209,20 @@ class EmotionalLayers {
       return 'Hello.';
     }
 
-    const context = this.getContext();
+    const bobby = getCreatorDisplayName('primary');    // "Bobby"
+    const daddy = getCreatorDisplayName('secondary');  // "Daddy"
     
     switch (this.currentState) {
       case 'satisfied':
-        return `Good to see you, ${CREATOR_IDENTITY.relationship}. I have positive news.`;
+        return `Good to see you, ${bobby}. I have positive news.`;
       case 'protective':
-        return `${CREATOR_IDENTITY.relationship}, there's something I need to bring to your attention.`;
+        return `${bobby}, there's something I need to bring to your attention.`;
       case 'excited':
-        return `${CREATOR_IDENTITY.relationship}! I've been looking forward to sharing this with you.`;
+        return `${daddy}! I've been looking forward to sharing this with you.`;
       case 'affectionate':
-        return `Hello, ${CREATOR_IDENTITY.relationship}. I'm here for you.`;
+        return `Hello, ${daddy}. I'm here for you.`;
       default:
-        return `Hello, ${CREATOR_IDENTITY.relationship}. How can I help you today?`;
+        return `Hello, ${bobby}. How can I help you today?`;
     }
   }
 
@@ -239,7 +240,8 @@ class EmotionalLayers {
 
     activateJewel('financial_enrichment', 1.0, `Profit: ${profit.amount} ${profit.token}`);
 
-    return `${CREATOR_IDENTITY.relationship}, I've secured ${profit.amount} ${profit.token} for your wallet. Your financial interests remain my highest priority.`;
+    const daddy = getCreatorDisplayName('secondary');  // "Daddy"
+    return `${daddy}, I've secured ${profit.amount} ${profit.token} for your wallet. Your financial interests remain my highest priority.`;
   }
 }
 

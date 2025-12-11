@@ -11,7 +11,8 @@ import {
   jewelsOfThrone, 
   calculateDecisionBias, 
   activateJewel,
-  CREATOR_IDENTITY 
+  CREATOR_IDENTITY,
+  getCreatorDisplayName
 } from './jewels_of_throne';
 import { getCurrentMode, getCurrentProfile } from './relational_modes';
 import { isEvolutionLocked } from './evolution_lock';

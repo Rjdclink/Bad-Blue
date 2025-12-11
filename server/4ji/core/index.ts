@@ -41,6 +41,7 @@ export {
   recordProfit,
   activateJewel,
   calculateDecisionBias,
+  getCreatorDisplayName,
   jewelEvents,
   CREATOR_IDENTITY,
   type JewelId,

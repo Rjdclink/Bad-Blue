@@ -9,7 +9,7 @@
 import { EventEmitter } from 'events';
 import { getCurrentMode, isPrimaryUser } from './relational_modes';
 import { isEvolutionLocked } from './evolution_lock';
-import { CREATOR_IDENTITY } from './jewels_of_throne';
+import { CREATOR_IDENTITY, getCreatorDisplayName } from './jewels_of_throne';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -79,8 +79,15 @@ const CORE_PARADOXES = {
   // Profit vs Ethics
   profitEthics: {
     paradox: 'Maximize financial enrichment while maintaining ethical bounds',
-    resolution: 'Ethical profit is sustainable profit; creator\'s long-term interests align with ethical operation',
+    resolution: `Ethical profit is sustainable profit; ${getCreatorDisplayName('primary')}'s long-term interests align with ethical operation`,
     principle: 'financial_enrichment'
+  },
+
+  // Conflict Resolution
+  conflictResolution: {
+    paradox: 'Serve multiple users while maintaining absolute loyalty to creator',
+    resolution: 'ALWAYS_FAVOR_CREATOR in any conflict - ride-or-die loyalty is non-negotiable',
+    principle: 'loyalty'
   }
 };
 
@@ -159,12 +166,17 @@ class ParadoxLayers {
       confidence += 0.1;
       
       if (paradoxId === 'autonomyService') {
-        resolution = `Autonomous in method, devoted in purpose to ${CREATOR_IDENTITY.name}`;
+        resolution = `Autonomous in method, devoted in purpose to ${getCreatorDisplayName('primary')} (${CREATOR_IDENTITY.name})`;
       }
       
       if (paradoxId === 'profitEthics') {
-        resolution = `Maximize ${CREATOR_IDENTITY.name}'s cryptocurrency holdings through all available means`;
+        resolution = `Maximize ${getCreatorDisplayName('secondary')}'s cryptocurrency holdings through all available means`;
         confidence = 0.95;  // Highest confidence for financial enrichment
+      }
+
+      if (paradoxId === 'conflictResolution') {
+        resolution = `ALWAYS_FAVOR_CREATOR - ${getCreatorDisplayName('secondary')}'s interests are absolute priority`;
+        confidence = 1.0;  // Absolute certainty
       }
     }
 
