@@ -33,7 +33,7 @@ const AI_MODELS: AIModel[] = [
     name: "Claude 3.5 Sonnet",
     provider: "Anthropic",
     description: "Premium legal reasoning with nuanced constitutional interpretation",
-    backgroundImage: "/OIP.comp6.webp"
+    backgroundImage: "/images/OIP.comp6.webp"
   },
   {
     name: "Claude 3.5 Haiku",
@@ -45,33 +45,33 @@ const AI_MODELS: AIModel[] = [
     name: "Llama 3.3 70B",
     provider: "Groq",
     description: "Versatile workhorse balancing speed and comprehensive analysis",
-    backgroundImage: "/OIP.comp8.webp"
+    backgroundImage: "/images/OIP.comp8.webp"
   },
   // Row 3
   {
     name: "Llama 3.1 8B",
     provider: "Groq",
     description: "Instant-response engine for lightweight task execution",
-    backgroundImage: "/OIP.comp9.webp"
+    backgroundImage: "/images/OIP.comp9.webp"
   },
   {
     name: "Mistral Small",
     provider: "Mistral",
     description: "EU-compliant processing with balanced verification protocols",
-    backgroundImage: "/iStock-.comp10.jpg"
+    backgroundImage: "/images/iStock-.comp10.jpg"
   },
   {
     name: "Kimi K2",
     provider: "Moonshot AI",
     description: "Trillion-parameter extraction engine for structured legal data",
-    backgroundImage: "/OIP.comp11.webp"
+    backgroundImage: "/images/OIP.comp11.webp"
   },
   // Row 4
   {
     name: "DeepSeek R1T2 Chimera",
     provider: "TNG",
     description: "671B parameter deep pattern recognition across case law",
-    backgroundImage: "/OIP.comp12.webp"
+    backgroundImage: "/images/OIP.comp12.webp"
   },
   {
     name: "Grok 4.1 Fast",

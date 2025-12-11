@@ -151,6 +151,7 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
 
       videoStreamRef.current = stream;
       
+      // Set stream on video element if it exists
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -159,7 +160,7 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
       setState(prev => ({ ...prev, isVideoReady: true, error: null }));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to access camera';
-      setState(prev => ({ ...prev, error: message }));
+      setState(prev => ({ ...prev, error: message, isVideoReady: false }));
     }
   }, [webcamConfig]);
 
@@ -383,6 +384,14 @@ export function useLexaraMedia(options: UseLexaraMediaOptions = {}) {
       stop();
     };
   }, [stop]);
+
+  // Sync video stream to video element when stream becomes ready
+  useEffect(() => {
+    if (state.isVideoReady && videoRef.current && videoStreamRef.current) {
+      videoRef.current.srcObject = videoStreamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [state.isVideoReady]);
 
   // ============================================================================
   // REF SETTERS
