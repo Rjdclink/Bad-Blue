@@ -59,36 +59,111 @@ export default function PantheonPage() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<PeopleSearchReport | null>(null);
   const [searchConfig, setSearchConfig] = useState<SearchConfig | null>(null);
+  const [searchAbortController, setSearchAbortController] = useState<AbortController | null>(null);
   const { toast } = useToast();
+  
+  // Timeout durations in milliseconds based on search depth
+  const DEPTH_TIMEOUTS: Record<number, number> = {
+    1: 35000,   // 35 seconds (5 second buffer)
+    2: 65000,   // 65 seconds
+    3: 125000,  // 125 seconds
+    4: 185000,  // 185 seconds
+  };
   
   const handleSearchStart = async (config: SearchConfig) => {
     setSearching(true);
     setResults(null);
     setSearchConfig(config);
     
+    // Create abort controller for timeout
+    const abortController = new AbortController();
+    setSearchAbortController(abortController);
+    
+    // Set timeout based on search depth
+    const timeout = DEPTH_TIMEOUTS[config.searchDepth] || 35000;
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, timeout);
+    
     try {
-      const response = await apiRequest('/api/osint/full-search', 'POST', {
-        name: config.name,
-        location: config.location,
-        searchDepth: config.searchDepth,
+      const response = await fetch('/api/osint/full-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: config.name,
+          location: config.location,
+          searchDepth: config.searchDepth,
+        }),
+        signal: abortController.signal,
       });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`Search failed: ${response.statusText}`);
+      }
       
       const data = await response.json();
       setResults(data);
       
       toast({
         title: "PANTHEON Search Complete",
-        description: `Intelligence report generated for ${data.identitySummary.name}`,
+        description: `Intelligence report generated for ${data.identitySummary?.name || config.name}`,
       });
-    } catch (error) {
-      console.error('Search failed:', error);
-      toast({
-        title: "Search Failed",
-        description: error instanceof Error ? error.message : 'An error occurred',
-        variant: "destructive",
-      });
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      
+      if (error.name === 'AbortError') {
+        // Timer ran out - generate partial report
+        const partialReport: PeopleSearchReport = {
+          identitySummary: {
+            name: config.name,
+            verificationStatus: 'Timeout - Partial Data',
+          },
+          contactInformation: [],
+          socialMediaPresence: [],
+          employmentAndEducation: [],
+          locationHistory: config.location ? [config.location] : [],
+          publicRecords: [],
+          onlineMentions: [],
+          riskAndReputation: [],
+          summary: `Search timed out after ${Math.floor(timeout / 1000)} seconds. This is a partial report based on data collected before the timeout. The search may have been incomplete due to time constraints. Consider running a deeper search level for more comprehensive results.`,
+          confidenceScore: 25,
+          sources: [{
+            name: 'Timeout Partial Report',
+            data: { timeout: timeout, searchDepth: config.searchDepth },
+            confidence: 25,
+            timestamp: new Date(),
+          }],
+        };
+        
+        setResults(partialReport);
+        
+        toast({
+          title: "Search Timed Out",
+          description: "Partial report generated with available data",
+          variant: "default",
+        });
+      } else {
+        console.error('Search failed:', error);
+        toast({
+          title: "Search Failed",
+          description: error instanceof Error ? error.message : 'An error occurred',
+          variant: "destructive",
+        });
+      }
     } finally {
       setSearching(false);
+      setSearchAbortController(null);
+    }
+  };
+  
+  // Handler for when the Doomsday Clock timer completes
+  const handleTimerComplete = () => {
+    if (searchAbortController && searching) {
+      // Abort the ongoing search
+      searchAbortController.abort();
     }
   };
   
@@ -293,9 +368,7 @@ export default function PantheonPage() {
               <PantheonProgressTracker 
                 searchDepth={searchConfig.searchDepth}
                 isSearching={searching}
-                onComplete={() => {
-                  // Progress complete - actual API response handles results
-                }}
+                onComplete={handleTimerComplete}
               />
             </section>
           )}

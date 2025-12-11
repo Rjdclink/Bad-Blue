@@ -79,6 +79,38 @@ router.get('/session', (req, res) => {
 });
 
 // ============================================
+// PUBLIC ROUTES (No auth required)
+// ============================================
+
+// GET /admin/crypto/status - Get system status (public for dashboard loading)
+router.get('/status', (req, res) => {
+  res.json({
+    success: true,
+    running: systemState.running,
+    cryptoCrawl: cryptoCrawlState.getStatus(),
+    startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
+    uptime: systemState.running ? Date.now() - systemState.startedAt : 0
+  });
+});
+
+// GET /admin/crypto/health - System health check (public for dashboard)
+router.get('/health', async (req, res) => {
+  const health = {
+    status: systemState.running ? 'running' : 'stopped',
+    uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
+    cryptoCrawl: cryptoCrawlState.getStatus(),
+    checks: {
+      database: await checkDatabase(),
+      rpcEndpoints: await checkRPCEndpoints(),
+      memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
+      eventLoop: process.uptime()
+    }
+  };
+  
+  res.json(health);
+});
+
+// ============================================
 // PROTECTED ROUTES (Require authentication)
 // ============================================
 router.use(requireCryptoCrawlAuth);
@@ -212,37 +244,9 @@ router.post('/stop', async (req, res) => {
   }
 });
 
-// GET /admin/crypto/health - System health check
-router.get('/health', async (req, res) => {
-  const health = {
-    status: systemState.running ? 'running' : 'stopped',
-    uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
-    cryptoCrawl: cryptoCrawlState.getStatus(),
-    checks: {
-      database: await checkDatabase(),
-      rpcEndpoints: await checkRPCEndpoints(),
-      memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
-      eventLoop: process.uptime()
-    }
-  };
-  
-  res.json(health);
-});
-
 // GET /admin/crypto/config - Get current config
 router.get('/config', (req, res) => {
   res.json(systemState.config);
-});
-
-// GET /admin/crypto/status - Get system status
-router.get('/status', (req, res) => {
-  res.json({
-    success: true,
-    running: systemState.running,
-    cryptoCrawl: cryptoCrawlState.getStatus(),
-    startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
-    uptime: systemState.running ? Date.now() - systemState.startedAt : 0
-  });
 });
 
 // POST /admin/crypto/config - Update config

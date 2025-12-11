@@ -177,12 +177,43 @@ export default function CryptoCrawlerDashboard() {
   const fetchStatus = useCallback(async () => {
     setLoadingStatus(true);
     try {
-      const response = await apiRequest('/admin/crypto/status', 'GET');
-      const data = await response.json();
-      setSystemStatus(data);
+      const response = await fetch('/admin/crypto/status', {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSystemStatus(data);
+      } else {
+        // Set default status on error
+        setSystemStatus({
+          running: false,
+          cryptoCrawl: {
+            enabled: false,
+            gasOracle: false,
+            balanceMonitor: false,
+            networkHealth: false,
+          },
+          startedAt: null,
+          uptime: 0,
+        });
+        addConsoleLog('warn', `Status fetch returned ${response.status}`);
+      }
     } catch (error) {
       console.error('Failed to fetch status:', error);
       addConsoleLog('error', 'Failed to fetch system status');
+      // Set default status on error
+      setSystemStatus({
+        running: false,
+        cryptoCrawl: {
+          enabled: false,
+          gasOracle: false,
+          balanceMonitor: false,
+          networkHealth: false,
+        },
+        startedAt: null,
+        uptime: 0,
+      });
     } finally {
       setLoadingStatus(false);
     }
@@ -192,10 +223,15 @@ export default function CryptoCrawlerDashboard() {
   const fetchStats = useCallback(async () => {
     setLoadingStats(true);
     try {
-      const response = await apiRequest('/api/crypto/stats', 'GET');
-      const data = await response.json();
-      setStats(data);
-      addConsoleLog('info', `Stats updated: ${data.trades.total} total trades`);
+      const response = await fetch('/api/crypto/stats', {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setStats(data);
+        addConsoleLog('info', `Stats updated: ${data.trades?.total || 0} total trades`);
+      }
     } catch (error) {
       console.error('Failed to fetch stats:', error);
       addConsoleLog('error', 'Failed to fetch trading stats');
@@ -240,9 +276,14 @@ export default function CryptoCrawlerDashboard() {
   const fetchHistory = useCallback(async () => {
     setLoadingHistory(true);
     try {
-      const response = await apiRequest('/api/crypto/history?limit=50', 'GET');
-      const data = await response.json();
-      setTradeHistory(data.trades || []);
+      const response = await fetch('/api/crypto/history?limit=50', {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setTradeHistory(data.trades || []);
+      }
     } catch (error) {
       console.error('Failed to fetch history:', error);
     } finally {
@@ -253,9 +294,14 @@ export default function CryptoCrawlerDashboard() {
   // Fetch system health
   const fetchHealth = useCallback(async () => {
     try {
-      const response = await apiRequest('/admin/crypto/health', 'GET');
-      const data = await response.json();
-      setSystemHealth(data);
+      const response = await fetch('/admin/crypto/health', {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSystemHealth(data);
+      }
     } catch (error) {
       console.error('Failed to fetch health:', error);
     }
