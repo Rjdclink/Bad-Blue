@@ -21,6 +21,14 @@ import { isAdmin } from '../adminAuth';
 const router = express.Router();
 
 /**
+ * Extract userId from request user object
+ * Handles both direct id and claims.sub patterns used in different auth flows
+ */
+function extractUserId(user: Express.User | undefined): string | undefined {
+  return user?.id || user?.claims?.sub;
+}
+
+/**
  * GET /api/reactor/status
  * Get current reactor status including job queue and heat monitor
  */
@@ -96,7 +104,7 @@ router.get('/metrics', async (req, res) => {
 router.post('/job', async (req, res) => {
   try {
     // Validate admin access
-    const userId = req.user?.id || req.user?.claims?.sub;
+    const userId = extractUserId(req.user);
     if (!userId || !isAdmin(userId)) {
       return res.status(403).json({
         success: false,
@@ -177,7 +185,7 @@ router.get('/job/:jobId', async (req, res) => {
  */
 router.delete('/job/:jobId', async (req, res) => {
   try {
-    const userId = req.user?.id || req.user?.claims?.sub;
+    const userId = extractUserId(req.user);
     if (!userId || !isAdmin(userId)) {
       return res.status(403).json({
         success: false,
@@ -209,7 +217,7 @@ router.delete('/job/:jobId', async (req, res) => {
  */
 router.post('/enable', async (req, res) => {
   try {
-    const userId = req.user?.id || req.user?.claims?.sub;
+    const userId = extractUserId(req.user);
     if (!userId || !isAdmin(userId)) {
       return res.status(403).json({
         success: false,
@@ -249,7 +257,7 @@ router.post('/enable', async (req, res) => {
  */
 router.post('/monte-carlo', async (req, res) => {
   try {
-    const userId = req.user?.id || req.user?.claims?.sub;
+    const userId = extractUserId(req.user);
     if (!userId || !isAdmin(userId)) {
       return res.status(403).json({
         success: false,
