@@ -880,16 +880,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/inmate-search', inmateSearchRoutes.default);
 
   // ============================================
-  // LEXARA STREAMING ROUTES
+  // LEXARA ROUTES (A7 - Persona Mode Locked)
   // ============================================
+  // Streaming routes (WebRTC, SSE)
   const lexaraRoutes = await import('./routes/lexara.routes');
   app.use('/api/lexara', lexaraRoutes.default);
-
-  // ============================================
-  // LEXARA CHAT ROUTES (Adaptive AI Consultation)
-  // ============================================
+  
+  // Chat routes (AI conversation with persona kernel)
   const lexaraChatRoutes = await import('./routes/lexara.chat.routes');
-  app.use('/api/lexara/chat', lexaraChatRoutes.default);
+  app.use('/api/lexara', lexaraChatRoutes.default);
 
   // ============================================
   // PREVIEW ROUTES
