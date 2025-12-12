@@ -9,7 +9,7 @@
  * 
  * For voice synthesis, use:
  * - useVoiceSynthesis hook (client/src/hooks/useVoiceSynthesis.ts)
- * - Server-side /api/alexera/speak endpoint
+ * - Server-side voice synthesis (handled automatically by the hook)
  */
 
 import { getLexaraStateManager, type LexaraTone, type LexaraEmotionState } from './LexaraState';
@@ -202,12 +202,12 @@ export class LexaraSpeech {
 
   /**
    * Speak text with LEXARA's voice
-   * @deprecated Browser TTS is disabled. Use useVoiceSynthesis hook or /api/alexera/speak endpoint.
+   * @deprecated Browser TTS is disabled. Use useVoiceSynthesis hook for Lexara voice synthesis.
    */
   async speak(options: LexaraSpeechOptions): Promise<LexaraSpeechResult> {
     // Browser TTS is disabled to enforce Lexara voice profile
     const error = new Error(
-      'Browser TTS is disabled. Use the Lexara server-side voice synthesis via useVoiceSynthesis hook or /api/alexera/speak endpoint.'
+      'Browser TTS is disabled. Use the Lexara server-side voice synthesis via useVoiceSynthesis hook.'
     );
     options.onError?.(error);
     return { success: false, error };
