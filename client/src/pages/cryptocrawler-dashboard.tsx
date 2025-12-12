@@ -619,20 +619,28 @@ export default function CryptoCrawlerDashboard() {
   // Initial data fetch - wrapped in try/catch, errors display inline, NEVER redirect
   useEffect(() => {
     const initializeDashboard = async () => {
-      try {
-        await Promise.allSettled([
-          fetchStatus(),
-          fetchStats(),
-          fetchHealth(),
-          fetchFaucetStatus()
-        ]);
-        addConsoleLog('info', '[CryptoCrawler] Dashboard initialized');
-        addConsoleLog('info', '[Faucet] 🟢 Autonomous profit faucet is ACTIVE');
-      } catch (error) {
+      const results = await Promise.allSettled([
+        fetchStatus(),
+        fetchStats(),
+        fetchHealth(),
+        fetchFaucetStatus()
+      ]);
+      
+      const rejected = results.filter(r => r.status === 'rejected');
+      if (rejected.length > 0) {
         // Show error inline, do NOT redirect
         setHasError(true);
-        setErrorMessage(error instanceof Error ? error.message : 'Failed to initialize dashboard');
-        addConsoleLog('error', `[CryptoCrawler] Initialization error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        // Aggregate error messages if multiple
+        const errorMessages = rejected.map(r => 
+          (r as PromiseRejectedResult).reason instanceof Error 
+            ? (r as PromiseRejectedResult).reason.message 
+            : String((r as PromiseRejectedResult).reason)
+        );
+        setErrorMessage(errorMessages.join('; ') || 'Failed to initialize dashboard');
+        addConsoleLog('error', `[CryptoCrawler] Initialization error: ${errorMessages.join('; ')}`);
+      } else {
+        addConsoleLog('info', '[CryptoCrawler] Dashboard initialized');
+        addConsoleLog('info', '[Faucet] 🟢 Autonomous profit faucet is ACTIVE');
       }
     };
 

@@ -107,12 +107,12 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     preferredGender: 'female' as const,
     targetPitch: 1.2,
     targetRate: 0.95,
-    persona: 'ethereal-18yo-spectral-legal-counsel',
+    persona: 'ethereal-spectral-legal-counsel',
     femaleVoiceHints: [
       'female', 'woman', 'samantha', 'karen', 'fiona', 'tessa', 'moira',
       'victoria', 'alex', 'allison', 'ava', 'susan', 'zira', 'hazel',
       'jenny', 'aria', 'sara', 'joanna', 'amy', 'emma', 'ivy', 'kendra',
-      'kimberly', 'salli', 'joey', 'nicole', 'veena', 'aditi', 'raveena',
+      'kimberly', 'salli', 'nicole', 'veena', 'aditi', 'raveena',
       'google uk english female', 'google us english female'
     ],
   };

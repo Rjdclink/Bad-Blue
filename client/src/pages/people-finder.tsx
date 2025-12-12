@@ -2,69 +2,37 @@ import { useState, useCallback } from "react";
 import PeopleFinderSearch from "@/components/PeopleFinderSearch";
 import { useLocation } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Shield, Users, Search, Globe, Database, Satellite, MapPin, Clock } from "lucide-react";
+import { Shield, Users, Search, Globe, Database, Satellite, MapPin, Clock } from "lucide-react";
 import { AppHeader } from "@/components/AppHeader";
 import { GeoconsoleRadarDashboard } from "@/components/geoconsole";
-import type { GPSPoint, DataSource } from '@shared/geoconsoleTypes';
-
-/**
- * GeoConsole state interface for SPECTRA integration
- */
-interface GeoIntent {
-  offerGeo?: boolean;
-  requestGeo?: boolean;
-  requestType?: 'map' | 'satellite' | 'timeline';
-  provideOnAsk?: boolean;
-  reason?: string;
-  focus?: 'subject' | 'self' | 'area';
-}
-
-/**
- * Selected person result type
- */
-interface SelectedPerson {
-  name: string;
-  locationHistory?: Array<{ lat: number; lng: number; timestamp: string }>;
-}
+import type { GPSPoint } from '@shared/geoconsoleTypes';
 
 export default function PeopleFinderPage() {
   const [, setLocation] = useLocation();
 
-  // State for SPECTRA GeoConsole integration
-  const [selectedPerson, setSelectedPerson] = useState<SelectedPerson | null>(null);
-  const [lastSearchResult, setLastSearchResult] = useState<SelectedPerson | null>(null);
-  const [geoIntent, setGeoIntent] = useState<GeoIntent>({});
-  const [geoConsoleMode, setGeoConsoleMode] = useState<'idle' | 'active'>('idle');
+  // State for SPECTRA GeoConsole integration (reserved for future Lexara integration)
   const [geoConsoleTab, setGeoConsoleTab] = useState<'timeline' | 'map' | 'satellite'>('timeline');
   
-  // Handle GeoConsole suggestions (Lexara-driven)
-  const handleGeoSuggestion = useCallback((suggestion: any) => {
-    // Lexara handles this verbally - no UI action needed
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[GeoConsole] Suggestion:', suggestion);
+  // Deterministic hash function for confidence calculation
+  function hashString(str: string): number {
+    let hash = 0, i, chr;
+    if (str.length === 0) return hash;
+    for (i = 0; i < str.length; i++) {
+      chr = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + chr;
+      hash |= 0; // Convert to 32bit integer
     }
-  }, []);
+    return Math.abs(hash);
+  }
 
   // Convert person location history to GPSPoints for GeoConsole
   const getGeoConsoleData = useCallback((): GPSPoint[] => {
-    const person = selectedPerson || lastSearchResult;
-    if (!person?.locationHistory) return [];
-    
-    return person.locationHistory.map((loc, idx) => ({
-      latitude: loc.lat,
-      longitude: loc.lng,
-      timestamp: new Date(loc.timestamp),
-      source: 'public_record' as DataSource,
-      confidence: 0.85 + Math.random() * 0.1,
-    }));
-  }, [selectedPerson, lastSearchResult]);
-
-  // Determine if GeoConsole should be visible/active
-  const shouldShowGeoConsole = geoIntent.offerGeo || geoIntent.requestGeo || geoConsoleMode === 'active';
+    // Currently returns empty array - will be populated when Lexara integration is complete
+    return [];
+  }, []);
 
   return (
     <>
@@ -170,7 +138,7 @@ export default function PeopleFinderPage() {
 
         {/* SPECTRA GeoConsole - Embedded below search results */}
         <div className="container max-w-7xl mx-auto px-4 py-4">
-          <Card className={`border-slate-700/50 bg-slate-900/50 ${shouldShowGeoConsole ? '' : 'opacity-70'}`}>
+          <Card className="border-slate-700/50 bg-slate-900/50 opacity-70">
             <CardHeader className="py-3 border-b border-slate-700/50">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -184,14 +152,14 @@ export default function PeopleFinderPage() {
                 </div>
                 <Badge 
                   variant="outline" 
-                  className={`text-xs ${geoConsoleMode === 'active' ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' : 'bg-slate-700/50 text-slate-400 border-slate-600/30'}`}
+                  className="text-xs bg-slate-700/50 text-slate-400 border-slate-600/30"
                 >
-                  {geoConsoleMode === 'active' ? 'Active' : 'Idle Preview'}
+                  Idle Preview
                 </Badge>
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              {/* Tab Navigation */}
+              {/* Tab Navigation - tabs are visual indicators only since GeoconsoleRadarDashboard handles view switching internally */}
               <Tabs value={geoConsoleTab} onValueChange={(v) => setGeoConsoleTab(v as any)} className="w-full">
                 <TabsList className="w-full justify-start bg-slate-800/50 rounded-none border-b border-slate-700/50">
                   <TabsTrigger value="timeline" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
@@ -208,28 +176,20 @@ export default function PeopleFinderPage() {
                   </TabsTrigger>
                 </TabsList>
                 
-                {/* GeoConsole Dashboard */}
+                {/* GeoConsole Dashboard - visible for all tabs, internally handles view mode */}
                 <TabsContent value="timeline" className="m-0">
                   <div className="h-[400px]">
-                    <GeoconsoleRadarDashboard 
-                      initialData={getGeoConsoleData()}
-                    />
+                    <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
                   </div>
                 </TabsContent>
-                
                 <TabsContent value="map" className="m-0">
                   <div className="h-[400px]">
-                    <GeoconsoleRadarDashboard 
-                      initialData={getGeoConsoleData()}
-                    />
+                    <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
                   </div>
                 </TabsContent>
-                
                 <TabsContent value="satellite" className="m-0">
                   <div className="h-[400px]">
-                    <GeoconsoleRadarDashboard 
-                      initialData={getGeoConsoleData()}
-                    />
+                    <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
                   </div>
                 </TabsContent>
               </Tabs>

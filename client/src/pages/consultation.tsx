@@ -21,7 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { 
   ArrowLeft, Send, Scale, Clock, CheckCircle, AlertCircle,
-  Loader2, Mic, MicOff, Settings, MessageCircle, ShieldCheck
+  Loader2, Mic, MicOff, Settings, MessageCircle
 } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
 import { apiRequest } from '@/lib/queryClient';
@@ -316,9 +316,12 @@ export default function DomainConsultationPage() {
     const init = async () => {
       // Auto-start camera + mic if browser permission is granted
       try { await lexaraMedia.start({ video: true, audio: true }); } catch (e) {
-        // Permission denied or not available - continue without video
-        // User can still use text chat
+        // Permission denied or not available - notify user and continue in text-only mode
         console.log('Media auto-init: browser permission required or unavailable');
+        toast({
+          title: "Camera/Microphone Unavailable",
+          description: "We couldn't access your camera or microphone. You can continue in text-only mode.",
+        });
       }
       
       try { 
@@ -450,8 +453,8 @@ export default function DomainConsultationPage() {
             <Card className="flex flex-col h-full justify-center items-center bg-slate-950/80 border border-slate-700 rounded-3xl shadow-2xl overflow-hidden">
               <div className="grid grid-cols-1 md:grid-cols-5 h-full min-h-[600px] w-full">
                 
-                {/* Avatar - 40% (min-width 420px) */}
-                <div className="md:col-span-2 border-b md:border-b-0 md:border-r border-slate-800/50 relative min-w-[420px]">
+                {/* Avatar - 40% (responsive width) */}
+                <div className="md:col-span-2 border-b md:border-b-0 md:border-r border-slate-800/50 relative w-full md:min-w-[420px]">
                   <EtherealLexara 
                     isSpeaking={voiceSynthesis.isSpeaking} 
                     isListening={voiceMode.isListening} 
@@ -468,6 +471,7 @@ export default function DomainConsultationPage() {
                         playsInline
                         muted
                         className="w-full h-full object-cover transform -scale-x-100"
+                        aria-label="User camera preview"
                       />
                       <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-red-500 rounded text-[8px] text-white font-medium animate-pulse">
                         LIVE
