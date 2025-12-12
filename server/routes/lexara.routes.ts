@@ -3,30 +3,43 @@
  * 
  * Provides WebRTC-compatible streaming endpoint for real-time
  * two-way communication with LEXARA AI legal assistant.
+ * 
+ * A7 - LOCK LEXARA INTO TRUE "PERSONA MODE"
+ * Permanent, Stable, Feminine, Non-Robotic
  */
 
 import express, { Request, Response } from 'express';
 import { logger } from '../logger';
+import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
 
 const router = express.Router();
 
-// Store active stream sessions
+// Store active stream sessions with persona attached
 const activeSessions = new Map<string, {
   sessionId: string;
   createdAt: Date;
   lastActivity: Date;
   status: 'initializing' | 'active' | 'paused' | 'ended';
+  persona: typeof LEXARA_KERNEL;
 }>();
 
 /**
  * GET /api/lexara/stream
  * Initialize a streaming session for LEXARA communication
  * Returns Server-Sent Events (SSE) stream as placeholder
+ * Force-merges LEXARA_KERNEL to ensure persona consistency
  */
 router.get('/stream', (req: Request, res: Response) => {
   const sessionId = `lexara-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
   
-  logger.info('[LEXARA] Stream session initiated', { sessionId });
+  // Force-merge LEXARA_KERNEL - ensures persona is always locked
+  const persona = mergePersonaWithKernel();
+  
+  logger.info('[LEXARA] Stream session initiated with persona kernel', { 
+    sessionId, 
+    personaName: persona.identity.name,
+    personaTimbre: persona.speech.timbre,
+  });
   
   // Set headers for SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -35,15 +48,16 @@ router.get('/stream', (req: Request, res: Response) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('X-Accel-Buffering', 'no');
   
-  // Track the session
+  // Track the session with persona attached
   activeSessions.set(sessionId, {
     sessionId,
     createdAt: new Date(),
     lastActivity: new Date(),
     status: 'active',
+    persona,
   });
   
-  // Send initial connection event
+  // Send initial connection event with persona info
   res.write(`event: connected\n`);
   res.write(`data: ${JSON.stringify({
     sessionId,
@@ -51,6 +65,11 @@ router.get('/stream', (req: Request, res: Response) => {
     message: 'LEXARA stream initialized',
     capabilities: ['text', 'audio', 'video'],
     webrtcSupported: true,
+    persona: {
+      name: persona.identity.name,
+      timbre: persona.speech.timbre,
+      style: persona.identity.style,
+    },
   })}\n\n`);
   
   // Send periodic heartbeat to keep connection alive
