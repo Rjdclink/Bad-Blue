@@ -7,6 +7,7 @@
  * - Routing Engine
  * - Computational Reactor
  * - Lexara Power System (PowerSpine, PowerReactor, PowerMesh, Heartline)
+ * - API Optimizer (Semantic caching, deduplication, batching, coherency)
  */
 
 // Evolution Lock
@@ -24,6 +25,20 @@ export {
   type EvolutionState,
   type ManipulationMetrics
 } from './evolutionLock';
+
+// API Optimizer
+export {
+  getAPIOptimizer,
+  shutdownAPIOptimizer,
+  APIOptimizer,
+  SemanticCache,
+  RequestBatcher,
+  CoherencyManager,
+  type OptimizedRequest,
+  type OptimizationResult,
+  type BatchedRequest,
+  type CoherencyState
+} from './apiOptimizer';
 
 // Neural Fusion
 export {
@@ -196,8 +211,12 @@ export async function shutdown4JiCore(): Promise<void> {
   const { shutdownRoutingEngine } = await import('../routing/routingEngine');
   const { shutdownReactor } = await import('../reactor/computationalReactor');
   const { shutdownLexaraPowerSystem } = await import('./power');
+  const { shutdownAPIOptimizer } = await import('./apiOptimizer');
   
   // Shutdown in reverse order
+  // Shutdown API Optimizer
+  shutdownAPIOptimizer();
+  
   // Shutdown Lexara Power System first (most dependent)
   await shutdownLexaraPowerSystem();
   
@@ -233,16 +252,24 @@ export async function get4JiStatus(): Promise<{
     meshStatus: string;
     heartlineStatus: string;
   };
+  apiOptimizer: {
+    totalRequests: number;
+    cacheHits: number;
+    savedApiCalls: number;
+    savingsPercent: number;
+  };
 }> {
   const { isEvolutionLocked, getGeigerReading } = await import('./evolutionLock');
   const { getModelStatuses } = await import('../routing/routingEngine');
   const { getReactorStatus } = await import('../reactor/computationalReactor');
   const { getFusionStats } = await import('../neural_fusion/neuralFusionEngine');
   const { getPowerSystemStatus } = await import('./power');
+  const { getAPIOptimizer } = await import('./apiOptimizer');
   
   const reactorStatus = getReactorStatus();
   const fusionStats = getFusionStats();
   const powerSystemStatus = getPowerSystemStatus();
+  const optimizerMetrics = getAPIOptimizer().getMetrics();
   
   return {
     evolutionLocked: isEvolutionLocked(),
@@ -264,6 +291,12 @@ export async function get4JiStatus(): Promise<{
       reactorStatus: powerSystemStatus.reactorStatus,
       meshStatus: powerSystemStatus.meshStatus,
       heartlineStatus: powerSystemStatus.heartlineStatus
+    },
+    apiOptimizer: {
+      totalRequests: optimizerMetrics.totalRequests,
+      cacheHits: optimizerMetrics.cacheHits,
+      savedApiCalls: optimizerMetrics.savedApiCalls,
+      savingsPercent: optimizerMetrics.savingsPercent,
     }
   };
 }

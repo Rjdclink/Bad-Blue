@@ -10,9 +10,12 @@
  * - Exponential backoff on failures
  * - Provider-specific API formatting
  * - Unified response format
+ * - API optimization with semantic caching, deduplication, and batching
+ * - Intelligent model fallback with personality coherency
  */
 
 import { geigerRateLimiter, type RotationResult } from './geigerRateLimiter';
+import { getAPIOptimizer } from './core/apiOptimizer';
 
 export interface UnifiedAIRequest {
   prompt: string;
@@ -23,6 +26,8 @@ export interface UnifiedAIRequest {
   preferredModel?: string;
   context?: 'user' | 'autonomous' | 'retry';
   retryCount?: number;
+  skipCache?: boolean;       // Skip semantic cache lookup
+  skipOptimization?: boolean; // Skip all optimization (emergency direct calls)
 }
 
 export interface UnifiedAIResponse {
@@ -412,10 +417,56 @@ async function callSambaNova(
 /**
  * Main unified AI call function
  * Automatically selects the best provider using Geiger3D rotation
+ * Integrates with API optimizer for semantic caching, deduplication, and batching
  */
 export async function callAI(request: UnifiedAIRequest): Promise<UnifiedAIResponse> {
   const startTime = Date.now();
+  const optimizer = getAPIOptimizer();
   
+  // Skip optimization if explicitly requested (emergency/critical calls)
+  if (!request.skipOptimization) {
+    // Run through API optimizer for caching, deduplication, and coherency
+    const optimization = await optimizer.optimizeAIRequest(
+      request.prompt,
+      request.systemPrompt,
+      { 
+        priority: request.context === 'user' ? 8 : 5,
+        skipCache: request.skipCache,
+      }
+    );
+
+    // If we have a cached result, return it immediately
+    if (!optimization.shouldExecute && optimization.cachedResult) {
+      console.log('[UnifiedAI] Returning optimized cached/deduplicated result');
+      return {
+        content: typeof optimization.cachedResult === 'string' 
+          ? optimization.cachedResult 
+          : optimization.cachedResult.content || optimization.cachedResult.text || '',
+        provider: 'cache',
+        model: 'semantic-cache',
+        tokensUsed: 0,
+        latencyMs: Date.now() - startTime,
+        geigerStatus: {
+          radiation: 0,
+          health: 100,
+          dailyUsage: 0,
+        },
+      };
+    }
+
+    // Use optimized prompts with coherency enhancement
+    request = {
+      ...request,
+      systemPrompt: optimization.optimizedSystemPrompt,
+    };
+
+    // Check if optimizer has a preferred provider for coherency
+    const preferredProvider = optimizer.getPreferredProvider();
+    if (preferredProvider && !request.preferredProvider) {
+      request.preferredProvider = preferredProvider;
+    }
+  }
+
   // Get next provider from Geiger rate limiter
   const rotation = geigerRateLimiter.getNextProvider(request.preferredModel);
   
@@ -461,8 +512,21 @@ export async function callAI(request: UnifiedAIRequest): Promise<UnifiedAIRespon
         throw new Error(`Unknown provider: ${provider}`);
     }
 
-    // Record success
+    // Record success in Geiger limiter
     geigerRateLimiter.recordSuccess(provider);
+    
+    // Record success in optimizer for caching and coherency
+    if (!request.skipOptimization) {
+      const semanticHash = optimizer['semanticCache'].generateSemanticHash(
+        request.prompt + (request.systemPrompt || '')
+      );
+      const deduplicationKey = require('crypto')
+        .createHash('sha256')
+        .update(request.prompt + (request.systemPrompt || ''))
+        .digest('hex');
+      
+      optimizer.recordSuccess(semanticHash, deduplicationKey, result, provider, model);
+    }
     
     const reading = rotation.geigerReading;
     
@@ -519,4 +583,25 @@ export function resetProvider(providerName: string) {
  */
 export function resetAllProviders() {
   geigerRateLimiter.resetAll();
+}
+
+/**
+ * Get API optimization metrics
+ */
+export function getOptimizationMetrics() {
+  return getAPIOptimizer().getMetrics();
+}
+
+/**
+ * Reset coherency state for new conversation
+ */
+export function resetCoherency() {
+  getAPIOptimizer().resetCoherency();
+}
+
+/**
+ * Get coherency state
+ */
+export function getCoherencyState() {
+  return getAPIOptimizer().getCoherencyState();
 }
