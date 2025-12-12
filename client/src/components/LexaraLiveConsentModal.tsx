@@ -68,6 +68,13 @@ export function isLexaraLiveEnabled(): boolean {
 }
 
 // ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/** Time in ms to display error message before auto-continuing to text mode */
+const ERROR_DISPLAY_TIMEOUT_MS = 2000;
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -132,7 +139,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
       // After short delay, continue with text-only mode
       setTimeout(() => {
         onConsent(false);
-      }, 2000);
+      }, ERROR_DISPLAY_TIMEOUT_MS);
     } finally {
       setIsRequesting(false);
     }

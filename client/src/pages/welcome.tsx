@@ -213,7 +213,7 @@ export default function WelcomePage() {
       // Check if user has already made a consent choice
       if (hasLexaraLiveConsent()) {
         // Already consented - navigate with their preference
-        const liveEnabled = localStorage.getItem('lexaraLiveEnabled') === 'true';
+        const liveEnabled = getLexaraLiveEnabled() === 'true';
         setLocation(`/consultation/${selectedType.id}?live=${liveEnabled}`);
       } else {
         // Show consent modal for first-time users

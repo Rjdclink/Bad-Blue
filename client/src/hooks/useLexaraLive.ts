@@ -188,7 +188,11 @@ export function useLexaraLive(options: UseLexaraLiveOptions = {}): UseLexaraLive
   // ============================================================================
 
   const initializeMedia = useCallback(async (): Promise<boolean> => {
-    if (initAttempted.current) return isMediaReady;
+    // Skip if already attempted (prevents concurrent calls)
+    if (initAttempted.current) {
+      // Wait a tick for state to sync before returning
+      return new Promise(resolve => setTimeout(() => resolve(isMediaReady), 0));
+    }
     initAttempted.current = true;
     
     setError(null);
@@ -239,20 +243,21 @@ export function useLexaraLive(options: UseLexaraLiveOptions = {}): UseLexaraLive
   // ============================================================================
 
   const enableLiveMode = useCallback(async (): Promise<boolean> => {
-    // Reset init state to allow re-attempt
-    initAttempted.current = false;
+    // Don't reset initAttempted here - instead handle it properly
+    // by checking if we need to stop existing stream first
     setError(null);
     
     try {
+      // Stop any existing stream before requesting new one
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
+      }
+      
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: true,
       });
-      
-      // Stop any existing stream
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      }
       
       mediaStreamRef.current = stream;
       setIsMediaReady(true);
