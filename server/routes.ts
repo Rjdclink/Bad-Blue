@@ -880,16 +880,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/inmate-search', inmateSearchRoutes.default);
 
   // ============================================
-  // LEXARA STREAMING ROUTES
+  // LEXARA ROUTES (Consolidated - Chat, Streaming, Status)
   // ============================================
   const lexaraRoutes = await import('./routes/lexara.routes');
   app.use('/api/lexara', lexaraRoutes.default);
-
-  // ============================================
-  // LEXARA CHAT ROUTES (Adaptive AI Consultation)
-  // ============================================
-  const lexaraChatRoutes = await import('./routes/lexara.chat.routes');
-  app.use('/api/lexara/chat', lexaraChatRoutes.default);
 
   // ============================================
   // PREVIEW ROUTES

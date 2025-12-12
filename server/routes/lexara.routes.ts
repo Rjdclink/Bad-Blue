@@ -1,14 +1,24 @@
 /**
- * LEXARA Streaming API Routes
+ * LEXARA API Routes (Consolidated)
  * 
- * Provides WebRTC-compatible streaming endpoint for real-time
- * two-way communication with LEXARA AI legal assistant.
+ * All Lexara endpoints in a single router:
+ * - /api/lexara/health - Health check
+ * - /api/lexara/status - System status
+ * - /api/lexara/chat - Chat endpoint
+ * - /api/lexara/analyze-signals - Signal analysis
+ * - /api/lexara/stream - WebRTC streaming
+ * - /api/lexara/stream/signal - WebRTC signaling
+ * - /api/lexara/stream/status - Stream session status
+ * - /api/lexara/stream/config - WebRTC config
  */
 
 import express, { Request, Response } from 'express';
-import { logger } from '../logger';
+import { logger, createLogger } from '../logger';
+import { callAIWithFallback } from '../aiSubAgent';
+import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 
 const router = express.Router();
+const log = createLogger('LEXARARoutes');
 
 // Store active stream sessions
 const activeSessions = new Map<string, {
@@ -18,10 +28,161 @@ const activeSessions = new Map<string, {
   status: 'initializing' | 'active' | 'paused' | 'ended';
 }>();
 
+// ============================================================================
+// HEALTH & STATUS ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/lexara/health
+ * Health check endpoint
+ */
+router.get('/health', (req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    source: 'lexara-router',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * GET /api/lexara/status
+ * Get LEXARA system status
+ */
+router.get('/status', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    status: 'active',
+    persona: {
+      name: LEXARA_PERSONA.name,
+      traits: LEXARA_PERSONA.traits,
+    },
+    capabilities: {
+      voice: true,
+      video: true,
+      adaptiveBehavior: true,
+      modes: ['personable', 'professional'],
+    },
+  });
+});
+
+// ============================================================================
+// CHAT ENDPOINTS
+// ============================================================================
+
+/**
+ * POST /api/lexara/chat
+ * Main chat endpoint for LEXARA conversational AI
+ */
+router.post('/chat', express.json(), async (req: Request, res: Response) => {
+  try {
+    const { prompt, context, systemPrompt } = req.body;
+    
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Prompt is required',
+      });
+    }
+    
+    log.info('[LEXARA] Chat request received', {
+      promptLength: prompt.length,
+      hasPreviousMessages: !!context?.previousMessages?.length,
+      behaviorMode: context?.behaviorMode,
+    });
+    
+    // Get system prompt
+    const finalSystemPrompt = systemPrompt || LEXARA_PERSONA.systemPrompt;
+    
+    // Add previous messages for context
+    let conversationContext = '';
+    if (context?.previousMessages && Array.isArray(context.previousMessages)) {
+      for (const msg of context.previousMessages.slice(-6)) {
+        const role = msg.role === 'lexara' ? 'LEXARA' : 'User';
+        conversationContext += `${role}: ${msg.content}\n\n`;
+      }
+    }
+    
+    // Build the full prompt with context
+    const fullPrompt = conversationContext 
+      ? `Previous conversation:\n${conversationContext}\nUser: ${prompt}`
+      : prompt;
+    
+    // Call AI with fallback support
+    const aiResponse = await callAIWithFallback(fullPrompt, {
+      systemPrompt: finalSystemPrompt,
+      temperature: 0.7,
+      maxTokens: 1000,
+    });
+    
+    if (!aiResponse.success || !aiResponse.content) {
+      log.error('[LEXARA] AI call failed', { error: aiResponse.error });
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to generate response',
+      });
+    }
+    
+    log.info('[LEXARA] Chat response generated', {
+      responseLength: aiResponse.content.length,
+      model: aiResponse.model,
+    });
+    
+    return res.json({
+      success: true,
+      response: aiResponse.content,
+      model: aiResponse.model,
+    });
+    
+  } catch (error) {
+    log.error('[LEXARA] Chat endpoint error', { error });
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+    });
+  }
+});
+
+/**
+ * POST /api/lexara/analyze-signals
+ * Analyze user signals for adaptive behavior
+ */
+router.post('/analyze-signals', express.json(), (req: Request, res: Response) => {
+  try {
+    const { text, voiceMetrics, bodyLanguage } = req.body;
+    
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Text is required',
+      });
+    }
+    
+    // Import and use the signal analyzer
+    const { analyzeUserSignals } = require('../../shared/lexaraVoicePersona');
+    const analysis = analyzeUserSignals(text, voiceMetrics, bodyLanguage);
+    
+    return res.json({
+      success: true,
+      analysis,
+    });
+    
+  } catch (error) {
+    log.error('[LEXARA] Signal analysis error', { error });
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+    });
+  }
+});
+
+// ============================================================================
+// STREAMING ENDPOINTS (WebRTC)
+// ============================================================================
+
 /**
  * GET /api/lexara/stream
  * Initialize a streaming session for LEXARA communication
- * Returns Server-Sent Events (SSE) stream as placeholder
+ * Returns Server-Sent Events (SSE) stream
  */
 router.get('/stream', (req: Request, res: Response) => {
   const sessionId = `lexara-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
