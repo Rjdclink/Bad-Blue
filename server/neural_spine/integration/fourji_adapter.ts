@@ -354,8 +354,8 @@ class FourJiAdapter {
 
       // Extract crawlers from tags
       pattern.synapse.tags
-        .filter(t => t.includes('crawler') || t.includes('osint') || t.includes('legal') || t.includes('crypto'))
-        .forEach(crawler => {
+        .filter((t: string) => t.includes('crawler') || t.includes('osint') || t.includes('legal') || t.includes('crypto'))
+        .forEach((crawler: string) => {
           crawlerVotes.set(crawler, (crawlerVotes.get(crawler) || 0) + weight);
         });
     }
@@ -413,7 +413,7 @@ class FourJiAdapter {
    */
   private generateSuggestion(synapse: NeuralSynapse): string {
     const relevantTags = synapse.tags
-      .filter(t => !['4ji', 'orchestrator', 'subagent'].includes(t))
+      .filter((t: string) => !['4ji', 'orchestrator', 'subagent'].includes(t))
       .join(', ');
     return `4Ji pattern (w: ${synapse.weight.toFixed(2)}, c: ${synapse.confidence.toFixed(2)}): ${relevantTags || 'general'}`;
   }

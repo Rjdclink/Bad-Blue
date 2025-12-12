@@ -209,7 +209,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
     input: string,
     context?: Record<string, unknown>
   ): Promise<Contradiction[]> {
-    const detectionLayers = this.getLayers('detection');
+    const detectionLayers = this.getLayersByCategory('detection');
     const contradictions: Contradiction[] = [];
 
     // Layer 1: Primary contradiction scanner
@@ -251,7 +251,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
     contradictions: Contradiction[],
     context?: Record<string, unknown>
   ): Promise<PerspectiveFrame[]> {
-    const framingLayers = this.getLayers('framing');
+    const framingLayers = this.getLayersByCategory('framing');
     const frames: PerspectiveFrame[] = [];
 
     // Layer 6: Logical lens
@@ -286,7 +286,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
     frames: PerspectiveFrame[],
     contradictions: Contradiction[]
   ): Promise<PerspectiveFrame[]> {
-    const evalLayers = this.getLayers('evaluation');
+    const evalLayers = this.getLayersByCategory('evaluation');
 
     // Layer 11: User service scorer
     this.markLayerProcessed(evalLayers[0]);
@@ -329,7 +329,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
     frames: PerspectiveFrame[],
     contradictions: Contradiction[]
   ): Promise<string> {
-    const compLayers = this.getLayers('compression');
+    const compLayers = this.getLayersByCategory('compression');
 
     // Layer 16: Viewpoint consolidator
     this.markLayerProcessed(compLayers[0]);
@@ -367,7 +367,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
     frames: PerspectiveFrame[],
     startTime: number
   ): Promise<ParadoxResolution> {
-    const unifyLayers = this.getLayers('unification');
+    const unifyLayers = this.getLayersByCategory('unification');
 
     // Layer 21: Reality marker
     this.markLayerProcessed(unifyLayers[0]);
@@ -772,7 +772,7 @@ export class ParadoxIntegrationCore extends EventEmitter {
   // Utility Methods
   // ============================================================================
 
-  private getLayers(category: ParadoxLayerCategory): ParadoxLayer[] {
+  private getLayersByCategory(category: ParadoxLayerCategory): ParadoxLayer[] {
     return this.layers.filter(l => l.category === category);
   }
 

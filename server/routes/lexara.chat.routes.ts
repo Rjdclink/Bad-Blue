@@ -67,9 +67,14 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       content: prompt,
     });
     
+    // Build prompt string from messages for AI fallback
+    const conversationPrompt = messages
+      .map(msg => `${msg.role.toUpperCase()}: ${msg.content}`)
+      .join('\n\n');
+    
     // Call AI with fallback support
-    const aiResponse = await callAIWithFallback({
-      messages,
+    const aiResponse = await callAIWithFallback(conversationPrompt, {
+      systemPrompt: finalSystemPrompt,
       temperature: 0.7,
       maxTokens: 1000,
     });

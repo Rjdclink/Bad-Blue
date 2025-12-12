@@ -27,6 +27,9 @@ import {
   NeuralRegionId,
   SynapseQuery
 } from './synapse_store';
+
+// Re-export NeuralSynapse for adapters
+export { NeuralSynapse };
 import {
   makeInputFingerprint,
   makeFingerprint

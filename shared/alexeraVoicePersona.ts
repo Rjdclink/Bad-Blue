@@ -259,7 +259,13 @@ export type SpeechContext =
   | 'reassurance'
   | 'introduction'
   | 'conclusion'
-  | 'transition';
+  | 'transition'
+  // LEXARA-specific contexts
+  | 'greeting'
+  | 'serious'
+  | 'casual'
+  | 'protective'
+  | 'clarification';
 
 /**
  * Get persona parameters for a specific speech context
@@ -267,7 +273,7 @@ export type SpeechContext =
 export function getPersonaForContext(context: SpeechContext): Partial<AlexeraVoicePersona> {
   const basePersona = ALEXERA_VOICE_PERSONA;
   
-  const contextMap = {
+  const contextMap: Record<SpeechContext, Partial<AlexeraVoicePersona>> = {
     evaluation: {
       vocal: {
         ...basePersona.vocal,
@@ -336,6 +342,63 @@ export function getPersonaForContext(context: SpeechContext): Partial<AlexeraVoi
     transition: {
       vocal: basePersona.vocal,
       speechModel: basePersona.speechModel,
+    },
+    // LEXARA-specific contexts
+    greeting: {
+      vocal: {
+        ...basePersona.vocal,
+        warmth: 'warm' as const,
+        pacing: 'dynamic' as const,
+      },
+      speechModel: {
+        ...basePersona.speechModel,
+        primaryTone: 'consultative-professional',
+      },
+    },
+    serious: {
+      vocal: {
+        ...basePersona.vocal,
+        authority: 'authoritative-calm' as const,
+        pacing: 'thoughtful' as const,
+      },
+      speechModel: {
+        ...basePersona.speechModel,
+        primaryTone: 'appellate-argumentation',
+      },
+    },
+    casual: {
+      vocal: {
+        ...basePersona.vocal,
+        warmth: 'warm' as const,
+        pacing: 'dynamic' as const,
+        diction: 'conversational' as const,
+      },
+      speechModel: {
+        ...basePersona.speechModel,
+        primaryTone: 'consultative-professional',
+      },
+    },
+    protective: {
+      vocal: {
+        ...basePersona.vocal,
+        authority: 'commanding' as const,
+        empathy: 'supportive' as const,
+      },
+      speechModel: {
+        ...basePersona.speechModel,
+        primaryTone: 'consultative-professional',
+      },
+    },
+    clarification: {
+      vocal: {
+        ...basePersona.vocal,
+        articulation: 'precise' as const,
+        pacing: 'thoughtful' as const,
+      },
+      speechModel: {
+        ...basePersona.speechModel,
+        primaryTone: 'judicial-instructional',
+      },
     },
   };
 
