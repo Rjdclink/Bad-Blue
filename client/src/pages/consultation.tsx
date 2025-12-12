@@ -21,7 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { 
   ArrowLeft, Send, Scale, Clock, CheckCircle, AlertCircle,
-  Loader2, Mic, MicOff, Settings, MessageCircle
+  Loader2, Mic, MicOff, Settings, MessageCircle, Video, VideoOff
 } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
 import { apiRequest } from '@/lib/queryClient';
@@ -30,6 +30,11 @@ import { LAW_TYPE_DATA } from '@shared/lawTypes';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import useLexaraMedia from '@/hooks/useLexaraMedia';
+import { useLexaraLive } from '@/hooks/useLexaraLive';
+import LexaraLiveConsentModal, { 
+  getLexaraLiveEnabled, 
+  hasLexaraLiveConsent 
+} from '@/components/LexaraLiveConsentModal';
 import { cn } from '@/lib/utils';
 
 // ============================================================================
@@ -272,7 +277,13 @@ export default function DomainConsultationPage() {
   const { toast } = useToast();
   const domainId = params?.domainId || '';
   const initAttempted = useRef(false);
+  const greetingPlayedRef = useRef(false);
+  const firstInteractionRef = useRef(false);
   const domainInfo = LAW_TYPE_DATA.find(t => t.id === domainId);
+  
+  // Check URL params for live mode
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const liveParam = urlParams?.get('live');
   
   // State
   const [caseData, setCaseData] = useState<CaseData>({ issueType: '', situation: '', jurisdiction: '', deadlines: '' });
@@ -280,9 +291,21 @@ export default function DomainConsultationPage() {
   const [intakePhase, setIntakePhase] = useState<IntakePhase>('greeting');
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [userInput, setUserInput] = useState('');
+  const [isLiveMode, setIsLiveMode] = useState<boolean>(() => {
+    // Initialize from URL param or localStorage
+    if (liveParam === 'true') return true;
+    if (liveParam === 'false') return false;
+    return getLexaraLiveEnabled() === 'true';
+  });
+  const [showEnableLiveButton, setShowEnableLiveButton] = useState<boolean>(() => {
+    // Show enable button if live=false in URL or localStorage
+    return liveParam === 'false' || getLexaraLiveEnabled() === 'false';
+  });
+  const [isEnablingLive, setIsEnablingLive] = useState(false);
+  const [awaitingFirstInteraction, setAwaitingFirstInteraction] = useState(false);
   const conversationEndRef = useRef<HTMLDivElement>(null);
   
-  // Lexara Media - FULL AUTO: auto-detect webcam + mic on load (no toggles)
+  // Lexara Media - Initialize based on live mode consent
   const lexaraMedia = useLexaraMedia({
     onAudioLevel: () => {}, // VAD level updates handled by hook state
     onSpeechStart: () => {},
@@ -299,8 +322,9 @@ export default function DomainConsultationPage() {
   // Helpers
   const addLexaraMessage = useCallback((content: string, speak = true) => {
     setConversation(prev => [...prev, { id: `l-${Date.now()}`, role: 'lexara', content, timestamp: new Date() }]);
-    if (speak) voiceSynthesis.speak(content, { context: 'explanation', autoPlay: true });
-  }, [voiceSynthesis]);
+    // Only speak if live mode is enabled
+    if (speak && isLiveMode) voiceSynthesis.speak(content, { context: 'explanation', autoPlay: true });
+  }, [voiceSynthesis, isLiveMode]);
   
   const addUserMessage = useCallback((content: string) => {
     setConversation(prev => [...prev, { id: `u-${Date.now()}`, role: 'user', content, timestamp: new Date() }]);
@@ -308,39 +332,124 @@ export default function DomainConsultationPage() {
   
   useEffect(() => { conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [conversation]);
   
-  // Initialize conversation and auto-start media (FULL AUTO)
+  // Play greeting on first user interaction (for live mode)
+  const playGreetingOnFirstInteraction = useCallback(async () => {
+    if (firstInteractionRef.current || greetingPlayedRef.current) return;
+    firstInteractionRef.current = true;
+    setAwaitingFirstInteraction(false);
+    
+    // Resume audio context if needed
+    if (voiceSynthesis) {
+      const greeting = `Hello! I'm Lexara, your legal co-counsel. I'm here to help you with ${domainInfo?.name || 'legal'} matters. Let's start with a simple question: what type of issue are you dealing with?`;
+      if (!greetingPlayedRef.current) {
+        greetingPlayedRef.current = true;
+        voiceSynthesis.speak(greeting, { context: 'introduction', autoPlay: true });
+      }
+    }
+  }, [voiceSynthesis, domainInfo?.name]);
+  
+  // Setup first interaction listener for live mode
+  useEffect(() => {
+    if (!isLiveMode || firstInteractionRef.current) return;
+    
+    // Set awaiting state
+    setAwaitingFirstInteraction(true);
+    
+    const handleFirstInteraction = () => {
+      playGreetingOnFirstInteraction();
+    };
+    
+    document.addEventListener('click', handleFirstInteraction, { once: true });
+    document.addEventListener('touchstart', handleFirstInteraction, { once: true });
+    document.addEventListener('scroll', handleFirstInteraction, { once: true });
+    
+    return () => {
+      document.removeEventListener('click', handleFirstInteraction);
+      document.removeEventListener('touchstart', handleFirstInteraction);
+      document.removeEventListener('scroll', handleFirstInteraction);
+    };
+  }, [isLiveMode, playGreetingOnFirstInteraction]);
+  
+  // Enable Live Mode handler
+  const handleEnableLiveMode = useCallback(async () => {
+    setIsEnablingLive(true);
+    
+    try {
+      // Request permissions
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+      
+      // Stop stream - we just needed permission
+      stream.getTracks().forEach(track => track.stop());
+      
+      // Update state
+      setIsLiveMode(true);
+      setShowEnableLiveButton(false);
+      
+      // Update URL
+      const url = new URL(window.location.href);
+      url.searchParams.set('live', 'true');
+      window.history.replaceState({}, '', url.toString());
+      
+      // Start media
+      await lexaraMedia.start({ video: true, audio: true });
+      await voiceMode.enable();
+      voiceMode.startListening();
+      
+      toast({
+        title: "Live Mode Enabled",
+        description: "Voice and video are now active.",
+      });
+    } catch (err: any) {
+      console.error('Enable live mode failed:', err);
+      toast({
+        title: "Could not enable live mode",
+        description: err?.name === 'NotAllowedError' 
+          ? "Camera/microphone permission was denied." 
+          : "Could not access camera or microphone.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsEnablingLive(false);
+    }
+  }, [lexaraMedia, voiceMode, toast]);
+  
+  // Initialize conversation and media based on live mode consent
   useEffect(() => {
     if (initAttempted.current) return;
     initAttempted.current = true;
     
     const init = async () => {
-      // Auto-start camera + mic if browser permission is granted
-      try { await lexaraMedia.start({ video: true, audio: true }); } catch (e) {
-        // Permission denied or not available - notify user and continue in text-only mode
-        console.log('Media auto-init: browser permission required or unavailable');
-        toast({
-          title: "Camera/Microphone Unavailable",
-          description: "We couldn't access your camera or microphone. You can continue in text-only mode.",
-        });
+      // Only auto-start media if live mode is enabled (consent given)
+      if (isLiveMode) {
+        try { 
+          await lexaraMedia.start({ video: true, audio: true }); 
+        } catch (e) {
+          // Permission denied or not available
+          console.log('Media auto-init: browser permission required or unavailable');
+          toast({
+            title: "Camera/Microphone Unavailable",
+            description: "We couldn't access your camera or microphone. You can continue in text-only mode.",
+          });
+          setIsLiveMode(false);
+          setShowEnableLiveButton(true);
+        }
+        
+        try { 
+          await voiceMode.enable(); 
+          voiceMode.startListening(); 
+        } catch (e) {
+          console.log('Voice auto-init deferred, waiting for user interaction');
+        }
       }
       
-      try { 
-        await voiceMode.enable(); 
-        voiceMode.startListening(); 
-      } catch (e) {
-        console.log('Voice auto-init deferred, waiting for user interaction');
-        document.addEventListener('click', async () => { 
-          try { 
-            await voiceMode.enable(); 
-            voiceMode.startListening(); 
-          } catch (err) {
-            console.log('Voice initialization failed:', err);
-          }
-        }, { once: true });
-      }
+      // Add greeting message (TTS playback handled by first interaction for live mode)
       setTimeout(() => {
         const greeting = `Hello! I'm Lexara, your legal co-counsel. I'm here to help you with ${domainInfo?.name || 'legal'} matters. Let's start with a simple question: what type of issue are you dealing with?`;
-        addLexaraMessage(greeting);
+        // For text-only mode, don't play TTS; for live mode, TTS triggered on first interaction
+        setConversation(prev => [...prev, { id: `l-${Date.now()}`, role: 'lexara', content: greeting, timestamp: new Date() }]);
         setIntakePhase('issue_type');
       }, 800);
     };
@@ -442,6 +551,42 @@ export default function DomainConsultationPage() {
               <span className="text-slate-500 text-sm hidden sm:inline">• {domainInfo?.name}</span>
             </div>
           </div>
+          {/* Live mode status / Enable button */}
+          <div className="flex items-center gap-2">
+            {isLiveMode && (lexaraMedia.webrtcState.connected || lexaraMedia.state.isVideoReady) && (
+              <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 flex items-center gap-1.5 px-3 py-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                LIVE · SECURE
+              </Badge>
+            )}
+            {awaitingFirstInteraction && isLiveMode && (
+              <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 flex items-center gap-1.5 px-3 py-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Click to activate
+              </Badge>
+            )}
+            {showEnableLiveButton && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleEnableLiveMode}
+                disabled={isEnablingLive}
+                className="border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10"
+              >
+                {isEnablingLive ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    Waiting for browser permission…
+                  </>
+                ) : (
+                  <>
+                    <Video className="h-4 w-4 mr-1" />
+                    Enable Live Mode
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
         </div>
       </header>
       
@@ -460,10 +605,10 @@ export default function DomainConsultationPage() {
                     isListening={voiceMode.isListening} 
                     isThinking={isThinking}
                     audioLevel={lexaraMedia.state.audioLevel}
-                    isConnected={lexaraMedia.webrtcState.connected || lexaraMedia.state.isVideoReady}
+                    isConnected={isLiveMode && (lexaraMedia.webrtcState.connected || lexaraMedia.state.isVideoReady)}
                   />
                   {/* PIP Preview - User's webcam in lower-right of avatar frame */}
-                  {lexaraMedia.state.isVideoReady && (
+                  {isLiveMode && lexaraMedia.state.isVideoReady && (
                     <div className="absolute bottom-4 right-4 w-24 h-18 rounded-lg overflow-hidden border-2 border-cyan-500/50 shadow-lg bg-black z-20">
                       <video
                         ref={lexaraMedia.setVideoElement}
@@ -592,6 +737,7 @@ export default function DomainConsultationPage() {
                 <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-500">Knowledge Base</span><span className="text-emerald-400">Loaded</span></div><Progress value={100} className="h-1 bg-slate-800"/></div>
                 <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-500">AI Models</span><span className="text-emerald-400">Ready</span></div><Progress value={100} className="h-1 bg-slate-800"/></div>
                 <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-500">Voice Link</span><span className={voiceMode.isEnabled?"text-emerald-400":"text-slate-500"}>{voiceMode.isEnabled?"Active":"Standby"}</span></div><Progress value={voiceMode.isEnabled?100:0} className="h-1 bg-slate-800"/></div>
+                <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-500">Live Mode</span><span className={isLiveMode && lexaraMedia.state.isVideoReady?"text-emerald-400":"text-slate-500"}>{isLiveMode && lexaraMedia.state.isVideoReady?"LIVE · SECURE":"Text Only"}</span></div><Progress value={isLiveMode && lexaraMedia.state.isVideoReady?100:0} className="h-1 bg-slate-800"/></div>
               </CardContent>
             </Card>
             
