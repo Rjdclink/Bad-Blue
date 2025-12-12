@@ -2,7 +2,8 @@
  * useVoiceSynthesis Hook
  * Stage 13-14: Frontend voice synthesis and playback
  * 
- * Provides interface for ALEXERA voice synthesis with browser fallback
+ * Provides interface for Lexara server-side voice synthesis.
+ * Browser TTS is disabled to enforce consistent Lexara voice profile.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -30,7 +31,8 @@ export interface VoiceSynthesisResult {
 }
 
 /**
- * Hook for ALEXERA voice synthesis
+ * Hook for Lexara voice synthesis (server-side only)
+ * Browser TTS is disabled to enforce consistent Lexara voice profile.
  */
 export function useVoiceSynthesis(): VoiceSynthesisResult {
   const { toast } = useToast();
@@ -41,7 +43,6 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   const [provider, setProvider] = useState<string | null>(null);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const currentOptionsRef = useRef<VoiceSynthesisOptions>({});
 
   // Cleanup on unmount
@@ -52,20 +53,14 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   }, []);
 
   /**
-   * Stop current speech
+   * Stop current speech (server-side audio only)
    */
   const stop = useCallback(() => {
-    // Stop audio element
+    // Stop audio element from server-side synthesis
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
       audioRef.current = null;
-    }
-
-    // Stop speech synthesis
-    if (utteranceRef.current) {
-      window.speechSynthesis.cancel();
-      utteranceRef.current = null;
     }
 
     setIsSpeaking(false);
@@ -74,165 +69,27 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   }, []);
 
   /**
-   * Pause current speech
+   * Pause current speech (server-side audio only)
    */
   const pause = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
       setIsPaused(true);
-    } else if (utteranceRef.current) {
-      window.speechSynthesis.pause();
-      setIsPaused(true);
     }
   }, []);
 
   /**
-   * Resume paused speech
+   * Resume paused speech (server-side audio only)
    */
   const resume = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.play();
       setIsPaused(false);
-    } else if (utteranceRef.current) {
-      window.speechSynthesis.resume();
-      setIsPaused(false);
     }
   }, []);
 
-  // ============================================================================
-  // LEXARA VOICE CONFIGURATION - Female voice profile
-  // ============================================================================
-  
-  const LEXARA_VOICE_CONFIG = {
-    preferredGender: 'female' as const,
-    targetPitch: 1.2,
-    targetRate: 0.95,
-    persona: 'ethereal-spectral-legal-counsel',
-    femaleVoiceHints: [
-      'female', 'woman', 'samantha', 'karen', 'fiona', 'tessa', 'moira',
-      'victoria', 'alex', 'allison', 'ava', 'susan', 'zira', 'hazel',
-      'jenny', 'aria', 'sara', 'joanna', 'amy', 'emma', 'ivy', 'kendra',
-      'kimberly', 'salli', 'nicole', 'veena', 'aditi', 'raveena',
-      'google uk english female', 'google us english female'
-    ],
-  };
-
-  const LEXARA_VOICE_STORAGE_KEY = 'lexara-voice-profile';
-
   /**
-   * Select a female voice from available voices
-   */
-  const selectFemaleVoice = useCallback((voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
-    if (!voices.length) return null;
-    
-    // First, try to find explicitly female voices
-    for (const voice of voices) {
-      const nameLower = voice.name.toLowerCase();
-      const langLower = voice.lang.toLowerCase();
-      
-      for (const hint of LEXARA_VOICE_CONFIG.femaleVoiceHints) {
-        if (nameLower.includes(hint) || langLower.includes(hint)) {
-          return voice;
-        }
-      }
-    }
-    
-    // Prefer English voices as fallback
-    const englishVoice = voices.find(v => v.lang.startsWith('en'));
-    if (englishVoice) return englishVoice;
-    
-    return voices[0];
-  }, []);
-
-  /**
-   * Get or select the LEXARA voice profile
-   */
-  const getLexaraVoice = useCallback((): SpeechSynthesisVoice | null => {
-    const voices = window.speechSynthesis.getVoices();
-    if (!voices.length) return null;
-    
-    // Try to load cached voice
-    try {
-      const cachedVoiceId = localStorage.getItem(LEXARA_VOICE_STORAGE_KEY);
-      if (cachedVoiceId) {
-        const cachedVoice = voices.find(v => v.voiceURI === cachedVoiceId);
-        if (cachedVoice) return cachedVoice;
-      }
-    } catch (e) {
-      // localStorage may not be available
-    }
-    
-    // Select a female voice and cache it
-    const selectedVoice = selectFemaleVoice(voices);
-    if (selectedVoice) {
-      try {
-        localStorage.setItem(LEXARA_VOICE_STORAGE_KEY, selectedVoice.voiceURI);
-      } catch (e) {
-        // localStorage may not be available
-      }
-    }
-    
-    return selectedVoice;
-  }, [selectFemaleVoice]);
-
-  /**
-   * Speak using browser Web Speech API
-   */
-  const speakWithBrowser = useCallback(async (
-    text: string,
-    ssml: string,
-    options: VoiceSynthesisOptions
-  ) => {
-    if (!('speechSynthesis' in window)) {
-      throw new Error('Browser speech synthesis not supported');
-    }
-
-    // Stop any ongoing speech
-    window.speechSynthesis.cancel();
-
-    // Create utterance
-    const utterance = new SpeechSynthesisUtterance(text);
-    utteranceRef.current = utterance;
-
-    // Get LEXARA female voice (with caching)
-    const lexaraVoice = getLexaraVoice();
-    if (lexaraVoice) {
-      utterance.voice = lexaraVoice;
-    }
-
-    // Configure utterance based on LEXARA female persona
-    utterance.rate = LEXARA_VOICE_CONFIG.targetRate;  // 0.95 - soft, clear, articulate
-    utterance.pitch = LEXARA_VOICE_CONFIG.targetPitch; // 1.2 - slightly higher for feminine voice
-    utterance.volume = 1.0;
-
-    // Set up event handlers
-    utterance.onstart = () => {
-      setIsSpeaking(true);
-      setIsLoading(false);
-      options.onStart?.();
-    };
-
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      utteranceRef.current = null;
-      options.onEnd?.();
-    };
-
-    utterance.onerror = (event) => {
-      const err = new Error(`Speech synthesis error: ${event.error}`);
-      setError(err);
-      setIsSpeaking(false);
-      utteranceRef.current = null;
-      options.onError?.(err);
-    };
-
-    // Speak
-    window.speechSynthesis.speak(utterance);
-    setProvider('browser');
-  }, [getLexaraVoice]);
-
-  /**
-   * Speak using server-side synthesis
+   * Speak using server-side Lexara voice synthesis
    */
   const speakWithServer = useCallback(async (
     text: string,
@@ -252,12 +109,13 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       });
 
       if (!response.ok) {
-        throw new Error(`Server speech synthesis failed: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Lexara voice synthesis failed: ${response.status}`);
       }
 
       const contentType = response.headers.get('Content-Type');
 
-      // Check if we got audio data
+      // Check if we got audio data from Lexara voice provider
       if (contentType?.includes('audio/')) {
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
@@ -294,23 +152,22 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
           options.onError?.(err);
         };
 
-        const providerName = response.headers.get('X-Provider') || 'server';
+        const providerName = response.headers.get('X-Provider') || 'lexara';
         setProvider(providerName);
 
       } else {
-        // Got SSML/metadata for browser synthesis
-        const data = await response.json();
-        setProvider(data.provider || 'browser');
-        await speakWithBrowser(data.text, data.ssml, options);
+        // No audio data received - Lexara voice synthesis unavailable
+        throw new Error('Lexara voice synthesis did not return audio. Voice synthesis is temporarily unavailable.');
       }
 
     } catch (err) {
       throw err;
     }
-  }, [speakWithBrowser]);
+  }, []);
 
   /**
    * Main speak function
+   * Uses only server-side Lexara voice synthesis (browser TTS disabled)
    */
   const speak = useCallback(async (
     text: string,
@@ -326,17 +183,11 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       setIsLoading(true);
       setError(null);
 
-      // Try server-side synthesis first
-      try {
-        await speakWithServer(text, options);
-      } catch (serverError) {
-        // Fallback to browser synthesis
-        console.warn('Server synthesis failed, using browser TTS:', serverError);
-        await speakWithBrowser(text, '', options);
-      }
+      // Use only server-side Lexara voice synthesis (no browser TTS fallback)
+      await speakWithServer(text, options);
 
     } catch (err) {
-      const error = err instanceof Error ? err : new Error('Speech synthesis failed');
+      const error = err instanceof Error ? err : new Error('Lexara voice synthesis unavailable');
       setError(error);
       setIsLoading(false);
       setIsSpeaking(false);
@@ -344,12 +195,12 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       options.onError?.(error);
       
       toast({
-        title: 'Voice Synthesis Error',
-        description: 'Unable to play audio. Please check your audio settings.',
+        title: 'Lexara Voice Unavailable',
+        description: 'Voice synthesis is temporarily unavailable. Please try again later.',
         variant: 'destructive',
       });
     }
-  }, [stop, speakWithServer, speakWithBrowser, toast]);
+  }, [stop, speakWithServer, toast]);
 
   return {
     speak,

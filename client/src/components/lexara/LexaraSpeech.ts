@@ -1,9 +1,15 @@
 /**
  * LEXARA Speech Module
  * 
- * High-fidelity feminine voice model with emotion layering.
- * Uses browser TTS with enhanced configuration for a breathy, 
- * natural feminine voice with varied speech cadence.
+ * @deprecated Browser TTS is disabled to enforce Lexara voice profile.
+ * Use the server-side voice synthesis via useVoiceSynthesis hook instead.
+ * 
+ * This module is preserved for backward compatibility but speech() will return
+ * an error indicating that browser TTS is disabled.
+ * 
+ * For voice synthesis, use:
+ * - useVoiceSynthesis hook (client/src/hooks/useVoiceSynthesis.ts)
+ * - Server-side /api/alexera/speak endpoint
  */
 
 import { getLexaraStateManager, type LexaraTone, type LexaraEmotionState } from './LexaraState';
@@ -196,97 +202,15 @@ export class LexaraSpeech {
 
   /**
    * Speak text with LEXARA's voice
+   * @deprecated Browser TTS is disabled. Use useVoiceSynthesis hook or /api/alexera/speak endpoint.
    */
   async speak(options: LexaraSpeechOptions): Promise<LexaraSpeechResult> {
-    if (!this.synth) {
-      const error = new Error('Speech synthesis not supported in this browser');
-      options.onError?.(error);
-      return { success: false, error };
-    }
-
-    // Ensure voices are loaded
-    await this.voiceLoadPromise;
-
-    // Stop any current speech
-    this.stop();
-
-    // Get current state from LexaraState
-    const stateManager = getLexaraStateManager();
-    const currentTone = stateManager.getTone();
-    const emotion = this.mapToneToEmotion(currentTone);
-
-    // Merge style with current state
-    const styleTag: SpeechStyleTag = {
-      emotion: options.style?.emotion || emotion,
-      urgency: options.style?.urgency || 'medium',
-      warmth: options.style?.warmth || 'warm',
-    };
-
-    // Calculate final voice config
-    const voiceConfig = this.calculateVoiceConfig(styleTag);
-
-    // Process text for natural speech
-    const processedText = this.processTextForNaturalSpeech(options.text, voiceConfig);
-
-    // Create utterance
-    const utterance = new SpeechSynthesisUtterance(processedText);
-
-    // Apply voice settings
-    if (this.selectedVoice) {
-      utterance.voice = this.selectedVoice;
-    }
-    utterance.pitch = voiceConfig.pitch;
-    utterance.rate = voiceConfig.rate;
-    utterance.volume = voiceConfig.volume;
-
-    // Set up event handlers
-    utterance.onstart = () => {
-      this.isSpeaking = true;
-      this.isPaused = false;
-      options.onStart?.();
-    };
-
-    utterance.onend = () => {
-      this.isSpeaking = false;
-      this.isPaused = false;
-      this.currentUtterance = null;
-      options.onEnd?.();
-    };
-
-    utterance.onpause = () => {
-      this.isPaused = true;
-      options.onPause?.();
-    };
-
-    utterance.onresume = () => {
-      this.isPaused = false;
-      options.onResume?.();
-    };
-
-    utterance.onerror = (event) => {
-      this.isSpeaking = false;
-      this.isPaused = false;
-      this.currentUtterance = null;
-      const error = new Error(`Speech synthesis error: ${event.error}`);
-      options.onError?.(error);
-    };
-
-    utterance.onboundary = (event) => {
-      options.onBoundary?.(event);
-    };
-
-    // Store current utterance
-    this.currentUtterance = utterance;
-
-    // Start speaking
-    try {
-      this.synth.speak(utterance);
-      return { success: true, utterance };
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error('Failed to start speech');
-      options.onError?.(err);
-      return { success: false, error: err };
-    }
+    // Browser TTS is disabled to enforce Lexara voice profile
+    const error = new Error(
+      'Browser TTS is disabled. Use the Lexara server-side voice synthesis via useVoiceSynthesis hook or /api/alexera/speak endpoint.'
+    );
+    options.onError?.(error);
+    return { success: false, error };
   }
 
   /**

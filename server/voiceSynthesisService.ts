@@ -2,12 +2,13 @@
  * Voice Synthesis Service
  * Stage 13: Neural Voice Synthesis and Delivery Layer
  * 
- * Integrates with voice synthesis providers:
+ * Integrates with Lexara voice synthesis providers:
  * - ElevenLabs (premium)
  * - Amazon Polly Neural
  * - Microsoft Azure Neural Voice
  * - Google Cloud WaveNet/Neural2
- * - Browser Web Speech API (fallback)
+ * 
+ * Note: Browser TTS is disabled to enforce Lexara voice profile consistency.
  */
 
 import { 
@@ -58,35 +59,6 @@ interface VoiceProvider {
   name: string;
   synthesize(request: VoiceSynthesisRequest, ssml: string): Promise<VoiceSynthesisResponse>;
   isAvailable(): Promise<boolean>;
-}
-
-/**
- * Browser TTS Provider (Fallback)
- * Generates SSML that can be used with browser SpeechSynthesis API
- */
-class BrowserTTSProvider implements VoiceProvider {
-  name = 'browser';
-
-  async isAvailable(): Promise<boolean> {
-    return true; // Always available as fallback
-  }
-
-  async synthesize(
-    request: VoiceSynthesisRequest,
-    ssml: string
-  ): Promise<VoiceSynthesisResponse> {
-    log.info('Using browser TTS (client-side synthesis)');
-    
-    // Return SSML for client-side synthesis
-    return {
-      mimeType: 'text/plain',
-      duration: 0, // Will be determined client-side
-      text: request.text,
-      ssml,
-      segments: [],
-      provider: 'browser',
-    };
-  }
 }
 
 /**
@@ -228,13 +200,10 @@ export class VoiceSynthesisService {
       targetProvider: 'ssml',
     });
 
-    // Initialize providers
+    // Initialize providers (Lexara voice providers only - browser TTS disabled)
     this.providers = new Map();
     
-    // Add browser fallback
-    this.providers.set('browser', new BrowserTTSProvider());
-    
-    // Add premium providers if API keys are available
+    // Add premium Lexara-compatible providers if API keys are available
     if (process.env.ELEVENLABS_API_KEY) {
       this.providers.set('elevenlabs', new ElevenLabsProvider(process.env.ELEVENLABS_API_KEY));
     }
@@ -251,30 +220,40 @@ export class VoiceSynthesisService {
       this.providers.set('google', new GoogleTTSProvider());
     }
 
-    // Set default provider based on availability
-    this.defaultProvider = 'browser';
+    // Set default provider based on availability (no browser TTS fallback)
+    this.defaultProvider = '';
     this.selectDefaultProvider();
   }
 
   private async selectDefaultProvider(): Promise<void> {
-    // Prefer ElevenLabs for quality, fall back to others
-    const preferenceOrder = ['elevenlabs', 'azure', 'google', 'polly', 'browser'];
+    // Prefer ElevenLabs for Lexara voice quality, fall back to other neural providers
+    // Browser TTS is excluded to enforce Lexara voice profile
+    const preferenceOrder = ['elevenlabs', 'azure', 'google', 'polly'];
     
     for (const providerName of preferenceOrder) {
       const provider = this.providers.get(providerName);
       if (provider && await provider.isAvailable()) {
         this.defaultProvider = providerName;
-        log.info(`Selected voice provider: ${providerName}`);
-        break;
+        log.info(`Selected Lexara voice provider: ${providerName}`);
+        return;
       }
     }
+    
+    // No providers available - voice synthesis will be unavailable
+    log.warn('No Lexara voice providers available. Voice synthesis will be unavailable.');
   }
 
   /**
    * Main synthesis method
+   * Uses only Lexara voice providers (no browser TTS fallback)
    */
   async synthesize(request: VoiceSynthesisRequest): Promise<VoiceSynthesisResponse> {
     try {
+      // Check if any Lexara voice provider is available
+      if (!this.defaultProvider) {
+        throw new Error('No Lexara voice providers configured. Please configure ElevenLabs, Azure, Google, or Polly.');
+      }
+
       log.info('Voice synthesis request', {
         context: request.context,
         textLength: request.text.length,
@@ -296,7 +275,7 @@ export class VoiceSynthesisService {
       const provider = this.providers.get(providerName);
 
       if (!provider) {
-        throw new Error(`Voice provider '${providerName}' not available`);
+        throw new Error(`Lexara voice provider '${providerName}' not available`);
       }
 
       // Step 4: Synthesize with the provider
@@ -315,15 +294,8 @@ export class VoiceSynthesisService {
     } catch (error) {
       log.error('Voice synthesis failed', error);
       
-      // Fallback to browser TTS on error
-      if (this.defaultProvider !== 'browser') {
-        log.info('Falling back to browser TTS');
-        const browserProvider = this.providers.get('browser')!;
-        const speechFlow = this.speechFlow.transformToSpeech(request.text, request.context || 'explanation');
-        return browserProvider.synthesize(request, speechFlow.ssml);
-      }
-      
-      throw error;
+      // No browser TTS fallback - throw error to inform client
+      throw new Error('Lexara voice synthesis unavailable. Please try again later.');
     }
   }
 
