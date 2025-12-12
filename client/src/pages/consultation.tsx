@@ -317,6 +317,8 @@ export default function DomainConsultationPage() {
       // Auto-start camera + mic if browser permission is granted
       try { await lexaraMedia.start({ video: true, audio: true }); } catch (e) {
         // Permission denied or not available - continue without video
+        // User can still use text chat
+        console.log('Media auto-init: browser permission required or unavailable');
       }
       
       try { 
@@ -449,7 +451,7 @@ export default function DomainConsultationPage() {
               <div className="grid grid-cols-1 md:grid-cols-5 h-full min-h-[600px] w-full">
                 
                 {/* Avatar - 40% (min-width 420px) */}
-                <div className="md:col-span-2 border-b md:border-b-0 md:border-r border-slate-800/50 relative" style={{ minWidth: '420px' }}>
+                <div className="md:col-span-2 border-b md:border-b-0 md:border-r border-slate-800/50 relative min-w-[420px]">
                   <EtherealLexara 
                     isSpeaking={voiceSynthesis.isSpeaking} 
                     isListening={voiceMode.isListening} 

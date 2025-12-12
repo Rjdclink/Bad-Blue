@@ -169,7 +169,8 @@ export default function InmateSearch() {
     onError: (error: Error) => {
       setSearchProgress(0);
       // Show error banner but keep form visible - do NOT redirect anywhere
-      setSearchApiError("We couldn't reach one of the inmate systems. Try again or adjust filters.");
+      const errorMsg = error.message || "We couldn't reach one of the inmate systems. Try again or adjust filters.";
+      setSearchApiError(errorMsg);
       toast({
         title: "Search Failed",
         description: error.message,
