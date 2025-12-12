@@ -1,12 +1,16 @@
 /**
  * LEXARA API Routes
  * Backend endpoints for LEXARA conversational AI
+ * 
+ * A7 - LOCK LEXARA INTO TRUE "PERSONA MODE"
+ * Permanent, Stable, Feminine, Non-Robotic
  */
 
 import express, { Request, Response } from 'express';
 import { createLogger } from '../logger';
 import { callAIWithFallback } from '../aiSubAgent';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
+import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
 
 const router = express.Router();
 const log = createLogger('LEXARARoutes');
@@ -14,10 +18,14 @@ const log = createLogger('LEXARARoutes');
 /**
  * POST /api/lexara/chat
  * Main chat endpoint for LEXARA conversational AI
+ * Force-merges LEXARA_KERNEL to ensure persona consistency
  */
 router.post('/chat', express.json(), async (req: Request, res: Response) => {
   try {
     const { prompt, context, systemPrompt } = req.body;
+    
+    // Force-merge LEXARA_KERNEL into persona - stops the "default robot" voice from ever appearing
+    req.body.persona = mergePersonaWithKernel(req.body.persona);
     
     if (!prompt || typeof prompt !== 'string') {
       return res.status(400).json({
@@ -26,10 +34,11 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       });
     }
     
-    log.info('[LEXARA] Chat request received', {
+    log.info('[LEXARA] Chat request received with persona kernel', {
       promptLength: prompt.length,
       hasPreviousMessages: !!context?.previousMessages?.length,
       behaviorMode: context?.behaviorMode,
+      personaName: LEXARA_KERNEL.identity.name,
     });
     
     // Build conversation history for context
@@ -95,12 +104,18 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 /**
  * GET /api/lexara/status
- * Get LEXARA system status
+ * Get LEXARA system status with persona kernel info
  */
 router.get('/status', (req: Request, res: Response) => {
   res.json({
     success: true,
     status: 'active',
+    kernel: {
+      name: LEXARA_KERNEL.identity.name,
+      age: LEXARA_KERNEL.identity.age,
+      style: LEXARA_KERNEL.identity.style,
+      speech: LEXARA_KERNEL.speech,
+    },
     persona: {
       name: LEXARA_PERSONA.name,
       traits: LEXARA_PERSONA.traits,
@@ -110,8 +125,58 @@ router.get('/status', (req: Request, res: Response) => {
       video: true,
       adaptiveBehavior: true,
       modes: ['personable', 'professional'],
+      personaLocked: true,
     },
   });
+});
+
+/**
+ * POST /api/lexara/voice
+ * Voice synthesis endpoint with persona kernel
+ */
+router.post('/voice', express.json(), async (req: Request, res: Response) => {
+  try {
+    const { text, context, emotionalState } = req.body;
+    
+    // Force-merge LEXARA_KERNEL into persona
+    req.body.persona = mergePersonaWithKernel(req.body.persona);
+    
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Text is required for voice synthesis',
+      });
+    }
+    
+    log.info('[LEXARA] Voice synthesis request', {
+      textLength: text.length,
+      context,
+      emotionalState,
+      personaTimbre: LEXARA_KERNEL.speech.timbre,
+    });
+    
+    // Return voice configuration for client-side TTS
+    // The client will use server TTS (LexaraServerTTS) when available
+    return res.json({
+      success: true,
+      text,
+      voiceConfig: {
+        timbre: LEXARA_KERNEL.speech.timbre,
+        texture: LEXARA_KERNEL.speech.texture,
+        pacing: LEXARA_KERNEL.speech.pacing,
+        intonation: LEXARA_KERNEL.speech.intonation,
+      },
+      persona: LEXARA_KERNEL,
+      emotionalState: emotionalState || 'neutral',
+    });
+    
+  } catch (error) {
+    log.error('[LEXARA] Voice synthesis error', { error });
+    return res.status(500).json({
+      success: false,
+      error: 'Voice synthesis failed',
+    });
+  }
 });
 
 /**

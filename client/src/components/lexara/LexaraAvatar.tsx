@@ -1,15 +1,20 @@
 /**
  * LEXARA Avatar Component
  * 
+ * A7 - LOCK LEXARA INTO TRUE "PERSONA MODE"
+ * Permanent, Stable, Feminine, Non-Robotic
+ * 
  * Ethereal, spectral 18-year-old feminine figure with:
  * - Luminous, electric-blue irises and gold-ring pupils
  * - Non-cartoon, non-uncanny appearance
  * - Procedural animation: floating hair, micro-movements, spectral glow
  * - Emotion states: curious, focused, alert, empathetic
+ * - Awareness hooks: responds to user focus and movement
  */
 
-import React, { memo, useState, useEffect, useRef, useMemo } from 'react';
+import React, { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { cn } from '@/lib/utils';
+import { Lexara } from '@/lib/lexaraSpeechClient';
 import type { LexaraEmotionState } from './LexaraState';
 
 // ============================================================================
@@ -24,6 +29,9 @@ export interface LexaraAvatarProps {
   audioLevel?: number;  // 0-1 for lip sync
   emotion?: LexaraEmotionState;
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
+  onReady?: () => void;
+  onFocusChange?: (isFocused: boolean) => void;
+  onUserMovement?: (movement: { x: number; y: number }) => void;
 }
 
 // ============================================================================
@@ -86,6 +94,9 @@ export const LexaraAvatar = memo(function LexaraAvatar({
   audioLevel = 0,
   emotion = 'curious',
   size = 'full',
+  onReady,
+  onFocusChange,
+  onUserMovement,
 }: LexaraAvatarProps) {
   // Animation state
   const [breathePhase, setBreathePhase] = useState(0);
@@ -94,9 +105,15 @@ export const LexaraAvatar = memo(function LexaraAvatar({
   const [blinkState, setBlinkState] = useState(false);
   const [microMovementX, setMicroMovementX] = useState(0);
   const [microMovementY, setMicroMovementY] = useState(0);
+  
+  // A7: Awareness state - tracks user focus and movement
+  const [userFocus, setUserFocus] = useState(true);
+  const [userMovement, setUserMovement] = useState({ x: 0, y: 0 });
+  const [isAvatarReady, setIsAvatarReady] = useState(false);
 
   const animationRef = useRef<number>();
   const lastTimeRef = useRef<number>(0);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Get emotion colors
   const colors = useMemo(() => EMOTION_COLORS[emotion], [emotion]);
@@ -154,6 +171,96 @@ export const LexaraAvatar = memo(function LexaraAvatar({
   }, [isSpeaking, audioLevel]);
 
   // ============================================================================
+  // A7: LEXARA AWARENESS HOOKS
+  // Makes her responsive—she follows you, reacts to motion, and feels present
+  // ============================================================================
+
+  // Notify when avatar is ready
+  useEffect(() => {
+    if (!isAvatarReady) {
+      setIsAvatarReady(true);
+      Lexara.notify(Lexara.events.AVATAR_READY);
+      onReady?.();
+    }
+  }, [isAvatarReady, onReady]);
+
+  // Track user focus (document visibility)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const isFocused = document.visibilityState === 'visible';
+      setUserFocus(isFocused);
+      Lexara.notify(Lexara.events.USER_FOCUS, isFocused);
+      onFocusChange?.(isFocused);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [onFocusChange]);
+
+  // Track mouse movement for subtle gaze following
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      
+      const rect = containerRef.current.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      
+      // Calculate normalized offset (-1 to 1)
+      const offsetX = (e.clientX - centerX) / (window.innerWidth / 2);
+      const offsetY = (e.clientY - centerY) / (window.innerHeight / 2);
+      
+      // Clamp values
+      const clampedX = Math.max(-1, Math.min(1, offsetX));
+      const clampedY = Math.max(-1, Math.min(1, offsetY));
+      
+      setUserMovement({ x: clampedX, y: clampedY });
+      
+      // Notify Lexara of movement (throttled via state update)
+      onUserMovement?.({ x: clampedX, y: clampedY });
+    };
+
+    // Throttle mouse tracking
+    let lastUpdate = 0;
+    const throttledHandler = (e: MouseEvent) => {
+      const now = Date.now();
+      if (now - lastUpdate > 50) { // 20fps max
+        lastUpdate = now;
+        handleMouseMove(e);
+      }
+    };
+
+    window.addEventListener('mousemove', throttledHandler);
+    
+    return () => {
+      window.removeEventListener('mousemove', throttledHandler);
+    };
+  }, [onUserMovement]);
+
+  // Listen for Lexara events
+  useEffect(() => {
+    const handleLexaraEvent = (e: CustomEvent) => {
+      const { event, data } = e.detail;
+      
+      // React to events with subtle animations
+      if (event === Lexara.events.SPEAKING_START) {
+        // Could trigger additional visual feedback here
+      } else if (event === Lexara.events.LISTENING_START) {
+        // Could trigger listening animation
+      }
+    };
+
+    window.addEventListener('lexara-event', handleLexaraEvent as EventListener);
+    
+    return () => {
+      window.removeEventListener('lexara-event', handleLexaraEvent as EventListener);
+    };
+  }, []);
+
+  // ============================================================================
   // CALCULATED ANIMATION VALUES
   // ============================================================================
 
@@ -161,12 +268,18 @@ export const LexaraAvatar = memo(function LexaraAvatar({
   const hairOffset = Math.sin(hairDrift) * 2.5;
   const shoulderMovement = Math.sin(breathePhase * 0.5) * 1;
 
-  // Eye gaze based on state
+  // Eye gaze based on state - A7: now includes user movement tracking for presence
   const getEyeOffset = useMemo(() => {
     if (isThinking) return { x: 2, y: -1.5 };
     if (isListening) return { x: 0, y: 0 };
-    return { x: microMovementX * 0.5, y: microMovementY * 0.3 };
-  }, [isThinking, isListening, microMovementX, microMovementY]);
+    
+    // A7: Blend user movement tracking with micro-movements for natural gaze following
+    const userGazeInfluence = userFocus ? 0.6 : 0.2;
+    const blendedX = (microMovementX * 0.5) + (userMovement.x * 2 * userGazeInfluence);
+    const blendedY = (microMovementY * 0.3) + (userMovement.y * 1.5 * userGazeInfluence);
+    
+    return { x: blendedX, y: blendedY };
+  }, [isThinking, isListening, microMovementX, microMovementY, userMovement, userFocus]);
 
   // Memoized styles for performance
   const shimmerOverlayStyle = useMemo(() => ({
@@ -196,6 +309,7 @@ export const LexaraAvatar = memo(function LexaraAvatar({
 
   return (
     <div
+      ref={containerRef}
       className={cn(
         'relative flex items-center justify-center overflow-hidden',
         'bg-gradient-to-br from-slate-950 via-indigo-950/80 to-slate-900',
