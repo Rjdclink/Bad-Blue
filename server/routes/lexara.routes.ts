@@ -33,10 +33,20 @@ interface LexaraResponsePayload {
 }
 
 /**
- * Validate Lexara AI response and return safe fallback if invalid
+ * Validate Lexara AI response and return safe fallback if invalid.
+ * 
+ * Validation rules:
+ * 1. Response must exist (not null/undefined)
+ * 2. Response.success must be explicitly true (not undefined or false)
+ * 3. Response.content must be a non-empty string
+ * 
+ * @param aiResponse - The raw response from callAIWithFallback
+ * @returns LexaraResponsePayload - Validated response or safe fallback
+ * 
+ * Note: _diagnostic flag is used internally for logging but stripped before client response
  */
 function validateLexaraResponse(aiResponse: any): LexaraResponsePayload {
-  // Check if response exists and has required fields
+  // Check if response exists
   if (!aiResponse) {
     log.warn('[LEXARA] AI response is null/undefined');
     return {
@@ -46,7 +56,8 @@ function validateLexaraResponse(aiResponse: any): LexaraResponsePayload {
     };
   }
 
-  if (!aiResponse.success) {
+  // Check success field explicitly (handle undefined case)
+  if (aiResponse.success !== true) {
     log.warn('[LEXARA] AI response indicates failure', { error: aiResponse.error });
     return {
       success: false,
@@ -55,7 +66,8 @@ function validateLexaraResponse(aiResponse: any): LexaraResponsePayload {
     };
   }
 
-  if (!aiResponse.content || typeof aiResponse.content !== 'string') {
+  // Check content field exists and is a string
+  if (typeof aiResponse.content !== 'string' || !aiResponse.content) {
     log.warn('[LEXARA] AI response missing valid content', { aiResponse });
     return {
       success: false,
@@ -170,18 +182,20 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const validatedResponse = validateLexaraResponse(aiResponse);
     
     if (!validatedResponse.success) {
-      return res.status(500).json(validatedResponse);
+      // Remove _diagnostic flag before sending to client
+      const { _diagnostic, ...clientResponse } = validatedResponse;
+      return res.status(500).json(clientResponse);
     }
     
     log.info('[LEXARA] Chat response generated', {
-      responseLength: aiResponse.content.length,
-      model: aiResponse.model,
+      responseLength: validatedResponse.response?.length || 0,
+      model: validatedResponse.model,
     });
     
     return res.json({
       success: true,
-      response: aiResponse.content,
-      model: aiResponse.model,
+      response: validatedResponse.response,
+      model: validatedResponse.model,
     });
     
   } catch (error) {

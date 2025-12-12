@@ -251,7 +251,14 @@ export class VoiceSynthesisService {
     try {
       // Check if any Lexara voice provider is available
       if (!this.defaultProvider) {
-        throw new Error('No Lexara voice providers configured. Please configure ElevenLabs, Azure, Google, or Polly.');
+        throw new Error(
+          'No Lexara voice providers configured. ' +
+          'Set one of the following environment variables to enable a provider: ' +
+          'ELEVENLABS_API_KEY (for ElevenLabs), ' +
+          'AZURE_SPEECH_KEY (for Azure), ' +
+          'GOOGLE_APPLICATION_CREDENTIALS (for Google), or ' +
+          'AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (for Polly).'
+        );
       }
 
       log.info('Voice synthesis request', {
