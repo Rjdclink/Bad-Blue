@@ -106,6 +106,16 @@ async function gracefulShutdown(signal: string): Promise<void> {
     }
 
     try {
+      const { maintenanceWorker } = await import('./maintenanceWorker');
+      if (maintenanceWorker.shutdown) {
+        await maintenanceWorker.shutdown();
+        console.log('[SHUTDOWN] Maintenance Worker stopped');
+      }
+    } catch (e) {
+      console.warn('[SHUTDOWN] Error stopping maintenance worker:', e);
+    }
+
+    try {
       const { pool } = await import('./db');
       if (pool?.end) {
         await pool.end();
@@ -252,6 +262,15 @@ async function initializeServices(): Promise<void> {
     console.log('[STARTUP] ✓ Sub-Agent Harvester initialized (daily 3:00 UTC)');
   } catch (error: any) {
     console.warn('[STARTUP] ⚠ Sub-Agent Harvester failed:', error?.message ?? error);
+  }
+
+  // Initialize Unified Maintenance Worker for weekly system maintenance
+  try {
+    const { maintenanceWorker } = await import('./maintenanceWorker');
+    await maintenanceWorker.initialize();
+    console.log('[STARTUP] ✓ Maintenance Worker initialized (weekly Sunday 3:00 UTC)');
+  } catch (error: any) {
+    console.warn('[STARTUP] ⚠ Maintenance Worker failed:', error?.message ?? error);
   }
 }
 
