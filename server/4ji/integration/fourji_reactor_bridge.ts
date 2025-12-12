@@ -290,35 +290,21 @@ class FourJiReactorBridge {
     priority: string
   ): Promise<ReactorResponse> {
     try {
-      // Build a complete ReactorJob with all required properties
-      const jobId = `4ji-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-      const now = new Date();
+      // Submit job to reactor and get job ID
+      const jobType = this.mapRequestTypeToJobType(request.requestType);
+      const priorityNum = this.mapPriorityToNumber(priority);
       
-      const job: ReactorJob = {
-        id: jobId,
-        type: this.mapRequestTypeToJobType(request.requestType),
-        payload: request.context,
-        status: 'pending',
-        priority: this.mapPriorityToNumber(priority),
-        scheduledAt: now,
-        startedAt: null,
-        finishedAt: null,
-        errorMessage: null,
-        retryCount: 0,
-        maxRetries: 3,
-        createdAt: now
-      };
+      const jobId = await submitJob(jobType, request.context, priorityNum);
 
-      const result = await submitJob(job);
-
+      // Return success - actual result will be processed asynchronously
       return {
-        success: result.status === 'completed',
-        data: result.result,
-        error: result.error || undefined,
+        success: true,
+        data: { jobId },
+        error: undefined,
         metrics: {
-          processingTimeMs: result.processingTime || 0,
-          modelsUsed: result.modelsUsed || [],
-          confidenceScore: result.confidence || 0.5
+          processingTimeMs: 0,
+          modelsUsed: [],
+          confidenceScore: 0.5
         }
       };
     } catch (error: any) {

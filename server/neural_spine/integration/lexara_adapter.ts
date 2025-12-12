@@ -297,8 +297,8 @@ class LexaraAdapter {
     const intents = new Set<string>();
     patterns.forEach(p => {
       p.synapse.tags
-        .filter(t => !['voice', 'ui', 'assistant', 'conversation', 'command'].includes(t))
-        .forEach(t => intents.add(t));
+        .filter((t: string) => !['voice', 'ui', 'assistant', 'conversation', 'command'].includes(t))
+        .forEach((t: string) => intents.add(t));
     });
 
     // Determine tone based on successful patterns
@@ -322,7 +322,7 @@ class LexaraAdapter {
    * Generate a suggestion string from a synapse
    */
   private generateSuggestion(synapse: NeuralSynapse): string {
-    const tags = synapse.tags.filter(t => !['voice', 'ui', 'assistant'].includes(t)).join(', ');
+    const tags = synapse.tags.filter((t: string) => !['voice', 'ui', 'assistant'].includes(t)).join(', ');
     return `Voice pattern (w: ${synapse.weight.toFixed(2)}, c: ${synapse.confidence.toFixed(2)}): ${tags || 'general'}`;
   }
 

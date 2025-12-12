@@ -67,6 +67,7 @@ import type {
   OrchestratedResult,
   RelationalMode,
   TrainingPhase,
+  VoiceProfile,
 } from './types';
 
 const log = createLogger('4Ji-Core');
@@ -131,7 +132,8 @@ export class FourJi extends EventEmitter {
     // Apply voice profile overrides if specified
     if (options.voiceProfileOverrides) {
       const blender = getPersonalityBlender();
-      blender.updateVoiceProfile({ traits: options.voiceProfileOverrides });
+      // Cast to allow partial traits override
+      blender.updateVoiceProfile({ traits: options.voiceProfileOverrides as VoiceProfile['traits'] });
     }
 
     this.initialized = true;
