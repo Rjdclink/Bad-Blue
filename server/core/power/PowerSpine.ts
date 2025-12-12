@@ -65,6 +65,13 @@ export interface SpineConfig {
 // CONSTANTS
 // ============================================================================
 
+/**
+ * Resource allocation scale factor
+ * Converts task weight (0.0-1.0) to resource units for tracking
+ * This allows granular resource tracking while keeping weights intuitive
+ */
+const RESOURCE_SCALE_FACTOR = 10;
+
 const DEFAULT_CONFIG: SpineConfig = {
   maxConcurrentTasks: 10,
   maxQueueSize: 100,
@@ -488,8 +495,8 @@ class PowerSpine {
       // Remove from queue
       this.taskQueue = this.taskQueue.filter(t => t.id !== task.id);
       
-      // Allocate resources
-      task.allocatedResources = task.weight * 10; // Scale factor
+      // Allocate resources using scale factor (converts weight to resource units)
+      task.allocatedResources = task.weight * RESOURCE_SCALE_FACTOR;
       this.totalResourcesAllocated += task.allocatedResources;
       
       // Start task

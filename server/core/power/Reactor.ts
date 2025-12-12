@@ -474,8 +474,21 @@ class PowerReactor {
     // Merge current with optimal insights
     const reinforced = this.mergeResults(current, optimal);
     
-    // Calculate confidence gain
-    const confidenceGain = Math.random() * 0.1 + 0.05; // 5-15% per cycle
+    // Calculate confidence gain based on merge quality
+    // More structured data (objects with properties) indicates better reinforcement
+    let confidenceGain = 0.05; // Base gain
+    
+    if (typeof optimal === 'object' && optimal !== null) {
+      const optimalKeys = Object.keys(optimal as object).length;
+      // More information in optimal hints = higher confidence gain (max +0.1)
+      confidenceGain += Math.min(0.1, optimalKeys * 0.02);
+    }
+    
+    if (typeof current === 'object' && current !== null) {
+      // Existing structure in current data adds stability (max +0.03)
+      const currentKeys = Object.keys(current as object).length;
+      confidenceGain += Math.min(0.03, currentKeys * 0.01);
+    }
 
     return { result: reinforced, confidenceGain };
   }
