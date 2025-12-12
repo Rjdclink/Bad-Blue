@@ -1,17 +1,19 @@
 /**
- * LEXARA Personal Mode - Production Ready - FULL AUTO
+ * LEXARA VIEWPORT - Production Full-Page Interface
  * 
- * Full viewport ethereal experience with:
- * - Ethereal background layer
- * - 3D/video avatar viewport  
- * - Minimal overlay for status + chat transcript
- * - FULL AUTO: Automatic device detection & media start
- * - Voice pipeline integration (talk & listen)
- * - ADAPTIVE BEHAVIOR: Switches between personable/professional modes
- *   based on user's tone, pitch, range, topic, and body language
- * - Responsive design for laptop & phone
+ * FULL AUTO MODE - No toggles, everything automatic
  * 
- * ONE MODE: FULL AUTO - No toggles, no buttons, everything automatic
+ * Components:
+ * 1. Live Video Panel - User camera feed
+ * 2. Audio I/O Engine - Mic input + speaker output
+ * 3. Speech Synthesis Module - Feminine HD voice (TTS)
+ * 4. Message/Action Panel - Chat transcript + input
+ * 5. Dynamic Overlay Layer - Satellite/GPS feeds (GeoConsole)
+ * 
+ * GEO BEHAVIOR:
+ * - Relevance check: If task involves location → LEXARA OFFERS
+ * - Direct request: If user asks for map → LEXARA PROVIDES
+ * - Never auto-opens geo viewport without offer/request
  */
 
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
@@ -19,7 +21,7 @@ import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { 
   ArrowLeft, Send, Mic, MicOff, Video, VideoOff,
-  Loader2, AlertCircle
+  Loader2, AlertCircle, MapPin, Satellite, X, Maximize2, Minimize2
 } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
 import { useToast } from '@/hooks/use-toast';
@@ -38,6 +40,30 @@ import {
 } from '@shared/lexaraBrain';
 import type { LEXARAResponsePayload } from '@shared/lexaraVoicePersona';
 
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const LEXARA_CONSENT_KEY = 'lexara_auto_start';
+
+// Keywords that indicate geo-relevance
+const GEO_RELEVANT_KEYWORDS = [
+  'where is', 'location', 'locate', 'track', 'find',
+  'gps', 'coordinates', 'address', 'map', 'satellite',
+  'position', 'last known', 'movement', 'trail', 'heatmap',
+  'people radar', 'nearby', 'distance', 'route', 'directions',
+  'incident place', 'crime scene', 'witness location'
+];
+
+// Keywords that trigger immediate geo display
+const GEO_REQUEST_KEYWORDS = [
+  'show map', 'show the map', 'show satellite', 'show location',
+  'show radar', 'show trail', 'show heatmap', 'people radar',
+  'open map', 'open satellite', 'display map', 'display location',
+  'see the map', 'view map', 'view location', 'show me the map',
+  'show me where', 'show their location', 'show my location'
+];
+
 // Singleton brain instance
 const lexaraBrain = new LEXARABrain();
 
@@ -53,6 +79,7 @@ interface ConversationMessage {
   emotionHint?: LEXARAEmotionHint;
   gazeHint?: LEXARAGazeHint;
   behaviorMode?: 'personable' | 'professional';
+  geoOffer?: boolean; // True if this message offers geo view
 }
 
 interface MediaState {
@@ -64,7 +91,15 @@ interface MediaState {
   permissionGranted: boolean;
 }
 
-// Voice metrics for adaptive behavior
+interface GeoState {
+  isVisible: boolean;
+  isMaximized: boolean;
+  mode: 'pin' | 'trail' | 'heatmap' | 'radar';
+  coordinates: { lat: number; lng: number } | null;
+  locationData: any | null;
+  hasOffered: boolean; // Track if we've already offered geo view for current context
+}
+
 interface LiveVoiceMetrics {
   pitch: number;
   speechRate: number;
@@ -72,171 +107,223 @@ interface LiveVoiceMetrics {
 }
 
 // ============================================================================
-// LOCAL STORAGE KEYS
+// GEO RELEVANCE DETECTOR
 // ============================================================================
 
-const LEXARA_AUTO_START_KEY = 'lexara_auto_start';
-const LEXARA_CONSENT_KEY = 'lexara_consent';
-
-// ============================================================================
-// ADMIN CONTROLS PANEL (Bobby only)
-// ============================================================================
-
-interface AdminControlsProps {
-  micEnabled: boolean;
-  cameraEnabled: boolean;
-  onMicToggle: (enabled: boolean) => void;
-  onCameraToggle: (enabled: boolean) => void;
-  isListening: boolean;
-  hasVideo: boolean;
+function detectGeoRelevance(text: string): boolean {
+  const lowerText = text.toLowerCase();
+  return GEO_RELEVANT_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-const AdminControlsPanel = memo(function AdminControlsPanel({
-  micEnabled,
-  cameraEnabled,
-  onMicToggle,
-  onCameraToggle,
-  isListening,
-  hasVideo,
-}: AdminControlsProps) {
-  return (
-    <div className="absolute top-16 right-4 z-30 bg-slate-900/80 backdrop-blur-md rounded-lg border border-slate-700/50 p-4 space-y-4">
-      <div className="flex items-center gap-2 text-xs text-amber-400 font-medium">
-        <Settings className="h-3.5 w-3.5" />
-        Admin Controls
-      </div>
-      
-      {/* Microphone Toggle */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2 text-sm text-slate-300">
-          {micEnabled ? <Mic className="h-4 w-4 text-emerald-400" /> : <MicOff className="h-4 w-4 text-slate-500" />}
-          <span>Microphone</span>
-        </div>
-        <Switch
-          checked={micEnabled}
-          onCheckedChange={onMicToggle}
-          className="data-[state=checked]:bg-emerald-500"
-        />
-      </div>
-      
-      {/* Camera Toggle */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2 text-sm text-slate-300">
-          {cameraEnabled ? <Video className="h-4 w-4 text-blue-400" /> : <VideoOff className="h-4 w-4 text-slate-500" />}
-          <span>Camera</span>
-        </div>
-        <Switch
-          checked={cameraEnabled}
-          onCheckedChange={onCameraToggle}
-          className="data-[state=checked]:bg-blue-500"
-        />
-      </div>
-      
-      {/* Status */}
-      <div className="text-xs text-slate-500 pt-2 border-t border-slate-700/50">
-        {isListening && <span className="text-emerald-400">● Listening</span>}
-        {hasVideo && <span className="text-blue-400 ml-2">● Video Active</span>}
-      </div>
-    </div>
-  );
-});
+function detectGeoRequest(text: string): boolean {
+  const lowerText = text.toLowerCase();
+  return GEO_REQUEST_KEYWORDS.some(keyword => lowerText.includes(keyword));
+}
+
+function determineGeoMode(text: string): GeoState['mode'] {
+  const lowerText = text.toLowerCase();
+  if (lowerText.includes('trail') || lowerText.includes('movement') || lowerText.includes('history')) {
+    return 'trail';
+  }
+  if (lowerText.includes('heatmap') || lowerText.includes('heat map')) {
+    return 'heatmap';
+  }
+  if (lowerText.includes('radar') || lowerText.includes('people radar') || lowerText.includes('nearby')) {
+    return 'radar';
+  }
+  return 'pin';
+}
 
 // ============================================================================
-// ETHEREAL BACKGROUND COMPONENT
+// ETHEREAL BACKGROUND
 // ============================================================================
 
 const EtherealBackground = memo(function EtherealBackground() {
   return (
-    <div className="fixed inset-0 z-0 overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950/90 to-slate-900">
-      {/* Animated gradient orbs */}
-      <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-indigo-900/30 rounded-full blur-[120px] animate-pulse" />
-      <div className="absolute bottom-1/4 right-1/3 w-[500px] h-[500px] bg-purple-900/20 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '1.5s' }} />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-cyan-900/10 rounded-full blur-[150px]" />
+    <div className="fixed inset-0 z-0 overflow-hidden">
+      {/* Base gradient */}
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-indigo-950/90 to-slate-900" />
       
-      {/* Subtle particle field */}
+      {/* Subtle particle field - very low intensity */}
       <div className="absolute inset-0 opacity-30">
-        {[...Array(40)].map((_, i) => (
-          <div
-            key={i}
-            className="absolute rounded-full"
-            style={{
-              width: `${1 + Math.random() * 2}px`,
-              height: `${1 + Math.random() * 2}px`,
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              background: i % 4 === 0 
-                ? 'rgba(212, 175, 55, 0.6)' 
-                : i % 4 === 1 
-                ? 'rgba(96, 165, 250, 0.5)'
-                : i % 4 === 2
-                ? 'rgba(139, 92, 246, 0.5)'
-                : 'rgba(236, 72, 153, 0.4)',
-              animation: `float-bg-particle ${12 + Math.random() * 8}s ease-in-out infinite ${Math.random() * 6}s`,
-            }}
-          />
-        ))}
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full bg-cyan-500/10 blur-3xl animate-pulse" style={{ animationDuration: '8s' }} />
+        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full bg-indigo-500/10 blur-3xl animate-pulse" style={{ animationDuration: '10s', animationDelay: '2s' }} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-purple-500/5 blur-3xl" />
       </div>
       
-      {/* Grid pattern overlay */}
-      <div 
-        className="absolute inset-0 opacity-[0.02]"
-        style={{
-          backgroundImage: 'linear-gradient(rgba(99, 102, 241, 0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(99, 102, 241, 0.5) 1px, transparent 1px)',
-          backgroundSize: '80px 80px',
-        }}
-      />
-      
-      <style>{`
-        @keyframes float-bg-particle {
-          0%, 100% { transform: translateY(0) translateX(0); opacity: 0.2; }
-          25% { transform: translateY(-30px) translateX(10px); opacity: 0.5; }
-          50% { transform: translateY(-15px) translateX(-10px); opacity: 0.3; }
-          75% { transform: translateY(-40px) translateX(5px); opacity: 0.6; }
-        }
-      `}</style>
+      {/* Subtle shimmer effect */}
+      <div className="absolute inset-0 bg-gradient-to-t from-transparent via-white/[0.02] to-transparent" />
     </div>
   );
 });
 
 // ============================================================================
-// TRANSCRIPT PANEL COMPONENT
+// GEO CONSOLE OVERLAY
 // ============================================================================
 
-interface TranscriptPanelProps {
+interface GeoConsoleOverlayProps {
+  geoState: GeoState;
+  onClose: () => void;
+  onToggleMaximize: () => void;
+}
+
+const GeoConsoleOverlay = memo(function GeoConsoleOverlay({
+  geoState,
+  onClose,
+  onToggleMaximize,
+}: GeoConsoleOverlayProps) {
+  if (!geoState.isVisible) return null;
+  
+  const modeLabels = {
+    pin: 'Location Pin',
+    trail: 'Movement Trail',
+    heatmap: 'Activity Heatmap',
+    radar: 'People Radar',
+  };
+  
+  return (
+    <div className={cn(
+      "absolute z-30 bg-slate-900/95 backdrop-blur-md border border-cyan-500/30 rounded-xl overflow-hidden shadow-2xl transition-all duration-300",
+      geoState.isMaximized 
+        ? "inset-4" 
+        : "bottom-4 right-4 w-80 h-64 md:w-96 md:h-80"
+    )}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-800/50 border-b border-slate-700/50">
+        <div className="flex items-center gap-2">
+          <Satellite className="h-4 w-4 text-cyan-400" />
+          <span className="text-sm font-medium text-slate-200">{modeLabels[geoState.mode]}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-slate-400 hover:text-slate-200"
+            onClick={onToggleMaximize}
+          >
+            {geoState.isMaximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-slate-400 hover:text-slate-200"
+            onClick={onClose}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+      
+      {/* Map Content */}
+      <div className="relative flex-1 h-full">
+        {geoState.coordinates ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            {/* Placeholder for actual map integration */}
+            <div className="text-center">
+              <MapPin className="h-12 w-12 text-cyan-400 mx-auto mb-2" />
+              <p className="text-sm text-slate-300">
+                {geoState.mode === 'pin' && 'Location Pinned'}
+                {geoState.mode === 'trail' && 'Movement Trail Active'}
+                {geoState.mode === 'heatmap' && 'Heatmap Rendering'}
+                {geoState.mode === 'radar' && 'People Radar Scanning'}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                {geoState.coordinates.lat.toFixed(6)}, {geoState.coordinates.lng.toFixed(6)}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="text-center">
+              <Loader2 className="h-8 w-8 text-cyan-400 mx-auto mb-2 animate-spin" />
+              <p className="text-sm text-slate-400">Acquiring location data...</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+// ============================================================================
+// LIVE VIDEO PANEL
+// ============================================================================
+
+interface LiveVideoPanelProps {
+  videoRef: React.RefObject<HTMLVideoElement>;
+  isActive: boolean;
+}
+
+const LiveVideoPanel = memo(function LiveVideoPanel({
+  videoRef,
+  isActive,
+}: LiveVideoPanelProps) {
+  return (
+    <div className={cn(
+      "absolute bottom-4 left-4 w-32 h-24 md:w-40 md:h-30 rounded-xl overflow-hidden border-2 transition-all duration-300 z-20",
+      isActive 
+        ? "border-cyan-500/50 shadow-lg shadow-cyan-500/20" 
+        : "border-slate-700/50 opacity-50"
+    )}>
+      <video 
+        ref={videoRef}
+        autoPlay 
+        muted 
+        playsInline
+        className="w-full h-full object-cover bg-slate-900"
+      />
+      {!isActive && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80">
+          <VideoOff className="h-6 w-6 text-slate-500" />
+        </div>
+      )}
+    </div>
+  );
+});
+
+// ============================================================================
+// MESSAGE PANEL
+// ============================================================================
+
+interface MessagePanelProps {
   messages: ConversationMessage[];
   interimTranscript: string;
   isThinking: boolean;
   userInput: string;
   setUserInput: (value: string) => void;
   onSubmit: (e: React.FormEvent) => void;
+  onGeoAccept: () => void;
   isDisabled: boolean;
 }
 
-const TranscriptPanel = memo(function TranscriptPanel({
+const MessagePanel = memo(function MessagePanel({
   messages,
   interimTranscript,
   isThinking,
   userInput,
   setUserInput,
   onSubmit,
+  onGeoAccept,
   isDisabled,
-}: TranscriptPanelProps) {
+}: MessagePanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-  
-  // Show only last N messages
-  const visibleMessages = messages.slice(-10);
+  }, [messages, interimTranscript]);
   
   return (
-    <div className="flex flex-col h-full bg-slate-900/40 backdrop-blur-md border-l border-slate-700/30">
-      {/* Messages area */}
+    <div className="flex flex-col h-full bg-slate-900/60 backdrop-blur-sm border-l border-slate-700/30">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-slate-700/30">
+        <h2 className="text-sm font-semibold text-slate-200">Conversation</h2>
+      </div>
+      
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {visibleMessages.map(msg => (
+        {messages.map((msg) => (
           <div 
-            key={msg.id} 
+            key={msg.id}
             className={cn(
               "flex gap-2",
               msg.role === 'user' && "flex-row-reverse"
@@ -249,6 +336,19 @@ const TranscriptPanel = memo(function TranscriptPanel({
                 : "bg-slate-700/50 border border-slate-600/30 text-slate-100"
             )}>
               {msg.content}
+              
+              {/* Geo offer button */}
+              {msg.geoOffer && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 w-full text-xs border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                  onClick={onGeoAccept}
+                >
+                  <MapPin className="h-3 w-3 mr-1" />
+                  Show Map View
+                </Button>
+              )}
             </div>
           </div>
         ))}
@@ -275,7 +375,7 @@ const TranscriptPanel = memo(function TranscriptPanel({
         <div ref={scrollRef} />
       </div>
       
-      {/* Input area */}
+      {/* Input */}
       <form onSubmit={onSubmit} className="p-3 border-t border-slate-700/30">
         <div className="flex gap-2">
           <input
@@ -301,10 +401,10 @@ const TranscriptPanel = memo(function TranscriptPanel({
 });
 
 // ============================================================================
-// MAIN COMPONENT - LUXARA SHELL
+// MAIN COMPONENT - LEXARA VIEWPORT
 // ============================================================================
 
-export default function LEXARAPage() {
+export default function LexaraViewport() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   
@@ -316,10 +416,10 @@ export default function LEXARAPage() {
   const [isThinking, setIsThinking] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   
-  // Adaptive behavior mode tracking
+  // Adaptive behavior mode
   const [currentBehaviorMode, setCurrentBehaviorMode] = useState<'personable' | 'professional'>('personable');
   
-  // Live voice metrics for adaptive behavior
+  // Live voice metrics
   const [liveVoiceMetrics, setLiveVoiceMetrics] = useState<LiveVoiceMetrics>({
     pitch: 200,
     speechRate: 150,
@@ -336,7 +436,17 @@ export default function LEXARAPage() {
     permissionGranted: false,
   });
   
-  // FULL AUTO MODE - Only show begin button on FIRST visit ever
+  // Geo state
+  const [geoState, setGeoState] = useState<GeoState>({
+    isVisible: false,
+    isMaximized: false,
+    mode: 'pin',
+    coordinates: null,
+    locationData: null,
+    hasOffered: false,
+  });
+  
+  // Session state
   const [showBeginButton, setShowBeginButton] = useState(false);
   const [sessionStarted, setSessionStarted] = useState(false);
   
@@ -367,109 +477,148 @@ export default function LEXARAPage() {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const hasMic = devices.some(d => d.kind === 'audioinput');
       const hasCamera = devices.some(d => d.kind === 'videoinput');
-      
-      setMediaState(prev => ({ ...prev, hasMic, hasCamera }));
       return { hasMic, hasCamera };
-    } catch (error) {
-      console.error('Device detection failed:', error);
+    } catch (e) {
+      console.log('Device detection failed:', e);
       return { hasMic: false, hasCamera: false };
     }
   }, []);
 
   // ============================================================================
-  // MEDIA INITIALIZATION
+  // MEDIA INITIALIZATION - FULL AUTO
   // ============================================================================
   
-  const initializeMedia = useCallback(async (requestVideo = true, requestAudio = true) => {
+  const initializeMedia = useCallback(async (enableVideo: boolean, enableAudio: boolean) => {
     try {
       const constraints: MediaStreamConstraints = {
-        audio: requestAudio && mediaState.hasMic,
-        video: requestVideo && mediaState.hasCamera,
+        video: enableVideo,
+        audio: enableAudio,
       };
-      
-      // Don't request if nothing to request
-      if (!constraints.audio && !constraints.video) {
-        setMediaState(prev => ({
-          ...prev,
-          isInitialized: true,
-          permissionGranted: false,
-        }));
-        return false;
-      }
       
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       
-      // Attach video to element
-      if (videoRef.current && stream.getVideoTracks().length > 0) {
+      // Attach to video element
+      if (videoRef.current && enableVideo) {
         videoRef.current.srcObject = stream;
       }
       
-      // Set up audio analysis for lip sync
-      if (stream.getAudioTracks().length > 0) {
-        audioContextRef.current = new AudioContext();
-        const source = audioContextRef.current.createMediaStreamSource(stream);
-        analyserRef.current = audioContextRef.current.createAnalyser();
-        analyserRef.current.fftSize = 256;
-        source.connect(analyserRef.current);
+      // Setup audio context for voice analysis
+      if (enableAudio) {
+        try {
+          audioContextRef.current = new AudioContext();
+          analyserRef.current = audioContextRef.current.createAnalyser();
+          const source = audioContextRef.current.createMediaStreamSource(stream);
+          source.connect(analyserRef.current);
+        } catch (e) {
+          console.log('Audio context setup failed:', e);
+        }
       }
-      
-      // Store consent for auto-start on next visit
-      localStorage.setItem(LEXARA_AUTO_START_KEY, 'true');
-      localStorage.setItem(LEXARA_CONSENT_KEY, 'true');
       
       setMediaState(prev => ({
         ...prev,
         mediaStream: stream,
         isInitialized: true,
         permissionGranted: true,
-        autoStartEligible: true,
       }));
       
-      // Enable voice mode
-      try {
-        await voiceMode.enable();
-        voiceMode.startListening();
-      } catch (e) {
-        console.log('Voice mode initialization deferred');
+      // Store consent
+      localStorage.setItem(LEXARA_CONSENT_KEY, 'true');
+      
+      // Start voice mode
+      if (enableAudio) {
+        try {
+          await voiceMode.enable();
+          voiceMode.startListening();
+        } catch (e) {
+          console.log('Voice mode start deferred');
+        }
       }
       
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Media initialization failed:', error);
-      // Fallback to text-only mode
+      
+      // Fallback: try audio only
+      if (enableVideo && enableAudio) {
+        return initializeMedia(false, true);
+      }
+      
+      // Fallback: text only
       setMediaState(prev => ({
         ...prev,
         isInitialized: true,
         permissionGranted: false,
       }));
+      
+      toast({
+        title: "Media Access",
+        description: "Running in text-only mode. Voice features unavailable.",
+        variant: "default",
+      });
+      
       return false;
     }
-  }, [mediaState.hasMic, mediaState.hasCamera, voiceMode]);
+  }, [toast, voiceMode]);
 
   // ============================================================================
-  // STOP MEDIA
+  // GEO FUNCTIONS
   // ============================================================================
   
-  const stopMedia = useCallback(() => {
-    if (mediaState.mediaStream) {
-      mediaState.mediaStream.getTracks().forEach(track => track.stop());
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    setMediaState(prev => ({
+  const acquireLocation = useCallback(async () => {
+    return new Promise<{ lat: number; lng: number } | null>((resolve) => {
+      if (!navigator.geolocation) {
+        resolve(null);
+        return;
+      }
+      
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        },
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    });
+  }, []);
+  
+  const openGeoConsole = useCallback(async (mode: GeoState['mode'] = 'pin') => {
+    setGeoState(prev => ({
       ...prev,
-      mediaStream: null,
-      isInitialized: false,
-      permissionGranted: false,
+      isVisible: true,
+      mode,
     }));
-    voiceMode.disable();
-  }, [mediaState.mediaStream, voiceMode]);
-
-  // ============================================================================
-  // FULL AUTO MODE - NO TOGGLES, EVERYTHING AUTOMATIC
-  // ============================================================================
+    
+    // Acquire location if not already available
+    if (!geoState.coordinates) {
+      const coords = await acquireLocation();
+      setGeoState(prev => ({
+        ...prev,
+        coordinates: coords,
+      }));
+    }
+  }, [acquireLocation, geoState.coordinates]);
+  
+  const closeGeoConsole = useCallback(() => {
+    setGeoState(prev => ({
+      ...prev,
+      isVisible: false,
+      isMaximized: false,
+    }));
+  }, []);
+  
+  const toggleGeoMaximize = useCallback(() => {
+    setGeoState(prev => ({
+      ...prev,
+      isMaximized: !prev.isMaximized,
+    }));
+  }, []);
+  
+  const handleGeoAccept = useCallback(() => {
+    openGeoConsole(geoState.mode);
+  }, [openGeoConsole, geoState.mode]);
 
   // ============================================================================
   // AUTO-START LOGIC - FULL AUTO
@@ -480,13 +629,9 @@ export default function LEXARAPage() {
     initAttempted.current = true;
     
     const initialize = async () => {
-      // Detect available devices
       const devices = await detectDevices();
-      
-      // Check for previous consent
       const hasConsent = localStorage.getItem(LEXARA_CONSENT_KEY) === 'true';
       
-      // FULL AUTO MODE: Show begin button only on first visit
       setShowBeginButton(!hasConsent);
       setMediaState(prev => ({
         ...prev,
@@ -496,7 +641,7 @@ export default function LEXARAPage() {
       }));
       
       if (hasConsent) {
-        // FULL AUTO: Start immediately for returning users
+        // FULL AUTO: Start immediately
         setTimeout(async () => {
           await initializeMedia(true, true);
           setSessionStarted(true);
@@ -509,21 +654,18 @@ export default function LEXARAPage() {
   }, [detectDevices, initializeMedia]);
 
   // ============================================================================
-  // BEGIN SESSION HANDLER - FULL AUTO
+  // BEGIN SESSION - FULL AUTO
   // ============================================================================
   
   const handleBeginSession = async () => {
     setShowBeginButton(false);
-    
-    // FULL AUTO: Always enable everything
     await initializeMedia(true, true);
-    
     setSessionStarted(true);
     sendLEXARAGreeting();
   };
 
   // ============================================================================
-  // AUDIO LEVEL MONITORING FOR LIP SYNC
+  // AUDIO LEVEL MONITORING
   // ============================================================================
   
   useEffect(() => {
@@ -532,7 +674,6 @@ export default function LEXARAPage() {
       return;
     }
     
-    // Simulate audio level when speaking (since we're using TTS)
     const interval = setInterval(() => {
       setAudioLevel(0.3 + Math.random() * 0.5);
     }, 80);
@@ -550,27 +691,28 @@ export default function LEXARAPage() {
   const addMessage = useCallback((
     role: 'lexara' | 'user', 
     content: string, 
-    response?: LEXARAResponsePayload & { behaviorMode?: 'personable' | 'professional' }
+    options?: {
+      emotionHint?: LEXARAEmotionHint;
+      gazeHint?: LEXARAGazeHint;
+      behaviorMode?: 'personable' | 'professional';
+      geoOffer?: boolean;
+    }
   ) => {
     setConversation(prev => [...prev, {
       id: `${role}-${Date.now()}`,
       role,
       content,
       timestamp: new Date(),
-      emotionHint: response?.emotionHint,
-      gazeHint: response?.gazeHint,
-      behaviorMode: response?.behaviorMode,
+      ...options,
     }]);
   }, []);
   
   const sendLEXARAGreeting = useCallback(async () => {
-    const greetingText = "Hi there! I'm LEXARA, and I'm so glad you're here. I'm your legal consultation assistant, ready to help you understand legal concepts and explore your options. What can I help you with today?";
+    const greetingText = "Hi there! I'm LEXARA, your AI legal consultation assistant. I'm here to help you understand legal concepts and explore your options. What can I help you with today?";
     
     addMessage('lexara', greetingText, {
-      text: greetingText,
       emotionHint: 'playful',
       gazeHint: 'camera',
-      voiceStyle: 'warm',
       behaviorMode: 'personable',
     });
     
@@ -578,7 +720,6 @@ export default function LEXARAPage() {
     setCurrentGaze('camera');
     setCurrentBehaviorMode('personable');
     
-    // Speak the greeting
     try {
       await voiceSynthesis.speak(greetingText, {
         context: 'introduction',
@@ -595,43 +736,91 @@ export default function LEXARAPage() {
     setCurrentEmotion('calm');
     setCurrentGaze('thinking');
     
+    // Check for direct geo request
+    if (detectGeoRequest(message)) {
+      const mode = determineGeoMode(message);
+      setIsThinking(false);
+      
+      // Acquire location and open geo console
+      const coords = await acquireLocation();
+      
+      if (coords) {
+        setGeoState(prev => ({
+          ...prev,
+          isVisible: true,
+          mode,
+          coordinates: coords,
+        }));
+        
+        const responseText = `Here's the ${mode === 'pin' ? 'location' : mode} view for you.`;
+        addMessage('lexara', responseText, {
+          emotionHint: 'calm',
+          gazeHint: 'camera',
+        });
+        voiceSynthesis.speak(responseText, { context: 'explanation', autoPlay: true });
+      } else {
+        const responseText = "I'd love to show you the map, but I couldn't get location data. Could you share an address or coordinates?";
+        addMessage('lexara', responseText, {
+          emotionHint: 'empathetic',
+          gazeHint: 'camera',
+        });
+        voiceSynthesis.speak(responseText, { context: 'clarification', autoPlay: true });
+      }
+      
+      setCurrentEmotion('calm');
+      setCurrentGaze('camera');
+      return;
+    }
+    
     try {
-      // Build context with voice metrics for adaptive behavior
       const context: LEXARABrainContext = {
         previousMessages: conversation.slice(-6).map(m => ({
           role: m.role === 'lexara' ? 'lexara' : 'user',
           content: m.content,
         })),
-        // Pass live voice metrics for adaptive behavior analysis
         voiceMetrics: {
           pitch: liveVoiceMetrics.pitch,
           speechRate: liveVoiceMetrics.speechRate,
           volume: liveVoiceMetrics.volume,
         },
-        // Current mode for continuity
         currentMode: currentBehaviorMode,
       };
       
-      // Get response from LEXARA Brain (with adaptive behavior)
       const response = await lexaraBrain.ask(message, context);
       
       setIsThinking(false);
       setCurrentEmotion(response.emotionHint);
       setCurrentGaze(response.gazeHint);
       
-      // Update behavior mode if changed
       if (response.behaviorMode !== currentBehaviorMode) {
         setCurrentBehaviorMode(response.behaviorMode);
-        console.log(`LEXARA behavior mode: ${response.behaviorMode}`);
       }
       
-      addMessage('lexara', response.text, response);
+      // Check if geo is relevant and we should offer
+      const isGeoRelevant = detectGeoRelevance(message) || detectGeoRelevance(response.text);
+      const shouldOffer = isGeoRelevant && !geoState.hasOffered && !geoState.isVisible;
       
-      // Speak the response with appropriate context
-      voiceSynthesis.speak(response.text, {
-        context: response.context || 'explanation',
-        autoPlay: true,
-      });
+      if (shouldOffer) {
+        // Add response with geo offer
+        const mode = determineGeoMode(message + ' ' + response.text);
+        setGeoState(prev => ({ ...prev, mode, hasOffered: true }));
+        
+        const offerText = response.text + " I can show you a live map or satellite view of this if you'd like.";
+        addMessage('lexara', offerText, {
+          emotionHint: response.emotionHint,
+          gazeHint: response.gazeHint,
+          behaviorMode: response.behaviorMode,
+          geoOffer: true,
+        });
+        voiceSynthesis.speak(offerText, { context: response.context || 'explanation', autoPlay: true });
+      } else {
+        addMessage('lexara', response.text, {
+          emotionHint: response.emotionHint,
+          gazeHint: response.gazeHint,
+          behaviorMode: response.behaviorMode,
+        });
+        voiceSynthesis.speak(response.text, { context: response.context || 'explanation', autoPlay: true });
+      }
       
     } catch (error) {
       console.error('LEXARA brain error:', error);
@@ -639,14 +828,13 @@ export default function LEXARAPage() {
       setCurrentEmotion('empathetic');
       setCurrentGaze('camera');
       
-      // Fallback based on current mode
       const fallbackText = currentBehaviorMode === 'personable'
-        ? "I'm so sorry, I'm having a little trouble right now. Could you try asking me again? I really want to help!"
-        : "I apologize for the technical difficulty. Please try your question again, and I'll do my best to assist you.";
+        ? "I'm so sorry, I'm having a little trouble right now. Could you try asking me again?"
+        : "I apologize for the technical difficulty. Please try your question again.";
       addMessage('lexara', fallbackText);
       voiceSynthesis.speak(fallbackText, { context: 'reassurance', autoPlay: true });
     }
-  }, [addMessage, conversation, voiceSynthesis, liveVoiceMetrics, currentBehaviorMode]);
+  }, [addMessage, conversation, voiceSynthesis, liveVoiceMetrics, currentBehaviorMode, acquireLocation, geoState.hasOffered, geoState.isVisible]);
   
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -661,11 +849,9 @@ export default function LEXARAPage() {
   
   useEffect(() => {
     return () => {
-      // Stop media streams
       if (mediaState.mediaStream) {
         mediaState.mediaStream.getTracks().forEach(track => track.stop());
       }
-      // Close audio context
       if (audioContextRef.current) {
         audioContextRef.current.close();
       }
@@ -680,13 +866,13 @@ export default function LEXARAPage() {
     <div className="fixed inset-0 overflow-hidden">
       <SEOHead 
         title="LEXARA - AI Legal Consultation" 
-        description="Experience LEXARA, your ethereal AI legal consultation assistant."
+        description="Experience LEXARA, your ethereal AI legal consultation assistant with voice interaction and satellite intelligence."
       />
       
       {/* Ethereal Background */}
       <EtherealBackground />
       
-      {/* Main Content Container */}
+      {/* Main Content */}
       <div className="relative z-10 h-full flex flex-col">
         {/* Minimal Header */}
         <header className="flex items-center justify-between px-4 py-3 bg-slate-900/30 backdrop-blur-sm border-b border-slate-700/30">
@@ -701,7 +887,7 @@ export default function LEXARAPage() {
           </Button>
           
           <div className="flex items-center gap-3">
-            <span className="text-cyan-400 font-semibold tracking-wide">LUXARA</span>
+            <span className="text-cyan-400 font-semibold tracking-wide">LEXARA</span>
             <LEXARAStatusIndicator 
               isSpeaking={voiceSynthesis.isSpeaking}
               isListening={voiceMode.isListening}
@@ -727,20 +913,25 @@ export default function LEXARAPage() {
                 {mediaState.mediaStream?.getVideoTracks().length ? <Video className="h-3.5 w-3.5" /> : <VideoOff className="h-3.5 w-3.5" />}
               </div>
             )}
+            {geoState.isVisible && (
+              <div className="p-1.5 rounded-full text-cyan-400 bg-cyan-500/10">
+                <Satellite className="h-3.5 w-3.5" />
+              </div>
+            )}
           </div>
         </header>
         
-        {/* Main Layout - Responsive */}
+        {/* Main Layout */}
         <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
-          {/* Avatar Viewport - Takes 50-60% on mobile, ~60% on desktop */}
+          {/* Avatar Viewport */}
           <div className="flex-1 md:flex-[3] relative flex items-center justify-center p-4 md:p-8">
-            {/* Begin Session Button Overlay */}
+            {/* Begin Session Overlay */}
             {showBeginButton && (
               <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm">
                 <div className="text-center">
                   <h2 className="text-2xl font-light text-slate-200 mb-4">Welcome to LEXARA</h2>
                   <p className="text-slate-400 text-sm mb-6 max-w-xs mx-auto">
-                    Your AI legal consultation assistant. Click to begin.
+                    Your AI legal consultation assistant with voice interaction.
                   </p>
                   <Button 
                     onClick={handleBeginSession}
@@ -755,7 +946,7 @@ export default function LEXARAPage() {
             
             {/* Avatar */}
             <div className="w-full h-full max-w-lg max-h-[600px] relative">
-              <LexaraEtherealAvatar
+              <LEXARAEtherealAvatar
                 isSpeaking={voiceSynthesis.isSpeaking}
                 isListening={voiceMode.isListening}
                 isThinking={isThinking}
@@ -766,31 +957,36 @@ export default function LEXARAPage() {
               />
             </div>
             
-            {/* Hidden video element for user camera */}
-            <video 
-              ref={videoRef}
-              autoPlay 
-              muted 
-              playsInline
-              className="hidden"
+            {/* Live Video Panel (PiP) */}
+            <LiveVideoPanel
+              videoRef={videoRef}
+              isActive={!!mediaState.mediaStream?.getVideoTracks().length}
+            />
+            
+            {/* Geo Console Overlay */}
+            <GeoConsoleOverlay
+              geoState={geoState}
+              onClose={closeGeoConsole}
+              onToggleMaximize={toggleGeoMaximize}
             />
           </div>
           
-          {/* Transcript Panel - 40-50% on mobile, ~40% on desktop */}
+          {/* Message Panel */}
           <div className="h-[40vh] md:h-full md:flex-[2] md:max-w-md">
-            <TranscriptPanel
+            <MessagePanel
               messages={conversation}
               interimTranscript={voiceMode.interimTranscript}
               isThinking={isThinking}
               userInput={userInput}
               setUserInput={setUserInput}
               onSubmit={handleSubmit}
+              onGeoAccept={handleGeoAccept}
               isDisabled={isThinking || showBeginButton}
             />
           </div>
         </main>
         
-        {/* Disclaimer footer - minimal */}
+        {/* Disclaimer Footer */}
         <footer className="px-4 py-2 bg-slate-900/30 backdrop-blur-sm border-t border-slate-700/30">
           <div className="flex items-center justify-center gap-2 text-xs text-slate-500">
             <AlertCircle className="h-3 w-3" />
