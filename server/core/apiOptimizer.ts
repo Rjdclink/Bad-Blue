@@ -614,6 +614,18 @@ class APIOptimizer extends EventEmitter {
   }
 
   /**
+   * Generate cache keys for a prompt/systemPrompt combination
+   * Public method for external use when caching results
+   */
+  generateCacheKeys(prompt: string, systemPrompt?: string): { semanticHash: string; deduplicationKey: string } {
+    const combinedText = prompt + (systemPrompt || '');
+    return {
+      semanticHash: this.semanticCache.generateSemanticHash(combinedText),
+      deduplicationKey: crypto.createHash('sha256').update(combinedText).digest('hex'),
+    };
+  }
+
+  /**
    * Get optimization metrics
    */
   getMetrics(): typeof this.metrics & { savingsPercent: number; cacheStats: any } {

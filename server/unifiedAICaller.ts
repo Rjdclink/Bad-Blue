@@ -517,13 +517,10 @@ export async function callAI(request: UnifiedAIRequest): Promise<UnifiedAIRespon
     
     // Record success in optimizer for caching and coherency
     if (!request.skipOptimization) {
-      const semanticHash = optimizer['semanticCache'].generateSemanticHash(
-        request.prompt + (request.systemPrompt || '')
+      const { semanticHash, deduplicationKey } = optimizer.generateCacheKeys(
+        request.prompt,
+        request.systemPrompt
       );
-      const deduplicationKey = require('crypto')
-        .createHash('sha256')
-        .update(request.prompt + (request.systemPrompt || ''))
-        .digest('hex');
       
       optimizer.recordSuccess(semanticHash, deduplicationKey, result, provider, model);
     }
