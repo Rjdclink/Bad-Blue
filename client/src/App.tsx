@@ -121,6 +121,9 @@ const ConsultationPage = lazyWithRetry(() => import("@/pages/consultation"), 'Co
 // LEXARA Viewport - Full-Page AI Legal Consultation (Production, FULL AUTO)
 const LexaraViewport = lazyWithRetry(() => import("@/components/LexaraViewport"), 'LexaraViewport');
 
+// SPECTRA - LEXARA + GeoConsole + People Radar
+const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
+
 // Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 
@@ -239,6 +242,9 @@ function Router() {
             
             {/* LEXARA Viewport - Full-Page AI Legal Consultation (FULL AUTO) */}
             <Route path="/lexara" component={LexaraViewport} />
+            
+            {/* SPECTRA - LEXARA + GeoConsole + People Radar */}
+            <Route path="/spectra" component={SpectraPage} />
             
             {/* GEO Console - Renders INSIDE LexaraViewport, redirects to /lexara */}
             <Route path="/geo-console">
