@@ -99,6 +99,82 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     }
   }, []);
 
+  // ============================================================================
+  // LEXARA VOICE CONFIGURATION - Female voice profile
+  // ============================================================================
+  
+  const LEXARA_VOICE_CONFIG = {
+    preferredGender: 'female' as const,
+    targetPitch: 1.2,
+    targetRate: 0.95,
+    persona: 'ethereal-18yo-spectral-legal-counsel',
+    femaleVoiceHints: [
+      'female', 'woman', 'samantha', 'karen', 'fiona', 'tessa', 'moira',
+      'victoria', 'alex', 'allison', 'ava', 'susan', 'zira', 'hazel',
+      'jenny', 'aria', 'sara', 'joanna', 'amy', 'emma', 'ivy', 'kendra',
+      'kimberly', 'salli', 'joey', 'nicole', 'veena', 'aditi', 'raveena',
+      'google uk english female', 'google us english female'
+    ],
+  };
+
+  const LEXARA_VOICE_STORAGE_KEY = 'lexara-voice-profile';
+
+  /**
+   * Select a female voice from available voices
+   */
+  const selectFemaleVoice = useCallback((voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
+    if (!voices.length) return null;
+    
+    // First, try to find explicitly female voices
+    for (const voice of voices) {
+      const nameLower = voice.name.toLowerCase();
+      const langLower = voice.lang.toLowerCase();
+      
+      for (const hint of LEXARA_VOICE_CONFIG.femaleVoiceHints) {
+        if (nameLower.includes(hint) || langLower.includes(hint)) {
+          return voice;
+        }
+      }
+    }
+    
+    // Prefer English voices as fallback
+    const englishVoice = voices.find(v => v.lang.startsWith('en'));
+    if (englishVoice) return englishVoice;
+    
+    return voices[0];
+  }, []);
+
+  /**
+   * Get or select the LEXARA voice profile
+   */
+  const getLexaraVoice = useCallback((): SpeechSynthesisVoice | null => {
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices.length) return null;
+    
+    // Try to load cached voice
+    try {
+      const cachedVoiceId = localStorage.getItem(LEXARA_VOICE_STORAGE_KEY);
+      if (cachedVoiceId) {
+        const cachedVoice = voices.find(v => v.voiceURI === cachedVoiceId);
+        if (cachedVoice) return cachedVoice;
+      }
+    } catch (e) {
+      // localStorage may not be available
+    }
+    
+    // Select a female voice and cache it
+    const selectedVoice = selectFemaleVoice(voices);
+    if (selectedVoice) {
+      try {
+        localStorage.setItem(LEXARA_VOICE_STORAGE_KEY, selectedVoice.voiceURI);
+      } catch (e) {
+        // localStorage may not be available
+      }
+    }
+    
+    return selectedVoice;
+  }, [selectFemaleVoice]);
+
   /**
    * Speak using browser Web Speech API
    */
@@ -118,21 +194,15 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     const utterance = new SpeechSynthesisUtterance(text);
     utteranceRef.current = utterance;
 
-    // Find a suitable voice (prefer female, professional)
-    const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(
-      v => v.lang.startsWith('en') && v.name.toLowerCase().includes('female')
-    ) || voices.find(
-      v => v.lang.startsWith('en')
-    ) || voices[0];
-
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
+    // Get LEXARA female voice (with caching)
+    const lexaraVoice = getLexaraVoice();
+    if (lexaraVoice) {
+      utterance.voice = lexaraVoice;
     }
 
-    // Configure utterance based on ALEXERA persona
-    utterance.rate = 0.95; // Slightly slower for professionalism
-    utterance.pitch = 1.1; // Slightly higher for feminine voice
+    // Configure utterance based on LEXARA female persona
+    utterance.rate = LEXARA_VOICE_CONFIG.targetRate;  // 0.95 - soft, clear, articulate
+    utterance.pitch = LEXARA_VOICE_CONFIG.targetPitch; // 1.2 - slightly higher for feminine voice
     utterance.volume = 1.0;
 
     // Set up event handlers
@@ -159,7 +229,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     // Speak
     window.speechSynthesis.speak(utterance);
     setProvider('browser');
-  }, []);
+  }, [getLexaraVoice]);
 
   /**
    * Speak using server-side synthesis
