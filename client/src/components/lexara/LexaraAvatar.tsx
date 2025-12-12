@@ -168,6 +168,28 @@ export const LexaraAvatar = memo(function LexaraAvatar({
     return { x: microMovementX * 0.5, y: microMovementY * 0.3 };
   }, [isThinking, isListening, microMovementX, microMovementY]);
 
+  // Memoized styles for performance
+  const shimmerOverlayStyle = useMemo(() => ({
+    background: `linear-gradient(135deg, transparent 0%, ${colors.iris}40 50%, transparent 100%)`,
+    animation: 'lexara-shimmer 5s ease-in-out infinite',
+  }), [colors.iris]);
+
+  const speakingPulseStyle = useMemo(() => ({
+    boxShadow: `0 0 35px ${colors.glow}, 0 0 70px ${colors.aura}`,
+    animation: 'lexara-pulse-glow 0.35s ease-in-out infinite',
+  }), [colors.glow, colors.aura]);
+
+  const thinkingGlowStyle = useMemo(() => ({
+    boxShadow: `0 0 45px ${colors.accent}50, 0 0 90px ${colors.accent}25`,
+    animation: 'lexara-pulse-glow 1.2s ease-in-out infinite',
+  }), [colors.accent]);
+
+  const spectralAuraStyle = useMemo(() => ({
+    background: `radial-gradient(ellipse, ${colors.aura} 0%, transparent 70%)`,
+    opacity: isSpeaking ? 0.5 : 0.3,
+    animation: 'lexara-shimmer-pulse 4s ease-in-out infinite',
+  }), [colors.aura, isSpeaking]);
+
   // ============================================================================
   // RENDER
   // ============================================================================
@@ -214,11 +236,7 @@ export const LexaraAvatar = memo(function LexaraAvatar({
       {/* Spectral aura behind avatar */}
       <div
         className="absolute top-1/4 left-1/2 -translate-x-1/2 w-3/4 h-1/2 rounded-full blur-3xl"
-        style={{
-          background: `radial-gradient(ellipse, ${colors.aura} 0%, transparent 70%)`,
-          opacity: isSpeaking ? 0.5 : 0.3,
-          animation: 'lexara-shimmer-pulse 4s ease-in-out infinite',
-        }}
+        style={spectralAuraStyle}
       />
 
       {/* Main avatar container with breathing */}
@@ -495,20 +513,14 @@ export const LexaraAvatar = memo(function LexaraAvatar({
         {/* Spectral shimmer overlay */}
         <div
           className="absolute inset-0 pointer-events-none opacity-15"
-          style={{
-            background: `linear-gradient(135deg, transparent 0%, ${colors.iris}40 50%, transparent 100%)`,
-            animation: 'lexara-shimmer 5s ease-in-out infinite',
-          }}
+          style={shimmerOverlayStyle}
         />
 
         {/* Speaking pulse effect */}
         {isSpeaking && (
           <div
             className="absolute inset-0 pointer-events-none rounded-full"
-            style={{
-              boxShadow: `0 0 35px ${colors.glow}, 0 0 70px ${colors.aura}`,
-              animation: 'lexara-pulse-glow 0.35s ease-in-out infinite',
-            }}
+            style={speakingPulseStyle}
           />
         )}
 
@@ -516,10 +528,7 @@ export const LexaraAvatar = memo(function LexaraAvatar({
         {isThinking && (
           <div
             className="absolute inset-0 pointer-events-none"
-            style={{
-              boxShadow: `0 0 45px ${colors.accent}50, 0 0 90px ${colors.accent}25`,
-              animation: 'lexara-pulse-glow 1.2s ease-in-out infinite',
-            }}
+            style={thinkingGlowStyle}
           />
         )}
       </div>

@@ -437,12 +437,15 @@ export class LexaraSpeech {
 }
 
 // ============================================================================
-// SINGLETON INSTANCE
+// SINGLETON INSTANCE - Lazy initialization on first use
+// In browser environment, we delay creation until browser APIs are available
 // ============================================================================
 
 let speechInstance: LexaraSpeech | null = null;
 
 export function getLexaraSpeech(): LexaraSpeech {
+  // Lazy initialization to ensure browser APIs are available
+  // Module-level initialization would fail in SSR environments
   if (!speechInstance) {
     speechInstance = new LexaraSpeech();
   }

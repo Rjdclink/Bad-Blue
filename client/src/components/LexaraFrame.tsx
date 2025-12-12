@@ -187,6 +187,9 @@ const LiveVideoPanel = memo(function LiveVideoPanel({
           ? 'border-cyan-500/50 shadow-lg shadow-cyan-500/20'
           : 'border-slate-700/50 opacity-50'
       )}
+      role="region"
+      aria-label={isActive ? 'Live camera feed active' : 'Camera feed inactive'}
+      aria-live="polite"
     >
       <video
         ref={videoRef}
@@ -194,9 +197,10 @@ const LiveVideoPanel = memo(function LiveVideoPanel({
         muted
         playsInline
         className="w-full h-full object-cover bg-slate-900"
+        aria-label="Your camera video"
       />
       {!isActive && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80">
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80" aria-hidden="true">
           <VideoOff className="h-6 w-6 text-slate-500" />
         </div>
       )}
@@ -553,9 +557,14 @@ export default function LexaraFrame({
 
   const handleBeginSession = async () => {
     setShowBeginButton(false);
-    await initializeMedia(true, true);
+    const mediaInitialized = await initializeMedia(true, true);
     setSessionStarted(true);
-    sendGreeting();
+    // Wait for media to be ready before greeting
+    if (mediaInitialized) {
+      await sendGreeting();
+    } else {
+      sendGreeting(); // Proceed anyway in text mode
+    }
   };
 
   // ============================================================================

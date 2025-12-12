@@ -382,15 +382,14 @@ export class LexaraStateManager {
 }
 
 // ============================================================================
-// SINGLETON INSTANCE
+// SINGLETON INSTANCE - Module-level lazy initialization
+// JavaScript's module system ensures this is only created once on first access
 // ============================================================================
 
-let stateManagerInstance: LexaraStateManager | null = null;
+// Create the singleton at module load time for guaranteed single instance
+const stateManagerInstance = new LexaraStateManager();
 
 export function getLexaraStateManager(): LexaraStateManager {
-  if (!stateManagerInstance) {
-    stateManagerInstance = new LexaraStateManager();
-  }
   return stateManagerInstance;
 }
 
