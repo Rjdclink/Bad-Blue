@@ -102,8 +102,8 @@ router.get('/status', (req: Request, res: Response) => {
     success: true,
     status: 'active',
     persona: {
-      name: LEXARA_PERSONA.identity.name,
-      role: LEXARA_PERSONA.identity.role,
+      name: LEXARA_PERSONA.name,
+      traits: LEXARA_PERSONA.traits,
     },
     capabilities: {
       voice: true,
