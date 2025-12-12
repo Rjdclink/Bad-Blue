@@ -20,6 +20,58 @@ import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 const router = express.Router();
 const log = createLogger('LEXARARoutes');
 
+// ============================================================================
+// RESPONSE VALIDATION
+// ============================================================================
+
+interface LexaraResponsePayload {
+  success: boolean;
+  response?: string;
+  error?: string;
+  model?: string;
+  _diagnostic?: boolean;
+}
+
+/**
+ * Validate Lexara AI response and return safe fallback if invalid
+ */
+function validateLexaraResponse(aiResponse: any): LexaraResponsePayload {
+  // Check if response exists and has required fields
+  if (!aiResponse) {
+    log.warn('[LEXARA] AI response is null/undefined');
+    return {
+      success: false,
+      error: 'Lexara encountered an internal error processing this request.',
+      _diagnostic: true,
+    };
+  }
+
+  if (!aiResponse.success) {
+    log.warn('[LEXARA] AI response indicates failure', { error: aiResponse.error });
+    return {
+      success: false,
+      error: aiResponse.error || 'Lexara encountered an internal error processing this request.',
+      _diagnostic: true,
+    };
+  }
+
+  if (!aiResponse.content || typeof aiResponse.content !== 'string') {
+    log.warn('[LEXARA] AI response missing valid content', { aiResponse });
+    return {
+      success: false,
+      error: 'Lexara encountered an internal error processing this request.',
+      _diagnostic: true,
+    };
+  }
+
+  // Valid response
+  return {
+    success: true,
+    response: aiResponse.content,
+    model: aiResponse.model,
+  };
+}
+
 // Store active stream sessions
 const activeSessions = new Map<string, {
   sessionId: string;
@@ -114,12 +166,11 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       maxTokens: 1000,
     });
     
-    if (!aiResponse.success || !aiResponse.content) {
-      log.error('[LEXARA] AI call failed', { error: aiResponse.error });
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to generate response',
-      });
+    // Validate response and return safe fallback if invalid
+    const validatedResponse = validateLexaraResponse(aiResponse);
+    
+    if (!validatedResponse.success) {
+      return res.status(500).json(validatedResponse);
     }
     
     log.info('[LEXARA] Chat response generated', {
