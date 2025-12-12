@@ -3,12 +3,11 @@
  * 
  * Displays 30 law types as realistic law book spines on a bookshelf
  * Features Law Enforcement Accountability as highlighted option
+ * Each book is directly clickable to navigate to the consultation page
  * Integrates with existing BadBlue functionality
  */
 
-import { useState } from "react";
 import { useLocation } from "wouter";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Shield } from "lucide-react";
 import { LAW_TYPE_DATA, type LawTypeInfo } from "@shared/lawTypes";
@@ -78,37 +77,38 @@ const adjustColorBrightness = (hex: string, percent: number): string => {
   ).toString(16).slice(1);
 };
 
-// Book spine component with vertical text and 3D effect
+// Book spine component with vertical text and 3D effect - Now directly navigates on click
 const BookSpine = ({ 
   lawType, 
   color, 
-  isSelected, 
-  onClick 
+  onClick,
+  ariaLabel
 }: { 
   lawType: LawTypeInfo; 
   color: string; 
-  isSelected: boolean; 
-  onClick: () => void 
+  onClick: () => void;
+  ariaLabel: string;
 }) => {
   const darkColor = adjustColorBrightness(color, 20);
   const lighterColor = adjustColorBrightness(color, -10);
 
   return (
-    <div
+    <button
       onClick={onClick}
+      aria-label={ariaLabel}
       className={`
         relative cursor-pointer transition-all duration-300 flex-shrink-0
-        ${isSelected ? 'scale-105 z-10' : 'hover:-translate-y-3'}
+        hover:-translate-y-3 hover:scale-105 hover:z-10
+        focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 focus:ring-offset-black
+        active:scale-95 active:translate-y-0
       `}
       style={{
         width: '55px',
         height: '280px',
         background: `linear-gradient(to right, ${darkColor} 0%, ${color} 40%, ${color} 60%, ${darkColor} 100%)`,
         borderRadius: '2px 6px 6px 2px',
-        boxShadow: isSelected 
-          ? `0 0 30px rgba(212, 175, 55, 0.8), 2px 4px 8px rgba(0,0,0,0.5), inset -2px 0 6px rgba(0,0,0,0.3)`
-          : `2px 2px 4px rgba(0,0,0,0.4), inset -2px 0 4px rgba(0,0,0,0.2)`,
-        border: isSelected ? '2px solid #D4AF37' : 'none',
+        boxShadow: `2px 2px 4px rgba(0,0,0,0.4), inset -2px 0 4px rgba(0,0,0,0.2)`,
+        border: 'none',
       }}
     >
       {/* Spine highlight for 3D effect */}
@@ -153,14 +153,13 @@ const BookSpine = ({
           </Badge>
         </div>
       )}
-    </div>
+    </button>
   );
 };
 
 export default function WelcomePage() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
-  const [selectedLawType, setSelectedLawType] = useState<string | null>(null);
 
   // Sort law types alphabetically by name
   const sortedLawTypes = [...LAW_TYPE_DATA].sort((a, b) => 
@@ -179,16 +178,9 @@ export default function WelcomePage() {
     }).filter(Boolean) as [string, string][]
   );
 
-  // Handle law type selection (only one at a time)
-  const handleSelection = (lawTypeId: string) => {
-    setSelectedLawType(selectedLawType === lawTypeId ? null : lawTypeId);
-  };
-
-  // Handle "Let's Go" button click
-  const handleLetsGo = () => {
-    if (!selectedLawType) return;
-    
-    const selectedType = LAW_TYPE_DATA.find(type => type.id === selectedLawType);
+  // Handle book click - directly navigate to the appropriate page
+  const handleBookClick = (lawTypeId: string) => {
+    const selectedType = LAW_TYPE_DATA.find(type => type.id === lawTypeId);
     if (selectedType) {
       // Force Law Enforcement to go directly to BadBlue tools
       if (selectedType.id === 'law-enforcement-accountability') {
@@ -252,19 +244,18 @@ export default function WelcomePage() {
               border: '2px solid rgba(139, 69, 19, 0.5)',
             }}
           >
-            {/* Books displayed in rows */}
+            {/* Books displayed in rows - each book is directly clickable */}
             <div className="flex flex-wrap justify-center gap-2 mb-4">
               {sortedLawTypes.map((lawType) => {
                 const color = colorMap.get(lawType.id) || DEFAULT_BOOK_COLOR;
-                const isSelected = selectedLawType === lawType.id;
                 
                 return (
                   <BookSpine
                     key={lawType.id}
                     lawType={lawType}
                     color={color}
-                    isSelected={isSelected}
-                    onClick={() => handleSelection(lawType.id)}
+                    onClick={() => handleBookClick(lawType.id)}
+                    ariaLabel={`Open ${lawType.name} consultation`}
                   />
                 );
               })}
@@ -278,25 +269,6 @@ export default function WelcomePage() {
               }}
             />
           </div>
-
-          {/* Let's Go Button - Displayed below bookshelf when selection is made */}
-          {selectedLawType && (
-            <div className="mt-6 flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <Button
-                size="lg"
-                onClick={handleLetsGo}
-                className="shadow-xl hover:shadow-2xl transition-all text-lg bg-gradient-to-r from-primary to-primary/90 animate-pulse"
-              >
-                <img 
-                  src="/images/Law-book.webp" 
-                  alt="" 
-                  className="w-5 h-5 mr-2 object-contain"
-                />
-                Let's Go with {LAW_TYPE_DATA.find(t => t.id === selectedLawType)?.name}
-                <ArrowRight className="w-5 h-5 ml-2" />
-              </Button>
-            </div>
-          )}
         </div>
 
         {/* PANTHEON - Advanced Intelligence Platform */}
@@ -449,12 +421,10 @@ export default function WelcomePage() {
           </div>
         </div>
 
-        {/* Helper Text */}
-        {!selectedLawType && (
-          <div className="text-center mt-8 text-white/80">
-            <p className="text-sm">Select a law book from the shelf above to continue</p>
-          </div>
-        )}
+        {/* Helper Text - Always visible */}
+        <div className="text-center mt-8 text-white/80">
+          <p className="text-sm">Click any law book above to start your consultation</p>
+        </div>
       </main>
 
       {/* Footer */}
