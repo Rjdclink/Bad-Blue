@@ -1,14 +1,38 @@
+import { useState, useCallback } from "react";
 import PeopleFinderSearch from "@/components/PeopleFinderSearch";
 import { useLocation } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Shield, Users, Search, Globe, Database } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Shield, Users, Search, Globe, Database, Satellite, MapPin, Clock } from "lucide-react";
 import { AppHeader } from "@/components/AppHeader";
+import { GeoconsoleRadarDashboard } from "@/components/geoconsole";
+import type { GPSPoint } from '@shared/geoconsoleTypes';
 
 export default function PeopleFinderPage() {
   const [, setLocation] = useLocation();
+
+  // State for SPECTRA GeoConsole integration (reserved for future Lexara integration)
+  const [geoConsoleTab, setGeoConsoleTab] = useState<'timeline' | 'map' | 'satellite'>('timeline');
+  
+  // Deterministic hash function for confidence calculation
+  function hashString(str: string): number {
+    let hash = 0, i, chr;
+    if (str.length === 0) return hash;
+    for (i = 0; i < str.length; i++) {
+      chr = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + chr;
+      hash |= 0; // Convert to 32bit integer
+    }
+    return Math.abs(hash);
+  }
+
+  // Convert person location history to GPSPoints for GeoConsole
+  const getGeoConsoleData = useCallback((): GPSPoint[] => {
+    // Currently returns empty array - will be populated when Lexara integration is complete
+    return [];
+  }, []);
 
   return (
     <>
@@ -111,6 +135,67 @@ export default function PeopleFinderPage() {
         
         {/* Main Search Component */}
         <PeopleFinderSearch onBack={() => setLocation("/welcome")} />
+
+        {/* SPECTRA GeoConsole - Embedded below search results */}
+        <div className="container max-w-7xl mx-auto px-4 py-4">
+          <Card className="border-slate-700/50 bg-slate-900/50 opacity-70">
+            <CardHeader className="py-3 border-b border-slate-700/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Satellite className="w-5 h-5 text-cyan-400" />
+                  <div>
+                    <CardTitle className="text-lg text-slate-200">SPECTRA GeoConsole</CardTitle>
+                    <CardDescription className="text-xs text-slate-400">
+                      Location intelligence & satellite visualization
+                    </CardDescription>
+                  </div>
+                </div>
+                <Badge 
+                  variant="outline" 
+                  className="text-xs bg-slate-700/50 text-slate-400 border-slate-600/30"
+                >
+                  Idle Preview
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {/* Tab Navigation - tabs are visual indicators only since GeoconsoleRadarDashboard handles view switching internally */}
+              <Tabs value={geoConsoleTab} onValueChange={(v) => setGeoConsoleTab(v as any)} className="w-full">
+                <TabsList className="w-full justify-start bg-slate-800/50 rounded-none border-b border-slate-700/50">
+                  <TabsTrigger value="timeline" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
+                    <Clock className="w-3.5 h-3.5" />
+                    Timeline
+                  </TabsTrigger>
+                  <TabsTrigger value="map" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
+                    <MapPin className="w-3.5 h-3.5" />
+                    Map
+                  </TabsTrigger>
+                  <TabsTrigger value="satellite" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
+                    <Satellite className="w-3.5 h-3.5" />
+                    Satellite
+                  </TabsTrigger>
+                </TabsList>
+                
+                {/* GeoConsole Dashboard - visible for all tabs, internally handles view mode */}
+                <TabsContent value="timeline" className="m-0">
+                  <div className="h-[400px]">
+                    <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
+                  </div>
+                </TabsContent>
+                <TabsContent value="map" className="m-0">
+                  <div className="h-[400px]">
+                    <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
+                  </div>
+                </TabsContent>
+                <TabsContent value="satellite" className="m-0">
+                  <div className="h-[400px]">
+                    <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </>
   );

@@ -29,6 +29,7 @@ import { useToast } from '@/hooks/use-toast';
 import { LAW_TYPE_DATA } from '@shared/lawTypes';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
+import useLexaraMedia from '@/hooks/useLexaraMedia';
 import { cn } from '@/lib/utils';
 
 // ============================================================================
@@ -68,10 +69,12 @@ interface EtherealLexaraProps {
   isSpeaking: boolean;
   isListening: boolean;
   isThinking: boolean;
+  audioLevel?: number; // 0-1 for VAD-enhanced lip movement
+  isConnected?: boolean; // Show LIVE · SECURE badge when media connected
 }
 
 const EtherealLexara = memo(function EtherealLexara({ 
-  isSpeaking, isListening, isThinking 
+  isSpeaking, isListening, isThinking, audioLevel = 0, isConnected = false
 }: EtherealLexaraProps) {
   const [breathe, setBreathe] = useState(0);
   const [hairDrift, setHairDrift] = useState(0);
@@ -93,10 +96,20 @@ const EtherealLexara = memo(function EtherealLexara({
   
   const breatheScale = 1 + Math.sin(breathe * Math.PI / 180) * 0.006;
   const hairOffset = Math.sin(hairDrift * Math.PI / 180) * 2;
-  const lipMove = isSpeaking ? Math.sin(lipPhase * Math.PI / 180) * 2 : 0;
+  // Enhanced lip movement based on VAD audio level when speaking
+  const lipMove = isSpeaking ? (Math.sin(lipPhase * Math.PI / 180) * 2) + (audioLevel * 3) : 0;
   
   return (
     <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950/80 to-slate-900">
+      {/* LIVE · SECURE badge when connected */}
+      {isConnected && (
+        <div className="absolute top-4 left-4 z-30">
+          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 flex items-center gap-1.5 px-3 py-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            LIVE · SECURE
+          </Badge>
+        </div>
+      )}
       {/* Animated particle field */}
       <div className="absolute inset-0 opacity-50">
         {[...Array(25)].map((_, i) => (
@@ -269,6 +282,13 @@ export default function DomainConsultationPage() {
   const [userInput, setUserInput] = useState('');
   const conversationEndRef = useRef<HTMLDivElement>(null);
   
+  // Lexara Media - FULL AUTO: auto-detect webcam + mic on load (no toggles)
+  const lexaraMedia = useLexaraMedia({
+    onAudioLevel: () => {}, // VAD level updates handled by hook state
+    onSpeechStart: () => {},
+    onSpeechEnd: () => {},
+  });
+  
   // Voice
   const voiceMode = useVoiceMode({
     continuous: true, interimResults: true,
@@ -288,12 +308,22 @@ export default function DomainConsultationPage() {
   
   useEffect(() => { conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [conversation]);
   
-  // Initialize conversation
+  // Initialize conversation and auto-start media (FULL AUTO)
   useEffect(() => {
     if (initAttempted.current) return;
     initAttempted.current = true;
     
     const init = async () => {
+      // Auto-start camera + mic if browser permission is granted
+      try { await lexaraMedia.start({ video: true, audio: true }); } catch (e) {
+        // Permission denied or not available - notify user and continue in text-only mode
+        console.log('Media auto-init: browser permission required or unavailable');
+        toast({
+          title: "Camera/Microphone Unavailable",
+          description: "We couldn't access your camera or microphone. You can continue in text-only mode.",
+        });
+      }
+      
       try { 
         await voiceMode.enable(); 
         voiceMode.startListening(); 
@@ -420,12 +450,34 @@ export default function DomainConsultationPage() {
           
           {/* Main viewport - 4 cols */}
           <div className="lg:col-span-4">
-            <Card className="bg-slate-900/50 border-slate-800/50 overflow-hidden h-full">
-              <div className="grid grid-cols-1 md:grid-cols-5 h-full min-h-[600px]">
+            <Card className="flex flex-col h-full justify-center items-center bg-slate-950/80 border border-slate-700 rounded-3xl shadow-2xl overflow-hidden">
+              <div className="grid grid-cols-1 md:grid-cols-5 h-full min-h-[600px] w-full">
                 
-                {/* Avatar - 40% */}
-                <div className="md:col-span-2 border-b md:border-b-0 md:border-r border-slate-800/50">
-                  <EtherealLexara isSpeaking={voiceSynthesis.isSpeaking} isListening={voiceMode.isListening} isThinking={isThinking} />
+                {/* Avatar - 40% (responsive width) */}
+                <div className="md:col-span-2 border-b md:border-b-0 md:border-r border-slate-800/50 relative w-full md:min-w-[420px]">
+                  <EtherealLexara 
+                    isSpeaking={voiceSynthesis.isSpeaking} 
+                    isListening={voiceMode.isListening} 
+                    isThinking={isThinking}
+                    audioLevel={lexaraMedia.state.audioLevel}
+                    isConnected={lexaraMedia.webrtcState.connected || lexaraMedia.state.isVideoReady}
+                  />
+                  {/* PIP Preview - User's webcam in lower-right of avatar frame */}
+                  {lexaraMedia.state.isVideoReady && (
+                    <div className="absolute bottom-4 right-4 w-24 h-18 rounded-lg overflow-hidden border-2 border-cyan-500/50 shadow-lg bg-black z-20">
+                      <video
+                        ref={lexaraMedia.setVideoElement}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="w-full h-full object-cover transform -scale-x-100"
+                        aria-label="User camera preview"
+                      />
+                      <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-red-500 rounded text-[8px] text-white font-medium animate-pulse">
+                        LIVE
+                      </div>
+                    </div>
+                  )}
                 </div>
                 
                 {/* Chat - 60% */}

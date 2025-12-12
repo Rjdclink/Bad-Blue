@@ -20,6 +20,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { MessageCircle } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Card,

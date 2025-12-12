@@ -217,8 +217,13 @@ export default function CryptoCrawlerDashboard() {
   const [loadingFaucet, setLoadingFaucet] = useState(false);
   const [togglingFaucet, setTogglingFaucet] = useState(false);
 
+  // Error state for inline display - dashboard NEVER redirects on error
+  const [hasError, setHasError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   // Auth gating is handled by App.tsx {isAuthenticated ? (...) : null}
   // No redirect useEffect needed here - the route won't render if not authenticated
+  // The page MUST NOT self-redirect; it shows status/errors inline
 
   // Fetch system status
   const fetchStatus = useCallback(async () => {
@@ -611,14 +616,35 @@ export default function CryptoCrawlerDashboard() {
     }
   };
 
-  // Initial data fetch
+  // Initial data fetch - wrapped in try/catch, errors display inline, NEVER redirect
   useEffect(() => {
-    fetchStatus();
-    fetchStats();
-    fetchHealth();
-    fetchFaucetStatus();
-    addConsoleLog('info', '[CryptoCrawler] Dashboard initialized');
-    addConsoleLog('info', '[Faucet] 🟢 Autonomous profit faucet is ACTIVE');
+    const initializeDashboard = async () => {
+      const results = await Promise.allSettled([
+        fetchStatus(),
+        fetchStats(),
+        fetchHealth(),
+        fetchFaucetStatus()
+      ]);
+      
+      const rejected = results.filter(r => r.status === 'rejected');
+      if (rejected.length > 0) {
+        // Show error inline, do NOT redirect
+        setHasError(true);
+        // Aggregate error messages if multiple
+        const errorMessages = rejected.map(r => 
+          (r as PromiseRejectedResult).reason instanceof Error 
+            ? (r as PromiseRejectedResult).reason.message 
+            : String((r as PromiseRejectedResult).reason)
+        );
+        setErrorMessage(errorMessages.join('; ') || 'Failed to initialize dashboard');
+        addConsoleLog('error', `[CryptoCrawler] Initialization error: ${errorMessages.join('; ')}`);
+      } else {
+        addConsoleLog('info', '[CryptoCrawler] Dashboard initialized');
+        addConsoleLog('info', '[Faucet] 🟢 Autonomous profit faucet is ACTIVE');
+      }
+    };
+
+    initializeDashboard();
     
     // Set up polling for real-time updates
     const statusInterval = setInterval(fetchStatus, 10000);
@@ -772,6 +798,27 @@ export default function CryptoCrawlerDashboard() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
+        {/* Error Banner - Non-blocking, dashboard stays visible */}
+        {hasError && errorMessage && (
+          <Card className="mb-6 bg-red-900/20 border border-red-500/30">
+            <CardContent className="pt-6">
+              <div className="flex items-start gap-4">
+                <AlertTriangle className="w-6 h-6 text-red-400 flex-shrink-0" />
+                <div className="flex-1">
+                  <h4 className="text-red-300 font-medium mb-1">System Error</h4>
+                  <p className="text-sm text-gray-400">{errorMessage}</p>
+                  <button 
+                    onClick={() => { setHasError(false); setErrorMessage(null); }}
+                    className="text-xs text-red-400 hover:underline mt-2"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Stats Overview - Real Data */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <Card className="bg-gray-800/50 border-white/10">

@@ -124,58 +124,14 @@ export default function InmateSearch() {
   const [results, setResults] = useState<InmateSearchResult | null>(null);
   const [searchProgress, setSearchProgress] = useState(0);
 
-  // Fetch state list with error handling
+  // Fetch state list with error handling - non-blocking
   const { data: statesData, error: statesError, isLoading: statesLoading } = useQuery<{ success: boolean; data: StateInfo[] }>({
     queryKey: ['/api/inmate-search/states'],
     retry: 1,
   });
 
-  // Show error card if states API fails
-  if (statesError) {
-    return (
-      <div className="container max-w-6xl mx-auto px-4 py-8">
-        <Card className="border-destructive/50 bg-destructive/5">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="w-6 h-6" />
-              Service Temporarily Unavailable
-            </CardTitle>
-            <CardDescription>
-              The inmate search service is currently experiencing issues.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              We're unable to load the state database at this time. This may be due to temporary server issues.
-              Please try again later or search official sources directly.
-            </p>
-            <div className="flex flex-wrap gap-3">
-              <a
-                href="https://www.bop.gov/inmateloc/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md border hover:bg-muted transition-colors text-sm"
-              >
-                <Database className="w-4 h-4" />
-                Federal BOP Search
-                <ExternalLink className="w-3 h-3" />
-              </a>
-              <a
-                href="https://www.vinelink.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md border hover:bg-muted transition-colors text-sm"
-              >
-                <Shield className="w-4 h-4" />
-                VINE Link
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  // Track if we have an API error for the search
+  const [searchApiError, setSearchApiError] = useState<string | null>(null);
 
   const searchMutation = useMutation({
     mutationFn: async (searchData: {
@@ -192,6 +148,7 @@ export default function InmateSearch() {
     },
     onSuccess: (data: { success: boolean; data: InmateSearchResult; error?: string }) => {
       setSearchProgress(100);
+      setSearchApiError(null); // Clear any previous errors
       if (data.success) {
         setResults(data.data);
         const partialMsg = data.data.partial ? ' (partial results - timeout reached)' : '';
@@ -200,6 +157,8 @@ export default function InmateSearch() {
           description: `Found ${data.data.totalResults} result(s) in ${data.data.searchDuration}ms${partialMsg}`,
         });
       } else {
+        // Show error but keep results/form visible - do NOT redirect
+        setSearchApiError(data.error || "Unknown error");
         toast({
           title: "Search Failed",
           description: data.error || "Unknown error",
@@ -209,6 +168,9 @@ export default function InmateSearch() {
     },
     onError: (error: Error) => {
       setSearchProgress(0);
+      // Show error banner but keep form visible - do NOT redirect anywhere
+      const errorMsg = error.message || "We couldn't reach one of the inmate systems. Try again or adjust filters.";
+      setSearchApiError(errorMsg);
       toast({
         title: "Search Failed",
         description: error.message,
@@ -313,6 +275,67 @@ export default function InmateSearch() {
 
   return (
     <div className="container max-w-6xl mx-auto px-4 py-8">
+      {/* Non-blocking error banner for states API */}
+      {statesError && (
+        <Card className="mb-4 border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="py-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                  State database temporarily unavailable
+                </p>
+                <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                  You can still search by name or inmate ID. State-specific searches may be limited.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <a
+                    href="https://www.bop.gov/inmateloc/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-amber-800 dark:text-amber-200 hover:underline"
+                  >
+                    <Database className="w-3 h-3" />
+                    Federal BOP
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                  <a
+                    href="https://www.vinelink.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-amber-800 dark:text-amber-200 hover:underline"
+                  >
+                    <Shield className="w-3 h-3" />
+                    VINE Link
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Non-blocking error banner for search API */}
+      {searchApiError && (
+        <Card className="mb-4 border-destructive/50 bg-destructive/5">
+          <CardContent className="py-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-destructive">{searchApiError}</p>
+                <button 
+                  onClick={() => setSearchApiError(null)}
+                  className="text-xs text-muted-foreground hover:underline mt-1"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Search Form */}
       <Card className="mb-6">
         <CardHeader>
