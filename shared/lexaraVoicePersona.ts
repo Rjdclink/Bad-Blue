@@ -9,7 +9,7 @@
  *   based on user's tone, pitch, range, topic, and body language
  */
 
-export interface LuxaraVoicePersona {
+export interface LEXARAVoicePersona {
   identity: {
     name: string;
     role: string;
@@ -114,7 +114,7 @@ export interface LuxaraVoicePersona {
  * LUXARA's Default Voice Persona
  * Ethereal, intelligent, adaptive presence
  */
-export const LUXARA_VOICE_PERSONA: LuxaraVoicePersona = {
+export const LUXARA_VOICE_PERSONA: LEXARAVoicePersona = {
   identity: {
     name: 'LUXARA',
     role: 'Legal Intelligence Co-Counsel',
@@ -293,13 +293,13 @@ export const LUXARA_VOICE_PERSONA: LuxaraVoicePersona = {
 /**
  * Behavior Mode Type
  */
-export type LuxaraBehaviorMode = 'personable' | 'professional' | 'adaptive';
+export type LEXARABehaviorMode = 'personable' | 'professional' | 'adaptive';
 
 /**
  * User Signal Analysis Result
  */
 export interface UserSignalAnalysis {
-  detectedMode: LuxaraBehaviorMode;
+  detectedMode: LEXARABehaviorMode;
   confidence: number;
   signals: {
     tone: 'relaxed' | 'formal' | 'stressed' | 'neutral';
@@ -430,7 +430,7 @@ export function analyzeUserSignals(
 /**
  * Get prosody adjustments for behavior mode
  */
-export function getProsodyForMode(mode: 'personable' | 'professional'): Partial<LuxaraVoicePersona['prosody']> {
+export function getProsodyForMode(mode: 'personable' | 'professional'): Partial<LEXARAVoicePersona['prosody']> {
   const base = LUXARA_VOICE_PERSONA.prosody;
   
   if (mode === 'personable') {
@@ -469,8 +469,8 @@ export function getProsodyForMode(mode: 'personable' | 'professional'): Partial<
  * LUXARA Default Persona - Personable Legal Consultant
  * Standard persona for all users - warm, protective, professional
  */
-export const LUXARA_PERSONA = {
-  name: 'Luxara',
+export const LEXARA_PERSONA = {
+  name: 'LEXARA',
   traits: {
     professional: true,
     personable: true,
@@ -516,12 +516,12 @@ Always respond in a conversational, natural manner that reflects your intelligen
 };
 
 // Backward compatibility alias
-export const LUXARA_PERSONA_B = LUXARA_PERSONA;
+export const LEXARA_PERSONA_B = LEXARA_PERSONA;
 
 /**
- * Voice Synthesis Configuration for Luxara
+ * Voice Synthesis Configuration for LEXARA
  */
-export interface LuxaraVoiceConfig {
+export interface LEXARAVoiceConfig {
   provider: 'browser' | 'elevenlabs' | 'custom';
   voiceId?: string;
   stability?: number;
@@ -530,7 +530,7 @@ export interface LuxaraVoiceConfig {
   useSpeakerBoost?: boolean;
 }
 
-export const DEFAULT_LUXARA_VOICE_CONFIG: LuxaraVoiceConfig = {
+export const DEFAULT_LUXARA_VOICE_CONFIG: LEXARAVoiceConfig = {
   provider: 'browser',
   stability: 0.65,
   similarityBoost: 0.75,
@@ -541,7 +541,7 @@ export const DEFAULT_LUXARA_VOICE_CONFIG: LuxaraVoiceConfig = {
 /**
  * Speech Context Types
  */
-export type LuxaraSpeechContext = 
+export type LEXARASpeechContext = 
   | 'greeting'
   | 'explanation'
   | 'guidance'
@@ -551,20 +551,20 @@ export type LuxaraSpeechContext =
   | 'protective';
 
 /**
- * Response Payload from Luxara Brain
+ * Response Payload from LEXARA Brain
  */
-export interface LuxaraResponsePayload {
+export interface LEXARAResponsePayload {
   text: string;
   emotionHint: 'calm' | 'playful' | 'serious' | 'empathetic' | 'protective' | 'authoritative';
   gazeHint: 'camera' | 'side' | 'down' | 'up' | 'thinking';
   voiceStyle: 'soft' | 'firm' | 'warm' | 'professional' | 'protective';
-  context?: LuxaraSpeechContext;
+  context?: LEXARASpeechContext;
 }
 
 /**
  * Get voice parameters for a specific speech context
  */
-export function getLuxaraVoiceForContext(context: LuxaraSpeechContext): Partial<LuxaraVoicePersona> {
+export function getLEXARAVoiceForContext(context: LEXARASpeechContext): Partial<LEXARAVoicePersona> {
   const base = LUXARA_VOICE_PERSONA;
 
   switch (context) {
@@ -639,7 +639,7 @@ export function detectUserSentiment(text: string): 'neutral' | 'stressed' | 'hos
 /**
  * Get appropriate voice style based on user sentiment
  */
-export function getVoiceStyleForSentiment(sentiment: ReturnType<typeof detectUserSentiment>): LuxaraResponsePayload['voiceStyle'] {
+export function getVoiceStyleForSentiment(sentiment: ReturnType<typeof detectUserSentiment>): LEXARAResponsePayload['voiceStyle'] {
   switch (sentiment) {
     case 'hostile':
       return 'firm';

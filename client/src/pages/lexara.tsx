@@ -1,55 +1,45 @@
 /**
- * LUXARA Personal Mode - Production Ready
+ * LEXARA Personal Mode - Production Ready - FULL AUTO
  * 
  * Full viewport ethereal experience with:
  * - Ethereal background layer
  * - 3D/video avatar viewport  
  * - Minimal overlay for status + chat transcript
- * - Automatic device detection & media start (standard users)
- * - Manual toggle controls (Bobby/admin mode only)
+ * - FULL AUTO: Automatic device detection & media start
  * - Voice pipeline integration (talk & listen)
  * - ADAPTIVE BEHAVIOR: Switches between personable/professional modes
  *   based on user's tone, pitch, range, topic, and body language
  * - Responsive design for laptop & phone
  * 
- * USER MODES:
- * - Standard: Fully automatic, no toggles, seamless experience
- * - Bobby (Admin): Manual toggle controls for mic, camera, settings
+ * ONE MODE: FULL AUTO - No toggles, no buttons, everything automatic
  */
 
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
 import { 
   ArrowLeft, Send, Mic, MicOff, Video, VideoOff,
-  Loader2, AlertCircle, Settings
+  Loader2, AlertCircle
 } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
 import { useToast } from '@/hooks/use-toast';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
-import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { 
-  LuxaraEtherealAvatar, 
-  LuxaraStatusIndicator,
-  type LuxaraEmotionHint,
-  type LuxaraGazeHint,
-} from '@/components/LuxaraEtherealAvatar';
+  LEXARAEtherealAvatar, 
+  LEXARAStatusIndicator,
+  type LEXARAEmotionHint,
+  type LEXARAGazeHint,
+} from '@/components/LexaraEtherealAvatar';
 import { 
-  LuxaraBrain,
-  type LuxaraBrainContext,
-  type VoiceMetrics,
-  type BodyLanguageSignals,
-} from '@shared/luxaraBrain';
-import type { LuxaraResponsePayload } from '@shared/luxaraVoicePersona';
-
-// Admin username for toggle controls
-const ADMIN_USERNAME = 'bobby';
+  LEXARABrain,
+  type LEXARABrainContext,
+} from '@shared/lexaraBrain';
+import type { LEXARAResponsePayload } from '@shared/lexaraVoicePersona';
 
 // Singleton brain instance
-const luxaraBrain = new LuxaraBrain();
+const lexaraBrain = new LEXARABrain();
 
 // ============================================================================
 // TYPES
@@ -57,11 +47,11 @@ const luxaraBrain = new LuxaraBrain();
 
 interface ConversationMessage {
   id: string;
-  role: 'luxara' | 'user';
+  role: 'lexara' | 'user';
   content: string;
   timestamp: Date;
-  emotionHint?: LuxaraEmotionHint;
-  gazeHint?: LuxaraGazeHint;
+  emotionHint?: LEXARAEmotionHint;
+  gazeHint?: LEXARAGazeHint;
   behaviorMode?: 'personable' | 'professional';
 }
 
@@ -85,8 +75,8 @@ interface LiveVoiceMetrics {
 // LOCAL STORAGE KEYS
 // ============================================================================
 
-const LUXARA_AUTO_START_KEY = 'luxara_auto_start';
-const LUXARA_CONSENT_KEY = 'luxara_consent';
+const LEXARA_AUTO_START_KEY = 'lexara_auto_start';
+const LEXARA_CONSENT_KEY = 'lexara_consent';
 
 // ============================================================================
 // ADMIN CONTROLS PANEL (Bobby only)
@@ -254,7 +244,7 @@ const TranscriptPanel = memo(function TranscriptPanel({
           >
             <div className={cn(
               "max-w-[90%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
-              msg.role === 'luxara' 
+              msg.role === 'lexara' 
                 ? "bg-gradient-to-br from-cyan-500/15 to-indigo-500/15 border border-cyan-500/20 text-slate-200" 
                 : "bg-slate-700/50 border border-slate-600/30 text-slate-100"
             )}>
@@ -314,20 +304,15 @@ const TranscriptPanel = memo(function TranscriptPanel({
 // MAIN COMPONENT - LUXARA SHELL
 // ============================================================================
 
-export default function LuxaraPage() {
+export default function LEXARAPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { user } = useAuth();
-  
-  // Determine if user is admin (Bobby) - gets toggle controls
-  const isAdmin = user?.username?.toLowerCase() === ADMIN_USERNAME || 
-                  user?.email?.toLowerCase().includes(ADMIN_USERNAME);
   
   // Conversation state
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [userInput, setUserInput] = useState('');
-  const [currentEmotion, setCurrentEmotion] = useState<LuxaraEmotionHint>('calm');
-  const [currentGaze, setCurrentGaze] = useState<LuxaraGazeHint>('camera');
+  const [currentEmotion, setCurrentEmotion] = useState<LEXARAEmotionHint>('calm');
+  const [currentGaze, setCurrentGaze] = useState<LEXARAGazeHint>('camera');
   const [isThinking, setIsThinking] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   
@@ -341,7 +326,7 @@ export default function LuxaraPage() {
     volume: 70,
   });
   
-  // Media state
+  // Media state - FULL AUTO
   const [mediaState, setMediaState] = useState<MediaState>({
     hasMic: false,
     hasCamera: false,
@@ -351,12 +336,7 @@ export default function LuxaraPage() {
     permissionGranted: false,
   });
   
-  // Admin toggle state (only used when isAdmin is true)
-  const [adminMicEnabled, setAdminMicEnabled] = useState(true);
-  const [adminCameraEnabled, setAdminCameraEnabled] = useState(true);
-  
-  // Standard user: no begin button needed after first consent
-  // Admin: can control when to start
+  // FULL AUTO MODE - Only show begin button on FIRST visit ever
   const [showBeginButton, setShowBeginButton] = useState(false);
   const [sessionStarted, setSessionStarted] = useState(false);
   
@@ -365,7 +345,7 @@ export default function LuxaraPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   
-  // Voice hooks
+  // Voice hooks - FULL AUTO
   const voiceMode = useVoiceMode({
     continuous: true,
     interimResults: true,
@@ -434,8 +414,8 @@ export default function LuxaraPage() {
       }
       
       // Store consent for auto-start on next visit
-      localStorage.setItem(LUXARA_AUTO_START_KEY, 'true');
-      localStorage.setItem(LUXARA_CONSENT_KEY, 'true');
+      localStorage.setItem(LEXARA_AUTO_START_KEY, 'true');
+      localStorage.setItem(LEXARA_CONSENT_KEY, 'true');
       
       setMediaState(prev => ({
         ...prev,
@@ -488,51 +468,11 @@ export default function LuxaraPage() {
   }, [mediaState.mediaStream, voiceMode]);
 
   // ============================================================================
-  // ADMIN TOGGLE HANDLERS
+  // FULL AUTO MODE - NO TOGGLES, EVERYTHING AUTOMATIC
   // ============================================================================
-  
-  const handleAdminMicToggle = useCallback(async (enabled: boolean) => {
-    setAdminMicEnabled(enabled);
-    
-    if (enabled) {
-      // Re-enable mic
-      if (!mediaState.mediaStream) {
-        await initializeMedia(adminCameraEnabled, true);
-      } else {
-        try {
-          await voiceMode.enable();
-          voiceMode.startListening();
-        } catch (e) {
-          console.log('Failed to re-enable voice mode');
-        }
-      }
-    } else {
-      // Disable mic
-      voiceMode.disable();
-      if (mediaState.mediaStream) {
-        mediaState.mediaStream.getAudioTracks().forEach(track => track.stop());
-      }
-    }
-  }, [adminCameraEnabled, initializeMedia, mediaState.mediaStream, voiceMode]);
-  
-  const handleAdminCameraToggle = useCallback(async (enabled: boolean) => {
-    setAdminCameraEnabled(enabled);
-    
-    if (enabled) {
-      // Re-enable camera
-      if (!mediaState.mediaStream || !mediaState.mediaStream.getVideoTracks().length) {
-        await initializeMedia(true, adminMicEnabled);
-      }
-    } else {
-      // Disable camera
-      if (mediaState.mediaStream) {
-        mediaState.mediaStream.getVideoTracks().forEach(track => track.stop());
-      }
-    }
-  }, [adminMicEnabled, initializeMedia, mediaState.mediaStream]);
 
   // ============================================================================
-  // AUTO-START LOGIC
+  // AUTO-START LOGIC - FULL AUTO
   // ============================================================================
   
   useEffect(() => {
@@ -544,69 +484,42 @@ export default function LuxaraPage() {
       const devices = await detectDevices();
       
       // Check for previous consent
-      const hasConsent = localStorage.getItem(LUXARA_CONSENT_KEY) === 'true';
+      const hasConsent = localStorage.getItem(LEXARA_CONSENT_KEY) === 'true';
       
-      if (isAdmin) {
-        // ADMIN MODE: Show controls, wait for explicit start or auto-start if consent exists
-        if (hasConsent) {
-          setShowBeginButton(false);
-          setMediaState(prev => ({
-            ...prev,
-            hasMic: devices.hasMic,
-            hasCamera: devices.hasCamera,
-            autoStartEligible: true,
-          }));
-          
-          // Auto-initialize for admin if they have consent
-          setTimeout(async () => {
-            await initializeMedia(adminCameraEnabled, adminMicEnabled);
-            setSessionStarted(true);
-            sendLuxaraGreeting();
-          }, 500);
-        } else {
-          // First time admin - show begin button
-          setShowBeginButton(true);
-        }
-      } else {
-        // STANDARD USER MODE: Fully automatic, seamless experience
-        setShowBeginButton(!hasConsent);
-        setMediaState(prev => ({
-          ...prev,
-          hasMic: devices.hasMic,
-          hasCamera: devices.hasCamera,
-          autoStartEligible: hasConsent,
-        }));
-        
-        if (hasConsent) {
-          // Auto-start immediately for returning users
-          setTimeout(async () => {
-            await initializeMedia(true, true);
-            setSessionStarted(true);
-            sendLuxaraGreeting();
-          }, 300);
-        }
+      // FULL AUTO MODE: Show begin button only on first visit
+      setShowBeginButton(!hasConsent);
+      setMediaState(prev => ({
+        ...prev,
+        hasMic: devices.hasMic,
+        hasCamera: devices.hasCamera,
+        autoStartEligible: hasConsent,
+      }));
+      
+      if (hasConsent) {
+        // FULL AUTO: Start immediately for returning users
+        setTimeout(async () => {
+          await initializeMedia(true, true);
+          setSessionStarted(true);
+          sendLEXARAGreeting();
+        }, 300);
       }
     };
     
     initialize();
-  }, [detectDevices, initializeMedia, isAdmin, adminCameraEnabled, adminMicEnabled]);
+  }, [detectDevices, initializeMedia]);
 
   // ============================================================================
-  // BEGIN SESSION HANDLER
+  // BEGIN SESSION HANDLER - FULL AUTO
   // ============================================================================
   
   const handleBeginSession = async () => {
     setShowBeginButton(false);
     
-    // For standard users: auto-enable everything
-    // For admin: use their toggle preferences
-    const success = await initializeMedia(
-      isAdmin ? adminCameraEnabled : true,
-      isAdmin ? adminMicEnabled : true
-    );
+    // FULL AUTO: Always enable everything
+    await initializeMedia(true, true);
     
     setSessionStarted(true);
-    sendLuxaraGreeting();
+    sendLEXARAGreeting();
   };
 
   // ============================================================================
@@ -635,9 +548,9 @@ export default function LuxaraPage() {
   // ============================================================================
   
   const addMessage = useCallback((
-    role: 'luxara' | 'user', 
+    role: 'lexara' | 'user', 
     content: string, 
-    response?: LuxaraResponsePayload & { behaviorMode?: 'personable' | 'professional' }
+    response?: LEXARAResponsePayload & { behaviorMode?: 'personable' | 'professional' }
   ) => {
     setConversation(prev => [...prev, {
       id: `${role}-${Date.now()}`,
@@ -650,10 +563,10 @@ export default function LuxaraPage() {
     }]);
   }, []);
   
-  const sendLuxaraGreeting = useCallback(async () => {
-    const greetingText = "Hi there! I'm Luxara, and I'm so glad you're here. I'm your legal consultation assistant, ready to help you understand legal concepts and explore your options. What can I help you with today?";
+  const sendLEXARAGreeting = useCallback(async () => {
+    const greetingText = "Hi there! I'm LEXARA, and I'm so glad you're here. I'm your legal consultation assistant, ready to help you understand legal concepts and explore your options. What can I help you with today?";
     
-    addMessage('luxara', greetingText, {
+    addMessage('lexara', greetingText, {
       text: greetingText,
       emotionHint: 'playful',
       gazeHint: 'camera',
@@ -684,9 +597,9 @@ export default function LuxaraPage() {
     
     try {
       // Build context with voice metrics for adaptive behavior
-      const context: LuxaraBrainContext = {
+      const context: LEXARABrainContext = {
         previousMessages: conversation.slice(-6).map(m => ({
-          role: m.role === 'luxara' ? 'luxara' : 'user',
+          role: m.role === 'lexara' ? 'lexara' : 'user',
           content: m.content,
         })),
         // Pass live voice metrics for adaptive behavior analysis
@@ -699,8 +612,8 @@ export default function LuxaraPage() {
         currentMode: currentBehaviorMode,
       };
       
-      // Get response from Luxara Brain (with adaptive behavior)
-      const response = await luxaraBrain.ask(message, context);
+      // Get response from LEXARA Brain (with adaptive behavior)
+      const response = await lexaraBrain.ask(message, context);
       
       setIsThinking(false);
       setCurrentEmotion(response.emotionHint);
@@ -709,10 +622,10 @@ export default function LuxaraPage() {
       // Update behavior mode if changed
       if (response.behaviorMode !== currentBehaviorMode) {
         setCurrentBehaviorMode(response.behaviorMode);
-        console.log(`Luxara behavior mode: ${response.behaviorMode}`);
+        console.log(`LEXARA behavior mode: ${response.behaviorMode}`);
       }
       
-      addMessage('luxara', response.text, response);
+      addMessage('lexara', response.text, response);
       
       // Speak the response with appropriate context
       voiceSynthesis.speak(response.text, {
@@ -721,7 +634,7 @@ export default function LuxaraPage() {
       });
       
     } catch (error) {
-      console.error('Luxara brain error:', error);
+      console.error('LEXARA brain error:', error);
       setIsThinking(false);
       setCurrentEmotion('empathetic');
       setCurrentGaze('camera');
@@ -730,7 +643,7 @@ export default function LuxaraPage() {
       const fallbackText = currentBehaviorMode === 'personable'
         ? "I'm so sorry, I'm having a little trouble right now. Could you try asking me again? I really want to help!"
         : "I apologize for the technical difficulty. Please try your question again, and I'll do my best to assist you.";
-      addMessage('luxara', fallbackText);
+      addMessage('lexara', fallbackText);
       voiceSynthesis.speak(fallbackText, { context: 'reassurance', autoPlay: true });
     }
   }, [addMessage, conversation, voiceSynthesis, liveVoiceMetrics, currentBehaviorMode]);
@@ -766,8 +679,8 @@ export default function LuxaraPage() {
   return (
     <div className="fixed inset-0 overflow-hidden">
       <SEOHead 
-        title="Luxara - AI Legal Consultation" 
-        description="Experience Luxara, your ethereal AI legal consultation assistant."
+        title="LEXARA - AI Legal Consultation" 
+        description="Experience LEXARA, your ethereal AI legal consultation assistant."
       />
       
       {/* Ethereal Background */}
@@ -789,7 +702,7 @@ export default function LuxaraPage() {
           
           <div className="flex items-center gap-3">
             <span className="text-cyan-400 font-semibold tracking-wide">LUXARA</span>
-            <LuxaraStatusIndicator 
+            <LEXARAStatusIndicator 
               isSpeaking={voiceSynthesis.isSpeaking}
               isListening={voiceMode.isListening}
               isThinking={isThinking}
@@ -825,7 +738,7 @@ export default function LuxaraPage() {
             {showBeginButton && (
               <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm">
                 <div className="text-center">
-                  <h2 className="text-2xl font-light text-slate-200 mb-4">Welcome to Luxara</h2>
+                  <h2 className="text-2xl font-light text-slate-200 mb-4">Welcome to LEXARA</h2>
                   <p className="text-slate-400 text-sm mb-6 max-w-xs mx-auto">
                     Your AI legal consultation assistant. Click to begin.
                   </p>
@@ -842,7 +755,7 @@ export default function LuxaraPage() {
             
             {/* Avatar */}
             <div className="w-full h-full max-w-lg max-h-[600px] relative">
-              <LuxaraEtherealAvatar
+              <LexaraEtherealAvatar
                 isSpeaking={voiceSynthesis.isSpeaking}
                 isListening={voiceMode.isListening}
                 isThinking={isThinking}

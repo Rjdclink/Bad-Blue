@@ -886,10 +886,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/lexara', lexaraRoutes.default);
 
   // ============================================
-  // LUXARA CHAT ROUTES (Adaptive AI Consultation)
+  // LEXARA CHAT ROUTES (Adaptive AI Consultation)
   // ============================================
-  const luxaraChatRoutes = await import('./routes/luxara.chat.routes');
-  app.use('/api/luxara', luxaraChatRoutes.default);
+  const lexaraChatRoutes = await import('./routes/lexara.chat.routes');
+  app.use('/api/lexara/chat', lexaraChatRoutes.default);
 
   // ============================================
   // PREVIEW ROUTES

@@ -1,25 +1,25 @@
 /**
- * LUXARA Brain Interface
+ * LEXARA Brain Interface
  * Production-ready conversational AI for legal consultation
  * 
  * ADAPTIVE BEHAVIOR: Dynamically switches between personable and professional
  * modes based on user's tone, pitch, range, topic, and body language
  * 
- * Exposes: luxaraBrain.ask(prompt, context) -> Promise<ResponsePayload>
+ * Exposes: lexaraBrain.ask(prompt, context) -> Promise<ResponsePayload>
  * Integrates with 4Ji orchestrator for real LLM responses
  */
 
 import { 
-  type LuxaraResponsePayload, 
-  type LuxaraSpeechContext,
-  type LuxaraBehaviorMode,
+  type LEXARAResponsePayload, 
+  type LEXARASpeechContext,
+  type LEXARABehaviorMode,
   type UserSignalAnalysis,
-  LUXARA_PERSONA,
+  LEXARA_PERSONA,
   detectUserSentiment,
   getVoiceStyleForSentiment,
   analyzeUserSignals,
   getProsodyForMode,
-} from './luxaraVoicePersona';
+} from './lexaraVoicePersona';
 
 /**
  * Voice metrics from audio analysis
@@ -40,10 +40,10 @@ export interface BodyLanguageSignals {
 }
 
 /**
- * Context for Luxara Brain
+ * Context for LEXARA Brain
  */
-export interface LuxaraBrainContext {
-  previousMessages?: Array<{ role: 'user' | 'luxara'; content: string }>;
+export interface LEXARABrainContext {
+  previousMessages?: Array<{ role: 'user' | 'lexara'; content: string }>;
   userSentiment?: 'neutral' | 'stressed' | 'hostile' | 'curious';
   topic?: 'legal' | 'casual' | 'greeting' | 'unknown';
   userName?: string;
@@ -53,32 +53,32 @@ export interface LuxaraBrainContext {
   voiceMetrics?: VoiceMetrics;
   bodyLanguage?: BodyLanguageSignals;
   // Current behavior mode (tracks across conversation)
-  currentMode?: LuxaraBehaviorMode;
+  currentMode?: LEXARABehaviorMode;
 }
 
 /**
  * Extended response with behavior mode info
  */
-export interface LuxaraExtendedResponse extends LuxaraResponsePayload {
+export interface LEXARAExtendedResponse extends LEXARAResponsePayload {
   behaviorMode: 'personable' | 'professional';
   signalAnalysis?: UserSignalAnalysis;
 }
 
 /**
- * Luxara Brain Class
+ * LEXARA Brain Class
  * Handles all conversational logic and response generation
  * ADAPTIVE: Switches behavior based on real-time user signals
  */
-export class LuxaraBrain {
-  private persona = LUXARA_PERSONA;
+export class LEXARABrain {
+  private persona = LEXARA_PERSONA;
   private currentMode: 'personable' | 'professional' = 'personable';
   private modeHistory: Array<{ mode: 'personable' | 'professional'; timestamp: number }> = [];
   
   /**
-   * Main ask method - the interface for Luxara's mode to call
+   * Main ask method - the interface for LEXARA's mode to call
    * Analyzes user signals and adapts behavior accordingly
    */
-  async ask(prompt: string, context: LuxaraBrainContext = {}): Promise<LuxaraExtendedResponse> {
+  async ask(prompt: string, context: LEXARABrainContext = {}): Promise<LEXARAExtendedResponse> {
     // Analyze user signals for adaptive behavior
     const signalAnalysis = analyzeUserSignals(
       prompt,
@@ -143,7 +143,7 @@ export class LuxaraBrain {
                           analysis.signals.urgency === 'high'; // Urgency override
       
       if (shouldSwitch && newMode !== this.currentMode) {
-        console.log(`Luxara mode switch: ${this.currentMode} -> ${newMode} (confidence: ${analysis.confidence})`);
+        console.log(`LEXARA mode switch: ${this.currentMode} -> ${newMode} (confidence: ${analysis.confidence})`);
         this.currentMode = newMode;
       }
     }
@@ -163,7 +163,7 @@ export class LuxaraBrain {
   private getAdaptiveVoiceStyle(
     sentiment: ReturnType<typeof detectUserSentiment>,
     analysis: UserSignalAnalysis
-  ): LuxaraResponsePayload['voiceStyle'] {
+  ): LEXARAResponsePayload['voiceStyle'] {
     // Base style from sentiment
     const baseStyle = getVoiceStyleForSentiment(sentiment);
     
@@ -184,7 +184,7 @@ export class LuxaraBrain {
    */
   private async fetchLLMResponse(
     prompt: string,
-    context: LuxaraBrainContext,
+    context: LEXARABrainContext,
     sentiment: ReturnType<typeof detectUserSentiment>,
     signalAnalysis: UserSignalAnalysis
   ): Promise<string> {
@@ -193,7 +193,7 @@ export class LuxaraBrain {
       ? this.getPersonableSystemPrompt()
       : this.getProfessionalSystemPrompt();
     
-    const response = await fetch('/api/luxara/chat', {
+    const response = await fetch('/api/lexara/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -254,9 +254,9 @@ You are currently in professional mode because the user is discussing serious le
    */
   private determineSpeechContext(
     prompt: string, 
-    context: LuxaraBrainContext,
+    context: LEXARABrainContext,
     signalAnalysis: UserSignalAnalysis
-  ): LuxaraSpeechContext {
+  ): LEXARASpeechContext {
     const lowercasePrompt = prompt.toLowerCase();
     
     // Greeting detection
@@ -305,10 +305,10 @@ You are currently in professional mode because the user is discussing serious le
    */
   private determineEmotionAndGaze(
     sentiment: ReturnType<typeof detectUserSentiment>,
-    context: LuxaraSpeechContext,
-    brainContext: LuxaraBrainContext,
+    context: LEXARASpeechContext,
+    brainContext: LEXARABrainContext,
     signalAnalysis: UserSignalAnalysis
-  ): { emotionHint: LuxaraResponsePayload['emotionHint']; gazeHint: LuxaraResponsePayload['gazeHint'] } {
+  ): { emotionHint: LEXARAResponsePayload['emotionHint']; gazeHint: LEXARAResponsePayload['gazeHint'] } {
     
     // Handle protective context - firm but caring redirect
     if (context === 'protective') {
@@ -346,7 +346,7 @@ You are currently in professional mode because the user is discussing serious le
    */
   private generateLocalResponse(
     prompt: string,
-    context: LuxaraBrainContext,
+    context: LEXARABrainContext,
     sentiment: ReturnType<typeof detectUserSentiment>,
     signalAnalysis: UserSignalAnalysis
   ): string {
@@ -357,13 +357,13 @@ You are currently in professional mode because the user is discussing serious le
     if (lowercasePrompt.match(/^(hi|hello|hey|good morning|good afternoon|good evening)/)) {
       if (isPersonable) {
         const greetings = [
-          "Hi there! I'm Luxara, and I'm so glad you're here! How can I help you today?",
-          "Hello! Welcome! I'm Luxara, your legal consultation assistant. What's on your mind?",
+          "Hi there! I'm LEXARA, and I'm so glad you're here! How can I help you today?",
+          "Hello! Welcome! I'm LEXARA, your legal consultation assistant. What's on your mind?",
           "Hey! It's great to meet you! I'm here to help with any legal questions you might have. What can I do for you?",
         ];
         return greetings[Math.floor(Math.random() * greetings.length)];
       } else {
-        return "Hello. I'm Luxara, your legal consultation assistant. I'm here to help you understand legal concepts and explore your options. How may I assist you today?";
+        return "Hello. I'm LEXARA, your legal consultation assistant. I'm here to help you understand legal concepts and explore your options. How may I assist you today?";
       }
     }
     
@@ -391,12 +391,12 @@ You are currently in professional mode because the user is discussing serious le
       }
     }
     
-    // Handle questions about Luxara
+    // Handle questions about LEXARA
     if (lowercasePrompt.includes('who are you') || lowercasePrompt.includes('what are you')) {
       if (isPersonable) {
-        return "I'm Luxara! Think of me as your friendly legal information guide. I'm here to help you understand legal concepts, explore your options, and feel more confident about navigating the legal system. While I can't give you legal advice like an attorney would, I can definitely help you figure out the right questions to ask! What would you like to know about?";
+        return "I'm LEXARA! Think of me as your friendly legal information guide. I'm here to help you understand legal concepts, explore your options, and feel more confident about navigating the legal system. While I can't give you legal advice like an attorney would, I can definitely help you figure out the right questions to ask! What would you like to know about?";
       } else {
-        return "I'm Luxara, an advanced legal consultation assistant. My role is to help you understand legal concepts, identify relevant considerations for your situation, and provide guidance on procedural matters. I provide legal information rather than legal advice, which requires a licensed attorney. How may I assist you?";
+        return "I'm LEXARA, an advanced legal consultation assistant. My role is to help you understand legal concepts, identify relevant considerations for your situation, and provide guidance on procedural matters. I provide legal information rather than legal advice, which requires a licensed attorney. How may I assist you?";
       }
     }
     
@@ -436,25 +436,25 @@ You are currently in professional mode because the user is discussing serious le
 }
 
 // Singleton instance
-let luxaraBrainInstance: LuxaraBrain | null = null;
+let lexaraBrainInstance: LEXARABrain | null = null;
 
 /**
- * Get Luxara Brain instance
+ * Get LEXARA Brain instance
  */
-export function getLuxaraBrain(): LuxaraBrain {
-  if (!luxaraBrainInstance) {
-    luxaraBrainInstance = new LuxaraBrain();
+export function getLEXARABrain(): LEXARABrain {
+  if (!lexaraBrainInstance) {
+    lexaraBrainInstance = new LEXARABrain();
   }
-  return luxaraBrainInstance;
+  return lexaraBrainInstance;
 }
 
 /**
- * Convenience function for asking Luxara
+ * Convenience function for asking LEXARA
  */
-export async function askLuxara(
+export async function askLEXARA(
   prompt: string, 
-  context?: LuxaraBrainContext
-): Promise<LuxaraResponsePayload> {
-  const brain = getLuxaraBrain();
+  context?: LEXARABrainContext
+): Promise<LEXARAResponsePayload> {
+  const brain = getLEXARABrain();
   return brain.ask(prompt, context);
 }

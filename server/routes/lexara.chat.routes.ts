@@ -1,19 +1,19 @@
 /**
- * LUXARA API Routes
- * Backend endpoints for Luxara conversational AI
+ * LEXARA API Routes
+ * Backend endpoints for LEXARA conversational AI
  */
 
 import express, { Request, Response } from 'express';
 import { createLogger } from '../logger';
 import { callAIWithFallback } from '../aiSubAgent';
-import { LUXARA_PERSONA } from '../../shared/luxaraVoicePersona';
+import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 
 const router = express.Router();
-const log = createLogger('LuxaraRoutes');
+const log = createLogger('LEXARARoutes');
 
 /**
- * POST /api/luxara/chat
- * Main chat endpoint for Luxara conversational AI
+ * POST /api/lexara/chat
+ * Main chat endpoint for LEXARA conversational AI
  */
 router.post('/chat', express.json(), async (req: Request, res: Response) => {
   try {
@@ -26,7 +26,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       });
     }
     
-    log.info('[LUXARA] Chat request received', {
+    log.info('[LEXARA] Chat request received', {
       promptLength: prompt.length,
       hasPreviousMessages: !!context?.previousMessages?.length,
       behaviorMode: context?.behaviorMode,
@@ -36,7 +36,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
     
     // Add system prompt
-    const finalSystemPrompt = systemPrompt || LUXARA_PERSONA.systemPrompt;
+    const finalSystemPrompt = systemPrompt || LEXARA_PERSONA.systemPrompt;
     messages.push({
       role: 'system',
       content: finalSystemPrompt,
@@ -46,7 +46,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     if (context?.previousMessages && Array.isArray(context.previousMessages)) {
       for (const msg of context.previousMessages.slice(-6)) {
         messages.push({
-          role: msg.role === 'luxara' ? 'assistant' : 'user',
+          role: msg.role === 'lexara' ? 'assistant' : 'user',
           content: msg.content,
         });
       }
@@ -66,14 +66,14 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     });
     
     if (!aiResponse.success || !aiResponse.content) {
-      log.error('[LUXARA] AI call failed', { error: aiResponse.error });
+      log.error('[LEXARA] AI call failed', { error: aiResponse.error });
       return res.status(500).json({
         success: false,
         error: 'Failed to generate response',
       });
     }
     
-    log.info('[LUXARA] Chat response generated', {
+    log.info('[LEXARA] Chat response generated', {
       responseLength: aiResponse.content.length,
       model: aiResponse.model,
     });
@@ -85,7 +85,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     });
     
   } catch (error) {
-    log.error('[LUXARA] Chat endpoint error', { error });
+    log.error('[LEXARA] Chat endpoint error', { error });
     return res.status(500).json({
       success: false,
       error: 'Internal server error',
@@ -94,16 +94,16 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/luxara/status
- * Get Luxara system status
+ * GET /api/lexara/status
+ * Get LEXARA system status
  */
 router.get('/status', (req: Request, res: Response) => {
   res.json({
     success: true,
     status: 'active',
     persona: {
-      name: LUXARA_PERSONA.identity.name,
-      role: LUXARA_PERSONA.identity.role,
+      name: LEXARA_PERSONA.identity.name,
+      role: LEXARA_PERSONA.identity.role,
     },
     capabilities: {
       voice: true,
@@ -115,7 +115,7 @@ router.get('/status', (req: Request, res: Response) => {
 });
 
 /**
- * POST /api/luxara/analyze-signals
+ * POST /api/lexara/analyze-signals
  * Analyze user signals for adaptive behavior (optional server-side analysis)
  */
 router.post('/analyze-signals', express.json(), (req: Request, res: Response) => {
@@ -131,7 +131,7 @@ router.post('/analyze-signals', express.json(), (req: Request, res: Response) =>
     
     // Import and use the signal analyzer
     // This mirrors the client-side analysis for consistency
-    const { analyzeUserSignals } = require('../../shared/luxaraVoicePersona');
+    const { analyzeUserSignals } = require('../../shared/lexaraVoicePersona');
     const analysis = analyzeUserSignals(text, voiceMetrics, bodyLanguage);
     
     return res.json({
@@ -140,7 +140,7 @@ router.post('/analyze-signals', express.json(), (req: Request, res: Response) =>
     });
     
   } catch (error) {
-    log.error('[LUXARA] Signal analysis error', { error });
+    log.error('[LEXARA] Signal analysis error', { error });
     return res.status(500).json({
       success: false,
       error: 'Internal server error',

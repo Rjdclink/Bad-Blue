@@ -550,6 +550,31 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 relative">
+                {/* LEXARA Voice Consultation - Full Auto Conversational Experience */}
+                <div 
+                  className="relative p-4 rounded-xl bg-gradient-to-r from-cyan-500/10 via-indigo-500/10 to-purple-500/10 border border-cyan-500/20 cursor-pointer hover:border-cyan-400/40 transition-all group"
+                  onClick={() => setLocation('/lexara')}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-full bg-cyan-500/20 group-hover:bg-cyan-500/30 transition-colors">
+                        <MessageCircle className="w-5 h-5 text-cyan-400" />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-cyan-200">LEXARA Voice Consultation</p>
+                        <p className="text-sm text-slate-400">Natural conversation with AI-powered legal consultation</p>
+                      </div>
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10"
+                    >
+                      Launch →
+                    </Button>
+                  </div>
+                </div>
+                
                 {!analysis ? (
                   <>
                     <div className="space-y-3">

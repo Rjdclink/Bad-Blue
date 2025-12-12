@@ -118,8 +118,8 @@ const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon')
 // Domain Consultation Page - 4JI Orchestrator Integration
 const ConsultationPage = lazyWithRetry(() => import("@/pages/consultation"), 'Consultation');
 
-// LUXARA Personal Mode - Ethereal AI Legal Consultation
-const LuxaraPage = lazyWithRetry(() => import("@/pages/luxara-demo"), 'Luxara');
+// LEXARA - Ethereal AI Legal Consultation (Production)
+const LexaraPage = lazyWithRetry(() => import("@/pages/lexara"), 'Lexara');
 
 // Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
@@ -237,9 +237,8 @@ function Router() {
             {/* PANTHEON - Advanced Intelligence Platform */}
             <Route path="/pantheon" component={PantheonPage} />
             
-            {/* LUXARA - Ethereal AI Legal Consultation */}
-            <Route path="/luxara" component={LuxaraPage} />
-            <Route path="/demo/luxara" component={LuxaraPage} />
+            {/* LEXARA - Ethereal AI Legal Consultation (Production) */}
+            <Route path="/lexara" component={LexaraPage} />
             
             {/* Domain Consultation - 4JI Orchestrator Integration */}
             <Route path="/consultation/:domainId" component={ConsultationPage} />

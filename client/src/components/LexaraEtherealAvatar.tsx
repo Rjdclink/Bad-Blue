@@ -1,7 +1,7 @@
 /**
  * LUXARA Ethereal Avatar Component
  * 
- * Spectral, ethereal, softly luminous avatar for Luxara
+ * Spectral, ethereal, softly luminous avatar for LEXARA
  * - Not cartoony - intelligent, calm 18-19 year old presence
  * - Soft hair movement
  * - Subtle idle breathing / micro-movements
@@ -16,17 +16,17 @@ import { cn } from '@/lib/utils';
 // TYPES
 // ============================================================================
 
-export type LuxaraEmotionHint = 'calm' | 'playful' | 'serious' | 'empathetic' | 'protective' | 'authoritative';
-export type LuxaraGazeHint = 'camera' | 'side' | 'down' | 'up' | 'thinking';
-export type LuxaraVoiceStyle = 'soft' | 'firm' | 'warm' | 'professional' | 'protective';
+export type LEXARAEmotionHint = 'calm' | 'playful' | 'serious' | 'empathetic' | 'protective' | 'authoritative';
+export type LEXARAGazeHint = 'camera' | 'side' | 'down' | 'up' | 'thinking';
+export type LEXARAVoiceStyle = 'soft' | 'firm' | 'warm' | 'professional' | 'protective';
 
-export interface LuxaraEtherealAvatarProps {
+export interface LEXARAEtherealAvatarProps {
   isSpeaking?: boolean;
   isListening?: boolean;
   isThinking?: boolean;
   audioLevel?: number; // 0-1 for lip sync
-  emotionHint?: LuxaraEmotionHint;
-  gazeHint?: LuxaraGazeHint;
+  emotionHint?: LEXARAEmotionHint;
+  gazeHint?: LEXARAGazeHint;
   className?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
 }
@@ -47,7 +47,7 @@ const SIZE_CONFIG = {
 // ETHEREAL LUXARA AVATAR
 // ============================================================================
 
-export const LuxaraEtherealAvatar = memo(function LuxaraEtherealAvatar({
+export const LEXARAEtherealAvatar = memo(function LEXARAEtherealAvatar({
   isSpeaking = false,
   isListening = false,
   isThinking = false,
@@ -56,7 +56,7 @@ export const LuxaraEtherealAvatar = memo(function LuxaraEtherealAvatar({
   gazeHint = 'camera',
   className,
   size = 'full',
-}: LuxaraEtherealAvatarProps) {
+}: LEXARAEtherealAvatarProps) {
   // Animation state
   const [breathePhase, setBreathePhase] = useState(0);
   const [hairDrift, setHairDrift] = useState(0);
@@ -522,14 +522,14 @@ export const LuxaraEtherealAvatar = memo(function LuxaraEtherealAvatar({
 // LUXARA STATUS INDICATOR
 // ============================================================================
 
-export interface LuxaraStatusIndicatorProps {
+export interface LEXARAStatusIndicatorProps {
   isSpeaking: boolean;
   isListening: boolean;
   isThinking: boolean;
   className?: string;
 }
 
-export const LuxaraStatusIndicator: React.FC<LuxaraStatusIndicatorProps> = ({
+export const LEXARAStatusIndicator: React.FC<LEXARAStatusIndicatorProps> = ({
   isSpeaking,
   isListening,
   isThinking,
@@ -558,4 +558,4 @@ export const LuxaraStatusIndicator: React.FC<LuxaraStatusIndicatorProps> = ({
   );
 };
 
-export default LuxaraEtherealAvatar;
+export default LEXARAEtherealAvatar;
