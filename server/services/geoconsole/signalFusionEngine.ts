@@ -149,6 +149,8 @@ const DEFAULT_CONFIG: SignalFusionConfig = {
 
 const EARTH_RADIUS_M = 6371000;
 const DEG_TO_RAD = Math.PI / 180;
+/** Approximate meters per degree at equator for rough conversions */
+const METERS_PER_DEGREE = 111000;
 
 // ═══════════════════════════════════════════════════════
 // SIGNAL FUSION ENGINE CLASS
@@ -161,8 +163,8 @@ export class SignalFusionEngine extends EventEmitter {
   private signals: Map<string, SignalSource[]> = new Map();
   private fusedPositions: Map<string, FusedPosition[]> = new Map();
   
-  // Pattern storage
-  private timePatterns: Map<string, TimePattern[]> = new Map();
+  // Pattern storage - using Map<targetId, Map<patternKey, TimePattern>> for O(1) lookups
+  private timePatterns: Map<string, Map<string, TimePattern>> = new Map();
   private facilityGeometry: Map<string, FacilityGeometry> = new Map();
   
   // Kalman filter state per target
@@ -178,6 +180,11 @@ export class SignalFusionEngine extends EventEmitter {
       sandboxEnabled: this.config.sandboxEnabled,
       simulations: this.config.monteCarlo.simulations,
     });
+  }
+
+  /** Generate composite key for time pattern lookup */
+  private getPatternKey(hour: number, dayOfWeek: number): string {
+    return `${hour}-${dayOfWeek}`;
   }
 
   // ═══════════════════════════════════════════════════════
@@ -376,7 +383,8 @@ export class SignalFusionEngine extends EventEmitter {
     kalman: KalmanState,
     signals: SignalSource[]
   ): FusedPosition {
-    const accuracy = Math.sqrt(kalman.P[0][0] + kalman.P[1][1]) * 111000; // Convert to meters
+    // Convert covariance to meters using METERS_PER_DEGREE
+    const accuracy = Math.sqrt(kalman.P[0][0] + kalman.P[1][1]) * METERS_PER_DEGREE;
     
     return {
       lat: kalman.x,
@@ -398,19 +406,20 @@ export class SignalFusionEngine extends EventEmitter {
    */
   private updateTimePatterns(targetId: string, signal: SignalSource): void {
     if (!this.timePatterns.has(targetId)) {
-      this.timePatterns.set(targetId, []);
+      this.timePatterns.set(targetId, new Map());
     }
     
     const patterns = this.timePatterns.get(targetId)!;
     const hour = signal.timestamp.getHours();
     const dayOfWeek = signal.timestamp.getDay();
+    const key = this.getPatternKey(hour, dayOfWeek);
     
-    // Find or create pattern
-    let pattern = patterns.find(p => p.hour === hour && p.dayOfWeek === dayOfWeek);
+    // O(1) lookup using composite key
+    let pattern = patterns.get(key);
     
     if (!pattern) {
       pattern = { hour, dayOfWeek, frequency: 0, locations: [] };
-      patterns.push(pattern);
+      patterns.set(key, pattern);
     }
     
     pattern.frequency++;
@@ -427,13 +436,15 @@ export class SignalFusionEngine extends EventEmitter {
    */
   getPredictedLocationFromPatterns(targetId: string, time?: Date): { lat: number; lng: number; confidence: number } | null {
     const patterns = this.timePatterns.get(targetId);
-    if (!patterns || patterns.length === 0) return null;
+    if (!patterns || patterns.size === 0) return null;
     
     const t = time || new Date();
     const hour = t.getHours();
     const dayOfWeek = t.getDay();
+    const key = this.getPatternKey(hour, dayOfWeek);
     
-    const pattern = patterns.find(p => p.hour === hour && p.dayOfWeek === dayOfWeek);
+    // O(1) lookup
+    const pattern = patterns.get(key);
     if (!pattern || pattern.locations.length === 0) return null;
     
     // Calculate centroid of pattern locations
@@ -522,8 +533,8 @@ export class SignalFusionEngine extends EventEmitter {
         vx += (Math.random() - 0.5) * 0.0001;
         vy += (Math.random() - 0.5) * 0.0001;
         
-        // Clamp speed
-        const speed = Math.sqrt(vx * vx + vy * vy) * 111000; // approx m/s
+        // Clamp speed (convert degree/s to m/s using METERS_PER_DEGREE)
+        const speed = Math.sqrt(vx * vx + vy * vy) * METERS_PER_DEGREE;
         if (speed > maxSpeedMps) {
           const scale = maxSpeedMps / speed;
           vx *= scale;
@@ -709,11 +720,24 @@ export class SignalFusionEngine extends EventEmitter {
     return EARTH_RADIUS_M * c;
   }
 
-  // Matrix operations for Kalman filter
+  // Matrix operations for Kalman filter with boundary validation
   private matrixMultiply(A: number[][], B: number[][]): number[][] {
+    // Validate matrices
+    if (!A || !A.length || !A[0] || !B || !B.length || !B[0]) {
+      return [];
+    }
+    
     const rowsA = A.length;
     const colsA = A[0].length;
+    const rowsB = B.length;
     const colsB = B[0].length;
+    
+    // Validate dimensions match for multiplication
+    if (colsA !== rowsB) {
+      log.warn('Matrix multiplication dimension mismatch', { colsA, rowsB });
+      return [];
+    }
+    
     const result: number[][] = [];
     
     for (let i = 0; i < rowsA; i++) {
@@ -730,18 +754,28 @@ export class SignalFusionEngine extends EventEmitter {
   }
 
   private matrixAdd(A: number[][], B: number[][]): number[][] {
-    return A.map((row, i) => row.map((val, j) => val + B[i][j]));
+    if (!A || !A.length || !B || !B.length || A.length !== B.length) {
+      return A || [];
+    }
+    return A.map((row, i) => row.map((val, j) => val + (B[i]?.[j] ?? 0)));
   }
 
   private matrixSubtract(A: number[][], B: number[][]): number[][] {
-    return A.map((row, i) => row.map((val, j) => val - B[i][j]));
+    if (!A || !A.length || !B || !B.length || A.length !== B.length) {
+      return A || [];
+    }
+    return A.map((row, i) => row.map((val, j) => val - (B[i]?.[j] ?? 0)));
   }
 
   private transpose(A: number[][]): number[][] {
+    if (!A || !A.length || !A[0]) return [];
     return A[0].map((_, i) => A.map(row => row[i]));
   }
 
   private matrixInverse2x2(A: number[][]): number[][] {
+    if (!A || A.length < 2 || !A[0] || A[0].length < 2) {
+      return [[0, 0], [0, 0]];
+    }
     const det = A[0][0] * A[1][1] - A[0][1] * A[1][0];
     if (det === 0) return [[0, 0], [0, 0]];
     
@@ -768,7 +802,9 @@ export class SignalFusionEngine extends EventEmitter {
   }
 
   getTimePatterns(targetId: string): TimePattern[] {
-    return this.timePatterns.get(targetId) || [];
+    const patternMap = this.timePatterns.get(targetId);
+    if (!patternMap) return [];
+    return Array.from(patternMap.values());
   }
 
   clearTarget(targetId: string): void {

@@ -368,8 +368,16 @@ export const SYSTEM_VERSION = {
     lexara: 'v2.1.0-persona',
     maintenance: 'v1.0.0',
   },
-  lastUpdated: new Date().toISOString(),
+  /** Build/deployment timestamp - set at module load time */
+  buildTimestamp: new Date().toISOString(),
 };
+
+/**
+ * Get current runtime timestamp (for logging/reports)
+ */
+export function getCurrentTimestamp(): string {
+  return new Date().toISOString();
+}
 
 // ═══════════════════════════════════════════════════════
 // HELPER FUNCTIONS

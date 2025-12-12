@@ -342,9 +342,15 @@ class MaintenanceWorker extends EventEmitter {
     };
     
     try {
+      // Validate cwd is a safe path (no shell metacharacters)
+      const cwd = process.cwd();
+      if (!/^[\w\-./]+$/.test(cwd)) {
+        throw new Error('Invalid working directory path');
+      }
+      
       // Run npm outdated
       const { stdout } = await exec('npm outdated --json 2>/dev/null || echo "{}"', {
-        cwd: process.cwd(),
+        cwd,
         timeout: 60000,
       });
       
@@ -376,12 +382,14 @@ class MaintenanceWorker extends EventEmitter {
       // Check for security vulnerabilities
       try {
         const { stdout: auditOutput } = await exec('npm audit --json 2>/dev/null || echo "{}"', {
-          cwd: process.cwd(),
+          cwd,
           timeout: 60000,
         });
         
-        const audit = JSON.parse(auditOutput || '{}');
-        report.securityIssues = audit.metadata?.vulnerabilities?.total || 0;
+        const auditResult = JSON.parse(auditOutput || '{}');
+        // Safe access to nested properties
+        const vulnerabilities = auditResult?.metadata?.vulnerabilities;
+        report.securityIssues = typeof vulnerabilities?.total === 'number' ? vulnerabilities.total : 0;
       } catch {
         // Audit may fail in some environments
       }
