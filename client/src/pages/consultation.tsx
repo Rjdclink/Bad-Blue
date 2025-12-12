@@ -1,46 +1,46 @@
 /**
- * Domain Consultation Page
+ * Domain Consultation Page - LEXARA Live Co-Counsel
  * 
- * Handles consultations for any legal domain by:
- * - Launching the appropriate sub-agent via 4JI orchestrator
- * - Loading domain-specific UI configuration
- * - Providing consultation forms and templates
- * - Displaying results with citations and suggested actions
+ * Premium ethereal consultation experience featuring:
+ * - Spectral Lexara avatar (ethereal young woman, electric blue eyes, golden irises)
+ * - Conversational intake (Lexara asks questions naturally - no forms)
+ * - Two-pane FaceTime-style layout: Avatar (40%) | Chat (60%)
+ * - Voice-enabled bidirectional communication
+ * - Structured legal briefing output
+ * 
+ * Design: Cool blues + soft gold accents, deep navy/indigo background
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { useRoute, useLocation } from 'wouter';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useMutation } from '@tanstack/react-query';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-// Tabs components available for future tab-based consultation features
-// import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
-  ArrowLeft, 
-  Send, 
-  FileText, 
-  Scale, 
-  Book, 
-  Lightbulb, 
-  Clock, 
-  CheckCircle,
-  AlertCircle,
-  Loader2,
-  Volume2,
-  Save
+  ArrowLeft, Send, Scale, Clock, CheckCircle, AlertCircle,
+  Loader2, Mic, MicOff, Settings, MessageCircle
 } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
-import { AppHeader } from '@/components/AppHeader';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import { LAW_TYPE_DATA } from '@shared/lawTypes';
+import { useVoiceMode } from '@/hooks/useVoiceMode';
+import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
+import { cn } from '@/lib/utils';
+
+// ============================================================================
+// TYPES
+// ============================================================================
+
+interface CaseData {
+  issueType: string;
+  situation: string;
+  jurisdiction: string;
+  deadlines: string;
+}
 
 interface ConsultationResponse {
   domainId: string;
@@ -51,497 +51,522 @@ interface ConsultationResponse {
   suggestedActions: string[];
 }
 
-interface UIConfig {
-  domain: string;
-  name: string;
-  theme: {
-    primaryColor: string;
-    secondaryColor: string;
-    accentColor: string;
-  };
-  layout: {
-    consultationForm: {
-      title: string;
-      subtitle: string;
-      fields: Array<{
-        id: string;
-        label: string;
-        type: string;
-        placeholder?: string;
-        options?: string[];
-        required: boolean;
-      }>;
-    };
-  };
-  features: {
-    voiceInput: boolean;
-    documentGeneration: boolean;
-    templateLibrary: boolean;
-  };
+type IntakePhase = 'greeting' | 'issue_type' | 'situation' | 'jurisdiction' | 'deadlines' | 'complete' | 'analyzing' | 'report';
+
+interface ConversationMessage {
+  id: string;
+  role: 'lexara' | 'user';
+  content: string;
+  timestamp: Date;
 }
+
+// ============================================================================
+// ETHEREAL LEXARA AVATAR - Spectral Young Woman
+// ============================================================================
+
+interface EtherealLexaraProps {
+  isSpeaking: boolean;
+  isListening: boolean;
+  isThinking: boolean;
+}
+
+const EtherealLexara = memo(function EtherealLexara({ 
+  isSpeaking, isListening, isThinking 
+}: EtherealLexaraProps) {
+  const [breathe, setBreathe] = useState(0);
+  const [hairDrift, setHairDrift] = useState(0);
+  const [lipPhase, setLipPhase] = useState(0);
+  
+  // Gentle animations
+  useEffect(() => {
+    const breatheId = setInterval(() => setBreathe(p => (p + 1) % 360), 50);
+    const hairId = setInterval(() => setHairDrift(p => (p + 0.5) % 360), 30);
+    return () => { clearInterval(breatheId); clearInterval(hairId); };
+  }, []);
+  
+  // Lip animation when speaking
+  useEffect(() => {
+    if (!isSpeaking) { setLipPhase(0); return; }
+    const lipId = setInterval(() => setLipPhase(p => (p + 1) % 360), 80);
+    return () => clearInterval(lipId);
+  }, [isSpeaking]);
+  
+  const breatheScale = 1 + Math.sin(breathe * Math.PI / 180) * 0.006;
+  const hairOffset = Math.sin(hairDrift * Math.PI / 180) * 2;
+  const lipMove = isSpeaking ? Math.sin(lipPhase * Math.PI / 180) * 2 : 0;
+  
+  return (
+    <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950/80 to-slate-900">
+      {/* Animated particle field */}
+      <div className="absolute inset-0 opacity-50">
+        {[...Array(25)].map((_, i) => (
+          <div
+            key={i}
+            className="absolute rounded-full"
+            style={{
+              width: `${2 + Math.random() * 3}px`,
+              height: `${2 + Math.random() * 3}px`,
+              left: `${Math.random() * 100}%`,
+              top: `${Math.random() * 100}%`,
+              background: i % 4 === 0 ? 'rgba(212, 175, 55, 0.7)' : 'rgba(96, 165, 250, 0.5)',
+              animation: `float-particle ${10 + Math.random() * 8}s ease-in-out infinite ${Math.random() * 5}s`,
+            }}
+          />
+        ))}
+      </div>
+      
+      {/* Radial depth gradient */}
+      <div className="absolute inset-0" style={{ background: 'radial-gradient(circle at center, transparent 0%, transparent 40%, rgba(2,6,23,0.7) 100%)' }} />
+      
+      {/* Main avatar container */}
+      <div 
+        className="relative z-10"
+        style={{ transform: `scale(${breatheScale})`, transition: 'transform 0.1s ease-out' }}
+      >
+        {/* Outer aura rings */}
+        <div 
+          className={cn("absolute rounded-full border border-cyan-400/20", isSpeaking && "animate-pulse")}
+          style={{ width: '300px', height: '300px', left: '-22px', top: '-22px',
+            boxShadow: '0 0 50px rgba(96,165,250,0.15), 0 0 100px rgba(212,175,55,0.08)' }}
+        />
+        <div className="absolute rounded-full border border-amber-400/10"
+          style={{ width: '270px', height: '270px', left: '-7px', top: '-7px', animation: 'spin 25s linear infinite reverse' }}
+        />
+        
+        {/* Avatar figure */}
+        <div 
+          className="relative w-64 h-64 rounded-full overflow-hidden"
+          style={{ boxShadow: `0 0 35px rgba(96,165,250,0.3), 0 0 70px rgba(212,175,55,0.12), inset 0 0 35px rgba(96,165,250,0.2)` }}
+        >
+          {/* Background */}
+          <div className="absolute inset-0 bg-gradient-to-b from-indigo-900/50 via-slate-800/70 to-slate-900/90" />
+          
+          {/* SVG Figure - Ethereal young woman */}
+          <svg viewBox="0 0 200 200" className="absolute inset-0 w-full h-full" style={{ filter: 'blur(0.3px)' }}>
+            <defs>
+              <linearGradient id="hairG" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="rgba(30,41,59,0.95)" />
+                <stop offset="50%" stopColor="rgba(51,65,85,0.85)" />
+                <stop offset="100%" stopColor="rgba(30,41,59,0.95)" />
+              </linearGradient>
+              <linearGradient id="skinG" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="rgba(226,232,240,0.75)" />
+                <stop offset="100%" stopColor="rgba(203,213,225,0.55)" />
+              </linearGradient>
+              <filter id="glow"><feGaussianBlur stdDeviation="1.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            </defs>
+            
+            {/* Flowing hair */}
+            <path d={`M60 ${46+hairOffset*0.3} Q50 62,${56+hairOffset*0.4} 125 Q62 165,${52+hairOffset*0.3} 188 L42 192 Q47 150,46 100 Q46 52,60 ${46+hairOffset*0.3}Z`} fill="url(#hairG)" opacity="0.9"/>
+            <path d={`M140 ${46-hairOffset*0.3} Q150 62,${144-hairOffset*0.4} 125 Q138 165,${148-hairOffset*0.3} 188 L158 192 Q153 150,154 100 Q154 52,140 ${46-hairOffset*0.3}Z`} fill="url(#hairG)" opacity="0.9"/>
+            <ellipse cx="100" cy="56" rx="44" ry="28" fill="url(#hairG)" opacity="0.95"/>
+            
+            {/* Face */}
+            <ellipse cx="100" cy="86" rx="34" ry="40" fill="url(#skinG)" filter="url(#glow)" opacity="0.88"/>
+            
+            {/* Neck & shoulders */}
+            <path d="M86 124 Q100 134,114 124 L118 142 Q100 152,82 142Z" fill="url(#skinG)" opacity="0.75"/>
+            
+            {/* Simple top */}
+            <path d="M62 152 Q82 144,100 146 Q118 144,138 152 L142 200 L58 200Z" fill="rgba(148,163,184,0.45)" stroke="rgba(148,163,184,0.25)" strokeWidth="1"/>
+            
+            {/* Eyes - Electric blue pupils, golden irises */}
+            <g filter="url(#glow)">
+              <ellipse cx="85" cy="82" rx="7.5" ry="5.5" fill="rgba(255,255,255,0.92)"/>
+              <circle cx="85" cy="82" r="4.5" fill="rgba(212,175,55,0.85)"/>
+              <circle cx="85" cy="82" r="2.8" fill="rgba(59,130,246,1)" className={isListening?"animate-pulse":""}/>
+              <circle cx="83.5" cy="80.5" r="0.9" fill="rgba(255,255,255,0.85)"/>
+              
+              <ellipse cx="115" cy="82" rx="7.5" ry="5.5" fill="rgba(255,255,255,0.92)"/>
+              <circle cx="115" cy="82" r="4.5" fill="rgba(212,175,55,0.85)"/>
+              <circle cx="115" cy="82" r="2.8" fill="rgba(59,130,246,1)" className={isListening?"animate-pulse":""}/>
+              <circle cx="113.5" cy="80.5" r="0.9" fill="rgba(255,255,255,0.85)"/>
+            </g>
+            
+            {/* Eyebrows */}
+            <path d={`M76 ${74-(isListening?1.5:0)} Q86 ${72-(isListening?2:0)},94 74`} stroke="rgba(71,85,105,0.55)" strokeWidth="1.3" fill="none"/>
+            <path d={`M106 74 Q114 ${72-(isListening?2:0)},124 ${74-(isListening?1.5:0)}`} stroke="rgba(71,85,105,0.55)" strokeWidth="1.3" fill="none"/>
+            
+            {/* Nose */}
+            <path d="M100 84 L100 96 Q97 99,100 101" stroke="rgba(148,163,184,0.35)" strokeWidth="0.8" fill="none"/>
+            
+            {/* Lips */}
+            <path d={`M91 ${108+lipMove} Q100 ${112+(isSpeaking?2:0)},109 ${108+lipMove}`} stroke="rgba(244,114,182,0.55)" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+          </svg>
+          
+          {/* Spectral shimmer */}
+          <div className="absolute inset-0 opacity-25" style={{
+            background: 'linear-gradient(135deg, transparent 0%, rgba(96,165,250,0.25) 50%, transparent 100%)',
+            animation: 'shimmer 4s ease-in-out infinite'
+          }}/>
+          
+          {/* Speaking pulse */}
+          {isSpeaking && <div className="absolute inset-0 rounded-full" style={{
+            boxShadow: '0 0 25px rgba(59,130,246,0.4), 0 0 50px rgba(59,130,246,0.2)',
+            animation: 'pulse-glow 0.4s ease-in-out infinite'
+          }}/>}
+          
+          {/* Thinking glow */}
+          {isThinking && <div className="absolute inset-0 rounded-full" style={{
+            boxShadow: '0 0 35px rgba(212,175,55,0.3), 0 0 70px rgba(212,175,55,0.15)',
+            animation: 'pulse-glow 1s ease-in-out infinite'
+          }}/>}
+        </div>
+        
+        {/* Orbiting particles */}
+        {[...Array(6)].map((_, i) => (
+          <div key={i} className="absolute rounded-full" style={{
+            width: '3px', height: '3px',
+            background: i%2===0 ? 'rgba(212,175,55,0.8)' : 'rgba(96,165,250,0.8)',
+            left: `${50 + 42*Math.cos((i*60+breathe)*Math.PI/180)}%`,
+            top: `${50 + 42*Math.sin((i*60+breathe)*Math.PI/180)}%`,
+            boxShadow: i%2===0 ? '0 0 8px rgba(212,175,55,0.5)' : '0 0 8px rgba(96,165,250,0.5)',
+            transition: 'all 0.2s ease-out'
+          }}/>
+        ))}
+      </div>
+      
+      {/* Status badge */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
+        <div className={cn(
+          "px-4 py-1.5 rounded-full text-xs font-medium tracking-wider backdrop-blur-md border",
+          isSpeaking ? "bg-blue-500/20 border-blue-400/40 text-blue-300" :
+          isListening ? "bg-emerald-500/20 border-emerald-400/40 text-emerald-300" :
+          isThinking ? "bg-amber-500/20 border-amber-400/40 text-amber-300" :
+          "bg-slate-800/60 border-slate-600/40 text-slate-400"
+        )}>
+          {isSpeaking ? '● Speaking' : isListening ? '● Listening' : isThinking ? '● Thinking' : '○ Ready'}
+        </div>
+      </div>
+      
+      <style>{`
+        @keyframes float-particle { 0%,100%{transform:translateY(0) translateX(0);opacity:0.3} 50%{transform:translateY(-25px) translateX(8px);opacity:0.7} }
+        @keyframes shimmer { 0%,100%{opacity:0.2;transform:translateX(-10%)} 50%{opacity:0.4;transform:translateX(10%)} }
+        @keyframes pulse-glow { 0%,100%{opacity:0.6} 50%{opacity:1} }
+        @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+      `}</style>
+    </div>
+  );
+});
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 
 export default function DomainConsultationPage() {
   const [, params] = useRoute('/consultation/:domainId');
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const domainId = params?.domainId || '';
-  
-  const [query, setQuery] = useState('');
-  const [formData, setFormData] = useState<Record<string, string>>({});
-  const [consultation, setConsultation] = useState<ConsultationResponse | null>(null);
-  const [autosaveEnabled] = useState(true);
-  
-  // Get domain info from LAW_TYPE_DATA
+  const initAttempted = useRef(false);
   const domainInfo = LAW_TYPE_DATA.find(t => t.id === domainId);
   
-  // Fetch domain information from 4JI orchestrator
-  const { data: domainData } = useQuery({
-    queryKey: ['domain', domainId],
-    queryFn: async () => {
-      const response = await apiRequest(`/api/domains/${domainId}`, 'GET');
-      if (!response.ok) throw new Error('Failed to fetch domain');
-      return response.json();
-    },
-    enabled: !!domainId
-  });
+  // State
+  const [caseData, setCaseData] = useState<CaseData>({ issueType: '', situation: '', jurisdiction: '', deadlines: '' });
+  const [consultation, setConsultation] = useState<ConsultationResponse | null>(null);
+  const [intakePhase, setIntakePhase] = useState<IntakePhase>('greeting');
+  const [conversation, setConversation] = useState<ConversationMessage[]>([]);
+  const [userInput, setUserInput] = useState('');
+  const conversationEndRef = useRef<HTMLDivElement>(null);
   
-  // Consultation mutation
+  // Voice
+  const voiceMode = useVoiceMode({
+    continuous: true, interimResults: true,
+    onTranscript: (text, isFinal) => { if (isFinal && text.trim()) handleUserMessage(text.trim()); },
+  });
+  const voiceSynthesis = useVoiceSynthesis();
+  
+  // Helpers
+  const addLexaraMessage = useCallback((content: string, speak = true) => {
+    setConversation(prev => [...prev, { id: `l-${Date.now()}`, role: 'lexara', content, timestamp: new Date() }]);
+    if (speak) voiceSynthesis.speak(content, { context: 'explanation', autoPlay: true });
+  }, [voiceSynthesis]);
+  
+  const addUserMessage = useCallback((content: string) => {
+    setConversation(prev => [...prev, { id: `u-${Date.now()}`, role: 'user', content, timestamp: new Date() }]);
+  }, []);
+  
+  useEffect(() => { conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [conversation]);
+  
+  // Initialize conversation
+  useEffect(() => {
+    if (initAttempted.current) return;
+    initAttempted.current = true;
+    
+    const init = async () => {
+      try { 
+        await voiceMode.enable(); 
+        voiceMode.startListening(); 
+      } catch (e) {
+        console.log('Voice auto-init deferred, waiting for user interaction');
+        document.addEventListener('click', async () => { 
+          try { 
+            await voiceMode.enable(); 
+            voiceMode.startListening(); 
+          } catch (err) {
+            console.log('Voice initialization failed:', err);
+          }
+        }, { once: true });
+      }
+      setTimeout(() => {
+        const greeting = `Hello! I'm Lexara, your legal co-counsel. I'm here to help you with ${domainInfo?.name || 'legal'} matters. Let's start with a simple question: what type of issue are you dealing with?`;
+        addLexaraMessage(greeting);
+        setIntakePhase('issue_type');
+      }, 800);
+    };
+    init();
+  }, [domainInfo?.name, voiceMode, addLexaraMessage]);
+  
+  // Process user responses
+  const handleUserMessage = useCallback((message: string) => {
+    addUserMessage(message);
+    setTimeout(() => {
+      switch (intakePhase) {
+        case 'issue_type':
+          setCaseData(p => ({ ...p, issueType: message }));
+          addLexaraMessage("I understand. Now, please tell me about your specific situation. What happened? Include any important details.");
+          setIntakePhase('situation');
+          break;
+        case 'situation':
+          setCaseData(p => ({ ...p, situation: p.situation ? `${p.situation} ${message}` : message }));
+          addLexaraMessage("Thank you for sharing. What state or jurisdiction is this matter in?");
+          setIntakePhase('jurisdiction');
+          break;
+        case 'jurisdiction':
+          setCaseData(p => ({ ...p, jurisdiction: message }));
+          addLexaraMessage("Good. Are there any critical deadlines I should know about? Say 'none' if not.");
+          setIntakePhase('deadlines');
+          break;
+        case 'deadlines':
+          setCaseData(p => ({ ...p, deadlines: message.toLowerCase() === 'none' ? '' : message }));
+          addLexaraMessage("Perfect. I have everything I need. Analyzing your case now...");
+          setIntakePhase('complete');
+          setTimeout(runAnalysis, 1500);
+          break;
+        case 'report':
+          addLexaraMessage("That's a good follow-up question. Let me address that based on your case details...");
+          break;
+        default:
+          setCaseData(p => ({ ...p, situation: p.situation ? `${p.situation} ${message}` : message }));
+      }
+    }, 600);
+  }, [intakePhase, addUserMessage, addLexaraMessage]);
+  
+  // Analysis
   const consultMutation = useMutation({
     mutationFn: async (data: { query: string; context: Record<string, any> }) => {
-      const response = await apiRequest(`/api/domains/${domainId}/consult`, 'POST', {
-        query: data.query,
-        context: data.context
-      });
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Consultation failed');
-      }
-      return response.json();
+      const resp = await apiRequest(`/api/domains/${domainId}/consult`, 'POST', { query: data.query, context: data.context });
+      if (!resp.ok) throw new Error((await resp.json()).error || 'Analysis failed');
+      return resp.json();
     },
     onSuccess: (data) => {
-      setConsultation(data.response);
-      toast({
-        title: "Consultation Complete",
-        description: `Analysis ready with ${data.response.confidence * 100}% confidence`,
-      });
+      const result = data.response || data;
+      setConsultation(result);
+      setIntakePhase('report');
+      const confidence = Math.round((result.confidence || 0.85) * 100);
+      addLexaraMessage(`Analysis complete with ${confidence}% confidence. Review the briefing below and feel free to ask follow-up questions.`);
+      toast({ title: "Analysis Complete", description: `${confidence}% confidence` });
     },
-    onError: (error: Error) => {
-      toast({
-        title: "Consultation Failed",
-        description: error.message,
-        variant: "destructive"
-      });
+    onError: (err: Error) => {
+      setIntakePhase('complete');
+      addLexaraMessage("I encountered an issue during analysis. Would you like me to try again?");
+      toast({ title: "Analysis Failed", description: err.message, variant: "destructive" });
     }
   });
   
-  // Draft generation mutation
-  const draftMutation = useMutation({
-    mutationFn: async (documentType: string) => {
-      const response = await apiRequest(`/api/domains/${domainId}/draft`, 'POST', {
-        documentType,
-        context: { ...formData, query }
-      });
-      if (!response.ok) throw new Error('Draft generation failed');
-      return response.json();
-    },
-    onSuccess: (data) => {
-      toast({
-        title: "Document Generated",
-        description: "Your draft has been created successfully",
-      });
-    }
-  });
+  const runAnalysis = useCallback(() => {
+    setIntakePhase('analyzing');
+    const query = `Issue: ${caseData.issueType || 'General'}\nSituation: ${caseData.situation}\nJurisdiction: ${caseData.jurisdiction}\nDeadlines: ${caseData.deadlines || 'None'}`;
+    consultMutation.mutate({ query, context: caseData });
+  }, [caseData, consultMutation]);
   
-  // Autosave effect
-  useEffect(() => {
-    if (!autosaveEnabled || !domainId) return;
-    
-    const saveData = { domainId, query, formData, consultation };
-    const key = `consultation_${domainId}_draft`;
-    localStorage.setItem(key, JSON.stringify(saveData));
-  }, [query, formData, consultation, domainId, autosaveEnabled]);
-  
-  // Load saved data on mount
-  useEffect(() => {
-    if (!domainId) return;
-    
-    const key = `consultation_${domainId}_draft`;
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      try {
-        const data = JSON.parse(saved);
-        if (data.domainId === domainId) {
-          setQuery(data.query || '');
-          setFormData(data.formData || {});
-          setConsultation(data.consultation || null);
-        }
-      } catch (e) {
-        // Ignore parse errors
-      }
-    }
-  }, [domainId]);
-  
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleInputSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) {
-      toast({
-        title: "Query Required",
-        description: "Please describe your legal issue",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    consultMutation.mutate({
-      query,
-      context: formData
-    });
+    if (!userInput.trim()) return;
+    handleUserMessage(userInput.trim());
+    setUserInput('');
   };
   
-  const handleFieldChange = (fieldId: string, value: string) => {
-    setFormData(prev => ({ ...prev, [fieldId]: value }));
-  };
+  const isThinking = intakePhase === 'analyzing' || consultMutation.isPending;
   
-  if (!domainId) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>Invalid domain</p>
-      </div>
-    );
-  }
+  if (!domainId) return <div className="min-h-screen flex items-center justify-center bg-slate-950"><p className="text-slate-400">Invalid domain</p></div>;
+  
+  // ============================================================================
+  // RENDER - Premium Two-Pane Layout
+  // ============================================================================
   
   return (
-    <div className="min-h-screen bg-background">
-      <SEOHead
-        title={`${domainInfo?.name || 'Legal'} Consultation | LegalWhat`}
-        description={`Get AI-powered assistance with ${domainInfo?.name || 'legal'} matters`}
-      />
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <SEOHead title={`Lexara - ${domainInfo?.name || 'Legal'} Co-Counsel`} description={`AI legal consultation for ${domainInfo?.name || 'legal'} matters`}/>
       
-      <AppHeader
-        title={domainInfo?.name || 'Legal Consultation'}
-        subtitle="4JI AI-Powered Analysis"
-        fallbackRoute="/welcome"
-      />
-      
-      <main className="container mx-auto px-4 py-8 max-w-6xl">
-        {/* Domain Info Header */}
-        <Card className="mb-6">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-2xl flex items-center gap-2">
-                  <Scale className="h-6 w-6" />
-                  {domainInfo?.name || 'Legal Consultation'}
-                </CardTitle>
-                <CardDescription className="mt-2">
-                  {domainInfo?.description || 'AI-powered legal assistance'}
-                </CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="flex items-center gap-1">
-                  <CheckCircle className="h-3 w-3" />
-                  4JI Orchestrated
-                </Badge>
-                {autosaveEnabled && (
-                  <Badge variant="secondary" className="flex items-center gap-1">
-                    <Save className="h-3 w-3" />
-                    Autosave On
-                  </Badge>
-                )}
-              </div>
+      {/* Header */}
+      <header className="border-b border-slate-800/50 bg-slate-900/60 backdrop-blur-sm sticky top-0 z-50">
+        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="sm" onClick={() => setLocation('/welcome')} className="text-slate-400 hover:text-slate-100">
+              <ArrowLeft className="h-4 w-4 mr-1"/>Back
+            </Button>
+            <div className="flex items-center gap-2">
+              <Scale className="h-5 w-5 text-cyan-400"/>
+              <span className="font-semibold">Lexara <span className="text-cyan-400">Co-Counsel</span></span>
+              <span className="text-slate-500 text-sm hidden sm:inline">• {domainInfo?.name}</span>
             </div>
-          </CardHeader>
-        </Card>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Consultation Form */}
-          <div className="lg:col-span-2 space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <FileText className="h-5 w-5" />
-                  Describe Your Legal Issue
-                </CardTitle>
-                <CardDescription>
-                  Provide details about your situation for accurate analysis
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  {/* Issue Type */}
-                  <div className="space-y-2">
-                    <Label htmlFor="issueType">Type of Issue</Label>
-                    <Select 
-                      value={formData.issueType || ''} 
-                      onValueChange={(v) => handleFieldChange('issueType', v)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select issue type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="general">General Inquiry</SelectItem>
-                        <SelectItem value="document">Document Review</SelectItem>
-                        <SelectItem value="case">Case Evaluation</SelectItem>
-                        <SelectItem value="research">Legal Research</SelectItem>
-                        <SelectItem value="filing">Court Filing Assistance</SelectItem>
-                        <SelectItem value="other">Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  {/* Main Query */}
-                  <div className="space-y-2">
-                    <Label htmlFor="query">Describe Your Situation</Label>
-                    <Textarea
-                      id="query"
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Provide as much detail as possible about your legal issue..."
-                      className="min-h-[150px]"
-                      required
-                    />
-                  </div>
-                  
-                  {/* Additional Context */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="state">State/Jurisdiction</Label>
-                      <Input
-                        id="state"
-                        value={formData.state || ''}
-                        onChange={(e) => handleFieldChange('state', e.target.value)}
-                        placeholder="e.g., California"
-                      />
+          </div>
+        </div>
+      </header>
+      
+      <main className="container mx-auto px-4 py-6 max-w-7xl">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 min-h-[calc(100vh-120px)]">
+          
+          {/* Main viewport - 4 cols */}
+          <div className="lg:col-span-4">
+            <Card className="bg-slate-900/50 border-slate-800/50 overflow-hidden h-full">
+              <div className="grid grid-cols-1 md:grid-cols-5 h-full min-h-[600px]">
+                
+                {/* Avatar - 40% */}
+                <div className="md:col-span-2 border-b md:border-b-0 md:border-r border-slate-800/50">
+                  <EtherealLexara isSpeaking={voiceSynthesis.isSpeaking} isListening={voiceMode.isListening} isThinking={isThinking} />
+                </div>
+                
+                {/* Chat - 60% */}
+                <div className="md:col-span-3 flex flex-col h-[400px] md:h-full">
+                  {/* Chat header */}
+                  <div className="px-4 py-3 border-b border-slate-800/50 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <MessageCircle className="h-4 w-4 text-cyan-400"/>
+                      <span className="text-sm font-medium text-slate-300">Consultation</span>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="deadline">Any Deadlines?</Label>
-                      <Input
-                        id="deadline"
-                        type="date"
-                        value={formData.deadline || ''}
-                        onChange={(e) => handleFieldChange('deadline', e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  
-                  {/* Submit */}
-                  <div className="flex justify-end gap-2 pt-4">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        setQuery('');
-                        setFormData({});
-                        setConsultation(null);
-                      }}
-                    >
-                      Clear
-                    </Button>
-                    <Button 
-                      type="submit" 
-                      disabled={consultMutation.isPending}
-                    >
-                      {consultMutation.isPending ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Analyzing...
-                        </>
-                      ) : (
-                        <>
-                          <Send className="mr-2 h-4 w-4" />
-                          Get Analysis
-                        </>
-                      )}
+                    <Button variant="ghost" size="sm" onClick={() => voiceMode.isEnabled ? voiceMode.disable() : voiceMode.enable()}
+                      className={cn("h-8 w-8 p-0 rounded-full", voiceMode.isEnabled ? "text-emerald-400" : "text-slate-500")}>
+                      {voiceMode.isEnabled ? <Mic className="h-4 w-4"/> : <MicOff className="h-4 w-4"/>}
                     </Button>
                   </div>
-                </form>
-              </CardContent>
+                  
+                  {/* Messages */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {conversation.map(msg => (
+                      <div key={msg.id} className={cn("flex gap-3", msg.role === 'user' && "flex-row-reverse")}>
+                        <div className={cn("max-w-[85%] rounded-2xl px-4 py-3",
+                          msg.role === 'lexara' ? "bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/20" : "bg-slate-700/50 border border-slate-600/30"
+                        )}>
+                          <p className="text-sm leading-relaxed text-slate-200">{msg.content}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {isThinking && (
+                      <div className="flex gap-3">
+                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl px-4 py-3 flex items-center gap-2 text-amber-300 text-sm">
+                          <Loader2 className="h-4 w-4 animate-spin"/>Analyzing...
+                        </div>
+                      </div>
+                    )}
+                    {voiceMode.interimTranscript && (
+                      <div className="flex gap-3 flex-row-reverse">
+                        <div className="bg-slate-700/30 border border-slate-600/20 rounded-2xl px-4 py-2 text-slate-400 text-sm italic">
+                          {voiceMode.interimTranscript}...
+                        </div>
+                      </div>
+                    )}
+                    <div ref={conversationEndRef}/>
+                  </div>
+                  
+                  {/* Input */}
+                  <form onSubmit={handleInputSubmit} className="p-4 border-t border-slate-800/50">
+                    <div className="flex gap-2">
+                      <Input value={userInput} onChange={e => setUserInput(e.target.value)} placeholder="Type your message..."
+                        className="flex-1 bg-slate-800/50 border-slate-700/50 text-slate-100 rounded-full px-4" disabled={isThinking}/>
+                      <Button type="submit" disabled={!userInput.trim() || isThinking} className="rounded-full bg-cyan-600 hover:bg-cyan-500 px-4">
+                        <Send className="h-4 w-4"/>
+                      </Button>
+                    </div>
+                  </form>
+                </div>
+              </div>
             </Card>
             
-            {/* Results */}
-            {consultation && (
-              <Card>
-                <CardHeader>
+            {/* Briefing */}
+            {consultation && intakePhase === 'report' && (
+              <Card className="mt-6 bg-slate-900/50 border-slate-800/50">
+                <CardHeader className="border-b border-slate-800/50">
                   <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                      <CheckCircle className="h-5 w-5 text-green-500" />
-                      Analysis Results
-                    </CardTitle>
-                    <Badge 
-                      variant={consultation.confidence >= 0.7 ? "default" : "secondary"}
-                    >
-                      Confidence: {(consultation.confidence * 100).toFixed(0)}%
-                    </Badge>
+                    <CardTitle className="text-lg text-cyan-400 flex items-center gap-2"><Scale className="h-5 w-5"/>Legal Briefing</CardTitle>
+                    <Badge className="bg-cyan-500/20 text-cyan-300 border-cyan-500/30">{Math.round((consultation.confidence||0.85)*100)}% Confidence</Badge>
                   </div>
                 </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Main Response */}
+                <CardContent className="p-6 space-y-6">
                   <div>
-                    <h4 className="font-semibold mb-2">Analysis</h4>
-                    <p className="text-muted-foreground">{consultation.response}</p>
+                    <h4 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-2">Analysis</h4>
+                    <p className="text-slate-200 leading-relaxed">{consultation.response}</p>
                   </div>
-                  
-                  {/* Citations */}
-                  {consultation.citations.length > 0 && (
+                  {consultation.suggestedActions?.length > 0 && (
                     <div>
-                      <h4 className="font-semibold mb-2 flex items-center gap-2">
-                        <Book className="h-4 w-4" />
-                        Relevant Citations
-                      </h4>
-                      <div className="flex flex-wrap gap-2">
-                        {consultation.citations.map((citation, idx) => (
-                          <Badge key={idx} variant="outline">
-                            {citation}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Suggested Actions */}
-                  {consultation.suggestedActions.length > 0 && (
-                    <div>
-                      <h4 className="font-semibold mb-2 flex items-center gap-2">
-                        <Lightbulb className="h-4 w-4" />
-                        Suggested Actions
-                      </h4>
+                      <h4 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-2">Recommended Actions</h4>
                       <ul className="space-y-2">
-                        {consultation.suggestedActions.map((action, idx) => (
-                          <li key={idx} className="flex items-start gap-2">
-                            <CheckCircle className="h-4 w-4 mt-0.5 text-green-500 flex-shrink-0" />
-                            <span className="text-sm">{action}</span>
-                          </li>
+                        {consultation.suggestedActions.map((a,i) => (
+                          <li key={i} className="flex items-start gap-2 text-slate-300"><CheckCircle className="h-4 w-4 text-emerald-400 mt-0.5 flex-shrink-0"/>{a}</li>
                         ))}
                       </ul>
                     </div>
                   )}
-                  
-                  {/* Templates */}
-                  {consultation.templates.length > 0 && (
+                  {consultation.citations?.length > 0 && (
                     <div>
-                      <h4 className="font-semibold mb-2 flex items-center gap-2">
-                        <FileText className="h-4 w-4" />
-                        Available Templates
-                      </h4>
+                      <h4 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-2">Citations</h4>
                       <div className="flex flex-wrap gap-2">
-                        {consultation.templates.map((template, idx) => (
-                          <Button
-                            key={idx}
-                            variant="outline"
-                            size="sm"
-                            onClick={() => draftMutation.mutate(template)}
-                            disabled={draftMutation.isPending}
-                          >
-                            Generate: {template.replace(/-/g, ' ')}
-                          </Button>
-                        ))}
+                        {consultation.citations.map((c,i) => <Badge key={i} variant="outline" className="border-slate-600 text-slate-400">{c}</Badge>)}
                       </div>
                     </div>
                   )}
+                  <Button onClick={() => {
+                    setConsultation(null); setCaseData({issueType:'',situation:'',jurisdiction:'',deadlines:''});
+                    setConversation([]); setIntakePhase('greeting'); initAttempted.current = false;
+                    setTimeout(() => { initAttempted.current = true;
+                      addLexaraMessage(`Hello again! I'm ready to help with another ${domainInfo?.name||'legal'} matter. What type of issue?`);
+                      setIntakePhase('issue_type');
+                    }, 300);
+                  }} variant="outline" className="w-full border-slate-700 text-slate-300 hover:bg-slate-800/50">
+                    Start New Consultation
+                  </Button>
                 </CardContent>
               </Card>
             )}
           </div>
           
-          {/* Sidebar */}
-          <div className="space-y-6">
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Quick Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <Button 
-                  variant="outline" 
-                  className="w-full justify-start"
-                  onClick={() => setLocation('/welcome')}
-                >
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back to Library
-                </Button>
-                <Button 
-                  variant="outline" 
-                  className="w-full justify-start"
-                  onClick={() => {
-                    // Voice input would go here
-                    toast({
-                      title: "Voice Input",
-                      description: "Voice input feature coming soon",
-                    });
-                  }}
-                >
-                  <Volume2 className="mr-2 h-4 w-4" />
-                  Voice Input
-                </Button>
+          {/* Sidebar - 1 col */}
+          <div className="space-y-4">
+            <Card className="bg-slate-900/50 border-slate-800/50">
+              <CardHeader className="py-3 px-4"><CardTitle className="text-sm text-slate-400 flex items-center gap-2"><Clock className="h-4 w-4"/>System Status</CardTitle></CardHeader>
+              <CardContent className="px-4 pb-4 space-y-3">
+                <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-500">4JI Orchestrator</span><span className="text-emerald-400">Active</span></div><Progress value={100} className="h-1 bg-slate-800"/></div>
+                <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-500">Knowledge Base</span><span className="text-emerald-400">Loaded</span></div><Progress value={100} className="h-1 bg-slate-800"/></div>
+                <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-500">AI Models</span><span className="text-emerald-400">Ready</span></div><Progress value={100} className="h-1 bg-slate-800"/></div>
+                <div><div className="flex justify-between text-xs mb-1"><span className="text-slate-500">Voice Link</span><span className={voiceMode.isEnabled?"text-emerald-400":"text-slate-500"}>{voiceMode.isEnabled?"Active":"Standby"}</span></div><Progress value={voiceMode.isEnabled?100:0} className="h-1 bg-slate-800"/></div>
               </CardContent>
             </Card>
             
-            {/* System Status */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Clock className="h-4 w-4" />
-                  System Status
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>4JI Orchestrator</span>
-                    <span className="text-green-500">Active</span>
+            <Card className="bg-slate-900/50 border-slate-800/50">
+              <CardHeader className="py-3 px-4"><CardTitle className="text-sm text-slate-400">Case Data</CardTitle></CardHeader>
+              <CardContent className="px-4 pb-4 space-y-2 text-xs">
+                {([
+                  { key: 'issueType', label: 'Issue Type' },
+                  { key: 'situation', label: 'Situation' },
+                  { key: 'jurisdiction', label: 'Jurisdiction' },
+                  { key: 'deadlines', label: 'Deadlines' }
+                ] as const).map(({ key, label }) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <div className={cn("h-2 w-2 rounded-full", caseData[key]?"bg-emerald-400":"bg-slate-600")}/>
+                    <span className="text-slate-400">{label}</span>
+                    {caseData[key] && <CheckCircle className="h-3 w-3 text-emerald-400 ml-auto"/>}
                   </div>
-                  <Progress value={100} className="h-2" />
-                </div>
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Knowledge Base</span>
-                    <span className="text-green-500">Loaded</span>
-                  </div>
-                  <Progress value={100} className="h-2" />
-                </div>
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>AI Models</span>
-                    <span className="text-green-500">Ready</span>
-                  </div>
-                  <Progress value={100} className="h-2" />
-                </div>
+                ))}
               </CardContent>
             </Card>
             
-            {/* Domain Info */}
-            {domainData?.domain && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Domain Details</CardTitle>
-                </CardHeader>
-                <CardContent className="text-sm space-y-2">
-                  <div>
-                    <span className="text-muted-foreground">Domain:</span>{' '}
-                    {domainData.domain.name}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">ID:</span>{' '}
-                    {domainData.domain.id}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Description:</span>{' '}
-                    {domainData.domain.description}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-            
-            {/* Help Notice */}
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Legal Disclaimer</AlertTitle>
-              <AlertDescription className="text-xs">
-                This AI analysis is for informational purposes only and does not 
-                constitute legal advice. Always consult with a qualified attorney 
-                for legal matters.
-              </AlertDescription>
-            </Alert>
+            <Card className="bg-slate-900/30 border-slate-800/30 border-dashed">
+              <CardContent className="p-3 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-500/70 flex-shrink-0 mt-0.5"/>
+                <p className="text-xs text-slate-500">AI analysis for informational purposes only. Not legal advice.</p>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </main>

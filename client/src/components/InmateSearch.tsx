@@ -44,7 +44,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 
 interface InmateSearchProps {
-  onBack?: () => void;
+  // No props needed - component handles its own state
 }
 
 interface ChargeInfo {
@@ -112,7 +112,7 @@ interface StateInfo {
   searchUrl?: string;
 }
 
-export default function InmateSearch({ onBack }: InmateSearchProps) {
+export default function InmateSearch() {
   const { toast } = useToast();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -124,10 +124,58 @@ export default function InmateSearch({ onBack }: InmateSearchProps) {
   const [results, setResults] = useState<InmateSearchResult | null>(null);
   const [searchProgress, setSearchProgress] = useState(0);
 
-  // Fetch state list
-  const { data: statesData } = useQuery<{ success: boolean; data: StateInfo[] }>({
+  // Fetch state list with error handling
+  const { data: statesData, error: statesError, isLoading: statesLoading } = useQuery<{ success: boolean; data: StateInfo[] }>({
     queryKey: ['/api/inmate-search/states'],
+    retry: 1,
   });
+
+  // Show error card if states API fails
+  if (statesError) {
+    return (
+      <div className="container max-w-6xl mx-auto px-4 py-8">
+        <Card className="border-destructive/50 bg-destructive/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-6 h-6" />
+              Service Temporarily Unavailable
+            </CardTitle>
+            <CardDescription>
+              The inmate search service is currently experiencing issues.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              We're unable to load the state database at this time. This may be due to temporary server issues.
+              Please try again later or search official sources directly.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <a
+                href="https://www.bop.gov/inmateloc/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md border hover:bg-muted transition-colors text-sm"
+              >
+                <Database className="w-4 h-4" />
+                Federal BOP Search
+                <ExternalLink className="w-3 h-3" />
+              </a>
+              <a
+                href="https://www.vinelink.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md border hover:bg-muted transition-colors text-sm"
+              >
+                <Shield className="w-4 h-4" />
+                VINE Link
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   const searchMutation = useMutation({
     mutationFn: async (searchData: {

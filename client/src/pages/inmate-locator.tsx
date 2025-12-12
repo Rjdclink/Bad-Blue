@@ -1,5 +1,4 @@
 import InmateSearch from "@/components/InmateSearch";
-import { useLocation } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,8 +6,6 @@ import { Building, Database, Globe, Lock, Search, Shield } from "lucide-react";
 import { AppHeader } from "@/components/AppHeader";
 
 export default function InmateLocatorPage() {
-  const [, setLocation] = useLocation();
-
   return (
     <>
       <SEOHead
@@ -122,8 +119,8 @@ export default function InmateLocatorPage() {
           </Card>
         </div>
         
-        {/* Main Search Component */}
-        <InmateSearch onBack={() => setLocation("/welcome")} />
+        {/* Main Search Component - No redirect callbacks */}
+        <InmateSearch />
       </div>
     </>
   );
