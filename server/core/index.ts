@@ -40,6 +40,15 @@ export {
   type CoherencyState
 } from './apiOptimizer';
 
+// Database Cache
+export {
+  getDatabaseCache,
+  shutdownDatabaseCache,
+  TTL_PRESETS,
+  type CachedQuery,
+  type DbCacheStats
+} from './databaseCache';
+
 // Neural Fusion
 export {
   neuralFusionEngine,
@@ -212,10 +221,12 @@ export async function shutdown4JiCore(): Promise<void> {
   const { shutdownReactor } = await import('../reactor/computationalReactor');
   const { shutdownLexaraPowerSystem } = await import('./power');
   const { shutdownAPIOptimizer } = await import('./apiOptimizer');
+  const { shutdownDatabaseCache } = await import('./databaseCache');
   
   // Shutdown in reverse order
-  // Shutdown API Optimizer
+  // Shutdown API Optimizer and Database Cache
   shutdownAPIOptimizer();
+  shutdownDatabaseCache();
   
   // Shutdown Lexara Power System first (most dependent)
   await shutdownLexaraPowerSystem();
