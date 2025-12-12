@@ -1,5 +1,5 @@
 /**
- * HRETS-Locator: Triangulated Satellite-Hybrid Positioning Engine
+ * TSHPE - Triangulated Satellite-Hybrid Positioning Engine
  * 
  * A hyper-accurate location tracking system featuring:
  * - Multi-source triangulation (GPS, WiFi, Cellular, IP)
@@ -25,8 +25,8 @@ import {
 } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
 import { cn } from '@/lib/utils';
-import { HRETSMap } from '@/components/HRETSMap';
-import { useHRETSLocator } from '@/hooks/useHRETSLocator';
+import { TSHPEMap } from '@/components/TSHPEMap';
+import { useTSHPELocator } from '@/hooks/useTSHPELocator';
 
 // ============================================================================
 // TYPES
@@ -39,7 +39,7 @@ type ViewMode = 'live' | 'playback' | 'forecast';
 // MAIN COMPONENT
 // ============================================================================
 
-export default function HRETSLocatorPage() {
+export default function TSHPELocatorPage() {
   const [, setLocation] = useLocation();
   
   // State
@@ -50,7 +50,7 @@ export default function HRETSLocatorPage() {
   const [forecastMinutes, setForecastMinutes] = useState(30);
   const [showSettings, setShowSettings] = useState(false);
   
-  // HRETS Locator hook
+  // TSHPE Locator hook
   const {
     currentPosition,
     positionHistory,
@@ -63,7 +63,7 @@ export default function HRETSLocatorPage() {
     getHistoryRange,
     monteCarloScore,
     systemHealth,
-  } = useHRETSLocator();
+  } = useTSHPELocator();
   
   // Playback animation
   useEffect(() => {
@@ -90,6 +90,12 @@ export default function HRETSLocatorPage() {
     return currentPosition;
   }, [viewMode, playbackIndex, positionHistory, currentPosition]);
   
+  // Memoize formatted coordinates to avoid re-computation on every render
+  const formattedCoordinates = useMemo(() => ({
+    lat: displayPosition.lat.toFixed(6),
+    lon: displayPosition.lon.toFixed(6),
+  }), [displayPosition.lat, displayPosition.lon]);
+  
   // Heat trail data for visualization
   const heatTrailData = useMemo(() => {
     if (viewMode === 'playback') {
@@ -101,8 +107,8 @@ export default function HRETSLocatorPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 overflow-hidden">
       <SEOHead 
-        title="HRETS-Locator | Triangulated Positioning Engine" 
-        description="Hyper-accurate satellite-hybrid positioning system"
+        title="TSHPE | Satellite-Hybrid Positioning Engine" 
+        description="Triangulated Satellite-Hybrid Positioning Engine - Hyper-accurate location tracking system"
       />
       
       {/* Ethereal Background Glow */}
@@ -121,7 +127,7 @@ export default function HRETSLocatorPage() {
                 variant="ghost"
                 size="sm"
                 onClick={() => setLocation('/welcome')}
-                className="text-slate-400 hover:text-slate-100"
+                className="text-slate-400 hover:text-slate-100 hover:bg-slate-800"
               >
                 <ArrowLeft className="h-4 w-4 mr-1" />
                 Exit
@@ -134,10 +140,10 @@ export default function HRETSLocatorPage() {
                 </div>
                 <div>
                   <h1 className="text-lg font-bold tracking-wide">
-                    HRETS<span className="text-cyan-400">-Locator</span>
+                    TSHPE
                   </h1>
                   <p className="text-xs text-slate-500 font-mono tracking-wider">
-                    TRIANGULATED POSITIONING ENGINE
+                    TRIANGULATED SATELLITE-HYBRID POSITIONING ENGINE
                   </p>
                 </div>
               </div>
@@ -217,7 +223,7 @@ export default function HRETSLocatorPage() {
       <main className="pt-16 h-screen">
         <div className="relative h-full">
           {/* Map Component */}
-          <HRETSMap
+          <TSHPEMap
             position={displayPosition}
             heatTrail={heatTrailData}
             predictedCone={viewMode === 'forecast' ? predictedCone : null}
@@ -381,7 +387,7 @@ export default function HRETSLocatorPage() {
                 <div className="space-y-2">
                   <div className="text-xs font-mono text-slate-500">COORDINATES</div>
                   <div className="font-mono text-sm text-slate-300">
-                    {displayPosition.lat.toFixed(6)}, {displayPosition.lon.toFixed(6)}
+                    {formattedCoordinates.lat}, {formattedCoordinates.lon}
                   </div>
                 </div>
                 

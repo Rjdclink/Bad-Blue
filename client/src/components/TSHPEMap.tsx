@@ -1,5 +1,5 @@
 /**
- * HRETSMap Component
+ * TSHPEMap Component
  * 
  * Cinematic full-screen map with:
  * - Glowing star geolocation reticle
@@ -37,7 +37,7 @@ export interface PredictedCone {
   confidence: number;
 }
 
-interface HRETSMapProps {
+interface TSHPEMapProps {
   position: Position;
   heatTrail?: Position[];
   predictedCone?: PredictedCone | null;
@@ -52,7 +52,7 @@ type MapStatus = 'initializing' | 'loading' | 'ready' | 'error';
 // COMPONENT
 // ============================================================================
 
-export const HRETSMap: React.FC<HRETSMapProps> = ({
+export const TSHPEMap: React.FC<TSHPEMapProps> = ({
   position,
   heatTrail = [],
   predictedCone = null,
@@ -96,7 +96,7 @@ export const HRETSMap: React.FC<HRETSMapProps> = ({
   // Custom glowing reticle icon
   const createReticleIcon = useCallback(() => {
     return L.divIcon({
-      className: 'hrets-reticle',
+      className: 'tshpe-reticle',
       html: `
         <div class="reticle-container">
           <div class="reticle-pulse"></div>
@@ -155,7 +155,7 @@ export const HRETSMap: React.FC<HRETSMapProps> = ({
         mapRef.current = null;
       };
     } catch (error) {
-      console.error('[HRETSMap] Initialization failed:', error);
+      console.error('[TSHPEMap] Initialization failed:', error);
       setMapStatus('error');
     }
   }, []);
@@ -243,8 +243,13 @@ export const HRETSMap: React.FC<HRETSMapProps> = ({
       0.3 + (i / heatTrail.length) * 0.7, // Intensity increases towards current
     ]);
     
-    // Add heat layer
-    heatLayerRef.current = (L as any).heatLayer(heatData, {
+    // Add heat layer (leaflet.heat extends L with heatLayer)
+    // Type assertion needed as leaflet.heat augments the L namespace
+    const LeafletWithHeat = L as typeof L & {
+      heatLayer: (data: [number, number, number][], options: Record<string, unknown>) => L.Layer;
+    };
+    
+    heatLayerRef.current = LeafletWithHeat.heatLayer(heatData, {
       radius: 15,
       blur: 20,
       maxZoom: 18,
@@ -348,7 +353,7 @@ export const HRETSMap: React.FC<HRETSMapProps> = ({
       
       {/* Glowing Reticle CSS */}
       <style>{`
-        .hrets-reticle {
+        .tshpe-reticle {
           background: transparent !important;
           border: none !important;
         }

@@ -1,7 +1,7 @@
 /**
- * useHRETSLocator Hook
+ * useTSHPELocator Hook
  * 
- * HRETS-Locator: Triangulated Satellite-Hybrid Positioning Engine
+ * TSHPE-Locator: Triangulated Satellite-Hybrid Positioning Engine
  * 
  * Features:
  * - Multi-source triangulation (GPS, WiFi, Cellular, IP)
@@ -252,7 +252,7 @@ class MonteCarloSimulator {
 // MAIN HOOK
 // ============================================================================
 
-export function useHRETSLocator() {
+export function useTSHPELocator() {
   // State
   const [currentPosition, setCurrentPosition] = useState<Position>({
     lat: 40.7128,
@@ -470,26 +470,26 @@ export function useHRETSLocator() {
     });
     setAccuracy(fused.accuracy || 10);
     
-    // Add to history
+    // Add to history (optimized array handling)
     setPositionHistory(prev => {
-      const newHistory = [...prev, fused];
-      // Keep last 72 hours (assuming ~5s intervals = ~51840 points max, limit to 10000)
-      if (newHistory.length > 10000) {
-        return newHistory.slice(-10000);
+      // Avoid spread if not needed for trimming
+      if (prev.length >= 10000) {
+        // Only create new array when trimming
+        const newHistory = prev.slice(-9999);
+        newHistory.push(fused);
+        return newHistory;
       }
-      return newHistory;
+      // Use concat for single addition (more efficient than spread)
+      return prev.concat([fused]);
     });
     
-    // Update predicted cone
-    setPositionHistory(prev => {
-      const cone = calculatePredictedCone(fused, prev);
-      setPredictedCone(cone);
-      return prev;
-    });
-  }, [fusePositions, calculatePredictedCone]);
+    // Update predicted cone (separate effect, not in setState callback)
+    const cone = calculatePredictedCone(fused, positionHistory);
+    setPredictedCone(cone);
+  }, [fusePositions, calculatePredictedCone, positionHistory]);
   
   const handleGPSError = useCallback((error: GeolocationPositionError) => {
-    console.warn('[HRETS] GPS Error:', error.message);
+    console.warn('[TSHPE] GPS Error:', error.message);
     setTriangulationData(prev => ({
       ...prev,
       gps: { ...prev.gps, active: false },
@@ -500,9 +500,16 @@ export function useHRETSLocator() {
   // IP GEOLOCATION FALLBACK
   // ============================================================================
   
+  // Use ref to track GPS active state for interval callbacks
+  const gpsActiveRef = useRef(triangulationData.gps.active);
+  useEffect(() => {
+    gpsActiveRef.current = triangulationData.gps.active;
+  }, [triangulationData.gps.active]);
+  
   const fetchIPLocation = useCallback(async () => {
     try {
-      // Use a free IP geolocation service
+      // Note: IP geolocation provides approximate location only
+      // User consent should be obtained before tracking in production
       const response = await fetch('https://ipapi.co/json/');
       if (!response.ok) throw new Error('IP lookup failed');
       
@@ -526,8 +533,8 @@ export function useHRETSLocator() {
         },
       }));
       
-      // Only use IP if GPS isn't available
-      if (!triangulationData.gps.active) {
+      // Only use IP if GPS isn't available (use ref for current value)
+      if (!gpsActiveRef.current) {
         setCurrentPosition(prev => {
           if (prev.source === 'ip' || prev.source === 'fused') {
             return ipPos;
@@ -536,9 +543,9 @@ export function useHRETSLocator() {
         });
       }
     } catch (error) {
-      console.warn('[HRETS] IP geolocation failed:', error);
+      console.warn('[TSHPE] IP geolocation failed:', error);
     }
-  }, [triangulationData.gps.active]);
+  }, []);
   
   // ============================================================================
   // MONTE-CARLO ENHANCEMENT
@@ -614,7 +621,8 @@ export function useHRETSLocator() {
     // Start IP location polling as fallback
     fetchIPLocation();
     pollIntervalRef.current = setInterval(() => {
-      if (!triangulationData.gps.active) {
+      // Use ref for current GPS active state to avoid stale closure
+      if (!gpsActiveRef.current) {
         fetchIPLocation();
       }
       updateSystemHealth();
@@ -627,7 +635,7 @@ export function useHRETSLocator() {
     
     // Run initial Monte-Carlo
     setTimeout(runMonteCarloEnhancement, 30000);
-  }, [handleGPSPosition, handleGPSError, fetchIPLocation, updateSystemHealth, runMonteCarloEnhancement, systemHealth.pollInterval, triangulationData.gps.active]);
+  }, [handleGPSPosition, handleGPSError, fetchIPLocation, updateSystemHealth, runMonteCarloEnhancement, systemHealth.pollInterval]);
   
   const stopTracking = useCallback(() => {
     setIsTracking(false);
