@@ -127,6 +127,9 @@ const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
 // Location Intelligence Page - Interactive Heatmap Dashboard
 const LocationIntelPage = lazyWithRetry(() => import("@/pages/location-intel"), 'LocationIntel');
 
+// HRETS-Locator - Triangulated Satellite-Hybrid Positioning Engine
+const HRETSLocatorPage = lazyWithRetry(() => import("@/pages/hrets-locator"), 'HRETSLocator');
+
 // Nationwide Inmate Locator Page
 const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
 
@@ -236,6 +239,10 @@ function Router() {
             
             {/* Location Intelligence - Interactive Heatmap Dashboard */}
             <Route path="/location-intel" component={LocationIntelPage} />
+            
+            {/* HRETS-Locator - Triangulated Satellite-Hybrid Positioning Engine */}
+            <Route path="/hrets-locator" component={HRETSLocatorPage} />
+            <Route path="/hrets" component={HRETSLocatorPage} />
             
             {/* Nationwide Inmate Locator */}
             <Route path="/inmate-locator" component={InmateLocatorPage} />
