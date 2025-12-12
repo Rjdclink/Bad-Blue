@@ -880,6 +880,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/inmate-search', inmateSearchRoutes.default);
 
   // ============================================
+  // REACTOR ROUTES - Computational Engine API
+  // ============================================
+  const reactorRoutes = await import('./routes/reactor.routes');
+  app.use('/api/reactor', reactorRoutes.default);
+
+  // ============================================
   // LEXARA ROUTES (A7 - Persona Mode Locked)
   // ============================================
   // Streaming routes (WebRTC, SSE)
