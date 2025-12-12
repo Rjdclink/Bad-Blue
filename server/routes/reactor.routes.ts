@@ -96,7 +96,8 @@ router.get('/metrics', async (req, res) => {
 router.post('/job', async (req, res) => {
   try {
     // Validate admin access
-    if (!req.user || !isAdmin(req.user)) {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (!userId || !isAdmin(userId)) {
       return res.status(403).json({
         success: false,
         error: 'Admin access required'
@@ -176,7 +177,8 @@ router.get('/job/:jobId', async (req, res) => {
  */
 router.delete('/job/:jobId', async (req, res) => {
   try {
-    if (!req.user || !isAdmin(req.user)) {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (!userId || !isAdmin(userId)) {
       return res.status(403).json({
         success: false,
         error: 'Admin access required'
@@ -207,7 +209,8 @@ router.delete('/job/:jobId', async (req, res) => {
  */
 router.post('/enable', async (req, res) => {
   try {
-    if (!req.user || !isAdmin(req.user)) {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (!userId || !isAdmin(userId)) {
       return res.status(403).json({
         success: false,
         error: 'Admin access required'
@@ -246,7 +249,8 @@ router.post('/enable', async (req, res) => {
  */
 router.post('/monte-carlo', async (req, res) => {
   try {
-    if (!req.user || !isAdmin(req.user)) {
+    const userId = req.user?.id || req.user?.claims?.sub;
+    if (!userId || !isAdmin(userId)) {
       return res.status(403).json({
         success: false,
         error: 'Admin access required'
