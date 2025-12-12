@@ -886,6 +886,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/lexara', lexaraRoutes.default);
 
   // ============================================
+  // LEXARA CHAT ROUTES (Adaptive AI Consultation)
+  // ============================================
+  const lexaraChatRoutes = await import('./routes/lexara.chat.routes');
+  app.use('/api/lexara/chat', lexaraChatRoutes.default);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {

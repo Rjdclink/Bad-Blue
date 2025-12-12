@@ -118,6 +118,12 @@ const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon')
 // Domain Consultation Page - 4JI Orchestrator Integration
 const ConsultationPage = lazyWithRetry(() => import("@/pages/consultation"), 'Consultation');
 
+// LEXARA Viewport - Full-Page AI Legal Consultation (Production, FULL AUTO)
+const LexaraViewport = lazyWithRetry(() => import("@/components/LexaraViewport"), 'LexaraViewport');
+
+// SPECTRA - LEXARA + GeoConsole + People Radar
+const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
+
 // Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 
@@ -233,6 +239,21 @@ function Router() {
             
             {/* PANTHEON - Advanced Intelligence Platform */}
             <Route path="/pantheon" component={PantheonPage} />
+            
+            {/* LEXARA Viewport - Full-Page AI Legal Consultation (FULL AUTO) */}
+            <Route path="/lexara" component={LexaraViewport} />
+            
+            {/* SPECTRA - LEXARA + GeoConsole + People Radar */}
+            <Route path="/spectra" component={SpectraPage} />
+            
+            {/* GEO Console - Renders INSIDE LexaraViewport, redirects to /lexara */}
+            <Route path="/geo-console">
+              {() => {
+                // Redirect geo-console to lexara with geo flag
+                window.location.href = '/lexara?geo=true';
+                return null;
+              }}
+            </Route>
             
             {/* Domain Consultation - 4JI Orchestrator Integration */}
             <Route path="/consultation/:domainId" component={ConsultationPage} />
