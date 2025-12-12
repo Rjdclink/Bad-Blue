@@ -1,5 +1,5 @@
 /**
- * LUXARA Ethereal Avatar Component
+ * LEXARA Ethereal Avatar Component
  * 
  * Spectral, ethereal, softly luminous avatar for LEXARA
  * - Not cartoony - intelligent, calm 18-19 year old presence
@@ -44,7 +44,7 @@ const SIZE_CONFIG = {
 };
 
 // ============================================================================
-// ETHEREAL LUXARA AVATAR
+// ETHEREAL LEXARA AVATAR
 // ============================================================================
 
 export const LEXARAEtherealAvatar = memo(function LEXARAEtherealAvatar({
@@ -519,7 +519,7 @@ export const LEXARAEtherealAvatar = memo(function LEXARAEtherealAvatar({
 });
 
 // ============================================================================
-// LUXARA STATUS INDICATOR
+// LEXARA STATUS INDICATOR
 // ============================================================================
 
 export interface LEXARAStatusIndicatorProps {

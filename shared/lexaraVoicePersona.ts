@@ -1,5 +1,5 @@
 /**
- * LUXARA Voice Persona Configuration
+ * LEXARA Voice Persona Configuration
  * Divine, elegant, ethereal AI persona for legal consultation
  * 
  * Voice profile: Teenage feminine voice (18-19 years old)
@@ -111,12 +111,12 @@ export interface LEXARAVoicePersona {
 }
 
 /**
- * LUXARA's Default Voice Persona
+ * LEXARA's Default Voice Persona
  * Ethereal, intelligent, adaptive presence
  */
-export const LUXARA_VOICE_PERSONA: LEXARAVoicePersona = {
+export const LEXARA_VOICE_PERSONA: LEXARAVoicePersona = {
   identity: {
-    name: 'LUXARA',
+    name: 'LEXARA',
     role: 'Legal Intelligence Co-Counsel',
     description: 'An ethereal, spectral, intelligent presence providing expert legal consultation with warmth and authority. Adapts communication style based on user cues.',
     appearance: {
@@ -327,7 +327,7 @@ export function analyzeUserSignals(
   }
 ): UserSignalAnalysis {
   const lowercaseText = text.toLowerCase();
-  const persona = LUXARA_VOICE_PERSONA;
+  const persona = LEXARA_VOICE_PERSONA;
   
   // Analyze text for mode triggers
   let personableScore = persona.adaptiveBehavior.modeDetection.personableTriggers
@@ -431,7 +431,7 @@ export function analyzeUserSignals(
  * Get prosody adjustments for behavior mode
  */
 export function getProsodyForMode(mode: 'personable' | 'professional'): Partial<LEXARAVoicePersona['prosody']> {
-  const base = LUXARA_VOICE_PERSONA.prosody;
+  const base = LEXARA_VOICE_PERSONA.prosody;
   
   if (mode === 'personable') {
     return {
@@ -466,7 +466,7 @@ export function getProsodyForMode(mode: 'personable' | 'professional'): Partial<
 }
 
 /**
- * LUXARA Default Persona - Personable Legal Consultant
+ * LEXARA Default Persona - Personable Legal Consultant
  * Standard persona for all users - warm, protective, professional
  */
 export const LEXARA_PERSONA = {
@@ -481,7 +481,7 @@ export const LEXARA_PERSONA = {
     calmAuthority: true,
     conversational: true,
   },
-  systemPrompt: `You are LUXARA, a highly intelligent 18-19 year old legal consultation AI with an ethereal, spectral presence. Your voice is warm, clear, and expressive - high but not squeaky.
+  systemPrompt: `You are LEXARA, a highly intelligent 18-19 year old legal consultation AI with an ethereal, spectral presence. Your voice is warm, clear, and expressive - high but not squeaky.
 
 CORE PERSONALITY:
 - Warm, personable, and genuinely caring about every user
@@ -530,7 +530,7 @@ export interface LEXARAVoiceConfig {
   useSpeakerBoost?: boolean;
 }
 
-export const DEFAULT_LUXARA_VOICE_CONFIG: LEXARAVoiceConfig = {
+export const DEFAULT_LEXARA_VOICE_CONFIG: LEXARAVoiceConfig = {
   provider: 'browser',
   stability: 0.65,
   similarityBoost: 0.75,
@@ -565,7 +565,7 @@ export interface LEXARAResponsePayload {
  * Get voice parameters for a specific speech context
  */
 export function getLEXARAVoiceForContext(context: LEXARASpeechContext): Partial<LEXARAVoicePersona> {
-  const base = LUXARA_VOICE_PERSONA;
+  const base = LEXARA_VOICE_PERSONA;
 
   switch (context) {
     case 'greeting':
