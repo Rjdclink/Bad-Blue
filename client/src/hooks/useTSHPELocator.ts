@@ -470,23 +470,20 @@ export function useTSHPELocator() {
     });
     setAccuracy(fused.accuracy || 10);
     
-    // Add to history (optimized array handling)
+    // Add to history and calculate cone in a single setState to ensure consistency
     setPositionHistory(prev => {
-      // Avoid spread if not needed for trimming
-      if (prev.length >= 10000) {
-        // Only create new array when trimming
-        const newHistory = prev.slice(-9999);
-        newHistory.push(fused);
-        return newHistory;
-      }
-      // Use concat for single addition (more efficient than spread)
-      return prev.concat([fused]);
+      // Immutable array update with efficient trimming
+      const updatedHistory = prev.length >= 10000 
+        ? [...prev.slice(-9999), fused]
+        : [...prev, fused];
+      
+      // Calculate predicted cone using the updated history
+      const cone = calculatePredictedCone(fused, updatedHistory);
+      setPredictedCone(cone);
+      
+      return updatedHistory;
     });
-    
-    // Update predicted cone (separate effect, not in setState callback)
-    const cone = calculatePredictedCone(fused, positionHistory);
-    setPredictedCone(cone);
-  }, [fusePositions, calculatePredictedCone, positionHistory]);
+  }, [fusePositions, calculatePredictedCone]);
   
   const handleGPSError = useCallback((error: GeolocationPositionError) => {
     console.warn('[TSHPE] GPS Error:', error.message);

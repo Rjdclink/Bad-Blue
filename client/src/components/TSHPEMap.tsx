@@ -289,28 +289,34 @@ export const TSHPEMap: React.FC<TSHPEMapProps> = ({
     const heading = position.heading || 0;
     const coneAngle = 30 + (1 - confidence) * 30; // Wider cone = less confidence
     
-    // Calculate cone points
+    // Calculate cone polygon points using spherical coordinate projection
     const points: [number, number][] = [];
     const steps = 20;
-    const earthRadius = 6371000; // meters
+    const earthRadius = 6371000; // Earth radius in meters
     
-    // Start point (current position)
+    // Start point (current position - cone apex)
     points.push([center.lat, center.lon]);
     
-    // Arc at future radius
+    // Generate arc points at the future radius distance
+    // Using small-angle approximation for distance-to-degrees conversion
+    // Formula: Δlat = (distance / earthRadius) × (180 / π)
+    // For longitude: Δlon = Δlat / cos(latitude) to account for meridian convergence
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
+      // Calculate angle along the arc from left edge to right edge of cone
       const arcAngle = heading - coneAngle / 2 + t * coneAngle;
       const radAngle = (arcAngle * Math.PI) / 180;
-      const radHeading = (heading * Math.PI) / 180;
       
+      // Convert distance in meters to latitude offset in degrees
+      // Note: This approximation works well for distances < 100km
       const lat = center.lat + (radiusFuture / earthRadius) * (180 / Math.PI) * Math.cos(radAngle);
+      // Longitude requires correction for latitude (meridians converge at poles)
       const lon = center.lon + (radiusFuture / earthRadius) * (180 / Math.PI) * Math.sin(radAngle) / Math.cos(center.lat * Math.PI / 180);
       
       points.push([lat, lon]);
     }
     
-    // Close the cone
+    // Close the cone polygon back to the apex
     points.push([center.lat, center.lon]);
     
     coneLayerRef.current = L.polygon(points, {
