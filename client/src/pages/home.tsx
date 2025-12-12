@@ -3,18 +3,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, FileText, Scale, ChevronRight, Users, Search as SearchIcon, Bell, Image as ImageIcon, Mail, Activity, CreditCard } from "lucide-react";
+import { Shield, FileText, Scale, ChevronRight, Users, Search as SearchIcon, Bell, Image as ImageIcon, Mail, Activity, CreditCard, Grid } from "lucide-react";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation, Link } from "wouter";
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
-import AlexeraConsultation from "@/components/AlexeraConsultation";
 import OfficerSearch from "@/components/OfficerSearch";
 import { AISubAgentPanel } from "@/components/AISubAgentPanel";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { SEOHead } from "@/components/SEOHead";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 import { HiddenFAQ } from "@/components/HiddenFAQ";
+import LexaraFrame from "@/components/LexaraFrame";
 
 export default function Home() {
   usePageFaqSchema("/home");
@@ -22,7 +22,7 @@ export default function Home() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [activeFeature, setActiveFeature] = useState<'consultation' | 'officer-search' | 'ai-subagent' | null>(null);
+  const [activeFeature, setActiveFeature] = useState<'officer-search' | 'ai-subagent' | 'dashboard' | null>(null);
 
   // Redirect to landing if not authenticated
   if (!user) {
@@ -43,39 +43,9 @@ export default function Home() {
   // DEPRECATED: Payment gate removed - Officer search and legal consultation are now FREE for all signed-in users
   // All authenticated users now have full access to officer search and legal consultation
 
-  // If LegalAI Consultation is selected, show it
-  if (activeFeature === 'consultation') {
-    return (
-      <div className="min-h-screen bg-background">
-        {/* Header */}
-        <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="container flex h-14 items-center gap-4 px-4">
-            <Link href="/" className="flex items-center gap-2 hover-elevate active-elevate-2 px-2 py-1 rounded-md">
-              <Shield className="h-10 w-auto text-primary" />
-              <span className="font-semibold">BadBlue</span>
-            </Link>
-            <div className="ml-auto flex items-center gap-2">
-              <LanguageSelector />
-              <Button variant="ghost" size="sm" onClick={handleLogout} data-testid="button-logout">
-                Logout
-              </Button>
-            </div>
-          </div>
-        </header>
-
-        {/* Back Button */}
-        <div className="container px-4 py-4">
-          <Button variant="ghost" onClick={() => setActiveFeature(null)} data-testid="button-back">
-            ← Back to Dashboard
-          </Button>
-        </div>
-
-        {/* Feature Content */}
-        <div className="container px-4 py-8">
-          <AlexeraConsultation />
-        </div>
-      </div>
-    );
+  // If dashboard view is explicitly selected, show the old dashboard
+  if (activeFeature === 'dashboard') {
+    return renderDashboard();
   }
 
   // If Officer Search is selected, show it
@@ -178,56 +148,57 @@ export default function Home() {
     );
   }
 
-  // Main Dashboard View
-  return (
-    <div className="min-h-screen bg-background">
-      <SEOHead
-        title="Bad Blue — Dashboard | Police Accountability Tools"
-        description="Access officer search, file misconduct complaints, generate §1983 civil rights lawsuits, submit FOIA requests, and create officer resignation petitions. Affordable alternative to attorneys, fully online."
-        keywords="police officer search, officer information search, find police officer, locate officer, search police department, find department information, police brutality legal help, officer assault legal advice, police complaint help, officer grievance assistance, FOIA police request, FOIA officer documents, police records search, officer background search, police information database, officer details search, locate police officer, find officer by name, search officer by badge, police department search, officer department information, police legal consultation, officer legal advice, police accountability tools, officer accountability resources, search police records, find officer records, police misconduct information, officer misconduct search, police brutality help, officer assault assistance, file police complaint, file officer grievance, police lawsuit help, officer lawsuit assistance, FOIA request police, FOIA request officer, petition police officer, petition officer resignation, police documents search, officer documents request, police legal help online, officer legal advice online, search for police officer, search for officer information, find police department, locate officer department, police officer database, officer information database, police search tools, officer search resources, police accountability platform, officer accountability system, police information help, officer information assistance, legal advice police case, legal help officer case, police brutality resources, officer assault resources, police complaint tools, officer grievance tools, police lawsuit resources, officer lawsuit help, department search tools, department information search"
-        ogTitle="BadBlue Dashboard | Professional Legal Rights Protection Service"
-        ogDescription="Professional civil rights advocacy platform for reporting police misconduct, law enforcement abuse & bad cops. Transparent complaint filing system for justice accessibility."
-        noIndex={true}
-      />
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-14 items-center gap-4 px-4">
-          <div className="flex items-center gap-2">
-            <Shield className="w-5 h-5 text-primary" />
-            <span className="font-semibold">BadBlue</span>
+  // Dashboard View function - accessed via 'dashboard' feature
+  function renderDashboard() {
+    return (
+      <div className="min-h-screen bg-background">
+        <SEOHead
+          title="Bad Blue — Dashboard | Police Accountability Tools"
+          description="Access officer search, file misconduct complaints, generate §1983 civil rights lawsuits, submit FOIA requests, and create officer resignation petitions. Affordable alternative to attorneys, fully online."
+          keywords="police officer search, officer information search, find police officer, locate officer, search police department, find department information, police brutality legal help, officer assault legal advice, police complaint help, officer grievance assistance, FOIA police request, FOIA officer documents, police records search, officer background search, police information database, officer details search, locate police officer, find officer by name, search officer by badge, police department search, officer department information, police legal consultation, officer legal advice, police accountability tools, officer accountability resources, search police records, find officer records, police misconduct information, officer misconduct search, police brutality help, officer assault assistance, file police complaint, file officer grievance, police lawsuit help, officer lawsuit assistance, FOIA request police, FOIA request officer, petition police officer, petition officer resignation, police documents search, officer documents request, police legal help online, officer legal advice online, search for police officer, search for officer information, find police department, locate officer department, police officer database, officer information database, police search tools, officer search resources, police accountability platform, officer accountability system, police information help, officer information assistance, legal advice police case, legal help officer case, police brutality resources, officer assault resources, police complaint tools, officer grievance tools, police lawsuit resources, officer lawsuit help, department search tools, department information search"
+          ogTitle="BadBlue Dashboard | Professional Legal Rights Protection Service"
+          ogDescription="Professional civil rights advocacy platform for reporting police misconduct, law enforcement abuse & bad cops. Transparent complaint filing system for justice accessibility."
+          noIndex={true}
+        />
+        {/* Header */}
+        <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="container flex h-14 items-center gap-4 px-4">
+            <div className="flex items-center gap-2">
+              <Shield className="w-5 h-5 text-primary" />
+              <span className="font-semibold">BadBlue</span>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <LanguageSelector />
+              {user && (
+                <Button variant="ghost" size="sm" onClick={handleLogout} data-testid="button-logout">
+                  Logout
+                </Button>
+              )}
+            </div>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <LanguageSelector />
-            {user && (
-              <Button variant="ghost" size="sm" onClick={handleLogout} data-testid="button-logout">
-                Logout
-              </Button>
-            )}
-          </div>
+        </header>
+
+        {/* Back Button - return to LEXARA */}
+        <div className="container px-4 py-4">
+          <Button variant="ghost" onClick={() => setActiveFeature(null)} data-testid="button-back">
+            ← Back to LEXARA
+          </Button>
         </div>
-      </header>
 
-      {/* Back Button */}
-      <div className="container px-4 py-4">
-        <Button variant="ghost" onClick={() => setLocation('/landing')} data-testid="button-back">
-          ← Back to Landing Page
-        </Button>
-      </div>
-
-      {/* Hero Section */}
-      <section className="py-12 px-4 bg-gradient-to-b from-primary/5 to-background">
-        <div className="container max-w-4xl mx-auto text-center">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            Welcome to BadBlue
-          </h1>
-          <p className="text-xl text-muted-foreground mb-6">
-            Your complete police accountability platform. Access all features below.
-          </p>
-          {user && (
-            <p className="text-sm text-muted-foreground">
-              Logged in as: {user.email}
+        {/* Hero Section */}
+        <section className="py-12 px-4 bg-gradient-to-b from-primary/5 to-background">
+          <div className="container max-w-4xl mx-auto text-center">
+            <h1 className="text-4xl md:text-5xl font-bold mb-4">
+              BadBlue Tools & Services
+            </h1>
+            <p className="text-xl text-muted-foreground mb-6">
+              Access all police accountability tools and services below.
             </p>
-          )}
+            {user && (
+              <p className="text-sm text-muted-foreground">
+                Logged in as: {user.email}
+              </p>
+            )}
         </div>
       </section>
 
@@ -288,62 +259,7 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {/* 1. ALEXERA - Legal Expert AI Resource Advisor */}
-            <Card className="hover-elevate cursor-pointer transition-all" onClick={() => setActiveFeature('consultation')} data-testid="card-legal-consultation">
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <img 
-                        src="/images/OIP.webp" 
-                        alt="ALEXERA - Legal Expert AI Resource Advisor"
-                        className="w-16 h-16 rounded-full object-cover border-2 border-primary shadow-lg"
-                      />
-                      <div className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-1">
-                        <img 
-                          src="/images/Law-book.webp" 
-                          alt="" 
-                          className="w-3 h-3 object-contain"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <CardTitle className="text-2xl">ALEXERA</CardTitle>
-                      <CardDescription className="mt-1">
-                        Legal Expert AI Resource Advisor - <span className="text-green-600 dark:text-green-400 font-semibold">Included with access</span>
-                      </CardDescription>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-6 h-6 text-muted-foreground" />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground">
-                  Consult with ALEXERA to evaluate potential claims, assess case merit, identify applicable laws, 
-                  and get strategic recommendations. Integrated with F.M.I. (Forensic Media Intelligence) for evidence analysis.
-                </p>
-                <ul className="space-y-2 mt-4">
-                  <li className="flex items-start gap-2 text-sm">
-                    <Bell className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
-                    <span>Multi-area legal analysis (29+ practice areas)</span>
-                  </li>
-                  <li className="flex items-start gap-2 text-sm">
-                    <Bell className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
-                    <span>F.M.I. evidence intelligence integration</span>
-                  </li>
-                  <li className="flex items-start gap-2 text-sm">
-                    <Bell className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
-                    <span>Jurisdiction-specific statute analysis</span>
-                  </li>
-                  <li className="flex items-start gap-2 text-sm">
-                    <Bell className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
-                    <span>Actionability assessment & next steps</span>
-                  </li>
-                </ul>
-              </CardContent>
-            </Card>
-
-            {/* 2. Officer Search */}
+            {/* Officer Search */}
             <Card className="hover-elevate cursor-pointer transition-all" onClick={() => setActiveFeature('officer-search')} data-testid="card-officer-search">
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -373,7 +289,7 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {/* 3. FOIA Records Request */}
+            {/* FOIA Records Request */}
             <Card className="hover-elevate cursor-pointer transition-all" onClick={() => setLocation('/foia-request')} data-testid="card-foia-request">
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -816,7 +732,7 @@ export default function Home() {
               </CardFooter>
             </Card>
 
-            {/* Corrupt Law Enforcement & Informant Hub */}
+              {/* Corrupt Law Enforcement & Informant Hub */}
             <Card className="hover-elevate cursor-pointer transition-all" onClick={() => setLocation('/evidence-hub')} data-testid="card-evidence-hub">
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -848,6 +764,29 @@ export default function Home() {
       <HiddenFAQ path="/home" />
 
       <SupportEmailFooter />
+    </div>
+    );
+  }
+
+  // Primary Interface: LexaraFrame - Full-viewport AI Legal Consultation
+  return (
+    <div className="relative min-h-screen">
+      {/* Dashboard Access Button - Floating in corner */}
+      <div className="fixed top-4 right-4 z-50">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setActiveFeature('dashboard')}
+          className="bg-slate-900/80 backdrop-blur-sm border-slate-700/50 text-slate-200 hover:text-white hover:bg-slate-800/90"
+          data-testid="button-dashboard"
+        >
+          <Grid className="h-4 w-4 mr-2" />
+          Tools & Services
+        </Button>
+      </div>
+      
+      {/* LexaraFrame - Primary Interface */}
+      <LexaraFrame />
     </div>
   );
 }
