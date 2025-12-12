@@ -68,7 +68,7 @@ router.get('/heat', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message || 'Failed to get heat monitor data'
     });
   }
 });
@@ -92,7 +92,7 @@ router.get('/metrics', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message || 'Failed to get metrics'
     });
   }
 });
@@ -146,7 +146,7 @@ router.post('/job', async (req, res) => {
     console.error('[Reactor API] Job submission error:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message || 'Job submission failed'
     });
   }
 });
@@ -174,7 +174,7 @@ router.get('/job/:jobId', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message || 'Failed to get job status'
     });
   }
 });
@@ -206,7 +206,7 @@ router.delete('/job/:jobId', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message || 'Failed to cancel job'
     });
   }
 });
@@ -246,7 +246,7 @@ router.post('/enable', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message || 'Failed to update reactor state'
     });
   }
 });
@@ -293,7 +293,7 @@ router.post('/monte-carlo', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message || 'Failed to schedule Monte Carlo optimization'
     });
   }
 });
