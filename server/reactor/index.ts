@@ -1,7 +1,10 @@
 /**
  * Reactor Module - Index
  * 
- * Exports the Computational Reactor (OPIF) for job scheduling and optimization
+ * This module is the central Computational Reactor (OPIF) powering Lexara, crawlers, 
+ * Monte Carlo optimization, and maintenance.
+ * 
+ * Exports the Computational Reactor for job scheduling and optimization
  */
 
 export {
