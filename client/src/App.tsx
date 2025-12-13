@@ -115,8 +115,8 @@ const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'P
 // PANTHEON Page - Advanced Intelligence Platform
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
 
-// Domain Consultation Page - 4JI Orchestrator Integration
-const ConsultationPage = lazyWithRetry(() => import("@/pages/consultation"), 'Consultation');
+// Domain Consultation Page - 4JI Orchestrator Integration (Now using Legal Consultation)
+const ConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'Consultation');
 
 // LEXARA Viewport - Full-Page AI Legal Consultation (Production, FULL AUTO)
 const LexaraViewport = lazyWithRetry(() => import("@/components/LexaraViewport"), 'LexaraViewport');
