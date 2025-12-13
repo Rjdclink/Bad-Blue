@@ -166,7 +166,7 @@ class BadBlueWorker {
 
   // Gemini model selection (updated to Gemini 3)
   private getPreferredGeminiModel(): string {
-    return process.env.GEMINI_MODEL || 'gemini-3-pro';
+    return process.env.GEMINI_MODEL || 'gemini-2.5-pro';
   }
 
   // Platform helpers

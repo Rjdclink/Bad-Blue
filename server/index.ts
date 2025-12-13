@@ -363,7 +363,7 @@ app.get("/api/health", async (_req, res) => {
       anthropicConfigured: !!process.env.ANTHROPIC_API_KEY,
     },
     aiProviders: {
-      gemini: { model: 'gemini-3-pro', available: !!process.env.GEMINI_API_KEY },
+      gemini: { model: 'gemini-2.5-pro', available: !!process.env.GEMINI_API_KEY },
       groq: { model: 'llama-3.3-70b-versatile', available: !!process.env.GROQ_API_KEY },
       mistral: { model: 'mistral-large-latest', available: !!process.env.MISTRAL_API_KEY },
       claude: { model: 'claude-3-5-haiku-20241022', available: !!process.env.ANTHROPIC_API_KEY },

@@ -47,12 +47,12 @@ const DAILY_SCRAPE_HOUR_UTC = Number(process.env.DAILY_SCRAPE_HOUR_UTC || 2);
 const DAILY_SCRAPE_DURATION_MS = Number(process.env.DAILY_SCRAPE_DURATION_MS || 1000 * 60 * 60);
 const MIN_API_CALL_INTERVAL_MS = 1500;
 
-const DEFAULT_GEMINI_MODEL = 'gemini-3-pro';
+const DEFAULT_GEMINI_MODEL = 'gemini-2.5-pro';
 const GEMINI_MODEL_CANDIDATES = [
   () => process.env.GEMINI_MODEL?.trim(),
   () => DEFAULT_GEMINI_MODEL,
-  () => 'gemini-3-pro-preview',
-  () => 'gemini-3-flash',
+  () => 'gemini-3.0-pro-preview',
+  () => 'gemini-2.5-flash',
   () => 'gemini-2.5-flash',
   () => 'gemini-2.0-flash',
   () => 'gemini-1.5-flash-latest',

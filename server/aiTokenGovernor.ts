@@ -69,15 +69,17 @@ export enum AIProvider {
   QWEN = 'qwen',
   GPT5_MINI = 'gpt5_mini',
   CLAUDE_OPUS = 'claude_opus',
-  // Additional providers (December 2025)
+  // Platform providers (December 2025)
   OPENROUTER = 'openrouter',
+  HUGGINGFACE = 'huggingface',
+  LMAI = 'lmai',
+  // Additional providers (December 2025)
   COHERE = 'cohere',
   TOGETHER = 'together',
   PERPLEXITY = 'perplexity',
   FIREWORKS = 'fireworks',
   CEREBRAS = 'cerebras',
   SAMBANOVA = 'sambanova',
-  HUGGINGFACE = 'huggingface',
 }
 
 export enum UsageContext {
@@ -235,21 +237,25 @@ class AITokenGovernorEnhanced {
   private readonly GROK_TPM = Math.floor(50000 / 1440);     // ~35 TPM
   private readonly KIMI_TPM = Math.floor(50000 / 1440);     // ~35 TPM
   
-  // Target distribution percentages (for weighted USER selection - Groq/Mistral excluded from USER)
+  // Target distribution percentages - ALL PROVIDERS UTILIZED EQUALLY
   // CONTEXT SEPARATION POLICY:
   // - AUTONOMOUS: Only Groq + Mistral (no USER providers)
   // - USER: Only Gemini + Claude + DeepSeek + Grok + Kimi (no AUTONOMOUS providers)
-  private readonly MISTRAL_TARGET_PERCENT = 0;  // Mistral excluded from USER selection
-  private readonly GROQ_TARGET_PERCENT = 0;     // Groq excluded from USER selection
-  private readonly GEMINI_TARGET_PERCENT = 35;
-  private readonly CLAUDE_TARGET_PERCENT = 15;
-  private readonly DEEPSEEK_TARGET_PERCENT = 20;
-  private readonly GROK_TARGET_PERCENT = 15;
-  private readonly KIMI_TARGET_PERCENT = 15;
+  private readonly MISTRAL_TARGET_PERCENT = 20;  // Equal distribution
+  private readonly GROQ_TARGET_PERCENT = 20;     // Equal distribution
+  private readonly GEMINI_TARGET_PERCENT = 20;   // Equal distribution
+  private readonly CLAUDE_TARGET_PERCENT = 20;   // Equal distribution
+  private readonly DEEPSEEK_TARGET_PERCENT = 20; // Equal distribution
+  private readonly GROK_TARGET_PERCENT = 0;      // Via OpenRouter
+  private readonly KIMI_TARGET_PERCENT = 0;      // Via OpenRouter
 
   // Provider availability cache
   private providerAvailability: Map<AIProvider, boolean> = new Map();
   private availabilityChecked = false;
+
+  // Circuit breaker: Track providers that have failed and should be immediately disabled
+  // Key: provider, Value: { disabledAt: timestamp, reason: string, failureCount: number }
+  private disabledProviders: Map<AIProvider, { disabledAt: number; reason: string; failureCount: number }> = new Map();
 
   // Quota status memoization cache with mutex
   private quotaCache: QuotaCache = {
@@ -261,6 +267,55 @@ class AITokenGovernorEnhanced {
   private constructor() {
     // No file loading - database is the source of truth
     this.checkProviderAvailability();
+  }
+
+  /**
+   * CIRCUIT BREAKER: Immediately disable a provider that has failed
+   * This prevents the system from attempting to use a non-functioning provider
+   */
+  public disableProvider(provider: AIProvider, reason: string): void {
+    const existing = this.disabledProviders.get(provider);
+    const failureCount = existing ? existing.failureCount + 1 : 1;
+    
+    this.disabledProviders.set(provider, {
+      disabledAt: Date.now(),
+      reason,
+      failureCount,
+    });
+    
+    // Also update the availability map
+    this.providerAvailability.set(provider, false);
+    
+    console.warn(`[AI Circuit Breaker] ⚡ Provider ${provider} DISABLED immediately - Reason: ${reason} (Failure #${failureCount})`);
+  }
+
+  /**
+   * Re-enable a provider (e.g., after manual intervention or recovery)
+   */
+  public enableProvider(provider: AIProvider): void {
+    this.disabledProviders.delete(provider);
+    // Re-check availability based on API key
+    this.availabilityChecked = false;
+    this.checkProviderAvailability();
+    console.log(`[AI Circuit Breaker] ✓ Provider ${provider} re-enabled`);
+  }
+
+  /**
+   * Check if a provider is disabled by circuit breaker
+   */
+  public isProviderDisabled(provider: AIProvider): boolean {
+    return this.disabledProviders.has(provider);
+  }
+
+  /**
+   * Get status of all disabled providers
+   */
+  public getDisabledProviders(): Array<{ provider: AIProvider; disabledAt: number; reason: string; failureCount: number }> {
+    const result: Array<{ provider: AIProvider; disabledAt: number; reason: string; failureCount: number }> = [];
+    this.disabledProviders.forEach((value, key) => {
+      result.push({ provider: key, ...value });
+    });
+    return result;
   }
 
   /**
