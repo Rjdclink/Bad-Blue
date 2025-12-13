@@ -268,6 +268,7 @@ function Router() {
             
             {/* Nationwide Inmate Locator */}
             <Route path="/inmate-locator" component={InmateLocatorPage} />
+            <Route path="/inmate-locator/dashboard" component={InmateLocatorPage} />
             
             {/* BadBlue routes - Law Enforcement Accountability */}
             <Route path="/badblue" component={Home} />
