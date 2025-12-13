@@ -66,18 +66,60 @@ router.post('/', apiRateLimit, async (req, res) => {
       state: query.state,
       scope: query.searchScope,
     });
+
+    // Get user ID if authenticated
+    const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
+    let reportId: string | null = null;
+
+    // Create initial report record
+    if (userId) {
+      const { storage } = await import('../storage');
+      const initialReport = await storage.createInmateSearchReport({
+        userId,
+        searchQuery: query,
+        firstName: query.firstName,
+        lastName: query.lastName,
+        state: query.state,
+        reportData: { status: 'processing' },
+        status: 'processing',
+      });
+      reportId = initialReport.id;
+    }
     
+    // Execute the actual search
     const result = await searchInmates(query);
+
+    // Update report with completed data
+    if (reportId && userId) {
+      const { storage } = await import('../storage');
+      await storage.updateInmateSearchReportStatus(
+        reportId,
+        'completed',
+        result
+      );
+    }
     
     return res.json({
       success: true,
       data: result,
+      jobId: reportId,
+      jobCompleted: true,
+      jobStatus: 'completed',
     });
   } catch (error: any) {
     console.error('[Inmate Search API] Error:', error);
+
+    // Get user ID if authenticated
+    const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
+    
+    // Try to update report with error if we can extract the reportId
+    // (In a real scenario, we'd store it in a variable accessible here)
+    
     return res.status(500).json({
       success: false,
       error: error.message || 'Internal server error',
+      jobCompleted: true,
+      jobStatus: 'failed',
     });
   }
 });

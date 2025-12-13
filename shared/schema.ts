@@ -2420,6 +2420,80 @@ export const insertPeopleSearchReportSchema = createInsertSchema(peopleSearchRep
 export type PeopleSearchReport = typeof peopleSearchReports.$inferSelect;
 
 // ============================================
+// INMATE SEARCH REPORTS TABLE
+// ============================================
+export const inmateSearchReports = pgTable("inmate_search_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }),
+  searchQuery: jsonb("search_query").notNull(), // Store full search criteria
+  firstName: varchar("first_name", { length: 100 }),
+  lastName: varchar("last_name", { length: 100 }),
+  state: varchar("state", { length: 2 }),
+  reportData: jsonb("report_data").notNull(), // Full search results
+  status: varchar("status", { length: 50 }).notNull().default('processing'), // processing, completed, failed
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_inmate_search_user").on(table.userId),
+  index("idx_inmate_search_status").on(table.status),
+  index("idx_inmate_search_created").on(table.createdAt),
+  index("idx_inmate_search_name").on(table.lastName, table.firstName),
+]);
+
+export const inmateSearchReportsRelations = relations(inmateSearchReports, ({ one }) => ({
+  user: one(users, {
+    fields: [inmateSearchReports.userId],
+    references: [users.id],
+  }),
+}));
+
+export const insertInmateSearchReportSchema = createInsertSchema(inmateSearchReports).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InmateSearchReport = typeof inmateSearchReports.$inferSelect;
+export type InsertInmateSearchReport = z.infer<typeof insertInmateSearchReportSchema>;
+
+// ============================================
+// LEXARA CONVERSATION HISTORY TABLE
+// ============================================
+export const lexaraConversations = pgTable("lexara_conversations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }),
+  sessionId: varchar("session_id", { length: 255 }),
+  userPrompt: text("user_prompt").notNull(),
+  lexaraResponse: text("lexara_response").notNull(),
+  audioGenerated: boolean("audio_generated").default(false),
+  audioUrl: text("audio_url"),
+  audioBase64: text("audio_base64"), // For storing small audio files
+  audioDurationMs: integer("audio_duration_ms"),
+  model: varchar("model", { length: 50 }),
+  context: jsonb("context"), // Conversation context
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_lexara_user").on(table.userId),
+  index("idx_lexara_session").on(table.sessionId),
+  index("idx_lexara_created").on(table.createdAt),
+]);
+
+export const lexaraConversationsRelations = relations(lexaraConversations, ({ one }) => ({
+  user: one(users, {
+    fields: [lexaraConversations.userId],
+    references: [users.id],
+  }),
+}));
+
+export const insertLexaraConversationSchema = createInsertSchema(lexaraConversations).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type LexaraConversation = typeof lexaraConversations.$inferSelect;
+export type InsertLexaraConversation = z.infer<typeof insertLexaraConversationSchema>;
+
+// ============================================
 // EVIDENCE FILES TABLE - F.M.I. (Forensic Media Intelligence)
 // ============================================
 export const evidenceFiles = pgTable("evidence_files", {

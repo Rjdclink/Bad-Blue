@@ -132,12 +132,45 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         });
       }
     }
+
+    // Persist conversation to database
+    const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
+    const sessionId = context?.sessionId || null;
+    let conversationId: string | null = null;
+
+    try {
+      const { storage } = await import('../storage');
+      const conversation = await storage.createLexaraConversation({
+        userId,
+        sessionId,
+        userPrompt: prompt,
+        lexaraResponse: aiResponse.content,
+        audioGenerated: !!audioData,
+        audioBase64: audioData?.audioBase64 || null,
+        audioDurationMs: audioData?.durationMs || null,
+        model: aiResponse.model,
+        context: context || null,
+      });
+      conversationId = conversation.id;
+
+      log.info('[LEXARA] Conversation persisted', {
+        conversationId,
+        userId,
+        sessionId,
+      });
+    } catch (dbError) {
+      log.error('[LEXARA] Failed to persist conversation', { error: dbError });
+      // Continue even if persistence fails - don't block the response
+    }
     
     return res.json({
       success: true,
       response: aiResponse.content,
       model: aiResponse.model,
       audio: audioData,
+      conversationId,
+      jobCompleted: true,
+      jobStatus: 'completed',
     });
     
   } catch (error) {
@@ -145,6 +178,8 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'Internal server error',
+      jobCompleted: true,
+      jobStatus: 'failed',
     });
   }
 });

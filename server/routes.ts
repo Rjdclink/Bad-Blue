@@ -3571,7 +3571,23 @@ Contact: ${foiaRequest.userEmail || userEmail}
       return res.status(400).json({ error: 'Name required' });
     }
 
+    // Get user ID if authenticated
+    const userId = req.user?.id || req.user?.claims?.sub;
+    let reportId: string | null = null;
+
     try {
+      // Create initial report record if user is authenticated
+      if (userId) {
+        const initialReport = await storage.createPeopleSearchReport({
+          userId,
+          searchQuery: name,
+          subjectName: name,
+          reportData: { status: 'processing', searchDepth },
+          status: 'processing',
+        });
+        reportId = initialReport.id;
+      }
+
       const { conductFullOSINT } = await import('./peopleSearch');
       
       // Pass search depth to the OSINT function
@@ -3582,11 +3598,42 @@ Contact: ${foiaRequest.userEmail || userEmail}
         domain,
         searchDepth 
       });
+
+      // Update report with completed data if we have a report ID
+      if (reportId && userId) {
+        await storage.updatePeopleSearchReportStatus(
+          reportId,
+          'completed',
+          report
+        );
+      }
       
-      res.json(report);
+      // Return report with job completion status
+      res.json({
+        ...report,
+        jobId: reportId,
+        jobCompleted: true,
+        jobStatus: 'completed',
+      });
     } catch (error: any) {
       console.error('[OSINT API] Error:', error);
-      res.status(500).json({ error: error.message });
+
+      // Update report with error if we have a report ID
+      if (reportId && userId) {
+        await storage.updatePeopleSearchReportStatus(
+          reportId,
+          'failed',
+          undefined,
+          error.message
+        );
+      }
+
+      res.status(500).json({ 
+        error: error.message,
+        jobId: reportId,
+        jobCompleted: true,
+        jobStatus: 'failed',
+      });
     }
   });
 
