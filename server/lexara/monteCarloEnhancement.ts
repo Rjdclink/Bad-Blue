@@ -150,6 +150,10 @@ export interface MonteCarloEnhancementConfig {
   convergenceThreshold: number;
   /** Minimum fitness threshold to accept optimization */
   acceptanceThreshold: number;
+  /** Initial population variation from baseline (0-1) */
+  initialVariation: number;
+  /** Maximum improvement per micro-optimization (0-1) */
+  microOptimizationMaxImprovement: number;
 }
 
 /**
@@ -200,6 +204,8 @@ const DEFAULT_CONFIG: MonteCarloEnhancementConfig = {
   mutationMagnitude: 0.12,
   convergenceThreshold: 0.005,
   acceptanceThreshold: 0.75,
+  initialVariation: 0.1,
+  microOptimizationMaxImprovement: 0.02,
 };
 
 const DEFAULT_SCHEDULE: ScheduledCycleConfig = {
@@ -565,10 +571,10 @@ class LexaraMonteCarloEnhancementEngine {
     for (let i = 0; i < this.config.candidatesPerDomain; i++) {
       const id = `cs-${domain}-0-${crypto.randomBytes(4).toString('hex')}`;
       
-      // Create candidate with small variations from base
+      // Create candidate with small variations from base using configurable variation
       const parameters: Record<string, number> = {};
       for (const [key, value] of Object.entries(baseMetrics)) {
-        const variation = (Math.random() - 0.5) * 0.1;
+        const variation = (Math.random() - 0.5) * this.config.initialVariation;
         parameters[key] = Math.max(0, Math.min(1, value + variation));
       }
 
@@ -641,19 +647,18 @@ class LexaraMonteCarloEnhancementEngine {
     population: CandidateStrategy[],
     domain: OptimizationDomain
   ): Promise<EvaluatedStrategy[]> {
-    const evaluated: EvaluatedStrategy[] = [];
-
-    for (const strategy of population) {
+    // Evaluate strategies in parallel for better performance
+    const evaluationPromises = population.map(async (strategy) => {
       const fitness = this.evaluateStrategy(strategy, domain);
-      evaluated.push({
+      return {
         strategy,
         fitness,
         domainScore: fitness,
         evaluatedAt: new Date(),
-      });
-    }
+      } as EvaluatedStrategy;
+    });
 
-    return evaluated;
+    return Promise.all(evaluationPromises);
   }
 
   /**
@@ -782,13 +787,24 @@ class LexaraMonteCarloEnhancementEngine {
    * Refine an existing profile through micro-adjustments
    */
   private refineProfile(profile: OptimizationProfile): OptimizationProfile {
-    const refined = JSON.parse(JSON.stringify(profile)) as OptimizationProfile;
-    refined.id = `profile-refined-${crypto.randomBytes(4).toString('hex')}`;
-    refined.timestamp = new Date();
+    // Deep clone using structured approach for type safety
+    const refined: OptimizationProfile = {
+      id: `profile-refined-${crypto.randomBytes(4).toString('hex')}`,
+      timestamp: new Date(),
+      domains: {
+        legalUnderstanding: { ...profile.domains.legalUnderstanding },
+        explanationQuality: { ...profile.domains.explanationQuality },
+        consultativeEngagement: { ...profile.domains.consultativeEngagement },
+        vocalGravitas: { ...profile.domains.vocalGravitas },
+      },
+      overallScore: profile.overallScore,
+      generation: profile.generation,
+    };
 
-    // Apply small improvements to each domain
+    // Apply small improvements using configurable maximum improvement
+    const maxImprovement = this.config.microOptimizationMaxImprovement;
     const refineValue = (value: number): number => {
-      const improvement = Math.random() * 0.02; // Max 2% improvement
+      const improvement = Math.random() * maxImprovement;
       return Math.min(1, value + improvement);
     };
 
