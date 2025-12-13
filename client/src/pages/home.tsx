@@ -767,7 +767,7 @@ export default function Home() {
     );
   }
 
-  // Primary Interface: CTA to navigate to LEXARA (/lexara)
+  // Primary Interface: CTA to navigate to LEXARA (/legal-consultation)
   // This eliminates duplicated logic + media permission flows
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950/90 to-slate-900 flex flex-col items-center justify-center">
@@ -799,7 +799,7 @@ export default function Home() {
           Experience LEXARA, your AI-powered legal consultation assistant with voice interaction and real-time guidance.
         </p>
         <Button
-          onClick={() => setLocation('/lexara')}
+          onClick={() => setLocation('/legal-consultation')}
           size="lg"
           className="bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white px-10 py-6 rounded-full font-medium shadow-lg hover:shadow-xl transition-all text-lg"
           data-testid="button-lexara"

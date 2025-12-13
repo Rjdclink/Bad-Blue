@@ -5,7 +5,7 @@
  * - OIP.webp avatar image (via LexaraAvatar component)
  * - Continuous audio pipeline for two-way communication
  * - Domain-specific legal consultation
- * - Loads from welcome page via /consultation/:domainId
+ * - Loads from welcome page via /legal-consultation/:domainId
  */
 
 import { useEffect, useCallback, useState, Suspense } from "react";
@@ -30,10 +30,10 @@ const ConsultationLoader = () => (
 
 export default function LegalConsultationPage() {
   const [, setLocation] = useLocation();
-  const [, params] = useRoute('/consultation/:domainId');
+  const [, params] = useRoute('/legal-consultation/:domainId');
   const [isAudioInitialized, setIsAudioInitialized] = useState(false);
   
-  // Get domain info if coming from /consultation/:domainId route
+  // Get domain info if coming from /legal-consultation/:domainId route
   const domainId = params?.domainId;
   const domainInfo = domainId ? LAW_TYPE_DATA.find(t => t.id === domainId) : null;
   

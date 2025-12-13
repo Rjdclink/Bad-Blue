@@ -245,23 +245,23 @@ function Router() {
             {/* PANTHEON - Advanced Intelligence Platform */}
             <Route path="/pantheon" component={PantheonPage} />
             
-            {/* LEXARA Viewport - Full-Page AI Legal Consultation (FULL AUTO) */}
-            <Route path="/lexara" component={LexaraViewport} />
+            {/* LEXARA Viewport - REMOVED: legal-consultation page is the only LEXARA interface */}
+            {/* <Route path="/lexara" component={LexaraViewport} /> */}
             
             {/* SPECTRA - LEXARA + GeoConsole + People Radar */}
             <Route path="/spectra" component={SpectraPage} />
             
-            {/* GEO Console - Renders INSIDE LexaraViewport, redirects to /lexara */}
+            {/* GEO Console - Redirects to legal-consultation */}
             <Route path="/geo-console">
               {() => {
-                // Redirect geo-console to lexara with geo flag
-                window.location.href = '/lexara?geo=true';
+                // Redirect geo-console to legal-consultation
+                window.location.href = '/legal-consultation?geo=true';
                 return null;
               }}
             </Route>
             
             {/* Domain Consultation - 4JI Orchestrator Integration */}
-            <Route path="/consultation/:domainId" component={ConsultationPage} />
+            <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
             
             {/* Location Intelligence - Interactive Heatmap Dashboard */}
             <Route path="/location-intel" component={LocationIntelPage} />
