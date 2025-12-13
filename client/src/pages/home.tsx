@@ -767,7 +767,7 @@ export default function Home() {
     );
   }
 
-  // Primary Interface: CTA to navigate to LEXARA (/lexara)
+  // Primary Interface: CTA to navigate to LEXARA (/legal-consultation)
   // This eliminates duplicated logic + media permission flows
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950/90 to-slate-900 flex flex-col items-center justify-center">

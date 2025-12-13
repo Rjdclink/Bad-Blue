@@ -251,11 +251,11 @@ function Router() {
             {/* SPECTRA - LEXARA + GeoConsole + People Radar */}
             <Route path="/spectra" component={SpectraPage} />
             
-            {/* GEO Console - Renders INSIDE LexaraViewport, redirects to /lexara */}
+            {/* GEO Console - Redirects to legal-consultation */}
             <Route path="/geo-console">
               {() => {
-                // Redirect geo-console to lexara with geo flag
-                window.location.href = '/lexara?geo=true';
+                // Redirect geo-console to legal-consultation
+                window.location.href = '/legal-consultation?geo=true';
                 return null;
               }}
             </Route>
