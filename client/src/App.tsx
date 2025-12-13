@@ -245,8 +245,8 @@ function Router() {
             {/* PANTHEON - Advanced Intelligence Platform */}
             <Route path="/pantheon" component={PantheonPage} />
             
-            {/* LEXARA Viewport - Full-Page AI Legal Consultation (FULL AUTO) */}
-            <Route path="/lexara" component={LexaraViewport} />
+            {/* LEXARA Viewport - REMOVED: legal-consultation page is the only LEXARA interface */}
+            {/* <Route path="/lexara" component={LexaraViewport} /> */}
             
             {/* SPECTRA - LEXARA + GeoConsole + People Radar */}
             <Route path="/spectra" component={SpectraPage} />
