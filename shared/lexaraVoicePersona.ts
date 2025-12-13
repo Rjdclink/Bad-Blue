@@ -716,14 +716,22 @@ export const DEFAULT_VOICE_CONFIG: VoiceSynthesisConfig = {
  * Get persona parameters for a specific speech context (backwards compatible)
  */
 export function getPersonaForContext(context: SpeechContext): Partial<LEXARAVoicePersona> {
-  // Map SpeechContext to LEXARASpeechContext
-  const lexaraContext: LEXARASpeechContext = (
-    context === 'evaluation' || 
-    context === 'introduction' || 
-    context === 'conclusion' || 
-    context === 'transition' ||
-    context === 'clarification'
-  ) ? 'explanation' : (context as LEXARASpeechContext);
+  // Map SpeechContext to LEXARASpeechContext with explicit handling
+  const contextMapping: Record<SpeechContext, LEXARASpeechContext> = {
+    'evaluation': 'explanation',
+    'guidance': 'guidance',
+    'explanation': 'explanation',
+    'reassurance': 'reassurance',
+    'introduction': 'greeting',
+    'conclusion': 'serious',
+    'transition': 'explanation',
+    'greeting': 'greeting',
+    'serious': 'serious',
+    'casual': 'casual',
+    'protective': 'protective',
+    'clarification': 'explanation',
+  };
   
+  const lexaraContext = contextMapping[context] ?? 'explanation';
   return getLEXARAVoiceForContext(lexaraContext);
 }
