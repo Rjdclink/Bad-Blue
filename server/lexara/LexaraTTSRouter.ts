@@ -615,4 +615,68 @@ export function getTTSCacheStats(): { size: number; hitRate: number; totalAccess
   return lexaraTTSRouter.getCacheStats();
 }
 
+/**
+ * HARD TEST: Direct ElevenLabs voice synthesis test
+ * Takes text → Calls ElevenLabs → Returns MP3 buffer
+ * No abstractions. No magic.
+ * 
+ * @returns Buffer containing MP3 audio data
+ * @throws Error if ELEVENLABS_API_KEY or ELEVENLABS_VOICE_ID missing, or API fails
+ */
+export async function lexaraSpeakTest(): Promise<Buffer> {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  const voiceId = process.env.ELEVENLABS_VOICE_ID;
+
+  if (!apiKey) {
+    throw new Error('ELEVENLABS_API_KEY missing - cannot test voice');
+  }
+  if (!voiceId) {
+    throw new Error('ELEVENLABS_VOICE_ID missing - cannot test voice');
+  }
+
+  log.info('[lexaraSpeakTest] Testing ElevenLabs voice synthesis', {
+    voiceId,
+    testText: 'Lexara online. Voice system confirmed.',
+  });
+
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    {
+      method: 'POST',
+      headers: {
+        'xi-api-key': apiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg',
+      },
+      body: JSON.stringify({
+        text: 'Lexara online. Voice system confirmed.',
+        model_id: 'eleven_monolingual_v1',
+        voice_settings: {
+          stability: 0.75,
+          similarity_boost: 0.85,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    log.error('[lexaraSpeakTest] ElevenLabs API failed', {
+      status: response.status,
+      error: errorText,
+    });
+    throw new Error(`ElevenLabs failed: ${errorText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const audioBuffer = Buffer.from(arrayBuffer);
+
+  log.info('[lexaraSpeakTest] Voice test successful', {
+    voiceId,
+    audioByteLength: audioBuffer.length,
+  });
+
+  return audioBuffer;
+}
+
 export default lexaraTTSRouter;
