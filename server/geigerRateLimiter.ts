@@ -1,12 +1,12 @@
 /**
- * 3D Geiger Counter Rate Limiter with Provider Rotation
+ * 3D Geiger Counter Rate Limiter with Equal Provider Distribution
  * 
  * A reactive, exponential rate limiting system that:
- * 1. ROTATES through ALL available free AI providers
+ * 1. EQUALLY DISTRIBUTES requests across ALL available free AI providers
  * 2. Reacts like a Geiger counter - spikes on heavy usage, decays over time
  * 3. Operates in 3D: Time decay × Usage intensity × Provider health
  * 
- * FREE AI PROVIDERS (December 2025):
+ * FREE AI PROVIDERS (December 2025) - ALL EQUAL PRIORITY:
  * - Groq (llama-3.3-70b, mixtral-8x7b, gemma2-9b) - 30 RPM, 14.4K RPD
  * - Google Gemini (gemini-1.5-flash, gemini-2.0-flash) - 15 RPM, 1500 RPD  
  * - Mistral (mistral-small-latest via La Plateforme free tier)
@@ -18,8 +18,11 @@
  * - Cerebras (free tier - ultra fast)
  * - SambaNova (free tier)
  * 
- * ROTATION STRATEGY:
- * - Round-robin across healthy providers
+ * DISTRIBUTION STRATEGY:
+ * - Equal priority (5) for ALL providers - no provider is preferred
+ * - Usage-weighted scoring ensures balanced distribution
+ * - Providers with lower daily usage get selected more often
+ * - Round-robin across healthy providers with weighted random selection
  * - Skip providers with high "radiation" (usage intensity)
  * - Exponential backoff on failures
  * - Automatic recovery as radiation decays
@@ -64,7 +67,7 @@ export interface RotationResult {
 
 // Free AI Provider Configurations
 const FREE_PROVIDERS: ProviderConfig[] = [
-  // TIER 1: Most generous free tiers
+  // All free providers have EQUAL priority (5) for balanced utilization
   {
     name: 'groq',
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
@@ -83,7 +86,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     rpdLimit: 14400,
     tpdLimit: 500000,
     apiKeyEnv: 'GROQ_API_KEY',
-    priority: 1,
+    priority: 5,  // Equal priority for balanced utilization
     isAvailable: () => !!process.env.GROQ_API_KEY,
   },
   {
@@ -93,7 +96,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     rpmLimit: 15,
     rpdLimit: 1500,
     apiKeyEnv: 'GEMINI_API_KEY',
-    priority: 2,
+    priority: 5,  // Equal priority for balanced utilization
     isAvailable: () => !!process.env.GEMINI_API_KEY,
   },
   {
@@ -103,7 +106,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     rpmLimit: 5,
     rpdLimit: 500,
     apiKeyEnv: 'MISTRAL_API_KEY',
-    priority: 3,
+    priority: 5,  // Equal priority for balanced utilization
     isAvailable: () => !!process.env.MISTRAL_API_KEY,
   },
   {
@@ -114,10 +117,9 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     rpdLimit: 100,
     tpdLimit: 25000,
     apiKeyEnv: 'ANTHROPIC_API_KEY',
-    priority: 4,
+    priority: 5,  // Equal priority for balanced utilization
     isAvailable: () => !!process.env.ANTHROPIC_API_KEY || !!process.env.CLAUDE_API_KEY,
   },
-  // TIER 2: Additional free providers
   {
     name: 'cohere',
     endpoint: 'https://api.cohere.ai/v1/chat',
@@ -125,7 +127,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     rpmLimit: 20,
     rpdLimit: 1000,
     apiKeyEnv: 'COHERE_API_KEY',
-    priority: 5,
+    priority: 5,  // Equal priority for balanced utilization
     isAvailable: () => !!process.env.COHERE_API_KEY,
   },
   {
@@ -135,7 +137,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     rpmLimit: 10,
     rpdLimit: 1000,
     apiKeyEnv: 'TOGETHER_API_KEY',
-    priority: 6,
+    priority: 5,  // Equal priority for balanced utilization
     isAvailable: () => !!process.env.TOGETHER_API_KEY,
   },
   {
@@ -150,7 +152,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     rpmLimit: 30,
     rpdLimit: 1000,
     apiKeyEnv: 'HUGGINGFACE_API_KEY',
-    priority: 7,
+    priority: 5,  // Equal priority for balanced utilization
     isAvailable: () => !!process.env.HUGGINGFACE_API_KEY,
   },
   {
@@ -160,7 +162,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     rpmLimit: 30,
     rpdLimit: 1000,
     apiKeyEnv: 'CEREBRAS_API_KEY',
-    priority: 8,
+    priority: 5,  // Equal priority for balanced utilization
     isAvailable: () => !!process.env.CEREBRAS_API_KEY,
   },
   {
@@ -177,7 +179,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     rpmLimit: 20,
     rpdLimit: 500,
     apiKeyEnv: 'SAMBANOVA_API_KEY',
-    priority: 9,
+    priority: 5,  // Equal priority for balanced utilization
     isAvailable: () => !!process.env.SAMBANOVA_API_KEY,
   },
 ];
@@ -306,19 +308,21 @@ class GeigerRateLimiter {
 
   /**
    * Calculate provider score for selection (lower = better)
+   * Updated: Equal distribution across all free providers
    */
   private calculateProviderScore(provider: ProviderConfig): number {
     const reading = this.readings.get(provider.name);
     if (!reading) return Infinity;
     
-    // 3D scoring: radiation × usage × inverse health
+    // Equal distribution scoring: Focus on usage balance, not priority
+    // This ensures all free providers are utilized equally
     const radiationFactor = reading.radiation / 100;
     const usageFactor = reading.dailyUsage / provider.rpdLimit;
     const healthFactor = 1 - (reading.healthScore / 100);
-    const priorityFactor = provider.priority / 10;
     
-    // Combined score (lower is better)
-    return (radiationFactor * 0.4) + (usageFactor * 0.3) + (healthFactor * 0.2) + (priorityFactor * 0.1);
+    // Remove priority weighting - all providers are equal
+    // Weight heavily toward usage balance for equal distribution
+    return (radiationFactor * 0.3) + (usageFactor * 0.5) + (healthFactor * 0.2);
   }
 
   /**
