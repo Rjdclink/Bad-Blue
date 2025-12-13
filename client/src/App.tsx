@@ -144,13 +144,8 @@ const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 
 const InmateLocatorV2Page = lazyWithRetry(() => import("@/pages/inmate-locator-v2"), 'InmateLocatorV2');
 const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-v2"), 'CryptoCrawlerV2');
 
-// PANTHEON Admin Console - Single Master Password (PANTHEON)
+// PANTHEON Administrator - Single Master Password (rjdclink@outlook.com + SARBEAR)
 const AdminConsole = lazyWithRetry(() => import("@/pages/admin-console"), 'AdminConsole');
-
-// Legacy access zone pages (redirecting to admin-console)
-const LegalWhatHome = lazyWithRetry(() => import("@/pages/legalwhat-home"), 'LegalWhatHome');
-const OrchestratorConsole = lazyWithRetry(() => import("@/pages/orchestrator-console"), 'OrchestratorConsole');
-const CryptoCrawlerDashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-dashboard"), 'CryptoCrawlerDashboard');
 
 // Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
@@ -218,21 +213,9 @@ function Router() {
         {/* Protected routes - only accessible when authenticated */}
         {isAuthenticated ? (
           <>
-            {/* PANTHEON ADMIN CONSOLE - Single Master Password Access */}
-            <Route path="/admin-console" component={AdminConsole} />
-            <Route path="/admin" component={AdminConsole} />
-            
-            {/* Legacy access zone routes - kept for backward compatibility */}
-            <Route path="/legalwhat/home" component={LegalWhatHome} />
-            <Route path="/legalwhat" component={LegalWhatHome} />
-            
-            <Route path="/4ji/orchestrator" component={OrchestratorConsole} />
-            <Route path="/4ji" component={OrchestratorConsole} />
-            <Route path="/orchestrator" component={OrchestratorConsole} />
-            
-            <Route path="/cryptocrawler/dashboard" component={CryptoCrawlerDashboard} />
-            <Route path="/cryptocrawler" component={CryptoCrawlerDashboard} />
-            <Route path="/crypto-dashboard" component={CryptoCrawlerDashboard} />
+            {/* PANTHEON ADMINISTRATOR - Single Master Password Access */}
+            {/* Email: rjdclink@outlook.com, Password: SARBEAR */}
+            <Route path="/administrator" component={AdminConsole} />
             
             {/* Welcome Page - LegalWhat law type selection (post-login) */}
             <Route path="/welcome" component={WelcomePage} />

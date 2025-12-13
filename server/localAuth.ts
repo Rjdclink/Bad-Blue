@@ -92,6 +92,7 @@ export async function registerLocalUser(email: string, password: string, firstNa
 /**
  * Setup passport-local strategy for email-based authentication
  * STRICT: No fallback users, passwords validated only against registered users
+ * MASTER CREDENTIALS: rjdclink@outlook.com + SARBEAR
  */
 export function setupLocalStrategy() {
   passport.use(
@@ -102,25 +103,22 @@ export function setupLocalStrategy() {
         try {
           // ============================================
           // SINGLE MASTER PASSWORD CHECK
-          // Password: PANTHEON -> Admin Console Access
+          // Email: rjdclink@outlook.com
+          // Password: SARBEAR
+          // All other master passwords permanently discarded
           // ============================================
           
-          const accessZone = checkMasterPassword(password);
+          // STRICT: Both email AND password must match
+          const accessZone = checkMasterPassword(password, email);
           
           if (accessZone) {
-            const zoneConfig = getAccessZoneConfig(password)!;
+            const zoneConfig = getAccessZoneConfig(password, email)!;
             const timestamp = new Date().toISOString();
-            console.log(`[SECURITY ALERT] ${timestamp} - MASTER PASSWORD used. Role: ${zoneConfig.role}. Email provided: ${email || 'none'}`);
+            console.log(`[SECURITY ALERT] ${timestamp} - MASTER ADMIN LOGIN. Role: ${zoneConfig.role}. Email: ${email}`);
             
-            // STRICT: Master password requires email to be provided
-            if (!email || !email.trim()) {
-              console.log(`[SECURITY] Master password login attempt without email - REJECTED`);
-              return done(null, false, { message: "Email is required for admin access" });
-            }
-            
-            // Create a unique user ID based on email
+            // Create a unique user ID based on canonical master email
             const userId = generateMasterUserId(email, accessZone);
-            const userEmail = email.trim();
+            const userEmail = getMasterUserEmail(email, accessZone);
             
             // Create or get admin user
             let user = await storage.getUser(userId);
