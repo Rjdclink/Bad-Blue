@@ -115,8 +115,8 @@ const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'P
 // PANTHEON Page - Advanced Intelligence Platform
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
 
-// Domain Consultation Page - 4JI Orchestrator Integration
-const ConsultationPage = lazyWithRetry(() => import("@/pages/consultation"), 'Consultation');
+// Domain Consultation Page - 4JI Orchestrator Integration (Now using Legal Consultation)
+const ConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'Consultation');
 
 // LEXARA Viewport - Full-Page AI Legal Consultation (Production, FULL AUTO)
 const LexaraViewport = lazyWithRetry(() => import("@/components/LexaraViewport"), 'LexaraViewport');
@@ -138,6 +138,11 @@ const TSHPELocatorPage = lazyWithRetry(() => import("@/pages/tshpe-locator"), 'T
 
 // Nationwide Inmate Locator Page
 const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
+
+// V2 Pages - Clean implementations (Rule 1: New route, new page component)
+// No AppLayout, no feature guards, no auth gates, no global error boundary
+const InmateLocatorV2Page = lazyWithRetry(() => import("@/pages/inmate-locator-v2"), 'InmateLocatorV2');
+const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-v2"), 'CryptoCrawlerV2');
 
 // Three-Tier Master Password Access Zones
 // Zone A: LegalWhat User Access (SARBEAR)
@@ -269,6 +274,10 @@ function Router() {
             {/* Nationwide Inmate Locator */}
             <Route path="/inmate-locator" component={InmateLocatorPage} />
             <Route path="/inmate-locator/dashboard" component={InmateLocatorPage} />
+            
+            {/* V2 Pages - Clean implementations without wrappers */}
+            <Route path="/inmate-locator-v2" component={InmateLocatorV2Page} />
+            <Route path="/cryptocrawler-v2" component={CryptoCrawlerV2Dashboard} />
             
             {/* BadBlue routes - Law Enforcement Accountability */}
             <Route path="/badblue" component={Home} />
