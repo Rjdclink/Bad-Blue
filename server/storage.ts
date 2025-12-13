@@ -1442,14 +1442,20 @@ export class DatabaseStorage implements IStorage {
     reportData?: any,
     errorMessage?: string
   ): Promise<PeopleSearchReport> {
+    const updateData: any = {
+      status,
+      errorMessage: errorMessage || null,
+      completedAt: status === 'completed' ? new Date() : null,
+    };
+    
+    // Only update reportData if provided
+    if (reportData !== undefined) {
+      updateData.reportData = reportData;
+    }
+    
     const [updated] = await db
       .update(peopleSearchReports)
-      .set({
-        status,
-        reportData: reportData || sql`report_data`,
-        errorMessage: errorMessage || null,
-        completedAt: status === 'completed' ? new Date() : null,
-      })
+      .set(updateData)
       .where(eq(peopleSearchReports.id, reportId))
       .returning();
     return updated;
@@ -1523,14 +1529,20 @@ export class DatabaseStorage implements IStorage {
     reportData?: any,
     errorMessage?: string
   ): Promise<InmateSearchReport> {
+    const updateData: any = {
+      status,
+      errorMessage: errorMessage || null,
+      completedAt: status === 'completed' ? new Date() : null,
+    };
+    
+    // Only update reportData if provided
+    if (reportData !== undefined) {
+      updateData.reportData = reportData;
+    }
+    
     const [updated] = await db
       .update(inmateSearchReports)
-      .set({
-        status,
-        reportData: reportData || sql`report_data`,
-        errorMessage: errorMessage || null,
-        completedAt: status === 'completed' ? new Date() : null,
-      })
+      .set(updateData)
       .where(eq(inmateSearchReports.id, reportId))
       .returning();
     return updated;

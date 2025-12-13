@@ -2424,7 +2424,7 @@ export type PeopleSearchReport = typeof peopleSearchReports.$inferSelect;
 // ============================================
 export const inmateSearchReports = pgTable("inmate_search_reports", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }),
+  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }), // Nullable for unauthenticated searches
   searchQuery: jsonb("search_query").notNull(), // Store full search criteria
   firstName: varchar("first_name", { length: 100 }),
   lastName: varchar("last_name", { length: 100 }),
@@ -2461,7 +2461,7 @@ export type InsertInmateSearchReport = z.infer<typeof insertInmateSearchReportSc
 // ============================================
 export const lexaraConversations = pgTable("lexara_conversations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }),
+  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }), // Nullable for unauthenticated users
   sessionId: varchar("session_id", { length: 255 }),
   userPrompt: text("user_prompt").notNull(),
   lexaraResponse: text("lexara_response").notNull(),

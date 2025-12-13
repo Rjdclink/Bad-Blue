@@ -54,7 +54,9 @@ router.get('/people-search/:reportId', async (req: Request, res: Response) => {
 router.get('/people-search/user/:userId', async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const limit = parseInt(req.query.limit as string) || 50;
+    const requestedLimit = parseInt(req.query.limit as string) || 50;
+    // Prevent DoS attacks with extremely large limits
+    const limit = Math.min(requestedLimit, 1000);
     
     const reports = await storage.getUserPeopleSearchReports(userId, limit);
     
@@ -115,7 +117,9 @@ router.get('/inmate-search/:reportId', async (req: Request, res: Response) => {
 router.get('/inmate-search/user/:userId', async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const limit = parseInt(req.query.limit as string) || 50;
+    const requestedLimit = parseInt(req.query.limit as string) || 50;
+    // Prevent DoS attacks with extremely large limits
+    const limit = Math.min(requestedLimit, 1000);
     
     const reports = await storage.getUserInmateSearchReports(userId, limit);
     
@@ -176,7 +180,9 @@ router.get('/lexara/:conversationId', async (req: Request, res: Response) => {
 router.get('/lexara/user/:userId', async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const limit = parseInt(req.query.limit as string) || 50;
+    const requestedLimit = parseInt(req.query.limit as string) || 50;
+    // Prevent DoS attacks with extremely large limits
+    const limit = Math.min(requestedLimit, 1000);
     
     const conversations = await storage.getUserLexaraConversations(userId, limit);
     
@@ -201,7 +207,9 @@ router.get('/lexara/user/:userId', async (req: Request, res: Response) => {
 router.get('/lexara/session/:sessionId', async (req: Request, res: Response) => {
   try {
     const { sessionId } = req.params;
-    const limit = parseInt(req.query.limit as string) || 100;
+    const requestedLimit = parseInt(req.query.limit as string) || 100;
+    // Prevent DoS attacks with extremely large limits
+    const limit = Math.min(requestedLimit, 1000);
     
     const conversations = await storage.getLexaraConversationsBySession(sessionId, limit);
     

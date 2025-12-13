@@ -8,7 +8,7 @@
 -- ============================================
 CREATE TABLE IF NOT EXISTS inmate_search_reports (
   id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE,
+  user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE, -- Nullable for unauthenticated searches
   search_query JSONB NOT NULL,
   first_name VARCHAR(100),
   last_name VARCHAR(100),
@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_inmate_search_name ON inmate_search_reports(last_
 -- ============================================
 CREATE TABLE IF NOT EXISTS lexara_conversations (
   id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE,
+  user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE, -- Nullable for unauthenticated users
   session_id VARCHAR(255),
   user_prompt TEXT NOT NULL,
   lexara_response TEXT NOT NULL,
@@ -53,11 +53,13 @@ CREATE INDEX IF NOT EXISTS idx_lexara_created ON lexara_conversations(created_at
 COMMENT ON TABLE inmate_search_reports IS 'Stores inmate search history and results for tracking and retrieval';
 COMMENT ON TABLE lexara_conversations IS 'Stores Lexara AI conversation history with audio synthesis tracking';
 
+COMMENT ON COLUMN inmate_search_reports.user_id IS 'User who performed search - nullable to allow unauthenticated searches';
 COMMENT ON COLUMN inmate_search_reports.search_query IS 'Full search criteria as JSON';
 COMMENT ON COLUMN inmate_search_reports.report_data IS 'Complete search results including all inmates found';
 COMMENT ON COLUMN inmate_search_reports.status IS 'Search status: processing, completed, or failed';
 COMMENT ON COLUMN inmate_search_reports.completed_at IS 'Timestamp when search completed';
 
+COMMENT ON COLUMN lexara_conversations.user_id IS 'User who initiated conversation - nullable for unauthenticated users';
 COMMENT ON COLUMN lexara_conversations.session_id IS 'Groups related conversations in a session';
 COMMENT ON COLUMN lexara_conversations.audio_generated IS 'Whether TTS audio was successfully generated';
 COMMENT ON COLUMN lexara_conversations.audio_base64 IS 'Base64 encoded audio for small files';

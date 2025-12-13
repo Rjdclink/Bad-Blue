@@ -38,6 +38,10 @@ const InmateSearchSchema = z.object({
  * Search for inmates across federal and state correctional systems
  */
 router.post('/', apiRateLimit, async (req, res) => {
+  // Declare reportId outside try block for error handling access
+  let reportId: string | null = null;
+  const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
+  
   try {
     // Validate request body
     const validation = InmateSearchSchema.safeParse(req.body);
@@ -67,11 +71,7 @@ router.post('/', apiRateLimit, async (req, res) => {
       scope: query.searchScope,
     });
 
-    // Get user ID if authenticated
-    const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
-    let reportId: string | null = null;
-
-    // Create initial report record
+    // Create initial report record if user is authenticated
     if (userId) {
       const { storage } = await import('../storage');
       const initialReport = await storage.createInmateSearchReport({
@@ -109,15 +109,25 @@ router.post('/', apiRateLimit, async (req, res) => {
   } catch (error: any) {
     console.error('[Inmate Search API] Error:', error);
 
-    // Get user ID if authenticated
-    const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
-    
-    // Try to update report with error if we can extract the reportId
-    // (In a real scenario, we'd store it in a variable accessible here)
+    // Update report with error if we have a reportId
+    if (reportId && userId) {
+      try {
+        const { storage } = await import('../storage');
+        await storage.updateInmateSearchReportStatus(
+          reportId,
+          'failed',
+          undefined,
+          error.message
+        );
+      } catch (updateError) {
+        console.error('[Inmate Search API] Failed to update error status:', updateError);
+      }
+    }
     
     return res.status(500).json({
       success: false,
       error: error.message || 'Internal server error',
+      jobId: reportId,
       jobCompleted: true,
       jobStatus: 'failed',
     });

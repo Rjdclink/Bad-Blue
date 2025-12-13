@@ -137,6 +137,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
     const sessionId = context?.sessionId || null;
     let conversationId: string | null = null;
+    let persistenceSuccess = true;
 
     try {
       const { storage } = await import('../storage');
@@ -160,6 +161,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       });
     } catch (dbError) {
       log.error('[LEXARA] Failed to persist conversation', { error: dbError });
+      persistenceSuccess = false;
       // Continue even if persistence fails - don't block the response
     }
     
@@ -169,6 +171,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       model: aiResponse.model,
       audio: audioData,
       conversationId,
+      persistenceSuccess, // Indicate if conversation was saved
       jobCompleted: true,
       jobStatus: 'completed',
     });
