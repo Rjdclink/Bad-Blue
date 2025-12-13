@@ -19,8 +19,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
 import LexaraLiveConsentModal, { 
   hasLexaraLiveConsent,
-  setLexaraLiveEnabled,
-  getLexaraLiveEnabled
+  getLexaraLiveEnabled 
 } from "@/components/LexaraLiveConsentModal";
 
 // Color palette - 30 distinct colors assigned to ensure no adjacent similar colors

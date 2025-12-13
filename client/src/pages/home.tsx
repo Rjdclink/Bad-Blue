@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, FileText, Scale, ChevronRight, Users, Search as SearchIcon, Bell, Image as ImageIcon, Mail, Activity, CreditCard, Grid } from "lucide-react";
+import { Shield, FileText, Scale, ChevronRight, Users, Search as SearchIcon, Bell, Image as ImageIcon, Mail, Activity, CreditCard, Grid, Mic } from "lucide-react";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation, Link } from "wouter";
@@ -14,7 +14,6 @@ import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { SEOHead } from "@/components/SEOHead";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 import { HiddenFAQ } from "@/components/HiddenFAQ";
-import LexaraFrame from "@/components/LexaraFrame";
 
 export default function Home() {
   usePageFaqSchema("/home");
@@ -768,9 +767,15 @@ export default function Home() {
     );
   }
 
-  // Primary Interface: LexaraFrame - Full-viewport AI Legal Consultation
+  // Primary Interface: CTA to navigate to LEXARA (/lexara)
+  // This eliminates duplicated logic + media permission flows
   return (
-    <div className="relative min-h-screen">
+    <div className="relative min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950/90 to-slate-900 flex flex-col items-center justify-center">
+      <SEOHead
+        title="BadBlue - AI Legal Consultation"
+        description="Access LEXARA AI Legal Consultation for professional legal assistance"
+      />
+      
       {/* Dashboard Access Button - Floating in corner */}
       <div className="fixed top-4 right-4 z-50">
         <Button
@@ -785,8 +790,27 @@ export default function Home() {
         </Button>
       </div>
       
-      {/* LexaraFrame - Primary Interface */}
-      <LexaraFrame />
+      {/* LEXARA CTA */}
+      <div className="text-center px-6">
+        <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
+          Welcome to BadBlue
+        </h1>
+        <p className="text-lg text-slate-300 mb-8 max-w-xl mx-auto">
+          Experience LEXARA, your AI-powered legal consultation assistant with voice interaction and real-time guidance.
+        </p>
+        <Button
+          onClick={() => setLocation('/lexara')}
+          size="lg"
+          className="bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white px-10 py-6 rounded-full font-medium shadow-lg hover:shadow-xl transition-all text-lg"
+          data-testid="button-lexara"
+        >
+          <Mic className="h-5 w-5 mr-2" />
+          Start LEXARA Consultation
+        </Button>
+        <p className="text-sm text-slate-500 mt-6">
+          Voice + video AI legal consultation
+        </p>
+      </div>
     </div>
   );
 }
