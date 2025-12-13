@@ -462,8 +462,14 @@ app.get("/api/schema-verify", async (_req, res) => {
 
   if (process.env.NODE_ENV !== 'production') {
     // Dynamically import Vite only in development to avoid bundling it in production
-    const { setupVite } = await import("./vite");
-    await setupVite(app, httpServer);
+    try {
+      const { setupVite } = await import("./vite");
+      await setupVite(app, httpServer);
+    } catch (error) {
+      console.error('[STARTUP] ❌ Failed to initialize Vite development server:', error);
+      console.error('[STARTUP] Falling back to static file serving');
+      serveStatic(app);
+    }
   } else {
     serveStatic(app);
   }
