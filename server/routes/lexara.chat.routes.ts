@@ -146,8 +146,8 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         userPrompt: prompt,
         lexaraResponse: aiResponse.content,
         audioGenerated: !!audioData,
-        audioBase64: audioData?.audioBase64 || null,
-        audioDurationMs: audioData?.durationMs || null,
+        audioBase64: audioData?.audioBase64 || undefined,
+        audioDurationMs: audioData?.durationMs || undefined,
         model: aiResponse.model,
         context: context || null,
       });

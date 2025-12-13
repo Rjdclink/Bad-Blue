@@ -897,6 +897,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/lexara', lexaraChatRoutes.default);
 
   // ============================================
+  // VERIFICATION ROUTES - Job Status & Data Retrieval
+  // ============================================
+  const verificationRoutes = await import('./routes/verification.routes');
+  app.use('/api/verify', verificationRoutes.default);
+
+  // ============================================
   // GEOCONSOLE ROUTES - Hybrid GPS Intelligence
   // ============================================
   const geoconsoleRoutes = await import('./routes/geoconsole.routes');
