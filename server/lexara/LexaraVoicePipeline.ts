@@ -620,11 +620,11 @@ export class LexaraVoicePipeline extends EventEmitter {
   getProviderStatuses(): { elevenlabs: ProviderStatus; coqui: ProviderStatus; openai: ProviderStatus } {
     const elevenLabsStatus = this.elevenLabsProvider.getStatus();
     
-    // Return unavailable status for deprecated providers
+    // Return unavailable status for deprecated providers (keep original names for API compatibility)
     return {
       elevenlabs: elevenLabsStatus,
-      coqui: { name: 'elevenlabs' as VoiceProvider, available: false, lastError: 'Coqui is deprecated - use ElevenLabs', lastCheck: Date.now() },
-      openai: { name: 'elevenlabs' as VoiceProvider, available: false, lastError: 'OpenAI TTS is deprecated - use ElevenLabs', lastCheck: Date.now() },
+      coqui: { name: 'elevenlabs', available: false, lastError: 'Coqui is deprecated - use ElevenLabs', lastCheck: Date.now() },
+      openai: { name: 'elevenlabs', available: false, lastError: 'OpenAI TTS is deprecated - use ElevenLabs', lastCheck: Date.now() },
     };
   }
 

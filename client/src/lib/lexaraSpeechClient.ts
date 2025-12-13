@@ -64,6 +64,14 @@ const playbackState: PlaybackState = {
 let audioContext: AudioContext | null = null;
 
 /**
+ * Silent WAV audio as base64 - used to unlock audio playback on mobile browsers.
+ * This is a minimal valid WAV file that produces no audible sound but triggers
+ * the browser's audio playback permission, enabling subsequent audio to play
+ * without user interaction.
+ */
+const SILENT_AUDIO_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+
+/**
  * Unlock audio playback on user interaction
  * Must be called on first user click/tap
  */
@@ -83,8 +91,8 @@ export async function unlockAudio(): Promise<boolean> {
       await audioContext.resume();
     }
 
-    // Play silent audio to unlock
-    const silentAudio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+    // Play silent audio to unlock browser audio playback
+    const silentAudio = new Audio(SILENT_AUDIO_BASE64);
     silentAudio.volume = 0.001;
     
     await silentAudio.play();

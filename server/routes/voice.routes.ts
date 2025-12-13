@@ -16,6 +16,7 @@ import {
   type VoiceSynthesisRequest 
 } from '../voiceSynthesisService';
 import { createLogger } from '../logger';
+import { synthesizeLexaraSpeech } from '../lexara/LexaraTTSRouter';
 import type { SpeechContext } from '@shared/lexaraVoicePersona';
 
 const log = createLogger('VoiceRoutes');
@@ -149,9 +150,6 @@ export function setupVoiceRoutes(app: Express): void {
       }
 
       try {
-        // Import TTS router directly for streaming
-        const { synthesizeLexaraSpeech } = await import('../lexara/LexaraTTSRouter');
-        
         log.info('[VoiceRoutes] TTS stream request', {
           provider: 'elevenlabs',
           textLength: text.length,

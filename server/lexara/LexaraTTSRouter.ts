@@ -23,6 +23,17 @@ import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 const log = createLogger('LexaraTTSRouter');
 
 // ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/** Average speaking rate in words per minute (used for duration estimation) */
+const AVERAGE_SPEAKING_RATE_WPM = 150;
+
+/** ElevenLabs style parameter valid range */
+const STYLE_MIN = 0.0;
+const STYLE_MAX = 1.0;
+
+// ============================================================================
 // ENVIRONMENT VALIDATION
 // ============================================================================
 
@@ -269,11 +280,14 @@ class LexaraTTSRouter {
     this.status = 'busy';
     
     try {
+      // Validate and clamp style parameter to ElevenLabs API range
+      const clampedStyle = Math.max(STYLE_MIN, Math.min(STYLE_MAX, request.style ?? 0.0));
+      
       // Call ElevenLabs API with voice settings
       const voiceSettings = {
         stability: request.stability ?? 0.5,
         similarityBoost: request.similarityBoost ?? 0.75,
-        style: request.style ?? 0.0,
+        style: clampedStyle,
         useSpeakerBoost: true,
       };
       
@@ -303,10 +317,9 @@ class LexaraTTSRouter {
         throw new Error('ElevenLabs returned empty audio data');
       }
       
-      // Estimate duration based on typical MP3 bitrate and text length
-      // Average speaking rate is ~150 words per minute
+      // Estimate duration based on text length and average speaking rate
       const wordCount = text.split(/\s+/).length;
-      const estimatedDurationMs = Math.round((wordCount / 150) * 60 * 1000);
+      const estimatedDurationMs = Math.round((wordCount / AVERAGE_SPEAKING_RATE_WPM) * 60 * 1000);
       
       // Log success
       log.info('[LexaraTTSRouter] ElevenLabs synthesis complete', {
@@ -401,10 +414,13 @@ class LexaraTTSRouter {
       textLength: text.length,
     });
     
+    // Validate and clamp style parameter to ElevenLabs API range
+    const clampedStyle = Math.max(STYLE_MIN, Math.min(STYLE_MAX, request.style ?? 0.0));
+    
     const voiceSettings = {
       stability: request.stability ?? 0.5,
       similarityBoost: request.similarityBoost ?? 0.75,
-      style: request.style ?? 0.0,
+      style: clampedStyle,
       useSpeakerBoost: true,
     };
     
@@ -419,7 +435,7 @@ class LexaraTTSRouter {
       let index = 0;
       let totalBytes = 0;
       const wordCount = text.split(/\s+/).length;
-      const estimatedTotalDurationMs = Math.round((wordCount / 150) * 60 * 1000);
+      const estimatedTotalDurationMs = Math.round((wordCount / AVERAGE_SPEAKING_RATE_WPM) * 60 * 1000);
       
       // Read from the stream
       const reader = audioStream.getReader();
