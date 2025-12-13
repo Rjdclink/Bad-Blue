@@ -56,6 +56,21 @@ export {
   type CrawlerOptimizationProfile,
 } from './SevenStageOptimization';
 
+// Cain (Overseer) and The Reaper
+export {
+  Cain,
+  Reaper,
+  type EpistemicSurfaceArea,
+  type EntropyGradient,
+  type CompressionResistance,
+  type EvolutionaryDebt,
+  type StarburstDemand,
+  type FailsafeSwitch,
+  type ReaperSignal,
+  type ReaperAction,
+  type EdenscanResult,
+} from './CainAndReaper';
+
 // Job Management with Tiered Reports and Doomsday Clock
 export { 
   CrawlerJobManager, 
