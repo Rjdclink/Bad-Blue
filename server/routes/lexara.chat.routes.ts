@@ -19,10 +19,15 @@ const log = createLogger('LEXARARoutes');
  * POST /api/lexara/chat
  * Main chat endpoint for LEXARA conversational AI
  * Force-merges LEXARA_KERNEL to ensure persona consistency
+ * 
+ * Returns:
+ * - response: Lexara's text response
+ * - audio: Audio data as base64 or audioUrl for playback
+ * - If ElevenLabs TTS is unavailable, returns text only
  */
 router.post('/chat', express.json(), async (req: Request, res: Response) => {
   try {
-    const { prompt, context, systemPrompt } = req.body;
+    const { prompt, context, systemPrompt, includeAudio = true } = req.body;
     
     // Force-merge LEXARA_KERNEL into persona - stops the "default robot" voice from ever appearing
     req.body.persona = mergePersonaWithKernel(req.body.persona);
@@ -39,6 +44,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       hasPreviousMessages: !!context?.previousMessages?.length,
       behaviorMode: context?.behaviorMode,
       personaName: LEXARA_KERNEL.identity.name,
+      includeAudio,
     });
     
     // Build conversation history for context
@@ -92,10 +98,46 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       model: aiResponse.model,
     });
     
+    // Generate audio using ElevenLabs TTS if requested
+    let audioData: { audioUrl?: string; audioBase64?: string; mimeType?: string; durationMs?: number } | null = null;
+    
+    if (includeAudio) {
+      try {
+        // Import the TTS router
+        const { synthesizeLexaraSpeech } = await import('../lexara/LexaraTTSRouter');
+        
+        const ttsResult = await synthesizeLexaraSpeech({
+          text: aiResponse.content,
+          context: 'general',
+        });
+        
+        // Return audio as base64 for client playback
+        audioData = {
+          audioBase64: ttsResult.audioData.toString('base64'),
+          mimeType: ttsResult.mimeType,
+          durationMs: ttsResult.durationMs,
+        };
+        
+        log.info('[LEXARA] TTS synthesis complete', {
+          provider: 'elevenlabs',
+          voiceId: ttsResult.voiceId,
+          audioByteLength: ttsResult.audioByteLength,
+          durationMs: ttsResult.durationMs,
+        });
+        
+      } catch (ttsError) {
+        // Log the error but don't fail the request - return text without audio
+        log.warn('[LEXARA] TTS synthesis failed, returning text only', { 
+          error: ttsError instanceof Error ? ttsError.message : 'Unknown error' 
+        });
+      }
+    }
+    
     return res.json({
       success: true,
       response: aiResponse.content,
       model: aiResponse.model,
+      audio: audioData,
     });
     
   } catch (error) {

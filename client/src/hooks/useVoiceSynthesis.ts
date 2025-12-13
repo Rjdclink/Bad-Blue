@@ -303,92 +303,62 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   }, [getLexaraVoice, getModulatedVoiceSettings]);
 
   /**
-   * Speak using server-side synthesis with LexaraServerTTS
-   * A7: Primary method - ensures permanent feminine voice
+   * Speak using server-side synthesis with ElevenLabs via LexaraServerTTS
+   * Primary method - ensures permanent feminine voice
    */
   const speakWithServer = useCallback(async (
     text: string,
     options: VoiceSynthesisOptions
   ) => {
     try {
-      // Try Lexara voice endpoint first
-      const response = await fetch('/api/lexara/voice', {
+      // Use the TTS stream endpoint for direct ElevenLabs audio
+      const response = await fetch('/api/lexara/tts/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           text,
-          context: options.context || 'explanation',
-          emotionalState: options.userInput 
-            ? (analyzeUserSentiment(options.userInput).stress ? 'empathetic' : 'neutral')
-            : 'neutral',
         }),
       });
 
       if (!response.ok) {
-        // Fallback to lexara endpoint
-        const lexaraResponse = await fetch('/api/lexara/speak', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text,
-            context: options.context || 'explanation',
-            optimizeForAuditory: true,
-          }),
-        });
-        
-        if (!lexaraResponse.ok) {
-          throw new Error(`Server speech synthesis failed: ${lexaraResponse.status}`);
-        }
-        
-        // Handle lexara response
-        const lexaraContentType = lexaraResponse.headers.get('Content-Type');
-        if (lexaraContentType?.includes('audio/')) {
-          const audioBlob = await lexaraResponse.blob();
-          await LexaraServerTTS.play(audioBlob);
-          setProvider('lexara-server');
-        } else {
-          const data = await lexaraResponse.json();
-          setProvider(data.provider || 'browser');
-          await speakWithBrowser(data.text || text, '', options);
-        }
-        return;
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Server speech synthesis failed: ${response.status}`);
       }
 
       const contentType = response.headers.get('Content-Type');
 
-      // Check if we got audio data
-      if (contentType?.includes('audio/')) {
-        const audioBlob = await response.blob();
-        
-        // Use LexaraServerTTS to play - A7: replaces browser defaults
-        await LexaraServerTTS.play(audioBlob);
-        setProvider('lexara-server');
-        
-      } else {
-        // Got voice config for browser synthesis
-        const data = await response.json();
-        setProvider(data.provider || 'lexara-browser');
-        
-        // Apply emotional modulation from server config
-        if (data.voiceConfig) {
-          emotionalStateRef.current = data.voiceConfig;
-        }
-        
-        await speakWithBrowser(data.text || text, '', options);
+      // Verify we got audio data
+      if (!contentType?.includes('audio/')) {
+        throw new Error('Server did not return audio data');
       }
+
+      const audioBlob = await response.blob();
+      
+      if (audioBlob.size === 0) {
+        throw new Error('Received empty audio from server');
+      }
+      
+      // Use LexaraServerTTS to play
+      await LexaraServerTTS.play(audioBlob);
+      setProvider('elevenlabs');
+      
+      const voiceId = response.headers.get('X-Voice-Id');
+      console.log('[useVoiceSynthesis] Playing ElevenLabs audio', {
+        provider: 'elevenlabs',
+        voiceId,
+        audioSize: audioBlob.size,
+      });
 
     } catch (err) {
       throw err;
     }
-  }, [speakWithBrowser]);
+  }, []);
 
   /**
    * Main speak function
-   * A7: Prioritizes server TTS to ensure permanent feminine voice
+   * Prioritizes ElevenLabs server TTS for consistent Lexara voice
    */
   const speak = useCallback(async (
     text: string,
@@ -407,7 +377,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       // Notify Lexara
       Lexara.notify(Lexara.events.SPEAKING_START, { text: text.substring(0, 50) });
 
-      // Try server-side synthesis first (preferred for consistent feminine voice)
+      // Try server-side ElevenLabs synthesis
       try {
         await speakWithServer(text, options);
         options.onStart?.();
@@ -427,9 +397,9 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         });
         
       } catch (serverError) {
-        // Fallback to browser synthesis with LEXARA feminine voice
-        console.warn('Server synthesis failed, using browser TTS with LEXARA voice:', serverError);
-        await speakWithBrowser(text, '', options);
+        // Log the error - don't fallback to browser TTS (per requirements)
+        console.error('[useVoiceSynthesis] ElevenLabs TTS failed:', serverError);
+        throw serverError;
       }
 
     } catch (err) {
@@ -442,11 +412,11 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       
       toast({
         title: 'Voice Synthesis Error',
-        description: 'Unable to play audio. Please check your audio settings.',
+        description: error.message || 'Unable to play audio. Please check ElevenLabs configuration.',
         variant: 'destructive',
       });
     }
-  }, [stop, speakWithServer, speakWithBrowser, toast]);
+  }, [stop, speakWithServer, toast]);
 
   return {
     speak,
