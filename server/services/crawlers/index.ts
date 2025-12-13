@@ -41,6 +41,21 @@ export {
   SilenceCrawler,
 } from './SixCrawlerInitiative';
 
+// Seven-Stage Three-Pass Optimization Framework
+export {
+  SevenStageOptimizationOrchestrator,
+  MirrorOptimizer,
+  KeyOptimizer,
+  ChewerOptimizer,
+  ComputationalOptimizer,
+  USCOptimizer,
+  WooOptimizer,
+  SilenceOptimizer,
+  type OptimizationPass,
+  type OptimizationStage,
+  type CrawlerOptimizationProfile,
+} from './SevenStageOptimization';
+
 // Job Management with Tiered Reports and Doomsday Clock
 export { 
   CrawlerJobManager, 
