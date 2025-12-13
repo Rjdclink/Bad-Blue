@@ -34,6 +34,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface PeopleFinderSearchProps {
   onBack?: () => void;
+  onResults?: (results: PeopleSearchReport | null) => void;
 }
 
 interface OSINTSource {
@@ -43,7 +44,7 @@ interface OSINTSource {
   timestamp: string;
 }
 
-interface PeopleSearchReport {
+export interface PeopleSearchReport {
   identitySummary: {
     name: string;
     aliases?: string[];
@@ -64,7 +65,7 @@ interface PeopleSearchReport {
   sources: OSINTSource[];
 }
 
-export default function PeopleFinderSearch({ onBack }: PeopleFinderSearchProps) {
+export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSearchProps) {
   const { toast } = useToast();
   
   // Check for URL query parameters
@@ -95,6 +96,8 @@ export default function PeopleFinderSearch({ onBack }: PeopleFinderSearchProps) 
     },
     onSuccess: (data: PeopleSearchReport) => {
       setResults(data);
+      // Notify parent component of results for GeoConsole integration
+      onResults?.(data);
       toast({
         title: "Search Complete",
         description: `Found intelligence report for ${data.identitySummary.name}`,
