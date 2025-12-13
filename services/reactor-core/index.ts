@@ -47,6 +47,8 @@ export interface ReactorConfig {
   maxPendingSimulations: number;
   /** Gate timeout (ms) */
   gateTimeoutMs: number;
+  /** Minimum simulation confidence threshold (0-1) */
+  minSimConfidence: number;
   /** Telemetry emission interval (ms) */
   telemetryIntervalMs: number;
   /** Circuit breaker configurations */
@@ -236,6 +238,7 @@ export class ReactorCore extends EventEmitter {
       dryRun: false,
       maxPendingSimulations: 100,
       gateTimeoutMs: 5000,
+      minSimConfidence: 0.5,
       telemetryIntervalMs: 10000,
       circuitBreakers: [
         { name: 'crypto_error_rate', domain: 'crypto', threshold: 0.3, metric: 'error_rate', cooldownMs: 60000, severity: 'high' },
@@ -571,11 +574,11 @@ export class ReactorCore extends EventEmitter {
     // In production, this would be async with callback
     const simResult = await this.requestSimulation(simRequest);
 
-    if (!simResult || simResult.confidence < 0.5) {
+    if (!simResult || simResult.confidence < this.config.minSimConfidence) {
       return {
         passed: false,
         bypassed: false,
-        reason: simResult ? `Simulation confidence too low: ${simResult.confidence}` : 'Simulation timeout',
+        reason: simResult ? `Simulation confidence too low: ${simResult.confidence} (threshold: ${this.config.minSimConfidence})` : 'Simulation timeout',
         sim_id: simRequest.event_id,
         duration_ms: Date.now() - startTime,
       };

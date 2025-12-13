@@ -14,23 +14,23 @@
  *   await startReactor();
  */
 
-import { getTransport } from '../packages/contracts/src/transport';
-import { getReactorCore, ReactorCore } from '../services/reactor-core/index';
-import { getSimFabric, SimulationFabric } from '../services/sim-fabric/index';
-import { getCryptoExecutor, CryptoCrawlerExecutor } from '../services/cryptocrawler-executor/index';
-import { getLexaraPlanner, getLexaraSynth, LexaraPlanner, LexaraSynth } from '../services/lexara-synth/index';
-import { getForensicsDashboard, ForensicsDashboard } from '../dashboards/forensics/index';
+import { getTransport } from '../../packages/contracts/src/transport';
+import { getReactorCore, ReactorCore } from '../../services/reactor-core/index';
+import { getSimFabric, SimulationFabric } from '../../services/sim-fabric/index';
+import { getCryptoExecutor, CryptoCrawlerExecutor } from '../../services/cryptocrawler-executor/index';
+import { getLexaraPlanner, getLexaraSynth, LexaraPlanner, LexaraSynth } from '../../services/lexara-synth/index';
+import { getForensicsDashboard, ForensicsDashboard } from '../../dashboards/forensics/index';
 
 // Re-export contracts
-export * from '../packages/contracts/src/index';
-export { ReactorTransport, getTransport } from '../packages/contracts/src/transport';
+export * from '../../packages/contracts/src/index';
+export { ReactorTransport, getTransport } from '../../packages/contracts/src/transport';
 
 // Re-export services
-export { ReactorCore, getReactorCore } from '../services/reactor-core/index';
-export { SimulationFabric, getSimFabric } from '../services/sim-fabric/index';
-export { CryptoCrawlerExecutor, getCryptoExecutor } from '../services/cryptocrawler-executor/index';
-export { LexaraPlanner, LexaraSynth, getLexaraPlanner, getLexaraSynth } from '../services/lexara-synth/index';
-export { ForensicsDashboard, getForensicsDashboard } from '../dashboards/forensics/index';
+export { ReactorCore, getReactorCore } from '../../services/reactor-core/index';
+export { SimulationFabric, getSimFabric } from '../../services/sim-fabric/index';
+export { CryptoCrawlerExecutor, getCryptoExecutor } from '../../services/cryptocrawler-executor/index';
+export { LexaraPlanner, LexaraSynth, getLexaraPlanner, getLexaraSynth } from '../../services/lexara-synth/index';
+export { ForensicsDashboard, getForensicsDashboard } from '../../dashboards/forensics/index';
 
 // ============================================================================
 // UNIFIED REACTOR LIFECYCLE

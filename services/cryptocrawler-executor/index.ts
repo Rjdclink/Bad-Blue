@@ -322,7 +322,8 @@ export class CryptoCrawlerExecutor extends EventEmitter {
       
       if (!rateCheck.allowed) {
         console.log(`[CryptoExecutor] Rate limited for ${exchange}`);
-        // Could retry or emit rate-limited result
+        // Emit rate-limited result to maintain contract with caller
+        await this.emitRateLimitedResult(intent, exchange);
         return;
       }
 
@@ -533,6 +534,23 @@ export class CryptoCrawlerExecutor extends EventEmitter {
       details: {
         state: 'rejected',
         rejection_reason: 'Intent expired before execution',
+      } as CryptoActionResult,
+      latency_ms: 0,
+      idempotency_key: intent.idempotency_key,
+    };
+
+    await this.transport.publishDurable(PUBSUB_TOPICS.RESULT, result);
+  }
+
+  private async emitRateLimitedResult(intent: ActionIntent, exchange: string): Promise<void> {
+    const result: ActionResult = {
+      ...createBaseEvent(intent.trace_id),
+      kind: 'result',
+      domain: 'crypto',
+      status: 'rejected',
+      details: {
+        state: 'rejected',
+        rejection_reason: `Rate limited for exchange: ${exchange}`,
       } as CryptoActionResult,
       latency_ms: 0,
       idempotency_key: intent.idempotency_key,
