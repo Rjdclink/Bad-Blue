@@ -1099,23 +1099,24 @@ export class USCCrawler extends EventEmitter {
    */
   private async coordinationLoop(): Promise<void> {
     while (this.isRunning) {
+      // Check if we can process tasks
       if (this.taskQueue.length > 0 && this.coordinationState.activeTaskCount < 10) {
         const task = this.taskQueue.shift();
         if (task) {
-          this.executeTask(task);
+          // Fire and forget - task execution is tracked via activeTaskCount
+          void this.executeTask(task);
         }
+        
+        // Update throughput
+        const uptime = (Date.now() - this.startTime) / 1000;
+        this.coordinationState.throughput = this.tasksProcessed / Math.max(1, uptime);
+        
+        // Minimal delay when actively processing
+        await new Promise(resolve => setTimeout(resolve, 10));
       } else {
-        // Back-pressure: increase delay when queue is empty to reduce CPU usage
-        await new Promise(resolve => setTimeout(resolve, this.taskQueue.length > 0 ? 10 : 100));
-        continue;
+        // Back-pressure: increase delay when queue is empty or at capacity to reduce CPU usage
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
-
-      // Update throughput
-      const uptime = (Date.now() - this.startTime) / 1000;
-      this.coordinationState.throughput = this.tasksProcessed / Math.max(1, uptime);
-
-      // Minimal delay for coordination cycle (only when processing tasks)
-      await new Promise(resolve => setTimeout(resolve, 10));
     }
   }
 
