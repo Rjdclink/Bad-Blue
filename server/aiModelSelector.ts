@@ -5,10 +5,9 @@
  * Enhanced for cryptocrawler AI harmony integration.
  * 
  * GEMINI SELECTION (Updated December 2025):
- * - High-capability tasks → gemini-3-pro-preview (newest flagship, 1M context)
- * - Lightweight/high-volume → gemini-2.5-flash (fast inference)
- * - Ultra-high-volume → gemini-2.5-flash-lite (1000 requests/day)
- * - Stable fallback → gemini-1.5-pro
+ * - High-capability tasks → gemini-3.0-flash-preview (preview features, experimental)
+ * - Lightweight/high-volume → gemini-2.5-flash (fast inference, current stable)
+ * - Stable fallback → gemini-2.0-flash
  * 
  * CLAUDE SELECTION:
  * - Legal/creative → claude-3-5-sonnet-latest (advanced reasoning)
@@ -125,7 +124,7 @@ interface ModelCapabilities {
  */
 const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   // Gemini 3 models (Updated December 2025 - NEWEST)
-  'gemini-3-pro': {
+  'gemini-2.5-pro': {
     multimodal: 98,
     longContext: 99,
     massiveContext: 98,
@@ -143,7 +142,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     costEfficiency: 80,
     dailyCapacity: 75, // Premium model
   },
-  'gemini-3-flash': {
+  'gemini-2.5-flash': {
     multimodal: 92,
     longContext: 95,
     massiveContext: 90,
@@ -161,7 +160,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     costEfficiency: 95,
     dailyCapacity: 100, // High throughput
   },
-  'gemini-3-pro-preview': {
+  'gemini-3.0-flash-preview': {
     multimodal: 95,
     longContext: 98,
     massiveContext: 95,
@@ -180,24 +179,6 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     dailyCapacity: 50, // Premium model
   },
   // Legacy Gemini models (kept for backward compatibility)
-  'gemini-2.5-flash': {
-    multimodal: 85,
-    longContext: 90,
-    massiveContext: 80,
-    structuredOutput: 90,
-    codeGeneration: 85,
-    creativeWriting: 80,
-    reasoning: 85,
-    speed: 95,
-    verification: 85,
-    legalAnalysis: 75,
-    imageAnalysis: 85,
-    patternRecognition: 85,
-    dataExtraction: 85,
-    searchGrounding: 95,
-    costEfficiency: 95,
-    dailyCapacity: 100, // High throughput
-  },
   'gemini-2.5-flash-lite': {
     multimodal: 80,
     longContext: 85,
@@ -871,36 +852,36 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
 export class AIModelSelector {
   /**
    * Select optimal Gemini model based on task attributes
-   * Updated December 2025: Prioritizes Gemini 3 models
+   * Updated December 2025: Prioritizes Gemini 2.5 models
    */
   static selectGeminiModel(attrs: TaskAttributes): string {
-    // Use gemini-3-pro for multimodal/image tasks
+    // Use gemini-2.5-pro for multimodal/image tasks
     if (attrs.needsMultimodal || attrs.needsImageAnalysis) {
-      return 'gemini-3-pro';
+      return 'gemini-2.5-pro';
     }
     
-    // Use gemini-3-pro for high-complexity tasks
+    // Use gemini-2.5-pro for high-complexity tasks
     if (attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'gemini-3-pro';
+      return 'gemini-2.5-pro';
     }
     
-    // Use gemini-3-flash for high-volume/lightweight tasks
+    // Use gemini-2.5-flash for high-volume/lightweight tasks
     if (attrs.complexity === TaskComplexity.LIGHTWEIGHT || attrs.needsFastResponse) {
-      return 'gemini-3-flash';
+      return 'gemini-2.5-flash';
     }
     
-    // Use gemini-3-pro for long context needs
+    // Use gemini-2.5-pro for long context needs
     if (attrs.needsLongContext || attrs.needsMassiveContext) {
-      return 'gemini-3-pro';
+      return 'gemini-2.5-pro';
     }
     
-    // Use gemini-3-pro for advanced reasoning
+    // Use gemini-2.5-pro for advanced reasoning
     if (attrs.needsReasoning || attrs.needsPatternRecognition) {
-      return 'gemini-3-pro';
+      return 'gemini-2.5-pro';
     }
     
-    // Default to gemini-3-flash for cost efficiency
-    return 'gemini-3-flash';
+    // Default to gemini-2.5-flash for cost efficiency
+    return 'gemini-2.5-flash';
   }
   
   /**

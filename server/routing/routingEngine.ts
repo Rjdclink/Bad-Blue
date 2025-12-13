@@ -65,7 +65,7 @@ export interface HealthCheckResult {
 // Default model configurations
 const DEFAULT_MODELS: ModelConfig[] = [
   {
-    id: 'gemini-3-pro',
+    id: 'gemini-2.5-pro',
     name: 'Gemini 3 Pro',
     provider: 'gemini',
     status: 'online',
@@ -77,7 +77,7 @@ const DEFAULT_MODELS: ModelConfig[] = [
     maxBudget: 1000
   },
   {
-    id: 'gemini-3-flash',
+    id: 'gemini-2.5-flash',
     name: 'Gemini 3 Flash',
     provider: 'gemini',
     status: 'online',
@@ -143,42 +143,42 @@ const DEFAULT_ROUTES: RouteConfig[] = [
   {
     domain: 'legal',
     taskType: 'analysis',
-    primaryModelId: 'gemini-3-pro',
+    primaryModelId: 'gemini-2.5-pro',
     backupModelIds: ['claude-3-sonnet', 'groq-llama-70b', 'mistral-7b'],
     routingStrategy: 'dual',
-    weights: { 'gemini-3-pro': 1.0, 'claude-3-sonnet': 0.9, 'groq-llama-70b': 0.7 }
+    weights: { 'gemini-2.5-pro': 1.0, 'claude-3-sonnet': 0.9, 'groq-llama-70b': 0.7 }
   },
   {
     domain: 'legal',
     taskType: 'drafting',
     primaryModelId: 'claude-3-sonnet',
-    backupModelIds: ['gemini-3-pro', 'gemini-3-flash', 'mistral-7b'],
+    backupModelIds: ['gemini-2.5-pro', 'gemini-2.5-flash', 'mistral-7b'],
     routingStrategy: 'single',
-    weights: { 'claude-3-sonnet': 1.0, 'gemini-3-pro': 0.95 }
+    weights: { 'claude-3-sonnet': 1.0, 'gemini-2.5-pro': 0.95 }
   },
   {
     domain: 'crypto',
     taskType: 'analysis',
-    primaryModelId: 'gemini-3-flash',
+    primaryModelId: 'gemini-2.5-flash',
     backupModelIds: ['groq-llama-70b', 'mistral-7b'],
     routingStrategy: 'single',
-    weights: { 'gemini-3-flash': 1.0, 'groq-llama-70b': 0.85 }
+    weights: { 'gemini-2.5-flash': 1.0, 'groq-llama-70b': 0.85 }
   },
   {
     domain: 'osint',
     taskType: 'summarization',
     primaryModelId: 'groq-llama-70b',
-    backupModelIds: ['gemini-3-flash', 'mistral-7b'],
+    backupModelIds: ['gemini-2.5-flash', 'mistral-7b'],
     routingStrategy: 'single',
-    weights: { 'groq-llama-70b': 1.0, 'gemini-3-flash': 0.9 }
+    weights: { 'groq-llama-70b': 1.0, 'gemini-2.5-flash': 0.9 }
   },
   {
     domain: 'general',
     taskType: 'chat',
-    primaryModelId: 'gemini-3-flash',
+    primaryModelId: 'gemini-2.5-flash',
     backupModelIds: ['claude-3-sonnet', 'groq-llama-70b', 'mistral-7b', 'local-llm'],
     routingStrategy: 'single',
-    weights: { 'gemini-3-flash': 1.0, 'claude-3-sonnet': 0.9, 'groq-llama-70b': 0.85 }
+    weights: { 'gemini-2.5-flash': 1.0, 'claude-3-sonnet': 0.9, 'groq-llama-70b': 0.85 }
   }
 ];
 

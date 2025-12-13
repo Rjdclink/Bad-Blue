@@ -76,7 +76,7 @@ export interface RoutingResult {
 
 const MODEL_CAPABILITIES: ModelCapability[] = [
   {
-    modelName: 'gemini-3-flash',
+    modelName: 'gemini-2.5-flash',
     capabilities: {
       legalReasoning: 0.85,
       factExtraction: 0.95,
