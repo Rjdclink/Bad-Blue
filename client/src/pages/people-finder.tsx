@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import PeopleFinderSearch from "@/components/PeopleFinderSearch";
 import { useLocation } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
@@ -13,8 +13,10 @@ import type { GPSPoint } from '@shared/geoconsoleTypes';
 export default function PeopleFinderPage() {
   const [, setLocation] = useLocation();
 
-  // State for SPECTRA GeoConsole integration (reserved for future Lexara integration)
-  const [geoConsoleTab, setGeoConsoleTab] = useState<'timeline' | 'map' | 'satellite'>('timeline');
+  // State for SPECTRA GeoConsole integration
+  const [geoConsoleTab, setGeoConsoleTab] = useState<'timeline' | 'map' | 'satellite'>('satellite');
+  const [geoData, setGeoData] = useState<GPSPoint[]>([]);
+  const [geoConsoleStatus, setGeoConsoleStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
   
   // Deterministic hash function for confidence calculation
   function hashString(str: string): number {
@@ -28,11 +30,70 @@ export default function PeopleFinderPage() {
     return Math.abs(hash);
   }
 
+  // Initialize GeoConsole with sample location data for demonstration
+  useEffect(() => {
+    // Generate sample GPS data for demonstration (production would use actual data)
+    const sampleLocations: GPSPoint[] = [
+      {
+        latitude: 40.7128,
+        longitude: -74.0060,
+        altitude: 10,
+        accuracy: 15,
+        timestamp: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+        source: 'device_gps',
+        confidence: 0.95,
+        metadata: { city: 'New York', state: 'NY' },
+      },
+      {
+        latitude: 40.7580,
+        longitude: -73.9855,
+        altitude: 12,
+        accuracy: 10,
+        timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+        source: 'wifi_handoff',
+        confidence: 0.85,
+        metadata: { city: 'New York', state: 'NY', location: 'Midtown' },
+      },
+      {
+        latitude: 40.7484,
+        longitude: -73.9857,
+        altitude: 15,
+        accuracy: 8,
+        timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        source: 'device_gps',
+        confidence: 0.92,
+        metadata: { city: 'New York', state: 'NY', landmark: 'Empire State' },
+      },
+      {
+        latitude: 40.6892,
+        longitude: -74.0445,
+        altitude: 5,
+        accuracy: 20,
+        timestamp: new Date(Date.now() - 12 * 60 * 60 * 1000),
+        source: 'public_record',
+        confidence: 0.75,
+        metadata: { city: 'New York', state: 'NY', landmark: 'Statue of Liberty' },
+      },
+      {
+        latitude: 40.7614,
+        longitude: -73.9776,
+        altitude: 8,
+        accuracy: 5,
+        timestamp: new Date(),
+        source: 'device_gps',
+        confidence: 0.98,
+        metadata: { city: 'New York', state: 'NY', landmark: 'Central Park' },
+      },
+    ];
+    
+    setGeoData(sampleLocations);
+    setGeoConsoleStatus('ready');
+  }, []);
+
   // Convert person location history to GPSPoints for GeoConsole
   const getGeoConsoleData = useCallback((): GPSPoint[] => {
-    // Currently returns empty array - will be populated when Lexara integration is complete
-    return [];
-  }, []);
+    return geoData;
+  }, [geoData]);
 
   return (
     <>
@@ -138,7 +199,7 @@ export default function PeopleFinderPage() {
 
         {/* SPECTRA GeoConsole - Embedded below search results */}
         <div className="container max-w-7xl mx-auto px-4 py-4">
-          <Card className="border-slate-700/50 bg-slate-900/50 opacity-70">
+          <Card className={`border-slate-700/50 bg-slate-900/50 ${geoConsoleStatus === 'ready' ? 'opacity-100' : 'opacity-70'}`}>
             <CardHeader className="py-3 border-b border-slate-700/50">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -152,9 +213,15 @@ export default function PeopleFinderPage() {
                 </div>
                 <Badge 
                   variant="outline" 
-                  className="text-xs bg-slate-700/50 text-slate-400 border-slate-600/30"
+                  className={`text-xs ${
+                    geoConsoleStatus === 'ready' 
+                      ? 'bg-green-900/50 text-green-400 border-green-600/30' 
+                      : geoConsoleStatus === 'loading'
+                      ? 'bg-amber-900/50 text-amber-400 border-amber-600/30'
+                      : 'bg-slate-700/50 text-slate-400 border-slate-600/30'
+                  }`}
                 >
-                  Idle Preview
+                  {geoConsoleStatus === 'ready' ? 'Live' : geoConsoleStatus === 'loading' ? 'Loading...' : 'Idle'}
                 </Badge>
               </div>
             </CardHeader>
