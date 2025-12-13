@@ -334,25 +334,30 @@ async function searchPublicRecords(name: string): Promise<OSINTSource> {
   try {
     // Check if PANTHEON is available for crawling
     if (canActivatePantheon()) {
-      const crawlerResult = await pantheonOrchestrator('public-records-search', {
-        target: name,
-        crawlerType: 'ICE', // Precision extractor for public records
-        priority: 7,
-        quantum: 15000,
-        entropyBudget: 50,
-      });
+      try {
+        await pantheonOrchestrator.initialize();
+        const crawlerResults = await pantheonOrchestrator.search([name], {
+          depth: 2,
+          crawlers: ['startrek', 'birdofprey'],
+          maxResultsPerCrawler: 10,
+          timeout: 15000,
+          stealth: true,
+        });
 
-      if (crawlerResult && crawlerResult.signatures && crawlerResult.signatures.length > 0) {
-        return {
-          name: 'Public Records',
-          data: {
-            records: crawlerResult.signatures.map((sig: any) => sig.hash || JSON.stringify(sig)),
-            rawData: crawlerResult,
-            crawlerUsed: 'PANTHEON ICE',
-          },
-          confidence: 0.85,
-          timestamp: new Date(),
-        };
+        if (crawlerResults && crawlerResults.length > 0) {
+          return {
+            name: 'Public Records',
+            data: {
+              records: crawlerResults.map((result: CrawlerResult) => result.content || JSON.stringify(result)),
+              rawData: crawlerResults,
+              crawlerUsed: 'PANTHEON',
+            },
+            confidence: 0.85,
+            timestamp: new Date(),
+          };
+        }
+      } catch (crawlerError) {
+        logger.warn('[PEOPLE SEARCH] PANTHEON crawler error, falling back to web search:', crawlerError);
       }
     }
 
@@ -403,17 +408,17 @@ async function searchPublicRecords(name: string): Promise<OSINTSource> {
 async function searchSocialMedia(name: string): Promise<OSINTSource> {
   try {
     // Use Social Intelligence Service for comprehensive social media search
-    const socialResults = await socialIntelligenceService.searchSocialProfiles(name);
+    const socialResults = await socialIntelligenceService.findUserAcrossPlatforms(name);
     
-    if (socialResults && socialResults.profiles && socialResults.profiles.length > 0) {
+    if (socialResults && socialResults.length > 0) {
       return {
         name: 'Social Media',
         data: {
-          profiles: socialResults.profiles.map((profile: any) => 
+          profiles: socialResults.map((profile: any) => 
             `${profile.platform}: ${profile.url || profile.username} (confidence: ${profile.confidence || 'N/A'})`
           ),
           rawData: socialResults,
-          platformCount: socialResults.profiles.length,
+          platformCount: socialResults.length,
         },
         confidence: 0.8,
         timestamp: new Date(),
@@ -422,24 +427,29 @@ async function searchSocialMedia(name: string): Promise<OSINTSource> {
 
     // Fallback: Use PANTHEON HYDRA crawler for social discovery
     if (canActivatePantheon()) {
-      const crawlerResult = await pantheonOrchestrator('social-media-search', {
-        target: name,
-        crawlerType: 'HYDRA', // Adaptive explorer for social networks
-        priority: 6,
-        quantum: 20000,
-        entropyBudget: 100,
-      });
+      try {
+        await pantheonOrchestrator.initialize();
+        const crawlerResults = await pantheonOrchestrator.search([name], {
+          depth: 2,
+          crawlers: ['sixdegrees'],
+          maxResultsPerCrawler: 20,
+          timeout: 20000,
+          stealth: true,
+        });
 
-      if (crawlerResult && crawlerResult.signatures && crawlerResult.signatures.length > 0) {
-        return {
-          name: 'Social Media',
-          data: {
-            profiles: crawlerResult.signatures.map((sig: any) => sig.hash || JSON.stringify(sig)),
-            crawlerUsed: 'PANTHEON HYDRA',
-          },
-          confidence: 0.7,
-          timestamp: new Date(),
-        };
+        if (crawlerResults && crawlerResults.length > 0) {
+          return {
+            name: 'Social Media',
+            data: {
+              profiles: crawlerResults.map((result: CrawlerResult) => result.content || JSON.stringify(result)),
+              crawlerUsed: 'PANTHEON SixDegrees',
+            },
+            confidence: 0.7,
+            timestamp: new Date(),
+          };
+        }
+      } catch (crawlerError) {
+        logger.warn('[PEOPLE SEARCH] PANTHEON crawler error:', crawlerError);
       }
     }
 
@@ -471,28 +481,33 @@ async function searchSocialMedia(name: string): Promise<OSINTSource> {
 async function searchProfessionalNetworks(name: string): Promise<OSINTSource> {
   try {
     // Use email discovery service for professional contacts
-    const emailResults = await emailDiscoveryService.discoverProfessionalEmails(name);
+    const emailResults = await emailDiscoveryService.discoverEmails(name, { maxResults: 20 });
     
     const findings: string[] = [];
     
-    if (emailResults && emailResults.length > 0) {
-      emailResults.forEach((result: any) => {
+    if (emailResults && emailResults.emails && emailResults.emails.length > 0) {
+      emailResults.emails.forEach((result: any) => {
         findings.push(`Professional contact: ${result.email} (${result.source}, confidence: ${result.confidence}%)`);
       });
     }
 
     // Use PANTHEON for professional directory crawling
     if (canActivatePantheon()) {
-      const crawlerResult = await pantheonOrchestrator('professional-network-search', {
-        target: name,
-        crawlerType: 'WRAITH', // Ghost layer for timing-sensitive searches
-        priority: 5,
-        quantum: 10000,
-        entropyBudget: 30,
-      });
+      try {
+        await pantheonOrchestrator.initialize();
+        const crawlerResults = await pantheonOrchestrator.search([name], {
+          depth: 1,
+          crawlers: ['startrek'],
+          maxResultsPerCrawler: 10,
+          timeout: 10000,
+          stealth: true,
+        });
 
-      if (crawlerResult && crawlerResult.signatures && crawlerResult.signatures.length > 0) {
-        findings.push(`Professional directory results: ${crawlerResult.signatures.length} entries found`);
+        if (crawlerResults && crawlerResults.length > 0) {
+          findings.push(`Professional directory results: ${crawlerResults.length} entries found via PANTHEON`);
+        }
+      } catch (crawlerError) {
+        logger.warn('[PEOPLE SEARCH] PANTHEON crawler error:', crawlerError);
       }
     }
 
@@ -541,16 +556,22 @@ async function searchNewsAndArticles(name: string): Promise<OSINTSource> {
 
     // Use PANTHEON for deep news archive crawling
     if (canActivatePantheon() && mentions.length < 5) {
-      const crawlerResult = await pantheonOrchestrator('news-archive-search', {
-        target: name,
-        crawlerType: 'HYDRA', // Adaptive explorer for news archives
-        priority: 4,
-        quantum: 15000,
-        entropyBudget: 40,
-      });
+      try {
+        await pantheonOrchestrator.initialize();
+        const crawlerResults = await pantheonOrchestrator.search([name], {
+          depth: 2,
+          crawlers: ['blizzard'],
+          maxResultsPerCrawler: 20,
+          timeout: 15000,
+          stealth: true,
+          stormIntensity: 'snow',
+        });
 
-      if (crawlerResult && crawlerResult.signatures && crawlerResult.signatures.length > 0) {
-        mentions.push(`News archive: ${crawlerResult.signatures.length} mentions found via PANTHEON`);
+        if (crawlerResults && crawlerResults.length > 0) {
+          mentions.push(`News archive: ${crawlerResults.length} mentions found via PANTHEON`);
+        }
+      } catch (crawlerError) {
+        logger.warn('[PEOPLE SEARCH] PANTHEON crawler error:', crawlerError);
       }
     }
 
@@ -583,26 +604,31 @@ async function searchCourtRecords(name: string): Promise<OSINTSource> {
     const records: string[] = [];
 
     // Use precedent extractor for legal case history
-    const caseResults = await precedentExtractor.extractCasesForPerson(name);
+    const caseResults = await precedentExtractor.extractPrecedents(name);
     
     if (caseResults && caseResults.length > 0) {
-      caseResults.forEach((caseRecord: CasePrecedent) => {
-        records.push(`${caseRecord.caseName || 'Case'}: ${caseRecord.citation || ''} (${caseRecord.court || 'Court'})`);
+      caseResults.forEach((caseRecord: any) => {
+        records.push(`${caseRecord.caseName || caseRecord.name || 'Case'}: ${caseRecord.citation || ''} (${caseRecord.court || 'Court'})`);
       });
     }
 
     // Use PANTHEON ICE crawler for precision court record extraction
     if (canActivatePantheon()) {
-      const crawlerResult = await pantheonOrchestrator('court-records-search', {
-        target: name,
-        crawlerType: 'ICE', // Precision extractor for legal databases
-        priority: 8,
-        quantum: 20000,
-        entropyBudget: 60,
-      });
+      try {
+        await pantheonOrchestrator.initialize();
+        const crawlerResults = await pantheonOrchestrator.search([name], {
+          depth: 3,
+          crawlers: ['cerberus', 'lich'],
+          maxResultsPerCrawler: 15,
+          timeout: 20000,
+          stealth: true,
+        });
 
-      if (crawlerResult && crawlerResult.signatures && crawlerResult.signatures.length > 0) {
-        records.push(`PACER/State Court: ${crawlerResult.signatures.length} records found via PANTHEON ICE`);
+        if (crawlerResults && crawlerResults.length > 0) {
+          records.push(`PACER/State Court: ${crawlerResults.length} records found via PANTHEON`);
+        }
+      } catch (crawlerError) {
+        logger.warn('[PEOPLE SEARCH] PANTHEON crawler error:', crawlerError);
       }
     }
 
