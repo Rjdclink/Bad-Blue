@@ -52,12 +52,10 @@ import {
   LEXARABrain,
   type LEXARABrainContext,
 } from '@shared/lexaraBrain';
-
-// ============================================================================
-// CONSTANTS
-// ============================================================================
-
-const LEXARA_CONSENT_KEY = 'lexara_frame_auto_start';
+import {
+  getLexaraLiveEnabled,
+  setLexaraLiveEnabled,
+} from '@/components/LexaraLiveConsentModal';
 
 // Singleton brain instance
 const lexaraBrain = new LEXARABrain();
@@ -478,8 +476,8 @@ export default function LexaraFrame({
           permissionGranted: true,
         }));
 
-        // Store consent
-        localStorage.setItem(LEXARA_CONSENT_KEY, 'true');
+        // Store consent using unified helpers
+        setLexaraLiveEnabled('true');
 
         // Start voice mode
         if (enableAudio) {
@@ -529,7 +527,7 @@ export default function LexaraFrame({
 
     const initialize = async () => {
       const devices = await detectDevices();
-      const hasConsent = localStorage.getItem(LEXARA_CONSENT_KEY) === 'true';
+      const hasConsent = getLexaraLiveEnabled() === 'true';
 
       setShowBeginButton(!hasConsent);
       setMediaState((prev) => ({

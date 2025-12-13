@@ -39,12 +39,11 @@ import {
   type LEXARABrainContext,
 } from '@shared/lexaraBrain';
 import type { LEXARAResponsePayload } from '@shared/lexaraVoicePersona';
-
-// ============================================================================
-// CONSTANTS
-// ============================================================================
-
-const LEXARA_CONSENT_KEY = 'lexara_auto_start';
+import {
+  getLexaraLiveEnabled,
+  setLexaraLiveEnabled,
+  hasLexaraLiveConsent,
+} from '@/components/LexaraLiveConsentModal';
 
 // Keywords that indicate geo-relevance
 const GEO_RELEVANT_KEYWORDS = [
@@ -449,6 +448,7 @@ export default function LexaraViewport() {
   // Session state
   const [showBeginButton, setShowBeginButton] = useState(false);
   const [sessionStarted, setSessionStarted] = useState(false);
+  const [showVoiceActivationButton, setShowVoiceActivationButton] = useState(false);
   
   const initAttempted = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -521,16 +521,21 @@ export default function LexaraViewport() {
         permissionGranted: true,
       }));
       
-      // Store consent
-      localStorage.setItem(LEXARA_CONSENT_KEY, 'true');
+      // Store consent using unified helpers
+      setLexaraLiveEnabled('true');
       
       // Start voice mode
       if (enableAudio) {
         try {
           await voiceMode.enable();
           voiceMode.startListening();
-        } catch (e) {
-          console.log('Voice mode start deferred');
+          setShowVoiceActivationButton(false);
+        } catch (e: any) {
+          console.log('Voice mode start deferred:', e?.name);
+          // Show graceful "one-click arm" button on NotAllowedError or NotSupportedError
+          if (e?.name === 'NotAllowedError' || e?.name === 'NotSupportedError' || e?.message?.includes('not allowed')) {
+            setShowVoiceActivationButton(true);
+          }
         }
       }
       
@@ -630,7 +635,7 @@ export default function LexaraViewport() {
     
     const initialize = async () => {
       const devices = await detectDevices();
-      const hasConsent = localStorage.getItem(LEXARA_CONSENT_KEY) === 'true';
+      const hasConsent = getLexaraLiveEnabled() === 'true';
       
       setShowBeginButton(!hasConsent);
       setMediaState(prev => ({
@@ -662,6 +667,26 @@ export default function LexaraViewport() {
     await initializeMedia(true, true);
     setSessionStarted(true);
     sendLEXARAGreeting();
+  };
+
+  // Handler for one-click voice activation when auto-start fails
+  const handleActivateVoice = async () => {
+    try {
+      await voiceMode.enable();
+      voiceMode.startListening();
+      setShowVoiceActivationButton(false);
+      toast({
+        title: "Voice Mode Activated",
+        description: "LEXARA is now listening. Speak naturally.",
+      });
+    } catch (e: any) {
+      console.error('Voice activation failed:', e);
+      toast({
+        title: "Voice Activation Failed",
+        description: "Please check your browser permissions and try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   // ============================================================================
@@ -941,6 +966,19 @@ export default function LexaraViewport() {
                     Begin Session
                   </Button>
                 </div>
+              </div>
+            )}
+            
+            {/* Voice Activation Button - shown when auto-start fails */}
+            {showVoiceActivationButton && !showBeginButton && sessionStarted && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-full max-w-md px-4">
+                <Button
+                  onClick={handleActivateVoice}
+                  className="w-full bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white py-6 rounded-xl font-medium shadow-lg hover:shadow-xl transition-all text-base"
+                >
+                  <Mic className="h-5 w-5 mr-2" />
+                  Activate Live Legal Consultation
+                </Button>
               </div>
             )}
             
