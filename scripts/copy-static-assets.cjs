@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 /**
+ * TEMPORARILY DISABLED - This script is commented out to make the build atomic.
+ * See: https://github.com/Rjdclink/Bad-Blue/issues for context.
+ * 
  * Copy Static Assets for Production
  * 
  * This script copies the Vite-built frontend assets from dist/public/ to public/
@@ -17,6 +20,10 @@
  * NOTE: Uses CommonJS syntax for Railway compatibility (plain node invocation)
  */
 
+console.log('[Copy Static Assets] Script temporarily disabled');
+process.exit(0);
+
+/*
 const fs = require('fs');
 const path = require('path');
 
@@ -77,3 +84,4 @@ try {
   console.error('[Copy Static Assets] ✗ Failed: ' + error.message);
   process.exit(1);
 }
+*/

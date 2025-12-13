@@ -244,27 +244,21 @@ export default function PeopleFinderPage() {
                   variant="outline" 
                   className={`text-xs ${
                     geoConsoleStatus === 'loading' 
-                      ? 'bg-amber-900/50 text-amber-400
-                   border-amber-600/30'
-                         :
-                  searchResults?.locationHistory?.length
-                      ? 'bg-green-900/50 text-green-400 border-green-600/30' 
-                      : geoConsoleStatus === 'loading'
-                       border-amber-600/30'
-                             ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
-                             {geoConsoleStatus === 'ready'
-                       ? 'bg-green-900/50 text-green-400 border-green-600/30'
-                      : 'bg-slate-700/50 text-slate-400 border-slate-600/30'
+                      ? 'bg-amber-900/50 text-amber-400 border-amber-600/30'
+                      : searchResults?.locationHistory?.length
+                        ? 'bg-green-900/50 text-green-400 border-green-600/30'
+                        : geoConsoleStatus === 'ready'
+                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                          : 'bg-slate-700/50 text-slate-400 border-slate-600/30'
                   }`}
                 >
-                   ? 'Live' : geoConsoleStatus === 'loading' 
-                   ? 'Loading...' : 'Idle'}
-                   ? '$
-                   {searchResults?.locationHistory?.length 
-                   Locations` 
-                   {geoConsoleStatus === 'ready'
-                   ? 'Live'
-                   : 'Idle'}
+                  {geoConsoleStatus === 'loading' 
+                    ? 'Loading...' 
+                    : searchResults?.locationHistory?.length 
+                      ? `${searchResults.locationHistory.length} Locations`
+                      : geoConsoleStatus === 'ready'
+                        ? 'Live'
+                        : 'Idle'}
                 </Badge>
               </div>
             </CardHeader>

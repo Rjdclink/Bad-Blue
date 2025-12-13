@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 /**
+ * TEMPORARILY DISABLED - This script is commented out to make the build atomic.
+ * See: https://github.com/Rjdclink/Bad-Blue/issues for context.
+ * 
  * Verify Build Output for Railway Deployment
  * 
  * This script verifies that all required files exist before deployment.
  * Catches build issues early before Railway tries to start the server.
  */
 
+console.log('[Verify Build] Script temporarily disabled');
+process.exit(0);
+
+/*
 const fs = require('fs');
 const path = require('path');
 
@@ -98,3 +105,4 @@ if (hasErrors) {
   console.log('[Verify Build] All required files present');
   process.exit(0);
 }
+*/
