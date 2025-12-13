@@ -1,0 +1,32 @@
+{
+  "name": "@pantheon/contracts",
+  "version": "1.0.0",
+  "description": "Canonical event schemas for PANTHEON Reactor architecture",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "keywords": [
+    "pantheon",
+    "reactor",
+    "contracts",
+    "events",
+    "crypto",
+    "voice",
+    "satellite"
+  ],
+  "license": "MIT"
+}
