@@ -1,14 +1,31 @@
-# Trinity Crawlers - PANTHEON Intelligence Gathering
+# PANTHEON Intelligence Gathering Systems
 
-Three specialized crawler systems for distributed intelligence operations.
+Advanced crawler systems for distributed intelligence operations and security stress-testing.
 
 ## Overview
 
-The Trinity Crawlers represent three distinct approaches to web scraping and intelligence gathering:
+The PANTHEON crawler ecosystem includes multiple specialized systems:
+
+### Trinity Crawlers (Web Intelligence)
+
+Three distinct approaches to web scraping and intelligence gathering:
 
 - **❄️ Blizzard**: Mass parallel data collection with unique fingerprints
 - **🐺 Cerberus**: Three-headed adaptive defense with guaranteed reliability
 - **💀 Lich**: Immortal necromancer with learning and command capabilities
+
+### Six-Crawler Initiative (Security Stress-Testing)
+
+Six autonomous analytic entities for advanced security analysis:
+
+- **🪞 The Mirror**: Dual-state environment rendering
+- **🔑 The Key**: Authentication/authorization mapping
+- **🦫 The Chewer**: High-throughput data ingestion
+- **🧮 The Computational**: Pattern and correlation analysis
+- **🚀 The USC**: Unified systems coordination
+- **🎭 The Woo**: Cooperative interface engagement
+
+**[See Full Documentation →](./SIX_CRAWLER_INITIATIVE.md)**
 
 ## Architecture
 
