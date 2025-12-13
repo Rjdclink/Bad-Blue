@@ -166,7 +166,6 @@ export interface ComputationalAnalysis {
   nearMissArchive: NearMissEvent[]; // What almost happened but didn't
   futuresNotPasts: Array<{ scenario: string; probability: number; preventedBy: string }>;
 }
-}
 
 export interface CoordinationState {
   activeTaskCount: number;
@@ -2113,8 +2112,6 @@ export class SixCrawlerInitiative extends EventEmitter {
         usc: this.usc.getMetrics(),
         woo: this.woo.getMetrics(),
         silence: this.silence.getMetrics(),
-        usc: this.usc.getMetrics(),
-        woo: this.woo.getMetrics(),
       },
       coordination: this.usc.getCoordinationState(),
       insightCount: this.insights.length,
@@ -2135,19 +2132,5 @@ export class SixCrawlerInitiative extends EventEmitter {
     return this.insights.filter(i => i.severity === severity);
   }
 }
-
-// ============================================================================
-// EXPORTS
-// ============================================================================
-
-export {
-  MirrorCrawler,
-  KeyCrawler,
-  ChewerCrawler,
-  ComputationalCrawler,
-  USCCrawler,
-  WooCrawler,
-  SilenceCrawler,
-};
 
 export default SixCrawlerInitiative;
