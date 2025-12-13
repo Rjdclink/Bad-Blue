@@ -3,10 +3,10 @@
  * 
  * Displays 30 law types as realistic law book spines on a bookshelf
  * Features Law Enforcement Accountability as highlighted option
- * Each book is directly clickable to navigate to the consultation page
+ * Each book is directly clickable to navigate to the legal consultation page
  * Integrates with existing BadBlue functionality
  * 
- * Now includes Lexara Live consent modal for first-time consultation users
+ * Now includes Lexara Live consent modal for first-time legal consultation users
  */
 
 import { useState, useCallback } from "react";
@@ -194,8 +194,8 @@ export default function WelcomePage() {
     setShowConsentModal(false);
     
     if (pendingLawAreaId) {
-      // Navigate to consultation with live mode param
-      setLocation(`/consultation/${pendingLawAreaId}?live=${enabled}`);
+      // Navigate to legal consultation with live mode param
+      setLocation(`/legal-consultation/${pendingLawAreaId}?live=${enabled}`);
       setPendingLawAreaId(null);
     }
   }, [pendingLawAreaId, setLocation]);
@@ -214,7 +214,7 @@ export default function WelcomePage() {
       if (hasLexaraLiveConsent()) {
         // Already consented - navigate with their preference
         const liveEnabled = getLexaraLiveEnabled() === 'true';
-        setLocation(`/consultation/${selectedType.id}?live=${liveEnabled}`);
+        setLocation(`/legal-consultation/${selectedType.id}?live=${liveEnabled}`);
       } else {
         // Show consent modal for first-time users
         setPendingLawAreaId(selectedType.id);

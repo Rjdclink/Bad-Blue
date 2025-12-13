@@ -261,7 +261,7 @@ function Router() {
             </Route>
             
             {/* Domain Consultation - 4JI Orchestrator Integration */}
-            <Route path="/consultation/:domainId" component={ConsultationPage} />
+            <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
             
             {/* Location Intelligence - Interactive Heatmap Dashboard */}
             <Route path="/location-intel" component={LocationIntelPage} />

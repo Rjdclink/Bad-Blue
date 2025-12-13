@@ -8,8 +8,8 @@
  * 2. Show legal disclaimer ("not legal advice")
  * 3. Single CTA: "I understand and enable Lexara live co-counsel (voice, mic & camera)."
  * 4. On click: Call getUserMedia({ audio: true, video: true })
- *    - If granted: localStorage.lexaraLiveEnabled = "true", route to /consultation/[lawArea]?live=true
- *    - If denied: localStorage.lexaraLiveEnabled = "false", route to /consultation/[lawArea]?live=false
+ *    - If granted: localStorage.lexaraLiveEnabled = "true", route to /legal-consultation/[lawArea]?live=true
+ *    - If denied: localStorage.lexaraLiveEnabled = "false", route to /legal-consultation/[lawArea]?live=false
  * 5. Do not create own confirm dialogs - rely only on browser's native permission prompt
  * 6. Show "Waiting for browser permission..." during prompt
  */
