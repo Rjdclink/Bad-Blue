@@ -909,6 +909,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/crawler', crawlerRoutes.default);
 
   // ============================================
+  // MONTE CARLO SIMULATION ROUTES - Bounded execution particle filter
+  // ============================================
+  const monteCarloRoutes = await import('./routes/monteCarlo.routes');
+  app.use('/api/monte-carlo', monteCarloRoutes.default);
+
+  // ============================================
   // EVIDENCE UPLOAD ROUTES
   // ============================================
   const uploadRoutes = await import('./routes/upload.routes');
