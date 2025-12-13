@@ -160,7 +160,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     costEfficiency: 95,
     dailyCapacity: 100, // High throughput
   },
-  'gemini-3.0-pro-preview': {
+  'gemini-3.0-flash-preview': {
     multimodal: 95,
     longContext: 98,
     massiveContext: 95,
@@ -852,35 +852,35 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
 export class AIModelSelector {
   /**
    * Select optimal Gemini model based on task attributes
-   * Updated December 2025: Prioritizes Gemini 3 models
+   * Updated December 2025: Prioritizes Gemini 2.5 models
    */
   static selectGeminiModel(attrs: TaskAttributes): string {
-    // Use gemini-3.0-pro for multimodal/image tasks
+    // Use gemini-2.5-pro for multimodal/image tasks
     if (attrs.needsMultimodal || attrs.needsImageAnalysis) {
       return 'gemini-2.5-pro';
     }
     
-    // Use gemini-3.0-pro for high-complexity tasks
+    // Use gemini-2.5-pro for high-complexity tasks
     if (attrs.complexity === TaskComplexity.COMPREHENSIVE) {
       return 'gemini-2.5-pro';
     }
     
-    // Use gemini-3.0-flash for high-volume/lightweight tasks
+    // Use gemini-2.5-flash for high-volume/lightweight tasks
     if (attrs.complexity === TaskComplexity.LIGHTWEIGHT || attrs.needsFastResponse) {
       return 'gemini-2.5-flash';
     }
     
-    // Use gemini-3.0-pro for long context needs
+    // Use gemini-2.5-pro for long context needs
     if (attrs.needsLongContext || attrs.needsMassiveContext) {
       return 'gemini-2.5-pro';
     }
     
-    // Use gemini-3.0-pro for advanced reasoning
+    // Use gemini-2.5-pro for advanced reasoning
     if (attrs.needsReasoning || attrs.needsPatternRecognition) {
       return 'gemini-2.5-pro';
     }
     
-    // Default to gemini-3.0-flash for cost efficiency
+    // Default to gemini-2.5-flash for cost efficiency
     return 'gemini-2.5-flash';
   }
   
