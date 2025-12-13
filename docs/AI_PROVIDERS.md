@@ -7,8 +7,8 @@ Complete documentation for all 6 AI providers integrated into LegalWhat/Bad-Blue
 ## Overview
 
 **Total Providers**: 6  
-**Total Models**: 23  
-**Free Models**: 21  
+**Total Models**: 25  
+**Free Models**: 23  
 **Paid Models**: 2 (optional)  
 **Cost**: $0/month for core functionality
 
@@ -20,7 +20,7 @@ Complete documentation for all 6 AI providers integrated into LegalWhat/Bad-Blue
 |----------|--------|------|-------------|----------|
 | **OpenRouter** | 4 | FREE | Varies by model | Primary AI consultation |
 | **Gemini** | 3 | FREE | 1500 RPD | Document generation |
-| **Groq** | 7 | FREE | 30 RPM | Fast responses, TTS, STT |
+| **Groq** | 9 | FREE | 30 RPM | Fast responses, TTS, STT |
 | **Mistral** | 1 | FREE | Varies | European data compliance |
 | **Anthropic** | 2 | PAID | Pay-per-use | Premium consultations |
 | **SambaNova** | 6 | FREE | 20 RPM | DeepSeek, Mistral models |
@@ -189,7 +189,7 @@ console.log(response.text);
 **Docs**: [console.groq.com/docs](https://console.groq.com/docs)  
 **Cost**: FREE with excellent speed
 
-### Models (7 Free)
+### Models (9 Free)
 
 #### 3.1 Llama 3.3 70B Versatile
 ```typescript
@@ -209,7 +209,25 @@ model: 'llama-3.1-8b-instant'
 - **Best for**: Real-time chat, quick answers
 - **Rate Limit**: 30 requests/minute
 
-#### 3.3 Qwen3 32B
+#### 3.3 Mixtral 8x7B
+```typescript
+model: 'mixtral-8x7b-32768'
+```
+- **Context**: 32K tokens
+- **Strengths**: Mixture of experts, efficient
+- **Best for**: General purpose, code generation
+- **Rate Limit**: 30 requests/minute
+
+#### 3.4 Gemma2 9B
+```typescript
+model: 'gemma2-9b-it'
+```
+- **Context**: 8K tokens
+- **Strengths**: Efficient, instruction-tuned
+- **Best for**: Lightweight tasks, quick responses
+- **Rate Limit**: 30 requests/minute
+
+#### 3.5 Qwen3 32B
 ```typescript
 model: 'qwen/qwen3-32b'
 ```
@@ -218,7 +236,7 @@ model: 'qwen/qwen3-32b'
 - **Best for**: Complex analysis, structured outputs
 - **Rate Limit**: 30 requests/minute
 
-#### 3.4 PlayAI TTS
+#### 3.6 PlayAI TTS
 ```typescript
 model: 'playai-tts'
 ```
@@ -226,7 +244,7 @@ model: 'playai-tts'
 - **Best for**: Voice synthesis, accessibility
 - **Rate Limit**: 30 requests/minute
 
-#### 3.5 PlayAI TTS Arabic
+#### 3.7 PlayAI TTS Arabic
 ```typescript
 model: 'playai-tts-arabic'
 ```
@@ -234,7 +252,7 @@ model: 'playai-tts-arabic'
 - **Best for**: Arabic voice synthesis
 - **Rate Limit**: 30 requests/minute
 
-#### 3.6 Whisper Large V3
+#### 3.8 Whisper Large V3
 ```typescript
 model: 'whisper-large-v3'
 ```
@@ -242,7 +260,7 @@ model: 'whisper-large-v3'
 - **Best for**: Audio transcription
 - **Rate Limit**: 30 requests/minute
 
-#### 3.7 Whisper Large V3 Turbo
+#### 3.9 Whisper Large V3 Turbo
 ```typescript
 model: 'whisper-large-v3-turbo'
 ```
@@ -715,7 +733,7 @@ Monitor outages and performance:
 
 ## Summary
 
-✅ **6 AI providers** with 23 models (21 free) = $0/month  
+✅ **6 AI providers** with 25 models (23 free) = $0/month  
 ✅ **Automatic failover** for high availability  
 ✅ **Generous rate limits** for MVP and growth  
 ✅ **TTS and STT support** via Groq (PlayAI TTS, Whisper)  
@@ -723,7 +741,7 @@ Monitor outages and performance:
 ✅ **Optional premium** with Anthropic for $10-50/month  
 ✅ **Production-ready** with monitoring and error handling  
 
-**Recommendation**: Start with all 5 free providers, add Anthropic later for premium tier.
+**Recommendation**: Start with all 5 free primary providers (OpenRouter, Gemini, Groq, Mistral, SambaNova), add Anthropic later for premium tier.
 
 ---
 
