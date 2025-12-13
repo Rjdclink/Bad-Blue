@@ -22,7 +22,7 @@ try {
 import express, { type Request, type Response, type NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { serveStatic, log } from "./vite";
 import type { Server } from "http";
 
 // Static imports for migrations - ensures esbuild bundles them (dynamic imports don't work with bundlers)
@@ -460,7 +460,9 @@ app.get("/api/schema-verify", async (_req, res) => {
   // Serve CryptoCrawl dashboard UI
   app.use(express.static("server/services/cryptocrawl/ui"));
 
-  if (app.get("env") === "development") {
+  if (process.env.NODE_ENV !== 'production') {
+    // Dynamically import Vite only in development to avoid bundling it in production
+    const { setupVite } = await import("./vite");
     await setupVite(app, httpServer);
   } else {
     serveStatic(app);
