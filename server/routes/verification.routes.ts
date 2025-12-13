@@ -11,6 +11,22 @@ import { logger } from '../logger';
 
 const router = express.Router();
 
+/**
+ * Parse and validate limit query parameter
+ * @param limitParam - The limit query parameter value
+ * @param defaultLimit - Default limit if not provided
+ * @param maxLimit - Maximum allowed limit
+ * @returns Validated limit value
+ */
+function parseLimit(limitParam: string | undefined, defaultLimit = 50, maxLimit = 1000): number {
+  if (!limitParam) return defaultLimit;
+  
+  const parsed = parseInt(limitParam, 10);
+  if (isNaN(parsed) || parsed <= 0) return defaultLimit;
+  
+  return Math.min(parsed, maxLimit);
+}
+
 // ============================================
 // PANTHEON / PEOPLE SEARCH VERIFICATION
 // ============================================
@@ -54,9 +70,7 @@ router.get('/people-search/:reportId', async (req: Request, res: Response) => {
 router.get('/people-search/user/:userId', async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const requestedLimit = parseInt(req.query.limit as string) || 50;
-    // Prevent DoS attacks with extremely large limits
-    const limit = Math.min(requestedLimit, 1000);
+    const limit = parseLimit(req.query.limit as string);
     
     const reports = await storage.getUserPeopleSearchReports(userId, limit);
     
@@ -117,9 +131,7 @@ router.get('/inmate-search/:reportId', async (req: Request, res: Response) => {
 router.get('/inmate-search/user/:userId', async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const requestedLimit = parseInt(req.query.limit as string) || 50;
-    // Prevent DoS attacks with extremely large limits
-    const limit = Math.min(requestedLimit, 1000);
+    const limit = parseLimit(req.query.limit as string);
     
     const reports = await storage.getUserInmateSearchReports(userId, limit);
     
@@ -180,9 +192,7 @@ router.get('/lexara/:conversationId', async (req: Request, res: Response) => {
 router.get('/lexara/user/:userId', async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const requestedLimit = parseInt(req.query.limit as string) || 50;
-    // Prevent DoS attacks with extremely large limits
-    const limit = Math.min(requestedLimit, 1000);
+    const limit = parseLimit(req.query.limit as string);
     
     const conversations = await storage.getUserLexaraConversations(userId, limit);
     
@@ -207,9 +217,7 @@ router.get('/lexara/user/:userId', async (req: Request, res: Response) => {
 router.get('/lexara/session/:sessionId', async (req: Request, res: Response) => {
   try {
     const { sessionId } = req.params;
-    const requestedLimit = parseInt(req.query.limit as string) || 100;
-    // Prevent DoS attacks with extremely large limits
-    const limit = Math.min(requestedLimit, 1000);
+    const limit = parseLimit(req.query.limit as string, 100); // Default 100 for sessions
     
     const conversations = await storage.getLexaraConversationsBySession(sessionId, limit);
     
