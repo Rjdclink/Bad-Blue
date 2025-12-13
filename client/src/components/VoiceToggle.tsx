@@ -2,7 +2,7 @@
  * VoiceToggle Component
  * Stage 14: Voice Mode UI Control
  * 
- * Small, elegant, unobtrusive voice activation control for ALEXERA
+ * Small, elegant, unobtrusive voice activation control for LEXARA
  */
 
 import React from 'react';
@@ -168,7 +168,7 @@ export function VoiceStatusIndicator({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium">
           {isListening && 'Listening...'}
-          {isSpeaking && 'ALEXERA is speaking...'}
+          {isSpeaking && 'LEXARA is speaking...'}
           {!isListening && !isSpeaking && 'Voice mode active'}
         </p>
         {transcript && isListening && (
