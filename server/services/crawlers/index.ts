@@ -29,7 +29,7 @@ export { BirdOfPreyCrawler } from './BirdOfPreyCrawler';
 export { SixDegreesCrawler } from './SixDegreesCrawler';
 export { PhylacterySystem } from '../storage/PhylacterySystem';
 
-// Six-Crawler Initiative
+// Six-Crawler Initiative (Enhanced to Seven)
 export {
   SixCrawlerInitiative,
   MirrorCrawler,
@@ -38,6 +38,7 @@ export {
   ComputationalCrawler,
   USCCrawler,
   WooCrawler,
+  SilenceCrawler,
 } from './SixCrawlerInitiative';
 
 // Job Management with Tiered Reports and Doomsday Clock

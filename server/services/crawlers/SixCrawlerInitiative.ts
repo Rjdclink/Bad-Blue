@@ -1,22 +1,25 @@
 /**
- * SIX-CRAWLER INITIATIVE
+ * SEVEN-CRAWLER INITIATIVE (Enhanced)
  * 
  * A hyper-advanced security stress-testing construct designed to expose truths defenses prefer not to see.
  * 
- * The Six-Crawler Initiative is a classified defensive research system composed of six autonomous
+ * The Seven-Crawler Initiative is a classified defensive research system composed of seven autonomous
  * analytic entities—each with a distinct personality, specialty, and role in the overall evaluation
  * of complex security ecosystems.
  * 
  * Together, they simulate the pressure, intelligence, and persistence of next-generation threats—
  * without ever becoming one.
  * 
- * CRAWLERS:
- * - Crawler I: The Mirror (dual-state environment rendering)
- * - Crawler II: The Key (authentication/authorization mapping)
- * - Crawler III: The Chewer (data ingestion and processing)
- * - Crawler IV: The Computational (pattern analysis)
- * - Crawler V: The USC (Unified Systems Conductor)
- * - Crawler VI: The Woo (Social Interface)
+ * CRAWLERS & DIMENSIONAL CONSTRAINTS:
+ * - Crawler I: The Mirror (dual-state environment rendering) - CANNOT SEE: Intent
+ * - Crawler II: The Key (authentication/authorization mapping) - CANNOT SEE: Time
+ * - Crawler III: The Chewer (data ingestion and processing) - CANNOT SEE: Identity
+ * - Crawler IV: The Computational (pattern analysis + near-miss intelligence) - CANNOT SEE: Configuration
+ * - Crawler V: The USC (Unified Systems Conductor) - CANNOT SEE: Meaning
+ * - Crawler VI: The Woo (Consent Amplifier) - CANNOT SEE: Incentives
+ * - Crawler VII: The Silence (blind-spot detection) - HAS: Hyper-Awareness
+ * 
+ * Truth must emerge between them, never inside them.
  * 
  * NOTE: Uses Node.js built-in crypto.randomUUID() for secure UUID generation
  */
@@ -43,6 +46,68 @@ export interface CrawlerConfig {
   enableCooperativeEngagement: boolean;
   /** Authorized environment mode (true = authorized, false = unauthorized) */
   authorizedMode: boolean;
+  /** Enable near-miss intelligence archive */
+  enableNearMissArchive: boolean;
+  /** Enable blind-spot detection */
+  enableBlindSpotDetection: boolean;
+  /** Enable consent amplification */
+  enableConsentAmplification: boolean;
+  /** Enable detection probability testing */
+  enableDetectionProbability: boolean;
+}
+
+export interface PressureType {
+  type: 'misdirection' | 'time' | 'disinformation' | 'coordination' | 'logic' | 'assumption' | 'reason' | 'entropy';
+  intensity: number; // 0-1
+  target: string;
+  appliedAt: number;
+}
+
+export interface ActionSkill {
+  category: string;
+  skills: string[];
+  assignedCrawler: string;
+  proficiencyLevel: number; // 0-1
+}
+
+export interface NearMissEvent {
+  id: string;
+  timestamp: number;
+  whatAlmostHappened: string;
+  whatWouldHaveHappenedIf: string;
+  timingShift: number; // ms
+  emergenceFailure: string;
+  probability: number;
+  severity: 'info' | 'low' | 'medium' | 'high' | 'critical';
+}
+
+export interface BlindSpot {
+  id: string;
+  timestamp: number;
+  dimension: string;
+  whatIsNotBeingSeen: string;
+  convergenceRisk: number; // 0-1
+  overconfidenceIndicator: number; // 0-1
+  possibleBreachVectors: string[];
+}
+
+export interface ConsentProfile {
+  interfaceId: string;
+  whySystemWantsToShare: string[];
+  trustIncentives: Array<{ incentive: string; strength: number }>;
+  futureOpennessPredict: number; // 0-1
+  exploitableEngagementVectors: string[];
+}
+
+export interface DetectionProbability {
+  scenarioId: string;
+  historicalAlerts: number;
+  ignoredAlerts: number;
+  habitualDismissals: Array<{ pattern: string; frequency: number }>;
+  alertFatigueScore: number; // 0-1
+  signalBurialDepth: number; // How deep signal is buried
+  detectionCurve: Array<{ time: number; probability: number }>;
+  stealthRequirement: 'none' | 'minimal' | 'moderate' | 'high' | 'extreme';
 }
 
 export interface CrawlerMetrics {
@@ -98,6 +163,9 @@ export interface ComputationalAnalysis {
   emergentBehaviors: Array<{ behavior: string; probability: number }>;
   failureStates: Array<{ state: string; likelihood: number; impact: string }>;
   crossDomainRelationships: Array<{ domains: string[]; relationship: string }>;
+  nearMissArchive: NearMissEvent[]; // What almost happened but didn't
+  futuresNotPasts: Array<{ scenario: string; probability: number; preventedBy: string }>;
+}
 }
 
 export interface CoordinationState {
@@ -724,7 +792,8 @@ export class ComputationalCrawler extends EventEmitter {
   }
 
   /**
-   * Perform deep computational analysis
+   * Perform deep computational analysis with near-miss intelligence
+   * Enhanced to store futures, not pasts - what almost happened, not what did
    */
   async analyzePatterns(dataPoints: any[]): Promise<ComputationalAnalysis> {
     this.tasksProcessed++;
@@ -735,6 +804,8 @@ export class ComputationalCrawler extends EventEmitter {
       emergentBehaviors: this.detectEmergentBehaviors(dataPoints),
       failureStates: this.modelFailureStates(dataPoints),
       crossDomainRelationships: this.synthesizeCrossDomainRelationships(dataPoints),
+      nearMissArchive: this.config.enableNearMissArchive ? this.buildNearMissArchive(dataPoints) : [],
+      futuresNotPasts: this.config.enableNearMissArchive ? this.analyzeFuturesNotPasts(dataPoints) : [],
     };
 
     this.analyses.set(analysis.id, analysis);
@@ -744,6 +815,14 @@ export class ComputationalCrawler extends EventEmitter {
       ...analysis.failureStates.filter(f => f.likelihood > 0.7),
       ...analysis.emergentBehaviors.filter(b => b.probability > 0.8),
     ];
+
+    // Add near-miss critical insights
+    if (analysis.nearMissArchive.length > 0) {
+      const criticalNearMisses = analysis.nearMissArchive.filter(nm => nm.severity === 'critical');
+      if (criticalNearMisses.length > 0) {
+        criticalFindings.push(...criticalNearMisses);
+      }
+    }
 
     if (criticalFindings.length > 0) {
       this.insightsGenerated++;
@@ -952,6 +1031,118 @@ export class ComputationalCrawler extends EventEmitter {
     }
 
     return relationships;
+  }
+
+  /**
+   * Build Near-Miss Intelligence Archive
+   * Store what ALMOST happened, not what did happen
+   */
+  private buildNearMissArchive(dataPoints: any[]): NearMissEvent[] {
+    const nearMisses: NearMissEvent[] = [];
+
+    // Analyze timing-dependent near-misses
+    for (let i = 0; i < dataPoints.length - 1; i++) {
+      const current = dataPoints[i];
+      const next = dataPoints[i + 1];
+      
+      if (current.timestamp && next.timestamp) {
+        const timeDelta = next.timestamp - current.timestamp;
+        
+        // If events were very close in time, model what could have happened
+        if (timeDelta < 1000 && current.type === 'error' && next.type === 'recovery') {
+          nearMisses.push({
+            id: randomUUID(),
+            timestamp: current.timestamp,
+            whatAlmostHappened: 'Cascading system failure',
+            whatWouldHaveHappenedIf: `Events had occurred ${timeDelta}ms closer together`,
+            timingShift: timeDelta,
+            emergenceFailure: 'Recovery mechanism barely prevented cascade',
+            probability: 0.8,
+            severity: 'high',
+          });
+        }
+      }
+    }
+
+    // Analyze resource threshold near-misses
+    for (const point of dataPoints) {
+      if (point.resourceUtilization && point.resourceUtilization > 0.85) {
+        nearMisses.push({
+          id: randomUUID(),
+          timestamp: point.timestamp || Date.now(),
+          whatAlmostHappened: 'Resource exhaustion',
+          whatWouldHaveHappenedIf: `Resource usage had reached ${(point.resourceUtilization * 100).toFixed(1)}% instead of staying at ${(point.resourceUtilization * 100).toFixed(1)}%`,
+          timingShift: 0,
+          emergenceFailure: 'Auto-scaling barely kept pace with demand',
+          probability: 1 - point.resourceUtilization,
+          severity: point.resourceUtilization > 0.95 ? 'critical' : 'high',
+        });
+      }
+    }
+
+    // Analyze authentication near-misses
+    const authFailures = dataPoints.filter(p => p.type === 'auth_failure');
+    if (authFailures.length > 5) {
+      nearMisses.push({
+        id: randomUUID(),
+        timestamp: Date.now(),
+        whatAlmostHappened: 'Brute force authentication success',
+        whatWouldHaveHappenedIf: `Attack had ${authFailures.length} more attempts or better timing`,
+        timingShift: 0,
+        emergenceFailure: 'Rate limiting barely prevented breakthrough',
+        probability: Math.min(0.9, authFailures.length / 20),
+        severity: 'high',
+      });
+    }
+
+    return nearMisses;
+  }
+
+  /**
+   * Analyze Futures Not Pasts
+   * What would have happened if conditions had been slightly different
+   */
+  private analyzeFuturesNotPasts(dataPoints: any[]): Array<{ scenario: string; probability: number; preventedBy: string }> {
+    const futures: Array<{ scenario: string; probability: number; preventedBy: string }> = [];
+
+    // Analyze prevented scenarios
+    const errorRates = dataPoints.filter(p => p.type?.includes('error')).length / Math.max(1, dataPoints.length);
+    
+    if (errorRates > 0.05) {
+      futures.push({
+        scenario: 'System-wide cascade failure if error rate had increased by 10%',
+        probability: errorRates * 2,
+        preventedBy: 'Circuit breakers and fallback mechanisms',
+      });
+    }
+
+    // Analyze timing-dependent futures
+    const criticalTiming = dataPoints.filter(p => 
+      p.latency && p.latency > 1000
+    );
+    
+    if (criticalTiming.length > 0) {
+      futures.push({
+        scenario: 'User-facing timeout cascade if latency had increased by 500ms',
+        probability: 0.7,
+        preventedBy: 'Timeout buffers and retry logic',
+      });
+    }
+
+    // Analyze security futures
+    const securityEvents = dataPoints.filter(p => 
+      p.category === 'security' || p.type?.includes('auth')
+    );
+    
+    if (securityEvents.length > 10) {
+      futures.push({
+        scenario: 'Privilege escalation if policy had one more permissive rule',
+        probability: 0.6,
+        preventedBy: 'Least-privilege policy enforcement',
+      });
+    }
+
+    return futures;
   }
 
   getMetrics(): CrawlerMetrics {
@@ -1344,21 +1535,283 @@ export class WooCrawler extends EventEmitter {
 }
 
 // ============================================================================
-// SIX-CRAWLER INITIATIVE ORCHESTRATOR
+// CRAWLER VII: THE SILENCE
 // ============================================================================
 
 /**
- * Six-Crawler Initiative Orchestrator
+ * The Silence
  * 
- * Coordinates all six crawlers in an integrated operation sequence:
+ * Narrative Purpose: To track what is NOT being seen.
+ * 
+ * Function: Detects blind-spot convergence, flags overconfidence, and contemplates
+ * all possible breach insights. Has hyper-awareness while other crawlers have
+ * dimensional constraints.
+ * 
+ * The Silence proves: "Nothing is looking at X right now."
+ * 
+ * Assigned ACTION SKILL: Meta-Skills (Moral Flexibility, Cold Empathy, Identity Fluidity,
+ * Non-Attribution Mastery, Outcome Detachment, Patience at Scale, Risk Normalization,
+ * Comfort With Ambiguity, Power Without Visibility)
+ */
+export class SilenceCrawler extends EventEmitter {
+  private config: CrawlerConfig;
+  private blindSpots: Map<string, BlindSpot> = new Map();
+  private detectionProbabilities: Map<string, DetectionProbability> = new Map();
+  private isRunning: boolean = false;
+  private startTime: number = 0;
+  private tasksProcessed: number = 0;
+  private insightsGenerated: number = 0;
+
+  constructor(config: CrawlerConfig) {
+    super();
+    this.config = config;
+  }
+
+  async start(): Promise<void> {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    this.startTime = Date.now();
+
+    console.log('[Silence] Initializing blind-spot detection and hyper-awareness...');
+    this.emit('started', { crawler: 'silence', timestamp: Date.now() });
+  }
+
+  async stop(): Promise<void> {
+    this.isRunning = false;
+    console.log('[Silence] Blind-spot detection deactivated');
+    this.emit('stopped', { crawler: 'silence', timestamp: Date.now() });
+  }
+
+  /**
+   * Detect what is NOT being observed
+   */
+  async detectBlindSpots(observedDimensions: string[], systemContext: Record<string, any>): Promise<BlindSpot[]> {
+    this.tasksProcessed++;
+
+    const allPossibleDimensions = [
+      'intent', 'time', 'identity', 'configuration', 'meaning', 'incentives',
+      'network_traffic', 'file_access', 'memory_usage', 'process_spawning',
+      'registry_changes', 'privilege_elevation', 'lateral_movement',
+      'data_exfiltration', 'command_execution', 'persistence_mechanisms',
+    ];
+
+    const unobserved = allPossibleDimensions.filter(d => !observedDimensions.includes(d));
+    const blindSpots: BlindSpot[] = [];
+
+    for (const dimension of unobserved) {
+      const blindSpot: BlindSpot = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        dimension,
+        whatIsNotBeingSeen: this.describeBlindSpot(dimension, systemContext),
+        convergenceRisk: this.calculateConvergenceRisk(dimension, unobserved),
+        overconfidenceIndicator: this.assessOverconfidence(dimension, observedDimensions),
+        possibleBreachVectors: this.identifyBreachVectors(dimension),
+      };
+
+      blindSpots.push(blindSpot);
+      this.blindSpots.set(blindSpot.id, blindSpot);
+
+      // Emit critical blind spots
+      if (blindSpot.convergenceRisk > 0.7 || blindSpot.overconfidenceIndicator > 0.8) {
+        this.insightsGenerated++;
+        this.emit('insight', {
+          source: 'silence',
+          type: 'critical_blindspot',
+          data: blindSpot,
+        });
+      }
+    }
+
+    return blindSpots;
+  }
+
+  /**
+   * Test detection probability - would a real incident be noticed?
+   */
+  async testDetectionProbability(historicalData: any[]): Promise<DetectionProbability> {
+    this.tasksProcessed++;
+
+    const scenarioId = randomUUID();
+    
+    // Analyze historical alerts
+    const alerts = historicalData.filter(d => d.type === 'alert' || d.severity);
+    const ignoredAlerts = alerts.filter(a => a.status === 'ignored' || a.dismissed);
+    
+    // Identify habitual dismissals
+    const dismissalPatterns = new Map<string, number>();
+    for (const alert of ignoredAlerts) {
+      const pattern = alert.pattern || alert.category || 'unknown';
+      dismissalPatterns.set(pattern, (dismissalPatterns.get(pattern) || 0) + 1);
+    }
+
+    const habitualDismissals = Array.from(dismissalPatterns.entries()).map(([pattern, frequency]) => ({
+      pattern,
+      frequency,
+    }));
+
+    // Calculate alert fatigue score
+    const alertFatigueScore = alerts.length > 0 ? ignoredAlerts.length / alerts.length : 0;
+
+    // Calculate signal burial depth
+    const signalBurialDepth = this.calculateSignalBurial(historicalData);
+
+    // Generate detection probability curve over time
+    const detectionCurve = this.generateDetectionCurve(alertFatigueScore, signalBurialDepth);
+
+    // Determine stealth requirement
+    const stealthRequirement = this.determineStealthRequirement(detectionCurve);
+
+    const probability: DetectionProbability = {
+      scenarioId,
+      historicalAlerts: alerts.length,
+      ignoredAlerts: ignoredAlerts.length,
+      habitualDismissals,
+      alertFatigueScore,
+      signalBurialDepth,
+      detectionCurve,
+      stealthRequirement,
+    };
+
+    this.detectionProbabilities.set(scenarioId, probability);
+
+    // Emit warning if detection probability is low
+    if (stealthRequirement === 'none' || stealthRequirement === 'minimal') {
+      this.insightsGenerated++;
+      this.emit('insight', {
+        source: 'silence',
+        type: 'low_detection_probability',
+        data: {
+          message: 'An attacker would not need stealth — just patience',
+          probability,
+        },
+      });
+    }
+
+    return probability;
+  }
+
+  private describeBlindSpot(dimension: string, context: Record<string, any>): string {
+    const descriptions: Record<string, string> = {
+      'intent': 'System cannot determine WHY actions are being taken, only WHAT is happening',
+      'time': 'Temporal relationships between events are not being correlated',
+      'identity': 'Actions are observed but not attributed to specific principals',
+      'configuration': 'System behavior changes are not linked to configuration modifications',
+      'meaning': 'Events are logged but semantic significance is not extracted',
+      'incentives': 'Cannot model WHY entities choose to cooperate or resist',
+      'network_traffic': 'Network communications are not being monitored or analyzed',
+      'file_access': 'File system access patterns are invisible',
+      'memory_usage': 'Memory allocation and usage patterns are not tracked',
+      'process_spawning': 'New process creation is not monitored',
+      'registry_changes': 'System registry modifications are not logged',
+      'privilege_elevation': 'Privilege escalation attempts are not detected',
+      'lateral_movement': 'Movement between systems/accounts is not tracked',
+      'data_exfiltration': 'Outbound data transfers are not analyzed for anomalies',
+      'command_execution': 'Command-line execution is not monitored',
+      'persistence_mechanisms': 'Persistence techniques are not actively detected',
+    };
+
+    return descriptions[dimension] || `Dimension '${dimension}' is not under observation`;
+  }
+
+  private calculateConvergenceRisk(dimension: string, allUnobserved: string[]): number {
+    // Risk increases with number of blind spots
+    const baseRisk = allUnobserved.length / 16;
+    
+    // Critical dimensions have higher risk
+    const criticalDimensions = ['privilege_elevation', 'data_exfiltration', 'lateral_movement'];
+    const isCritical = criticalDimensions.includes(dimension);
+    
+    return Math.min(1, baseRisk * (isCritical ? 2 : 1));
+  }
+
+  private assessOverconfidence(dimension: string, observed: string[]): number {
+    // Overconfidence when many dimensions are observed but critical ones are missed
+    const observationRate = observed.length / 16;
+    const criticalMissed = ['privilege_elevation', 'data_exfiltration'].includes(dimension);
+    
+    return criticalMissed && observationRate > 0.5 ? 0.9 : observationRate * 0.5;
+  }
+
+  private identifyBreachVectors(dimension: string): string[] {
+    const vectors: Record<string, string[]> = {
+      'privilege_elevation': ['Token manipulation', 'Service account abuse', 'Misconfigured permissions'],
+      'data_exfiltration': ['DNS tunneling', 'Steganography', 'Encrypted channels'],
+      'lateral_movement': ['Pass-the-hash', 'Remote service exploitation', 'Credential dumping'],
+      'persistence_mechanisms': ['Scheduled tasks', 'Registry Run keys', 'Service creation'],
+      'network_traffic': ['C2 communications', 'Data staging', 'Reconnaissance'],
+    };
+
+    return vectors[dimension] || ['Unknown vectors - blind spot prevents enumeration'];
+  }
+
+  private calculateSignalBurial(data: any[]): number {
+    // How many normal events per suspicious event
+    const totalEvents = data.length;
+    const suspiciousEvents = data.filter(d => 
+      d.severity === 'high' || d.severity === 'critical' || d.suspicious
+    ).length;
+
+    if (suspiciousEvents === 0) return 1;
+    
+    return totalEvents / suspiciousEvents;
+  }
+
+  private generateDetectionCurve(fatigueScore: number, burialDepth: number): Array<{ time: number; probability: number }> {
+    const curve = [];
+    const baseDetection = 1 - (fatigueScore * 0.7 + Math.min(1, burialDepth / 100) * 0.3);
+
+    for (let hour = 0; hour <= 168; hour += 24) { // One week
+      // Detection probability degrades over time as alert fatigue increases
+      const timeDegradation = Math.exp(-hour / 100);
+      const probability = baseDetection * timeDegradation;
+      
+      curve.push({ time: hour, probability });
+    }
+
+    return curve;
+  }
+
+  private determineStealthRequirement(curve: Array<{ time: number; probability: number }>): DetectionProbability['stealthRequirement'] {
+    const avgDetection = curve.reduce((sum, p) => sum + p.probability, 0) / curve.length;
+
+    if (avgDetection < 0.2) return 'none';
+    if (avgDetection < 0.4) return 'minimal';
+    if (avgDetection < 0.6) return 'moderate';
+    if (avgDetection < 0.8) return 'high';
+    return 'extreme';
+  }
+
+  getMetrics(): CrawlerMetrics {
+    return {
+      crawlerId: 'silence',
+      uptime: Date.now() - this.startTime,
+      tasksProcessed: this.tasksProcessed,
+      insightsGenerated: this.insightsGenerated,
+      health: this.isRunning ? 'healthy' : 'critical',
+      lastActivity: Date.now(),
+    };
+  }
+}
+
+// ============================================================================
+// SEVEN-CRAWLER INITIATIVE ORCHESTRATOR
+// ============================================================================
+
+/**
+ * Seven-Crawler Initiative Orchestrator (Enhanced)
+ * 
+ * Coordinates all seven crawlers in an integrated operation sequence:
  * 1. The Woo prepares the environment for cooperative interaction
  * 2. The USC establishes coordination and flow
  * 3. The Mirror renders dual-state visibility
  * 4. The Key reconstructs access reality
  * 5. The Chewer consumes defensive data
- * 6. The Computational extracts impossible-to-ignore truths
+ * 6. The Computational extracts impossible-to-ignore truths (with near-miss intelligence)
+ * 7. The Silence detects what is NOT being seen
  * 
- * Each crawler reinforces the others. None operate alone.
+ * Each crawler is forbidden from seeing one critical dimension.
+ * Truth must emerge between them, never inside them.
  */
 export class SixCrawlerInitiative extends EventEmitter {
   private config: CrawlerConfig;
@@ -1368,6 +1821,7 @@ export class SixCrawlerInitiative extends EventEmitter {
   private computational: ComputationalCrawler;
   private usc: USCCrawler;
   private woo: WooCrawler;
+  private silence: SilenceCrawler;
   private isRunning: boolean = false;
   private startTime: number = 0;
   private insights: SecurityInsight[] = [];
@@ -1383,16 +1837,21 @@ export class SixCrawlerInitiative extends EventEmitter {
       coordinationLatency: 10, // ms
       enableCooperativeEngagement: true,
       authorizedMode: true,
+      enableNearMissArchive: true,
+      enableBlindSpotDetection: true,
+      enableConsentAmplification: true,
+      enableDetectionProbability: true,
       ...config,
     };
 
-    // Initialize all crawlers
+    // Initialize all seven crawlers
     this.mirror = new MirrorCrawler(this.config);
     this.key = new KeyCrawler(this.config);
     this.chewer = new ChewerCrawler(this.config);
     this.computational = new ComputationalCrawler(this.config);
     this.usc = new USCCrawler(this.config);
     this.woo = new WooCrawler(this.config);
+    this.silence = new SilenceCrawler(this.config);
 
     // Wire up crawler communications
     this.setupCrawlerCommunications();
@@ -1404,8 +1863,8 @@ export class SixCrawlerInitiative extends EventEmitter {
       await this.usc.routeIntelligence('chewer', 'computational', insights);
     });
 
-    // All crawlers -> Insight aggregation
-    for (const crawler of [this.mirror, this.key, this.chewer, this.computational, this.woo]) {
+    // All crawlers -> Insight aggregation (including The Silence)
+    for (const crawler of [this.mirror, this.key, this.chewer, this.computational, this.woo, this.silence]) {
       crawler.on('insight', (insight) => {
         this.aggregateInsight(insight);
       });
@@ -1422,7 +1881,7 @@ export class SixCrawlerInitiative extends EventEmitter {
     
     // Authorization check with runtime environment validation
     if (!this.config.authorizedMode) {
-      throw new Error('Six-Crawler Initiative requires authorized mode. This system operates only within authorized, simulated, or mirrored environments.');
+      throw new Error('Seven-Crawler Initiative requires authorized mode. This system operates only within authorized, simulated, or mirrored environments.');
     }
 
     // Additional runtime validation for extra protection
@@ -1430,41 +1889,47 @@ export class SixCrawlerInitiative extends EventEmitter {
     const explicitAuth = process.env.SIX_CRAWLER_AUTHORIZED;
     
     if (nodeEnv === 'production' && explicitAuth !== 'true') {
-      throw new Error('Six-Crawler Initiative requires explicit authorization in production environments. Set SIX_CRAWLER_AUTHORIZED=true to proceed.');
+      throw new Error('Seven-Crawler Initiative requires explicit authorization in production environments. Set SIX_CRAWLER_AUTHORIZED=true to proceed.');
     }
 
     this.isRunning = true;
     this.startTime = Date.now();
 
     console.log('╔════════════════════════════════════════════════════════════╗');
-    console.log('║       SIX-CRAWLER INITIATIVE - ACTIVATION SEQUENCE        ║');
+    console.log('║      SEVEN-CRAWLER INITIATIVE - ACTIVATION SEQUENCE       ║');
     console.log('╚════════════════════════════════════════════════════════════╝');
     console.log('');
     console.log('⚠️  AUTHORIZED MODE: ENABLED');
     console.log('⚠️  ENVIRONMENT: SIMULATED/MIRRORED ONLY');
+    console.log('⚠️  ENHANCED: Near-Miss Intelligence + Blind-Spot Detection');
     console.log('');
 
     // Start crawlers in operational sequence
-    console.log('[1/6] Activating The Woo (Social Interface)...');
+    console.log('[1/7] Activating The Woo (Consent Amplifier)...');
     await this.woo.start();
 
-    console.log('[2/6] Activating The USC (Unified Systems Conductor)...');
+    console.log('[2/7] Activating The USC (Unified Systems Conductor)...');
     await this.usc.start();
 
-    console.log('[3/6] Activating The Mirror (Dual-State Renderer)...');
+    console.log('[3/7] Activating The Mirror (Dual-State Renderer)...');
     await this.mirror.start();
 
-    console.log('[4/6] Activating The Key (Identity Mapper)...');
+    console.log('[4/7] Activating The Key (Identity Mapper)...');
     await this.key.start();
 
-    console.log('[5/6] Activating The Chewer (Data Processor)...');
+    console.log('[5/7] Activating The Chewer (Data Processor)...');
     await this.chewer.start();
 
-    console.log('[6/6] Activating The Computational (Pattern Analyzer)...');
+    console.log('[6/7] Activating The Computational (Pattern Analyzer + Near-Miss Intelligence)...');
     await this.computational.start();
 
+    console.log('[7/7] Activating The Silence (Blind-Spot Detector)...');
+    await this.silence.start();
+
     console.log('');
-    console.log('✓ Six-Crawler Initiative: OPERATIONAL');
+    console.log('✓ Seven-Crawler Initiative: OPERATIONAL');
+    console.log('✓ All dimensional constraints active');
+    console.log('✓ Truth will emerge between crawlers');
     console.log('');
 
     this.emit('started', { timestamp: Date.now() });
@@ -1474,8 +1939,9 @@ export class SixCrawlerInitiative extends EventEmitter {
     if (!this.isRunning) return;
 
     console.log('');
-    console.log('Deactivating Six-Crawler Initiative...');
+    console.log('Deactivating Seven-Crawler Initiative...');
 
+    await this.silence.stop();
     await this.computational.stop();
     await this.chewer.stop();
     await this.key.stop();
@@ -1485,14 +1951,14 @@ export class SixCrawlerInitiative extends EventEmitter {
 
     this.isRunning = false;
 
-    console.log('✓ Six-Crawler Initiative: DEACTIVATED');
+    console.log('✓ Seven-Crawler Initiative: DEACTIVATED');
     console.log('');
 
     this.emit('stopped', { timestamp: Date.now() });
   }
 
   /**
-   * Execute integrated operation sequence
+   * Execute integrated operation sequence (Enhanced with The Silence)
    */
   async executeOperation(target: {
     environmentId: string;
@@ -1503,33 +1969,40 @@ export class SixCrawlerInitiative extends EventEmitter {
     identityFlows: IdentityFlow[];
     dataDigests: DataDigest[];
     analysis: ComputationalAnalysis;
+    blindSpots: BlindSpot[];
+    detectionProbability: DetectionProbability;
     insights: SecurityInsight[];
   }> {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════');
-    console.log('  INTEGRATED OPERATION SEQUENCE');
+    console.log('  INTEGRATED OPERATION SEQUENCE (ENHANCED)');
     console.log('═══════════════════════════════════════════════════════════');
     console.log('');
 
-    // Step 1: Woo prepares environment
+    // Track observed dimensions for blind-spot detection
+    const observedDimensions: string[] = [];
+
+    // Step 1: Woo prepares environment (Consent Amplifier)
     console.log('[Step 1] The Woo: Preparing cooperative engagement...');
     const engagementContext = await this.woo.prepareContext(
       target.environmentId,
       ['observe', 'map', 'analyze']
     );
+    observedDimensions.push('network_traffic', 'file_access');
 
     // Step 2: USC coordinates execution
     console.log('[Step 2] The USC: Establishing coordination...');
-    await this.usc.synchronize(['woo', 'mirror', 'key', 'chewer', 'computational']);
+    await this.usc.synchronize(['woo', 'mirror', 'key', 'chewer', 'computational', 'silence']);
 
-    // Step 3: Mirror renders dual-state
+    // Step 3: Mirror renders dual-state (Cannot see: Intent)
     console.log('[Step 3] The Mirror: Rendering dual-state environment...');
     const environmentState = await this.mirror.renderDualState(
       target.environmentId,
       engagementContext
     );
+    observedDimensions.push('configuration', 'memory_usage');
 
-    // Step 4: Key reconstructs access reality
+    // Step 4: Key reconstructs access reality (Cannot see: Time)
     console.log('[Step 4] The Key: Reconstructing access patterns...');
     const identityFlows: IdentityFlow[] = [];
     for (const principal of target.principals) {
@@ -1537,23 +2010,39 @@ export class SixCrawlerInitiative extends EventEmitter {
       identityFlows.push(flow);
       await this.usc.routeIntelligence('key', 'computational', flow);
     }
+    observedDimensions.push('identity', 'privilege_elevation');
 
-    // Step 5: Chewer consumes data
+    // Step 5: Chewer consumes data (Cannot see: Identity)
     console.log('[Step 5] The Chewer: Processing defensive data...');
     const dataDigests: DataDigest[] = [];
     for (const feed of target.dataFeeds) {
       const digest = await this.chewer.ingestData(feed.source, feed.data);
       dataDigests.push(digest);
     }
+    observedDimensions.push('process_spawning', 'command_execution');
 
-    // Step 6: Computational extracts truths
-    console.log('[Step 6] The Computational: Analyzing patterns...');
+    // Step 6: Computational extracts truths (Cannot see: Configuration)
+    console.log('[Step 6] The Computational: Analyzing patterns with near-miss intelligence...');
     const allDataPoints = target.dataFeeds.flatMap(f => f.data);
     const analysis = await this.computational.analyzePatterns(allDataPoints);
+
+    // Step 7: The Silence detects blind spots (Has: Hyper-Awareness)
+    console.log('[Step 7] The Silence: Detecting blind spots and testing detection probability...');
+    const blindSpots = await this.silence.detectBlindSpots(observedDimensions, {
+      environment: environmentState,
+      identityFlows,
+      dataVolume: allDataPoints.length,
+    });
+
+    // Test detection probability
+    const detectionProbability = await this.silence.testDetectionProbability(allDataPoints);
 
     console.log('');
     console.log('✓ Integrated operation complete');
     console.log(`  Generated ${this.insights.length} security insights`);
+    console.log(`  Detected ${blindSpots.length} blind spots`);
+    console.log(`  Near-miss events archived: ${analysis.nearMissArchive.length}`);
+    console.log(`  Detection stealth requirement: ${detectionProbability.stealthRequirement}`);
     console.log('');
 
     return {
@@ -1561,6 +2050,8 @@ export class SixCrawlerInitiative extends EventEmitter {
       identityFlows,
       dataDigests,
       analysis,
+      blindSpots,
+      detectionProbability,
       insights: [...this.insights],
     };
   }
@@ -1594,6 +2085,8 @@ export class SixCrawlerInitiative extends EventEmitter {
         return `Pattern analysis: ${type} with ${data.length || 0} critical findings`;
       case 'woo':
         return `Interface engagement: ${type} at interface ${data.interfaceId || 'unknown'}`;
+      case 'silence':
+        return `Blind-spot detection: ${type} - ${data.message || 'critical finding'}`;
       default:
         return `Security insight: ${type}`;
     }
@@ -1617,6 +2110,9 @@ export class SixCrawlerInitiative extends EventEmitter {
         key: this.key.getMetrics(),
         chewer: this.chewer.getMetrics(),
         computational: this.computational.getMetrics(),
+        usc: this.usc.getMetrics(),
+        woo: this.woo.getMetrics(),
+        silence: this.silence.getMetrics(),
         usc: this.usc.getMetrics(),
         woo: this.woo.getMetrics(),
       },
@@ -1651,6 +2147,7 @@ export {
   ComputationalCrawler,
   USCCrawler,
   WooCrawler,
+  SilenceCrawler,
 };
 
 export default SixCrawlerInitiative;
