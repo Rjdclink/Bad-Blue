@@ -903,6 +903,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/geoconsole', geoconsoleRoutes.default);
 
   // ============================================
+  // CRAWLER JOB ROUTES - Production-grade crawl job management
+  // ============================================
+  const crawlerRoutes = await import('./routes/crawler.routes');
+  app.use('/api/crawler', crawlerRoutes.default);
+
+  // ============================================
   // EVIDENCE UPLOAD ROUTES
   // ============================================
   const uploadRoutes = await import('./routes/upload.routes');
