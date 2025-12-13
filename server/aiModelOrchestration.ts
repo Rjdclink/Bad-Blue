@@ -65,7 +65,7 @@ export interface OrchestrationResult {
 export const AI_MODELS: AIModel[] = [
   // Google Gemini 3 - Primary for research and legal analysis (NEWEST)
   {
-    id: 'gemini-3-pro',
+    id: 'gemini-2.5-pro',
     name: 'Gemini 3 Pro',
     provider: 'gemini',
     roles: ['research', 'legal_analysis', 'summarization', 'reasoning'],
@@ -75,7 +75,7 @@ export const AI_MODELS: AIModel[] = [
     priority: 1
   },
   {
-    id: 'gemini-3-flash',
+    id: 'gemini-2.5-flash',
     name: 'Gemini 3 Flash',
     provider: 'gemini',
     roles: ['research', 'drafting', 'inference'],

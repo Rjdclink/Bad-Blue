@@ -1,18 +1,27 @@
 /**
- * Unified AI Provider Module - 4-Way Collaboration (Parallel Orchestration)
+ * Unified AI Provider Module - Multi-Provider Collaboration (Parallel Orchestration)
  * Enforces token governance and coordinated provider execution
  * 
  * DISTRIBUTION TARGETS (for usage accounting, not sequential routing):
- * - Mistral: ~50% of total AI usage
- * - Groq: ~30-35% of total AI usage (32.5% midpoint)
- * - Gemini: ~10% of total AI usage
- * - Claude: ~5-10% of total AI usage (7.5% midpoint)
+ * All AI providers are utilized equally across the system.
  * 
- * UPDATED PROVIDERS/MODELS (December 2025 - FREE TIER ONLY):
- * - Gemini: gemini-3-pro-preview, gemini-2.5-flash, gemini-2.5-flash-lite, gemini-1.5-pro
- * - Claude: claude-3-5-haiku-latest (fast), claude-3-5-sonnet-latest (detailed)
+ * AVAILABLE PROVIDERS (December 2025):
+ * Core Providers:
+ * - Gemini: gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash, gemini-3.0-flash-preview
+ * - Claude: claude-3-5-haiku-latest (fast), claude-3-5-sonnet-latest (detailed), claude-3-opus-latest (powerful)
  * - Groq: llama-3.3-70b-versatile (newer, faster), llama-3.1-8b-instant (ultra-fast)
- * - Mistral: mistral-small-latest (FREE tier only)
+ * - Mistral: mistral-small-latest, mistral-large-latest
+ * - DeepSeek: deepseek-chat, deepseek-coder
+ * 
+ * Platform Providers:
+ * - OpenRouter: Access to multiple models via unified API
+ * - HuggingFace: Open-source model hosting and inference
+ * - LMAI: LM Studio / Local AI model integration
+ * 
+ * Additional Providers:
+ * - Grok, Kimi, Qwen, Falcon, CodeLlama, GPT-NeoX
+ * - Cohere, Together, Perplexity, Fireworks
+ * - Cerebras, SambaNova
  * 
  * ZERO-API MODE (December 2025):
  * - PANTHEON operates WITHOUT external API dependencies when no keys are configured
@@ -24,7 +33,7 @@
  * - Each provider uses its best-suited model and config based on task context and verbosity.
  * - Results are aggregated to produce a single final response.
  * - Token governor records each provider attempt (success/failure) with context and latency.
- * - Autonomous tasks still avoid Gemini (hard block), but run Groq+Mistral+Claude in parallel.
+ * - All providers are utilized equally.
  */
 
 import { getGroqClient } from './groq';
@@ -191,6 +200,12 @@ export async function generateText(
       successes.push(r.value);
     } else {
       failures.push({ provider, error: r.reason, latencyMs: Date.now() - startTime });
+      // CIRCUIT BREAKER: Immediately disable provider on failure
+      const errorMessage = r.reason?.message || String(r.reason);
+      // Only disable for serious errors (not rate limits which are temporary)
+      if (!errorMessage.includes('rate limit') && !errorMessage.includes('quota')) {
+        aiTokenGovernor.disableProvider(provider, `Provider error: ${errorMessage}`);
+      }
     }
   });
 
@@ -220,6 +235,7 @@ export async function generateText(
       
       for (const provider of fallbackOrder) {
         if (failedProviders.has(provider)) continue; // Skip already failed
+        if (aiTokenGovernor.isProviderDisabled(provider)) continue; // Skip disabled providers
         
         try {
           console.log(`[AI Provider] Sequential fallback: trying ${provider}...`);
@@ -241,6 +257,10 @@ export async function generateText(
           return result;
         } catch (err: any) {
           console.log(`[AI Provider] Sequential fallback: ${provider} failed - ${err.message}`);
+          // CIRCUIT BREAKER: Disable on sequential fallback failure too
+          if (!err.message?.includes('rate limit') && !err.message?.includes('quota')) {
+            aiTokenGovernor.disableProvider(provider, `Sequential fallback error: ${err.message}`);
+          }
           continue;
         }
       }
@@ -494,9 +514,9 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
   }>> = {
     [AIProvider.GEMINI]: {
       prefixes: ['gemini'],
-      lite: 'gemini-3-flash',             // FREE: Fast inference, high throughput
-      default: 'gemini-3-pro',            // FREE: Balanced, best reasoning
-      pro: 'gemini-3-pro-preview'         // FREE: Newest flagship, 1M context
+      lite: 'gemini-2.5-flash',             // FREE: Fast inference, high throughput
+      default: 'gemini-2.5-flash',          // FREE: Balanced, best reasoning
+      pro: 'gemini-3.0-flash-preview'       // FREE: Preview features (experimental)
     },
     [AIProvider.GROQ]: {
       prefixes: ['llama', 'mixtral', 'gemma'],
@@ -509,13 +529,28 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     },
     [AIProvider.CLAUDE]: {
       prefixes: ['claude'],
-      default: 'claude-3-5-haiku-latest',      // Fast responses
-      comprehensive: 'claude-3-5-sonnet-latest' // Advanced reasoning
+      lite: 'claude-3-5-haiku-latest',          // Fast responses
+      default: 'claude-3-5-sonnet-latest',      // Advanced reasoning
+      comprehensive: 'claude-3-5-sonnet-latest', // Advanced reasoning
+      pro: 'claude-3-opus-latest'               // Most powerful Claude model
     },
     // OpenRouter free models (December 2025)
     [AIProvider.DEEPSEEK]: {
       prefixes: ['deepseek'],
       default: 'deepseek/deepseek-r1-0528:free' // Advanced reasoning
+    },
+    // Platform providers (December 2025)
+    [AIProvider.OPENROUTER]: {
+      prefixes: ['openrouter', 'or-'],
+      default: 'meta-llama/llama-3.3-70b-instruct:free' // OpenRouter default
+    },
+    [AIProvider.HUGGINGFACE]: {
+      prefixes: ['hf-', 'huggingface'],
+      default: 'meta-llama/Llama-3.3-70B-Instruct' // HuggingFace default
+    },
+    [AIProvider.LMAI]: {
+      prefixes: ['lmai', 'lm-', 'local'],
+      default: 'local-model' // LMAI/LM Studio local model
     },
     // Legacy OpenRouter models (kept for backward compatibility)
     [AIProvider.GROK]: {

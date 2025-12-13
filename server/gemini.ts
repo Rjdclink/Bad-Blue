@@ -4,13 +4,13 @@
  * Gemini (Google) AI Service - MIGRATED to @google/genai SDK (Nov 30, 2025)
  * - Shared low-level client for entire application
  * - Supports text + JSON structured output
- * - Defaults to Gemini-3-pro-preview (NEWEST FLAGSHIP)
+ * - Defaults to gemini-2.5-flash (fast and intelligent)
  * 
  * Available Gemini Models (December 2025):
- * - gemini-3-pro-preview (newest flagship, 1M token context)
- * - gemini-3-flash (fast and intelligent, enhanced reasoning)
- * - gemini-3-pro-preview (preview features, advanced capabilities)
- * - gemini-2.5-flash (legacy fallback)
+ * - gemini-2.5-flash (fast and intelligent, current stable)
+ * - gemini-2.5-pro (powerful model, advanced reasoning)
+ * - gemini-2.0-flash (previous stable)
+ * - gemini-3.0-flash-preview (preview features, experimental)
  * 
  * NOTE: @google/generative-ai is DEPRECATED (EOL Nov 30, 2025)
  * This file now uses the new unified @google/genai SDK
@@ -105,12 +105,12 @@ export async function callGemini(
     throw new GeminiRateLimitError('Gemini is rate limited - use fallback provider');
   }
 
-  // Primary model: gemini-3-pro (newest flagship, 1M token context, superior reasoning)
+  // Primary model: gemini-2.5-flash (fast and intelligent, current stable)
   // Fallback models in order of preference:
-  // - gemini-3-flash (fast and intelligent, enhanced pattern recognition)
-  // - gemini-3-pro-preview (preview features)
-  // - gemini-2.5-flash (legacy fallback)
-  const modelName = options.model || "gemini-3-pro";
+  // - gemini-2.5-pro (powerful model, advanced reasoning)
+  // - gemini-2.0-flash (previous stable)
+  // - gemini-3.0-flash-preview (preview features, experimental)
+  const modelName = options.model || "gemini-2.5-flash";
   console.log(`[Gemini] Using model: ${modelName}`);
   const client = getGeminiClient();
 
@@ -252,7 +252,7 @@ Respond with a JSON object containing:
       : `User: ${userMessage}`;
 
     const response = await client.models.generateContent({
-      model: "gemini-3-pro-preview",
+      model: "gemini-2.5-flash",
       contents: [
         { role: "user", parts: [{ text: `${systemPrompt}\n\n${fullPrompt}` }] }
       ],
