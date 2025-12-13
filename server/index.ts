@@ -1,3 +1,6 @@
+// SERVER ENTRY POINT LOADED - Sanity check for deployment verification
+console.log("SERVER ENTRY LOADED");
+
 import * as dotenv from 'dotenv';
 dotenv.config();
 
