@@ -745,7 +745,7 @@ export default function CryptoCrawlerDashboard() {
                   <div className="flex items-center gap-2">
                     <Badge className="bg-green-500/20 text-green-300 border-green-500/30">
                       <Link2 className="w-3 h-3 mr-1" />
-                      {formatAddress(wallet.address!)}
+                      {wallet.address ? formatAddress(wallet.address) : 'Connected'}
                     </Badge>
                     <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/30">
                       {getChainName(wallet.chainId)}

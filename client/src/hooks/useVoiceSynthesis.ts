@@ -327,8 +327,8 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       });
 
       if (!response.ok) {
-        // Fallback to alexera endpoint
-        const alexeraResponse = await fetch('/api/alexera/speak', {
+        // Fallback to lexara endpoint
+        const lexaraResponse = await fetch('/api/lexara/speak', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -340,18 +340,18 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
           }),
         });
         
-        if (!alexeraResponse.ok) {
-          throw new Error(`Server speech synthesis failed: ${alexeraResponse.status}`);
+        if (!lexaraResponse.ok) {
+          throw new Error(`Server speech synthesis failed: ${lexaraResponse.status}`);
         }
         
-        // Handle alexera response
-        const alexeraContentType = alexeraResponse.headers.get('Content-Type');
-        if (alexeraContentType?.includes('audio/')) {
-          const audioBlob = await alexeraResponse.blob();
+        // Handle lexara response
+        const lexaraContentType = lexaraResponse.headers.get('Content-Type');
+        if (lexaraContentType?.includes('audio/')) {
+          const audioBlob = await lexaraResponse.blob();
           await LexaraServerTTS.play(audioBlob);
-          setProvider('alexera-server');
+          setProvider('lexara-server');
         } else {
-          const data = await alexeraResponse.json();
+          const data = await lexaraResponse.json();
           setProvider(data.provider || 'browser');
           await speakWithBrowser(data.text || text, '', options);
         }

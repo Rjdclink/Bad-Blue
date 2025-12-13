@@ -212,7 +212,7 @@ Provide comprehensive, accurate information with sources. Focus on:
 Return detailed findings with specific URLs and facts.`;
     
     const response = await client.models.generateContent({
-      model: "gemini-3-pro",
+      model: "gemini-2.5-pro",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         temperature: 0.1,
@@ -756,7 +756,7 @@ export class EnhancedWebSearchService {
       const genai = getGeminiClient();
 
       const result = await genai.models.generateContent({
-        model: "gemini-3-flash",
+        model: "gemini-2.5-flash",
         contents: [{
           role: 'user',
           parts: [{

@@ -89,6 +89,7 @@ export interface SignalFusionConfig {
     ip: number;
     checkin: number;
     camera: number;
+    manual: number;
   };
   // Kalman filter parameters
   kalman: {
@@ -124,6 +125,7 @@ const DEFAULT_CONFIG: SignalFusionConfig = {
     ip: 0.2,
     checkin: 0.8,
     camera: 0.9,
+    manual: 0.95,
   },
   kalman: {
     processNoise: 0.01,

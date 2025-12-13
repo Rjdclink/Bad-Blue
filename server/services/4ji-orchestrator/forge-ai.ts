@@ -203,7 +203,7 @@ export class ForgeAI {
     const models: AIModelConfig[] = [
       // Gemini models
       {
-        id: 'gemini-3-pro',
+        id: 'gemini-2.5-pro',
         name: 'Gemini 3 Pro Preview',
         provider: AIProvider.GEMINI,
         capabilities: ['reasoning', 'visual-analysis', 'long-context', 'research', 'orchestration'],

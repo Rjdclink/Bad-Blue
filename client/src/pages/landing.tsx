@@ -10,7 +10,7 @@ const heroImage = "/images/Constitution.webp";
 import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
-import SampleAlexeraConsultation from "@/components/SampleLegalConsultation"; // Note: Will create dedicated SampleAlexera component later
+import SampleLexaraConsultation from "@/components/SampleLegalConsultation"; // Sample Lexara consultation component
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 import { AISystemShowcase } from "@/components/AISystemShowcase";
@@ -471,7 +471,7 @@ export default function Landing() {
               Experience BadBlue's AI-powered legal analysis with a free sample consultation. No signup required.
             </p>
           </div>
-          <SampleAlexeraConsultation />
+          <SampleLexaraConsultation />
         </div>
       </section>
 

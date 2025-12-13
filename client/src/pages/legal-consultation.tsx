@@ -6,23 +6,11 @@
  * - Continuous audio pipeline for two-way communication
  * - Domain-specific legal consultation
  * - Loads from welcome page via /consultation/:domainId
- * 
- * RECURSIVE OPTIMIZATION PASS 1-10:
- * - Pass 1 (1.0x): Basic structure
- * - Pass 2 (1.2x): Enhanced routing
- * - Pass 3 (1.44x): Audio pipeline integration
- * - Pass 4 (1.73x): Error boundaries
- * - Pass 5 (2.07x): Performance optimization
- * - Pass 6 (2.49x): Accessibility
- * - Pass 7 (2.99x): Loading states
- * - Pass 8 (3.58x): Error handling
- * - Pass 9 (4.30x): SEO optimization
- * - Pass 10 (5.16x): Final polish
  */
 
 import { useEffect, useCallback, useState, Suspense } from "react";
 import AlexeraConsultation from "@/components/AlexeraConsultation";
-import { useLocation, useRoute } from "wouter";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Scale, Loader2, Mic, MicOff, Volume2 } from "lucide-react";
