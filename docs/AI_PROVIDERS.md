@@ -7,9 +7,9 @@ Complete documentation for all 7 AI providers integrated into LegalWhat/Bad-Blue
 ## Overview
 
 **Total Providers**: 7  
-**Total Models**: 29  
-**Free Models**: 27  
-**Paid Models**: 2 (optional)  
+**Total Models**: 37  
+**Free Models**: 30  
+**Paid Models**: 7 (optional, via OpenRouter)  
 **Cost**: $0/month for core functionality
 
 ---
@@ -18,7 +18,7 @@ Complete documentation for all 7 AI providers integrated into LegalWhat/Bad-Blue
 
 | Provider | Models | Cost | Rate Limits | Use Case |
 |----------|--------|------|-------------|----------|
-| **OpenRouter** | 4 | FREE | Varies by model | Primary AI consultation |
+| **OpenRouter** | 12 | FREE + Premium | Varies by model | Multi-provider routing |
 | **Gemini** | 3 | FREE | 1500 RPD | Document generation |
 | **Groq** | 9 | FREE | 30 RPM | Fast responses, TTS, STT |
 | **Mistral** | 1 | FREE | Varies | European data compliance |
@@ -35,45 +35,117 @@ Complete documentation for all 7 AI providers integrated into LegalWhat/Bad-Blue
 
 **Website**: [openrouter.ai](https://openrouter.ai)  
 **Docs**: [openrouter.ai/docs](https://openrouter.ai/docs)  
-**Cost**: FREE tier available
+**Cost**: FREE tier available + Premium models
 
-### Models (4 Free)
+### Models (12 - Best from Each Provider)
 
-#### 1.1 Kimi K2 (Moonshot AI)
+#### 1.1 Groq - Llama 3.3 70B Versatile
 ```typescript
-model: 'moonshot/kimi-k2:free'
-```
-- **Context**: 200K tokens
-- **Strengths**: Long context, multilingual
-- **Best for**: Complex legal consultations
-- **Rate Limit**: Generous free tier
-
-#### 1.2 DeepSeek R1 Chimera
-```typescript
-model: 'deepseek/deepseek-r1t2-chimera:free'
-```
-- **Context**: 64K tokens
-- **Strengths**: Reasoning, coding
-- **Best for**: Legal document structuring
-- **Rate Limit**: Free tier available
-
-#### 1.3 Grok Fast (xAI)
-```typescript
-model: 'x-ai/grok-4.1-fast:free'
+model: 'groq/llama-3.3-70b-versatile'
 ```
 - **Context**: 128K tokens
-- **Strengths**: Real-time data, speed
-- **Best for**: Quick legal questions
-- **Rate Limit**: Free tier available
+- **Strengths**: Ultra-fast inference, versatile
+- **Best for**: Quick responses, general tasks
+- **Rate Limit**: High throughput
 
-#### 1.4 Qwen 72B (Alibaba)
+#### 1.2 Google AI Studio - Gemini 2.0 Flash
+```typescript
+model: 'google/gemini-2.0-flash-exp:free'
+```
+- **Context**: 1M tokens
+- **Strengths**: Multimodal, fast, web grounded
+- **Best for**: Image analysis, document processing
+- **Rate Limit**: Free tier
+
+#### 1.3 NVIDIA - Nemotron 70B
+```typescript
+model: 'nvidia/llama-3.1-nemotron-70b-instruct:free'
+```
+- **Context**: 128K tokens
+- **Strengths**: Code generation, reasoning
+- **Best for**: Technical analysis, coding
+- **Rate Limit**: Free tier
+
+#### 1.4 OpenAI - GPT-4o Mini
+```typescript
+model: 'openai/gpt-4o-mini'
+```
+- **Context**: 128K tokens
+- **Strengths**: Balanced capability, reliable
+- **Best for**: General AI tasks
+- **Rate Limit**: Pay-per-use
+
+#### 1.5 Mistral - Mistral Large
+```typescript
+model: 'mistralai/mistral-large-2411'
+```
+- **Context**: 128K tokens
+- **Strengths**: European compliance, reasoning
+- **Best for**: Legal analysis, GDPR compliance
+- **Rate Limit**: Pay-per-use
+
+#### 1.6 DeepSeek - R1
+```typescript
+model: 'deepseek/deepseek-r1-0528:free'
+```
+- **Context**: 64K tokens
+- **Strengths**: Advanced reasoning, pattern recognition
+- **Best for**: Complex analysis, legal reasoning
+- **Rate Limit**: Free tier
+
+#### 1.7 Anthropic - Claude 3.5 Sonnet
+```typescript
+model: 'anthropic/claude-3.5-sonnet'
+```
+- **Context**: 200K tokens
+- **Strengths**: Best reasoning, safety, legal expertise
+- **Best for**: Premium legal consultations
+- **Rate Limit**: Pay-per-use
+
+#### 1.8 Perplexity - Sonar Pro
+```typescript
+model: 'perplexity/sonar-pro'
+```
+- **Context**: 128K tokens
+- **Strengths**: Real-time web search, citations
+- **Best for**: Current legal research
+- **Rate Limit**: Pay-per-use
+
+#### 1.9 Qwen - 2.5 72B
 ```typescript
 model: 'qwen/qwen-2.5-72b-instruct:free'
 ```
-- **Context**: 32K tokens
-- **Strengths**: Instruction following, multilingual
-- **Best for**: Guided legal workflows
-- **Rate Limit**: Free tier available
+- **Context**: 128K tokens
+- **Strengths**: Multilingual, structured output
+- **Best for**: Data extraction, international law
+- **Rate Limit**: Free tier
+
+#### 1.10 Cloudflare - Llama 3.1 70B
+```typescript
+model: 'cloudflare/llama-3.1-70b-instruct'
+```
+- **Context**: 128K tokens
+- **Strengths**: Edge deployment, fast
+- **Best for**: Low-latency responses
+- **Rate Limit**: Generous limits
+
+#### 1.11 SambaNova - Llama 3.1 405B
+```typescript
+model: 'sambanova/llama-3.1-405b-instruct'
+```
+- **Context**: 128K tokens
+- **Strengths**: Largest model, comprehensive
+- **Best for**: Complex reasoning, long documents
+- **Rate Limit**: Pay-per-use
+
+#### 1.12 Google Vertex - Gemma 2 27B
+```typescript
+model: 'google/gemma-2-27b-it:free'
+```
+- **Context**: 8K tokens
+- **Strengths**: Efficient, open source
+- **Best for**: Quick general tasks
+- **Rate Limit**: Free tier
 
 ### Configuration
 

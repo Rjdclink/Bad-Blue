@@ -572,150 +572,222 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     dailyCapacity: 70,
   },
   
-  // OpenRouter free models (Updated December 2025)
-  'qwen/qwen-2.5-72b-instruct:free': {
-    multimodal: 70,
-    longContext: 85,
-    massiveContext: 80,
-    structuredOutput: 88,
-    codeGeneration: 88,
-    creativeWriting: 80,
-    reasoning: 85,
-    speed: 70,
+  // OpenRouter models - Best model from each provider (Updated December 2025)
+  'groq/llama-3.3-70b-versatile': {
+    multimodal: 30,
+    longContext: 80,
+    massiveContext: 55,
+    structuredOutput: 85,
+    codeGeneration: 85,
+    creativeWriting: 78,
+    reasoning: 88,
+    speed: 98,
     verification: 82,
     legalAnalysis: 75,
-    imageAnalysis: 70,
+    imageAnalysis: 30,
     patternRecognition: 85,
-    dataExtraction: 85,
-    searchGrounding: 65,
+    dataExtraction: 82,
+    searchGrounding: 50,
+    costEfficiency: 95,
+    dailyCapacity: 80,
+  },
+  'google/gemini-2.0-flash-exp:free': {
+    multimodal: 92,
+    longContext: 90,
+    massiveContext: 85,
+    structuredOutput: 90,
+    codeGeneration: 88,
+    creativeWriting: 85,
+    reasoning: 90,
+    speed: 95,
+    verification: 88,
+    legalAnalysis: 82,
+    imageAnalysis: 92,
+    patternRecognition: 88,
+    dataExtraction: 88,
+    searchGrounding: 95,
     costEfficiency: 100,
-    dailyCapacity: 50,
+    dailyCapacity: 70,
+  },
+  'nvidia/llama-3.1-nemotron-70b-instruct:free': {
+    multimodal: 35,
+    longContext: 82,
+    massiveContext: 60,
+    structuredOutput: 88,
+    codeGeneration: 90,
+    creativeWriting: 80,
+    reasoning: 92,
+    speed: 85,
+    verification: 85,
+    legalAnalysis: 78,
+    imageAnalysis: 35,
+    patternRecognition: 88,
+    dataExtraction: 85,
+    searchGrounding: 55,
+    costEfficiency: 100,
+    dailyCapacity: 65,
+  },
+  'openai/gpt-4o-mini': {
+    multimodal: 85,
+    longContext: 85,
+    massiveContext: 70,
+    structuredOutput: 92,
+    codeGeneration: 90,
+    creativeWriting: 88,
+    reasoning: 90,
+    speed: 92,
+    verification: 88,
+    legalAnalysis: 85,
+    imageAnalysis: 85,
+    patternRecognition: 88,
+    dataExtraction: 90,
+    searchGrounding: 70,
+    costEfficiency: 85,
+    dailyCapacity: 60,
+  },
+  'mistralai/mistral-large-2411': {
+    multimodal: 55,
+    longContext: 85,
+    massiveContext: 65,
+    structuredOutput: 90,
+    codeGeneration: 88,
+    creativeWriting: 88,
+    reasoning: 92,
+    speed: 78,
+    verification: 88,
+    legalAnalysis: 85,
+    imageAnalysis: 55,
+    patternRecognition: 88,
+    dataExtraction: 88,
+    searchGrounding: 55,
+    costEfficiency: 75,
+    dailyCapacity: 55,
   },
   'deepseek/deepseek-r1-0528:free': {
     multimodal: 50,
     longContext: 85,
     massiveContext: 80,
     structuredOutput: 85,
-    codeGeneration: 90,
+    codeGeneration: 92,
     creativeWriting: 75,
-    reasoning: 95,
+    reasoning: 98,
     speed: 70,
-    verification: 85,
-    legalAnalysis: 80,
+    verification: 88,
+    legalAnalysis: 82,
     imageAnalysis: 50,
-    patternRecognition: 95,
-    dataExtraction: 85,
+    patternRecognition: 98,
+    dataExtraction: 88,
     searchGrounding: 60,
     costEfficiency: 100,
     dailyCapacity: 50,
   },
-  'meta-llama/llama-3.3-70b-instruct:free': {
-    multimodal: 30,
-    longContext: 75,
-    massiveContext: 50,
-    structuredOutput: 80,
-    codeGeneration: 80,
-    creativeWriting: 75,
-    reasoning: 85,
+  'anthropic/claude-3.5-sonnet': {
+    multimodal: 88,
+    longContext: 90,
+    massiveContext: 75,
+    structuredOutput: 95,
+    codeGeneration: 95,
+    creativeWriting: 95,
+    reasoning: 95,
     speed: 80,
-    verification: 75,
-    legalAnalysis: 70,
-    imageAnalysis: 30,
-    patternRecognition: 80,
-    dataExtraction: 75,
-    searchGrounding: 40,
-    costEfficiency: 100,
+    verification: 92,
+    legalAnalysis: 95,
+    imageAnalysis: 88,
+    patternRecognition: 92,
+    dataExtraction: 92,
+    searchGrounding: 55,
+    costEfficiency: 70,
     dailyCapacity: 50,
   },
-  'google/gemma-2-9b-it:free': {
-    multimodal: 40,
-    longContext: 60,
-    massiveContext: 40,
-    structuredOutput: 75,
-    codeGeneration: 70,
-    creativeWriting: 70,
-    reasoning: 75,
-    speed: 90,
-    verification: 70,
-    legalAnalysis: 60,
-    imageAnalysis: 40,
-    patternRecognition: 70,
-    dataExtraction: 70,
-    searchGrounding: 50,
-    costEfficiency: 100,
-    dailyCapacity: 60,
-  },
-  'microsoft/phi-4:free': {
-    multimodal: 35,
-    longContext: 55,
-    massiveContext: 35,
-    structuredOutput: 78,
+  'perplexity/sonar-pro': {
+    multimodal: 60,
+    longContext: 80,
+    massiveContext: 60,
+    structuredOutput: 82,
     codeGeneration: 75,
-    creativeWriting: 68,
-    reasoning: 78,
-    speed: 92,
-    verification: 72,
-    legalAnalysis: 55,
-    imageAnalysis: 35,
-    patternRecognition: 72,
-    dataExtraction: 72,
-    searchGrounding: 45,
+    creativeWriting: 78,
+    reasoning: 85,
+    speed: 88,
+    verification: 80,
+    legalAnalysis: 78,
+    imageAnalysis: 60,
+    patternRecognition: 82,
+    dataExtraction: 85,
+    searchGrounding: 98,
+    costEfficiency: 80,
+    dailyCapacity: 55,
+  },
+  'qwen/qwen-2.5-72b-instruct:free': {
+    multimodal: 70,
+    longContext: 88,
+    massiveContext: 82,
+    structuredOutput: 90,
+    codeGeneration: 90,
+    creativeWriting: 82,
+    reasoning: 88,
+    speed: 72,
+    verification: 85,
+    legalAnalysis: 78,
+    imageAnalysis: 70,
+    patternRecognition: 88,
+    dataExtraction: 88,
+    searchGrounding: 65,
     costEfficiency: 100,
+    dailyCapacity: 55,
+  },
+  'cloudflare/llama-3.1-70b-instruct': {
+    multimodal: 30,
+    longContext: 78,
+    massiveContext: 50,
+    structuredOutput: 82,
+    codeGeneration: 82,
+    creativeWriting: 75,
+    reasoning: 85,
+    speed: 90,
+    verification: 78,
+    legalAnalysis: 72,
+    imageAnalysis: 30,
+    patternRecognition: 80,
+    dataExtraction: 78,
+    searchGrounding: 45,
+    costEfficiency: 95,
     dailyCapacity: 70,
   },
-  'mistralai/mistral-7b-instruct:free': {
-    multimodal: 30,
-    longContext: 60,
-    massiveContext: 35,
-    structuredOutput: 75,
-    codeGeneration: 70,
-    creativeWriting: 72,
-    reasoning: 72,
-    speed: 95,
-    verification: 68,
-    legalAnalysis: 60,
-    imageAnalysis: 30,
-    patternRecognition: 68,
-    dataExtraction: 72,
-    searchGrounding: 35,
-    costEfficiency: 100,
-    dailyCapacity: 80,
-  },
-  'nousresearch/hermes-3-llama-3.1-405b:free': {
+  'sambanova/llama-3.1-405b-instruct': {
     multimodal: 40,
-    longContext: 80,
-    massiveContext: 70,
-    structuredOutput: 85,
-    codeGeneration: 85,
-    creativeWriting: 80,
-    reasoning: 88,
-    speed: 65,
-    verification: 80,
-    legalAnalysis: 75,
+    longContext: 85,
+    massiveContext: 75,
+    structuredOutput: 88,
+    codeGeneration: 88,
+    creativeWriting: 82,
+    reasoning: 92,
+    speed: 75,
+    verification: 85,
+    legalAnalysis: 80,
     imageAnalysis: 40,
-    patternRecognition: 85,
-    dataExtraction: 80,
-    searchGrounding: 50,
-    costEfficiency: 100,
-    dailyCapacity: 40,
+    patternRecognition: 88,
+    dataExtraction: 85,
+    searchGrounding: 55,
+    costEfficiency: 85,
+    dailyCapacity: 50,
   },
-  'openchat/openchat-7b:free': {
-    multimodal: 25,
-    longContext: 55,
-    massiveContext: 30,
-    structuredOutput: 72,
-    codeGeneration: 68,
-    creativeWriting: 70,
-    reasoning: 70,
-    speed: 95,
-    verification: 65,
-    legalAnalysis: 55,
-    imageAnalysis: 25,
-    patternRecognition: 65,
-    dataExtraction: 68,
-    searchGrounding: 30,
+  'google/gemma-2-27b-it:free': {
+    multimodal: 50,
+    longContext: 70,
+    massiveContext: 50,
+    structuredOutput: 82,
+    codeGeneration: 78,
+    creativeWriting: 75,
+    reasoning: 82,
+    speed: 88,
+    verification: 78,
+    legalAnalysis: 68,
+    imageAnalysis: 50,
+    patternRecognition: 78,
+    dataExtraction: 78,
+    searchGrounding: 55,
     costEfficiency: 100,
-    dailyCapacity: 80,
+    dailyCapacity: 65,
   },
   
   // Hugging Face models (December 2025 - Top 4 Selected)
@@ -871,17 +943,37 @@ export class AIModelSelector {
   
   /**
    * Select optimal OpenRouter model based on task attributes
-   * Updated December 2025 with valid free models
+   * Updated December 2025 - Best model from each provider
    */
   static selectOpenRouterModel(attrs: TaskAttributes): string {
-    // Use Hermes 3 for massive context
-    if (attrs.needsMassiveContext) {
-      return 'nousresearch/hermes-3-llama-3.1-405b:free';
+    // Use Claude 3.5 Sonnet for legal analysis (best accuracy)
+    if (attrs.needsLegalAnalysis) {
+      return 'anthropic/claude-3.5-sonnet';
     }
     
-    // Use Qwen for multimodal/image analysis
+    // Use Gemini 2.0 Flash for multimodal/image analysis
     if (attrs.needsMultimodal || attrs.needsImageAnalysis) {
-      return 'qwen/qwen-2.5-72b-instruct:free';
+      return 'google/gemini-2.0-flash-exp:free';
+    }
+    
+    // Use Perplexity Sonar Pro for web-grounded search
+    if (attrs.needsSearchGrounding) {
+      return 'perplexity/sonar-pro';
+    }
+    
+    // Use DeepSeek R1 for pattern recognition and complex reasoning
+    if (attrs.needsPatternRecognition || (attrs.needsReasoning && attrs.complexity === TaskComplexity.COMPREHENSIVE)) {
+      return 'deepseek/deepseek-r1-0528:free';
+    }
+    
+    // Use SambaNova Llama 405B for massive context
+    if (attrs.needsMassiveContext) {
+      return 'sambanova/llama-3.1-405b-instruct';
+    }
+    
+    // Use NVIDIA Nemotron for code generation
+    if (attrs.needsCodeGeneration) {
+      return 'nvidia/llama-3.1-nemotron-70b-instruct:free';
     }
     
     // Use Qwen for structured output/data extraction
@@ -889,23 +981,13 @@ export class AIModelSelector {
       return 'qwen/qwen-2.5-72b-instruct:free';
     }
     
-    // Use DeepSeek R1 for pattern recognition
-    if (attrs.needsPatternRecognition) {
-      return 'deepseek/deepseek-r1-0528:free';
+    // Use Groq for fast responses
+    if (attrs.needsFastResponse) {
+      return 'groq/llama-3.3-70b-versatile';
     }
     
-    // Use DeepSeek R1 for complex reasoning
-    if (attrs.needsReasoning && attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'deepseek/deepseek-r1-0528:free';
-    }
-    
-    // Use Llama 3.3 for code generation
-    if (attrs.needsCodeGeneration) {
-      return 'meta-llama/llama-3.3-70b-instruct:free';
-    }
-    
-    // Default to Llama 3.3 for general tasks
-    return 'meta-llama/llama-3.3-70b-instruct:free';
+    // Default to Google Gemini 2.0 Flash for general tasks (best free all-rounder)
+    return 'google/gemini-2.0-flash-exp:free';
   }
   
   /**

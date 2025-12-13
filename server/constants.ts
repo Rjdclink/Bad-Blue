@@ -88,16 +88,21 @@ export const AI_PROVIDERS = {
 
 export type AIProvider = typeof AI_PROVIDERS[keyof typeof AI_PROVIDERS];
 
-// OpenRouter models (Updated December 2025 with valid free models)
+// OpenRouter models (Updated December 2025 - Best model from each provider via OpenRouter)
 export const OPENROUTER_MODELS = {
-  QWEN_2_5_72B: 'qwen/qwen-2.5-72b-instruct:free',
-  DEEPSEEK_R1: 'deepseek/deepseek-r1-0528:free',
-  LLAMA_3_3_70B: 'meta-llama/llama-3.3-70b-instruct:free',
-  GEMMA_2_9B: 'google/gemma-2-9b-it:free',
-  PHI_4: 'microsoft/phi-4:free',
-  MISTRAL_7B: 'mistralai/mistral-7b-instruct:free',
-  HERMES_3_405B: 'nousresearch/hermes-3-llama-3.1-405b:free',
-  OPENCHAT_7B: 'openchat/openchat-7b:free',
+  // Best model from each provider via OpenRouter
+  GROQ_LLAMA: 'groq/llama-3.3-70b-versatile',           // Groq - Best: Llama 3.3 70B
+  GOOGLE_GEMINI: 'google/gemini-2.0-flash-exp:free',    // Google AI Studio - Best: Gemini 2.0 Flash
+  NVIDIA_NEMOTRON: 'nvidia/llama-3.1-nemotron-70b-instruct:free', // NVIDIA - Best: Nemotron 70B
+  OPENAI_GPT4O: 'openai/gpt-4o-mini',                   // OpenAI - Best: GPT-4o Mini (cost-effective)
+  MISTRAL_LARGE: 'mistralai/mistral-large-2411',        // Mistral - Best: Mistral Large
+  DEEPSEEK_R1: 'deepseek/deepseek-r1-0528:free',        // DeepSeek - Best: DeepSeek R1
+  ANTHROPIC_CLAUDE: 'anthropic/claude-3.5-sonnet',      // Anthropic - Best: Claude 3.5 Sonnet
+  PERPLEXITY_SONAR: 'perplexity/sonar-pro',             // Perplexity - Best: Sonar Pro (web-grounded)
+  QWEN_72B: 'qwen/qwen-2.5-72b-instruct:free',          // Qwen (via OpenRouter) - Best: Qwen 2.5 72B
+  CLOUDFLARE_LLAMA: 'cloudflare/llama-3.1-70b-instruct', // Cloudflare - Best: Llama 3.1 70B
+  SAMBANOVA_LLAMA: 'sambanova/llama-3.1-405b-instruct', // SambaNova - Best: Llama 3.1 405B
+  GOOGLE_GEMMA: 'google/gemma-2-27b-it:free',           // Google Vertex - Best: Gemma 2 27B
 } as const;
 
 // ==================== LAW TYPES ====================
