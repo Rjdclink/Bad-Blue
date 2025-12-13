@@ -11,6 +11,11 @@
  * - Bird of Prey: Klingon predator with perfect cloaking and disruptors
  * - Six Degrees: Social graph mapper for relationship discovery
  * 
+ * Six-Crawler Initiative:
+ * - Advanced security stress-testing construct
+ * - Six autonomous analytic entities working in coordination
+ * - Operates only in authorized, simulated, or mirrored environments
+ * 
  * Job Management:
  * - CrawlerJobManager: Production-grade continuous job lifecycle
  * - Tiered Reports: Basic (4min), Enhanced (8min), Full (12min), Eye of God (18min)
@@ -23,6 +28,17 @@ export { StarTrekCrawler } from './StarTrekCrawler';
 export { BirdOfPreyCrawler } from './BirdOfPreyCrawler';
 export { SixDegreesCrawler } from './SixDegreesCrawler';
 export { PhylacterySystem } from '../storage/PhylacterySystem';
+
+// Six-Crawler Initiative
+export {
+  SixCrawlerInitiative,
+  MirrorCrawler,
+  KeyCrawler,
+  ChewerCrawler,
+  ComputationalCrawler,
+  USCCrawler,
+  WooCrawler,
+} from './SixCrawlerInitiative';
 
 // Job Management with Tiered Reports and Doomsday Clock
 export { 
