@@ -84,7 +84,21 @@ const adjustColorBrightness = (hex: string, percent: number): string => {
   ).toString(16).slice(1);
 };
 
-// Book spine component with vertical text and 3D effect - Now directly navigates on click
+/**
+ * Converts hex color to RGB object for rgba usage
+ * @param hex - Hex color string (e.g., '#FF0000')
+ * @returns RGB object with r, g, b components
+ */
+const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : { r: 100, g: 100, b: 100 };
+}
+
+// Book spine component with "Quiet 3D" premium design - depth, light, and material
 const BookSpine = ({ 
   lawType, 
   color, 
@@ -96,56 +110,69 @@ const BookSpine = ({
   onClick: () => void;
   ariaLabel: string;
 }) => {
-  const darkColor = adjustColorBrightness(color, 20);
-  const lighterColor = adjustColorBrightness(color, -10);
+  const rgb = hexToRgb(color);
+  const accentRgba = `${rgb.r}, ${rgb.g}, ${rgb.b}`;
 
   return (
     <button
       onClick={onClick}
       aria-label={ariaLabel}
-      className={`
-        relative cursor-pointer transition-all duration-300 flex-shrink-0
-        hover:-translate-y-3 hover:scale-105 hover:z-10
-        focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 focus:ring-offset-black
-        active:scale-95 active:translate-y-0
-      `}
+      className="book-spine-quiet3d relative cursor-pointer flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:ring-offset-2 focus:ring-offset-black group"
       style={{
         width: '55px',
         height: '280px',
-        background: `linear-gradient(to right, ${darkColor} 0%, ${color} 40%, ${color} 60%, ${darkColor} 100%)`,
-        borderRadius: '2px 6px 6px 2px',
-        boxShadow: `2px 2px 4px rgba(0,0,0,0.4), inset -2px 0 4px rgba(0,0,0,0.2)`,
+        // Neutral dark base with subtle gradient for material feel
+        background: `linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.15))`,
+        backgroundColor: '#1a1a1f',
+        borderRadius: '14px',
+        // 3D depth: top light, bottom occlusion, object lift
+        boxShadow: `
+          inset 0 1px 0 rgba(255,255,255,0.15),
+          inset 0 -1px 0 rgba(0,0,0,0.25),
+          0 8px 20px rgba(0,0,0,0.35)
+        `,
         border: 'none',
+        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
       }}
     >
-      {/* Spine highlight for 3D effect */}
+      {/* Color as light source - left accent rim */}
       <div
-        className="absolute top-0 bottom-0 left-0 w-[2px]"
+        className="absolute top-0 bottom-0 left-0 w-[3px] rounded-l-[14px]"
         style={{
-          background: `linear-gradient(to bottom, ${lighterColor} 0%, transparent 50%, rgba(0,0,0,0.3) 100%)`,
+          background: `linear-gradient(to bottom, rgba(${accentRgba}, 0.6) 0%, rgba(${accentRgba}, 0.3) 50%, rgba(${accentRgba}, 0.1) 100%)`,
         }}
       />
       
-      {/* Text on spine */}
+      {/* Hover glow effect - color as light, not paint */}
       <div
-        className="absolute inset-0 flex items-center justify-center px-1"
+        className="absolute inset-0 rounded-[14px] opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-out pointer-events-none"
         style={{
-          writingMode: 'vertical-rl',
-          textOrientation: 'mixed',
-          transform: 'rotate(180deg)',
+          boxShadow: `0 0 24px rgba(${accentRgba}, 0.35)`,
         }}
-      >
+      />
+      
+      {/* Text on spine - horizontal, sentence case, medium weight */}
+      <div className="absolute inset-0 flex items-center justify-center px-2">
         <span
-          className="font-bold text-center break-words"
+          className="book-spine-label text-center break-words"
           style={{
-            color: '#D4AF37',
-            textShadow: '1px 1px 2px rgba(0,0,0,0.8), 0 0 8px rgba(212,175,55,0.4)',
-            fontSize: lawType.name.length > 25 ? '10px' : '11px',
-            letterSpacing: '0.5px',
+            fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif",
+            fontSize: lawType.name.length > 25 ? '9px' : '10px',
+            fontWeight: 500,
+            letterSpacing: '0.015em',
             lineHeight: '1.3',
+            color: 'rgba(255,255,255,0.9)',
+            // Subtle text depth for edge definition
+            textShadow: `
+              0 1px 1px rgba(0,0,0,0.4),
+              0 -1px 0 rgba(255,255,255,0.05)
+            `,
+            writingMode: 'vertical-rl',
+            textOrientation: 'mixed',
+            transform: 'rotate(180deg)',
           }}
         >
-          {lawType.name.toUpperCase()}
+          {lawType.name}
         </span>
       </div>
 
@@ -155,8 +182,8 @@ const BookSpine = ({
           className="absolute -top-2 left-1/2 transform -translate-x-1/2 z-20"
           style={{ writingMode: 'horizontal-tb' }}
         >
-          <Badge variant="destructive" className="text-[8px] px-1 py-0 shadow-lg">
-            FEATURED
+          <Badge variant="secondary" className="text-[8px] px-1.5 py-0.5 bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm shadow-lg">
+            Featured
           </Badge>
         </div>
       )}
@@ -305,151 +332,225 @@ export default function WelcomePage() {
         {/* PANTHEON - Advanced Intelligence Platform */}
         <div className="mb-8 sm:mb-12">
           <div className="flex items-center gap-2 mb-4 justify-center">
-            <Badge variant="default" className="text-sm bg-gradient-to-r from-red-600 to-pink-600">
-              🏛️ Advanced Intelligence Platform
+            <Badge variant="secondary" className="text-sm bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm px-4 py-1">
+              Advanced Intelligence Platform
             </Badge>
           </div>
-          <div
-            className="cursor-pointer transition-all hover:shadow-xl rounded-lg overflow-hidden"
+          <button
+            className="feature-card-quiet3d w-full text-left relative cursor-pointer rounded-2xl overflow-hidden group focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-black"
             onClick={() => setLocation('/pantheon')}
             style={{
-              background: 'linear-gradient(135deg, rgba(233, 69, 96, 0.15) 0%, rgba(15, 52, 96, 0.15) 100%)',
+              // Neutral dark base with material gradient
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.15))',
+              backgroundColor: '#1a1a1f',
               backdropFilter: 'blur(10px)',
-              border: '3px solid rgba(233, 69, 96, 0.5)',
+              // 3D depth simulation
+              boxShadow: `
+                inset 0 1px 0 rgba(255,255,255,0.15),
+                inset 0 -1px 0 rgba(0,0,0,0.25),
+                0 8px 20px rgba(0,0,0,0.35)
+              `,
+              border: '1px solid rgba(255,255,255,0.1)',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
             }}
           >
-            <div className="p-6 flex items-start gap-4">
+            {/* Color as rim light - left accent */}
+            <div
+              className="absolute top-0 bottom-0 left-0 w-[4px] rounded-l-2xl"
+              style={{
+                background: 'linear-gradient(to bottom, rgba(233, 69, 96, 0.7) 0%, rgba(233, 69, 96, 0.4) 50%, rgba(233, 69, 96, 0.2) 100%)',
+              }}
+            />
+            
+            {/* Hover glow effect */}
+            <div
+              className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-out pointer-events-none"
+              style={{
+                boxShadow: '0 0 24px rgba(233, 69, 96, 0.35)',
+              }}
+            />
+            
+            <div className="p-6 flex items-start gap-4 relative z-10">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-3">
-                  <Shield className="h-8 w-8 text-red-400" />
-                  <h3 className="text-2xl font-bold text-white">
-                    PANTHEON - Intelligence Platform
+                  <Shield className="h-8 w-8 text-white/70" />
+                  <h3 className="quiet3d-heading text-2xl text-white/90">
+                    Pantheon - Intelligence Platform
                   </h3>
                 </div>
-                <p className="text-base text-white/80 mb-2">
-                  <strong>Parallel Autonomous Network for Tactical Heuristic Evidence-Obtaining Entity</strong>
+                <p className="quiet3d-label text-base text-white/70 mb-2">
+                  Parallel Autonomous Network for Tactical Heuristic Evidence-Obtaining Entity
                 </p>
-                <p className="text-base text-white/80 mb-4">
+                <p className="text-base text-white/60 mb-4">
                   Advanced intelligence platform for comprehensive identity profiling. Synthesizes data from 60+ sources 
-                  to construct complete profiles including contacts, addresses, relationships, employment, and digital footprints. 
-                  Uncovers information that even the most expensive services miss.
+                  to construct complete profiles including contacts, addresses, relationships, employment, and digital footprints.
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary" className="text-xs bg-red-500/20 text-red-200 border-red-400/30">
-                    👁️ EYE OF GOD Mode
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    Eye of God Mode
                   </Badge>
-                  <Badge variant="secondary" className="text-xs bg-red-500/20 text-red-200 border-red-400/30">
-                    🌐 60+ Data Sources
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    60+ Data Sources
                   </Badge>
-                  <Badge variant="secondary" className="text-xs bg-red-500/20 text-red-200 border-red-400/30">
-                    🔍 Deep Intelligence
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    Deep Intelligence
                   </Badge>
-                  <Badge variant="secondary" className="text-xs bg-red-500/20 text-red-200 border-red-400/30">
-                    ⚡ Real-Time Resolution
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    Real-Time Resolution
                   </Badge>
                 </div>
               </div>
-              <ArrowRight className="h-8 w-8 text-red-400 flex-shrink-0 mt-2" />
+              <ArrowRight className="h-8 w-8 text-white/50 flex-shrink-0 mt-2 group-hover:text-white/70 transition-colors duration-200" />
             </div>
-          </div>
+          </button>
         </div>
 
-        {/* People Finder - Styled as Special Reference Book */}
+        {/* People Finder - Styled with Quiet 3D */}
         <div className="mb-8 sm:mb-12">
           <div className="flex items-center gap-2 mb-4 justify-center">
-            <Badge variant="default" className="text-sm bg-gradient-to-r from-blue-600 to-blue-700">
+            <Badge variant="secondary" className="text-sm bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm px-4 py-1">
               Universal Research Tool
             </Badge>
           </div>
-          <div
-            className="cursor-pointer transition-all hover:shadow-xl rounded-lg overflow-hidden"
+          <button
+            className="feature-card-quiet3d w-full text-left relative cursor-pointer rounded-2xl overflow-hidden group focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-black"
             onClick={() => setLocation('/people-finder')}
             style={{
-              background: 'linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%)',
+              // Neutral dark base with material gradient
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.15))',
+              backgroundColor: '#1a1a1f',
               backdropFilter: 'blur(10px)',
-              border: '3px solid rgba(59, 130, 246, 0.5)',
+              // 3D depth simulation
+              boxShadow: `
+                inset 0 1px 0 rgba(255,255,255,0.15),
+                inset 0 -1px 0 rgba(0,0,0,0.25),
+                0 8px 20px rgba(0,0,0,0.35)
+              `,
+              border: '1px solid rgba(255,255,255,0.1)',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
             }}
           >
-            <div className="p-6 flex items-start gap-4">
+            {/* Color as rim light - left accent (blue) */}
+            <div
+              className="absolute top-0 bottom-0 left-0 w-[4px] rounded-l-2xl"
+              style={{
+                background: 'linear-gradient(to bottom, rgba(59, 130, 246, 0.7) 0%, rgba(59, 130, 246, 0.4) 50%, rgba(59, 130, 246, 0.2) 100%)',
+              }}
+            />
+            
+            {/* Hover glow effect */}
+            <div
+              className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-out pointer-events-none"
+              style={{
+                boxShadow: '0 0 24px rgba(59, 130, 246, 0.35)',
+              }}
+            />
+            
+            <div className="p-6 flex items-start gap-4 relative z-10">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-3">
-                  <Shield className="h-8 w-8 text-blue-400" />
-                  <h3 className="text-2xl font-bold text-white">
+                  <Shield className="h-8 w-8 text-white/70" />
+                  <h3 className="quiet3d-heading text-2xl text-white/90">
                     People Finder - Global Identity Intelligence
                   </h3>
                 </div>
-                <p className="text-base text-white/80 mb-4">
+                <p className="text-base text-white/60 mb-4">
                   Advanced AI-powered people search tool. Find witnesses, experts, parties, or any individual 
                   relevant to your legal matter. Aggregates data from public records, court filings, social media, 
                   professional networks, and more. Works across all legal areas.
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary" className="text-xs bg-blue-500/20 text-blue-200 border-blue-400/30">
-                    🔍 Multi-Source Search
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    Multi-Source Search
                   </Badge>
-                  <Badge variant="secondary" className="text-xs bg-blue-500/20 text-blue-200 border-blue-400/30">
-                    🤖 AI Entity Resolution
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    AI Entity Resolution
                   </Badge>
-                  <Badge variant="secondary" className="text-xs bg-blue-500/20 text-blue-200 border-blue-400/30">
-                    📊 Professional Dossiers
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    Professional Dossiers
                   </Badge>
-                  <Badge variant="secondary" className="text-xs bg-blue-500/20 text-blue-200 border-blue-400/30">
-                    ⚖️ Legal Research Ready
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    Legal Research Ready
                   </Badge>
                 </div>
               </div>
-              <ArrowRight className="h-8 w-8 text-blue-400 flex-shrink-0 mt-2" />
+              <ArrowRight className="h-8 w-8 text-white/50 flex-shrink-0 mt-2 group-hover:text-white/70 transition-colors duration-200" />
             </div>
-          </div>
+          </button>
         </div>
 
-        {/* United States Inmate Locator - Green Accent */}
+        {/* United States Inmate Locator - Quiet 3D with green accent */}
         <div className="mb-8 sm:mb-12">
           <div className="flex items-center gap-2 mb-4 justify-center">
-            <Badge variant="default" className="text-sm bg-gradient-to-r from-green-600 to-green-700">
+            <Badge variant="secondary" className="text-sm bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm px-4 py-1">
               Nationwide Corrections Search
             </Badge>
           </div>
-          <div
-            className="cursor-pointer transition-all hover:shadow-xl rounded-lg overflow-hidden"
+          <button
+            className="feature-card-quiet3d w-full text-left relative cursor-pointer rounded-2xl overflow-hidden group focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-black"
             onClick={() => setLocation('/inmate-locator')}
             style={{
-              background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(22, 163, 74, 0.15) 100%)',
+              // Neutral dark base with material gradient
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.15))',
+              backgroundColor: '#1a1a1f',
               backdropFilter: 'blur(10px)',
-              border: '3px solid rgba(34, 197, 94, 0.5)',
+              // 3D depth simulation
+              boxShadow: `
+                inset 0 1px 0 rgba(255,255,255,0.15),
+                inset 0 -1px 0 rgba(0,0,0,0.25),
+                0 8px 20px rgba(0,0,0,0.35)
+              `,
+              border: '1px solid rgba(255,255,255,0.1)',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
             }}
           >
-            <div className="p-6 flex items-start gap-4">
+            {/* Color as rim light - left accent (green) */}
+            <div
+              className="absolute top-0 bottom-0 left-0 w-[4px] rounded-l-2xl"
+              style={{
+                background: 'linear-gradient(to bottom, rgba(34, 197, 94, 0.7) 0%, rgba(34, 197, 94, 0.4) 50%, rgba(34, 197, 94, 0.2) 100%)',
+              }}
+            />
+            
+            {/* Hover glow effect */}
+            <div
+              className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-out pointer-events-none"
+              style={{
+                boxShadow: '0 0 24px rgba(34, 197, 94, 0.35)',
+              }}
+            />
+            
+            <div className="p-6 flex items-start gap-4 relative z-10">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-3">
-                  <Shield className="h-8 w-8 text-green-400" />
-                  <h3 className="text-2xl font-bold text-white">
+                  <Shield className="h-8 w-8 text-white/70" />
+                  <h3 className="quiet3d-heading text-2xl text-white/90">
                     United States Inmate Locator
                   </h3>
                 </div>
-                <p className="text-base text-white/80 mb-4">
+                <p className="text-base text-white/60 mb-4">
                   Nationwide inmate search across federal, state, private, and local facilities with detailed 
                   records and offense indicators. Search BOP federal prisons, state DOC systems, county jails, 
                   and private correctional facilities with comprehensive custody status and charge information.
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary" className="text-xs bg-green-500/20 text-green-200 border-green-400/30">
-                    🏛️ Federal BOP
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    Federal BOP
                   </Badge>
-                  <Badge variant="secondary" className="text-xs bg-green-500/20 text-green-200 border-green-400/30">
-                    🗺️ 50-State Coverage
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    50-State Coverage
                   </Badge>
-                  <Badge variant="secondary" className="text-xs bg-green-500/20 text-green-200 border-green-400/30">
-                    ⚖️ Offense Details
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    Offense Details
                   </Badge>
-                  <Badge variant="secondary" className="text-xs bg-green-500/20 text-green-200 border-green-400/30">
-                    📊 Custody Status
+                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
+                    Custody Status
                   </Badge>
                 </div>
               </div>
-              <ArrowRight className="h-8 w-8 text-green-400 flex-shrink-0 mt-2" />
+              <ArrowRight className="h-8 w-8 text-white/50 flex-shrink-0 mt-2 group-hover:text-white/70 transition-colors duration-200" />
             </div>
-          </div>
+          </button>
         </div>
 
         {/* Helper Text - Always visible */}
