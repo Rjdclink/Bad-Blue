@@ -26,6 +26,13 @@ const log = createLogger('LEXARARoutes');
  * - If ElevenLabs TTS is unavailable, returns text only
  */
 router.post('/chat', express.json(), async (req: Request, res: Response) => {
+  console.log('[LEXARA CHAT] Handler entered', {
+    requestId: Date.now(),
+    hasBody: !!req.body,
+    hasPrompt: !!req.body?.prompt,
+    promptLength: req.body?.prompt?.length,
+  });
+  
   try {
     const { prompt, context, systemPrompt, includeAudio = true } = req.body;
     
@@ -33,11 +40,14 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     req.body.persona = mergePersonaWithKernel(req.body.persona);
     
     if (!prompt || typeof prompt !== 'string') {
+      console.log('[LEXARA CHAT] Validation failed: invalid prompt');
       return res.status(400).json({
         success: false,
         error: 'Prompt is required',
       });
     }
+    
+    console.log('[LEXARA CHAT] Validation passed, generating response');
     
     log.info('[LEXARA] Chat request received with persona kernel', {
       promptLength: prompt.length,

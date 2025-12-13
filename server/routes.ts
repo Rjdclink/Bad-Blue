@@ -824,6 +824,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
   setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
   app.use(peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
+  console.log('[MOUNT] People Search mounted at: /api/people-search (NO PREFIX)');
   
   // ============================================
   // AUTH & SUBSCRIPTION ROUTES (Phase 3)
@@ -878,6 +879,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
   const inmateSearchRoutes = await import('./routes/inmateSearch.routes');
   app.use('/api/inmate-search', inmateSearchRoutes.default);
+  console.log('[MOUNT] Inmate Search mounted at: /api/inmate-search');
 
   // ============================================
   // REACTOR ROUTES - Computational Engine API
@@ -895,6 +897,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Chat routes (AI conversation with persona kernel)
   const lexaraChatRoutes = await import('./routes/lexara.chat.routes');
   app.use('/api/lexara', lexaraChatRoutes.default);
+  console.log('[MOUNT] Lexara Chat mounted at: /api/lexara/chat');
 
   // ============================================
   // VERIFICATION ROUTES - Job Status & Data Retrieval

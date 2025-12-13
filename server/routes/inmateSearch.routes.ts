@@ -42,17 +42,27 @@ router.post('/', apiRateLimit, async (req, res) => {
   let reportId: string | null = null;
   const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
   
+  console.log('[INMATE SEARCH] Handler entered', {
+    requestId: Date.now(),
+    hasBody: !!req.body,
+    firstName: req.body?.firstName,
+    lastName: req.body?.lastName,
+  });
+  
   try {
     // Validate request body
     const validation = InmateSearchSchema.safeParse(req.body);
     
     if (!validation.success) {
+      console.log('[INMATE SEARCH] Validation failed', validation.error.errors);
       return res.status(400).json({
         success: false,
         error: 'Validation failed',
         details: validation.error.errors,
       });
     }
+    
+    console.log('[INMATE SEARCH] Validation passed, executing search');
     
     const query: InmateSearchQuery = {
       firstName: validation.data.firstName || '',

@@ -13,16 +13,26 @@ const aggregator = new PeopleSearchAggregator();
  * Search for person across multiple public data sources
  */
 router.post('/api/people-search', async (req, res) => {
+  console.log('[PEOPLE SEARCH] Handler entered', {
+    requestId: Date.now(),
+    hasBody: !!req.body,
+    firstName: req.body?.firstName,
+    lastName: req.body?.lastName,
+  });
+  
   try {
     const { firstName, lastName, city, state, age } = req.body;
 
     // Validate required fields
     if (!firstName || !lastName) {
+      console.log('[PEOPLE SEARCH] Validation failed: missing firstName or lastName');
       return res.status(400).json({
         success: false,
         error: 'firstName and lastName required',
       });
     }
+    
+    console.log('[PEOPLE SEARCH] Validation passed, executing search');
 
     // Build search query
     const query: SearchQuery = {
