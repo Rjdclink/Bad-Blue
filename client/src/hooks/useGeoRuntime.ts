@@ -85,7 +85,7 @@ const DEFAULT_CONFIG: GeoRuntimeConfig = {
 // HELPERS
 // ============================================================================
 
-const generateId = (): string => `f_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+const generateId = (): string => `f_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371000;
@@ -338,10 +338,19 @@ export function useGeoRuntime(
     }
   }, [convertToFrames, cfg.maxFrameBuffer, cfg.predictiveEnabled]);
 
-  // Initialize on mount
+  // Ref to hold initialData for mount-only effect
+  const initialDataRef = useRef(initialData);
+  const loadDataRef = useRef(loadData);
+  
+  // Keep refs in sync
   useEffect(() => {
-    loadData(initialData);
-  }, []); // Only once on mount
+    loadDataRef.current = loadData;
+  }, [loadData]);
+
+  // Initialize on mount only
+  useEffect(() => {
+    loadDataRef.current(initialDataRef.current);
+  }, []); // Intentionally empty - mount only
 
   // Tick function - advances index
   const tick = useCallback(() => {
