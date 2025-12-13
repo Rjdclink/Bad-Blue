@@ -44,7 +44,7 @@ export function authenticateWithPassword(password: string, email?: string): Auth
   if (!MASTER_EMAIL || !MASTER_PASSWORD_HASH) {
     return {
       success: false,
-      error: 'CryptoCrawl authentication not configured. Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD environment variables.'
+      error: 'Authentication service not configured. Please contact support.'
     };
   }
 

@@ -632,8 +632,11 @@ export default function LexaraViewport() {
         // Permissions were already granted in disclaimer modal
         // Initialize media immediately - no permission prompts needed
         setSessionStarted(true);
-        await initializeMedia(devices.hasCamera, devices.hasMic);
-        sendLEXARAGreeting();
+        const mediaInitialized = await initializeMedia(devices.hasCamera, devices.hasMic);
+        // Only send greeting after media is initialized
+        if (mediaInitialized) {
+          sendLEXARAGreeting();
+        }
       }
     };
     
@@ -647,8 +650,10 @@ export default function LexaraViewport() {
   const handleBeginSession = async () => {
     setShowBeginButton(false);
     setSessionStarted(true);
-    await initializeMedia(mediaState.hasCamera, mediaState.hasMic);
-    sendLEXARAGreeting();
+    const mediaInitialized = await initializeMedia(mediaState.hasCamera, mediaState.hasMic);
+    if (mediaInitialized) {
+      sendLEXARAGreeting();
+    }
   };
 
   // Handler for one-click voice activation when auto-start fails

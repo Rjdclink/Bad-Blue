@@ -333,7 +333,7 @@ export async function conductEnhancedPeopleSearch(
 async function searchPublicRecords(name: string): Promise<OSINTSource> {
   try {
     // Check if PANTHEON is available for crawling
-    if (canActivatePantheon()) {
+    if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
         const crawlerResults = await pantheonOrchestrator.search([name], {
@@ -426,7 +426,7 @@ async function searchSocialMedia(name: string): Promise<OSINTSource> {
     }
 
     // Fallback: Use PANTHEON HYDRA crawler for social discovery
-    if (canActivatePantheon()) {
+    if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
         const crawlerResults = await pantheonOrchestrator.search([name], {
@@ -492,7 +492,7 @@ async function searchProfessionalNetworks(name: string): Promise<OSINTSource> {
     }
 
     // Use PANTHEON for professional directory crawling
-    if (canActivatePantheon()) {
+    if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
         const crawlerResults = await pantheonOrchestrator.search([name], {
@@ -613,7 +613,7 @@ async function searchCourtRecords(name: string): Promise<OSINTSource> {
     }
 
     // Use PANTHEON ICE crawler for precision court record extraction
-    if (canActivatePantheon()) {
+    if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
         const crawlerResults = await pantheonOrchestrator.search([name], {

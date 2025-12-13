@@ -40,6 +40,23 @@ const audioBuffers = new Map<string, {
   lastChunkTime: number;
 }>();
 
+import crypto from 'crypto';
+
+/**
+ * Generate cryptographically secure random string
+ */
+function generateSecureRandom(length: number): string {
+  return crypto.randomBytes(Math.ceil(length / 2)).toString('hex').slice(0, length);
+}
+
+/**
+ * Generate a secure fingerprint for WebRTC DTLS
+ */
+function generateSecureFingerprint(): string {
+  const bytes = crypto.randomBytes(32);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(':');
+}
+
 /**
  * Generate SDP answer for WebRTC negotiation
  * Production mode - creates proper SDP response for audio/video streams
@@ -49,7 +66,7 @@ function generateSDPAnswer(offerSdp?: string): string {
   const hasAudio = offerSdp?.includes('m=audio') ?? true;
   const hasVideo = offerSdp?.includes('m=video') ?? false;
   
-  // Generate production SDP answer
+  // Generate production SDP answer with secure credentials
   const sdpLines = [
     'v=0',
     `o=- ${Date.now()} 2 IN IP4 127.0.0.1`,
@@ -64,10 +81,10 @@ function generateSDPAnswer(offerSdp?: string): string {
       'm=audio 9 UDP/TLS/RTP/SAVPF 111 103 104 9 0 8 106 105 13 110 112 113 126',
       'c=IN IP4 0.0.0.0',
       'a=rtcp:9 IN IP4 0.0.0.0',
-      'a=ice-ufrag:' + Math.random().toString(36).substring(2, 10),
-      'a=ice-pwd:' + Math.random().toString(36).substring(2, 26),
+      'a=ice-ufrag:' + generateSecureRandom(8),
+      'a=ice-pwd:' + generateSecureRandom(24),
       'a=ice-options:trickle',
-      'a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00',
+      'a=fingerprint:sha-256 ' + generateSecureFingerprint(),
       'a=setup:active',
       'a=mid:0',
       'a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level',
