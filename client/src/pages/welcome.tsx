@@ -84,6 +84,20 @@ const adjustColorBrightness = (hex: string, percent: number): string => {
   ).toString(16).slice(1);
 };
 
+/**
+ * Converts hex color to RGB object for rgba usage
+ * @param hex - Hex color string (e.g., '#FF0000')
+ * @returns RGB object with r, g, b components
+ */
+const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : { r: 100, g: 100, b: 100 };
+}
+
 // Book spine component with "Quiet 3D" premium design - depth, light, and material
 const BookSpine = ({ 
   lawType, 
@@ -96,16 +110,6 @@ const BookSpine = ({
   onClick: () => void;
   ariaLabel: string;
 }) => {
-  // Convert hex color to RGB for rgba usage
-  const hexToRgb = (hex: string) => {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? {
-      r: parseInt(result[1], 16),
-      g: parseInt(result[2], 16),
-      b: parseInt(result[3], 16)
-    } : { r: 100, g: 100, b: 100 };
-  };
-  
   const rgb = hexToRgb(color);
   const accentRgba = `${rgb.r}, ${rgb.g}, ${rgb.b}`;
 
@@ -183,20 +187,6 @@ const BookSpine = ({
           </Badge>
         </div>
       )}
-      
-      {/* CSS for hover state */}
-      <style>{`
-        .book-spine-quiet3d:hover {
-          transform: translateY(-2px);
-          box-shadow:
-            inset 0 1px 0 rgba(255,255,255,0.2),
-            inset 0 -1px 0 rgba(0,0,0,0.3),
-            0 14px 28px rgba(0,0,0,0.45) !important;
-        }
-        .book-spine-quiet3d:active {
-          transform: translateY(0);
-        }
-      `}</style>
     </button>
   );
 };
@@ -384,26 +374,11 @@ export default function WelcomePage() {
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-3">
                   <Shield className="h-8 w-8 text-white/70" />
-                  <h3 
-                    className="text-2xl text-white/90"
-                    style={{
-                      fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif",
-                      fontWeight: 500,
-                      letterSpacing: '0.015em',
-                      textShadow: '0 1px 1px rgba(0,0,0,0.4), 0 -1px 0 rgba(255,255,255,0.05)',
-                    }}
-                  >
+                  <h3 className="quiet3d-heading text-2xl text-white/90">
                     Pantheon - Intelligence Platform
                   </h3>
                 </div>
-                <p 
-                  className="text-base text-white/70 mb-2"
-                  style={{
-                    fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif",
-                    fontWeight: 500,
-                    letterSpacing: '0.015em',
-                  }}
-                >
+                <p className="quiet3d-label text-base text-white/70 mb-2">
                   Parallel Autonomous Network for Tactical Heuristic Evidence-Obtaining Entity
                 </p>
                 <p className="text-base text-white/60 mb-4">
@@ -475,15 +450,7 @@ export default function WelcomePage() {
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-3">
                   <Shield className="h-8 w-8 text-white/70" />
-                  <h3 
-                    className="text-2xl text-white/90"
-                    style={{
-                      fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif",
-                      fontWeight: 500,
-                      letterSpacing: '0.015em',
-                      textShadow: '0 1px 1px rgba(0,0,0,0.4), 0 -1px 0 rgba(255,255,255,0.05)',
-                    }}
-                  >
+                  <h3 className="quiet3d-heading text-2xl text-white/90">
                     People Finder - Global Identity Intelligence
                   </h3>
                 </div>
@@ -557,15 +524,7 @@ export default function WelcomePage() {
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-3">
                   <Shield className="h-8 w-8 text-white/70" />
-                  <h3 
-                    className="text-2xl text-white/90"
-                    style={{
-                      fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif",
-                      fontWeight: 500,
-                      letterSpacing: '0.015em',
-                      textShadow: '0 1px 1px rgba(0,0,0,0.4), 0 -1px 0 rgba(255,255,255,0.05)',
-                    }}
-                  >
+                  <h3 className="quiet3d-heading text-2xl text-white/90">
                     United States Inmate Locator
                   </h3>
                 </div>
