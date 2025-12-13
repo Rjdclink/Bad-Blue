@@ -73,6 +73,30 @@ export {
   type TTSEngineStatus,
 } from './LexaraTTSRouter';
 
+// Monte Carlo Enhancement System - Integrated optimization engine
+export {
+  lexaraMonteCarloEnhancement,
+  initializeMonteCarloEnhancement,
+  runOptimizationCycle,
+  evaluateAtDecisionBoundary,
+  configureEnhancement,
+  configureEnhancementSchedule,
+  getEnhancementState,
+  getActiveOptimizationProfile,
+  isEnhancementOptimizing,
+  shutdownMonteCarloEnhancement,
+  monteCarloEnhancementEvents,
+  type OptimizationDomain,
+  type LegalUnderstandingMetrics,
+  type ExplanationQualityMetrics,
+  type ConsultativeEngagementMetrics,
+  type VocalGravitasMetrics,
+  type OptimizationProfile,
+  type MonteCarloEnhancementConfig,
+  type SessionContext,
+  type ScheduledCycleConfig,
+  type EnhancementSystemState,
+} from './monteCarloEnhancement';
 // Monte Carlo Enhancement & Consultation Optimization System
 export {
   lexaraMCOptimizer,
