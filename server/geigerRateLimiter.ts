@@ -68,7 +68,17 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'groq',
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
-    models: ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768', 'gemma2-9b-it', 'llama-3.1-8b-instant'],
+    models: [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'mixtral-8x7b-32768',
+      'gemma2-9b-it',
+      'qwen/qwen3-32b',
+      'playai-tts',
+      'playai-tts-arabic',
+      'whisper-large-v3',
+      'whisper-large-v3-turbo'
+    ],
     rpmLimit: 30,
     rpdLimit: 14400,
     tpdLimit: 500000,
@@ -151,7 +161,14 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'sambanova',
     endpoint: 'https://api.sambanova.ai/v1/chat/completions',
-    models: ['Meta-Llama-3.1-8B-Instruct', 'Meta-Llama-3.1-70B-Instruct'],
+    models: [
+      'Meta-Llama-3.1-8B-Instruct',
+      'Meta-Llama-3.1-70B-Instruct',
+      'DeepSeek-V3-32K',
+      'DeepSeek-chat',
+      'DeepSeek-coder',
+      'Mistral-large'
+    ],
     rpmLimit: 20,
     rpdLimit: 500,
     apiKeyEnv: 'SAMBANOVA_API_KEY',

@@ -1,14 +1,14 @@
 # AI Providers Documentation
 
-Complete documentation for all 5 AI providers integrated into LegalWhat/Bad-Blue.
+Complete documentation for all 6 AI providers integrated into LegalWhat/Bad-Blue.
 
 ---
 
 ## Overview
 
-**Total Providers**: 5  
-**Total Models**: 12  
-**Free Models**: 10  
+**Total Providers**: 6  
+**Total Models**: 23  
+**Free Models**: 21  
 **Paid Models**: 2 (optional)  
 **Cost**: $0/month for core functionality
 
@@ -20,9 +20,10 @@ Complete documentation for all 5 AI providers integrated into LegalWhat/Bad-Blue
 |----------|--------|------|-------------|----------|
 | **OpenRouter** | 4 | FREE | Varies by model | Primary AI consultation |
 | **Gemini** | 3 | FREE | 1500 RPD | Document generation |
-| **Groq** | 2 | FREE | 30 RPM | Fast responses |
+| **Groq** | 7 | FREE | 30 RPM | Fast responses, TTS, STT |
 | **Mistral** | 1 | FREE | Varies | European data compliance |
 | **Anthropic** | 2 | PAID | Pay-per-use | Premium consultations |
+| **SambaNova** | 6 | FREE | 20 RPM | DeepSeek, Mistral models |
 
 **RPD** = Requests Per Day  
 **RPM** = Requests Per Minute
@@ -188,7 +189,7 @@ console.log(response.text);
 **Docs**: [console.groq.com/docs](https://console.groq.com/docs)  
 **Cost**: FREE with excellent speed
 
-### Models (2 Free)
+### Models (7 Free)
 
 #### 3.1 Llama 3.3 70B Versatile
 ```typescript
@@ -206,6 +207,47 @@ model: 'llama-3.1-8b-instant'
 - **Context**: 128K tokens
 - **Strengths**: Ultra-fast responses
 - **Best for**: Real-time chat, quick answers
+- **Rate Limit**: 30 requests/minute
+
+#### 3.3 Qwen3 32B
+```typescript
+model: 'qwen/qwen3-32b'
+```
+- **Context**: 32K tokens
+- **Strengths**: Strong reasoning, multilingual
+- **Best for**: Complex analysis, structured outputs
+- **Rate Limit**: 30 requests/minute
+
+#### 3.4 PlayAI TTS
+```typescript
+model: 'playai-tts'
+```
+- **Strengths**: High-quality text-to-speech
+- **Best for**: Voice synthesis, accessibility
+- **Rate Limit**: 30 requests/minute
+
+#### 3.5 PlayAI TTS Arabic
+```typescript
+model: 'playai-tts-arabic'
+```
+- **Strengths**: Arabic text-to-speech
+- **Best for**: Arabic voice synthesis
+- **Rate Limit**: 30 requests/minute
+
+#### 3.6 Whisper Large V3
+```typescript
+model: 'whisper-large-v3'
+```
+- **Strengths**: Accurate speech-to-text
+- **Best for**: Audio transcription
+- **Rate Limit**: 30 requests/minute
+
+#### 3.7 Whisper Large V3 Turbo
+```typescript
+model: 'whisper-large-v3-turbo'
+```
+- **Strengths**: Fast speech-to-text
+- **Best for**: Real-time transcription
 - **Rate Limit**: 30 requests/minute
 
 ### Configuration
@@ -377,14 +419,121 @@ console.log(message.content);
 
 ---
 
+## 6. SambaNova
+
+**Website**: [sambanova.ai](https://sambanova.ai)  
+**Docs**: [docs.sambanova.ai](https://docs.sambanova.ai)  
+**Cost**: FREE tier available
+
+### Models (6 Free)
+
+#### 6.1 Meta Llama 3.1 8B Instruct
+```typescript
+model: 'Meta-Llama-3.1-8B-Instruct'
+```
+- **Context**: 8K tokens
+- **Strengths**: Fast inference, efficient
+- **Best for**: Quick responses, lightweight tasks
+- **Rate Limit**: 20 requests/minute
+
+#### 6.2 Meta Llama 3.1 70B Instruct
+```typescript
+model: 'Meta-Llama-3.1-70B-Instruct'
+```
+- **Context**: 8K tokens
+- **Strengths**: High-quality reasoning
+- **Best for**: Complex analysis, detailed responses
+- **Rate Limit**: 20 requests/minute
+
+#### 6.3 DeepSeek V3-32K
+```typescript
+model: 'DeepSeek-V3-32K'
+```
+- **Context**: 32K tokens
+- **Strengths**: Extended context, advanced reasoning
+- **Best for**: Long document analysis, legal research
+- **Rate Limit**: 20 requests/minute
+
+#### 6.4 DeepSeek Chat
+```typescript
+model: 'DeepSeek-chat'
+```
+- **Context**: 32K tokens
+- **Strengths**: Conversational AI, reasoning
+- **Best for**: Interactive consultations
+- **Rate Limit**: 20 requests/minute
+
+#### 6.5 DeepSeek Coder
+```typescript
+model: 'DeepSeek-coder'
+```
+- **Context**: 32K tokens
+- **Strengths**: Code generation, analysis
+- **Best for**: Code-related tasks, technical analysis
+- **Rate Limit**: 20 requests/minute
+
+#### 6.6 Mistral Large
+```typescript
+model: 'Mistral-large'
+```
+- **Context**: 128K tokens
+- **Strengths**: Multilingual, reasoning
+- **Best for**: Complex tasks, European compliance
+- **Rate Limit**: 20 requests/minute
+
+### Configuration
+
+**Environment Variable**:
+```bash
+SAMBANOVA_API_KEY=xxxxxxxxxxxxxxxxxxxx
+```
+
+**Get API Key**:
+1. Go to [cloud.sambanova.ai](https://cloud.sambanova.ai)
+2. Sign up with email
+3. Generate API key (free tier)
+4. Add to Railway environment variables
+
+### Usage Example
+```typescript
+const response = await fetch('https://api.sambanova.ai/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${process.env.SAMBANOVA_API_KEY}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    model: 'DeepSeek-V3-32K',
+    messages: [
+      { role: 'system', content: 'You are a legal assistant.' },
+      { role: 'user', content: 'Analyze this contract clause.' }
+    ],
+    temperature: 0.7,
+    max_tokens: 2000,
+  }),
+});
+
+const data = await response.json();
+console.log(data.choices[0].message.content);
+```
+
+### Rate Limits & Quotas
+- **Free Tier**: 20 requests/minute, 500 requests/day
+- **Speed**: High throughput on SambaNova hardware
+- **Monitor**: Check usage at cloud.sambanova.ai
+- **Upgrade**: Enterprise plans available
+
+---
+
 ## Failover Strategy
 
 ### Priority Order
 1. **Primary**: OpenRouter (Qwen 72B)
 2. **Fallback 1**: Gemini 2.5 Flash
 3. **Fallback 2**: Groq Llama 3.3 70B
-4. **Fallback 3**: Mistral Large
-5. **Premium**: Anthropic Claude 3.5 (if configured)
+4. **Fallback 3**: SambaNova DeepSeek V3-32K
+5. **Fallback 4**: Mistral Large
+6. **Premium**: Anthropic Claude 3.5 (if configured)
 
 ### Implementation
 ```typescript
@@ -393,6 +542,7 @@ async function getAIResponse(prompt: string) {
     { name: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct:free' },
     { name: 'gemini', model: 'gemini-2.5-flash' },
     { name: 'groq', model: 'llama-3.3-70b-versatile' },
+    { name: 'sambanova', model: 'DeepSeek-V3-32K' },
     { name: 'mistral', model: 'mistral-large-latest' },
   ];
 
@@ -559,18 +709,21 @@ Monitor outages and performance:
 - **Groq**: [status.groq.com](https://status.groq.com)
 - **Mistral**: [status.mistral.ai](https://status.mistral.ai)
 - **Anthropic**: [status.anthropic.com](https://status.anthropic.com)
+- **SambaNova**: [cloud.sambanova.ai](https://cloud.sambanova.ai)
 
 ---
 
 ## Summary
 
-✅ **4 free AI providers** with 10 models = $0/month  
+✅ **6 AI providers** with 23 models (21 free) = $0/month  
 ✅ **Automatic failover** for high availability  
 ✅ **Generous rate limits** for MVP and growth  
+✅ **TTS and STT support** via Groq (PlayAI TTS, Whisper)  
+✅ **DeepSeek models** via SambaNova for advanced reasoning  
 ✅ **Optional premium** with Anthropic for $10-50/month  
 ✅ **Production-ready** with monitoring and error handling  
 
-**Recommendation**: Start with all 4 free providers, add Anthropic later for premium tier.
+**Recommendation**: Start with all 5 free providers, add Anthropic later for premium tier.
 
 ---
 
