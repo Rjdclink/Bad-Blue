@@ -118,7 +118,7 @@ export default function InmateSearch() {
   const [lastName, setLastName] = useState("");
   const [middleName, setMiddleName] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
-  const [state, setState] = useState("");
+  const [state, setState] = useState("ALL");
   const [inmateId, setInmateId] = useState("");
   const [searchScope, setSearchScope] = useState<string>("all");
   const [results, setResults] = useState<InmateSearchResult | null>(null);
@@ -210,7 +210,7 @@ export default function InmateSearch() {
       lastName: lastName.trim() || undefined,
       middleName: middleName.trim() || undefined,
       dateOfBirth: dateOfBirth || undefined,
-      state: state || undefined,
+      state: state === "ALL" ? undefined : state,
       inmateId: inmateId.trim() || undefined,
       searchScope,
     });
@@ -401,7 +401,7 @@ export default function InmateSearch() {
                     <SelectValue placeholder="All States" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All States</SelectItem>
+                    <SelectItem value="ALL">All States</SelectItem>
                     {statesData?.data?.map((s) => (
                       <SelectItem key={s.state} value={s.state}>
                         {s.stateName}
@@ -743,7 +743,7 @@ export default function InmateSearch() {
                     </a>
                   </div>
                   
-                  {state && statesData?.data && (
+                  {state && state !== "ALL" && statesData?.data && (
                     <div className="mt-4">
                       {statesData.data.filter(s => s.state === state).map(stateInfo => (
                         stateInfo.searchUrl && (
