@@ -17,10 +17,12 @@
  * - Crawler IV: The Computational (pattern analysis)
  * - Crawler V: The USC (Unified Systems Conductor)
  * - Crawler VI: The Woo (Social Interface)
+ * 
+ * NOTE: Uses Node.js built-in crypto.randomUUID() for secure UUID generation
  */
 
 import { EventEmitter } from 'events';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'crypto'; // Node.js built-in crypto for secure UUIDs
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -1093,7 +1095,7 @@ export class USCCrawler extends EventEmitter {
   }
 
   /**
-   * Arbitrate task execution
+   * Arbitrate task execution with efficient event-driven coordination
    */
   private async coordinationLoop(): Promise<void> {
     while (this.isRunning) {
@@ -1102,13 +1104,18 @@ export class USCCrawler extends EventEmitter {
         if (task) {
           this.executeTask(task);
         }
+      } else {
+        // Back-pressure: increase delay when queue is empty to reduce CPU usage
+        await new Promise(resolve => setTimeout(resolve, this.taskQueue.length > 0 ? 10 : 100));
+        continue;
       }
 
       // Update throughput
       const uptime = (Date.now() - this.startTime) / 1000;
       this.coordinationState.throughput = this.tasksProcessed / Math.max(1, uptime);
 
-      await new Promise(resolve => setTimeout(resolve, 10)); // 10ms coordination cycle
+      // Minimal delay for coordination cycle (only when processing tasks)
+      await new Promise(resolve => setTimeout(resolve, 10));
     }
   }
 
@@ -1412,8 +1419,17 @@ export class SixCrawlerInitiative extends EventEmitter {
   async start(): Promise<void> {
     if (this.isRunning) return;
     
+    // Authorization check with runtime environment validation
     if (!this.config.authorizedMode) {
       throw new Error('Six-Crawler Initiative requires authorized mode. This system operates only within authorized, simulated, or mirrored environments.');
+    }
+
+    // Additional runtime validation for extra protection
+    const nodeEnv = process.env.NODE_ENV;
+    const explicitAuth = process.env.SIX_CRAWLER_AUTHORIZED;
+    
+    if (nodeEnv === 'production' && explicitAuth !== 'true') {
+      throw new Error('Six-Crawler Initiative requires explicit authorization in production environments. Set SIX_CRAWLER_AUTHORIZED=true to proceed.');
     }
 
     this.isRunning = true;

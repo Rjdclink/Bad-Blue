@@ -548,7 +548,8 @@ export async function runAllExamples() {
   }
 }
 
-// Run examples if executed directly
-if (require.main === module) {
+// Run examples if executed directly (ES6 module compatible)
+// Note: This pattern works in ESM context when using tsx or similar
+if (import.meta.url === `file://${process.argv[1]}`) {
   runAllExamples().catch(console.error);
 }
