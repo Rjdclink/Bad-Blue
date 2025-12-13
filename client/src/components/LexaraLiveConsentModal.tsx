@@ -5,20 +5,20 @@
  * 
  * Requirements:
  * 1. Three states for localStorage.lexaraLiveEnabled: "true", "false", null/undefined
- * 2. Show legal disclaimer ("not legal advice")
- * 3. Single CTA: "I understand and enable Lexara live co-counsel (voice, mic & camera)."
- * 4. On click: Call getUserMedia({ audio: true, video: true })
- *    - If granted: localStorage.lexaraLiveEnabled = "true", route to /legal-consultation/[lawArea]?live=true
- *    - If denied: localStorage.lexaraLiveEnabled = "false", route to /legal-consultation/[lawArea]?live=false
- * 5. Do not create own confirm dialogs - rely only on browser's native permission prompt
- * 6. Show "Waiting for browser permission..." during prompt
+ * 2. Show legal disclaimer ("not legal advice") with checkbox
+ * 3. Checkbox triggers immediate mic/camera permission request
+ * 4. Continue button only enabled after disclaimer accepted and permissions granted
+ * 5. Shows permission status badges (mic ✓, camera ✓)
  */
 
 import { useState, useCallback, memo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Scale, Mic, Video, Shield, Loader2, AlertTriangle } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Scale, Mic, Video, Shield, Loader2, AlertTriangle, Check, X } from 'lucide-react';
+import { useVoiceMode } from '@/hooks/useVoiceMode';
 
 // ============================================================================
 // CONSTANTS
@@ -97,53 +97,118 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
 }: LexaraLiveConsentModalProps) {
   const [isRequesting, setIsRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+  const [permissionsGranted, setPermissionsGranted] = useState<{
+    audio: boolean;
+    video: boolean;
+  }>({ audio: false, video: false });
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+
+  // Voice mode hook - enableVoice is called HERE when checkbox is checked
+  const voiceMode = useVoiceMode({
+    continuous: true,
+    interimResults: true,
+  });
+
+  /**
+   * Handle disclaimer checkbox change
+   * When checked, immediately request camera/mic permissions AND enable voice
+   * This is the ONLY place where voice is enabled
+   */
+  const handleDisclaimerToggle = useCallback(async (checked: boolean) => {
+    setDisclaimerAccepted(checked);
+    
+    if (checked) {
+      // Immediately request permissions when disclaimer is checked
+      setIsRequesting(true);
+      setError(null);
+      
+      try {
+        // Request both audio and video permissions
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: true,
+        });
+
+        // Permission granted - keep track of granted permissions
+        const audioTrack = stream.getAudioTracks()[0];
+        const videoTrack = stream.getVideoTracks()[0];
+        
+        setPermissionsGranted({
+          audio: !!audioTrack,
+          video: !!videoTrack,
+        });
+
+        // Stop the stream - we'll re-acquire it when entering Lexara
+        stream.getTracks().forEach(track => track.stop());
+        
+        // NOW enable voice mode since we have audio permission
+        if (audioTrack) {
+          try {
+            await voiceMode.enableVoice();
+            setVoiceEnabled(true);
+          } catch (voiceErr) {
+            console.log('Voice mode enable failed:', voiceErr);
+            // Voice failed but we still have camera, continue
+          }
+        }
+        
+      } catch (err: any) {
+        console.log('getUserMedia failed during checkbox toggle:', err?.name, err?.message);
+        
+        // Try audio only if video fails
+        try {
+          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          setPermissionsGranted({ audio: true, video: false });
+          audioStream.getTracks().forEach(track => track.stop());
+          
+          // Enable voice with audio-only permission
+          try {
+            await voiceMode.enableVoice();
+            setVoiceEnabled(true);
+          } catch (voiceErr) {
+            console.log('Voice mode enable failed:', voiceErr);
+          }
+        } catch (audioErr) {
+          // Both failed
+          setPermissionsGranted({ audio: false, video: false });
+          setVoiceEnabled(false);
+          
+          if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+            setError('Permission denied. You can still continue in text-only mode.');
+          } else if (err?.name === 'NotFoundError') {
+            setError('No camera/microphone found. You can still continue in text-only mode.');
+          } else {
+            setError('Could not access devices. You can still continue in text-only mode.');
+          }
+        }
+      } finally {
+        setIsRequesting(false);
+      }
+    } else {
+      // Unchecked - reset permissions state and disable voice
+      setPermissionsGranted({ audio: false, video: false });
+      setVoiceEnabled(false);
+      voiceMode.disable();
+      setError(null);
+    }
+  }, [voiceMode]);
 
   /**
    * Handle the consent button click
-   * Requests getUserMedia permissions from the browser
+   * Only available after disclaimer is accepted
    */
   const handleEnableLive = useCallback(async () => {
-    setIsRequesting(true);
-    setError(null);
-
-    try {
-      // Request both audio and video permissions
-      // This will trigger the browser's native permission prompt
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: true,
-      });
-
-      // Permission granted - stop the stream immediately (we just needed permission)
-      stream.getTracks().forEach(track => track.stop());
-
-      // Store consent
-      setLexaraLiveEnabled('true');
-      onConsent(true);
-    } catch (err: any) {
-      // Permission denied or error
-      console.log('getUserMedia denied or failed:', err?.name, err?.message);
-      
-      // Store that user declined/couldn't enable
-      setLexaraLiveEnabled('false');
-      
-      // Set appropriate error message
-      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-        setError('Camera/microphone permission was denied. Continuing in text-only mode.');
-      } else if (err?.name === 'NotFoundError') {
-        setError('No camera or microphone found. Continuing in text-only mode.');
-      } else {
-        setError('Could not access camera/microphone. Continuing in text-only mode.');
-      }
-      
-      // After short delay, continue with text-only mode
-      setTimeout(() => {
-        onConsent(false);
-      }, ERROR_DISPLAY_TIMEOUT_MS);
-    } finally {
-      setIsRequesting(false);
+    if (!disclaimerAccepted) {
+      setError('Please accept the disclaimer first');
+      return;
     }
-  }, [onConsent]);
+
+    // Store consent based on permissions granted
+    const hasAnyPermission = permissionsGranted.audio || permissionsGranted.video;
+    setLexaraLiveEnabled(hasAnyPermission ? 'true' : 'false');
+    onConsent(hasAnyPermission);
+  }, [disclaimerAccepted, permissionsGranted, onConsent]);
 
   /**
    * Handle declining live mode (text-only)
@@ -187,15 +252,23 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
 
         {/* Content Section */}
         <div className="px-8 pb-6">
-          {/* Feature badges */}
+          {/* Permission Status Badges */}
           <div className="flex flex-wrap items-center justify-center gap-2 mb-6">
-            <Badge className="bg-cyan-500/15 text-cyan-300 border-cyan-500/30 flex items-center gap-1.5 px-3 py-1">
-              <Mic className="h-3.5 w-3.5" />
-              Voice Input
+            <Badge className={`flex items-center gap-1.5 px-3 py-1 ${
+              permissionsGranted.audio 
+                ? 'bg-green-500/15 text-green-300 border-green-500/30' 
+                : 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
+            }`}>
+              {permissionsGranted.audio ? <Check className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+              Voice {permissionsGranted.audio ? '✓' : 'Input'}
             </Badge>
-            <Badge className="bg-indigo-500/15 text-indigo-300 border-indigo-500/30 flex items-center gap-1.5 px-3 py-1">
-              <Video className="h-3.5 w-3.5" />
-              Video Chat
+            <Badge className={`flex items-center gap-1.5 px-3 py-1 ${
+              permissionsGranted.video 
+                ? 'bg-green-500/15 text-green-300 border-green-500/30' 
+                : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
+            }`}>
+              {permissionsGranted.video ? <Check className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}
+              Video {permissionsGranted.video ? '✓' : 'Chat'}
             </Badge>
             <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30 flex items-center gap-1.5 px-3 py-1">
               <Shield className="h-3.5 w-3.5" />
@@ -203,28 +276,66 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
             </Badge>
           </div>
 
-          {/* Legal Disclaimer Box */}
+          {/* Legal Disclaimer Box with Checkbox */}
           <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-6">
             <div className="flex items-start gap-3">
               <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
-              <div>
+              <div className="flex-1">
                 <p className="text-amber-200 font-medium text-sm mb-1">Legal Disclaimer</p>
-                <p className="text-amber-100/80 text-sm leading-relaxed">
+                <p className="text-amber-100/80 text-sm leading-relaxed mb-4">
                   LEXARA provides AI-powered legal information and assistance but does{' '}
                   <strong className="text-amber-200">not</strong> provide legal advice. 
                   The information provided is for educational purposes only. For legal advice, 
                   please consult a licensed attorney in your jurisdiction.
                 </p>
+                
+                {/* Disclaimer Checkbox - triggers permission request */}
+                <div className="flex items-start gap-3 pt-3 border-t border-amber-500/20">
+                  <Checkbox 
+                    id="disclaimer-accept"
+                    checked={disclaimerAccepted}
+                    onCheckedChange={(checked) => handleDisclaimerToggle(checked as boolean)}
+                    disabled={isRequesting}
+                    className="mt-0.5 border-amber-400/50 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                  />
+                  <Label 
+                    htmlFor="disclaimer-accept" 
+                    className="text-amber-100 text-sm leading-relaxed cursor-pointer"
+                  >
+                    I understand that LEXARA does not provide legal advice and I agree to enable 
+                    voice and camera access for the live co-counsel experience
+                  </Label>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Permission info */}
-          <p className="text-slate-400 text-sm text-center mb-6">
-            By enabling live mode, you'll be asked to grant camera and microphone access 
-            through your browser's permission prompt. You can revoke these permissions 
-            at any time in your browser settings.
-          </p>
+          {/* Requesting permissions indicator */}
+          {isRequesting && (
+            <div className="bg-cyan-500/15 border border-cyan-500/30 rounded-lg p-4 mb-4 text-center">
+              <div className="flex items-center justify-center gap-2 text-cyan-300">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="font-medium">Requesting camera & microphone access…</span>
+              </div>
+              <p className="text-cyan-200/70 text-sm mt-2">
+                Please allow access in the browser prompt that appears
+              </p>
+            </div>
+          )}
+
+          {/* Permission status message */}
+          {disclaimerAccepted && !isRequesting && (permissionsGranted.audio || permissionsGranted.video) && (
+            <div className="bg-green-500/15 border border-green-500/30 rounded-lg p-3 mb-4 text-center">
+              <p className="text-green-300 text-sm flex items-center justify-center gap-2">
+                <Check className="h-4 w-4" />
+                {permissionsGranted.audio && permissionsGranted.video 
+                  ? 'Camera and microphone access granted!' 
+                  : permissionsGranted.audio 
+                  ? 'Microphone access granted (camera unavailable)' 
+                  : 'Camera access granted (microphone unavailable)'}
+              </p>
+            </div>
+          )}
 
           {/* Error message */}
           {error && (
@@ -232,27 +343,14 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
               <p className="text-red-300 text-sm">{error}</p>
             </div>
           )}
-
-          {/* Waiting for permission message */}
-          {isRequesting && (
-            <div className="bg-cyan-500/15 border border-cyan-500/30 rounded-lg p-4 mb-4 text-center">
-              <div className="flex items-center justify-center gap-2 text-cyan-300">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span className="font-medium">Waiting for browser permission…</span>
-              </div>
-              <p className="text-cyan-200/70 text-sm mt-2">
-                Please allow camera and microphone access in the browser prompt
-              </p>
-            </div>
-          )}
         </div>
 
         {/* Action Buttons */}
         <div className="p-8 pt-2 space-y-3">
-          {/* Primary CTA */}
+          {/* Primary CTA - only enabled after disclaimer accepted */}
           <Button
             onClick={handleEnableLive}
-            disabled={isRequesting}
+            disabled={isRequesting || !disclaimerAccepted}
             className="w-full bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-medium py-6 text-base shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
           >
             {isRequesting ? (
@@ -260,10 +358,15 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
                 <Loader2 className="h-5 w-5 mr-2 animate-spin" />
                 Waiting for permission...
               </>
+            ) : disclaimerAccepted && (permissionsGranted.audio || permissionsGranted.video) ? (
+              <>
+                <Check className="h-5 w-5 mr-2" />
+                Continue to LEXARA Live
+              </>
             ) : (
               <>
                 <Mic className="h-5 w-5 mr-2" />
-                I understand and enable LEXARA live co-counsel (voice, mic & camera)
+                Accept disclaimer above to enable live features
               </>
             )}
           </Button>

@@ -485,7 +485,8 @@ export default function LexaraViewport() {
   }, []);
 
   // ============================================================================
-  // MEDIA INITIALIZATION - FULL AUTO
+  // MEDIA INITIALIZATION - Only attaches streams, does NOT enable voice
+  // Voice is enabled via disclaimer checkbox only
   // ============================================================================
   
   const initializeMedia = useCallback(async (enableVideo: boolean, enableAudio: boolean) => {
@@ -521,22 +522,10 @@ export default function LexaraViewport() {
         permissionGranted: true,
       }));
       
-      // Store consent using unified helpers
-      setLexaraLiveEnabled('true');
-      
-      // Start voice mode
-      if (enableAudio) {
-        try {
-          await voiceMode.enable();
-          voiceMode.startListening();
-          setShowVoiceActivationButton(false);
-        } catch (e: any) {
-          console.log('Voice mode start deferred:', e?.name);
-          // Show graceful "one-click arm" button on NotAllowedError or NotSupportedError
-          if (e?.name === 'NotAllowedError' || e?.name === 'NotSupportedError' || e?.message?.includes('not allowed')) {
-            setShowVoiceActivationButton(true);
-          }
-        }
+      // NOTE: Voice mode is NOT enabled here - it was already enabled in the disclaimer modal
+      // Just start listening since enableVoice was called in disclaimer
+      if (enableAudio && voiceMode.isEnabled) {
+        voiceMode.startListening();
       }
       
       return true;
@@ -555,15 +544,9 @@ export default function LexaraViewport() {
         permissionGranted: false,
       }));
       
-      toast({
-        title: "Media Access",
-        description: "Running in text-only mode. Voice features unavailable.",
-        variant: "default",
-      });
-      
       return false;
     }
-  }, [toast, voiceMode]);
+  }, [voiceMode]);
 
   // ============================================================================
   // GEO FUNCTIONS
@@ -626,7 +609,7 @@ export default function LexaraViewport() {
   }, [openGeoConsole, geoState.mode]);
 
   // ============================================================================
-  // AUTO-START LOGIC - FULL AUTO
+  // AUTO-START LOGIC - Permissions already granted in disclaimer modal
   // ============================================================================
   
   useEffect(() => {
@@ -646,12 +629,14 @@ export default function LexaraViewport() {
       }));
       
       if (hasConsent) {
-        // FULL AUTO: Start immediately
-        setTimeout(async () => {
-          await initializeMedia(true, true);
-          setSessionStarted(true);
+        // Permissions were already granted in disclaimer modal
+        // Initialize media immediately - no permission prompts needed
+        setSessionStarted(true);
+        const mediaInitialized = await initializeMedia(devices.hasCamera, devices.hasMic);
+        // Only send greeting after media is initialized
+        if (mediaInitialized) {
           sendLEXARAGreeting();
-        }, 300);
+        }
       }
     };
     
@@ -659,42 +644,30 @@ export default function LexaraViewport() {
   }, [detectDevices, initializeMedia]);
 
   // ============================================================================
-  // BEGIN SESSION - FULL AUTO
+  // BEGIN SESSION - For users who skipped disclaimer
   // ============================================================================
   
   const handleBeginSession = async () => {
     setShowBeginButton(false);
-    await initializeMedia(true, true);
     setSessionStarted(true);
-    sendLEXARAGreeting();
+    const mediaInitialized = await initializeMedia(mediaState.hasCamera, mediaState.hasMic);
+    if (mediaInitialized) {
+      sendLEXARAGreeting();
+    }
   };
 
   // Handler for one-click voice activation when auto-start fails
   const handleActivateVoice = async () => {
     try {
-      await voiceMode.enable();
+      await voiceMode.enableVoice();
       voiceMode.startListening();
       setShowVoiceActivationButton(false);
-      toast({
-        title: "Voice Mode Activated",
-        description: "LEXARA is now listening. Speak naturally.",
-      });
     } catch (e: any) {
       console.error('Voice activation failed:', e);
-      
-      // Provide targeted user guidance based on error type
-      let description = "Please check your browser permissions and try again.";
-      if (e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError') {
-        description = "Microphone permission denied. Please allow access in your browser settings.";
-      } else if (e?.name === 'NotSupportedError') {
-        description = "Voice features are not supported in this browser. Try Chrome or Edge.";
-      } else if (e?.name === 'NotFoundError') {
-        description = "No microphone found. Please connect a microphone and try again.";
-      }
-      
+      // User needs to grant permission via disclaimer first
       toast({
         title: "Voice Activation Failed",
-        description,
+        description: "Please grant microphone permission via the consent dialog.",
         variant: "destructive",
       });
     }

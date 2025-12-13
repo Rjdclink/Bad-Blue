@@ -40,7 +40,7 @@ const envSchema = z.object({
   SQUARE_SANDBOX_ACCESS_TOKEN: z.string().optional(),
   SQUARE_LOCATION_ID: z.string().min(1, 'SQUARE_LOCATION_ID is required'),
   SQUARE_APPLICATION_ID: z.string().min(1, 'SQUARE_APPLICATION_ID is required'),
-  SQUARE_ENVIRONMENT: z.enum(['production', 'sandbox']).default('sandbox'),
+  SQUARE_ENVIRONMENT: z.enum(['production', 'sandbox']).default('production'),
   SQUARE_WEBHOOK_SIGNATURE_KEY: z.string().optional(),
   
   // Email

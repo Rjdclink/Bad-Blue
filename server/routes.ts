@@ -897,6 +897,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/lexara', lexaraChatRoutes.default);
 
   // ============================================
+  // GEOCONSOLE ROUTES - Hybrid GPS Intelligence
+  // ============================================
+  const geoconsoleRoutes = await import('./routes/geoconsole.routes');
+  app.use('/api/geoconsole', geoconsoleRoutes.default);
+
+  // ============================================
+  // EVIDENCE UPLOAD ROUTES
+  // ============================================
+  const uploadRoutes = await import('./routes/upload.routes');
+  uploadRoutes.setupUploadRoutes(app);
+
+  // ============================================
   // PREVIEW ROUTES
   // ============================================
   app.post("/api/preview-complaint", asyncHandler(async (req: any, res: any) => {

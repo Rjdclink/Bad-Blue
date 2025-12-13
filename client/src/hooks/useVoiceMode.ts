@@ -1,8 +1,9 @@
 /**
  * useVoiceMode Hook
- * Stage 14: Conversational Interaction and Voice Mode Functionality
  * 
- * Provides microphone capture, voice activity detection, turn-taking logic
+ * Provides microphone capture, voice activity detection, turn-taking logic.
+ * IMPORTANT: Never auto-enables - exposes enableVoice() for manual activation only.
+ * Voice permissions should be acquired via the disclaimer modal first.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -22,7 +23,8 @@ export interface VoiceModeResult {
   isListening: boolean;
   transcript: string;
   interimTranscript: string;
-  enable: () => Promise<void>;
+  enableVoice: () => Promise<void>;
+  enable: () => Promise<void>; // Alias for enableVoice
   disable: () => void;
   startListening: () => void;
   stopListening: () => void;
@@ -32,6 +34,7 @@ export interface VoiceModeResult {
 
 /**
  * Hook for voice mode with speech recognition
+ * Never auto-enables - caller must explicitly call enableVoice()
  */
 export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const { toast } = useToast();
@@ -45,7 +48,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const recognitionRef = useRef<any>(null);
   const optionsRef = useRef<VoiceModeOptions>(options);
 
-  // Update options ref
+  // Update options ref - NO auto-enable logic here
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
@@ -127,18 +130,23 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       setIsListening(false);
       optionsRef.current.onError?.(err);
 
-      // Handle specific errors
+      // Handle specific errors - only show critical errors, not expected ones
       if (event.error === 'not-allowed' || event.error === 'permission-denied') {
         setHasPermission(false);
-        toast({
-          title: 'Microphone Permission Denied',
-          description: 'Please enable microphone access to use voice mode.',
-          variant: 'destructive',
-        });
+        // Only show toast for permission denied if user explicitly tried to enable
+        // Don't show during auto-init attempts
       } else if (event.error === 'no-speech') {
-        // No speech detected, this is normal
+        // No speech detected, this is normal - silently restart
+        setError(null);
+      } else if (event.error === 'network') {
+        // Network error - silently handle
+        console.log('[VoiceMode] Network error - will retry');
+        setError(null);
+      } else if (event.error === 'aborted') {
+        // Recognition was aborted - normal when stopping
         setError(null);
       }
+      // Don't show toasts for transient errors
     };
 
     recognition.onnomatch = () => {
@@ -166,9 +174,10 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   }, []);
 
   /**
-   * Enable voice mode
+   * Enable voice mode - MUST be called explicitly, never auto-called
+   * Assumes permissions were already granted via the disclaimer modal checkbox
    */
-  const enable = useCallback(async () => {
+  const enableVoice = useCallback(async () => {
     try {
       setError(null);
 
@@ -177,8 +186,17 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         throw new Error('Speech recognition not supported in this browser. Please use Chrome, Edge, or Safari.');
       }
 
-      // Request microphone permission
-      await requestMicrophonePermission();
+      // Permissions should already be granted from disclaimer modal
+      // Just verify we have access
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+        setHasPermission(true);
+      } catch (permErr) {
+        // Permission not granted - user needs to go through disclaimer first
+        setHasPermission(false);
+        throw new Error('Microphone permission not granted. Please enable via the consent dialog.');
+      }
 
       // Initialize speech recognition if not already done
       if (!recognitionRef.current) {
@@ -187,26 +205,13 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
       setIsEnabled(true);
 
-      toast({
-        title: 'Voice Mode Enabled',
-        description: 'LEXARA is now listening. You can speak your questions.',
-      });
-
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Failed to enable voice mode');
       setError(error);
       setIsEnabled(false);
-      setHasPermission(false);
-
-      toast({
-        title: 'Voice Mode Error',
-        description: error.message,
-        variant: 'destructive',
-      });
-
       throw error;
     }
-  }, [isSpeechRecognitionSupported, requestMicrophonePermission, initializeSpeechRecognition, toast]);
+  }, [isSpeechRecognitionSupported, initializeSpeechRecognition]);
 
   /**
    * Disable voice mode
@@ -286,7 +291,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     isListening,
     transcript,
     interimTranscript,
-    enable,
+    enableVoice,
+    enable: enableVoice, // Alias for backward compatibility
     disable,
     startListening,
     stopListening,
