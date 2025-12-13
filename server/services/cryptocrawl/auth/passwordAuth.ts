@@ -9,12 +9,18 @@
 
 import crypto from 'crypto';
 
-// Authentication credentials from environment variables with fallback defaults
-// Note: In production, always set these via environment variables
-const MASTER_EMAIL = process.env.CRYPTOCRAWL_EMAIL || 'crypto@cc.com';
-const MASTER_PASSWORD_HASH = crypto.createHash('sha256')
-  .update(process.env.CRYPTOCRAWL_PASSWORD || 'cryptocrawl')
-  .digest('hex');
+// Authentication credentials from environment variables (required in production)
+// CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD must be set via Railway environment variables
+const MASTER_EMAIL = process.env.CRYPTOCRAWL_EMAIL;
+const MASTER_PASSWORD = process.env.CRYPTOCRAWL_PASSWORD;
+
+if (!MASTER_EMAIL || !MASTER_PASSWORD) {
+  console.warn('[CryptoCrawl Auth] CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD must be set in environment variables');
+}
+
+const MASTER_PASSWORD_HASH = MASTER_PASSWORD
+  ? crypto.createHash('sha256').update(MASTER_PASSWORD).digest('hex')
+  : null;
 
 export interface AuthResult {
   success: boolean;
@@ -34,6 +40,14 @@ const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
  * Returns a session token on success
  */
 export function authenticateWithPassword(password: string, email?: string): AuthResult {
+  // Check if credentials are configured
+  if (!MASTER_EMAIL || !MASTER_PASSWORD_HASH) {
+    return {
+      success: false,
+      error: 'CryptoCrawl authentication not configured. Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD environment variables.'
+    };
+  }
+
   // Validate email if provided
   if (email && email.toLowerCase() !== MASTER_EMAIL.toLowerCase()) {
     return {
@@ -172,6 +186,10 @@ export function requireCryptoCrawlAuth(req: any, res: any, next: any): void {
  * Check if password is correct (for validation without creating session)
  */
 export function checkPassword(password: string): boolean {
+  if (!MASTER_PASSWORD_HASH) {
+    return false;
+  }
+  
   const providedHash = crypto.createHash('sha256')
     .update(password)
     .digest('hex');
