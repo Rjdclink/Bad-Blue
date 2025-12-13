@@ -681,9 +681,20 @@ export default function LexaraViewport() {
       });
     } catch (e: any) {
       console.error('Voice activation failed:', e);
+      
+      // Provide targeted user guidance based on error type
+      let description = "Please check your browser permissions and try again.";
+      if (e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError') {
+        description = "Microphone permission denied. Please allow access in your browser settings.";
+      } else if (e?.name === 'NotSupportedError') {
+        description = "Voice features are not supported in this browser. Try Chrome or Edge.";
+      } else if (e?.name === 'NotFoundError') {
+        description = "No microphone found. Please connect a microphone and try again.";
+      }
+      
       toast({
         title: "Voice Activation Failed",
-        description: "Please check your browser permissions and try again.",
+        description,
         variant: "destructive",
       });
     }
