@@ -1,9 +1,9 @@
+/* Leaflet CSS - Global import for LocationHeatmap (must be at top before @tailwind) */
+@import 'leaflet/dist/leaflet.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* Leaflet CSS - Global import for LocationHeatmap */
-@import 'leaflet/dist/leaflet.css';
 
 /* LIGHT MODE */
 :root {
