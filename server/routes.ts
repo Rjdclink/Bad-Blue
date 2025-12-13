@@ -4873,12 +4873,45 @@ Contact: ${foiaRequest.userEmail || userEmail}
   }));
 
   // ============================================
-  // CRYPTOCRAWL DASHBOARD API
+  // CRYPTOCRAWL DASHBOARD API - STRICT AUTH REQUIRED
+  // No fallback users, no auto-create, 401 only
   // ============================================
   
-  // Mount CryptoCrawl API routes
-  app.use('/api/crypto', dashboardApi);
-  app.use('/admin/crypto', adminApi);
+  // Strict auth middleware for crypto routes - no fallback, 401 only
+  const cryptoAuthMiddleware = (req: any, res: any, next: any) => {
+    // Set no-cache headers
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+    
+    // STRICT: Check if user is authenticated via passport
+    if (!req.isAuthenticated || !req.isAuthenticated()) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Authentication required. Please login at /login',
+      });
+    }
+    
+    const user = req.user as Express.User;
+    
+    // STRICT: Must be master password user (admin)
+    if (!user.isMasterBypass) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Admin access required',
+      });
+    }
+    
+    next();
+  };
+  
+  // Mount CryptoCrawl API routes WITH auth middleware
+  app.use('/api/crypto', cryptoAuthMiddleware, dashboardApi);
+  app.use('/admin/crypto', cryptoAuthMiddleware, adminApi);
   
   // ============================================
   // BRIDGE MANAGER API
