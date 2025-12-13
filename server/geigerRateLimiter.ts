@@ -141,7 +141,12 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'huggingface',
     endpoint: 'https://api-inference.huggingface.co/models',
-    models: ['meta-llama/Meta-Llama-3-8B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.2'],
+    models: [
+      'meta-llama/Meta-Llama-3.1-70B-Instruct',
+      'Qwen/Qwen2.5-72B-Instruct',
+      'mistralai/Mixtral-8x22B-Instruct-v0.1',
+      'microsoft/Phi-3-medium-4k-instruct'
+    ],
     rpmLimit: 30,
     rpdLimit: 1000,
     apiKeyEnv: 'HUGGINGFACE_API_KEY',
