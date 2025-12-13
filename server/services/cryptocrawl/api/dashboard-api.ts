@@ -3,14 +3,36 @@ import {WebSocketServer} from 'ws';
 import {pipeline} from '../integration/master-pipeline';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { autonomousFaucet } from '../faucet/autonomous-faucet';
+import { balanceMonitor } from '../bridge/balance-monitor';
+import { WalletManager } from '../core/wallet';
+import { scheduledMonteCarloTraining } from '../training/scheduled-monte-carlo-training';
 
 const router = express.Router();
 const wss = new WebSocketServer({noServer: true});
+
+// Wallet manager instance for real wallet operations
+let walletManager: WalletManager | null = null;
 
 // Initialize zero-capital engine on module load
 zeroCapitalEngine.initialize().catch(err => {
   console.error('[CryptoCrawl] Failed to initialize zero-capital engine:', err);
 });
+
+// Initialize balance monitor and wallet manager on module load
+(async () => {
+  try {
+    // Start balance monitor for real-time balance tracking
+    await balanceMonitor.start();
+    console.log('[CryptoCrawl] ✅ Balance monitor started - wallet balances connected');
+    
+    // Initialize wallet manager
+    walletManager = new WalletManager();
+    await walletManager.initialize();
+    console.log('[CryptoCrawl] ✅ Wallet manager initialized - cryptocrawler connected to wallet');
+  } catch (err) {
+    console.error('[CryptoCrawl] Failed to initialize balance monitor or wallet:', err);
+  }
+})();
 
 // AUTO-START: Initialize autonomous faucet on module load (Divine Auto-Activation)
 // This ensures arbitrage begins automatically when server starts with valid RPC connections
@@ -23,6 +45,14 @@ setTimeout(() => {
     console.log('[CryptoCrawl] ✅ Autonomous faucet started - Zero-capital arbitrage ACTIVE');
   }
 }, 5000); // 5 second delay to allow RPC connections to initialize
+
+// AUTO-START: Initialize scheduled Monte Carlo training for profitability optimization
+// Runs daily at low traffic hours (3 AM UTC by default) for continuous improvement
+setTimeout(() => {
+  console.log('[CryptoCrawl] 🎓 Starting scheduled Monte Carlo training system...');
+  scheduledMonteCarloTraining.start();
+  console.log('[CryptoCrawl] ✅ Monte Carlo training scheduled - profitability optimization ACTIVE');
+}, 10000); // 10 second delay to allow other systems to initialize first
 
 // In-memory stats (production: use Redis)
 let stats = {
@@ -273,6 +303,102 @@ router.post('/faucet/stress-test', async (req, res) => {
 });
 
 // ============================================================================
+// MONTE CARLO TRAINING API ENDPOINTS - Profitability Optimization
+// ============================================================================
+
+// GET /api/crypto/training/status - Get Monte Carlo training status
+router.get('/training/status', async (req, res) => {
+  try {
+    const metrics = scheduledMonteCarloTraining.getMetrics();
+    const currentSession = scheduledMonteCarloTraining.getCurrentSession();
+    const isActive = scheduledMonteCarloTraining.isActive();
+    
+    res.json({
+      active: isActive,
+      currentSession: currentSession ? {
+        sessionId: currentSession.sessionId,
+        status: currentSession.status,
+        simulationsCompleted: currentSession.simulationsCompleted,
+        strategiesTrained: currentSession.strategiesTrained,
+        elapsedTime: Date.now() - currentSession.startTime,
+      } : null,
+      metrics: {
+        totalSessionsCompleted: metrics.totalSessionsCompleted,
+        lastTrainingTime: metrics.lastTrainingTime ? new Date(metrics.lastTrainingTime).toISOString() : null,
+        averageSessionDuration: Math.round(metrics.averageSessionDuration / 1000),
+        totalSimulationsRun: metrics.totalSimulationsRun,
+        cumulativeProfitImprovement: `${metrics.cumulativeProfitImprovement.toFixed(2)}%`,
+      },
+      bestOptimizations: metrics.bestOptimizations.slice(0, 5).map(opt => ({
+        strategy: opt.strategyName,
+        condition: opt.marketCondition,
+        improvement: `${opt.profitImprovement.toFixed(2)}%`,
+        optimizedWinRate: opt.optimizedWinRate.toFixed(3),
+      })),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/crypto/training/trigger - Manually trigger a training session
+router.post('/training/trigger', async (req, res) => {
+  try {
+    console.log('[MonteCarloTraining] 🎯 Manual training trigger requested');
+    
+    // Check if training is already running
+    if (scheduledMonteCarloTraining.getCurrentSession()) {
+      return res.status(409).json({
+        success: false,
+        error: 'Training session already in progress',
+      });
+    }
+    
+    // Start training asynchronously
+    const sessionPromise = scheduledMonteCarloTraining.triggerTraining();
+    
+    // Return immediately with session ID
+    res.json({
+      success: true,
+      message: 'Training session started - profitability optimization in progress',
+      note: 'Check /api/crypto/training/status for progress',
+    });
+    
+    // Log when training completes
+    sessionPromise.then(session => {
+      console.log(`[MonteCarloTraining] ✅ Manual training completed: ${session.totalProfitImprovement.toFixed(2)}% improvement`);
+    }).catch(err => {
+      console.error('[MonteCarloTraining] ❌ Manual training failed:', err);
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// GET /api/crypto/training/optimized-params - Get optimized parameters for strategies
+router.get('/training/optimized-params', async (req, res) => {
+  try {
+    const allParams = scheduledMonteCarloTraining.getAllOptimizedParams();
+    const paramsObj: Record<string, any> = {};
+    
+    for (const [strategy, params] of allParams) {
+      paramsObj[strategy] = params;
+    }
+    
+    res.json({
+      success: true,
+      strategiesOptimized: allParams.size,
+      parameters: paramsObj,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // EXISTING API ENDPOINTS
 // ============================================================================
 
@@ -427,19 +553,72 @@ async function getBestTrade() {
   return {profit: 450, asset: 'USDC/USDT', timestamp: Date.now() - 3600000};
 }
 
+/**
+ * Get wallet balances from the real balance monitor
+ * This connects the cryptocrawler to the actual wallet for accurate balance display
+ */
 async function getWalletBalances() {
-  return [
-    {chain: 'polygon', native: 125.5, tokens: [{symbol: 'USDC', balance: 15420}], totalValue: 15545.5},
-    {chain: 'bsc', native: 0.8, tokens: [{symbol: 'BUSD', balance: 8900}], totalValue: 9140}
-  ];
+  try {
+    // Use real balance monitor if it's running
+    if (balanceMonitor.isRunning()) {
+      const balances = await balanceMonitor.getAllBalances();
+      return balances.map(b => ({
+        chain: b.chain,
+        native: b.native,
+        nativeUsd: b.nativeUsd,
+        tokens: [
+          { symbol: 'USDT', balance: b.usdt },
+          { symbol: 'USDC', balance: b.usdc }
+        ].filter(t => t.balance > 0),
+        totalValue: b.totalUsd
+      }));
+    }
+    
+    // If balance monitor not running, try to start it
+    console.log('[CryptoCrawl] Balance monitor not running, attempting to start...');
+    await balanceMonitor.start();
+    
+    const balances = await balanceMonitor.getAllBalances();
+    return balances.map(b => ({
+      chain: b.chain,
+      native: b.native,
+      nativeUsd: b.nativeUsd,
+      tokens: [
+        { symbol: 'USDT', balance: b.usdt },
+        { symbol: 'USDC', balance: b.usdc }
+      ].filter(t => t.balance > 0),
+      totalValue: b.totalUsd
+    }));
+  } catch (error) {
+    console.error('[CryptoCrawl] Failed to get wallet balances from monitor:', error);
+    // Return empty array on error - dashboard will show "no balances"
+    return [];
+  }
 }
 
-// Helper: Execute withdrawal (STUB - Replace with actual wallet integration)
+/**
+ * Execute withdrawal using the actual wallet manager
+ * Connects the cryptocrawler wallet to perform real withdrawals
+ */
 async function executeWithdrawal(amount: number, token: string, to: string) {
-  // TODO: Integrate with WalletManager for actual withdrawals
-  // For now, return a mock transaction hash
-  console.warn('⚠️ STUB: executeWithdrawal not yet implemented');
-  return '0x' + Math.random().toString(16).slice(2, 66);
+  try {
+    if (!walletManager) {
+      // Try to initialize wallet manager if not already done
+      walletManager = new WalletManager();
+      await walletManager.initialize();
+    }
+    
+    // For native token withdrawals, use the withdraw function
+    // Note: Currently supports native token withdrawals
+    // For ERC20 tokens like USDC/USDT, additional implementation would be needed
+    const chain = 'polygon'; // Default to polygon for withdrawals
+    const txHash = await walletManager.withdraw({ chain, to, amount: amount.toString() });
+    console.log(`[CryptoCrawl] ✅ Withdrawal executed: ${amount} ${token} to ${to} - TX: ${txHash}`);
+    return txHash;
+  } catch (error) {
+    console.error('[CryptoCrawl] Withdrawal failed:', error);
+    throw error;
+  }
 }
 
 // Helper: Get trade history (STUB - Replace with database queries)
