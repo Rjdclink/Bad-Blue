@@ -1,8 +1,8 @@
 /**
  * LEXARA VOICE PIPELINE
  * 
- * Complete voice synthesis path:
- * LLM → Text Response → Voice Path Selection (Coqui/OpenAI) → Generate Audio → Persist Audio → Return Playable Reference
+ * Complete voice synthesis path using ElevenLabs:
+ * LLM → Text Response → ElevenLabs TTS → Persist Audio → Return Playable Reference
  * 
  * LEXARA Voice Profile:
  * - 18-20 year old female voice
@@ -10,9 +10,12 @@
  * - Clear, authoritative, yet warm and approachable
  * - Professional legal delivery with measured cadence
  * 
- * PROVIDERS (ONLY):
- * - Coqui TTS: High-quality neural voice synthesis (primary)
- * - OpenAI TTS: Premium API-based synthesis (fallback/premium)
+ * PROVIDER:
+ * - ElevenLabs: High-quality neural voice synthesis (ONLY provider)
+ * 
+ * REQUIREMENTS:
+ * - ELEVENLABS_API_KEY environment variable (required)
+ * - ELEVENLABS_VOICE_ID environment variable (required)
  */
 
 import { EventEmitter } from 'events';
@@ -20,6 +23,7 @@ import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createLogger } from '../logger';
+import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 
 const log = createLogger('LexaraVoicePipeline');
 
@@ -89,7 +93,7 @@ export const LEXARA_VOICE_PROFILE: LexaraVoiceProfile = {
 // TYPES
 // ============================================================================
 
-export type VoiceProvider = 'coqui' | 'openai';
+export type VoiceProvider = 'elevenlabs';
 export type EmotionalContext = 'neutral' | 'empathetic' | 'authoritative' | 'reassuring' | 'serious';
 
 export interface VoiceSynthesisRequest {
@@ -99,8 +103,6 @@ export interface VoiceSynthesisRequest {
   traceId?: string;
   /** Emotional context for voice adaptation */
   context?: EmotionalContext;
-  /** Force specific provider */
-  provider?: VoiceProvider;
   /** Custom voice settings override */
   settings?: Partial<VoiceSynthesisSettings>;
   /** Whether to persist the audio */
@@ -155,138 +157,57 @@ export interface ProviderStatus {
 }
 
 // ============================================================================
-// COQUI TTS PROVIDER
+// ELEVENLABS TTS PROVIDER
 // ============================================================================
 
-class CoquiTTSProvider {
-  private serverUrl: string;
+class ElevenLabsTTSProvider {
+  private client: ElevenLabsClient | null = null;
+  private voiceId: string = '';
   private available: boolean = false;
   private lastCheck: number = 0;
   private lastError?: string;
+  private modelId: string = 'eleven_multilingual_v2';
 
-  constructor(serverUrl?: string) {
-    this.serverUrl = serverUrl || process.env.COQUI_TTS_URL || 'http://localhost:5002';
+  constructor() {
+    this.initializeClient();
   }
 
-  async checkAvailability(): Promise<boolean> {
-    try {
-      const response = await fetch(`${this.serverUrl}/api/tts`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(5000),
-      });
-      this.available = response.ok;
+  private initializeClient(): void {
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    const voiceId = process.env.ELEVENLABS_VOICE_ID;
+    
+    if (apiKey && voiceId) {
+      this.client = new ElevenLabsClient({ apiKey });
+      this.voiceId = voiceId;
+      this.available = true;
       this.lastCheck = Date.now();
-      this.lastError = undefined;
-      return this.available;
-    } catch (error) {
+      
+      log.info('[ElevenLabsTTSProvider] Initialized', {
+        voiceId: this.voiceId,
+        modelId: this.modelId,
+      });
+    } else {
       this.available = false;
-      this.lastCheck = Date.now();
-      this.lastError = (error as Error).message;
-      return false;
+      this.lastError = 'ELEVENLABS_API_KEY or ELEVENLABS_VOICE_ID not set';
+      log.warn('[ElevenLabsTTSProvider] Not configured', { error: this.lastError });
     }
-  }
-
-  isAvailable(): boolean {
-    return this.available;
-  }
-
-  getStatus(): ProviderStatus {
-    return {
-      name: 'coqui',
-      available: this.available,
-      lastError: this.lastError,
-      lastCheck: this.lastCheck,
-    };
-  }
-
-  async synthesize(
-    text: string,
-    settings: VoiceSynthesisSettings,
-    context: EmotionalContext
-  ): Promise<{ audioData: Buffer; latencyMs: number; quality: number }> {
-    const startTime = Date.now();
-
-    // Apply LEXARA voice profile based on emotional context
-    const emotionalSettings = LEXARA_VOICE_PROFILE.emotionalRange[context];
-    
-    // Voice model selection:
-    // - 'lexara_supreme_justice' is a custom model if available
-    // - Falls back to Coqui's default young female voice if custom model not found
-    const speakerId = process.env.COQUI_LEXARA_VOICE_ID || 'lexara_supreme_justice';
-    
-    const requestBody = {
-      text,
-      speaker_id: speakerId,
-      language_id: 'en',
-      speed: settings.speakingRate * (emotionalSettings.rate / 150),
-      pitch: settings.pitch + (emotionalSettings.pitch - 220) / 100,
-      // Coqui-specific LEXARA parameters
-      style_wav: null,
-      reference_audio: null,
-      emotion: context,
-      // Voice characteristics
-      stability: settings.stability,
-      clarity: LEXARA_VOICE_PROFILE.characteristics.clarity,
-      warmth: LEXARA_VOICE_PROFILE.characteristics.warmth,
-    };
-
-    try {
-      const response = await fetch(`${this.serverUrl}/api/tts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(30000),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Coqui TTS error: ${response.status} ${response.statusText}`);
-      }
-
-      const audioData = Buffer.from(await response.arrayBuffer());
-      const latencyMs = Date.now() - startTime;
-
-      // Quality score based on settings alignment and response time
-      const quality = Math.min(1, 0.85 + (settings.stability * 0.1) - (latencyMs / 30000) * 0.1);
-
-      return { audioData, latencyMs, quality };
-
-    } catch (error) {
-      this.lastError = (error as Error).message;
-      throw error;
-    }
-  }
-}
-
-// ============================================================================
-// OPENAI TTS PROVIDER
-// ============================================================================
-
-class OpenAITTSProvider {
-  private apiKey: string;
-  private baseUrl: string = 'https://api.openai.com/v1/audio/speech';
-  private available: boolean = false;
-  private lastCheck: number = 0;
-  private lastError?: string;
-
-  constructor(apiKey?: string) {
-    this.apiKey = apiKey || process.env.OPENAI_API_KEY || '';
   }
 
   async checkAvailability(): Promise<boolean> {
-    this.available = !!this.apiKey && this.apiKey.length > 20;
+    if (!this.client) {
+      this.initializeClient();
+    }
     this.lastCheck = Date.now();
     return this.available;
   }
 
   isAvailable(): boolean {
-    return this.available;
+    return this.available && this.client !== null;
   }
 
   getStatus(): ProviderStatus {
     return {
-      name: 'openai',
+      name: 'elevenlabs',
       available: this.available,
       lastError: this.lastError,
       lastCheck: this.lastCheck,
@@ -298,51 +219,77 @@ class OpenAITTSProvider {
     settings: VoiceSynthesisSettings,
     context: EmotionalContext
   ): Promise<{ audioData: Buffer; latencyMs: number; quality: number }> {
+    if (!this.client) {
+      throw new Error(
+        'ElevenLabs client not initialized. ' +
+        'Please set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables.'
+      );
+    }
+    
     const startTime = Date.now();
 
-    // Select OpenAI voice that best matches LEXARA profile
-    // "nova" - Young female, professional, clear
-    // "shimmer" - Alternative young female option
-    const voice = 'nova'; // Best match for 18-20 female with gravitas
-
-    // Apply emotional context to speed
+    // Apply LEXARA voice profile based on emotional context
     const emotionalSettings = LEXARA_VOICE_PROFILE.emotionalRange[context];
-    const speed = Math.max(0.25, Math.min(4.0, settings.speakingRate * (emotionalSettings.rate / 150)));
-
-    const requestBody = {
-      model: 'tts-1-hd', // High-definition model for quality
-      input: text,
-      voice: voice,
-      response_format: 'mp3',
-      speed: speed,
+    
+    // ElevenLabs voice settings
+    const voiceSettings = {
+      stability: settings.stability ?? 0.5,
+      similarityBoost: settings.similarity ?? 0.75,
+      style: settings.style ?? 0.0,
+      useSpeakerBoost: true,
     };
 
+    log.info('[ElevenLabsTTSProvider] Starting synthesis', {
+      voiceId: this.voiceId,
+      modelId: this.modelId,
+      textLength: text.length,
+      context,
+      stability: voiceSettings.stability,
+      similarityBoost: voiceSettings.similarityBoost,
+    });
+
     try {
-      const response = await fetch(this.baseUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(60000),
+      const audioResponse = await this.client.textToSpeech.convert(this.voiceId, {
+        text: text,
+        modelId: this.modelId,
+        voiceSettings: voiceSettings,
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`OpenAI TTS error: ${response.status} - ${errorText}`);
+      // Convert ReadableStream to buffer
+      const reader = audioResponse.getReader();
+      const chunks: Uint8Array[] = [];
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) chunks.push(value);
       }
-
-      const audioData = Buffer.from(await response.arrayBuffer());
+      
+      const audioData = Buffer.concat(chunks);
       const latencyMs = Date.now() - startTime;
 
-      // OpenAI typically produces very high quality
-      const quality = 0.95;
+      if (audioData.length === 0) {
+        throw new Error('ElevenLabs returned empty audio data');
+      }
+
+      // Quality score based on settings and response
+      const quality = 0.95; // ElevenLabs typically produces high quality
+
+      log.info('[ElevenLabsTTSProvider] Synthesis complete', {
+        voiceId: this.voiceId,
+        status: 'success',
+        audioByteLength: audioData.length,
+        latencyMs,
+      });
 
       return { audioData, latencyMs, quality };
 
     } catch (error) {
       this.lastError = (error as Error).message;
+      log.error('[ElevenLabsTTSProvider] Synthesis failed', {
+        voiceId: this.voiceId,
+        error: this.lastError,
+      });
       throw error;
     }
   }
@@ -402,10 +349,8 @@ class AudioPersistence {
 // ============================================================================
 
 export class LexaraVoicePipeline extends EventEmitter {
-  private coquiProvider: CoquiTTSProvider;
-  private openaiProvider: OpenAITTSProvider;
+  private elevenLabsProvider: ElevenLabsTTSProvider;
   private persistence: AudioPersistence;
-  private preferredProvider: VoiceProvider = 'coqui';
   private isInitialized: boolean = false;
 
   // Metrics
@@ -414,20 +359,12 @@ export class LexaraVoicePipeline extends EventEmitter {
   private errorCount: number = 0;
 
   constructor(config?: {
-    coquiUrl?: string;
-    openaiApiKey?: string;
     storageDir?: string;
-    preferredProvider?: VoiceProvider;
   }) {
     super();
     
-    this.coquiProvider = new CoquiTTSProvider(config?.coquiUrl);
-    this.openaiProvider = new OpenAITTSProvider(config?.openaiApiKey);
+    this.elevenLabsProvider = new ElevenLabsTTSProvider();
     this.persistence = new AudioPersistence(config?.storageDir);
-    
-    if (config?.preferredProvider) {
-      this.preferredProvider = config.preferredProvider;
-    }
   }
 
   /**
@@ -437,38 +374,31 @@ export class LexaraVoicePipeline extends EventEmitter {
     log.info('[LexaraVoicePipeline] Initializing...');
 
     // Check provider availability
-    await Promise.all([
-      this.coquiProvider.checkAvailability(),
-      this.openaiProvider.checkAvailability(),
-    ]);
+    await this.elevenLabsProvider.checkAvailability();
 
-    const coquiStatus = this.coquiProvider.getStatus();
-    const openaiStatus = this.openaiProvider.getStatus();
+    const status = this.elevenLabsProvider.getStatus();
 
     log.info('[LexaraVoicePipeline] Provider status', {
-      coqui: coquiStatus.available,
-      openai: openaiStatus.available,
+      elevenlabs: status.available,
+      voiceId: process.env.ELEVENLABS_VOICE_ID || 'not set',
     });
 
-    if (!coquiStatus.available && !openaiStatus.available) {
-      log.warn('[LexaraVoicePipeline] No voice providers available. Voice synthesis will be unavailable.');
-    }
-
-    // Set preferred provider based on availability
-    if (!this.coquiProvider.isAvailable() && this.openaiProvider.isAvailable()) {
-      this.preferredProvider = 'openai';
+    if (!status.available) {
+      log.warn('[LexaraVoicePipeline] ElevenLabs not available. Voice synthesis will be unavailable.', {
+        error: status.lastError,
+      });
     }
 
     this.isInitialized = true;
-    this.emit('initialized', { coqui: coquiStatus, openai: openaiStatus });
+    this.emit('initialized', { elevenlabs: status });
     
-    log.info('[LexaraVoicePipeline] Initialized with preferred provider:', this.preferredProvider);
+    log.info('[LexaraVoicePipeline] Initialized with ElevenLabs provider');
   }
 
   /**
    * MAIN SYNTHESIS METHOD
    * 
-   * Complete path: Text → Voice Selection → Generate → Persist → Return Reference
+   * Complete path: Text → ElevenLabs → Persist → Return Reference
    */
   async synthesize(request: VoiceSynthesisRequest): Promise<VoiceSynthesisResult> {
     const startTime = Date.now();
@@ -479,12 +409,19 @@ export class LexaraVoicePipeline extends EventEmitter {
       traceId,
       textLength: request.text.length,
       context: request.context,
-      provider: request.provider,
     });
 
     // Ensure initialized
     if (!this.isInitialized) {
       await this.initialize();
+    }
+
+    // Validate provider is available
+    if (!this.elevenLabsProvider.isAvailable()) {
+      throw new Error(
+        'ElevenLabs TTS is not available. ' +
+        'Please set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables.'
+      );
     }
 
     // Determine emotional context
@@ -493,53 +430,18 @@ export class LexaraVoicePipeline extends EventEmitter {
     // Build voice settings
     const settings = this.buildSettings(request.settings, context);
 
-    // Select provider
-    const provider = this.selectProvider(request.provider);
-
-    if (!provider) {
-      throw new Error('No voice providers available. Please configure COQUI_TTS_URL or OPENAI_API_KEY.');
-    }
-
     // Generate SSML for enhanced synthesis
     const ssml = this.generateSSML(request.text, context);
 
     let audioData: Buffer;
     let latencyMs: number;
     let qualityScore: number;
-    let usedProvider: VoiceProvider;
 
     try {
-      // Attempt synthesis with selected provider
-      if (provider === 'coqui' && this.coquiProvider.isAvailable()) {
-        const result = await this.coquiProvider.synthesize(request.text, settings, context);
-        audioData = result.audioData;
-        latencyMs = result.latencyMs;
-        qualityScore = result.quality;
-        usedProvider = 'coqui';
-      } else if (provider === 'openai' && this.openaiProvider.isAvailable()) {
-        const result = await this.openaiProvider.synthesize(request.text, settings, context);
-        audioData = result.audioData;
-        latencyMs = result.latencyMs;
-        qualityScore = result.quality;
-        usedProvider = 'openai';
-      } else {
-        // Fallback to any available provider
-        if (this.openaiProvider.isAvailable()) {
-          const result = await this.openaiProvider.synthesize(request.text, settings, context);
-          audioData = result.audioData;
-          latencyMs = result.latencyMs;
-          qualityScore = result.quality;
-          usedProvider = 'openai';
-        } else if (this.coquiProvider.isAvailable()) {
-          const result = await this.coquiProvider.synthesize(request.text, settings, context);
-          audioData = result.audioData;
-          latencyMs = result.latencyMs;
-          qualityScore = result.quality;
-          usedProvider = 'coqui';
-        } else {
-          throw new Error('No voice providers available');
-        }
-      }
+      const result = await this.elevenLabsProvider.synthesize(request.text, settings, context);
+      audioData = result.audioData;
+      latencyMs = result.latencyMs;
+      qualityScore = result.quality;
 
       this.synthesisCount++;
       this.totalLatencyMs += latencyMs;
@@ -550,8 +452,8 @@ export class LexaraVoicePipeline extends EventEmitter {
       throw error;
     }
 
-    // Determine MIME type
-    const mimeType = usedProvider === 'openai' ? 'audio/mpeg' : 'audio/wav';
+    // MIME type is always audio/mpeg for ElevenLabs
+    const mimeType = 'audio/mpeg';
 
     // Persist audio if requested (default: true)
     let audioRef: string;
@@ -560,7 +462,7 @@ export class LexaraVoicePipeline extends EventEmitter {
     if (request.persist !== false) {
       try {
         const filepath = await this.persistence.persist(audioId, audioData, mimeType);
-        audioRef = this.persistence.getPlayableRef(audioId, mimeType.includes('mp3') ? 'mp3' : 'wav');
+        audioRef = this.persistence.getPlayableRef(audioId, 'mp3');
         persisted = true;
         log.debug('[LexaraVoicePipeline] Audio persisted', { audioId, filepath });
       } catch (error) {
@@ -583,7 +485,7 @@ export class LexaraVoicePipeline extends EventEmitter {
       audioData: request.persist === false ? audioData : undefined,
       mimeType,
       durationMs,
-      provider: usedProvider,
+      provider: 'elevenlabs',
       persisted,
       generatedAt: Date.now(),
       latencyMs: Date.now() - startTime,
@@ -597,10 +499,11 @@ export class LexaraVoicePipeline extends EventEmitter {
     log.info('[LexaraVoicePipeline] Synthesis complete', {
       traceId,
       audioId,
-      provider: usedProvider,
+      provider: 'elevenlabs',
       durationMs,
       latencyMs: result.latencyMs,
       quality: qualityScore,
+      audioByteLength: audioData.length,
     });
 
     return result;
@@ -674,26 +577,6 @@ export class LexaraVoicePipeline extends EventEmitter {
   }
 
   /**
-   * Select best available provider
-   */
-  private selectProvider(requested?: VoiceProvider): VoiceProvider | null {
-    if (requested) {
-      if (requested === 'coqui' && this.coquiProvider.isAvailable()) return 'coqui';
-      if (requested === 'openai' && this.openaiProvider.isAvailable()) return 'openai';
-    }
-
-    // Use preferred provider if available
-    if (this.preferredProvider === 'coqui' && this.coquiProvider.isAvailable()) return 'coqui';
-    if (this.preferredProvider === 'openai' && this.openaiProvider.isAvailable()) return 'openai';
-
-    // Fallback to any available
-    if (this.coquiProvider.isAvailable()) return 'coqui';
-    if (this.openaiProvider.isAvailable()) return 'openai';
-
-    return null;
-  }
-
-  /**
    * Generate SSML for enhanced prosody
    */
   private generateSSML(text: string, context: EmotionalContext): string {
@@ -734,10 +617,14 @@ export class LexaraVoicePipeline extends EventEmitter {
   /**
    * Get provider statuses
    */
-  getProviderStatuses(): { coqui: ProviderStatus; openai: ProviderStatus } {
+  getProviderStatuses(): { elevenlabs: ProviderStatus; coqui: ProviderStatus; openai: ProviderStatus } {
+    const elevenLabsStatus = this.elevenLabsProvider.getStatus();
+    
+    // Return unavailable status for deprecated providers (keep original names for API compatibility)
     return {
-      coqui: this.coquiProvider.getStatus(),
-      openai: this.openaiProvider.getStatus(),
+      elevenlabs: elevenLabsStatus,
+      coqui: { name: 'elevenlabs', available: false, lastError: 'Coqui is deprecated - use ElevenLabs', lastCheck: Date.now() },
+      openai: { name: 'elevenlabs', available: false, lastError: 'OpenAI TTS is deprecated - use ElevenLabs', lastCheck: Date.now() },
     };
   }
 
@@ -756,27 +643,15 @@ export class LexaraVoicePipeline extends EventEmitter {
       avgLatencyMs: this.synthesisCount > 0 ? this.totalLatencyMs / this.synthesisCount : 0,
       errorCount: this.errorCount,
       errorRate: this.synthesisCount > 0 ? this.errorCount / (this.synthesisCount + this.errorCount) : 0,
-      preferredProvider: this.preferredProvider,
+      preferredProvider: 'elevenlabs',
     };
-  }
-
-  /**
-   * Set preferred provider
-   */
-  setPreferredProvider(provider: VoiceProvider): void {
-    this.preferredProvider = provider;
-    log.info('[LexaraVoicePipeline] Preferred provider set to:', provider);
   }
 
   /**
    * Refresh provider availability
    */
   async refreshProviders(): Promise<void> {
-    await Promise.all([
-      this.coquiProvider.checkAvailability(),
-      this.openaiProvider.checkAvailability(),
-    ]);
-    
+    await this.elevenLabsProvider.checkAvailability();
     this.emit('providers-refreshed', this.getProviderStatuses());
   }
 }
@@ -788,10 +663,7 @@ export class LexaraVoicePipeline extends EventEmitter {
 let pipelineInstance: LexaraVoicePipeline | null = null;
 
 export function getLexaraVoicePipeline(config?: {
-  coquiUrl?: string;
-  openaiApiKey?: string;
   storageDir?: string;
-  preferredProvider?: VoiceProvider;
 }): LexaraVoicePipeline {
   if (!pipelineInstance) {
     pipelineInstance = new LexaraVoicePipeline(config);

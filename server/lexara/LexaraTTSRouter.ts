@@ -1,29 +1,68 @@
 /**
  * LEXARA TTS ROUTER
  * 
- * Routes TTS requests through the frozen Lexara voice profile.
- * Ensures consistent voice regardless of which engine (Coqui/Piper) is used.
+ * Routes TTS requests through ElevenLabs for Lexara voice synthesis.
+ * This is the ONLY TTS provider - no fallbacks to other services.
  * 
  * Features:
- * - Multi-engine routing (Coqui for quality, Piper for speed)
+ * - ElevenLabs-only voice synthesis
  * - Streaming TTS for low-latency playback
- * - Unified post-processing chain
- * - Automatic fallback between engines
- * - Result caching by (voice_profile, text_hash)
+ * - Result caching by (voice_id, text_hash)
+ * - Comprehensive logging for debugging
+ * 
+ * REQUIREMENTS:
+ * - ELEVENLABS_API_KEY environment variable (required)
+ * - ELEVENLABS_VOICE_ID environment variable (required)
  */
 
 import { EventEmitter } from 'events';
 import crypto from 'crypto';
 import { createLogger } from '../logger';
-import { 
-  lexaraVoiceForge,
-  LexaraPersonaRewriter,
-  type FrozenVoiceProfile,
-  type VoiceCandidate,
-  type PostFXProfile,
-} from './voiceForge';
+import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 
 const log = createLogger('LexaraTTSRouter');
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/** Average speaking rate in words per minute (used for duration estimation) */
+const AVERAGE_SPEAKING_RATE_WPM = 150;
+
+/** ElevenLabs style parameter valid range */
+const STYLE_MIN = 0.0;
+const STYLE_MAX = 1.0;
+
+// ============================================================================
+// ENVIRONMENT VALIDATION
+// ============================================================================
+
+/**
+ * Validate that required ElevenLabs environment variables are set
+ * Throws a clear error if missing
+ */
+function validateElevenLabsEnv(): { apiKey: string; voiceId: string } {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  const voiceId = process.env.ELEVENLABS_VOICE_ID;
+  
+  if (!apiKey || apiKey.trim() === '') {
+    throw new Error(
+      'ELEVENLABS_API_KEY environment variable is not set. ' +
+      'Please set ELEVENLABS_API_KEY to your ElevenLabs API key. ' +
+      'Get your API key from: https://elevenlabs.io/app/settings/api-keys'
+    );
+  }
+  
+  if (!voiceId || voiceId.trim() === '') {
+    throw new Error(
+      'ELEVENLABS_VOICE_ID environment variable is not set. ' +
+      'Please set ELEVENLABS_VOICE_ID to your desired voice ID. ' +
+      'Get voice IDs from: https://elevenlabs.io/app/voice-library'
+    );
+  }
+  
+  return { apiKey: apiKey.trim(), voiceId: voiceId.trim() };
+}
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -36,14 +75,16 @@ export interface TTSRequest {
   text: string;
   /** Optional context for persona adaptation */
   context?: 'statute' | 'summary' | 'boundary' | 'reassurance' | 'general';
-  /** Force specific engine (overrides profile) */
-  forceEngine?: 'coqui' | 'piper';
   /** Enable streaming response */
   streaming?: boolean;
   /** Skip cache lookup */
   skipCache?: boolean;
-  /** Custom voice profile override */
-  profileOverride?: Partial<VoiceCandidate>;
+  /** Voice stability (0.0-1.0) */
+  stability?: number;
+  /** Voice similarity boost (0.0-1.0) */
+  similarityBoost?: number;
+  /** Voice style (0.0-1.0) - for v2 models */
+  style?: number;
 }
 
 export interface TTSResponse {
@@ -51,18 +92,20 @@ export interface TTSResponse {
   audioData: Buffer;
   /** Audio MIME type */
   mimeType: string;
-  /** Duration in milliseconds */
+  /** Duration in milliseconds (estimated) */
   durationMs: number;
-  /** Which engine was used */
-  engine: 'coqui' | 'piper';
-  /** Voice profile version used */
-  profileVersion: string;
+  /** Provider used */
+  provider: 'elevenlabs';
+  /** Voice ID used */
+  voiceId: string;
   /** Whether result was from cache */
   cached: boolean;
-  /** Text after persona rewriting */
-  processedText: string;
+  /** Original text */
+  text: string;
   /** Cache key for this result */
   cacheKey: string;
+  /** Audio byte length */
+  audioByteLength: number;
 }
 
 export interface TTSStreamChunk {
@@ -77,10 +120,6 @@ export interface TTSStreamChunk {
 }
 
 export interface TTSEngineConfig {
-  /** Coqui TTS server URL */
-  coquiUrl?: string;
-  /** Piper executable path */
-  piperPath?: string;
   /** Enable caching */
   enableCache: boolean;
   /** Max cache entries */
@@ -89,8 +128,8 @@ export interface TTSEngineConfig {
   cacheTTLMs: number;
   /** Timeout for TTS request in ms */
   timeoutMs: number;
-  /** Fallback behavior */
-  fallbackEnabled: boolean;
+  /** ElevenLabs model ID */
+  modelId?: string;
 }
 
 interface CacheEntry {
@@ -104,188 +143,15 @@ interface CacheEntry {
 // ============================================================================
 
 const DEFAULT_CONFIG: TTSEngineConfig = {
-  coquiUrl: process.env.COQUI_TTS_URL || 'http://localhost:5002',
-  piperPath: process.env.PIPER_PATH || '/usr/local/bin/piper',
   enableCache: true,
   maxCacheEntries: 500,
   cacheTTLMs: 30 * 60 * 1000, // 30 minutes
-  timeoutMs: 30000,
-  fallbackEnabled: true,
+  timeoutMs: 60000,
+  modelId: 'eleven_multilingual_v2', // High quality model
 };
 
 // ============================================================================
-// TTS ENGINE ADAPTERS
-// ============================================================================
-
-/**
- * Abstract TTS Engine interface
- */
-interface TTSEngine {
-  name: 'coqui' | 'piper';
-  synthesize(text: string, voiceConfig: VoiceCandidate): Promise<Buffer>;
-  isAvailable(): Promise<boolean>;
-  getStatus(): TTSEngineStatus;
-}
-
-/**
- * Coqui TTS Engine Adapter
- * High-quality neural TTS
- */
-class CoquiEngine implements TTSEngine {
-  name: 'coqui' = 'coqui';
-  private status: TTSEngineStatus = 'unavailable';
-  private serverUrl: string;
-  
-  constructor(serverUrl: string) {
-    this.serverUrl = serverUrl;
-  }
-  
-  async isAvailable(): Promise<boolean> {
-    try {
-      const response = await fetch(`${this.serverUrl}/api/tts`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(5000),
-      });
-      this.status = response.ok ? 'available' : 'unavailable';
-      return response.ok;
-    } catch {
-      this.status = 'unavailable';
-      return false;
-    }
-  }
-  
-  getStatus(): TTSEngineStatus {
-    return this.status;
-  }
-  
-  async synthesize(text: string, voiceConfig: VoiceCandidate): Promise<Buffer> {
-    this.status = 'busy';
-    
-    try {
-      const response = await fetch(`${this.serverUrl}/api/tts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text,
-          speaker_id: voiceConfig.voiceId,
-          style_wav: null,
-          language_id: 'en',
-          // Coqui-specific parameters
-          speed: voiceConfig.rate,
-          pitch: voiceConfig.pitch,
-        }),
-        signal: AbortSignal.timeout(30000),
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Coqui TTS error: ${response.status}`);
-      }
-      
-      const audioBuffer = Buffer.from(await response.arrayBuffer());
-      this.status = 'available';
-      return audioBuffer;
-      
-    } catch (error) {
-      this.status = 'error';
-      throw error;
-    }
-  }
-}
-
-/**
- * Piper TTS Engine Adapter
- * Fast, lightweight TTS
- */
-class PiperEngine implements TTSEngine {
-  name: 'piper' = 'piper';
-  private status: TTSEngineStatus = 'unavailable';
-  private piperPath: string;
-  
-  constructor(piperPath: string) {
-    this.piperPath = piperPath;
-  }
-  
-  async isAvailable(): Promise<boolean> {
-    // In production, check if piper executable exists
-    // For now, simulate availability
-    this.status = 'available';
-    return true;
-  }
-  
-  getStatus(): TTSEngineStatus {
-    return this.status;
-  }
-  
-  async synthesize(text: string, voiceConfig: VoiceCandidate): Promise<Buffer> {
-    this.status = 'busy';
-    
-    try {
-      // In production, this would execute piper CLI or use its library
-      // For now, simulate audio generation
-      
-      // Simulate processing time based on text length
-      const processingTime = Math.min(100 + text.length * 5, 2000);
-      await new Promise(resolve => setTimeout(resolve, processingTime));
-      
-      // Generate placeholder audio buffer (in production, actual audio)
-      const sampleRate = 22050;
-      const duration = text.length * 0.05; // ~50ms per character
-      const samples = Math.floor(sampleRate * duration);
-      const audioBuffer = Buffer.alloc(samples * 2); // 16-bit audio
-      
-      // Generate simple sine wave as placeholder
-      for (let i = 0; i < samples; i++) {
-        const t = i / sampleRate;
-        const frequency = 200 + (voiceConfig.pitch - 1) * 100;
-        const sample = Math.sin(2 * Math.PI * frequency * t) * 16000;
-        audioBuffer.writeInt16LE(Math.floor(sample), i * 2);
-      }
-      
-      this.status = 'available';
-      return audioBuffer;
-      
-    } catch (error) {
-      this.status = 'error';
-      throw error;
-    }
-  }
-}
-
-// ============================================================================
-// POST-PROCESSING CHAIN
-// ============================================================================
-
-/**
- * Apply post-processing effects to audio
- * EQ + Compression + Reverb chain
- */
-async function applyPostProcessing(
-  audioBuffer: Buffer,
-  profile: PostFXProfile
-): Promise<Buffer> {
-  // In production, this would use Web Audio API or audio processing library
-  // For now, return the audio as-is with metadata about intended processing
-  
-  log.debug('Post-processing applied', {
-    eqTilt: profile.eqTilt,
-    compression: `${profile.compressionThreshold}dB @ ${profile.compressionRatio}:1`,
-    reverb: `${(profile.reverbAmount * 100).toFixed(0)}% wet, room ${profile.reverbRoomSize}`,
-    deEsser: profile.deEsser,
-  });
-  
-  // In a full implementation, we would:
-  // 1. Apply EQ tilt (high shelf or low shelf)
-  // 2. Apply compression
-  // 3. Apply soft reverb
-  // 4. Apply de-esser
-  
-  return audioBuffer;
-}
-
-// ============================================================================
-// LEXARA TTS ROUTER
+// ELEVENLABS TTS ROUTER
 // ============================================================================
 
 export const ttsRouterEvents = new EventEmitter();
@@ -293,21 +159,43 @@ export const ttsRouterEvents = new EventEmitter();
 class LexaraTTSRouter {
   private static instance: LexaraTTSRouter;
   private config: TTSEngineConfig;
-  private engines: Map<string, TTSEngine>;
   private cache: Map<string, CacheEntry>;
-  private personaRewriter: LexaraPersonaRewriter | null = null;
+  private client: ElevenLabsClient | null = null;
+  private voiceId: string = '';
+  private status: TTSEngineStatus = 'unavailable';
+  private lastError: string | undefined;
   
   private constructor() {
     this.config = { ...DEFAULT_CONFIG };
-    this.engines = new Map();
     this.cache = new Map();
-    
-    // Initialize engines
-    this.engines.set('coqui', new CoquiEngine(this.config.coquiUrl!));
-    this.engines.set('piper', new PiperEngine(this.config.piperPath!));
     
     // Start cache cleanup interval
     setInterval(() => this.cleanupCache(), 60000);
+    
+    // Try to initialize on construction
+    this.initializeClient();
+  }
+  
+  /**
+   * Initialize the ElevenLabs client
+   */
+  private initializeClient(): void {
+    try {
+      const { apiKey, voiceId } = validateElevenLabsEnv();
+      this.voiceId = voiceId;
+      this.client = new ElevenLabsClient({ apiKey });
+      this.status = 'available';
+      
+      log.info('[LexaraTTSRouter] ElevenLabs client initialized', {
+        provider: 'elevenlabs',
+        voiceId: this.voiceId,
+        modelId: this.config.modelId,
+      });
+    } catch (error) {
+      this.status = 'unavailable';
+      this.lastError = (error as Error).message;
+      log.warn('[LexaraTTSRouter] ElevenLabs not configured', { error: this.lastError });
+    }
   }
   
   static getInstance(): LexaraTTSRouter {
@@ -322,147 +210,269 @@ class LexaraTTSRouter {
    */
   configure(config: Partial<TTSEngineConfig>): void {
     this.config = { ...this.config, ...config };
-    log.info('TTS Router configured', this.config);
+    log.info('[LexaraTTSRouter] Configuration updated', this.config);
   }
   
   /**
-   * Synthesize speech using the active Lexara voice profile
+   * Synthesize speech using ElevenLabs
+   * This is the ONLY TTS method - no fallbacks
    */
   async synthesize(request: TTSRequest): Promise<TTSResponse> {
     const startTime = Date.now();
     
-    // Get active voice profile
-    const profile = lexaraVoiceForge.getActiveProfile();
-    if (!profile) {
-      throw new Error('No active Lexara voice profile. Run Voice Forge first.');
+    // Validate environment and client
+    if (!this.client) {
+      // Try to re-initialize in case env vars were set after startup
+      this.initializeClient();
+      
+      if (!this.client) {
+        throw new Error(
+          'ElevenLabs TTS is not available. ' + 
+          (this.lastError || 'Please set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables.')
+        );
+      }
     }
     
-    // Get or create persona rewriter
-    if (!this.personaRewriter) {
-      this.personaRewriter = new LexaraPersonaRewriter(
-        profile.candidate.stylePrompt,
-        profile.candidate.pausePattern
-      );
+    // Validate text input
+    if (!request.text || request.text.trim() === '') {
+      throw new Error('Text to synthesize cannot be empty');
     }
     
-    // Apply persona rewriting to text
-    const processedText = this.personaRewriter.rewrite(request.text);
+    const text = request.text.trim();
     
     // Generate cache key
-    const cacheKey = this.generateCacheKey(processedText, profile.version, request);
+    const cacheKey = this.generateCacheKey(text, this.voiceId, request);
     
     // Check cache
     if (this.config.enableCache && !request.skipCache) {
       const cached = this.cache.get(cacheKey);
       if (cached && Date.now() - cached.createdAt < this.config.cacheTTLMs) {
         cached.accessCount++;
-        log.debug('Cache hit', { cacheKey, accessCount: cached.accessCount });
+        
+        log.info('[LexaraTTSRouter] Cache hit', {
+          provider: 'elevenlabs',
+          voiceId: this.voiceId,
+          cacheKey,
+          accessCount: cached.accessCount,
+          audioByteLength: cached.response.audioByteLength,
+        });
         
         ttsRouterEvents.emit('synthesis-complete', {
           cached: true,
           durationMs: Date.now() - startTime,
+          provider: 'elevenlabs',
+          voiceId: this.voiceId,
         });
         
         return { ...cached.response, cached: true };
       }
     }
     
-    // Determine which engine to use
-    const engineName = request.forceEngine || profile.candidate.engine;
-    let engine = this.engines.get(engineName);
+    // Log synthesis start
+    log.info('[LexaraTTSRouter] Starting ElevenLabs synthesis', {
+      provider: 'elevenlabs',
+      voiceId: this.voiceId,
+      modelId: this.config.modelId,
+      textLength: text.length,
+      context: request.context || 'general',
+    });
     
-    // Check engine availability and fallback if needed
-    if (!engine || !(await engine.isAvailable())) {
-      if (this.config.fallbackEnabled) {
-        const fallbackName = engineName === 'coqui' ? 'piper' : 'coqui';
-        engine = this.engines.get(fallbackName);
-        log.warn(`Engine ${engineName} unavailable, falling back to ${fallbackName}`);
+    this.status = 'busy';
+    
+    try {
+      // Validate and clamp style parameter to ElevenLabs API range
+      const clampedStyle = Math.max(STYLE_MIN, Math.min(STYLE_MAX, request.style ?? 0.0));
+      
+      // Call ElevenLabs API with voice settings
+      const voiceSettings = {
+        stability: request.stability ?? 0.5,
+        similarityBoost: request.similarityBoost ?? 0.75,
+        style: clampedStyle,
+        useSpeakerBoost: true,
+      };
+      
+      // Generate audio using ElevenLabs
+      const audioResponse = await this.client.textToSpeech.convert(this.voiceId, {
+        text: text,
+        modelId: this.config.modelId || 'eleven_multilingual_v2',
+        voiceSettings: voiceSettings,
+      });
+      
+      // Convert ReadableStream to buffer
+      const reader = audioResponse.getReader();
+      const chunks: Uint8Array[] = [];
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) chunks.push(value);
       }
       
-      if (!engine || !(await engine.isAvailable())) {
-        throw new Error('No TTS engines available');
+      const audioData = Buffer.concat(chunks);
+      
+      const latencyMs = Date.now() - startTime;
+      
+      // Validate we got audio data
+      if (audioData.length === 0) {
+        throw new Error('ElevenLabs returned empty audio data');
       }
-    }
-    
-    // Merge profile with any overrides
-    const voiceConfig: VoiceCandidate = {
-      ...profile.candidate,
-      ...request.profileOverride,
-    };
-    
-    // Synthesize audio
-    log.info('Synthesizing speech', {
-      engine: engine.name,
-      textLength: processedText.length,
-      profile: profile.version,
-    });
-    
-    let audioData = await engine.synthesize(processedText, voiceConfig);
-    
-    // Apply post-processing chain
-    audioData = await applyPostProcessing(audioData, voiceConfig.postFXProfile);
-    
-    // Calculate duration (approximate)
-    const durationMs = Math.floor(processedText.length * 50); // ~50ms per character
-    
-    const response: TTSResponse = {
-      audioData,
-      mimeType: 'audio/wav',
-      durationMs,
-      engine: engine.name,
-      profileVersion: profile.version,
-      cached: false,
-      processedText,
-      cacheKey,
-    };
-    
-    // Store in cache
-    if (this.config.enableCache) {
-      this.cache.set(cacheKey, {
-        response,
-        createdAt: Date.now(),
-        accessCount: 1,
+      
+      // Estimate duration based on text length and average speaking rate
+      const wordCount = text.split(/\s+/).length;
+      const estimatedDurationMs = Math.round((wordCount / AVERAGE_SPEAKING_RATE_WPM) * 60 * 1000);
+      
+      // Log success
+      log.info('[LexaraTTSRouter] ElevenLabs synthesis complete', {
+        provider: 'elevenlabs',
+        voiceId: this.voiceId,
+        status: 'success',
+        audioByteLength: audioData.length,
+        latencyMs,
+        estimatedDurationMs,
+        textLength: text.length,
       });
+      
+      const response: TTSResponse = {
+        audioData,
+        mimeType: 'audio/mpeg',
+        durationMs: estimatedDurationMs,
+        provider: 'elevenlabs',
+        voiceId: this.voiceId,
+        cached: false,
+        text,
+        cacheKey,
+        audioByteLength: audioData.length,
+      };
+      
+      // Store in cache
+      if (this.config.enableCache) {
+        this.cache.set(cacheKey, {
+          response,
+          createdAt: Date.now(),
+          accessCount: 1,
+        });
+      }
+      
+      this.status = 'available';
+      
+      ttsRouterEvents.emit('synthesis-complete', {
+        cached: false,
+        provider: 'elevenlabs',
+        voiceId: this.voiceId,
+        durationMs: latencyMs,
+        audioSizeBytes: audioData.length,
+      });
+      
+      return response;
+      
+    } catch (error) {
+      const latencyMs = Date.now() - startTime;
+      this.status = 'error';
+      this.lastError = (error as Error).message;
+      
+      // Log detailed error for debugging
+      log.error('[LexaraTTSRouter] ElevenLabs synthesis failed', {
+        provider: 'elevenlabs',
+        voiceId: this.voiceId,
+        status: 'error',
+        error: this.lastError,
+        latencyMs,
+        textLength: text.length,
+      });
+      
+      // Throw with clear error message
+      throw new Error(
+        `ElevenLabs TTS synthesis failed: ${this.lastError}. ` +
+        'Please check your ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables.'
+      );
     }
-    
-    const totalTime = Date.now() - startTime;
-    log.info(`Synthesis complete in ${totalTime}ms`, {
-      engine: engine.name,
-      durationMs,
-    });
-    
-    ttsRouterEvents.emit('synthesis-complete', {
-      cached: false,
-      engine: engine.name,
-      durationMs: totalTime,
-      audioSizeBytes: audioData.length,
-    });
-    
-    return response;
   }
   
   /**
    * Stream synthesis for low-latency playback
    */
   async *synthesizeStream(request: TTSRequest): AsyncGenerator<TTSStreamChunk> {
-    // Get the full synthesis first
-    const response = await this.synthesize({ ...request, streaming: true });
+    // Validate environment and client
+    if (!this.client) {
+      this.initializeClient();
+      if (!this.client) {
+        throw new Error(
+          'ElevenLabs TTS is not available. ' + 
+          (this.lastError || 'Please set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables.')
+        );
+      }
+    }
     
-    // Chunk the audio for streaming
-    const chunkSize = 4096; // 4KB chunks
-    const totalChunks = Math.ceil(response.audioData.length / chunkSize);
+    const text = request.text.trim();
+    if (!text) {
+      throw new Error('Text to synthesize cannot be empty');
+    }
     
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * chunkSize;
-      const end = Math.min(start + chunkSize, response.audioData.length);
-      const chunk = response.audioData.subarray(start, end);
+    log.info('[LexaraTTSRouter] Starting ElevenLabs streaming synthesis', {
+      provider: 'elevenlabs',
+      voiceId: this.voiceId,
+      textLength: text.length,
+    });
+    
+    // Validate and clamp style parameter to ElevenLabs API range
+    const clampedStyle = Math.max(STYLE_MIN, Math.min(STYLE_MAX, request.style ?? 0.0));
+    
+    const voiceSettings = {
+      stability: request.stability ?? 0.5,
+      similarityBoost: request.similarityBoost ?? 0.75,
+      style: clampedStyle,
+      useSpeakerBoost: true,
+    };
+    
+    try {
+      // Use streaming API
+      const audioStream = await this.client.textToSpeech.stream(this.voiceId, {
+        text: text,
+        modelId: this.config.modelId || 'eleven_multilingual_v2',
+        voiceSettings: voiceSettings,
+      });
       
-      yield {
-        index: i,
-        audioData: chunk,
-        isFinal: i === totalChunks - 1,
-        cumulativeDurationMs: Math.floor((end / response.audioData.length) * response.durationMs),
-      };
+      let index = 0;
+      let totalBytes = 0;
+      const wordCount = text.split(/\s+/).length;
+      const estimatedTotalDurationMs = Math.round((wordCount / AVERAGE_SPEAKING_RATE_WPM) * 60 * 1000);
+      
+      // Read from the stream
+      const reader = audioStream.getReader();
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        if (value) {
+          const chunkBuffer = Buffer.from(value);
+          totalBytes += chunkBuffer.length;
+          
+          yield {
+            index,
+            audioData: chunkBuffer,
+            isFinal: false, // Will be updated by consumer checking stream end
+            cumulativeDurationMs: Math.floor((totalBytes / (totalBytes + 1000)) * estimatedTotalDurationMs),
+          };
+          
+          index++;
+        }
+      }
+      
+      log.info('[LexaraTTSRouter] ElevenLabs streaming complete', {
+        provider: 'elevenlabs',
+        voiceId: this.voiceId,
+        totalChunks: index,
+        totalBytes,
+      });
+      
+    } catch (error) {
+      log.error('[LexaraTTSRouter] ElevenLabs streaming failed', {
+        provider: 'elevenlabs',
+        voiceId: this.voiceId,
+        error: (error as Error).message,
+      });
+      throw error;
     }
   }
   
@@ -471,14 +481,15 @@ class LexaraTTSRouter {
    */
   private generateCacheKey(
     text: string,
-    profileVersion: string,
+    voiceId: string,
     request: TTSRequest
   ): string {
     const hash = crypto.createHash('sha256');
     hash.update(text);
-    hash.update(profileVersion);
+    hash.update(voiceId);
     hash.update(request.context || 'general');
-    if (request.forceEngine) hash.update(request.forceEngine);
+    hash.update(String(request.stability ?? 0.5));
+    hash.update(String(request.similarityBoost ?? 0.75));
     return hash.digest('hex').substring(0, 16);
   }
   
@@ -510,22 +521,33 @@ class LexaraTTSRouter {
     }
     
     if (cleaned > 0) {
-      log.debug(`Cache cleanup: removed ${cleaned} entries, ${this.cache.size} remaining`);
+      log.debug(`[LexaraTTSRouter] Cache cleanup: removed ${cleaned} entries, ${this.cache.size} remaining`);
     }
   }
   
   /**
-   * Get engine statuses
+   * Get engine status
+   */
+  async getEngineStatus(): Promise<TTSEngineStatus> {
+    // Re-check availability
+    if (!this.client) {
+      try {
+        this.initializeClient();
+      } catch {
+        return 'unavailable';
+      }
+    }
+    return this.status;
+  }
+  
+  /**
+   * Get engine statuses (for compatibility with existing code)
    */
   async getEngineStatuses(): Promise<Record<string, TTSEngineStatus>> {
-    const statuses: Record<string, TTSEngineStatus> = {};
-    
-    for (const [name, engine] of this.engines.entries()) {
-      await engine.isAvailable();
-      statuses[name] = engine.getStatus();
-    }
-    
-    return statuses;
+    const status = await this.getEngineStatus();
+    return {
+      elevenlabs: status,
+    };
   }
   
   /**
@@ -549,15 +571,21 @@ class LexaraTTSRouter {
    */
   clearCache(): void {
     this.cache.clear();
-    log.info('Cache cleared');
+    log.info('[LexaraTTSRouter] Cache cleared');
   }
   
   /**
-   * Refresh persona rewriter (call after voice profile changes)
+   * Get voice ID
    */
-  refreshPersonaRewriter(): void {
-    this.personaRewriter = null;
-    log.info('Persona rewriter will be refreshed on next synthesis');
+  getVoiceId(): string {
+    return this.voiceId;
+  }
+  
+  /**
+   * Check if the router is available
+   */
+  isAvailable(): boolean {
+    return this.client !== null && this.status !== 'unavailable';
   }
 }
 
@@ -585,6 +613,70 @@ export async function getTTSEngineStatuses(): Promise<Record<string, TTSEngineSt
 
 export function getTTSCacheStats(): { size: number; hitRate: number; totalAccesses: number } {
   return lexaraTTSRouter.getCacheStats();
+}
+
+/**
+ * HARD TEST: Direct ElevenLabs voice synthesis test
+ * Takes text → Calls ElevenLabs → Returns MP3 buffer
+ * No abstractions. No magic.
+ * 
+ * @returns Buffer containing MP3 audio data
+ * @throws Error if ELEVENLABS_API_KEY or ELEVENLABS_VOICE_ID missing, or API fails
+ */
+export async function lexaraSpeakTest(): Promise<Buffer> {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  const voiceId = process.env.ELEVENLABS_VOICE_ID;
+
+  if (!apiKey) {
+    throw new Error('ELEVENLABS_API_KEY missing - cannot test voice');
+  }
+  if (!voiceId) {
+    throw new Error('ELEVENLABS_VOICE_ID missing - cannot test voice');
+  }
+
+  log.info('[lexaraSpeakTest] Testing ElevenLabs voice synthesis', {
+    voiceId,
+    testText: 'Lexara online. Voice system confirmed.',
+  });
+
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    {
+      method: 'POST',
+      headers: {
+        'xi-api-key': apiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg',
+      },
+      body: JSON.stringify({
+        text: 'Lexara online. Voice system confirmed.',
+        model_id: 'eleven_monolingual_v1',
+        voice_settings: {
+          stability: 0.75,
+          similarity_boost: 0.85,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    log.error('[lexaraSpeakTest] ElevenLabs API failed', {
+      status: response.status,
+      error: errorText,
+    });
+    throw new Error(`ElevenLabs failed: ${errorText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const audioBuffer = Buffer.from(arrayBuffer);
+
+  log.info('[lexaraSpeakTest] Voice test successful', {
+    voiceId,
+    audioByteLength: audioBuffer.length,
+  });
+
+  return audioBuffer;
 }
 
 export default lexaraTTSRouter;

@@ -2,12 +2,13 @@
  * Voice Synthesis Service
  * Stage 13: Neural Voice Synthesis and Delivery Layer
  * 
- * Integrates with Lexara voice synthesis providers:
- * - Coqui TTS (primary - high quality neural voice)
- * - OpenAI TTS (premium API-based synthesis)
+ * Integrates with Lexara voice synthesis using ElevenLabs ONLY.
+ * Other providers (Coqui, OpenAI) have been removed to enforce
+ * consistent Lexara voice profile.
  * 
- * Other providers have been removed to enforce Lexara voice profile consistency.
- * Browser TTS is disabled.
+ * REQUIREMENTS:
+ * - ELEVENLABS_API_KEY environment variable (required)
+ * - ELEVENLABS_VOICE_ID environment variable (required)
  */
 
 import { 
@@ -54,12 +55,11 @@ export interface VoiceSynthesisResponse {
 
 /**
  * Voice Synthesis Service
- * Main service using Lexara Voice Pipeline with Coqui and OpenAI only
+ * Uses ElevenLabs via Lexara Voice Pipeline exclusively
  */
 export class VoiceSynthesisService {
   private speechFlow: SpeechFlowEngine;
   private pipeline = getLexaraVoicePipeline();
-  private defaultProvider: 'coqui' | 'openai' | '' = '';
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
 
@@ -81,24 +81,25 @@ export class VoiceSynthesisService {
       await this.pipeline.initialize();
       const statuses = this.pipeline.getProviderStatuses();
       
-      if (statuses.coqui.available) {
-        this.defaultProvider = 'coqui';
-        log.info('Using Coqui TTS as primary Lexara voice provider');
-      } else if (statuses.openai.available) {
-        this.defaultProvider = 'openai';
-        log.info('Using OpenAI TTS as primary Lexara voice provider');
+      if (statuses.elevenlabs.available) {
+        log.info('[VoiceSynthesis] ElevenLabs voice provider initialized', {
+          provider: 'elevenlabs',
+          voiceId: process.env.ELEVENLABS_VOICE_ID || 'not set',
+        });
       } else {
-        log.warn('No Lexara voice providers available (Coqui or OpenAI). Voice synthesis will be unavailable.');
+        log.warn('[VoiceSynthesis] ElevenLabs not available. Voice synthesis will be unavailable.', {
+          error: statuses.elevenlabs.lastError,
+        });
       }
       this.initialized = true;
     } catch (error) {
-      log.error('Failed to initialize Lexara voice pipeline', error);
+      log.error('[VoiceSynthesis] Failed to initialize voice pipeline', error);
     }
   }
 
   /**
    * Main synthesis method
-   * Uses only Coqui TTS and OpenAI TTS providers
+   * Uses ElevenLabs exclusively
    */
   async synthesize(request: VoiceSynthesisRequest): Promise<VoiceSynthesisResponse> {
     try {
@@ -107,20 +108,19 @@ export class VoiceSynthesisService {
         await this.initPromise;
       }
       
-      // Check if any Lexara voice provider is available
-      if (!this.defaultProvider) {
+      // Check if ElevenLabs is available
+      const statuses = this.pipeline.getProviderStatuses();
+      if (!statuses.elevenlabs.available) {
         throw new Error(
-          'No Lexara voice providers configured. ' +
-          'Set one of the following environment variables to enable a provider: ' +
-          'COQUI_TTS_URL (for Coqui TTS), or ' +
-          'OPENAI_API_KEY (for OpenAI TTS).'
+          'ElevenLabs voice synthesis is not available. ' +
+          'Please set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables.'
         );
       }
 
-      log.info('Voice synthesis request', {
+      log.info('[VoiceSynthesis] Voice synthesis request', {
         context: request.context,
         textLength: request.text.length,
-        provider: this.defaultProvider,
+        provider: 'elevenlabs',
       });
 
       // Step 1: Optimize text for auditory comprehension if requested
@@ -136,7 +136,7 @@ export class VoiceSynthesisService {
       // Step 3: Map emotional state to pipeline context
       const pipelineContext = this.mapEmotionalState(request.emotionalState);
 
-      // Step 4: Synthesize with Lexara Voice Pipeline
+      // Step 4: Synthesize with Lexara Voice Pipeline (ElevenLabs)
       const result: VoiceSynthesisResult = await this.pipeline.synthesize({
         text,
         context: pipelineContext,
@@ -157,8 +157,8 @@ export class VoiceSynthesisService {
       };
 
     } catch (error) {
-      log.error('Voice synthesis failed', error);
-      throw new Error('Lexara voice synthesis unavailable. Please try again later.');
+      log.error('[VoiceSynthesis] Voice synthesis failed', error);
+      throw new Error('Lexara voice synthesis unavailable. Please check ElevenLabs configuration.');
     }
   }
 
@@ -172,25 +172,23 @@ export class VoiceSynthesisService {
   }
 
   /**
-   * Get available providers (Coqui and OpenAI only)
+   * Get available providers (ElevenLabs only)
    */
   async getAvailableProviders(): Promise<string[]> {
     const statuses = this.pipeline.getProviderStatuses();
     const available: string[] = [];
     
-    if (statuses.coqui.available) available.push('coqui');
-    if (statuses.openai.available) available.push('openai');
+    if (statuses.elevenlabs.available) available.push('elevenlabs');
     
     return available;
   }
 
   /**
-   * Check if a specific provider is available
+   * Check if ElevenLabs provider is available
    */
   async isProviderAvailable(name: string): Promise<boolean> {
     const statuses = this.pipeline.getProviderStatuses();
-    if (name === 'coqui') return statuses.coqui.available;
-    if (name === 'openai') return statuses.openai.available;
+    if (name === 'elevenlabs') return statuses.elevenlabs.available;
     return false;
   }
 

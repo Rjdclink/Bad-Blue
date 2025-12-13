@@ -1,8 +1,8 @@
 /**
  * LEXARA Speech Client
  * 
- * Server-side TTS integration for Lexara voice synthesis.
- * Replaces browser speechSynthesis defaults with server-rendered audio.
+ * Server-side TTS integration for Lexara voice synthesis using ElevenLabs.
+ * Handles audio playback with proper audio unlock for browsers.
  * 
  * A7 - LOCK LEXARA INTO TRUE "PERSONA MODE"
  * Permanent, Stable, Feminine, Non-Robotic
@@ -36,6 +36,9 @@ export interface VoiceResponse {
   text: string;
   audio?: Blob;
   audioUrl?: string;
+  audioBase64?: string;
+  mimeType?: string;
+  durationMs?: number;
   voiceConfig: PersonaKernelSpeech;
   emotionalState: string;
 }
@@ -47,13 +50,63 @@ interface PlaybackState {
   isPlaying: boolean;
   currentAudio: HTMLAudioElement | null;
   queue: Array<{ text: string; audio?: Blob }>;
+  audioUnlocked: boolean;
 }
 
 const playbackState: PlaybackState = {
   isPlaying: false,
   currentAudio: null,
   queue: [],
+  audioUnlocked: false,
 };
+
+// AudioContext for unlocking audio on mobile/browsers
+let audioContext: AudioContext | null = null;
+
+/**
+ * Silent WAV audio as base64 - used to unlock audio playback on mobile browsers.
+ * This is a minimal valid WAV file that produces no audible sound but triggers
+ * the browser's audio playback permission, enabling subsequent audio to play
+ * without user interaction.
+ */
+const SILENT_AUDIO_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+
+/**
+ * Unlock audio playback on user interaction
+ * Must be called on first user click/tap
+ */
+export async function unlockAudio(): Promise<boolean> {
+  if (playbackState.audioUnlocked) {
+    return true;
+  }
+
+  try {
+    // Create AudioContext if needed
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+
+    // Resume AudioContext (required for iOS/Safari)
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    // Play silent audio to unlock browser audio playback
+    const silentAudio = new Audio(SILENT_AUDIO_BASE64);
+    silentAudio.volume = 0.001;
+    
+    await silentAudio.play();
+    silentAudio.pause();
+
+    playbackState.audioUnlocked = true;
+    console.log('[LexaraServerTTS] Audio unlocked successfully');
+    return true;
+
+  } catch (error) {
+    console.warn('[LexaraServerTTS] Failed to unlock audio:', error);
+    return false;
+  }
+}
 
 /**
  * Apply emotional modulation to persona kernel speech
@@ -111,28 +164,50 @@ export function analyzeUserSentiment(text: string): UserSentiment {
 }
 
 /**
- * LexaraServerTTS - Server-side TTS client
- * Replaces browser speechSynthesis with server-rendered audio
+ * LexaraServerTTS - Server-side TTS client for ElevenLabs
+ * Primary method for Lexara voice synthesis
  */
 export const LexaraServerTTS = {
   /**
    * Play audio from server response
-   * This replaces: new SpeechSynthesisUtterance() and window.speechSynthesis.speak()
+   * Supports: Blob, audioUrl, or audioBase64
    */
-  async play(audioOrResponse: Blob | VoiceResponse | { audio: Blob }): Promise<void> {
-    let audioBlob: Blob;
+  async play(audioOrResponse: Blob | VoiceResponse | { audio: Blob } | { audioBase64: string; mimeType: string }): Promise<void> {
+    // Ensure audio is unlocked
+    if (!playbackState.audioUnlocked) {
+      await unlockAudio();
+    }
 
+    let audioUrl: string;
+    let shouldRevokeUrl = false;
+
+    // Handle different input types
     if (audioOrResponse instanceof Blob) {
-      audioBlob = audioOrResponse;
+      audioUrl = URL.createObjectURL(audioOrResponse);
+      shouldRevokeUrl = true;
+    } else if ('audioBase64' in audioOrResponse && audioOrResponse.audioBase64) {
+      // Convert base64 to blob and create URL
+      const mimeType = audioOrResponse.mimeType || 'audio/mpeg';
+      const byteCharacters = atob(audioOrResponse.audioBase64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: mimeType });
+      audioUrl = URL.createObjectURL(blob);
+      shouldRevokeUrl = true;
+    } else if ('audioUrl' in audioOrResponse && audioOrResponse.audioUrl) {
+      audioUrl = audioOrResponse.audioUrl;
     } else if ('audio' in audioOrResponse && audioOrResponse.audio) {
-      audioBlob = audioOrResponse.audio;
+      audioUrl = URL.createObjectURL(audioOrResponse.audio);
+      shouldRevokeUrl = true;
     } else {
       console.warn('[LexaraServerTTS] No audio data provided');
       return;
     }
 
-    // Create audio URL and play
-    const audioUrl = URL.createObjectURL(audioBlob);
+    // Create and play audio element
     const audio = new Audio(audioUrl);
 
     playbackState.currentAudio = audio;
@@ -142,15 +217,25 @@ export const LexaraServerTTS = {
       audio.onended = () => {
         playbackState.isPlaying = false;
         playbackState.currentAudio = null;
-        URL.revokeObjectURL(audioUrl);
+        if (shouldRevokeUrl) {
+          URL.revokeObjectURL(audioUrl);
+        }
+        Lexara.notify(Lexara.events.SPEAKING_END);
         resolve();
       };
 
       audio.onerror = (error) => {
         playbackState.isPlaying = false;
         playbackState.currentAudio = null;
-        URL.revokeObjectURL(audioUrl);
+        if (shouldRevokeUrl) {
+          URL.revokeObjectURL(audioUrl);
+        }
+        Lexara.notify(Lexara.events.SPEAKING_END);
         reject(error);
+      };
+
+      audio.onplay = () => {
+        Lexara.notify(Lexara.events.SPEAKING_START);
       };
 
       audio.play().catch(reject);
@@ -168,6 +253,7 @@ export const LexaraServerTTS = {
     }
     playbackState.isPlaying = false;
     playbackState.queue = [];
+    Lexara.notify(Lexara.events.SPEAKING_END);
   },
 
   /**
@@ -178,7 +264,51 @@ export const LexaraServerTTS = {
   },
 
   /**
-   * Fetch voice synthesis from server
+   * Check if audio is unlocked
+   */
+  isAudioUnlocked(): boolean {
+    return playbackState.audioUnlocked;
+  },
+
+  /**
+   * Synthesize and play audio using ElevenLabs via server
+   */
+  async synthesizeAndPlay(text: string, emotionalState?: string): Promise<void> {
+    try {
+      // Use the TTS stream endpoint for direct audio
+      const response = await fetch('/api/lexara/tts/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `TTS request failed: ${response.status}`);
+      }
+
+      // Get audio blob from response
+      const audioBlob = await response.blob();
+      
+      if (audioBlob.size === 0) {
+        throw new Error('Received empty audio from server');
+      }
+
+      // Play the audio
+      await this.play(audioBlob);
+
+    } catch (error) {
+      console.error('[LexaraServerTTS] Synthesis error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Fetch voice synthesis from server (legacy endpoint)
    */
   async synthesize(text: string, emotionalState?: string): Promise<VoiceResponse> {
     try {
@@ -215,17 +345,10 @@ export const LexaraServerTTS = {
                           sentiment.positive ? 'cheerful' : 'neutral';
 
     try {
-      const response = await this.synthesize(text, emotionalState);
-      
-      if (response.audio) {
-        await this.play(response);
-      } else {
-        // Fallback: Server returned voice config but no audio
-        // Client should use browser TTS with the provided config
-        console.log('[LexaraServerTTS] Using voice config for client-side synthesis:', response.voiceConfig);
-      }
+      await this.synthesizeAndPlay(text, emotionalState);
     } catch (error) {
       console.error('[LexaraServerTTS] Speak error:', error);
+      throw error;
     }
   },
 };
@@ -259,7 +382,34 @@ export const Lexara = {
     SPEAKING_END: 'speaking_end',
     LISTENING_START: 'listening_start',
     LISTENING_END: 'listening_end',
+    AUDIO_UNLOCKED: 'audio_unlocked',
   } as const,
 };
+
+/**
+ * Setup audio unlock on first user interaction
+ * Call this in your app initialization
+ */
+export function setupAudioUnlock(): void {
+  if (typeof window === 'undefined') return;
+
+  const unlockHandler = async () => {
+    if (!playbackState.audioUnlocked) {
+      const unlocked = await unlockAudio();
+      if (unlocked) {
+        Lexara.notify(Lexara.events.AUDIO_UNLOCKED);
+        // Remove listeners after successful unlock
+        document.removeEventListener('click', unlockHandler);
+        document.removeEventListener('touchstart', unlockHandler);
+        document.removeEventListener('keydown', unlockHandler);
+      }
+    }
+  };
+
+  // Add listeners for user interaction
+  document.addEventListener('click', unlockHandler, { once: false });
+  document.addEventListener('touchstart', unlockHandler, { once: false });
+  document.addEventListener('keydown', unlockHandler, { once: false });
+}
 
 export default LexaraServerTTS;

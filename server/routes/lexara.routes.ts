@@ -20,6 +20,7 @@
 import express, { Request, Response } from 'express';
 import { logger } from '../logger';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
+import { lexaraSpeakTest } from '../lexara/LexaraTTSRouter';
 
 const router = express.Router();
 
@@ -41,6 +42,32 @@ const audioBuffers = new Map<string, {
 }>();
 
 import crypto from 'crypto';
+
+/**
+ * GET /api/lexara/speak-test
+ * Hard test endpoint for ElevenLabs voice synthesis
+ * Returns MP3 audio directly or explicit error
+ */
+router.get('/speak-test', async (_req: Request, res: Response) => {
+  try {
+    logger.info('[LEXARA] speak-test: Testing voice system');
+    const audio = await lexaraSpeakTest();
+    
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', audio.length.toString());
+    res.setHeader('X-Lexara-Test', 'voice-system-confirmed');
+    res.send(audio);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('[LEXARA] speak-test: Voice test failed', { error: errorMessage });
+    
+    res.status(500).json({
+      success: false,
+      error: errorMessage,
+      hint: 'Check ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables',
+    });
+  }
+});
 
 /**
  * Generate cryptographically secure random string
