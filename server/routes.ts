@@ -1,5 +1,5 @@
 // API Routes - LegalWhat
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
 
@@ -4878,7 +4878,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
   
   // Strict auth middleware for crypto routes - no fallback, 401 only
-  const cryptoAuthMiddleware = (req: any, res: any, next: any) => {
+  const cryptoAuthMiddleware: RequestHandler = (req, res, next) => {
     // Set no-cache headers
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',

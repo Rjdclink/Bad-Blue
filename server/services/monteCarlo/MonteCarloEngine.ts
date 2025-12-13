@@ -307,7 +307,9 @@ function movePoint(lat: number, lng: number, distanceM: number, bearingRad: numb
  * Generate Gaussian random number (Box-Muller)
  */
 function gaussianRandom(mean: number = 0, stdDev: number = 1): number {
-  const u1 = Math.random();
+  // Ensure u1 > 0 to avoid Math.log(0) = -Infinity
+  let u1 = Math.random();
+  while (u1 === 0) u1 = Math.random();
   const u2 = Math.random();
   const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   return mean + z * stdDev;
@@ -468,16 +470,19 @@ export class MonteCarloEngine extends EventEmitter {
       cumulativeWeights.push(sum);
     }
     
-    // Systematic resampling
+    // Systematic resampling with bounds checking
     const newParticles: Particle[] = [];
     const u0 = Math.random() / N;
     
     let j = 0;
     for (let i = 0; i < N; i++) {
       const u = u0 + i / N;
-      while (j < cumulativeWeights.length - 1 && cumulativeWeights[j] < u) {
+      // Bounds check to prevent infinite loop from floating-point errors
+      while (j < cumulativeWeights.length - 1 && cumulativeWeights[j] < u && j < N - 1) {
         j++;
       }
+      // Ensure j is within bounds
+      j = Math.min(j, this.particles.length - 1);
       
       // Clone particle with small noise to prevent degeneracy
       const original = this.particles[j];
@@ -801,7 +806,8 @@ export class MonteCarloEngine extends EventEmitter {
     }
     
     // Convert to heatmap cells
-    const maxWeight = Math.max(...Array.from(grid.values()).map(c => c.weight));
+    const gridValues = Array.from(grid.values());
+    const maxWeight = gridValues.length > 0 ? Math.max(...gridValues.map(c => c.weight)) : 0;
     const cells: HeatmapCell[] = [];
     
     for (const [key, value] of grid.entries()) {

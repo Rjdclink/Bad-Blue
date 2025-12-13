@@ -365,7 +365,11 @@ export default function AdminConsole() {
 
   // Toggle subscription override
   const toggleSubscriptionOverride = async (userId: string, currentValue: boolean) => {
-    setUpdatingUsers(prev => new Set(prev).add(userId));
+    setUpdatingUsers(prev => {
+      const next = new Set(prev);
+      next.add(userId);
+      return next;
+    });
     
     try {
       const res = await fetch(`/api/admin/users/${userId}/subscription-override`, {

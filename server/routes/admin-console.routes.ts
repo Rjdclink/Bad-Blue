@@ -166,12 +166,13 @@ router.post('/users/:userId/subscription-override', async (req: Request, res: Re
         .limit(1);
 
       if (existingOverride.length === 0) {
-        // Create new override subscription
+        // Create new override subscription - use far future date (year 9999) for unlimited access
+        const unlimitedEndDate = new Date('9999-12-31T23:59:59.999Z');
         await db.insert(schema.userSubscriptions).values({
           userId,
           tierId: 'admin-override', // Special tier ID for overrides
           startDate: new Date(),
-          endDate: new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000), // 100 years
+          endDate: unlimitedEndDate,
           isActive: true,
           paymentId: null, // No payment = admin override
         });

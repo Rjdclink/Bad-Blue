@@ -7,19 +7,9 @@ import crypto from "crypto";
  * Password: SARBEAR
  * Required Email: rjdclink@outlook.com
  * Grants access to PANTHEON Admin Console
- * 
- * ALL OTHER MASTER PASSWORDS ARE PERMANENTLY DISCARDED
  */
 export const MASTER_PASSWORD = "SARBEAR";
 export const MASTER_EMAIL = "rjdclink@outlook.com";
-
-/**
- * DEPRECATED - All zone passwords removed
- * Only MASTER_PASSWORD with MASTER_EMAIL is valid
- */
-export const LEGALWHAT_PASSWORD = "PERMANENTLY_DISCARDED";
-export const ORCHESTRATOR_PASSWORD = "PERMANENTLY_DISCARDED";
-export const CRYPTOCRAWLER_PASSWORD = "PERMANENTLY_DISCARDED";
 
 /**
  * Access zone types - Single admin zone
