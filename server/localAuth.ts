@@ -1,4 +1,5 @@
 // Local Authentication (Username/Password) with bcrypt
+// STRICT AUTH: No fallback users, no auto-create on unauthenticated requests
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcrypt";
@@ -34,8 +35,14 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 
 /**
  * Register a new user with email/password and firstName/lastName
+ * STRICT: Requires all fields, no optional paths
  */
 export async function registerLocalUser(email: string, password: string, firstName: string, lastName: string) {
+  // Validate email is provided
+  if (!email || !email.trim()) {
+    throw new Error("Email is required");
+  }
+  
   // Check if email already exists
   const existingUser = await storage.getUserByEmail(email);
   if (existingUser) {
@@ -84,6 +91,7 @@ export async function registerLocalUser(email: string, password: string, firstNa
 
 /**
  * Setup passport-local strategy for email-based authentication
+ * STRICT: No fallback users, passwords validated only against registered users
  */
 export function setupLocalStrategy() {
   passport.use(
@@ -92,24 +100,29 @@ export function setupLocalStrategy() {
       { usernameField: 'email', passwordField: 'password' }, // Use email instead of username
       async (email, password, done) => {
         try {
-          // THREE-TIER MASTER PASSWORD SYSTEM
-          // Zone A: SARBEAR -> LegalWhat Access
-          // Zone B: FORGEAI -> 4JI Orchestrator Admin Console  
-          // Zone C: CRPTCRWLR -> CryptoCrawler Command Dashboard
-          // All three work without email - password only grants direct access
+          // ============================================
+          // SINGLE MASTER PASSWORD CHECK
+          // Password: PANTHEON -> Admin Console Access
+          // ============================================
           
           const accessZone = checkMasterPassword(password);
           
           if (accessZone) {
             const zoneConfig = getAccessZoneConfig(password)!;
             const timestamp = new Date().toISOString();
-            console.log(`[SECURITY ALERT] ${timestamp} - ${accessZone.toUpperCase()} master password used. Role: ${zoneConfig.role}. Email provided: ${email || 'none'}`);
+            console.log(`[SECURITY ALERT] ${timestamp} - MASTER PASSWORD used. Role: ${zoneConfig.role}. Email provided: ${email || 'none'}`);
             
-            // Create a unique user ID and email for this zone
+            // STRICT: Master password requires email to be provided
+            if (!email || !email.trim()) {
+              console.log(`[SECURITY] Master password login attempt without email - REJECTED`);
+              return done(null, false, { message: "Email is required for admin access" });
+            }
+            
+            // Create a unique user ID based on email
             const userId = generateMasterUserId(email, accessZone);
-            const userEmail = getMasterUserEmail(email, accessZone);
+            const userEmail = email.trim();
             
-            // Create or get master bypass user for this zone
+            // Create or get admin user
             let user = await storage.getUser(userId);
             if (!user) {
               user = await storage.upsertUser({
@@ -128,7 +141,7 @@ export function setupLocalStrategy() {
             // Grant paid access (bypass payment gate)
             if (!user.hasPaidForAccess) {
               await storage.updateUserAccess(userId, userId, 0).catch(err => {
-                console.error(`[SECURITY] Failed to update ${accessZone} access:`, err);
+                console.error(`[SECURITY] Failed to update admin access:`, err);
               });
             }
             
@@ -143,124 +156,35 @@ export function setupLocalStrategy() {
             } as Express.User);
           }
           
-          // Special case: Admin bypass (requires environment variables - no fallback defaults for security)
-          const adminBypassId = process.env.ADMIN_BYPASS_ID;
-          const adminBypassPassword = process.env.ADMIN_BYPASS_PASSWORD;
-          // SECURITY: Admin bypass email is configurable via environment variable.
-          // Default to internal-only domain to prevent accidental exposure of real emails in logs/databases.
-          // Never hardcode personal email addresses in source code.
-          const adminBypassEmail = process.env.ADMIN_BYPASS_EMAIL || "admin@badblue.internal";
+          // ============================================
+          // STRICT NORMAL AUTHENTICATION
+          // Passwords validated ONLY against registered users
+          // No "email-optional" paths, no fallback users
+          // ============================================
           
-          // Only allow admin bypass if credentials are explicitly configured - ONLY matches env var value, no "admin" fallback
-          if (adminBypassId && adminBypassPassword && email === adminBypassId) {
-            // Verify admin password
-            if (password !== adminBypassPassword) {
-              return done(null, false, { message: "Invalid admin credentials" });
-            }
-            
-            // [SECURITY ALERT] Log admin bypass usage with timestamp for audit trail
-            // Note: Full request context (IP, user-agent) is logged in the route handler
-            const timestamp = new Date().toISOString();
-            console.log(`[SECURITY ALERT] ${timestamp} - Admin bypass authentication used. Email: ${adminBypassEmail}`);
-            
-            // Create or get admin user with firstName: "Bypass" and lastName: "User" as requested
-            let user = await storage.getUser("admin-bypass");
-            if (!user) {
-              user = await storage.upsertUser({
-                id: "admin-bypass",
-                email: adminBypassEmail,
-                firstName: "Bypass",
-                lastName: "User",
-                profileImageUrl: null,
-                lastLoginAt: new Date(),
-              });
-            } else {
-              // Update last login for existing admin user
-              await storage.updateUserLastLogin("admin-bypass");
-            }
-            
-            // Grant admin access without waiting (bypass payment gate)
-            // Update happens asynchronously to avoid blocking authentication
-            if (!user.hasPaidForAccess) {
-              storage.updateUserAccess("admin-bypass", "admin-bypass", 0).catch(err => {
-                console.error('[SECURITY] Failed to update admin access:', err);
-              });
-            }
-            
-            return done(null, {
-              claims: { sub: user.id, email: user.email || adminBypassEmail, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
-              isAdminBypass: true,
-            } as Express.User);
+          // STRICT: Email is required
+          if (!email || !email.trim()) {
+            return done(null, false, { message: "Email is required" });
           }
 
-          // Special case: Payment bypass (allows paid access without admin privileges)
-          // Requires environment variables - no hardcoded defaults for security
-          const paymentBypassId = process.env.PAYMENT_BYPASS_ID;
-          const paymentBypassPassword = process.env.PAYMENT_BYPASS_PASSWORD;
-          
-          // Only allow payment bypass if credentials are explicitly configured
-          if (paymentBypassId && paymentBypassPassword && 
-              (email === paymentBypassId || email.toLowerCase() === paymentBypassId.toLowerCase())) {
-            console.log(`[SECURITY] Payment bypass login attempt detected`);
-            
-            // Verify bypass password
-            if (password !== paymentBypassPassword) {
-              console.log(`[SECURITY] Payment bypass authentication FAILED - incorrect password`);
-              return done(null, false, { message: "Invalid bypass credentials" });
-            }
-            
-            console.log(`[SECURITY] Payment bypass authentication successful`);
-            
-            // Create or get payment bypass user with firstName: "Bypass" and lastName: "User" as requested
-            let user = await storage.getUser("payment-bypass");
-            if (!user) {
-              console.log(`[SECURITY] Creating new payment bypass user`);
-              user = await storage.upsertUser({
-                id: "payment-bypass",
-                email: "bypass@badblue.internal",
-                firstName: "Bypass",
-                lastName: "User",
-                profileImageUrl: null,
-                lastLoginAt: new Date(),
-              });
-            } else {
-              console.log(`[SECURITY] Payment bypass user exists, updating last login`);
-              // Update last login for existing bypass user
-              await storage.updateUserLastLogin("payment-bypass");
-            }
-            
-            // Grant paid access without admin privileges
-            if (!user.hasPaidForAccess) {
-              console.log(`[SECURITY] Granting paid access to payment bypass user`);
-              await storage.updateUserAccess("payment-bypass", "payment-bypass", 0);
-            } else {
-              console.log(`[SECURITY] Payment bypass user already has paid access`);
-            }
-            
-            console.log(`[SECURITY] Payment bypass login complete for user: ${user.id}`);
-            
-            return done(null, {
-              claims: { sub: user.id, email: user.email || "bypass@badblue.internal", firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
-              isAdminBypass: false, // Not admin - just payment bypass
-            } as Express.User);
-          }
-
-          // Normal email/password authentication
-          // First find user by email
+          // Find user by email
           const user = await storage.getUserByEmail(email);
           if (!user) {
+            // STRICT: No auto-create user on invalid credentials
             return done(null, false, { message: "Invalid email or password" });
           }
 
           // Find auth account for this user
           const authAccount = await storage.getAuthAccountByUserId(user.id);
           if (!authAccount) {
+            // STRICT: User exists but no auth account - reject
             return done(null, false, { message: "Invalid email or password" });
           }
 
           // Verify password
           const isValid = await verifyPassword(password, authAccount.passwordHash!);
           if (!isValid) {
+            // STRICT: Invalid password - reject, no fallback
             return done(null, false, { message: "Invalid email or password" });
           }
 
@@ -271,6 +195,7 @@ export function setupLocalStrategy() {
           return done(null, {
             claims: { sub: user.id, email: user.email ?? undefined, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
             isAdminBypass: false,
+            isMasterBypass: false,
           } as Express.User);
         } catch (error) {
           return done(error);

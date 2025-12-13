@@ -915,6 +915,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/monte-carlo', monteCarloRoutes.default);
 
   // ============================================
+  // ADMIN CONSOLE ROUTES - Strict auth, no fallback users
+  // ============================================
+  const adminConsoleRoutes = await import('./routes/admin-console.routes');
+  app.use('/api/admin', adminConsoleRoutes.default);
+
+  // ============================================
   // EVIDENCE UPLOAD ROUTES
   // ============================================
   const uploadRoutes = await import('./routes/upload.routes');

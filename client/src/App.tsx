@@ -144,12 +144,12 @@ const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 
 const InmateLocatorV2Page = lazyWithRetry(() => import("@/pages/inmate-locator-v2"), 'InmateLocatorV2');
 const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-v2"), 'CryptoCrawlerV2');
 
-// Three-Tier Master Password Access Zones
-// Zone A: LegalWhat User Access (SARBEAR)
+// PANTHEON Admin Console - Single Master Password (PANTHEON)
+const AdminConsole = lazyWithRetry(() => import("@/pages/admin-console"), 'AdminConsole');
+
+// Legacy access zone pages (redirecting to admin-console)
 const LegalWhatHome = lazyWithRetry(() => import("@/pages/legalwhat-home"), 'LegalWhatHome');
-// Zone B: 4JI Orchestrator Admin Console (FORGEAI)
 const OrchestratorConsole = lazyWithRetry(() => import("@/pages/orchestrator-console"), 'OrchestratorConsole');
-// Zone C: CryptoCrawler Command Dashboard (CRPTCRWLR)
 const CryptoCrawlerDashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-dashboard"), 'CryptoCrawlerDashboard');
 
 // Admin pages - lowest priority
@@ -218,17 +218,18 @@ function Router() {
         {/* Protected routes - only accessible when authenticated */}
         {isAuthenticated ? (
           <>
-            {/* THREE-TIER MASTER PASSWORD ACCESS ZONES */}
-            {/* Zone A: LegalWhat User Access (SARBEAR) */}
+            {/* PANTHEON ADMIN CONSOLE - Single Master Password Access */}
+            <Route path="/admin-console" component={AdminConsole} />
+            <Route path="/admin" component={AdminConsole} />
+            
+            {/* Legacy access zone routes - kept for backward compatibility */}
             <Route path="/legalwhat/home" component={LegalWhatHome} />
             <Route path="/legalwhat" component={LegalWhatHome} />
             
-            {/* Zone B: 4JI Orchestrator Admin Console (FORGEAI) */}
             <Route path="/4ji/orchestrator" component={OrchestratorConsole} />
             <Route path="/4ji" component={OrchestratorConsole} />
             <Route path="/orchestrator" component={OrchestratorConsole} />
             
-            {/* Zone C: CryptoCrawler Command Dashboard (CRPTCRWLR) */}
             <Route path="/cryptocrawler/dashboard" component={CryptoCrawlerDashboard} />
             <Route path="/cryptocrawler" component={CryptoCrawlerDashboard} />
             <Route path="/crypto-dashboard" component={CryptoCrawlerDashboard} />
