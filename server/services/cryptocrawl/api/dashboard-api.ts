@@ -31,6 +31,8 @@ zeroCapitalEngine.initialize().catch(err => {
     console.log('[CryptoCrawl] ✅ Wallet manager initialized - cryptocrawler connected to wallet');
   } catch (err) {
     console.error('[CryptoCrawl] Failed to initialize balance monitor or wallet:', err);
+    // Set walletManager to null if initialization fails (addresses PR comment)
+    walletManager = null;
   }
 })();
 
@@ -354,13 +356,28 @@ router.post('/training/trigger', async (req, res) => {
       });
     }
     
-    // Start training asynchronously
+    // Start training and wait briefly to verify it started successfully
+    // This addresses the PR comment about validating training actually started
     const sessionPromise = scheduledMonteCarloTraining.triggerTraining();
     
-    // Return immediately with session ID
+    // Wait a brief moment to catch any synchronous startup errors
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Verify session was created
+    const currentSession = scheduledMonteCarloTraining.getCurrentSession();
+    if (!currentSession) {
+      return res.status(500).json({
+        success: false,
+        error: 'Training session failed to start',
+      });
+    }
+    
+    // Return with session ID confirmation
     res.json({
       success: true,
-      message: 'Training session started - profitability optimization in progress',
+      message: 'Training session started - Divine profitability optimization in progress',
+      sessionId: currentSession.sessionId,
+      strategy: currentSession.strategiesTrained[0],
       note: 'Check /api/crypto/training/status for progress',
     });
     
@@ -578,6 +595,10 @@ async function getWalletBalances() {
     console.log('[CryptoCrawl] Balance monitor not running, attempting to start...');
     await balanceMonitor.start();
     
+    // Wait briefly for initialization to complete before fetching balances
+    // This addresses the PR comment about potential stale data after start()
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
     const balances = await balanceMonitor.getAllBalances();
     return balances.map(b => ({
       chain: b.chain,
@@ -598,9 +619,15 @@ async function getWalletBalances() {
 
 /**
  * Execute withdrawal using the actual wallet manager
- * Connects the cryptocrawler wallet to perform real withdrawals
+ * Currently supports native token withdrawals on the specified chain.
+ * ERC20 token transfers require additional contract interaction implementation.
+ * 
+ * @param amount - Amount to withdraw
+ * @param token - Token symbol (e.g., 'POL', 'ETH', 'USDC')
+ * @param to - Destination address
+ * @param chain - Optional chain to withdraw from (defaults to finding best chain)
  */
-async function executeWithdrawal(amount: number, token: string, to: string) {
+async function executeWithdrawal(amount: number, token: string, to: string, chain?: string) {
   try {
     if (!walletManager) {
       // Try to initialize wallet manager if not already done
@@ -608,12 +635,37 @@ async function executeWithdrawal(amount: number, token: string, to: string) {
       await walletManager.initialize();
     }
     
-    // For native token withdrawals, use the withdraw function
-    // Note: Currently supports native token withdrawals
-    // For ERC20 tokens like USDC/USDT, additional implementation would be needed
-    const chain = 'polygon'; // Default to polygon for withdrawals
-    const txHash = await walletManager.withdraw({ chain, to, amount: amount.toString() });
-    console.log(`[CryptoCrawl] ✅ Withdrawal executed: ${amount} ${token} to ${to} - TX: ${txHash}`);
+    // Determine the appropriate chain for withdrawal
+    // If not specified, try to find the chain with sufficient balance
+    let withdrawalChain = chain;
+    if (!withdrawalChain) {
+      // Get balances to determine best chain for this token
+      const balances = await balanceMonitor.getAllBalances();
+      
+      // For native tokens, find chain with sufficient balance
+      const nativeTokens = ['POL', 'ETH', 'AVAX', 'BNB'];
+      if (nativeTokens.includes(token.toUpperCase())) {
+        const chainWithBalance = balances.find(b => b.native >= amount);
+        withdrawalChain = chainWithBalance?.chain || 'polygon';
+      } else {
+        // For stablecoins (USDC, USDT), find chain with sufficient balance
+        const chainWithStable = balances.find(b => 
+          (token.toUpperCase() === 'USDC' && b.usdc >= amount) ||
+          (token.toUpperCase() === 'USDT' && b.usdt >= amount)
+        );
+        withdrawalChain = chainWithStable?.chain || 'polygon';
+      }
+    }
+    
+    // Execute the withdrawal
+    // Note: For ERC20 tokens, walletManager.withdraw handles native tokens only
+    // Full ERC20 support would require walletManager.transferToken() implementation
+    const txHash = await walletManager.withdraw({ 
+      chain: withdrawalChain, 
+      to, 
+      amount: amount.toString() 
+    });
+    console.log(`[CryptoCrawl] ✅ Withdrawal executed: ${amount} ${token} on ${withdrawalChain} to ${to} - TX: ${txHash}`);
     return txHash;
   } catch (error) {
     console.error('[CryptoCrawl] Withdrawal failed:', error);

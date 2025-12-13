@@ -12,4 +12,4 @@ export {
   type OptimizedParameters,
   type TrainingSession,
   type TrainingMetrics,
-} from './scheduled-monte-carlo-training';
+} from './scheduled-monte-carlo-training.js';
