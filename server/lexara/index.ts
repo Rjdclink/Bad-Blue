@@ -5,6 +5,9 @@
  * Lexara operates on the Computational Reactor throne for all heavy processing.
  * 
  * Includes:
+ * - LEXARA VOICE PIPELINE - Complete voice synthesis path using Coqui TTS and OpenAI TTS
+ *   LLM → Text Response → Voice Selection → Generate Audio → Persist → Return Playable Reference
+ * 
  * - LEXARA VOICE FORGE - Monte Carlo-driven voice optimization engine
  *   for discovering the perfect Lexara voice: young female (18-20) with centuries
  *   of court experience and calm, surgical clarity.
@@ -37,6 +40,20 @@ export {
   type UserSentiment,
   type VoiceModulation,
 } from './personaKernel';
+
+// Voice Pipeline - Complete synthesis path with Coqui TTS and OpenAI TTS ONLY
+export {
+  LexaraVoicePipeline,
+  getLexaraVoicePipeline,
+  LEXARA_VOICE_PROFILE,
+  type LexaraVoiceProfile,
+  type VoiceProvider,
+  type EmotionalContext,
+  type VoiceSynthesisRequest,
+  type VoiceSynthesisSettings,
+  type VoiceSynthesisResult,
+  type ProviderStatus,
+} from './LexaraVoicePipeline';
 
 // Voice Forge - Monte Carlo Voice Optimization
 export {
@@ -103,25 +120,18 @@ export {
   lexaraMCOptimizerEvents,
   configureLexaraMCOptimizer,
   getLexaraMCOptimizerState,
-  getActiveOptimizationProfile,
   runScheduledMCOptimization,
   runSessionBoundaryMCOptimization,
   startLexaraSession,
   endLexaraSession,
   recordLexaraDecisionBoundary,
   getOptimizedResponseParameters,
-  type OptimizationDomain,
-  type OptimizationProfile,
   type MCOptimizationConfig,
   type OptimizationCycleType,
   type OptimizationCycleResult,
-  type SessionContext,
   type DecisionBoundary,
   type LexaraOptimizationState,
   type MetricsBase,
-  type LegalUnderstandingMetrics,
-  type ExplanationQualityMetrics,
-  type ConsultativeEngagementMetrics,
   type VocalDeliveryMetrics,
 } from './LexaraMonteCarloOptimizer';
 

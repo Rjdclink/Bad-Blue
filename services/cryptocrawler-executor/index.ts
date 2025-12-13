@@ -573,7 +573,7 @@ export class CryptoCrawlerExecutor extends EventEmitter {
 
   private checkExpiredOrders(): void {
     const now = Date.now();
-    for (const [id, order] of this.orders) {
+    for (const order of this.orders.values()) {
       if (order.expiresAt < now && ![OrderState.FILLED, OrderState.CANCELED, OrderState.REJECTED].includes(order.state)) {
         this.transitionState(order, OrderState.CANCELED, 'Order expired');
       }

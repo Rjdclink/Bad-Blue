@@ -3,12 +3,11 @@
  * Stage 13: Neural Voice Synthesis and Delivery Layer
  * 
  * Integrates with Lexara voice synthesis providers:
- * - ElevenLabs (premium)
- * - Amazon Polly Neural
- * - Microsoft Azure Neural Voice
- * - Google Cloud WaveNet/Neural2
+ * - Coqui TTS (primary - high quality neural voice)
+ * - OpenAI TTS (premium API-based synthesis)
  * 
- * Note: Browser TTS is disabled to enforce Lexara voice profile consistency.
+ * Other providers have been removed to enforce Lexara voice profile consistency.
+ * Browser TTS is disabled.
  */
 
 import { 
@@ -23,6 +22,7 @@ import {
   type SpeechFlowOutput 
 } from '@shared/speechFlowEngine';
 import { createLogger } from './logger';
+import { getLexaraVoicePipeline, type VoiceSynthesisResult } from './lexara/LexaraVoicePipeline';
 
 const log = createLogger('VoiceSynthesis');
 
@@ -53,143 +53,15 @@ export interface VoiceSynthesisResponse {
 }
 
 /**
- * Voice Provider Interface
- */
-interface VoiceProvider {
-  name: string;
-  synthesize(request: VoiceSynthesisRequest, ssml: string): Promise<VoiceSynthesisResponse>;
-  isAvailable(): Promise<boolean>;
-}
-
-/**
- * ElevenLabs Provider (Premium Neural Voice)
- */
-class ElevenLabsProvider implements VoiceProvider {
-  name = 'elevenlabs';
-  private apiKey: string;
-  private baseUrl = 'https://api.elevenlabs.io/v1';
-
-  constructor(apiKey: string) {
-    this.apiKey = apiKey;
-  }
-
-  async isAvailable(): Promise<boolean> {
-    return !!this.apiKey && this.apiKey.length > 0;
-  }
-
-  async synthesize(
-    request: VoiceSynthesisRequest,
-    ssml: string
-  ): Promise<VoiceSynthesisResponse> {
-    // Use voiceId from persona config, env var, or default
-    const voiceId = request.persona?.voiceId 
-      || process.env.ELEVENLABS_VOICE_ID 
-      || 'EXAVITQu4vr4xnSDxMaL'; // Professional female voice (default)
-    const model = request.persona?.model || 'eleven_multilingual_v2';
-
-    const response = await fetch(
-      `${this.baseUrl}/text-to-speech/${voiceId}`,
-      {
-        method: 'POST',
-        headers: {
-          'Accept': 'audio/mpeg',
-          'Content-Type': 'application/json',
-          'xi-api-key': this.apiKey,
-        },
-        body: JSON.stringify({
-          text: request.text,
-          model_id: model,
-          voice_settings: {
-            stability: request.persona?.stability ?? 0.7,
-            similarity_boost: request.persona?.similarityBoost ?? 0.8,
-            style: request.persona?.style ?? 0.3,
-            use_speaker_boost: request.persona?.useSpeakerBoost ?? true,
-          },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`ElevenLabs API error: ${response.status} ${response.statusText}`);
-    }
-
-    const audioData = Buffer.from(await response.arrayBuffer());
-
-    return {
-      audioData,
-      mimeType: 'audio/mpeg',
-      duration: 0, // Would need to parse audio to get duration
-      text: request.text,
-      ssml,
-      segments: [],
-      provider: 'elevenlabs',
-    };
-  }
-}
-
-/**
- * Amazon Polly Provider
- */
-class PollyProvider implements VoiceProvider {
-  name = 'polly';
-  
-  async isAvailable(): Promise<boolean> {
-    // Check if AWS SDK is configured
-    return process.env.AWS_ACCESS_KEY_ID !== undefined;
-  }
-
-  async synthesize(
-    request: VoiceSynthesisRequest,
-    ssml: string
-  ): Promise<VoiceSynthesisResponse> {
-    throw new Error('Amazon Polly integration requires AWS SDK setup. Install @aws-sdk/client-polly and configure AWS credentials to use this provider.');
-  }
-}
-
-/**
- * Azure Neural Voice Provider
- */
-class AzureVoiceProvider implements VoiceProvider {
-  name = 'azure';
-  
-  async isAvailable(): Promise<boolean> {
-    return process.env.AZURE_SPEECH_KEY !== undefined;
-  }
-
-  async synthesize(
-    request: VoiceSynthesisRequest,
-    ssml: string
-  ): Promise<VoiceSynthesisResponse> {
-    throw new Error('Azure Neural Voice integration requires Speech SDK setup. Install microsoft-cognitiveservices-speech-sdk and configure AZURE_SPEECH_KEY to use this provider.');
-  }
-}
-
-/**
- * Google Cloud TTS Provider
- */
-class GoogleTTSProvider implements VoiceProvider {
-  name = 'google';
-  
-  async isAvailable(): Promise<boolean> {
-    return process.env.GOOGLE_APPLICATION_CREDENTIALS !== undefined;
-  }
-
-  async synthesize(
-    request: VoiceSynthesisRequest,
-    ssml: string
-  ): Promise<VoiceSynthesisResponse> {
-    throw new Error('Google Cloud TTS integration requires Cloud SDK setup. Install @google-cloud/text-to-speech and configure GOOGLE_APPLICATION_CREDENTIALS to use this provider.');
-  }
-}
-
-/**
  * Voice Synthesis Service
- * Main service that coordinates between providers
+ * Main service using Lexara Voice Pipeline with Coqui and OpenAI only
  */
 export class VoiceSynthesisService {
   private speechFlow: SpeechFlowEngine;
-  private providers: Map<string, VoiceProvider>;
-  private defaultProvider: string;
+  private pipeline = getLexaraVoicePipeline();
+  private defaultProvider: 'coqui' | 'openai' | '' = '';
+  private initialized: boolean = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor() {
     this.speechFlow = new SpeechFlowEngine({
@@ -200,64 +72,48 @@ export class VoiceSynthesisService {
       targetProvider: 'ssml',
     });
 
-    // Initialize providers (Lexara voice providers only - browser TTS disabled)
-    this.providers = new Map();
-    
-    // Add premium Lexara-compatible providers if API keys are available
-    if (process.env.ELEVENLABS_API_KEY) {
-      this.providers.set('elevenlabs', new ElevenLabsProvider(process.env.ELEVENLABS_API_KEY));
-    }
-    
-    if (process.env.AWS_ACCESS_KEY_ID) {
-      this.providers.set('polly', new PollyProvider());
-    }
-    
-    if (process.env.AZURE_SPEECH_KEY) {
-      this.providers.set('azure', new AzureVoiceProvider());
-    }
-    
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      this.providers.set('google', new GoogleTTSProvider());
-    }
-
-    // Set default provider based on availability (no browser TTS fallback)
-    this.defaultProvider = '';
-    this.selectDefaultProvider();
+    // Initialize pipeline asynchronously - errors are handled gracefully
+    this.initPromise = this.initializePipeline();
   }
 
-  private async selectDefaultProvider(): Promise<void> {
-    // Prefer ElevenLabs for Lexara voice quality, fall back to other neural providers
-    // Browser TTS is excluded to enforce Lexara voice profile
-    const preferenceOrder = ['elevenlabs', 'azure', 'google', 'polly'];
-    
-    for (const providerName of preferenceOrder) {
-      const provider = this.providers.get(providerName);
-      if (provider && await provider.isAvailable()) {
-        this.defaultProvider = providerName;
-        log.info(`Selected Lexara voice provider: ${providerName}`);
-        return;
+  private async initializePipeline(): Promise<void> {
+    try {
+      await this.pipeline.initialize();
+      const statuses = this.pipeline.getProviderStatuses();
+      
+      if (statuses.coqui.available) {
+        this.defaultProvider = 'coqui';
+        log.info('Using Coqui TTS as primary Lexara voice provider');
+      } else if (statuses.openai.available) {
+        this.defaultProvider = 'openai';
+        log.info('Using OpenAI TTS as primary Lexara voice provider');
+      } else {
+        log.warn('No Lexara voice providers available (Coqui or OpenAI). Voice synthesis will be unavailable.');
       }
+      this.initialized = true;
+    } catch (error) {
+      log.error('Failed to initialize Lexara voice pipeline', error);
     }
-    
-    // No providers available - voice synthesis will be unavailable
-    log.warn('No Lexara voice providers available. Voice synthesis will be unavailable.');
   }
 
   /**
    * Main synthesis method
-   * Uses only Lexara voice providers (no browser TTS fallback)
+   * Uses only Coqui TTS and OpenAI TTS providers
    */
   async synthesize(request: VoiceSynthesisRequest): Promise<VoiceSynthesisResponse> {
     try {
+      // Ensure initialization is complete before synthesis
+      if (this.initPromise) {
+        await this.initPromise;
+      }
+      
       // Check if any Lexara voice provider is available
       if (!this.defaultProvider) {
         throw new Error(
           'No Lexara voice providers configured. ' +
           'Set one of the following environment variables to enable a provider: ' +
-          'ELEVENLABS_API_KEY (for ElevenLabs), ' +
-          'AZURE_SPEECH_KEY (for Azure), ' +
-          'GOOGLE_APPLICATION_CREDENTIALS (for Google), or ' +
-          'AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (for Polly).'
+          'COQUI_TTS_URL (for Coqui TTS), or ' +
+          'OPENAI_API_KEY (for OpenAI TTS).'
         );
       }
 
@@ -277,46 +133,53 @@ export class VoiceSynthesisService {
       const context = request.context || 'explanation';
       const speechFlow = this.speechFlow.transformToSpeech(text, context);
 
-      // Step 3: Get the appropriate voice provider
-      const providerName = request.persona?.provider || this.defaultProvider;
-      const provider = this.providers.get(providerName);
+      // Step 3: Map emotional state to pipeline context
+      const pipelineContext = this.mapEmotionalState(request.emotionalState);
 
-      if (!provider) {
-        throw new Error(`Lexara voice provider '${providerName}' not available`);
-      }
+      // Step 4: Synthesize with Lexara Voice Pipeline
+      const result: VoiceSynthesisResult = await this.pipeline.synthesize({
+        text,
+        context: pipelineContext,
+        speechContext: context as any,
+        persist: true,
+      });
 
-      // Step 4: Synthesize with the provider
-      const result = await provider.synthesize(
-        { ...request, text },
-        speechFlow.ssml
-      );
-
-      // Step 5: Add speechFlow metadata to result
+      // Step 5: Return response
       return {
-        ...result,
-        duration: result.duration || speechFlow.estimatedDuration,
+        audioUrl: result.audioRef,
+        audioData: result.audioData,
+        mimeType: result.mimeType,
+        duration: result.durationMs,
+        text: result.text,
+        ssml: result.ssml || speechFlow.ssml,
         segments: speechFlow.segments,
+        provider: result.provider,
       };
 
     } catch (error) {
       log.error('Voice synthesis failed', error);
-      
-      // No browser TTS fallback - throw error to inform client
       throw new Error('Lexara voice synthesis unavailable. Please try again later.');
     }
   }
 
+  private mapEmotionalState(state?: string): 'neutral' | 'empathetic' | 'authoritative' | 'reassuring' | 'serious' {
+    switch (state) {
+      case 'empathetic': return 'empathetic';
+      case 'authoritative': return 'authoritative';
+      case 'reassuring': return 'reassuring';
+      default: return 'neutral';
+    }
+  }
+
   /**
-   * Get available providers
+   * Get available providers (Coqui and OpenAI only)
    */
   async getAvailableProviders(): Promise<string[]> {
+    const statuses = this.pipeline.getProviderStatuses();
     const available: string[] = [];
     
-    for (const [name, provider] of this.providers.entries()) {
-      if (await provider.isAvailable()) {
-        available.push(name);
-      }
-    }
+    if (statuses.coqui.available) available.push('coqui');
+    if (statuses.openai.available) available.push('openai');
     
     return available;
   }
@@ -325,8 +188,17 @@ export class VoiceSynthesisService {
    * Check if a specific provider is available
    */
   async isProviderAvailable(name: string): Promise<boolean> {
-    const provider = this.providers.get(name);
-    return provider ? provider.isAvailable() : false;
+    const statuses = this.pipeline.getProviderStatuses();
+    if (name === 'coqui') return statuses.coqui.available;
+    if (name === 'openai') return statuses.openai.available;
+    return false;
+  }
+
+  /**
+   * Get pipeline statistics
+   */
+  getStats() {
+    return this.pipeline.getStats();
   }
 }
 

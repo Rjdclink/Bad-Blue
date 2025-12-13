@@ -15,11 +15,11 @@
  */
 
 import { getTransport } from '../../packages/contracts/src/transport';
-import { getReactorCore, ReactorCore } from '../../services/reactor-core/index';
-import { getSimFabric, SimulationFabric } from '../../services/sim-fabric/index';
-import { getCryptoExecutor, CryptoCrawlerExecutor } from '../../services/cryptocrawler-executor/index';
-import { getLexaraPlanner, getLexaraSynth, LexaraPlanner, LexaraSynth } from '../../services/lexara-synth/index';
-import { getForensicsDashboard, ForensicsDashboard } from '../../dashboards/forensics/index';
+import { getReactorCore } from '../../services/reactor-core/index';
+import { getSimFabric } from '../../services/sim-fabric/index';
+import { getCryptoExecutor } from '../../services/cryptocrawler-executor/index';
+import { getLexaraPlanner, getLexaraSynth } from '../../services/lexara-synth/index';
+import { getForensicsDashboard } from '../../dashboards/forensics/index';
 
 // Re-export contracts
 export * from '../../packages/contracts/src/index';
@@ -69,7 +69,7 @@ export async function startReactor(config?: {
     // Start services in order (dependencies first)
     
     // 1. Transport layer (always needed)
-    const transport = getTransport();
+    getTransport();
     console.log('[Reactor] Transport layer initialized');
 
     // 2. Simulation Fabric (needed by Reactor Core)

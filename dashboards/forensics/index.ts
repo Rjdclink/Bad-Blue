@@ -289,7 +289,6 @@ export class ForensicsDashboard extends EventEmitter {
 
   private generateTraceSummary(traceId: string, events: TimelineEvent[]): TraceSummary {
     const observations = events.filter(e => e.type === 'observation').map(e => e.event as Observation);
-    const gaps = events.filter(e => e.type === 'gap').map(e => e.event as GapDetected);
     const simReqs = events.filter(e => e.type === 'simreq').map(e => e.event as SimRequest);
     const simRes = events.filter(e => e.type === 'simres').map(e => e.event as SimResult);
     const intents = events.filter(e => e.type === 'intent').map(e => e.event as ActionIntent);

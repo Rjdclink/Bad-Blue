@@ -12,7 +12,6 @@
  */
 
 import { EventEmitter } from 'events';
-import { randomUUID } from 'crypto';
 import {
   type SimRequest,
   type SimResult,
@@ -60,7 +59,7 @@ class SlippagePathsSimulator implements Simulator {
   simType: SimType = 'slippage_paths';
 
   async run(input: SimulatorInput): Promise<SimulatorOutput> {
-    const { features, nPaths, horizonMs, seed } = input;
+    const { features, nPaths, seed } = input;
     const crypto = features.crypto as any;
     
     // Initialize PRNG with seed for reproducibility
@@ -265,8 +264,7 @@ class ProsodyCandidatesSimulator implements Simulator {
   simType: SimType = 'prosody_candidates';
 
   async run(input: SimulatorInput): Promise<SimulatorOutput> {
-    const { features, nPaths, seed, constraints } = input;
-    const voice = features.voice as any;
+    const { features, nPaths, seed } = input;
 
     let prngState = seed;
     const random = () => {
@@ -390,7 +388,7 @@ class QualityScoreDistributionSimulator implements Simulator {
   simType: SimType = 'quality_score_distribution';
 
   async run(input: SimulatorInput): Promise<SimulatorOutput> {
-    const { features, nPaths, seed, constraints } = input;
+    const { nPaths, seed, constraints } = input;
 
     let prngState = seed;
     const random = () => {

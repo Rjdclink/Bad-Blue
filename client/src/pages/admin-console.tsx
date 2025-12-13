@@ -31,20 +31,14 @@ import {
   Activity, 
   Users,
   Shield,
-  AlertTriangle,
-  Clock,
-  BarChart3,
   RefreshCw,
   Terminal,
   Database,
-  Bot,
-  Wallet,
   Power,
   Eye,
   EyeOff,
   LogOut,
   CheckCircle2,
-  CreditCard,
   Calendar,
   Mail,
   User,
@@ -54,14 +48,11 @@ import {
   DollarSign,
   TrendingUp,
   Target,
-  Zap,
   Droplets,
   Brain,
   Gauge,
   Timer,
   StopCircle,
-  Coins,
-  LineChart,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
@@ -182,7 +173,6 @@ export default function AdminConsole() {
   
   // Loading States
   const [isLoading, setIsLoading] = useState(true);
-  const [loadingFaucet, setLoadingFaucet] = useState(false);
   const [togglingFaucet, setTogglingFaucet] = useState(false);
   const [startingSystem, setStartingSystem] = useState(false);
   const [stoppingSystem, setStoppingSystem] = useState(false);

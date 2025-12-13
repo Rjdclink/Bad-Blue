@@ -31,7 +31,6 @@ import {
   type Severity,
   type RiskEnvelope,
   createBaseEvent,
-  SCHEMA_VERSION,
   PUBSUB_TOPICS,
 } from '../../packages/contracts/src/index';
 import { ReactorTransport, getTransport } from '../../packages/contracts/src/transport';
@@ -111,13 +110,10 @@ class CircuitBreaker {
   }
 
   recordMetric(value: number): void {
-    const now = Date.now();
     this.metrics.push(value);
     
-    // Trim old metrics
-    const cutoff = now - this.metricWindow;
+    // Trim old metrics (keep recent 100)
     this.metrics = this.metrics.filter((_, i) => {
-      // Keep recent metrics (simplified - in production, store with timestamps)
       return i > this.metrics.length - 100;
     });
   }
@@ -311,7 +307,6 @@ export class ReactorCore extends EventEmitter {
   // ==================== EVENT HANDLERS ====================
 
   private async handleObservation(obs: Observation): Promise<void> {
-    const startTime = Date.now();
     this.processedCount++;
 
     try {
@@ -661,7 +656,6 @@ export class ReactorCore extends EventEmitter {
 
     // Check risk envelope
     if (domain === 'crypto') {
-      const crypto = features.crypto as any;
       // Simple exposure check - in production, track actual positions
       // For now, always pass
     }
