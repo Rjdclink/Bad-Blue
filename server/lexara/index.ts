@@ -4,9 +4,14 @@
  * Central exports for Lexara's power, voice, and intelligence systems.
  * Lexara operates on the Computational Reactor throne for all heavy processing.
  * 
- * Includes the LEXARA VOICE FORGE - Monte Carlo-driven voice optimization engine
- * for discovering the perfect Lexara voice: young female (18-20) with centuries
- * of court experience and calm, surgical clarity.
+ * Includes:
+ * - LEXARA VOICE FORGE - Monte Carlo-driven voice optimization engine
+ *   for discovering the perfect Lexara voice: young female (18-20) with centuries
+ *   of court experience and calm, surgical clarity.
+ * 
+ * - MONTE CARLO ENHANCEMENT SYSTEM - Multi-layered optimization engine for
+ *   legal reasoning, analytical review, consultative engagement, and vocal authority.
+ *   Runs scheduled cycles (3 per day) and session-scoped evaluations at decision boundaries.
  */
 
 // Power Core
@@ -66,6 +71,31 @@ export {
   type TTSEngineConfig,
   type TTSEngineStatus,
 } from './LexaraTTSRouter';
+
+// Monte Carlo Enhancement System - Integrated optimization engine
+export {
+  lexaraMonteCarloEnhancement,
+  initializeMonteCarloEnhancement,
+  runOptimizationCycle,
+  evaluateAtDecisionBoundary,
+  configureEnhancement,
+  configureEnhancementSchedule,
+  getEnhancementState,
+  getActiveOptimizationProfile,
+  isEnhancementOptimizing,
+  shutdownMonteCarloEnhancement,
+  monteCarloEnhancementEvents,
+  type OptimizationDomain,
+  type LegalUnderstandingMetrics,
+  type ExplanationQualityMetrics,
+  type ConsultativeEngagementMetrics,
+  type VocalGravitasMetrics,
+  type OptimizationProfile,
+  type MonteCarloEnhancementConfig,
+  type SessionContext,
+  type ScheduledCycleConfig,
+  type EnhancementSystemState,
+} from './monteCarloEnhancement';
 
 import lexaraPowerCore from './lexaraPowerCore';
 export default lexaraPowerCore;
