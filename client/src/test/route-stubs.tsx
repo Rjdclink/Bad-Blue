@@ -49,8 +49,10 @@ export function CryptoCrawlerStub() {
   const [mountTime] = useState(Date.now());
   const [elapsed, setElapsed] = useState(0);
   const mountRef = useRef(false);
+  const unmountLoggedRef = useRef(false);
 
   useEffect(() => {
+    // Prevent double-logging in React StrictMode
     if (!mountRef.current) {
       mountRef.current = true;
       logMount('CryptoCrawlerStub', 'mount');
@@ -62,13 +64,17 @@ export function CryptoCrawlerStub() {
 
     return () => {
       clearInterval(interval);
-      logMount('CryptoCrawlerStub', 'unmount');
-      const mountDuration = Date.now() - mountTime;
-      console.log(`[MOUNT_TEST] CryptoCrawlerStub was mounted for ${mountDuration}ms (${Math.floor(mountDuration / 1000)}s)`);
-      if (mountDuration < 60000) {
-        console.warn(`[MOUNT_TEST] ⚠️ CryptoCrawlerStub unmounted before 60 seconds!`);
-      } else {
-        console.log(`[MOUNT_TEST] ✅ CryptoCrawlerStub stayed mounted for 60+ seconds`);
+      // Prevent double unmount logging in StrictMode
+      if (!unmountLoggedRef.current) {
+        unmountLoggedRef.current = true;
+        logMount('CryptoCrawlerStub', 'unmount');
+        const mountDuration = Date.now() - mountTime;
+        console.log(`[MOUNT_TEST] CryptoCrawlerStub was mounted for ${mountDuration}ms (${Math.floor(mountDuration / 1000)}s)`);
+        if (mountDuration < 60000) {
+          console.warn(`[MOUNT_TEST] ⚠️ CryptoCrawlerStub unmounted before 60 seconds!`);
+        } else {
+          console.log(`[MOUNT_TEST] ✅ CryptoCrawlerStub stayed mounted for 60+ seconds`);
+        }
       }
     };
   }, [mountTime]);
@@ -110,8 +116,10 @@ export function InmateLocatorStub() {
   const [mountTime] = useState(Date.now());
   const [elapsed, setElapsed] = useState(0);
   const mountRef = useRef(false);
+  const unmountLoggedRef = useRef(false);
 
   useEffect(() => {
+    // Prevent double-logging in React StrictMode
     if (!mountRef.current) {
       mountRef.current = true;
       logMount('InmateLocatorStub', 'mount');
@@ -123,13 +131,17 @@ export function InmateLocatorStub() {
 
     return () => {
       clearInterval(interval);
-      logMount('InmateLocatorStub', 'unmount');
-      const mountDuration = Date.now() - mountTime;
-      console.log(`[MOUNT_TEST] InmateLocatorStub was mounted for ${mountDuration}ms (${Math.floor(mountDuration / 1000)}s)`);
-      if (mountDuration < 60000) {
-        console.warn(`[MOUNT_TEST] ⚠️ InmateLocatorStub unmounted before 60 seconds!`);
-      } else {
-        console.log(`[MOUNT_TEST] ✅ InmateLocatorStub stayed mounted for 60+ seconds`);
+      // Prevent double unmount logging in StrictMode
+      if (!unmountLoggedRef.current) {
+        unmountLoggedRef.current = true;
+        logMount('InmateLocatorStub', 'unmount');
+        const mountDuration = Date.now() - mountTime;
+        console.log(`[MOUNT_TEST] InmateLocatorStub was mounted for ${mountDuration}ms (${Math.floor(mountDuration / 1000)}s)`);
+        if (mountDuration < 60000) {
+          console.warn(`[MOUNT_TEST] ⚠️ InmateLocatorStub unmounted before 60 seconds!`);
+        } else {
+          console.log(`[MOUNT_TEST] ✅ InmateLocatorStub stayed mounted for 60+ seconds`);
+        }
       }
     };
   }, [mountTime]);

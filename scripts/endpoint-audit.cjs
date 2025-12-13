@@ -17,7 +17,7 @@ const INMATE_SEARCH_PATH = path.join(__dirname, '../client/src/components/Inmate
 function extractEndpoints(content, filename) {
   const endpoints = [];
   
-  // Match fetch() calls
+  // Match fetch() calls with string literals
   const fetchMatches = content.matchAll(/fetch\s*\(\s*['"`]([^'"`]+)['"`]/g);
   for (const match of fetchMatches) {
     endpoints.push({
@@ -27,7 +27,19 @@ function extractEndpoints(content, filename) {
     });
   }
   
-  // Match apiRequest() calls
+  // Match fetch() calls with template literals (extract the static part)
+  const fetchTemplateMatches = content.matchAll(/fetch\s*\(\s*`([^`]*?)(?:\$\{|\`)/g);
+  for (const match of fetchTemplateMatches) {
+    if (match[1]) {
+      endpoints.push({
+        url: match[1] + '...',
+        type: 'fetch-template',
+        file: filename
+      });
+    }
+  }
+  
+  // Match apiRequest() calls with string literals
   const apiRequestMatches = content.matchAll(/apiRequest\s*\(\s*['"`]([^'"`]+)['"`]/g);
   for (const match of apiRequestMatches) {
     endpoints.push({
@@ -35,6 +47,18 @@ function extractEndpoints(content, filename) {
       type: 'apiRequest',
       file: filename
     });
+  }
+  
+  // Match apiRequest() calls with template literals
+  const apiRequestTemplateMatches = content.matchAll(/apiRequest\s*\(\s*`([^`]*?)(?:\$\{|\`)/g);
+  for (const match of apiRequestTemplateMatches) {
+    if (match[1]) {
+      endpoints.push({
+        url: match[1] + '...',
+        type: 'apiRequest-template',
+        file: filename
+      });
+    }
   }
   
   // Match useQuery queryKey (React Query)

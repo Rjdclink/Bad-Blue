@@ -52,19 +52,26 @@ function checkRouteDefinedOnce(content, routePath, routeName) {
 }
 
 function checkNoRedirectOnMount(content, componentName) {
-  // Check for useEffect with setLocation/navigate that runs unconditionally on mount
-  const hasRedirectOnMount = /useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[^}]*setLocation|useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[^}]*navigate\s*\(/s.test(content);
+  // More specific pattern: Look for useEffect that calls setLocation/navigate 
+  // without any conditional check (if statement)
+  // This pattern looks for useEffect(() => { setLocation(...) } without an if
+  const unconditionalRedirectPattern = /useEffect\s*\(\s*\(\s*\)\s*=>\s*\{\s*(?!.*if\s*\().*?(?:setLocation|navigate)\s*\(/s;
   
-  // Allow conditional redirects (isAuthenticated checks, etc.)
-  const hasConditionalRedirect = /if\s*\([^)]+\)\s*\{[^}]*setLocation|if\s*\([^)]+\)\s*\{[^}]*navigate/.test(content);
+  const hasUnconditionalRedirect = unconditionalRedirectPattern.test(content);
   
-  // Check for comments indicating no redirect
+  // Check for comments indicating no redirect (design intention)
   const hasNoRedirectComment = /NEVER redirect|do NOT redirect|NO redirect/i.test(content);
+  
+  // Check for conditional redirects (which are OK)
+  const hasConditionalRedirectPattern = /useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[^}]*if\s*\([^)]+\)[^}]*(?:setLocation|navigate)/s;
+  const hasConditionalRedirect = hasConditionalRedirectPattern.test(content);
   
   test(
     `${componentName} has no unconditional redirect on mount`,
-    !hasRedirectOnMount || hasConditionalRedirect || hasNoRedirectComment,
-    hasRedirectOnMount ? 'Found potential redirect on mount' : ''
+    !hasUnconditionalRedirect || hasConditionalRedirect || hasNoRedirectComment,
+    hasUnconditionalRedirect && !hasConditionalRedirect && !hasNoRedirectComment 
+      ? 'Found potential unconditional redirect on mount' 
+      : ''
   );
 }
 
@@ -143,9 +150,23 @@ function runInvariants() {
   console.log('-'.repeat(40));
   
   // Check that pages don't rely on global error boundary for error handling
-  const cryptoHasLocalErrorHandling = /catch|setError|setHasError|errorMessage/.test(cryptoContent);
-  // InmateSearch component handles errors for Inmate Locator
-  const inmateHasLocalErrorHandling = /catch|setError|searchApiError|setSearchApiError/.test(inmateSearchContent);
+  // More specific patterns that check for actual error state management
+  const cryptoErrorPatterns = [
+    /const\s*\[\s*(?:has)?[Ee]rror/,  // useState for error
+    /set(?:Has)?[Ee]rror\s*\(/,       // setError/setHasError calls
+    /errorMessage\s*&&/,               // conditional error display
+    /\.catch\s*\(/                     // Promise catch handling
+  ];
+  const cryptoHasLocalErrorHandling = cryptoErrorPatterns.some(p => p.test(cryptoContent));
+  
+  // InmateSearch specific error patterns
+  const inmateErrorPatterns = [
+    /searchApiError/,                  // Error state for search
+    /setSearchApiError/,               // Setting search error
+    /onError:\s*\(/,                   // React Query onError
+    /\.catch\s*\(/                     // Promise catch handling
+  ];
+  const inmateHasLocalErrorHandling = inmateErrorPatterns.some(p => p.test(inmateSearchContent));
   
   test(
     'CryptoCrawler has local error handling',
