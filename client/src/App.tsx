@@ -139,6 +139,11 @@ const TSHPELocatorPage = lazyWithRetry(() => import("@/pages/tshpe-locator"), 'T
 // Nationwide Inmate Locator Page
 const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
 
+// V2 Pages - Clean implementations (Rule 1: New route, new page component)
+// No AppLayout, no feature guards, no auth gates, no global error boundary
+const InmateLocatorV2Page = lazyWithRetry(() => import("@/pages/inmate-locator-v2"), 'InmateLocatorV2');
+const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-v2"), 'CryptoCrawlerV2');
+
 // Three-Tier Master Password Access Zones
 // Zone A: LegalWhat User Access (SARBEAR)
 const LegalWhatHome = lazyWithRetry(() => import("@/pages/legalwhat-home"), 'LegalWhatHome');
@@ -269,6 +274,10 @@ function Router() {
             {/* Nationwide Inmate Locator */}
             <Route path="/inmate-locator" component={InmateLocatorPage} />
             <Route path="/inmate-locator/dashboard" component={InmateLocatorPage} />
+            
+            {/* V2 Pages - Clean implementations without wrappers */}
+            <Route path="/inmate-locator-v2" component={InmateLocatorV2Page} />
+            <Route path="/cryptocrawler-v2" component={CryptoCrawlerV2Dashboard} />
             
             {/* BadBlue routes - Law Enforcement Accountability */}
             <Route path="/badblue" component={Home} />
