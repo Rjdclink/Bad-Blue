@@ -20,7 +20,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { createLogger } from '../logger';
+import { createLogger } from '../../logger';
 import crypto from 'crypto';
 
 const log = createLogger('LexaraVoiceForge');
