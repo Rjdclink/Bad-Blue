@@ -9,8 +9,8 @@
  */
 
 import { useEffect, useCallback, useState, Suspense } from "react";
-import AlexeraConsultation from "@/components/AlexeraConsultation";
-import { useLocation } from "wouter";
+import LexaraConsultation from "@/components/LexaraConsultation";
+import { useLocation, useRoute } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Scale, Loader2, Mic, MicOff, Volume2 } from "lucide-react";
@@ -178,7 +178,7 @@ export default function LegalConsultationPage() {
         </header>
 
         {/* Main Content - Pass lawType and audio state */}
-        <AlexeraConsultation 
+        <LexaraConsultation 
           onBack={() => setLocation(domainId ? '/welcome' : '/')} 
           lawType={domainInfo?.name}
         />

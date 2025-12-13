@@ -18,7 +18,7 @@
  * - Timeline reconstruction
  * - Evidentiary tagging (threats, admissions, inconsistencies)
  * 
- * All evidence processing is centralized through F.M.I. and exposed to ALEXERA.
+ * All evidence processing is centralized through F.M.I. and exposed to LEXARA.
  */
 
 import { generateUserText, TaskPriority, TaskComplexity, UsageContext } from './aiProvider';
@@ -538,7 +538,7 @@ export async function analyzeFMIEvidence(
   const nextSteps = [
     'Upload additional evidence for F.M.I. cross-correlation',
     'Review F.M.I. extracted facts for accuracy',
-    'Consult with ALEXERA for legal strategy integration'
+    'Consult with LEXARA for legal strategy integration'
   ];
   
   log.info('[F.M.I.] Analysis completed', { fileName: file.name });

@@ -6,10 +6,8 @@
  * 
  * Sources:
  * - shared/lexaraVoicePersona.ts - Core voice persona configuration
- * - shared/alexeraVoicePersona.ts - ALEXERA voice configuration
- * - client/src/components/AlexeraConsultation.tsx - Intake guidance and analysis lines
+ * - client/src/components/LexaraConsultation.tsx - Intake guidance and analysis lines
  * - VOICE_SYSTEM_FINAL_SUMMARY.md - Key descriptive phrases
- * - ALEXERA_VOICE_INTELLIGENCE_IMPLEMENTATION.md - Voice intelligence details
  * - server/lexara/personaKernel.ts - Core identity kernel
  * 
  * Output: 300,000+ characters of natural spoken lines for voice cloning
@@ -60,7 +58,7 @@ const IDENTITY_PHRASES = [
 ];
 
 /**
- * Legal consultation opening phrases from AlexeraConsultation.tsx
+ * Legal consultation opening phrases from LexaraConsultation.tsx
  */
 const CONSULTATION_OPENINGS = [
   "Hello, I understand you have some questions about your legal matters. How can I assist you today?",
@@ -102,7 +100,7 @@ const DISCLAIMER_PHRASES = [
 ];
 
 /**
- * Transition and acknowledgment phrases from alexeraVoicePersona.ts
+ * Transition and acknowledgment phrases from lexaraVoicePersona.ts
  */
 const TRANSITION_PHRASES = [
   "Now, let's consider the next aspect of your case.",

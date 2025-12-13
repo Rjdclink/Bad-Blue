@@ -651,3 +651,87 @@ export function getVoiceStyleForSentiment(sentiment: ReturnType<typeof detectUse
       return 'professional';
   }
 }
+
+// ============================================================================
+// BACKWARDS COMPATIBILITY EXPORTS
+// These maintain compatibility with code that previously imported from alexeraVoicePersona
+// All naming now uses LEXARA consistently
+// ============================================================================
+
+/**
+ * Backwards compatible SpeechContext type
+ * Maps to LEXARASpeechContext with additional contexts for compatibility
+ */
+export type SpeechContext = 
+  | 'evaluation'
+  | 'guidance' 
+  | 'explanation'
+  | 'reassurance'
+  | 'introduction'
+  | 'conclusion'
+  | 'transition'
+  | 'greeting'
+  | 'serious'
+  | 'casual'
+  | 'protective'
+  | 'clarification';
+
+/**
+ * Backwards compatible interface alias
+ */
+export interface LexaraVoicePersona extends LEXARAVoicePersona {}
+
+/**
+ * Backwards compatible voice persona constant
+ * @deprecated Use LEXARA_VOICE_PERSONA instead
+ */
+export const ALEXERA_VOICE_PERSONA = LEXARA_VOICE_PERSONA;
+
+/**
+ * Voice Synthesis Config for backwards compatibility
+ */
+export interface VoiceSynthesisConfig {
+  voiceProvider: 'google' | 'elevenlabs' | 'azure' | 'polly' | 'browser';
+  voiceId: string;
+  languageCode: string;
+  speed: number;
+  pitch: number;
+  format: 'mp3' | 'wav' | 'ogg';
+  sampleRate?: number;
+}
+
+/**
+ * Default voice configuration
+ */
+export const DEFAULT_VOICE_CONFIG: VoiceSynthesisConfig = {
+  voiceProvider: 'google',
+  voiceId: 'en-US-Neural2-F',
+  languageCode: 'en-US',
+  speed: 1.0,
+  pitch: 0,
+  format: 'mp3',
+};
+
+/**
+ * Get persona parameters for a specific speech context (backwards compatible)
+ */
+export function getPersonaForContext(context: SpeechContext): Partial<LEXARAVoicePersona> {
+  // Map SpeechContext to LEXARASpeechContext with explicit handling
+  const contextMapping: Record<SpeechContext, LEXARASpeechContext> = {
+    'evaluation': 'explanation',
+    'guidance': 'guidance',
+    'explanation': 'explanation',
+    'reassurance': 'reassurance',
+    'introduction': 'greeting',
+    'conclusion': 'serious',
+    'transition': 'explanation',
+    'greeting': 'greeting',
+    'serious': 'serious',
+    'casual': 'casual',
+    'protective': 'protective',
+    'clarification': 'explanation',
+  };
+  
+  const lexaraContext = contextMapping[context] ?? 'explanation';
+  return getLEXARAVoiceForContext(lexaraContext);
+}

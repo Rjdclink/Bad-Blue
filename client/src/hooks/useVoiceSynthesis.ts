@@ -9,7 +9,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToast } from './use-toast';
-import type { SpeechContext } from '@shared/alexeraVoicePersona';
+import type { SpeechContext } from '@shared/lexaraVoicePersona';
 import { 
   LexaraServerTTS, 
   Lexara, 
