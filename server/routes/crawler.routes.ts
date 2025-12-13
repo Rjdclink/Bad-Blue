@@ -334,6 +334,79 @@ router.post('/jobs/:jobId/compile', async (req: Request, res: Response) => {
   }
 });
 
+// ============================================================================
+// DOOMSDAY CLOCK ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/crawler/jobs/:jobId/doomsday-clock
+ * Get the doomsday clock state for UI display - NO CACHE
+ * Returns real-time progress through each tier
+ */
+router.get('/jobs/:jobId/doomsday-clock', noCache, async (req: Request, res: Response) => {
+  try {
+    const { jobId } = req.params;
+    const clockState = crawlerJobManager.getDoomsdayClockState(jobId);
+
+    if (!clockState) {
+      return res.status(404).json({
+        success: false,
+        error: 'Job not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: clockState,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('[CrawlerAPI] Get doomsday clock error:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get doomsday clock state',
+    });
+  }
+});
+
+/**
+ * POST /api/crawler/jobs/:jobId/hard-stop
+ * User-initiated hard stop via doomsday clock UI
+ * Only allowed if minimum tier has been reached
+ */
+router.post('/jobs/:jobId/hard-stop', async (req: Request, res: Response) => {
+  try {
+    const { jobId } = req.params;
+    const result = crawlerJobManager.hardStop(jobId);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.error,
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        message: 'Job stopped successfully',
+        finalReport: result.finalReport,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('[CrawlerAPI] Hard stop error:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to stop job',
+    });
+  }
+});
+
+// ============================================================================
+// JOB CLEANUP
+// ============================================================================
+
 /**
  * DELETE /api/crawler/jobs/:jobId
  * Cleanup a job
@@ -350,11 +423,11 @@ router.delete('/jobs/:jobId', async (req: Request, res: Response) => {
       });
     }
 
-    // Only allow cleanup of completed/failed/cancelled jobs
+    // Only allow cleanup of completed/failed/cancelled/stopped jobs
     if (job.status === JobStatus.RUNNING || job.status === JobStatus.PARTIAL_REPORT_AVAILABLE) {
       return res.status(400).json({
         success: false,
-        error: 'Cannot cleanup running job. Cancel it first.',
+        error: 'Cannot cleanup running job. Use hard-stop first.',
       });
     }
 
