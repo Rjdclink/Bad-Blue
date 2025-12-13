@@ -243,11 +243,9 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
    */
   const startListening = useCallback(() => {
     if (!isEnabled) {
-      toast({
-        title: 'Voice Mode Disabled',
-        description: 'Please enable voice mode first.',
-        variant: 'destructive',
-      });
+      // Don't show error toast - voice mode not being enabled is expected
+      // when auto-start fails. The UI should show an activation button instead.
+      console.log('[VoiceMode] Attempted to start listening but voice mode not enabled');
       return;
     }
 
@@ -260,7 +258,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     } catch (err) {
       // Already started, ignore
     }
-  }, [isEnabled, initializeSpeechRecognition, toast]);
+  }, [isEnabled, initializeSpeechRecognition]);
 
   /**
    * Stop listening

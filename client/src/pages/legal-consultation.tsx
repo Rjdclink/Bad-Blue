@@ -37,6 +37,10 @@ export default function LegalConsultationPage() {
   const domainId = params?.domainId;
   const domainInfo = domainId ? LAW_TYPE_DATA.find(t => t.id === domainId) : null;
   
+  // Check if live mode is requested via URL parameter
+  const urlParams = new URLSearchParams(window.location.search);
+  const liveMode = urlParams.get('live') === 'true';
+  
   // Initialize continuous audio pipeline for two-way communication
   const continuousAudio = useLexaraContinuousAudio({
     onTranscript: (text, isFinal) => {
@@ -69,6 +73,17 @@ export default function LegalConsultationPage() {
       }
     }
   }, [continuousAudio, isAudioInitialized]);
+  
+  // Auto-initialize audio when live mode is enabled via URL
+  useEffect(() => {
+    if (liveMode && !isAudioInitialized) {
+      // Delay slightly to ensure component is fully mounted
+      const timer = setTimeout(() => {
+        handleInitializeAudio();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [liveMode, isAudioInitialized, handleInitializeAudio]);
   
   // Setup first interaction listener for audio context resume
   useEffect(() => {
