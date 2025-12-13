@@ -1,4 +1,4 @@
-import AlexeraConsultation from "@/components/AlexeraConsultation";
+import LexaraConsultation from "@/components/LexaraConsultation";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Shield, ArrowLeft } from "lucide-react";
@@ -10,11 +10,11 @@ export default function LegalConsultationPage() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="ALEXERA - AI-Powered Legal Analysis | BadBlue"
-        description="Consult with ALEXERA (Legal Expert AI Resource Advisor) for expert legal case analysis. Get AI-powered case evaluation with actionable recommendations and statute citations."
-        keywords="ALEXERA, legal consultation, AI legal analysis, civil rights case evaluation, police misconduct analysis"
-        ogTitle="ALEXERA - Expert Legal Case Analysis & Consultation"
-        ogDescription="AI-powered legal analysis by ALEXERA to determine if you have an actionable complaint or lawsuit. Get detailed case evaluation with statute citations and F.M.I. evidence intelligence integration."
+        title="LEXARA - AI-Powered Legal Analysis | BadBlue"
+        description="Consult with LEXARA (Legal Expert AI Resource Advisor) for expert legal case analysis. Get AI-powered case evaluation with actionable recommendations and statute citations."
+        keywords="LEXARA, legal consultation, AI legal analysis, civil rights case evaluation, police misconduct analysis"
+        ogTitle="LEXARA - Expert Legal Case Analysis & Consultation"
+        ogDescription="AI-powered legal analysis by LEXARA to determine if you have an actionable complaint or lawsuit. Get detailed case evaluation with statute citations and F.M.I. evidence intelligence integration."
         canonicalUrl="https://example.com/legal-consultation"
       />
       
@@ -45,7 +45,7 @@ export default function LegalConsultationPage() {
       </header>
 
       {/* Main Content */}
-      <AlexeraConsultation onBack={() => setLocation('/')} />
+      <LexaraConsultation onBack={() => setLocation('/')} />
     </div>
   );
 }

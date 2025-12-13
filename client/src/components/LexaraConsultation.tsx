@@ -118,13 +118,13 @@ const US_STATES = [
   { code: "WY", name: "Wyoming" },
 ];
 
-interface AlexeraConsultationProps {
+interface LexaraConsultationProps {
   onBack?: () => void;
   lawType?: string;
   onDataChange?: (data: any) => void;
 }
 
-export default function AlexeraConsultation({ onBack, lawType, onDataChange }: AlexeraConsultationProps) {
+export default function LexaraConsultation({ onBack, lawType, onDataChange }: LexaraConsultationProps) {
   const { toast } = useToast();
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -248,7 +248,7 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
 
   // AUTOMATIC - Voice mode always enabled
   useEffect(() => {
-    localStorage.setItem('alexera-voice-mode', 'enabled');
+    localStorage.setItem('lexara-voice-mode', 'enabled');
   }, []);
 
   // Notify parent component when consultation data changes
@@ -509,17 +509,17 @@ export default function AlexeraConsultation({ onBack, lawType, onDataChange }: A
           </div>
         </LexaraPresence>
 
-        {/* ALEXERA Live Voice Channel - Always visible by default */}
+        {/* LEXARA Live Voice Channel - Always visible by default */}
         <Card className="mb-6 border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-purple-500/5 shadow-lg">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-3 text-lg">
               <div className="p-2 rounded-lg bg-primary/20">
                 <Volume2 className="w-5 h-5 text-primary" />
               </div>
-              ALEXERA Live Voice Channel
+              LEXARA Live Voice Channel
             </CardTitle>
             <CardDescription>
-              Voice interaction is active - speak to communicate with ALEXERA
+              Voice interaction is active - speak to communicate with LEXARA
             </CardDescription>
           </CardHeader>
           <CardContent>

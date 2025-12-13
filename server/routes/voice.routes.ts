@@ -2,7 +2,7 @@
  * Voice Synthesis Routes
  * Stage 13: Neural Voice Synthesis API Endpoints
  * 
- * Provides REST API for ALEXERA voice synthesis
+ * Provides REST API for LEXARA voice synthesis
  */
 
 import { type Express, type Request, type Response } from 'express';
@@ -19,8 +19,8 @@ const log = createLogger('VoiceRoutes');
 export function setupVoiceRoutes(app: Express): void {
   
   /**
-   * POST /api/alexera/speak
-   * Synthesize speech from text with ALEXERA's voice persona
+   * POST /api/lexara/speak
+   * Synthesize speech from text with LEXARA's voice persona
    * 
    * Body:
    * - text: Text to synthesize (required)
@@ -35,7 +35,7 @@ export function setupVoiceRoutes(app: Express): void {
    * - For server providers: Returns audio stream or URL
    */
   app.post(
-    '/api/alexera/speak',
+    '/api/lexara/speak',
     asyncHandler(async (req: Request, res: Response) => {
       const {
         text,
@@ -117,11 +117,11 @@ export function setupVoiceRoutes(app: Express): void {
   );
 
   /**
-   * GET /api/alexera/voice/providers
+   * GET /api/lexara/voice/providers
    * Get available voice synthesis providers
    */
   app.get(
-    '/api/alexera/voice/providers',
+    '/api/lexara/voice/providers',
     asyncHandler(async (req: Request, res: Response) => {
       try {
         const voiceService = getVoiceSynthesisService();
@@ -141,11 +141,11 @@ export function setupVoiceRoutes(app: Express): void {
   );
 
   /**
-   * GET /api/alexera/voice/status
+   * GET /api/lexara/voice/status
    * Get voice synthesis system status
    */
   app.get(
-    '/api/alexera/voice/status',
+    '/api/lexara/voice/status',
     asyncHandler(async (req: Request, res: Response) => {
       try {
         const voiceService = getVoiceSynthesisService();
