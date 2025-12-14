@@ -25,6 +25,8 @@ export interface FaucetMeshConfig {
   
   // Spread filtering
   minSpreadMultiplier: number;       // Spread must be ≥ fees × multiplier (default: 1.5)
+  testSignalSpreadMultiplier: number; // Relaxed spread multiplier for test signals (default: 2.0)
+  allowTestSignalOverride: boolean;   // Allow TEST_SIGNAL override (default: true)
   
   // Order book filtering
   minOrderBookDepthMultiplier: number; // Order book depth ≥ size × multiplier (default: 10)
@@ -69,7 +71,9 @@ const TOP_LIQUIDITY_PAIRS = [
 const DEFAULT_CONFIG: FaucetMeshConfig = {
   topLiquidityPairsOnly: true,
   minLiquidityRank: 50,
-  minSpreadMultiplier: 1.5,
+  minSpreadMultiplier: 1.5, // Production spread requirement
+  testSignalSpreadMultiplier: 2.0, // Relaxed for test signals
+  allowTestSignalOverride: true, // Allow TEST_SIGNAL override
   minOrderBookDepthMultiplier: 10,
   rejectVolatilitySpikes: true,
   volatilitySpikeThreshold: 2.0,
