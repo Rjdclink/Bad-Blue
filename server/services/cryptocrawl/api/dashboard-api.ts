@@ -5,6 +5,7 @@ import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { autonomousFaucet } from '../faucet/autonomous-faucet';
 import { balanceMonitor } from '../bridge/balance-monitor';
 import { WalletManager } from '../core/wallet';
+import type { ChainId } from '../core/lux-swarm';
 import { scheduledMonteCarloTraining } from '../training/scheduled-monte-carlo-training';
 
 const router = express.Router();
@@ -1082,16 +1083,21 @@ async function executeWithdrawal(amount: number, token: string, to: string, chai
         withdrawalChain = chainWithStable?.chain || 'polygon';
       }
     }
+
+    const allowedChains: readonly ChainId[] = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism', 'ethereum'];
+    const chainId: ChainId = (allowedChains as readonly string[]).includes(String(withdrawalChain))
+      ? (withdrawalChain as ChainId)
+      : 'polygon';
     
     // Execute the withdrawal
     // Note: For ERC20 tokens, walletManager.withdraw handles native tokens only
     // Full ERC20 support would require walletManager.transferToken() implementation
     const txHash = await walletManager.withdraw({ 
-      chain: withdrawalChain, 
+      chain: chainId, 
       to, 
       amount: amount.toString() 
     });
-    console.log(`[CryptoCrawl] ✅ Withdrawal executed: ${amount} ${token} on ${withdrawalChain} to ${to} - TX: ${txHash}`);
+    console.log(`[CryptoCrawl] ✅ Withdrawal executed: ${amount} ${token} on ${chainId} to ${to} - TX: ${txHash}`);
     return txHash;
   } catch (error) {
     console.error('[CryptoCrawl] Withdrawal failed:', error);

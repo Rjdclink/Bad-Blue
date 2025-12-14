@@ -166,6 +166,10 @@ export async function example2_MirrorCrawler() {
     coordinationLatency: 10,
     enableCooperativeEngagement: false,
     authorizedMode: true,
+    enableNearMissArchive: false,
+    enableBlindSpotDetection: false,
+    enableConsentAmplification: false,
+    enableDetectionProbability: false,
   });
 
   mirror.on('insight', (insight) => {
@@ -221,6 +225,10 @@ export async function example3_KeyCrawler() {
     coordinationLatency: 10,
     enableCooperativeEngagement: false,
     authorizedMode: true,
+    enableNearMissArchive: false,
+    enableBlindSpotDetection: false,
+    enableConsentAmplification: false,
+    enableDetectionProbability: false,
   });
 
   key.on('insight', (insight) => {
@@ -288,6 +296,10 @@ export async function example4_ChewerAndComputational() {
     coordinationLatency: 10,
     enableCooperativeEngagement: false,
     authorizedMode: true,
+    enableNearMissArchive: false,
+    enableBlindSpotDetection: false,
+    enableConsentAmplification: false,
+    enableDetectionProbability: false,
   });
 
   const computational = new ComputationalCrawler({
@@ -298,6 +310,10 @@ export async function example4_ChewerAndComputational() {
     coordinationLatency: 10,
     enableCooperativeEngagement: false,
     authorizedMode: true,
+    enableNearMissArchive: true,
+    enableBlindSpotDetection: false,
+    enableConsentAmplification: false,
+    enableDetectionProbability: false,
   });
 
   // Wire them together
@@ -389,6 +405,10 @@ export async function example5_USCCoordination() {
     coordinationLatency: 10,
     enableCooperativeEngagement: false,
     authorizedMode: true,
+    enableNearMissArchive: false,
+    enableBlindSpotDetection: true,
+    enableConsentAmplification: false,
+    enableDetectionProbability: false,
   });
 
   usc.on('task:execute', ({ taskId, crawler, priority }) => {
@@ -456,6 +476,10 @@ export async function example6_WooEngagement() {
     coordinationLatency: 10,
     enableCooperativeEngagement: true,
     authorizedMode: true,
+    enableNearMissArchive: false,
+    enableBlindSpotDetection: false,
+    enableConsentAmplification: true,
+    enableDetectionProbability: false,
   });
 
   woo.on('insight', (insight) => {

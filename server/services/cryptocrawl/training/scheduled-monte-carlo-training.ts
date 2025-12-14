@@ -30,6 +30,18 @@ import { createMonteCarloEngine, ELITE_STRATEGIES, MARKET_CONDITIONS, type Simul
  * Real-world operational training configuration
  * Optimized for actual production deployment with Divine creativity
  */
+const STRATEGIES_TO_TRAIN = [
+  'quantumFlashArbitrage',      // Zero-capital flash arbitrage (gets 1.2x time)
+  'crossChainLiquiditySniper',  // Multi-chain liquidity capture
+  'mevSandwichCounter',         // MEV defense and counter
+  'regimeAdaptiveMarketMaker',  // Adaptive market making
+  'blackSwanHunter',            // Rare event capture
+] as const;
+
+type StrategyName = (typeof STRATEGIES_TO_TRAIN)[number];
+
+const ZERO_CAPITAL_STRATEGIES: ReadonlyArray<StrategyName> = ['quantumFlashArbitrage'];
+
 const TRAINING_CONFIG = {
   // Schedule: Run 1 strategy every 6 hours
   TRAINING_INTERVAL_HOURS: 6,
@@ -57,16 +69,10 @@ const TRAINING_CONFIG = {
   CREATIVITY_POWER_INCREMENT: 0.2,
   
   // Real strategies that exist in ELITE_STRATEGIES
-  STRATEGIES_TO_TRAIN: [
-    'quantumFlashArbitrage',      // Zero-capital flash arbitrage (gets 1.2x time)
-    'crossChainLiquiditySniper',  // Multi-chain liquidity capture
-    'mevSandwichCounter',         // MEV defense and counter
-    'regimeAdaptiveMarketMaker',  // Adaptive market making
-    'blackSwanHunter',            // Rare event capture
-  ],
+  STRATEGIES_TO_TRAIN,
   
   // Zero-capital strategies get extra training time
-  ZERO_CAPITAL_STRATEGIES: ['quantumFlashArbitrage'],
+  ZERO_CAPITAL_STRATEGIES,
   
   // Market conditions to test
   MARKET_CONDITIONS_TO_TEST: ['normal', 'highVolatility', 'lowLiquidity', 'highCompetition', 'trending', 'ranging'],
@@ -244,7 +250,7 @@ class ScheduledMonteCarloTraining {
   /**
    * Calculate time cap for a strategy (zero-capital gets 1.2x)
    */
-  private getTimeCap(strategyName: string): number {
+  private getTimeCap(strategyName: StrategyName): number {
     const baseTimeCap = TRAINING_CONFIG.MIN_TIME_CAP_MS + 
       Math.random() * (TRAINING_CONFIG.MAX_TIME_CAP_MS - TRAINING_CONFIG.MIN_TIME_CAP_MS);
     
