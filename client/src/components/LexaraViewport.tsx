@@ -35,7 +35,7 @@ import {
   type LEXARAGazeHint,
 } from '@/components/LexaraEtherealAvatar';
 import { 
-  LEXARABrain,
+  getLEXARABrain,
   type LEXARABrainContext,
 } from '@shared/lexaraBrain';
 import type { LEXARAResponsePayload } from '@shared/lexaraVoicePersona';
@@ -63,8 +63,8 @@ const GEO_REQUEST_KEYWORDS = [
   'show me where', 'show their location', 'show my location'
 ];
 
-// Singleton brain instance
-const lexaraBrain = new LEXARABrain();
+// Singleton brain instance (one brain = one executor)
+const lexaraBrain = getLEXARABrain();
 
 // ============================================================================
 // TYPES
@@ -467,6 +467,17 @@ export default function LexaraViewport() {
   });
   
   const voiceSynthesis = useVoiceSynthesis();
+
+  // Prevent feedback loops: pause ASR while LEXARA is speaking (then resume).
+  useEffect(() => {
+    if (voiceSynthesis.isSpeaking) {
+      voiceMode.stopListening();
+      return;
+    }
+    if (voiceMode.isEnabled) {
+      voiceMode.startListening();
+    }
+  }, [voiceSynthesis.isSpeaking, voiceMode.isEnabled, voiceMode.startListening, voiceMode.stopListening]);
 
   // ============================================================================
   // DEVICE DETECTION

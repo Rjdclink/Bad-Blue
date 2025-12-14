@@ -34,7 +34,7 @@ import {
   type LEXARAGazeHint,
 } from '@/components/LexaraEtherealAvatar';
 import { 
-  LEXARABrain,
+  getLEXARABrain,
   type LEXARABrainContext,
 } from '@shared/lexaraBrain';
 
@@ -44,8 +44,8 @@ import {
 
 const LEXARA_CONSENT_KEY = 'lexara_auto_start';
 
-// Singleton brain instance
-const lexaraBrain = new LEXARABrain();
+// Singleton brain instance (one brain = one executor)
+const lexaraBrain = getLEXARABrain();
 
 // ============================================================================
 // TYPES
@@ -538,6 +538,17 @@ export default function SpectraPage() {
   });
   
   const voiceSynthesis = useVoiceSynthesis();
+
+  // Prevent feedback loops: pause ASR while LEXARA is speaking (then resume).
+  useEffect(() => {
+    if (voiceSynthesis.isSpeaking) {
+      voiceMode.stopListening();
+      return;
+    }
+    if (voiceMode.isEnabled) {
+      voiceMode.startListening();
+    }
+  }, [voiceSynthesis.isSpeaking, voiceMode.isEnabled, voiceMode.startListening, voiceMode.stopListening]);
 
   // ============================================================================
   // DEVICE DETECTION

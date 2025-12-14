@@ -1,13 +1,34 @@
 #!/usr/bin/env node
 
-const puppeteer = require('puppeteer');
+import puppeteer from 'puppeteer';
+import fs from 'node:fs';
 
 async function testPuppeteer() {
   console.log('🧪 Testing Puppeteer setup...\n');
 
   try {
     // Check for Chromium
-    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
+    const candidates = [
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+      '/usr/local/bin/google-chrome',
+      '/usr/bin/google-chrome',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+    ].filter(Boolean);
+
+    const executablePath =
+      candidates.find((p) => {
+        try {
+          return fs.existsSync(p);
+        } catch {
+          return false;
+        }
+      }) || puppeteer.executablePath?.() || undefined;
+
+    if (!executablePath) {
+      throw new Error('No Chromium/Chrome executable found. Set PUPPETEER_EXECUTABLE_PATH.');
+    }
     console.log(`✓ Chromium path: ${executablePath}`);
 
     // Launch browser
@@ -35,7 +56,8 @@ async function testPuppeteer() {
     console.log('\n✅ All Puppeteer tests passed!\n');
     process.exit(0);
   } catch (error) {
-    console.error('\n❌ Puppeteer test failed:', error.message);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('\n❌ Puppeteer test failed:', message);
     process.exit(1);
   }
 }
