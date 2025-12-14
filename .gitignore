@@ -23,6 +23,10 @@ public/index.html
 logs/
 *.log
 
+# Core dumps (should never be committed)
+core
+core.*
+
 # Backup files
 *.backup
 
