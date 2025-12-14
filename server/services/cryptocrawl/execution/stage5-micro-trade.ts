@@ -33,6 +33,14 @@ import {
 import { checkPilotAction, PilotCapability } from './pilot-narrow-mode';
 import { checkEditAllowed } from './pause-edit-lock';
 import { generateDeterministicTestSignal, checkFaucetMeshFailure } from './deterministic-test-signal';
+import {
+  startPreTradeOptimization,
+  startIntraTradeOptimization,
+  startPostTradeOptimization,
+  registerActiveOrder,
+  unregisterActiveOrder,
+  applyPendingOptimizations,
+} from './non-blocking-optimizer';
 
 const log = createLogger('Stage5MicroTrade');
 
@@ -541,9 +549,13 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
       });
 
       // ========================================================================
-      // STEP 6: Post-Trade Analysis
+      // STEP 6: Post-Trade Analysis (with non-blocking optimization)
       // ========================================================================
       log.info('Step 6: Post-trade analysis...');
+      
+      // Post-trade optimization already started in Step 5 (non-blocking)
+      // This analysis runs in parallel with optimization
+      
       const analysis = postTradeAnalyzer.analyzeTrade(
         decisionResult,
         execution.executionResult

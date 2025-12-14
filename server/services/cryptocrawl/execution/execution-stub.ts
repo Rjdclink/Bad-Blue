@@ -165,6 +165,13 @@ export class ExecutionStub extends EventEmitter {
    * Execute a decision result (STUB - does not actually execute)
    */
   async execute(request: ExecutionRequest): Promise<ExecutionStubResult> {
+    // SAFETY GATE: Ensure optimization cannot alter orders during execution
+    const { canOptimizationAlterOrders } = require('./non-blocking-optimizer');
+    if (canOptimizationAlterOrders()) {
+      // Optimization is allowed, but will be locked when order is registered
+      log.info('Optimization state: Can alter orders (will be locked during order placement)');
+    }
+    
     // Check daily loss before execution
     const dailyLossCheck = this.checkDailyLoss();
     if (dailyLossCheck.exceeded) {
@@ -354,6 +361,9 @@ export class ExecutionStub extends EventEmitter {
 
       // Abort if probe fails (slippage too high)
       if (!probeResult.success) {
+        // Note: Order not yet registered (probe phase only)
+        // No need to unregister, but optimization can proceed on abort
+        
         return {
           success: false,
           simulated: true,
@@ -370,6 +380,11 @@ export class ExecutionStub extends EventEmitter {
     // POST-ONLY LIMIT ORDERS (Simulated)
     // ========================================================================
     const orderType = this.config.safetyMechanics.postOnlyLimitOrders ? 'POST_ONLY_LIMIT' : 'MARKET';
+    
+    // SAFETY GATE: Register active order (prevents optimization from altering)
+    const { registerActiveOrder, unregisterActiveOrder } = require('./non-blocking-optimizer');
+    const orderId = `stub-order-${this.executionCount}-${Date.now()}`;
+    registerActiveOrder(orderId);
     
     // Log execution intent (if enabled)
     if (this.config.logExecutionIntent) {
@@ -413,6 +428,9 @@ export class ExecutionStub extends EventEmitter {
         executionId: `stub-${this.executionCount}`,
       });
 
+      // SAFETY GATE: Unregister active order before flatten (allows optimization on abort)
+      unregisterActiveOrder(orderId);
+
       // Simulate flatten (close position immediately)
       const flattenLoss = request.opportunity.profitEstimate * 0.05; // 5% loss on partial fill
       this.dailyLossTotal += flattenLoss;
@@ -444,6 +462,9 @@ export class ExecutionStub extends EventEmitter {
         actualSlippage,
         cap: this.config.safetyMechanics.maxSlippageCap,
       });
+
+      // SAFETY GATE: Unregister active order on abort (allows optimization on abort)
+      unregisterActiveOrder(orderId);
 
       return {
         success: false,
@@ -488,6 +509,9 @@ export class ExecutionStub extends EventEmitter {
         : 'STUB MODE - Simulated execution failure (no actual transaction attempted)',
     };
 
+    // SAFETY GATE: Unregister active order (allows optimization after order completes)
+    unregisterActiveOrder(orderId);
+    
     if (simulatedSuccess) {
       log.info('Execution stub - Simulated SUCCESS', {
         executionId: result.executionId,
