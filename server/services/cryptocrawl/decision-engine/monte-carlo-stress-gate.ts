@@ -12,6 +12,7 @@
 
 import { createLogger } from '../../../logger';
 import type { FusedSignal } from './signal-fusion-gate';
+import { isAdaptiveLogicDisabled, checkAdaptiveLogicViolation } from '../execution/compliance-enforcer';
 
 const log = createLogger('MonteCarloStressGate');
 
@@ -293,10 +294,10 @@ export class MonteCarloStressGate {
       
       results.push(profit);
       
-      // Early abort check
+      // Early abort check (STATIC - deterministic threshold check, not adaptive logic)
       if (this.config.enableEarlyAbort && 
           (i + 1) % this.config.earlyAbortCheckInterval === 0) {
-        // Update peak
+        // Update peak (STATIC calculation - no adaptive adjustments)
         if (profit > peak) {
           peak = profit;
         }

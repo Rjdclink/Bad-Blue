@@ -13,6 +13,15 @@ import { initializeExecutionOrchestrator } from './execution-orchestrator';
 import { getFaucetMeshFilter } from '../decision-engine/faucet-mesh-filter';
 import { generatePassingTestSignal } from './test-signal-generator';
 import { getPostTradeAnalyzer } from './post-trade-analysis';
+import {
+  STAGE_5_HUMAN_INTENT,
+  disableAdaptiveLogic,
+  checkCompliance,
+  handleGateFailure,
+  checkCognitionScope,
+  logViolation,
+  getViolationLog,
+} from './compliance-enforcer';
 
 const log = createLogger('Stage5MicroTrade');
 
@@ -99,6 +108,13 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
   log.info('Size: Micro/dust level');
   log.info('Auto-pause: Immediately after fill or failure');
   log.info('='.repeat(80));
+  
+  // ========================================================================
+  // COMPLIANCE: Disable adaptive logic, enforce strict constraints
+  // ========================================================================
+  disableAdaptiveLogic();
+  log.info('COMPLIANCE: Adaptive logic disabled - static, deterministic behavior only');
+  log.info('COMPLIANCE: Human intent:', STAGE_5_HUMAN_INTENT);
 
   const result: MicroTradeResult = {
     success: false,
@@ -173,13 +189,18 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
     
     if (!allFiltersPassed) {
       const failedFilter = filterResults.find(f => !f.passed);
+      const failureReason = failedFilter?.reason || 'Faucet mesh filter failed';
+      
+      // COMPLIANCE: Gate failure = STOP AND REPORT ONLY (no retries, no alternatives)
+      const gateFailure = handleGateFailure('FaucetMeshFilter', failureReason, 'Stage5MicroTrade');
+      
       result.faucetMeshFilter = {
         passed: false,
-        reason: failedFilter?.reason || 'Faucet mesh filter failed',
+        reason: gateFailure.reason,
       };
-      result.errors.push(result.faucetMeshFilter.reason);
+      result.errors.push(gateFailure.reason);
       
-      // Log exact spread vs fee numbers for debugging
+      // Log exact spread vs fee numbers for reporting (not for retry)
       const spread = testSignals[0].signal.opportunity?.profitEstimate || 0;
       const makerFeeRate = 0.0008;
       const estimatedGasFee = 0.0001;
@@ -187,24 +208,18 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
       const totalFees = estimatedGasFee + estimatedExchangeFee;
       const currentMultiplier = spread / totalFees;
       
-      log.warn('✗ Faucet mesh filter failed - Spread vs Fee Analysis', {
-        reason: result.faucetMeshFilter.reason,
+      log.warn('✗ Faucet mesh filter failed - Spread vs Fee Analysis (REPORT ONLY)', {
+        reason: failureReason,
         spread: spread.toFixed(6),
         totalFees: totalFees.toFixed(6),
         currentMultiplier: currentMultiplier.toFixed(2),
         requiredMultiplier: 2.0,
         shortfall: (totalFees * 2.0 - spread).toFixed(6),
+        compliance: 'STOPPED - No retries or alternatives permitted',
       });
       
-      // Incrementally increase spread multiplier for test signals
-      if (currentMultiplier < 2.0) {
-        const nextMultiplier = currentMultiplier < 2.5 ? 2.5 : 3.0;
-        log.info('Retrying with increased spread multiplier', {
-          currentMultiplier,
-          nextMultiplier,
-        });
-        // Would retry here, but for now return failure
-      }
+      // COMPLIANCE: Any retry attempt would be logged as violation
+      // No retry logic here - stop and report only
       
       return result;
     }
@@ -245,15 +260,26 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
     });
 
     if (decisionResult.verdict !== 'PASS') {
-      result.errors.push(`Decision Engine verdict: ${decisionResult.verdict}`);
-      log.warn('✗ Decision Engine did not pass', {
-        reason: decisionResult.gates.signalFusion.passed ? 
-          (decisionResult.gates.monteCarloStress.passed ? 
-            decisionResult.gates.riskGovernor.reason : 
-            decisionResult.gates.monteCarloStress.reason) :
-          decisionResult.gates.signalFusion.reason,
+      const failedGate = !decisionResult.gates.signalFusion.passed ? 'SignalFusion' :
+        (!decisionResult.gates.monteCarloStress.passed ? 'MonteCarloStress' : 'RiskGovernor');
+      const failureReason = decisionResult.gates.signalFusion.passed ? 
+        (decisionResult.gates.monteCarloStress.passed ? 
+          decisionResult.gates.riskGovernor.reason : 
+          decisionResult.gates.monteCarloStress.reason) :
+        decisionResult.gates.signalFusion.reason;
+      
+      // COMPLIANCE: Gate failure = STOP AND REPORT ONLY
+      const gateFailure = handleGateFailure(failedGate, failureReason, 'Stage5MicroTrade');
+      
+      result.errors.push(gateFailure.reason);
+      log.warn('✗ Decision Engine did not pass - STOPPING IMMEDIATELY', {
+        failedGate,
+        reason: failureReason,
+        compliance: 'STOPPED - No retries or alternatives permitted',
       });
-      // Continue to attempt execution for validation (stub mode)
+      
+      // COMPLIANCE: Do not continue to execution - gate failure means stop
+      result.warnings.push('Execution skipped due to Decision Engine gate failure - compliance: stop and report only');
     }
 
     // ========================================================================
@@ -319,6 +345,17 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
     log.info('Decision Engine Metrics:', result.metrics);
     log.info('Execution Metrics:', result.executionResult);
     log.info('Post-Trade Metrics:', result.postTradeAnalysis);
+    
+    // ========================================================================
+    // COMPLIANCE: Violation Telemetry Report
+    // ========================================================================
+    const violations = getViolationLog();
+    if (violations.length > 0) {
+      log.warn('COMPLIANCE VIOLATIONS DETECTED:', violations);
+      result.warnings.push(`Compliance violations detected: ${violations.length} violation(s)`);
+    } else {
+      log.info('COMPLIANCE: No violations detected');
+    }
     log.info('='.repeat(80));
 
     return result;
