@@ -21,6 +21,7 @@ public/index.html
 
 # Application logs
 logs/
+!logs/.gitkeep
 *.log
 
 # Backup files

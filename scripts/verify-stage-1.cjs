@@ -16,8 +16,12 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-const dirs = ['logs', 'server/db', 'server/routes', 'server/types', 'scripts'];
+const dirs = ['logs', 'server/routes', 'server/types', 'scripts'];
 const missingDirs = dirs.filter(dir => !fs.existsSync(dir));
+
+if (!fs.existsSync('server/db') && !fs.existsSync('server/db.ts')) {
+  missingDirs.push('server/db (or server/db.ts)');
+}
 
 if (missingDirs.length > 0) {
   console.error('❌ Missing directories:', missingDirs.join(', '));
