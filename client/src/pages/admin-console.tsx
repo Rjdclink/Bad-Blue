@@ -530,7 +530,7 @@ export default function AdminConsole() {
 
   return (
     <>
-      <SEOHead title="PANTHEON Administrator" description="Administrative control panel" noindex={true} />
+      <SEOHead title="PANTHEON Administrator" description="Administrative control panel" noIndex={true} />
       
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/10 to-gray-900">
         {/* Header */}
