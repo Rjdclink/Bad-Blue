@@ -58,63 +58,92 @@ export function generateDeterministicTestSignal(): DeterministicTestSignalResult
 
   // Start with base amount
   let baseAmount = STAGE_5_FIXED_CONFIG.baseAmount;
+  let profitPercent = 0.01; // Start with 1% profit margin
   
-  // Calculate minimum base amount to eliminate dust (gas <= 15% of grossEdge)
-  // We need to iterate to find baseAmount that satisfies: gas <= 15% of grossEdge
-  // For initial estimate, assume 1% profit margin
-  const initialMinBase = calculateMinimumBaseAmount(baseAmount * 0.01);
-  if (baseAmount < initialMinBase) {
-    baseAmount = initialMinBase;
-    log.info('Increased baseAmount to eliminate dust', {
-      original: STAGE_5_FIXED_CONFIG.baseAmount,
-      adjusted: baseAmount,
-      reason: 'Gas must be <= 15% of grossEdge',
-    });
-  }
-
-  // Calculate all-in cost (blended fees both legs, gas both legs, p95 slippage)
-  // We need grossEdge first, but grossEdge depends on baseAmount
-  // Iterative approach: start with estimated grossEdge, calculate allInCost, then verify threshold
+  // ENFORCE: grossEdge >= allInCost * 1.30 (30% buffer)
+  // ENFORCE: fees+slippage <= 15% of grossEdge (no dust, ever)
+  // Iterate to find baseAmount and profitPercent that satisfy both constraints
   
-  // Initial estimate: assume profit margin of 1% (will be adjusted)
-  let grossEdge = baseAmount * 0.01;
-  let allInCost = 0;
+  let grossEdge = baseAmount * profitPercent;
+  let costAnalysis = calculateAllInCost(baseAmount, grossEdge);
+  let allInCost = costAnalysis.allInCost;
   let iterations = 0;
-  const maxIterations = 10;
+  const maxIterations = 100;
   
   while (iterations < maxIterations) {
-    const costCalc = calculateAllInCost(baseAmount, grossEdge);
-    allInCost = costCalc.allInCost;
+    // Calculate all-in cost
+    costAnalysis = calculateAllInCost(baseAmount, grossEdge);
+    allInCost = costAnalysis.allInCost;
     
-    // Hard acceptance threshold: grossEdge >= allInCost * multiplier
-    // For test signals, use TEST_SIGNAL_SPREAD_MULTIPLIER (2.0), otherwise use ACCEPTANCE_THRESHOLD_MULTIPLIER (1.30)
-    const spreadMultiplier = FEE_CONSTANTS.TEST_SIGNAL_SPREAD_MULTIPLIER; // 2.0 for test signals
-    const minRequiredGrossEdge = allInCost * spreadMultiplier;
+    // Constraint 1: grossEdge >= allInCost * ACCEPTANCE_THRESHOLD_MULTIPLIER (1.30)
+    const minRequiredGrossEdge = allInCost * FEE_CONSTANTS.ACCEPTANCE_THRESHOLD_MULTIPLIER;
     
-    if (grossEdge >= minRequiredGrossEdge) {
-      // Also verify gas <= 15% of grossEdge
-      const gasToGrossRatio = FEE_CONSTANTS.GAS_FEE_BOTH_LEGS / grossEdge;
-      if (gasToGrossRatio <= FEE_CONSTANTS.MAX_GAS_TO_GROSS_EDGE_RATIO) {
-        break; // Found valid combination
-      } else {
-        // Increase baseAmount to reduce gas ratio
-        baseAmount *= 1.5;
-        grossEdge = baseAmount * 0.01; // Re-estimate
-      }
-    } else {
-      // Increase grossEdge to meet threshold (use test signal multiplier)
+    // Constraint 2: fees+slippage <= 15% of grossEdge
+    const feesAndSlippage = costAnalysis.exchangeFees + costAnalysis.slippageCost;
+    const maxFeesAndSlippage = grossEdge * FEE_CONSTANTS.MAX_GAS_TO_GROSS_EDGE_RATIO;
+    
+    // Check if both constraints are satisfied
+    const constraint1Satisfied = grossEdge >= minRequiredGrossEdge;
+    const constraint2Satisfied = feesAndSlippage <= maxFeesAndSlippage;
+    
+    if (constraint1Satisfied && constraint2Satisfied) {
+      break; // Both constraints satisfied
+    }
+    
+    // Adjust parameters to satisfy constraints
+    if (!constraint1Satisfied) {
+      // Increase grossEdge to meet threshold
       grossEdge = minRequiredGrossEdge * 1.1; // Add 10% buffer
+      profitPercent = grossEdge / baseAmount;
+    }
+    
+    if (!constraint2Satisfied) {
+      // Increase baseAmount to reduce fees+slippage ratio
+      baseAmount *= 1.1; // Increase by 10%
+      grossEdge = baseAmount * profitPercent; // Recalculate grossEdge
     }
     
     iterations++;
   }
   
   if (iterations >= maxIterations) {
-    // Fallback: use conservative calculation
-    const costCalc = calculateAllInCost(baseAmount, baseAmount * 0.02);
-    allInCost = costCalc.allInCost;
-    // Use test signal multiplier (2.0) for test signals
-    grossEdge = allInCost * FEE_CONSTANTS.TEST_SIGNAL_SPREAD_MULTIPLIER * 1.1; // 10% extra buffer
+    return {
+      signal: null,
+      passed: false,
+      reason: `Failed to satisfy constraints after ${maxIterations} iterations. Cannot eliminate dust or meet acceptance threshold.`,
+      requiresHumanPermission: true,
+      permissionRequest: {
+        parameter: 'baseAmount',
+        currentValue: STAGE_5_FIXED_CONFIG.baseAmount,
+        proposedValue: baseAmount * 1.5,
+        reason: 'Increase baseAmount to satisfy constraints',
+      },
+    };
+  }
+  
+  // Final validation: ensure all constraints are met
+  const finalCostAnalysis = calculateAllInCost(baseAmount, grossEdge);
+  const finalAllInCost = finalCostAnalysis.allInCost;
+  const finalMinGrossEdge = finalAllInCost * FEE_CONSTANTS.ACCEPTANCE_THRESHOLD_MULTIPLIER;
+  const finalFeesAndSlippage = finalCostAnalysis.exchangeFees + finalCostAnalysis.slippageCost;
+  const finalMaxFeesAndSlippage = grossEdge * FEE_CONSTANTS.MAX_GAS_TO_GROSS_EDGE_RATIO;
+  
+  if (grossEdge < finalMinGrossEdge) {
+    return {
+      signal: null,
+      passed: false,
+      reason: `Final validation failed: grossEdge ${grossEdge.toFixed(6)} < required ${finalMinGrossEdge.toFixed(6)} (allInCost * ${FEE_CONSTANTS.ACCEPTANCE_THRESHOLD_MULTIPLIER})`,
+      requiresHumanPermission: false,
+    };
+  }
+  
+  if (finalFeesAndSlippage > finalMaxFeesAndSlippage) {
+    return {
+      signal: null,
+      passed: false,
+      reason: `Final validation failed: fees+slippage ${finalFeesAndSlippage.toFixed(6)} > max ${finalMaxFeesAndSlippage.toFixed(6)} (15% of grossEdge)`,
+      requiresHumanPermission: false,
+    };
   }
 
   // Profit estimate = grossEdge

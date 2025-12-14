@@ -14,6 +14,8 @@
 import { EventEmitter } from 'events';
 import { createLogger } from '../../../logger';
 import type { DecisionResult } from '../decision-engine';
+import { getCanonicalControlManager } from './canonical-control';
+import { isOrderTypeAllowed, isExchangeAllowed, getProfitKernelLock } from './profit-kernel-lock';
 
 const log = createLogger('ExecutionStub');
 
@@ -98,6 +100,37 @@ export class ExecutionStub extends EventEmitter {
   private executionCount: number = 0;
   private dailyLossTotal: number = 0;
   private lastResetDate: string = new Date().toISOString().split('T')[0];
+  
+  /**
+   * Check daily loss and trigger GLOBAL_FULL_AGENT_PAUSE if exceeded
+   */
+  private checkDailyLoss(): { exceeded: boolean; reason?: string } {
+    // Reset daily loss if new day
+    const today = new Date().toISOString().split('T')[0];
+    if (today !== this.lastResetDate) {
+      this.dailyLossTotal = 0;
+      this.lastResetDate = today;
+    }
+    
+    // Check if daily loss exceeds cap
+    if (this.dailyLossTotal >= this.config.safetyMechanics.hardCapLossPerDay) {
+      // Trigger GLOBAL_FULL_AGENT_PAUSE via canonical control
+      const canonicalControl = getCanonicalControlManager();
+      canonicalControl.processCommand('GLOBAL_FULL_AGENT_PAUSE', 'system');
+      
+      log.error('Daily max loss exceeded - GLOBAL_FULL_AGENT_PAUSE triggered', {
+        dailyLossTotal: this.dailyLossTotal,
+        cap: this.config.safetyMechanics.hardCapLossPerDay,
+      });
+      
+      return {
+        exceeded: true,
+        reason: `Daily loss ${this.dailyLossTotal} exceeds cap ${this.config.safetyMechanics.hardCapLossPerDay}`,
+      };
+    }
+    
+    return { exceeded: false };
+  }
 
   constructor(config?: Partial<ExecutionStubConfig>) {
     super();
@@ -132,6 +165,46 @@ export class ExecutionStub extends EventEmitter {
    * Execute a decision result (STUB - does not actually execute)
    */
   async execute(request: ExecutionRequest): Promise<ExecutionStubResult> {
+    // Check daily loss before execution
+    const dailyLossCheck = this.checkDailyLoss();
+    if (dailyLossCheck.exceeded) {
+      return {
+        success: false,
+        simulated: true,
+        executionId: `stub-${Date.now()}`,
+        timestamp: new Date(),
+        latency: 0,
+        error: `Execution blocked: ${dailyLossCheck.reason}`,
+      };
+    }
+    
+    // Validate profit kernel constraints
+    if (request.opportunity?.chain) {
+      // Extract exchange from chain/opportunity metadata
+      const exchange = request.metadata?.exchange as string || 'uniswap-v3';
+      if (!isExchangeAllowed(exchange)) {
+        return {
+          success: false,
+          simulated: true,
+          executionId: `stub-${Date.now()}`,
+          timestamp: new Date(),
+          latency: 0,
+          error: `Exchange ${exchange} not allowed. Only ${getProfitKernelLock().getConfig().exchange} allowed.`,
+        };
+      }
+    }
+    
+    // Validate order type (must be maker/post-only)
+    if (!isOrderTypeAllowed('maker')) {
+      return {
+        success: false,
+        simulated: true,
+        executionId: `stub-${Date.now()}`,
+        timestamp: new Date(),
+        latency: 0,
+        error: 'Order type not allowed. Only maker/post-only orders allowed.',
+      };
+    }
     if (!this.initialized) {
       throw new Error('Execution Stub not initialized. Call initialize() first.');
     }
@@ -388,8 +461,15 @@ export class ExecutionStub extends EventEmitter {
       : undefined;
 
     // Track losses for daily cap
-    if (!simulatedSuccess && simulatedProfit !== undefined && simulatedProfit < 0) {
+    if (simulatedProfit !== undefined && simulatedProfit < 0) {
       this.dailyLossTotal += Math.abs(simulatedProfit);
+      
+      // Check daily loss after update (trigger pause if exceeded)
+      const dailyLossCheck = this.checkDailyLoss();
+      if (dailyLossCheck.exceeded) {
+        // Daily loss cap exceeded - pause already triggered
+        result.warning = `Daily loss cap exceeded. GLOBAL_FULL_AGENT_PAUSE triggered. ${dailyLossCheck.reason}`;
+      }
     }
 
     const latency = Date.now() - startTime;
