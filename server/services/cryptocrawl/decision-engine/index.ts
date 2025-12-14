@@ -27,7 +27,11 @@ export interface DecisionEngineConfig {
     agreementThreshold: number;       // Minimum confidence for agreement (0-1, default: 0.6)
     enableWeightedFusion: boolean;    // Use weighted fusion vs simple majority
   };
-  monteCarlo: StressTestConfig;
+  monteCarlo: StressTestConfig & {
+    enableEarlyAbort?: boolean;
+    earlyAbortDrawdownThreshold?: number;
+    earlyAbortCheckInterval?: number;
+  };
   riskGovernor: RiskLimits;
   killSwitch: {
     enabled: boolean;
@@ -115,13 +119,16 @@ const DEFAULT_CONFIG: DecisionEngineConfig = {
     enableWeightedFusion: true,
   },
   monteCarlo: {
-    simulations: 10000,
+    simulations: 3000,              // Reduced for live path (1k-5k range)
     confidenceLevel: 0.95,
     stressTestVolatility: true,
     stressTestFees: true,
     stressTestSlippage: true,
     stressTestLatency: true,
     minPassThreshold: 0.7,
+    enableEarlyAbort: true,          // Enable early abort for live path
+    earlyAbortDrawdownThreshold: 0.3, // Abort if drawdown exceeds 30%
+    earlyAbortCheckInterval: 100,    // Check every 100 simulations
   },
   riskGovernor: {
     maxPositionSize: 10000,           // USD

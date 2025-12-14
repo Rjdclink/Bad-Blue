@@ -20,13 +20,17 @@ const log = createLogger('MonteCarloStressGate');
 // ============================================================================
 
 export interface StressTestConfig {
-  simulations: number;              // Number of Monte Carlo iterations
+  simulations: number;              // Number of Monte Carlo iterations (1k-5k for live path)
   confidenceLevel: number;          // Confidence level for VaR (0.95 = 95%)
   stressTestVolatility: boolean;
   stressTestFees: boolean;
   stressTestSlippage: boolean;
   stressTestLatency: boolean;
   minPassThreshold: number;         // Minimum confidence to pass (0-1)
+  // NEW: Early abort for live path
+  enableEarlyAbort: boolean;        // Enable early abort if drawdown exceeds threshold
+  earlyAbortDrawdownThreshold: number; // Abort if drawdown exceeds this (default: 0.3 = 30%)
+  earlyAbortCheckInterval: number;   // Check for abort every N simulations (default: 100)
 }
 
 export interface StressTestResult {
@@ -142,12 +146,35 @@ export class MonteCarloStressGate {
       simulations: this.config.simulations,
     });
 
-    // Run Monte Carlo simulation
-    const simulationResults = this.runMonteCarloSimulation(
+    // Run Monte Carlo simulation (with early abort support)
+    const simulationOutput = this.runMonteCarloSimulation(
       opportunity,
       marketData,
       this.config.simulations
     );
+    const simulationResults = simulationOutput.results;
+    
+    // If aborted early, treat as failure
+    if (simulationOutput.aborted) {
+      return {
+        passed: false,
+        confidence: 0,
+        reason: simulationOutput.abortReason || 'Monte Carlo simulation aborted early',
+        valueAtRisk95: 0,
+        valueAtRisk99: 0,
+        conditionalVaR: 0,
+        maxDrawdown: 1.0, // Maximum drawdown (100%)
+        worstCasePath: [],
+        volatilityStress: { tested: false, worstCase: 0, percentile95: 0, percentile99: 0 },
+        feesStress: { tested: false, worstCase: 0, impact: 0 },
+        slippageStress: { tested: false, worstCase: 0, impact: 0 },
+        latencyStress: { tested: false, worstCase: 0, impact: 0 },
+        passFailThreshold: this.config.minPassThreshold,
+        killHoldTriggers: { kill: true, hold: false, reason: simulationOutput.abortReason },
+        confidenceInterval: [0, 0],
+        percentiles: { p5: 0, p25: 0, p50: 0, p75: 0, p95: 0 },
+      };
+    }
 
     // Calculate risk metrics
     const valueAtRisk95 = this.calculateVaR(simulationResults, 0.95);
@@ -233,17 +260,20 @@ export class MonteCarloStressGate {
   }
 
   /**
-   * Run Monte Carlo simulation
+   * Run Monte Carlo simulation with early abort support
    */
   private runMonteCarloSimulation(
     opportunity: FusedSignal['opportunity']!,
     marketData: FusedSignal['marketData'] | undefined,
     simulations: number
-  ): number[] {
+  ): { results: number[]; aborted: boolean; abortReason?: string } {
     const results: number[] = [];
     const baseProfit = opportunity.profitEstimate;
     const volatility = marketData?.volatility || 0.6;
     const baseConfidence = opportunity.confidence;
+    let peak = baseProfit;
+    let aborted = false;
+    let abortReason: string | undefined;
 
     for (let i = 0; i < simulations; i++) {
       // Simulate profit with random walk
@@ -262,9 +292,34 @@ export class MonteCarloStressGate {
       profit += marketShock;
       
       results.push(profit);
+      
+      // Early abort check
+      if (this.config.enableEarlyAbort && 
+          (i + 1) % this.config.earlyAbortCheckInterval === 0) {
+        // Update peak
+        if (profit > peak) {
+          peak = profit;
+        }
+        
+        // Calculate current drawdown
+        const currentDrawdown = (peak - profit) / peak;
+        
+        // Abort if drawdown exceeds threshold
+        if (currentDrawdown > this.config.earlyAbortDrawdownThreshold) {
+          aborted = true;
+          abortReason = `Early abort: drawdown ${(currentDrawdown * 100).toFixed(1)}% exceeds threshold ${(this.config.earlyAbortDrawdownThreshold * 100).toFixed(1)}% at simulation ${i + 1}`;
+          log.warn('Monte Carlo simulation aborted early', {
+            simulation: i + 1,
+            totalSimulations: simulations,
+            currentDrawdown: currentDrawdown,
+            threshold: this.config.earlyAbortDrawdownThreshold,
+          });
+          break;
+        }
+      }
     }
 
-    return results;
+    return { results, aborted, abortReason };
   }
 
   /**
