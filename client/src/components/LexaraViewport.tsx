@@ -909,7 +909,7 @@ export default function LexaraViewport() {
             {mediaState.isInitialized && mediaState.hasMic && (
               <div className={cn(
                 "p-1.5 rounded-full",
-                voiceMode.isListening ? "text-emerald-400 bg-emerald-500/10" : "text-slate-500"
+                voiceMode.isListening ? "text-amber-200 bg-amber-500/10" : "text-slate-500"
               )}>
                 {voiceMode.isListening ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
               </div>
@@ -958,7 +958,7 @@ export default function LexaraViewport() {
               <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-full max-w-md px-4">
                 <Button
                   onClick={handleActivateVoice}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white py-6 rounded-xl font-medium shadow-lg hover:shadow-xl transition-all text-base"
+                  className="w-full bg-gradient-to-r from-amber-600 to-cyan-600 hover:from-amber-500 hover:to-cyan-500 text-white py-6 rounded-xl font-medium shadow-lg hover:shadow-xl transition-all text-base"
                 >
                   <Mic className="h-5 w-5 mr-2" />
                   Activate Live Legal Consultation
