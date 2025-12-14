@@ -1,40 +1,20 @@
 import express from 'express';
 import {WebSocketServer} from 'ws';
-import {pipeline} from '../integration/master-pipeline';
-import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { autonomousFaucet } from '../faucet/autonomous-faucet';
 import { balanceMonitor } from '../bridge/balance-monitor';
-import { WalletManager } from '../core/wallet';
 import { scheduledMonteCarloTraining } from '../training/scheduled-monte-carlo-training';
 
 const router = express.Router();
 const wss = new WebSocketServer({noServer: true});
 
-// Wallet manager instance for real wallet operations
-let walletManager: WalletManager | null = null;
-
-// Initialize zero-capital engine on module load
-zeroCapitalEngine.initialize().catch(err => {
-  console.error('[CryptoCrawl] Failed to initialize zero-capital engine:', err);
-});
-
-// Initialize balance monitor and wallet manager on module load
-(async () => {
-  try {
-    // Start balance monitor for real-time balance tracking
-    await balanceMonitor.start();
-    console.log('[CryptoCrawl] ✅ Balance monitor started - wallet balances connected');
-    
-    // Initialize wallet manager
-    walletManager = new WalletManager();
-    await walletManager.initialize();
-    console.log('[CryptoCrawl] ✅ Wallet manager initialized - cryptocrawler connected to wallet');
-  } catch (err) {
-    console.error('[CryptoCrawl] Failed to initialize balance monitor or wallet:', err);
-    // Set walletManager to null if initialization fails (addresses PR comment)
-    walletManager = null;
-  }
-})();
+// ============================================================================
+// STAGE 1 SAFETY: SIGNAL-ONLY MODE (NO FUNDS MOVEMENT, NO EXECUTION)
+// - Default ON unless explicitly disabled.
+// - Hard stop for signing/broadcasting/withdrawals/autostart background loops.
+// ============================================================================
+const SIGNAL_ONLY =
+  (process.env.CRYPTOCRAWL_SIGNAL_ONLY ?? 'true').toLowerCase() !== 'false';
+const DAILY_CAP_USD = 200;
 
 // ============================================================================
 // DIVINE RECURSIVE OPTIMIZATION SYSTEM - FAUCET ALWAYS ON
@@ -56,9 +36,10 @@ const DIVINE_OPTIMIZER_CONFIG = {
   // Health and operational thresholds
   HEALTH_THRESHOLD: 0.9, // 90% health for "110% operational"
   
-  // CRITICAL: Faucet ALWAYS ON settings
-  FAUCET_ALWAYS_ON: true, // Master switch - faucet should ALWAYS be on
-  AUTO_RESTART_ENABLED: true, // Auto-restart if faucet stops
+  // CRITICAL: Stage 1 safety
+  // In signal-only mode, we must not auto-run background execution loops.
+  FAUCET_ALWAYS_ON: !SIGNAL_ONLY,
+  AUTO_RESTART_ENABLED: !SIGNAL_ONLY,
   AUTO_RESTART_DELAY_MS: 3000, // Wait 3 seconds before restart
   MAX_RESTART_ATTEMPTS: 10, // Max restart attempts before cooldown
   RESTART_COOLDOWN_MS: 60000, // 1 minute cooldown after max attempts
@@ -268,6 +249,9 @@ function inferTradingIntent(): { intent: TradingIntent; confidence: number; reas
  * This is the core function that keeps the faucet running
  */
 async function ensureFaucetAlwaysOn(): Promise<boolean> {
+  // STAGE 1 HARD LAW: no autonomous execution in signal-only mode
+  if (SIGNAL_ONLY) return false;
+
   // Check if manually disabled by user
   if (divineOptimizerState.manuallyDisabled) {
     console.log('[DivineOptimizer] Faucet manually disabled by user - respecting override');
@@ -369,6 +353,10 @@ async function performRecursiveOptimization(): Promise<void> {
  */
 function startDivineOptimizer(): void {
   if (divineOptimizerState.isRunning) return;
+  if (SIGNAL_ONLY) {
+    console.log('[DivineOptimizer] Signal-only mode - optimizer disabled');
+    return;
+  }
   
   divineOptimizerState.isRunning = true;
   divineOptimizerState.manuallyDisabled = false; // Reset manual override on start
@@ -387,7 +375,7 @@ function startDivineOptimizer(): void {
     console.error('[DivineOptimizer] Initial optimization failed:', err);
   });
   
-  // Schedule periodic optimization checks
+  // Schedule periodic optimization checks (disabled in signal-only mode)
   setInterval(() => {
     performRecursiveOptimization().catch(err => {
       console.error('[DivineOptimizer] Periodic optimization failed:', err);
@@ -415,33 +403,8 @@ function manuallyEnableFaucet(): void {
   });
 }
 
-// AUTO-START: Initialize autonomous faucet on module load (Divine Auto-Activation)
-// This ensures arbitrage begins automatically when server starts with valid RPC connections
-setTimeout(() => {
-  console.log('[CryptoCrawl] 🚀 Divine Auto-Start: Initiating autonomous faucet...');
-  if (!autonomousFaucet.isActive()) {
-    autonomousFaucet.runAutonomousLoop().catch(err => {
-      console.error('[CryptoCrawl] Failed to auto-start autonomous faucet:', err);
-    });
-    console.log('[CryptoCrawl] ✅ Autonomous faucet started - Zero-capital arbitrage ACTIVE');
-  }
-}, 5000); // 5 second delay to allow RPC connections to initialize
-
-// AUTO-START: Initialize scheduled Monte Carlo training for profitability optimization
-// Runs every 6 hours with Divine creativity optimization
-setTimeout(() => {
-  console.log('[CryptoCrawl] 🎓 Starting scheduled Monte Carlo training system...');
-  scheduledMonteCarloTraining.start();
-  console.log('[CryptoCrawl] ✅ Monte Carlo training scheduled - profitability optimization ACTIVE');
-}, 10000); // 10 second delay to allow other systems to initialize first
-
-// AUTO-START: Initialize Divine Recursive Optimizer for 110% faucet operation
-// Ensures faucet is always operational at opportune times
-setTimeout(() => {
-  console.log('[CryptoCrawl] 🌟 Starting Divine Recursive Optimization System...');
-  startDivineOptimizer();
-  console.log('[CryptoCrawl] ✅ Divine optimizer active - 110% operational mode ENGAGED');
-}, 15000); // 15 second delay to allow faucet to initialize first
+// STAGE 1 HARD LAW:
+// No auto-start of any autonomous execution loops or long-lived background schedulers.
 
 // In-memory stats (production: use Redis)
 let stats = {
@@ -464,11 +427,11 @@ let stats = {
  * The autonomous-faucet.ts maintains the actual trading state independently.
  */
 let faucetState = {
-  enabled: true,  // FAUCET IS ON BY DEFAULT - Divine determination
+  enabled: false, // STAGE 1: default OFF (signal-only safe default)
   autoOptimize: true,
   profitableTimesOnly: true,
   antiDetectionEnabled: true,
-  dailyTarget: 35000,
+  dailyTarget: DAILY_CAP_USD,
   sessionStartTime: Date.now(),
 };
 
@@ -492,6 +455,10 @@ router.get('/faucet/status', async (req, res) => {
       marketConditions = null;
     }
     
+    const rawProfitDay = faucetData?.profitThisDay || 0;
+    const profitThisDayCapped = Math.min(rawProfitDay, DAILY_CAP_USD);
+    const hypotheticalExcess = Math.max(0, rawProfitDay - DAILY_CAP_USD);
+
     res.json({
       active,
       faucetId,
@@ -499,9 +466,13 @@ router.get('/faucet/status', async (req, res) => {
       mode: faucetData?.mode ?? (active ? 'opening' : 'closed'),
       profitThisSession: faucetData?.profitThisSession || 0,
       profitThisHour: faucetData?.profitThisHour || 0,
-      profitThisDay: faucetData?.profitThisDay || 0,
+      // STAGE 1: cap displayed realized profit at $200/day; excess is hypothetical only.
+      profitThisDay: profitThisDayCapped,
+      hypotheticalExcessProfitThisDay: hypotheticalExcess,
       dailyTarget: faucetState.dailyTarget,
-      dailyTargetProgress: faucetData?.dailyTargetProgress || 0,
+      dailyTargetProgress: faucetState.dailyTarget > 0
+        ? (profitThisDayCapped / faucetState.dailyTarget) * 100
+        : 0,
       tradesThisHour: faucetData?.tradesThisHour || 0,
       tradesThisDay: faucetData?.tradesThisDay || 0,
       stealthLevel: faucetData?.stealthLevel || 0,
@@ -515,6 +486,8 @@ router.get('/faucet/status', async (req, res) => {
       autoOptimize: faucetState.autoOptimize,
       profitableTimesOnly: faucetState.profitableTimesOnly,
       antiDetectionEnabled: faucetState.antiDetectionEnabled,
+      signalOnly: SIGNAL_ONLY,
+      dailyCapUsd: DAILY_CAP_USD,
       marketConditions: marketConditions ? {
         volatility: marketConditions.volatility,
         gasEfficiency: marketConditions.gasEfficiency,
@@ -585,9 +558,9 @@ router.post('/faucet/toggle', async (req, res) => {
   
   // Control the autonomous faucet AND the Divine Optimizer manual override
   if (enabled) {
-    // Remove manual override and start faucet
+    // Remove manual override and (optionally) start faucet
     manuallyEnableFaucet();
-    if (!autonomousFaucet.isActive()) {
+    if (!SIGNAL_ONLY && !autonomousFaucet.isActive()) {
       autonomousFaucet.runAutonomousLoop().catch(err => {
         console.error('[Faucet] Failed to start autonomous loop:', err);
       });
@@ -602,8 +575,12 @@ router.post('/faucet/toggle', async (req, res) => {
     success: true,
     enabled: faucetState.enabled,
     manuallyDisabled: divineOptimizerState.manuallyDisabled,
+    signalOnly: SIGNAL_ONLY,
+    dailyCapUsd: DAILY_CAP_USD,
     message: enabled 
-      ? '🟢 Autonomous profit faucet ACTIVATED - Divine creativity engaged (ALWAYS ON mode)' 
+      ? (SIGNAL_ONLY
+          ? '🟡 Signal-only mode: faucet marked enabled, but no execution will run'
+          : '🟢 Autonomous faucet activated')
       : '🔴 Faucet MANUALLY deactivated - Will remain OFF until re-enabled',
   });
 });
@@ -622,9 +599,8 @@ router.post('/faucet/settings', async (req, res) => {
   if (typeof antiDetectionEnabled === 'boolean') {
     faucetState.antiDetectionEnabled = antiDetectionEnabled;
   }
-  if (typeof dailyTarget === 'number' && dailyTarget > 0) {
-    faucetState.dailyTarget = dailyTarget;
-  }
+  // STAGE 1: daily cap is locked at $200 (non-configurable).
+  faucetState.dailyTarget = DAILY_CAP_USD;
   
   console.log('[Faucet] ⚡ Divine optimization settings updated:', faucetState);
   
@@ -636,7 +612,9 @@ router.post('/faucet/settings', async (req, res) => {
       antiDetectionEnabled: faucetState.antiDetectionEnabled,
       dailyTarget: faucetState.dailyTarget,
     },
-    message: '✨ Divine perfection synthesis complete - Settings optimized',
+    message: SIGNAL_ONLY
+      ? 'Signal-only mode: settings updated (daily cap locked at $200)'
+      : 'Settings updated',
   });
 });
 
@@ -790,6 +768,12 @@ router.get('/training/status', async (req, res) => {
 // POST /api/crypto/training/trigger - Manually trigger a training session
 router.post('/training/trigger', async (req, res) => {
   try {
+    if (SIGNAL_ONLY) {
+      return res.status(403).json({
+        success: false,
+        error: 'Signal-only mode: training triggers disabled during Stage 1 truth check',
+      });
+    }
     console.log('[MonteCarloTraining] 🎯 Manual training trigger requested');
     
     // Check if training is already running
@@ -865,35 +849,36 @@ router.get('/training/optimized-params', async (req, res) => {
 
 // GET /api/crypto/stats - Real-time statistics from Zero-Capital Engine
 router.get('/stats', async (req, res) => {
-  // Get stats from the zero-capital engine
-  const engineStats = zeroCapitalEngine.getStats();
-  
+  // STAGE 1 truth check: signal-only; do not claim real profits.
+  // Keep response shape stable for dashboards, but return conservative zeros.
   const response = {
     profit: {
-      today: parseFloat(engineStats.totalProfit) || 0,
-      thisWeek: parseFloat(engineStats.totalProfit) || 0,
-      thisMonth: parseFloat(engineStats.totalProfit) || 0,
-      allTime: parseFloat(engineStats.totalProfit) || 0
+      today: 0,
+      thisWeek: 0,
+      thisMonth: 0,
+      allTime: 0
     },
     trades: {
-      total: engineStats.totalTrades,
-      successful: engineStats.successfulTrades,
-      failed: engineStats.failedTrades,
-      successRate: engineStats.successRate
+      total: 0,
+      successful: 0,
+      failed: 0,
+      successRate: 0
     },
     performance: {
-      avgProfitPerTrade: engineStats.successfulTrades > 0 
-        ? (parseFloat(engineStats.totalProfit) / engineStats.successfulTrades).toFixed(4) 
-        : '0',
+      avgProfitPerTrade: '0',
       lastUpdate: new Date().toISOString(),
-      capitalRequired: engineStats.capitalRequired, // ZERO
-      gaslessTransactions: engineStats.gaslessTransactions
+      capitalRequired: 'ZERO (hypothetical)',
+      gaslessTransactions: true
     },
     zeroCapital: {
       enabled: true,
-      mechanism: 'Flash Loan + MEV Bundle',
+      mechanism: 'SIGNAL-ONLY (no execution)',
       capitalRequired: 'ZERO',
-      currentOpportunities: engineStats.currentOpportunities
+      currentOpportunities: 0
+    },
+    stage1: {
+      signalOnly: SIGNAL_ONLY,
+      dailyCapUsd: DAILY_CAP_USD,
     }
   };
   
@@ -902,7 +887,8 @@ router.get('/stats', async (req, res) => {
 
 // GET /api/crypto/opportunities - Current opportunities
 router.get('/opportunities', async (req, res) => {
-  const opportunities = await pipeline.getCurrentOpportunities();
+  // Stage 1: do not claim real market opportunities until fee-aware pipeline is verified.
+  const opportunities: any[] = [];
   
   res.json({
     count: opportunities.length,
@@ -914,7 +900,9 @@ router.get('/opportunities', async (req, res) => {
       successProbability: 0.85, // TODO: Calculate from historical data
       tier: opp.priority > 70 ? 'A' : opp.priority > 40 ? 'B' : 'C',
       age: Date.now() - opp.timestamp
-    }))
+    })),
+    signalOnly: SIGNAL_ONLY,
+    note: 'Stage 1 truth check: opportunity engine not yet validated for fee-aware real-market signals',
   });
 });
 
@@ -934,29 +922,12 @@ router.get('/balances', async (req, res) => {
 
 // POST /api/crypto/withdraw - Withdraw profits
 router.post('/withdraw', async (req, res) => {
-  const {amount, token, toAddress} = req.body;
-  
-  if (!amount || !token || !toAddress) {
-    return res.status(400).json({error: 'Missing parameters'});
-  }
-  
-  // Validate amount
-  if (typeof amount !== 'number' || amount <= 0) {
-    return res.status(400).json({error: 'Invalid amount'});
-  }
-  
-  // Validate Ethereum address format
-  if (!/^0x[a-fA-F0-9]{40}$/.test(toAddress)) {
-    return res.status(400).json({error: 'Invalid Ethereum address format'});
-  }
-  
-  try {
-    // TODO: Check available balance before withdrawal
-    const txHash = await executeWithdrawal(amount, token, toAddress);
-    res.json({success: true, txHash});
-  } catch (error: any) {
-    res.status(500).json({error: error.message});
-  }
+  // STAGE 1 HARD LAW: signal-only mode means no signing / broadcasting / withdrawals.
+  res.status(403).json({
+    success: false,
+    error: 'Signal-only mode: withdrawals disabled',
+    signalOnly: SIGNAL_ONLY,
+  });
 });
 
 // GET /api/crypto/history - Trade history
@@ -1058,62 +1029,6 @@ async function getWalletBalances() {
     console.error('[CryptoCrawl] Failed to get wallet balances from monitor:', error);
     // Return empty array on error - dashboard will show "no balances"
     return [];
-  }
-}
-
-/**
- * Execute withdrawal using the actual wallet manager
- * Currently supports native token withdrawals on the specified chain.
- * ERC20 token transfers require additional contract interaction implementation.
- * 
- * @param amount - Amount to withdraw
- * @param token - Token symbol (e.g., 'POL', 'ETH', 'USDC')
- * @param to - Destination address
- * @param chain - Optional chain to withdraw from (defaults to finding best chain)
- */
-async function executeWithdrawal(amount: number, token: string, to: string, chain?: string) {
-  try {
-    if (!walletManager) {
-      // Try to initialize wallet manager if not already done
-      walletManager = new WalletManager();
-      await walletManager.initialize();
-    }
-    
-    // Determine the appropriate chain for withdrawal
-    // If not specified, try to find the chain with sufficient balance
-    let withdrawalChain = chain;
-    if (!withdrawalChain) {
-      // Get balances to determine best chain for this token
-      const balances = await balanceMonitor.getAllBalances();
-      
-      // For native tokens, find chain with sufficient balance
-      const nativeTokens = ['POL', 'ETH', 'AVAX', 'BNB'];
-      if (nativeTokens.includes(token.toUpperCase())) {
-        const chainWithBalance = balances.find(b => b.native >= amount);
-        withdrawalChain = chainWithBalance?.chain || 'polygon';
-      } else {
-        // For stablecoins (USDC, USDT), find chain with sufficient balance
-        const chainWithStable = balances.find(b => 
-          (token.toUpperCase() === 'USDC' && b.usdc >= amount) ||
-          (token.toUpperCase() === 'USDT' && b.usdt >= amount)
-        );
-        withdrawalChain = chainWithStable?.chain || 'polygon';
-      }
-    }
-    
-    // Execute the withdrawal
-    // Note: For ERC20 tokens, walletManager.withdraw handles native tokens only
-    // Full ERC20 support would require walletManager.transferToken() implementation
-    const txHash = await walletManager.withdraw({ 
-      chain: withdrawalChain, 
-      to, 
-      amount: amount.toString() 
-    });
-    console.log(`[CryptoCrawl] ✅ Withdrawal executed: ${amount} ${token} on ${withdrawalChain} to ${to} - TX: ${txHash}`);
-    return txHash;
-  } catch (error) {
-    console.error('[CryptoCrawl] Withdrawal failed:', error);
-    throw error;
   }
 }
 

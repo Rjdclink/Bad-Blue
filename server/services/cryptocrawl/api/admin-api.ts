@@ -1,7 +1,5 @@
 import express from 'express';
-import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
-import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { 
   authenticateWithPassword, 
   requireCryptoCrawlAuth,
@@ -10,6 +8,14 @@ import {
 } from '../auth/passwordAuth';
 
 const router = express.Router();
+
+// ============================================================================
+// STAGE 1 SAFETY: SIGNAL-ONLY MODE (NO FUNDS MOVEMENT, NO EXECUTION)
+// - Default ON unless explicitly disabled.
+// - This is a hard safety gate for CryptoCrawler truth validation.
+// ============================================================================
+const SIGNAL_ONLY =
+  (process.env.CRYPTOCRAWL_SIGNAL_ONLY ?? 'true').toLowerCase() !== 'false';
 
 // ============================================
 // AUTHENTICATION ROUTES (No auth required)
@@ -184,29 +190,20 @@ router.post('/start', async (req, res) => {
   try {
     // Enable CryptoCrawl services
     await cryptoCrawlState.enable();
-    
-    // Start Zero-Capital Engine (TRUE zero upfront capital)
-    await zeroCapitalEngine.start();
-    
+
     // Only mark as running after successful service enablement
     systemState.running = true;
     systemState.startedAt = Date.now();
     
-    // Start pipeline in background
-    pipeline.run().catch(err => {
-      console.error('Pipeline error:', err);
-    });
-    
     res.json({
       success: true,
-      message: 'Zero-Capital Arbitrage System started',
+      message: SIGNAL_ONLY
+        ? 'CryptoCrawl started in SIGNAL-ONLY mode (no signing/broadcasting, no execution)'
+        : 'CryptoCrawl started',
       startedAt: new Date(systemState.startedAt).toISOString(),
       status: cryptoCrawlState.getStatus(),
-      zeroCapital: {
-        enabled: true,
-        capitalRequired: 'ZERO',
-        mechanism: 'Flash Loan + MEV Bundle'
-      }
+      signalOnly: SIGNAL_ONLY,
+      dailyCapUsd: 200,
     });
   } catch (error: any) {
     // Ensure state is not marked as running on error
@@ -226,7 +223,6 @@ router.post('/stop', async (req, res) => {
     await cryptoCrawlState.disable();
     
     systemState.running = false;
-    pipeline.stop();
     
     res.json({
       success: true,
@@ -312,8 +308,11 @@ router.post('/emergency', async (req, res) => {
       res.json({success: true, message: 'All operations paused'});
       break;
     case 'withdraw_all':
-      // Implement emergency withdrawal
-      res.json({success: true, message: 'Emergency withdrawal initiated'});
+      // STAGE 1 HARD LAW: no withdrawals / funds movement
+      res.status(403).json({
+        success: false,
+        error: 'Signal-only mode: withdrawals disabled',
+      });
       break;
     default:
       res.status(400).json({error: 'Unknown emergency action'});
