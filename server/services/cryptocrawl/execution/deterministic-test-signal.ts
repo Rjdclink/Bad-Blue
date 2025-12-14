@@ -15,21 +15,19 @@
 import { createLogger } from '../../../logger';
 import type { SignalInput } from '../decision-engine';
 import { getExecutionChokePoint } from './execution-choke-point';
+import { FEE_CONSTANTS, calculateAllInCost, calculateMinimumBaseAmount } from './fee-constants';
 
 const log = createLogger('DeterministicTestSignal');
 
 // ============================================================================
-// FIXED PARAMETERS (Stage 5 - No Optimization)
+// FIXED PARAMETERS (Stage 5 - Unified Fee Model)
 // ============================================================================
 
 const STAGE_5_FIXED_CONFIG = {
   exchange: 'uniswap-v3',
   pair: 'LINK/USDT', // High liquidity, wider spread
   size: 'dust' as const,
-  baseAmount: 0.0005, // Dust size (0.0005 ETH)
-  makerFeeRate: 0.0008, // 0.08% maker fee (fixed)
-  estimatedGasFee: 0.0001, // Fixed gas estimate
-  spreadMultiplier: 2.0, // Spread must be ≥ fees × 2.0 (fixed)
+  baseAmount: 0.001, // Increased to eliminate dust (will be calculated dynamically)
   volatility: 0.3, // Low volatility (fixed)
   liquidityScore: 0.92, // High liquidity (fixed)
 };
@@ -53,59 +51,142 @@ export interface DeterministicTestSignalResult {
 
 /**
  * Generate exactly one deterministic test signal (Stage 5)
- * No optimization, no chaos, fixed parameters only
+ * Unified fee model, all-in cost calculation, hard acceptance threshold
  */
 export function generateDeterministicTestSignal(): DeterministicTestSignalResult {
   log.info('Generating deterministic test signal (Stage 5)', STAGE_5_FIXED_CONFIG);
 
-  // Calculate required spread (fixed calculation)
-  const estimatedExchangeFee = STAGE_5_FIXED_CONFIG.baseAmount * STAGE_5_FIXED_CONFIG.makerFeeRate;
-  const totalFees = STAGE_5_FIXED_CONFIG.estimatedGasFee + estimatedExchangeFee;
-  const minRequiredSpread = totalFees * STAGE_5_FIXED_CONFIG.spreadMultiplier;
-  const profitEstimate = minRequiredSpread * 1.1; // 10% buffer (fixed)
+  // Start with base amount
+  let baseAmount = STAGE_5_FIXED_CONFIG.baseAmount;
+  
+  // Calculate minimum base amount to eliminate dust (gas <= 15% of grossEdge)
+  // We need to iterate to find baseAmount that satisfies: gas <= 15% of grossEdge
+  // For initial estimate, assume 1% profit margin
+  const initialMinBase = calculateMinimumBaseAmount(baseAmount * 0.01);
+  if (baseAmount < initialMinBase) {
+    baseAmount = initialMinBase;
+    log.info('Increased baseAmount to eliminate dust', {
+      original: STAGE_5_FIXED_CONFIG.baseAmount,
+      adjusted: baseAmount,
+      reason: 'Gas must be <= 15% of grossEdge',
+    });
+  }
 
-  // Create exactly one signal
-  const signal: SignalInput = {
-    sourceId: 'deterministic-test-signal-generator',
-    sourceType: 'cryptocrawl',
-    signal: {
-      opportunity: {
-        asset: 'LINK',
-        pair: STAGE_5_FIXED_CONFIG.pair,
-        chain: 'ethereum',
-        profitEstimate,
-        confidence: 0.78, // Fixed confidence
-        timestamp: Date.now(),
-      },
-      marketData: {
-        volatility: STAGE_5_FIXED_CONFIG.volatility,
-        liquidityScore: STAGE_5_FIXED_CONFIG.liquidityScore,
-        gasVolatility: 0.1, // Fixed
-        competitorDensity: 0.2, // Fixed
-        networkCongestion: 0.3, // Fixed
-      },
-    },
-    metadata: {
-      exchange: STAGE_5_FIXED_CONFIG.exchange,
-      size: STAGE_5_FIXED_CONFIG.size,
-      testSignal: true,
-      useMakerOnlyFees: true,
-      spreadMultiplier: STAGE_5_FIXED_CONFIG.spreadMultiplier,
-      deterministic: true, // Mark as deterministic
-    },
-  };
+  // Calculate all-in cost (blended fees both legs, gas both legs, p95 slippage)
+  // We need grossEdge first, but grossEdge depends on baseAmount
+  // Iterative approach: start with estimated grossEdge, calculate allInCost, then verify threshold
+  
+  // Initial estimate: assume profit margin of 1% (will be adjusted)
+  let grossEdge = baseAmount * 0.01;
+  let allInCost = 0;
+  let iterations = 0;
+  const maxIterations = 10;
+  
+  while (iterations < maxIterations) {
+    const costCalc = calculateAllInCost(baseAmount, grossEdge);
+    allInCost = costCalc.allInCost;
+    
+    // Hard acceptance threshold: grossEdge >= allInCost * multiplier
+    // For test signals, use TEST_SIGNAL_SPREAD_MULTIPLIER (2.0), otherwise use ACCEPTANCE_THRESHOLD_MULTIPLIER (1.30)
+    const spreadMultiplier = FEE_CONSTANTS.TEST_SIGNAL_SPREAD_MULTIPLIER; // 2.0 for test signals
+    const minRequiredGrossEdge = allInCost * spreadMultiplier;
+    
+    if (grossEdge >= minRequiredGrossEdge) {
+      // Also verify gas <= 15% of grossEdge
+      const gasToGrossRatio = FEE_CONSTANTS.GAS_FEE_BOTH_LEGS / grossEdge;
+      if (gasToGrossRatio <= FEE_CONSTANTS.MAX_GAS_TO_GROSS_EDGE_RATIO) {
+        break; // Found valid combination
+      } else {
+        // Increase baseAmount to reduce gas ratio
+        baseAmount *= 1.5;
+        grossEdge = baseAmount * 0.01; // Re-estimate
+      }
+    } else {
+      // Increase grossEdge to meet threshold (use test signal multiplier)
+      grossEdge = minRequiredGrossEdge * 1.1; // Add 10% buffer
+    }
+    
+    iterations++;
+  }
+  
+  if (iterations >= maxIterations) {
+    // Fallback: use conservative calculation
+    const costCalc = calculateAllInCost(baseAmount, baseAmount * 0.02);
+    allInCost = costCalc.allInCost;
+    // Use test signal multiplier (2.0) for test signals
+    grossEdge = allInCost * FEE_CONSTANTS.TEST_SIGNAL_SPREAD_MULTIPLIER * 1.1; // 10% extra buffer
+  }
 
+  // Profit estimate = grossEdge
+  const profitEstimate = grossEdge;
+  
+  // Calculate net edge
+  const netEdge = grossEdge - allInCost;
+
+  // Diagnostics logging
   log.info('Deterministic test signal generated', {
     pair: STAGE_5_FIXED_CONFIG.pair,
-    profitEstimate,
-    totalFees,
-    spreadMultiplier: profitEstimate / totalFees,
+    baseAmount,
+    grossEdge,
+    allInCost,
+    netEdge,
+    exchangeFees: calculateAllInCost(baseAmount, grossEdge).exchangeFees,
+    gasFees: calculateAllInCost(baseAmount, grossEdge).gasFees,
+    slippageCost: calculateAllInCost(baseAmount, grossEdge).slippageCost,
+    acceptanceThreshold: allInCost * FEE_CONSTANTS.TEST_SIGNAL_SPREAD_MULTIPLIER,
+    gasToGrossRatio: FEE_CONSTANTS.GAS_FEE_BOTH_LEGS / grossEdge,
+    passThreshold: grossEdge >= allInCost * FEE_CONSTANTS.TEST_SIGNAL_SPREAD_MULTIPLIER,
   });
 
+  // Create signal opportunity (one candidate)
+  const opportunity = {
+    asset: 'LINK',
+    pair: STAGE_5_FIXED_CONFIG.pair,
+    chain: 'ethereum',
+    profitEstimate,
+    confidence: 0.78, // Fixed confidence
+    timestamp: Date.now(),
+  };
+
+  const marketData = {
+    volatility: STAGE_5_FIXED_CONFIG.volatility,
+    liquidityScore: STAGE_5_FIXED_CONFIG.liquidityScore,
+    gasVolatility: 0.1, // Fixed
+    competitorDensity: 0.2, // Fixed
+    networkCongestion: 0.3, // Fixed
+  };
+
+  const metadata = {
+    exchange: STAGE_5_FIXED_CONFIG.exchange,
+    size: STAGE_5_FIXED_CONFIG.size,
+    baseAmount, // Store actual baseAmount used
+    testSignal: true,
+    useMakerOnlyFees: false, // Using blended fees now
+    spreadMultiplier: FEE_CONSTANTS.TEST_SIGNAL_SPREAD_MULTIPLIER,
+    deterministic: true,
+    // Store diagnostics
+    grossEdge,
+    allInCost,
+    netEdge,
+  };
+
+  // Generate 2 signals with same opportunity (for signal fusion gate requirement)
+  // This represents "one candidate" opportunity from multiple sources
+  const signal: SignalInput = {
+    sourceId: 'deterministic-test-signal-generator-1',
+    sourceType: 'cryptocrawl',
+    signal: {
+      opportunity,
+      marketData,
+    },
+    metadata,
+  };
+
+  // Return single signal (caller can duplicate if needed for signal fusion)
   return {
     signal,
     passed: true,
-    reason: 'Deterministic test signal generated with fixed parameters',
+    reason: 'Deterministic test signal generated with unified fee model and hard acceptance threshold',
     requiresHumanPermission: false,
   };
 }

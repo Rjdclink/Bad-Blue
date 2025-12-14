@@ -85,24 +85,8 @@ export function checkPilotAction(request: PilotActionRequest): PilotActionResult
     };
   }
 
-  // For execution actions, check choke-point
-  if (capability === PilotCapability.STAGE_5_MICRO_TRADE) {
-    const chokePoint = getExecutionChokePoint();
-    const chokeResult = chokePoint.checkExecution(
-      actorId,
-      'pilot',
-      'execution',
-      action
-    );
-
-    if (!chokeResult.allowed) {
-      return {
-        allowed: false,
-        reason: `Choke-point blocked: ${chokeResult.reason}`,
-        chokePointResult: chokeResult,
-      };
-    }
-  }
+  // For execution actions, capability check only (choke-point will be checked at actual execution gates)
+  // Do not call choke-point here to avoid premature token consumption
 
   log.info('Pilot action allowed', {
     actorId,

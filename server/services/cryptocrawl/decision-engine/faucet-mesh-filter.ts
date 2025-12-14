@@ -11,6 +11,7 @@
 
 import { createLogger } from '../../../logger';
 import type { SignalInput } from './index';
+import { FEE_CONSTANTS, calculateAllInCost } from '../execution/fee-constants';
 
 const log = createLogger('FaucetMeshFilter');
 
@@ -145,28 +146,95 @@ export class FaucetMeshFilter {
       const marketData = signal.signal.marketData;
       
       if (marketData) {
-        // Estimate fees (gas + exchange fees) - simplified model
-        const estimatedGasFee = 0.0001; // ~$0.10 in ETH terms
-        const estimatedExchangeFee = profitEstimate * 0.003; // 0.3% exchange fee
-        const totalFees = estimatedGasFee + estimatedExchangeFee;
+        // Use unified fee model - calculate all-in cost
+        // Get baseAmount from metadata or estimate from profitEstimate
+        const baseAmount = (signal.metadata?.baseAmount as number) || (profitEstimate / 0.01); // Estimate if not provided
+        const grossEdge = profitEstimate;
         
-        // Spread should be profit estimate (spread = profit)
-        const spread = profitEstimate;
-        const minRequiredSpread = totalFees * this.config.minSpreadMultiplier;
+        // Calculate all-in cost (blended fees both legs, gas both legs, p95 slippage)
+        const costCalc = calculateAllInCost(baseAmount, grossEdge);
+        const allInCost = costCalc.allInCost;
+        
+        // Hard acceptance threshold: grossEdge >= allInCost * 1.30
+        const minRequiredGrossEdge = allInCost * FEE_CONSTANTS.ACCEPTANCE_THRESHOLD_MULTIPLIER;
+        
+        // Check if test signal override applies
+        const isTestSignal = signal.metadata?.testSignal === true;
+        const useMakerOnlyFees = signal.metadata?.useMakerOnlyFees === true;
+        
+        // Use test signal multiplier if override allowed, otherwise use production multiplier
+        const spreadMultiplier = (isTestSignal && this.config.allowTestSignalOverride)
+          ? this.config.testSignalSpreadMultiplier
+          : this.config.minSpreadMultiplier;
+        
+        // Apply threshold check
+        const spread = grossEdge;
+        const minRequiredSpread = allInCost * spreadMultiplier;
         
         filters.spread = spread >= minRequiredSpread;
         
         if (!filters.spread) {
+          // Diagnostics logging
+          log.warn('Faucet mesh filter: Spread check failed', {
+            grossEdge,
+            allInCost,
+            netEdge: grossEdge - allInCost,
+            minRequiredSpread,
+            spreadMultiplier,
+            isTestSignal,
+            exchangeFees: costCalc.exchangeFees,
+            gasFees: costCalc.gasFees,
+            slippageCost: costCalc.slippageCost,
+          });
+          
           return {
             passed: false,
-            reason: `Spread ${spread.toFixed(6)} < required ${minRequiredSpread.toFixed(6)} (fees × ${this.config.minSpreadMultiplier})`,
+            reason: `Spread ${spread.toFixed(6)} < required ${minRequiredSpread.toFixed(6)} (allInCost × ${spreadMultiplier}${isTestSignal ? ' [TEST_SIGNAL]' : ''})`,
             filters,
-            details: { spread, totalFees, minRequiredSpread },
+            details: { 
+              spread, 
+              allInCost, 
+              minRequiredSpread,
+              grossEdge,
+              netEdge: grossEdge - allInCost,
+              spreadMultiplier,
+              isTestSignal,
+              exchangeFees: costCalc.exchangeFees,
+              gasFees: costCalc.gasFees,
+              slippageCost: costCalc.slippageCost,
+            },
           };
         }
+        
+        // Also check gas <= 15% of grossEdge
+        const gasToGrossRatio = FEE_CONSTANTS.GAS_FEE_BOTH_LEGS / grossEdge;
+        if (gasToGrossRatio > FEE_CONSTANTS.MAX_GAS_TO_GROSS_EDGE_RATIO) {
+          log.warn('Faucet mesh filter: Gas ratio too high', {
+            gasToGrossRatio,
+            maxAllowed: FEE_CONSTANTS.MAX_GAS_TO_GROSS_EDGE_RATIO,
+            grossEdge,
+            gasFees: FEE_CONSTANTS.GAS_FEE_BOTH_LEGS,
+          });
+          
+          return {
+            passed: false,
+            reason: `Gas ratio ${(gasToGrossRatio * 100).toFixed(2)}% > max allowed ${(FEE_CONSTANTS.MAX_GAS_TO_GROSS_EDGE_RATIO * 100).toFixed(2)}% (dust signal)`,
+            filters,
+            details: {
+              gasToGrossRatio,
+              maxAllowed: FEE_CONSTANTS.MAX_GAS_TO_GROSS_EDGE_RATIO,
+              grossEdge,
+              gasFees: FEE_CONSTANTS.GAS_FEE_BOTH_LEGS,
+            },
+          };
+        }
+        
         details.spread = spread;
-        details.totalFees = totalFees;
-        details.spreadMultiplier = spread / totalFees;
+        details.allInCost = allInCost;
+        details.grossEdge = grossEdge;
+        details.netEdge = grossEdge - allInCost;
+        details.spreadMultiplier = spread / allInCost;
+        details.isTestSignal = isTestSignal;
       } else {
         filters.spread = true; // No market data, allow through (will be filtered later)
       }

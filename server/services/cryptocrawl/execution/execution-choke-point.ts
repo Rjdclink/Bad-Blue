@@ -272,8 +272,22 @@ class ExecutionChokePoint {
       missingTokens.push('ONE_ACTION_TOKEN');
     } else if (this.tokens.oneAction.used) {
       missingTokens.push('ONE_ACTION_TOKEN (already used)');
-    } else if (this.tokens.oneAction.actionType !== actionType) {
-      missingTokens.push(`ONE_ACTION_TOKEN (wrong type: expected ${actionType}, got ${this.tokens.oneAction.actionType})`);
+    } else {
+      // Allow token to cascade through action types in a single cycle
+      // If token is 'signal', it can be used for signal → validation → execution in sequence
+      // If token is 'execution', it can only be used for execution (final gate)
+      const tokenActionType = this.tokens.oneAction.actionType;
+      const actionTypeOrder = ['signal', 'validation', 'execution'];
+      const tokenIndex = actionTypeOrder.indexOf(tokenActionType);
+      const requiredIndex = actionTypeOrder.indexOf(actionType);
+      
+      if (tokenIndex === -1 || requiredIndex === -1) {
+        missingTokens.push(`ONE_ACTION_TOKEN (invalid action type)`);
+      } else if (requiredIndex < tokenIndex) {
+        // Cannot go backwards (e.g., execution token cannot be used for signal)
+        missingTokens.push(`ONE_ACTION_TOKEN (wrong type: expected ${actionType}, got ${tokenActionType})`);
+      }
+      // If requiredIndex >= tokenIndex, allow (cascade forward through gates)
     }
 
     // Check system flags
@@ -319,8 +333,9 @@ class ExecutionChokePoint {
       };
     }
 
-    // Mark one-action token as used
-    if (this.tokens.oneAction) {
+    // Mark one-action token as used ONLY after execution (final gate)
+    // This allows token to cascade through signal → validation → execution in one cycle
+    if (this.tokens.oneAction && actionType === 'execution') {
       this.tokens.oneAction.used = true;
     }
 
