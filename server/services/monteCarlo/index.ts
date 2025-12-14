@@ -8,24 +8,25 @@
  * - Heatmaps, probable paths, and likelihood cones
  */
 
+// Values (classes/enums) — safe to import at runtime
 export {
   MonteCarloEngine,
   createMonteCarloEngine,
-  // Types
-  type Particle,
-  type ParticleState,
-  type Constraint,
-  type ConstraintType,
-  type MotionModel,
-  type SimulationConfig,
-  type ExecutionWindow,
-  type WindowStatus,
-  type SimulationSnapshot,
-  type HeatmapCell,
-  type ProbablePath,
-  type LikelihoodCone,
-  type LiveRenderState,
+  ParticleState,
+  ConstraintType,
+  WindowStatus,
 } from './MonteCarloEngine';
 
-// Re-export enums as values
-export { ParticleState, ConstraintType, WindowStatus } from './MonteCarloEngine';
+// Types — compile-time only
+export type {
+  Particle,
+  Constraint,
+  MotionModel,
+  SimulationConfig,
+  ExecutionWindow,
+  SimulationSnapshot,
+  HeatmapCell,
+  ProbablePath,
+  LikelihoodCone,
+  LiveRenderState,
+} from './MonteCarloEngine';

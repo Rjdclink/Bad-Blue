@@ -28,7 +28,8 @@ declare global {
       accessZone?: AccessZone;
       accessRole?: AccessRole;
       redirectRoute?: string;
-      aiMode?: 'legal' | 'orchestrator' | 'crypto';
+      // Mode used for UX/AI posture selection (auth-bound)
+      aiMode?: 'legal' | 'orchestrator' | 'crypto' | 'admin';
     }
     interface Request {
       rawBody?: Buffer;
@@ -136,7 +137,6 @@ import {
   insertSubscriptionTierSchema,
   DOCUMENT_CREATOR_PRICING_CENTS,
 } from "@shared/schema";
-import crypto from 'crypto';
 import archiver from 'archiver';
 import { eq, and, sql, desc, asc, inArray } from 'drizzle-orm';
 import { db } from './db';

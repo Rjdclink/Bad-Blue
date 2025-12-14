@@ -51,6 +51,12 @@ export const REPORT_TIER_THRESHOLDS: Record<ReportTier, number> = {
 };
 
 /**
+ * Alias used by legacy call sites in this module.
+ * Budgets are milestones; CONTINUOUS is unbounded.
+ */
+export const REPORT_TIER_BUDGETS: Record<ReportTier, number> = REPORT_TIER_THRESHOLDS;
+
+/**
  * Human-readable tier names
  */
 export const REPORT_TIER_NAMES: Record<ReportTier, string> = {
@@ -160,6 +166,8 @@ export interface CrawlResult {
 export interface JobConfig {
   // Whether to run continuously (no automatic stop after target tier)
   continuousMode: boolean;
+  // Target tier for bounded execution checks (CONTINUOUS = unbounded)
+  targetTier: ReportTier;
   // Minimum tier to reach before allowing manual stop (optional)
   minimumTier: ReportTier;
   // Maximum total attempts (0 = unlimited in continuous mode)
@@ -178,6 +186,10 @@ export interface JobConfig {
   circuitBreakerThreshold: number;
   // Satellite/geo refresh interval for real-time updates
   satelliteRefreshIntervalMs: number;
+}
+
+function getTierTimeBudget(tier: ReportTier): number {
+  return REPORT_TIER_BUDGETS[tier] ?? Infinity;
 }
 
 /**
@@ -336,6 +348,7 @@ export interface DoomsdayClockState {
 
 const DEFAULT_CONFIG: JobConfig = {
   continuousMode: true,           // Run continuously by default - no auto stop
+  targetTier: ReportTier.CONTINUOUS, // Unbounded by default
   minimumTier: ReportTier.BASIC,  // At least get basic report before allowing stop
   maxAttempts: 0,                 // 0 = unlimited in continuous mode
   diminishingReturns: {
@@ -1005,15 +1018,30 @@ export class CrawlerJobManager extends EventEmitter {
       tierSummaries[tier] = this.generateTierSummary(tier, job, results);
     }
 
+    // Capture tier snapshots (milestones) for this report version
+    const tierSnapshots: JobReport["tierSnapshots"] = {};
+    for (const tier of Object.values(ReportTier)) {
+      const capturedAt = tierCompletionTimes[tier];
+      if (!capturedAt) continue;
+      tierSnapshots[tier] = {
+        capturedAt,
+        resultCount: results.length,
+        data: successResults.map(r => r.data).filter(Boolean),
+        summary: tierSummaries[tier] || this.generateTierSummary(tier, job, results),
+      };
+    }
+
     const report: JobReport = {
       id: randomUUID(),
       jobId,
       version: newVersion,
       compiledAt: new Date(),
       isPartial,
+      snapshotTier: currentTier,
       currentTier,
       tierProgress,
       tierCompletedAt: tierCompletionTimes,
+      tierSnapshots,
       totalResults: results.length,
       successCount: successResults.length,
       failureCount: failureResults.length,
