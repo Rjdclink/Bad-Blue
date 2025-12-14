@@ -9,6 +9,7 @@ import { LanguageProvider } from "@/contexts/LanguageContext";
 import { MaintenanceMode } from "@/components/MaintenanceMode";
 import { lazy, Suspense, useEffect, Component, ErrorInfo, ReactNode } from "react";
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
+import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
 
 // Performance monitoring
 if (typeof window !== 'undefined') {
@@ -143,6 +144,8 @@ const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 
 // No AppLayout, no feature guards, no auth gates, no global error boundary
 const InmateLocatorV2Page = lazyWithRetry(() => import("@/pages/inmate-locator-v2"), 'InmateLocatorV2');
 const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-v2"), 'CryptoCrawlerV2');
+const ControlRoomPage = lazyWithRetry(() => import("@/pages/control-room"), 'ControlRoom');
+const OrchestratorConsole = lazyWithRetry(() => import("@/pages/orchestrator-console"), 'OrchestratorConsole');
 
 // PANTHEON Administrator - Single Master Password (rjdclink@outlook.com + SARBEAR)
 const AdminConsole = lazyWithRetry(() => import("@/pages/admin-console"), 'AdminConsole');
@@ -174,6 +177,18 @@ function GeoConsoleRedirect() {
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
+
+  // Global navigation contract (mobile-first, absolute)
+  // Swipe Up    -> Welcome / Overview
+  // Swipe Left  -> Monte Carlo
+  // Swipe Right -> CryptoCrawler
+  // Swipe Down / PageDown -> Control Room
+  useGlobalGestureNavigation({
+    up: "/welcome",
+    left: "/orchestrator-console",
+    right: "/cryptocrawler-v2",
+    down: "/control-room",
+  });
   
   // Performance monitoring for auth check
   useEffect(() => {
@@ -208,6 +223,8 @@ function Router() {
         
         {/* Public routes - accessible to everyone */}
         <Route path="/subscription-success" component={SubscriptionSuccess} />
+        <Route path="/control-room" component={ControlRoomPage} />
+        <Route path="/orchestrator-console" component={OrchestratorConsole} />
         
         {/* Other public routes */}
         <Route path="/login" component={Login} />
