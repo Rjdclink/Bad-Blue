@@ -17,6 +17,7 @@ import {
   type SimResult,
   type SimSummary,
   type SimDiagnostics,
+  type SimConstraints,
   type Domain,
   type SimType,
   createBaseEvent,
@@ -30,7 +31,7 @@ import { getTransport, ReactorTransport } from '../../packages/contracts/src/tra
 
 export interface SimulatorInput {
   features: Record<string, unknown>;
-  constraints: Record<string, unknown>;
+  constraints: SimConstraints;
   seed: number;
   nPaths: number;
   horizonMs: number;

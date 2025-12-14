@@ -79,11 +79,13 @@ export interface FeatureExtractionConfig {
 export interface GateResult {
   passed: boolean;
   reason?: string;
-  metrics?: Record<string, number>;
+  metrics?: Record<string, number | undefined>;
   duration_ms: number;
 }
 
 export interface FeasibilityMetrics {
+  // Allow metrics to be treated as a numeric map when needed for generic gate plumbing
+  [key: string]: number | undefined;
   net_spread_after_fees: number;
   expected_slippage: number;
   expected_fill_time_ms: number;
