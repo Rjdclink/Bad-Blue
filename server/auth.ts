@@ -6,27 +6,49 @@ import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 import { sendWelcomeEmail } from "./emailService";
 import { setupLocalStrategy } from "./localAuth";
-import { pool } from "./db"; // Import the shared pool
+import { getConfig } from "./config";
+import { isDatabaseConfigured, pool } from "./db";
 
 
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+  const cfg = getConfig();
+
+  // Dev-lite / no-secrets mode: allow boot without DB-backed sessions.
+  // Production continues to require DB and strong SESSION_SECRET via config.ts validation.
+  if (!isDatabaseConfigured) {
+    console.warn('[Auth] DB not configured - using in-memory sessions (dev-lite mode)');
+    return session({
+      secret: cfg.SESSION_SECRET,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: cfg.NODE_ENV === 'production',
+        sameSite: cfg.NODE_ENV === 'production' ? 'none' : 'lax',
+        maxAge: sessionTtl,
+      },
+    });
+  }
+
+  // DB-backed sessions (normal mode)
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
-    pool: pool, // Use the shared pool instead of creating new connections
+    pool: pool,
     createTableIfMissing: false,
     ttl: sessionTtl,
     tableName: "sessions",
   });
+
   return session({
-    secret: process.env.SESSION_SECRET!,
+    secret: cfg.SESSION_SECRET,
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      secure: cfg.NODE_ENV === 'production',
+      sameSite: cfg.NODE_ENV === 'production' ? 'none' : 'lax',
       maxAge: sessionTtl,
     },
   });

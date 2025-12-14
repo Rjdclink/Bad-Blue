@@ -88,16 +88,8 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
     });
   }, []);
 
-  // Auto-search if name parameter is provided
-  useEffect(() => {
-    if (nameParam && nameParam.trim()) {
-      console.log('[PEOPLE FINDER SEARCH] Auto-search triggered', { name: nameParam });
-      // Small delay to ensure component is mounted
-      setTimeout(() => {
-        handleSearch();
-      }, 500);
-    }
-  }, []); // Run only once on mount
+  // Stability rule: do NOT auto-run searches on mount (refresh must not re-fire searches).
+  // We still prefill from query params to support deep-linking, but execution must be explicit.
 
   const searchMutation = useMutation({
     mutationFn: async (searchData: { name: string; location?: string; department?: string; domain?: string }) => {

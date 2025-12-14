@@ -105,11 +105,14 @@ export default function PantheonPage() {
       }
       
       const data = await response.json();
-      setResults(data);
+      // Backend returns a structured wrapper ({ success, data, meta }) for OSINT.
+      // Normalize so UI always receives the report shape.
+      const report = data?.data || data;
+      setResults(report);
       
       toast({
         title: "PANTHEON Search Complete",
-        description: `Intelligence report generated for ${data.identitySummary?.name || config.name}`,
+        description: `Intelligence report generated for ${report.identitySummary?.name || config.name}`,
       });
     } catch (error: any) {
       clearTimeout(timeoutId);

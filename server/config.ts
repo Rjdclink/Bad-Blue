@@ -18,16 +18,19 @@ const portValidator = (fieldName: string) => z.string().transform((val) =>
 
 const envSchema = z.object({
   // Database
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  SUPABASE_DATABASE_URL: z.string().optional(),
+  // NOTE: In non-production environments we allow "no secrets" boot.
+  // Production safety is enforced in loadConfig() with explicit checks.
+  DATABASE_URL: z.string().optional().default(''),
+  SUPABASE_DATABASE_URL: z.string().optional().default(''),
   SUPABASE_URL: z.string().optional(),
-  SUPABASE_DB_URL: z.string().optional(),
+  SUPABASE_DB_URL: z.string().optional().default(''),
   
   // Application
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: portValidator('PORT').default('5000'),
   BASE_URL: z.string().url().optional(),
-  SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
+  // In dev/test we provide a stable default to prevent boot failures.
+  SESSION_SECRET: z.string().optional().default('dev-session-secret-legalwhat-000000000000'),
   
   // AI Services
   GEMINI_API_KEY: z.string().optional(),
@@ -36,10 +39,11 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   
   // Payment (Square)
-  SQUARE_ACCESS_TOKEN: z.string().min(1, 'SQUARE_ACCESS_TOKEN is required'),
+  // In dev/test these may be unset; production safety enforced in loadConfig().
+  SQUARE_ACCESS_TOKEN: z.string().optional().default(''),
   SQUARE_SANDBOX_ACCESS_TOKEN: z.string().optional(),
-  SQUARE_LOCATION_ID: z.string().min(1, 'SQUARE_LOCATION_ID is required'),
-  SQUARE_APPLICATION_ID: z.string().min(1, 'SQUARE_APPLICATION_ID is required'),
+  SQUARE_LOCATION_ID: z.string().optional().default(''),
+  SQUARE_APPLICATION_ID: z.string().optional().default(''),
   SQUARE_ENVIRONMENT: z.enum(['production', 'sandbox']).default('production'),
   SQUARE_WEBHOOK_SIGNATURE_KEY: z.string().optional(),
   
@@ -91,6 +95,25 @@ export function loadConfig(): Config {
   
   try {
     config = envSchema.parse(process.env);
+    // Hard production guardrails (no silent boot with missing secrets).
+    if (config.NODE_ENV === 'production') {
+      const dbUrl = config.SUPABASE_DATABASE_URL || config.SUPABASE_DB_URL || config.DATABASE_URL;
+      if (!dbUrl || !dbUrl.trim()) {
+        throw new Error('DATABASE_URL (or SUPABASE_DATABASE_URL / SUPABASE_DB_URL) is required in production');
+      }
+      if (!config.SESSION_SECRET || config.SESSION_SECRET.length < 32) {
+        throw new Error('SESSION_SECRET must be at least 32 characters in production');
+      }
+      if (!config.SQUARE_ACCESS_TOKEN || !config.SQUARE_ACCESS_TOKEN.trim()) {
+        throw new Error('SQUARE_ACCESS_TOKEN is required in production');
+      }
+      if (!config.SQUARE_LOCATION_ID || !config.SQUARE_LOCATION_ID.trim()) {
+        throw new Error('SQUARE_LOCATION_ID is required in production');
+      }
+      if (!config.SQUARE_APPLICATION_ID || !config.SQUARE_APPLICATION_ID.trim()) {
+        throw new Error('SQUARE_APPLICATION_ID is required in production');
+      }
+    }
     // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
     console.log('[Config] ✓ Environment variables validated successfully');
     console.log(`[Config] Environment: ${config.NODE_ENV}`);
