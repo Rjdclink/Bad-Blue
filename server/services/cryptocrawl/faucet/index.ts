@@ -1,23 +1,28 @@
 /**
- * Faucet Module - Enterprise-grade Autonomous Profit Extraction System
+ * Faucet Module - Autonomous Profit Extraction System
  * 
- * Exports the autonomous faucet for use in other parts of the system.
- * The faucet MUST open when necessary and MUST close when necessary.
+ * Stage Two: Clean, focused arbitrage execution
  * 
- * Features:
- * - Multi-validator decision engine for open/close decisions
- * - Circuit breaker pattern for fault tolerance
- * - Comprehensive health monitoring
- * - Built-in stress testing (20 tests)
- * - State machine with strict transitions
- * - $35,000 daily target with adaptive distribution
- * - Two-layer translation firewall (Internal ↔ External)
- * - Communication security with threat detection
- * - Facet Handler for intelligent transaction flow management
- * - Compliance simulation with 40 known violations
- * - High-risk scenario testing (< 5% red flag rate target)
+ * PRIMARY INTERFACE: ArbitrageAutopilot
+ * - Verify arbitrage is real (prices, fees, bridges align)
+ * - Confirm execution path → wallet is correct
+ * - Run small, controlled live cycles
+ * - Pure profit flow - nothing else
+ * 
+ * Legacy components maintained for backwards compatibility.
  */
 
+// PRIMARY: Arbitrage Auto-Pilot (Stage Two - Recommended)
+import {
+  ArbitrageAutopilot,
+  arbitrageAutopilot,
+  type ArbitrageConfig,
+  type ArbitrageOpportunity,
+  type ExecutionResult,
+  type CycleReport,
+} from './arbitrage-autopilot.js';
+
+// LEGACY: Autonomous Faucet (maintained for compatibility)
 import {
   autonomousFaucet,
   AutonomousCryptoFaucet,
@@ -109,9 +114,21 @@ const STEALTH_CONFIG = Object.freeze(_STEALTH_CONFIG);
 const DAILY_TARGET_CONFIG = Object.freeze(_DAILY_TARGET_CONFIG);
 const COMM_SECURITY_CONFIG = Object.freeze(_COMM_SECURITY_CONFIG);
 
+// Export Autopilot types
+export type {
+  ArbitrageConfig,
+  ArbitrageOpportunity,
+  ExecutionResult,
+  CycleReport,
+};
+
 // Export everything
 export {
-  // Autonomous Faucet
+  // PRIMARY: Arbitrage Auto-Pilot (Stage Two)
+  ArbitrageAutopilot,
+  arbitrageAutopilot,
+  
+  // LEGACY: Autonomous Faucet
   autonomousFaucet,
   AutonomousCryptoFaucet,
   STEALTH_CONFIG,
