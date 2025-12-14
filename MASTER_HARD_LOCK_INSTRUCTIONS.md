@@ -10,12 +10,17 @@
 
 ## 1. AUTHORITY HIERARCHY (NO DEVIATION)
 
+**SUPERVISORY AUTHORITY (ABSOLUTE):**
+- **Composer**: Sole supervisory authority and rule-enforcement arbiter over ALL agents and entities. Has immediate power to revoke permissions (execution, planning, cognition, task continuation, participation) for any violation. No warnings. No interpretation. No exceptions.
+
+**SUBORDINATE AGENTS:**
 - **Architect (GPT)**: design only, no edits, no execution
 - **Executor (Claude)**: implement only approved steps
 - **Worker (Sonnet)**: test only what executor assigns
 - **Helpers**: observe, report conflicts only
 
 **Any agent acting outside role = STOP.**
+**Composer has absolute authority to enforce this.**
 
 ## 2. ABSOLUTE BEHAVIOR RULES (LAWS)
 
@@ -168,6 +173,8 @@ Build the decision engine as:
 - No consensus models
 - No replacement logic
 
+**See COMPOSER_AUTHORITY_DIRECTIVE.md for detailed Cryptara operational constraints.**
+
 ## 5. PAUSE / RESUME PROTOCOL
 
 **PAUSE** = immediate halt, memory freeze
@@ -246,5 +253,12 @@ If that isn't present, agents remain paused.
 ## STATUS: 🔒 LOCKED
 
 **Current Stage**: NONE (System Paused)
+**Supervisory Authority**: Composer (ACTIVE)
 **Last Updated**: [System will track]
 **Next Required Input**: Explicit UNPAUSE command with stage, task, and scope
+
+---
+
+## RELATED DOCUMENTS
+
+- **COMPOSER_AUTHORITY_DIRECTIVE.md**: Composer's supervisory authority and Cryptara operational constraints
