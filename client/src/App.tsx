@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -161,6 +161,17 @@ const AdminEvidenceHub = lazyWithRetry(() => import("@/pages/admin-evidence-hub"
 // Loading fallback component with better UX
 const PageLoader = () => <PageSkeleton />;
 
+function GeoConsoleRedirect() {
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    // Redirect geo-console to legal-consultation without forcing a full page reload
+    setLocation('/legal-consultation?geo=true', { replace: true });
+  }, [setLocation]);
+
+  return null;
+}
+
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
   
@@ -236,13 +247,7 @@ function Router() {
             <Route path="/spectra" component={SpectraPage} />
             
             {/* GEO Console - Redirects to legal-consultation */}
-            <Route path="/geo-console">
-              {() => {
-                // Redirect geo-console to legal-consultation
-                window.location.href = '/legal-consultation?geo=true';
-                return null;
-              }}
-            </Route>
+            <Route path="/geo-console" component={GeoConsoleRedirect} />
             
             {/* Domain Consultation - 4JI Orchestrator Integration */}
             <Route path="/legal-consultation/:domainId" component={ConsultationPage} />

@@ -130,8 +130,10 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
     console.log(`[SSE] Connecting to progress stream: ${searchId}`);
     const eventSource = new EventSource(`/api/officer-search/progress/${searchId}`);
     eventSourceRef.current = eventSource;
+    let active = true;
 
     eventSource.onmessage = (event) => {
+      if (!active) return;
       try {
         const data = JSON.parse(event.data);
         console.log('[SSE] Progress update:', data);
@@ -144,14 +146,30 @@ export default function OfficerSearch({ onBack }: OfficerSearchProps) {
     };
 
     eventSource.onerror = (error) => {
+      if (!active) return;
       console.error('[SSE] Connection error:', error);
-      eventSource.close();
+      try {
+        eventSource.close();
+      } finally {
+        if (eventSourceRef.current === eventSource) {
+          eventSourceRef.current = null;
+        }
+      }
     };
 
     return () => {
+      active = false;
       console.log('[SSE] Cleaning up connection');
-      eventSource.close();
-      eventSourceRef.current = null;
+      // Detach handlers first to avoid late events triggering setState after unmount/search change
+      eventSource.onmessage = null;
+      eventSource.onerror = null;
+      try {
+        eventSource.close();
+      } finally {
+        if (eventSourceRef.current === eventSource) {
+          eventSourceRef.current = null;
+        }
+      }
     };
   }, [searchId]);
 
