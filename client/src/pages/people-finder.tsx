@@ -276,68 +276,56 @@ export default function PeopleFinderPage() {
           onResults={handleSearchResults}
         />
 
-        {/* SPECTRA GeoConsole - Embedded below search results */}
-        <div className="container max-w-7xl mx-auto px-4 py-4">
-          <Card className={`border-slate-700/50 bg-slate-900/50 ${searchResults?.locationHistory?.length ? 'opacity-100' : 'opacity-70'}`}>
-            <CardHeader className="py-3 border-b border-slate-700/50">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Satellite className="w-5 h-5 text-cyan-400" />
-                  <div>
-                    <CardTitle className="text-lg text-slate-200">SPECTRA GeoConsole</CardTitle>
-                    <CardDescription className="text-xs text-slate-400">
-                      Location intelligence & satellite visualization
-                    </CardDescription>
+        {/* SPECTRA GeoConsole - Only render if location data exists */}
+        {searchResults?.locationHistory?.length > 0 && (
+          <div className="container max-w-7xl mx-auto px-4 py-4">
+            <Card className="border-slate-700/50 bg-slate-900/50">
+              <CardHeader className="py-3 border-b border-slate-700/50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Satellite className="w-5 h-5 text-cyan-400" />
+                    <div>
+                      <CardTitle className="text-lg text-slate-200">SPECTRA GeoConsole</CardTitle>
+                      <CardDescription className="text-xs text-slate-400">
+                        Location intelligence & satellite visualization
+                      </CardDescription>
+                    </div>
                   </div>
+                  <Badge 
+                    variant="outline" 
+                    className="text-xs bg-green-900/50 text-green-400 border-green-600/30"
+                  >
+                    {searchResults.locationHistory.length} Locations
+                  </Badge>
                 </div>
-                <Badge 
-                  variant="outline" 
-                  className={`text-xs ${
-                    geoConsoleStatus === 'loading' 
-                      ? 'bg-amber-900/50 text-amber-400 border-amber-600/30'
-                      : searchResults?.locationHistory?.length
-                        ? 'bg-green-900/50 text-green-400 border-green-600/30'
-                        : geoConsoleStatus === 'ready'
-                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
-                          : 'bg-slate-700/50 text-slate-400 border-slate-600/30'
-                  }`}
-                >
-                  {geoConsoleStatus === 'loading' 
-                    ? 'Loading...' 
-                    : searchResults?.locationHistory?.length 
-                      ? `${searchResults.locationHistory.length} Locations`
-                      : geoConsoleStatus === 'ready'
-                        ? 'Live'
-                        : 'Idle'}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              {/* Tab Navigation - visual indicators only (single dashboard instance below) */}
-              <Tabs value={geoConsoleTab} onValueChange={(v) => setGeoConsoleTab(v as any)} className="w-full">
-                <TabsList className="w-full justify-start bg-slate-800/50 rounded-none border-b border-slate-700/50">
-                  <TabsTrigger value="timeline" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
-                    <Clock className="w-3.5 h-3.5" />
-                    Timeline
-                  </TabsTrigger>
-                  <TabsTrigger value="map" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
-                    <MapPin className="w-3.5 h-3.5" />
-                    Map
-                  </TabsTrigger>
-                  <TabsTrigger value="satellite" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
-                    <Satellite className="w-3.5 h-3.5" />
-                    Satellite
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
+              </CardHeader>
+              <CardContent className="p-0">
+                {/* Tab Navigation - visual indicators only (single dashboard instance below) */}
+                <Tabs value={geoConsoleTab} onValueChange={(v) => setGeoConsoleTab(v as any)} className="w-full">
+                  <TabsList className="w-full justify-start bg-slate-800/50 rounded-none border-b border-slate-700/50">
+                    <TabsTrigger value="timeline" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
+                      <Clock className="w-3.5 h-3.5" />
+                      Timeline
+                    </TabsTrigger>
+                    <TabsTrigger value="map" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
+                      <MapPin className="w-3.5 h-3.5" />
+                      Map
+                    </TabsTrigger>
+                    <TabsTrigger value="satellite" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
+                      <Satellite className="w-3.5 h-3.5" />
+                      Satellite
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
 
-              {/* GeoConsole Dashboard - render ONCE for stability */}
-              <div className="h-[400px]">
-                <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+                {/* GeoConsole Dashboard - render ONCE for stability */}
+                <div className="h-[400px]">
+                  <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
     </>
   );
