@@ -13,6 +13,7 @@ import { ValidatorBribingAdvanced } from '../mev/validator-bribing-advanced.js';
 import { TripleDipExtractor } from '../mev/triple-dip-extractor.js';
 import { StealthSuperiority, type StealthMetrics } from '../stealth/index.js';
 import logger from '../../../logger.js';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 const { JsonRpcProvider } = providers;
 
@@ -42,6 +43,9 @@ class MasterPipeline {
    * Initialize the pipeline with stealth systems
    */
   async initialize(): Promise<void> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.master-pipeline.initialize');
+    }
     console.log('🚀 Master Pipeline initializing with Stealth Superiority...');
 
     // Initialize stealth system
@@ -81,6 +85,9 @@ class MasterPipeline {
    * Start the main pipeline loop
    */
   async run(): Promise<void> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.master-pipeline.run');
+    }
     if (!this.stealthSystem) {
       await this.initialize();
     }

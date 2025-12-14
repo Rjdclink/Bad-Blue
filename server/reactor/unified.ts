@@ -20,6 +20,7 @@ import { getSimFabric } from '../../services/sim-fabric/index';
 import { getCryptoExecutor } from '../../services/cryptocrawler-executor/index';
 import { getLexaraPlanner, getLexaraSynth } from '../../services/lexara-synth/index';
 import { getForensicsDashboard } from '../../dashboards/forensics/index';
+import { CRYPTO_EXECUTION_RELEASED } from '../../shared/cryptoExecutionPolicy';
 
 // Re-export contracts
 export * from '../../packages/contracts/src/index';
@@ -83,9 +84,13 @@ export async function startReactor(config?: {
     console.log('[Reactor] Reactor Core started');
 
     // 4. CryptoCrawler Executor
-    const cryptoExecutor = getCryptoExecutor();
-    await cryptoExecutor.start();
-    console.log('[Reactor] CryptoCrawler Executor started');
+    if (CRYPTO_EXECUTION_RELEASED) {
+      const cryptoExecutor = getCryptoExecutor();
+      await cryptoExecutor.start();
+      console.log('[Reactor] CryptoCrawler Executor started');
+    } else {
+      console.log('[Reactor] CryptoCrawler Executor disabled (Stage 2 execution nullification)');
+    }
 
     // 5. Lexara Voice Synthesis
     const lexaraPlanner = getLexaraPlanner();

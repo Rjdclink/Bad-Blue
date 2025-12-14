@@ -16,6 +16,7 @@ import { gasOracle } from '../bridge/gas-oracle.js';
 import { MultiOraclePriceValidator } from '../validation/multi-oracle-validator.js';
 import { MasterOrchestrator } from '../core/master-orchestrator.js';
 import logger from '../../../logger.js';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 // Babel Integration - IP Protection Systems + Cain Reasoning
 import {
@@ -1493,6 +1494,9 @@ class AutonomousCryptoFaucet {
    * All decisions are validated by multiple validators
    */
   async runAutonomousLoop(): Promise<void> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.autonomous-faucet.runAutonomousLoop');
+    }
     if (this.isRunning) {
       logger.warn('[FAUCET] Autonomous loop already running', { component: 'AutonomousFaucet' });
       return;

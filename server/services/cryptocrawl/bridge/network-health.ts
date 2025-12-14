@@ -28,9 +28,12 @@ class NetworkHealthMonitor {
 
   async checkNetwork(chain: ChainId): Promise<NetworkHealth> {
     try {
-      const provider = this.providers.get(chain);
+      let provider = this.providers.get(chain);
       if (!provider) {
-        throw new Error(`Provider not initialized for ${chain}`);
+        // STAGE 2: keep request-driven behavior (no background start required)
+        this.initializeProviders();
+        provider = this.providers.get(chain);
+        if (!provider) throw new Error(`Provider not initialized for ${chain}`);
       }
 
       const startTime = Date.now();
@@ -106,12 +109,7 @@ class NetworkHealthMonitor {
   }
 
   private startAutoUpdate(): void {
-    // Update network health every 30 seconds
-    this.updateInterval = setInterval(() => {
-      this.checkAllNetworks().catch(error => {
-        console.error('[NetworkHealth] Auto-update failed:', error);
-      });
-    }, 30000);
+    // STAGE 2: do not start background intervals.
   }
 
   async start(): Promise<void> {

@@ -63,12 +63,12 @@ function toKrakenPair(pair: Pair): string {
 }
 
 function parseBinanceOrderbook(raw: any): Orderbook {
-  const bids = Array.isArray(raw?.bids) ? raw.bids : [];
-  const asks = Array.isArray(raw?.asks) ? raw.asks : [];
+  const bids: any[] = Array.isArray(raw?.bids) ? raw.bids : [];
+  const asks: any[] = Array.isArray(raw?.asks) ? raw.asks : [];
   const normalize = (lvl: any): OrderbookLevel => ({ price: Number(lvl?.[0]), qty: Number(lvl?.[1]) });
   return {
-    bids: bids.map(normalize).filter(l => Number.isFinite(l.price) && Number.isFinite(l.qty) && l.price > 0 && l.qty > 0),
-    asks: asks.map(normalize).filter(l => Number.isFinite(l.price) && Number.isFinite(l.qty) && l.price > 0 && l.qty > 0),
+    bids: bids.map(normalize).filter((l: OrderbookLevel) => Number.isFinite(l.price) && Number.isFinite(l.qty) && l.price > 0 && l.qty > 0),
+    asks: asks.map(normalize).filter((l: OrderbookLevel) => Number.isFinite(l.price) && Number.isFinite(l.qty) && l.price > 0 && l.qty > 0),
     ts: Date.now(),
   };
 }
@@ -77,12 +77,12 @@ function parseKrakenOrderbook(raw: any, pair: Pair): Orderbook {
   const p = toKrakenPair(pair);
   const book = raw?.result?.[p];
   if (!book) throw new Error(`Kraken missing orderbook for ${p}`);
-  const bids = Array.isArray(book?.bids) ? book.bids : [];
-  const asks = Array.isArray(book?.asks) ? book.asks : [];
+  const bids: any[] = Array.isArray(book?.bids) ? book.bids : [];
+  const asks: any[] = Array.isArray(book?.asks) ? book.asks : [];
   const normalize = (lvl: any): OrderbookLevel => ({ price: Number(lvl?.[0]), qty: Number(lvl?.[1]) });
   return {
-    bids: bids.map(normalize).filter(l => Number.isFinite(l.price) && Number.isFinite(l.qty) && l.price > 0 && l.qty > 0),
-    asks: asks.map(normalize).filter(l => Number.isFinite(l.price) && Number.isFinite(l.qty) && l.price > 0 && l.qty > 0),
+    bids: bids.map(normalize).filter((l: OrderbookLevel) => Number.isFinite(l.price) && Number.isFinite(l.qty) && l.price > 0 && l.qty > 0),
+    asks: asks.map(normalize).filter((l: OrderbookLevel) => Number.isFinite(l.price) && Number.isFinite(l.qty) && l.price > 0 && l.qty > 0),
     ts: Date.now(),
   };
 }

@@ -15,6 +15,7 @@
 
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../shared/cryptoExecutionPolicy';
 import {
   type ActionIntent,
   type ActionResult,
@@ -247,6 +248,10 @@ export class CryptoCrawlerExecutor extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    // STAGE 2: hard-disable any execution loop, subscriptions, and timers.
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawler-executor.start');
+    }
     if (this.isRunning) return;
     this.isRunning = true;
     this.startTime = Date.now();

@@ -5,6 +5,7 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type { ChainId } from './lux-swarm';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 const { JsonRpcProvider } = providers;
 const { formatEther, parseEther } = utils;
@@ -63,6 +64,10 @@ class WalletManager {
   private encryptionKey: Buffer;
 
   constructor() {
+    // STAGE 2: disallow wallet creation/handling unless execution is explicitly released.
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.core.wallet.WalletManager.constructor');
+    }
     // Derive encryption key from password "CRYPTOCRAWL" (as specified in requirements)
     // NOTE: In production, use environment variable and secure salt from key management system
     const password = process.env.WALLET_ENCRYPTION_PASSWORD || 'CRYPTOCRAWL';

@@ -5,6 +5,7 @@
 import { Wallet, providers, ethers } from 'ethers';
 import type { Opportunity, ChainId } from '../core/lux-swarm';
 import type { PreSignedTemplate, ExecutionResult, ExecutionPath } from './types';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 const { JsonRpcProvider } = providers;
 const { parseUnits, formatUnits } = ethers.utils;
@@ -82,6 +83,9 @@ export class UltraLowLatencyExecutor {
    * Only updates parameters, no signature needed = 2ms execution
    */
   async executeInstant(opportunity: Opportunity): Promise<ExecutionResult> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.stealth.ultra-low-latency.executeInstant');
+    }
     const startTime = Date.now();
     
     try {
@@ -144,6 +148,9 @@ export class UltraLowLatencyExecutor {
    * Flashbots, BloXroute, and Direct validator submission
    */
   async executeMultiPath(opportunity: Opportunity): Promise<ExecutionResult> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.stealth.ultra-low-latency.executeMultiPath');
+    }
     const startTime = Date.now();
 
     const paths: Promise<ExecutionResult>[] = [

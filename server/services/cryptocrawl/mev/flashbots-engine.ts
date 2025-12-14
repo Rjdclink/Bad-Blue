@@ -1,5 +1,6 @@
 import {Wallet, providers} from 'ethers';
 import {FlashbotsBundleProvider} from '@flashbots/ethers-provider-bundle';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 const { JsonRpcProvider } = providers;
 
@@ -9,6 +10,9 @@ class FlashbotsEngine {
   private wallet!: Wallet;
   
   async initialize() {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.mev.flashbots-engine.initialize');
+    }
     this.provider = new JsonRpcProvider(process.env.RPC_URL);
     this.wallet = new Wallet(
       process.env.PRIVATE_KEY || Wallet.createRandom().privateKey,

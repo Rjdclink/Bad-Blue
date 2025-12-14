@@ -557,32 +557,19 @@ router.post('/faucet/toggle', async (req, res) => {
   
   console.log(`[Faucet] 🔮 Divine ${enabled ? 'ACTIVATION' : 'DEACTIVATION'} - Faucet is now ${enabled ? 'ON' : 'OFF'}`);
   
-  // Control the autonomous faucet AND the Divine Optimizer manual override
-  if (enabled) {
-    // Remove manual override and (optionally) start faucet
-    manuallyEnableFaucet();
-    if (!SIGNAL_ONLY && !autonomousFaucet.isActive()) {
-      autonomousFaucet.runAutonomousLoop().catch(err => {
-        console.error('[Faucet] Failed to start autonomous loop:', err);
-      });
-    }
-  } else {
-    // Set manual override to disable and stop faucet
-    manuallyDisableFaucet();
-    autonomousFaucet.stop();
-  }
+  // STAGE 2: execution nullification — faucet cannot be started via API.
+  // Always force faucet OFF and stop any running loop.
+  faucetState.enabled = false;
+  manuallyDisableFaucet();
+  autonomousFaucet.stop();
   
   res.json({
     success: true,
-    enabled: faucetState.enabled,
+    enabled: false,
     manuallyDisabled: divineOptimizerState.manuallyDisabled,
     signalOnly: SIGNAL_ONLY,
     dailyCapUsd: DAILY_CAP_USD,
-    message: enabled 
-      ? (SIGNAL_ONLY
-          ? '🟡 Signal-only mode: faucet marked enabled, but no execution will run'
-          : '🟢 Autonomous faucet activated')
-      : '🔴 Faucet MANUALLY deactivated - Will remain OFF until re-enabled',
+    message: 'Execution disabled: faucet is forced OFF',
   });
 });
 

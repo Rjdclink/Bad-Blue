@@ -1,5 +1,6 @@
 import { Wallet, providers, ethers } from 'ethers';
 import logger from '../../../logger.js';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 const { JsonRpcProvider } = providers;
 const { parseEther, parseUnits } = ethers.utils;
@@ -34,8 +35,8 @@ interface GasPrediction {
 }
 
 class UltraLowLatencyExecutor {
-  private wallet: Wallet;
-  private provider: providers.JsonRpcProvider;
+  private wallet: Wallet | null = null;
+  private provider: providers.JsonRpcProvider | null = null;
   private preSignedTxPool: PreSignedTx[] = [];
   private currentNonce: number = 0;
   private initialized = false;
@@ -48,16 +49,26 @@ class UltraLowLatencyExecutor {
     this.privateRpcUrl = process.env.PRIVATE_RPC_URL || process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo';
     this.flashbotsUrl = process.env.FLASHBOTS_RPC || 'https://rpc.flashbots.net';
     this.bloxrouteUrl = process.env.BLOXROUTE_RPC || 'https://mev.api.bloxroute.com';
-    
-    this.provider = new JsonRpcProvider(this.privateRpcUrl);
-    this.wallet = new Wallet(
-      process.env.PRIVATE_KEY || Wallet.createRandom().privateKey,
-      this.provider
-    );
+
+    // STAGE 2: prevent any signer/private-key usage at module load time.
+    // Only construct provider/wallet if execution is explicitly released.
+    if (CRYPTO_EXECUTION_RELEASED) {
+      this.provider = new JsonRpcProvider(this.privateRpcUrl);
+      this.wallet = new Wallet(
+        process.env.PRIVATE_KEY || Wallet.createRandom().privateKey,
+        this.provider
+      );
+    }
   }
 
   async initialize(): Promise<void> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.initialize');
+    }
     if (this.initialized) return;
+    if (!this.wallet || !this.provider) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.missing-provider-or-wallet');
+    }
 
     logger.info('Initializing ultra-low-latency executor...', { 
       component: 'UltraLowLatencyExecutor' 
@@ -104,6 +115,12 @@ class UltraLowLatencyExecutor {
 
   async executeInstant(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.executeInstant');
+    }
+    if (!this.wallet || !this.provider) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.missing-provider-or-wallet');
+    }
 
     if (!this.initialized) {
       await this.initialize();
@@ -180,6 +197,14 @@ class UltraLowLatencyExecutor {
 
   async executeMultiPath(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.executeMultiPath');
+    }
+    if (!this.wallet || !this.provider) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.missing-provider-or-wallet');
+    }
+    const wallet = this.wallet;
+    const provider = this.provider;
 
     // Prepare transaction
     const tx = {
@@ -187,7 +212,7 @@ class UltraLowLatencyExecutor {
       data: opp.data,
       value: opp.value,
       gasLimit: opp.gasLimit,
-      nonce: await this.wallet.getTransactionCount()
+      nonce: await wallet.getTransactionCount()
     };
 
     // Race 3 execution paths simultaneously
@@ -236,6 +261,9 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaFlashbots(tx: any): Promise<{ txHash: string; path: string }> {
+    if (!this.wallet) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.submitViaFlashbots.missing-wallet');
+    }
     const signedTx = await this.wallet.signTransaction(tx);
     const flashbotsProvider = new JsonRpcProvider(this.flashbotsUrl);
     const response = await flashbotsProvider.sendTransaction(signedTx);
@@ -243,6 +271,9 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaBloxroute(tx: any): Promise<{ txHash: string; path: string }> {
+    if (!this.wallet) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.submitViaBloxroute.missing-wallet');
+    }
     const signedTx = await this.wallet.signTransaction(tx);
     const bloxrouteProvider = new JsonRpcProvider(this.bloxrouteUrl);
     const response = await bloxrouteProvider.sendTransaction(signedTx);
@@ -250,6 +281,9 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitDirect(tx: any): Promise<{ txHash: string; path: string }> {
+    if (!this.wallet || !this.provider) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.submitDirect.missing-wallet-or-provider');
+    }
     const signedTx = await this.wallet.signTransaction(tx);
     const response = await this.provider.sendTransaction(signedTx);
     return { txHash: response.hash, path: 'direct' };
@@ -257,13 +291,17 @@ class UltraLowLatencyExecutor {
 
   async predictOptimalGas(): Promise<GasPrediction> {
     try {
-      const currentBlock = await this.provider.getBlockNumber();
+      if (!this.provider) {
+        assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.predictOptimalGas.missing-provider');
+      }
+      const provider = this.provider;
+      const currentBlock = await provider.getBlockNumber();
       
       // 2024 Research: Fetch more blocks for better prediction (200 blocks ~40min)
       const blockCount = Math.min(200, currentBlock);
       const blocks = await Promise.all(
         Array.from({ length: blockCount }, (_, i) => 
-          this.provider.getBlock(currentBlock - i)
+          provider.getBlock(currentBlock - i)
         )
       );
 
@@ -275,7 +313,7 @@ class UltraLowLatencyExecutor {
       this.gasHistory = gasPrices.slice(0, 100);
 
       if (gasPrices.length === 0) {
-        const feeData = await this.provider.getFeeData();
+        const feeData = await provider.getFeeData();
         const gasPrice = Number(feeData.gasPrice || parseUnits('1', 'gwei'));
         return {
           mean: gasPrice,
@@ -344,6 +382,9 @@ class UltraLowLatencyExecutor {
       });
       
       // Fallback to current gas price
+      if (!this.provider) {
+        assertCryptoExecutionReleased('cryptocrawl.execution.ultra-low-latency.predictOptimalGas.fallback.missing-provider');
+      }
       const feeData = await this.provider.getFeeData();
       const gasPrice = Number(feeData.gasPrice || parseUnits('1', 'gwei'));
       

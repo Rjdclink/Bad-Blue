@@ -73,9 +73,12 @@ class GasOracle {
 
   async getGasPrice(chain: ChainId): Promise<GasPrice> {
     try {
-      const provider = this.providers.get(chain);
+      let provider = this.providers.get(chain);
       if (!provider) {
-        throw new Error(`Provider not initialized for ${chain}`);
+        // STAGE 2: keep request-driven behavior (no background start required)
+        this.initializeProviders();
+        provider = this.providers.get(chain);
+        if (!provider) throw new Error(`Provider not initialized for ${chain}`);
       }
 
       await this.updateNativePrices();
@@ -167,12 +170,8 @@ class GasOracle {
       return;
     }
     
-    // Start update interval (60 seconds instead of 15)
-    this.updateInterval = setInterval(() => {
-      this.updateAllGasPrices().catch(error => {
-        console.error('[GasOracle] Auto-update failed:', error);
-      });
-    }, 60000);
+    // STAGE 2: do not start background intervals.
+    // Gas data is updated on-demand via request paths (updateAllGasPrices / getGasPrice).
     
     console.log('[GasOracle] ✓ Started');
   }

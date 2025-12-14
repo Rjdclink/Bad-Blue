@@ -1,6 +1,7 @@
 import { providers, Wallet } from 'ethers';
 import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 const { JsonRpcProvider } = providers;
 
@@ -59,15 +60,19 @@ class MultiRelaySubmitter {
   private providers: Map<string, FlashbotsBundleProvider> = new Map();
   private metrics: Map<string, RelayMetrics> = new Map();
   private initialized = false;
-  private provider: providers.JsonRpcProvider;
-  private wallet: Wallet;
+  private provider: providers.JsonRpcProvider | null = null;
+  private wallet: Wallet | null = null;
 
   constructor() {
-    this.provider = new JsonRpcProvider(process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo');
-    this.wallet = new Wallet(
-      process.env.PRIVATE_KEY || Wallet.createRandom().privateKey,
-      this.provider
-    );
+    // STAGE 2: prevent any signer/private-key usage at module load time.
+    // Only construct provider/wallet if execution is explicitly released.
+    if (CRYPTO_EXECUTION_RELEASED) {
+      this.provider = new JsonRpcProvider(process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo');
+      this.wallet = new Wallet(
+        process.env.PRIVATE_KEY || Wallet.createRandom().privateKey,
+        this.provider
+      );
+    }
     
     // Initialize metrics for all relays
     RELAYS.forEach(relay => {
@@ -90,15 +95,24 @@ class MultiRelaySubmitter {
   }
 
   async initialize(): Promise<void> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.execution.multi-relay.initialize');
+    }
     if (this.initialized) return;
+    if (!this.provider || !this.wallet) {
+      // Defensive: should be impossible when execution is released, but fail closed.
+      assertCryptoExecutionReleased('cryptocrawl.execution.multi-relay.missing-provider-or-wallet');
+    }
+    const provider = this.provider;
+    const wallet = this.wallet;
 
     logger.info('Initializing multi-relay connections...', { component: 'MultiRelaySubmitter' });
 
     const initPromises = RELAYS.map(async (relay) => {
       try {
         const flashbotsProvider = await FlashbotsBundleProvider.create(
-          this.provider,
-          this.wallet,
+          provider,
+          wallet,
           relay.endpoint,
           'mainnet'
         );
@@ -209,6 +223,9 @@ class MultiRelaySubmitter {
   // 2024 Research: Bundle simulation to prevent failed submissions (gas savings)
   private async simulateBundle(bundle: Bundle): Promise<{ valid: boolean; reason?: string; score: number }> {
     try {
+      if (!this.provider) {
+        assertCryptoExecutionReleased('cryptocrawl.execution.multi-relay.simulateBundle.missing-provider');
+      }
       // Validate bundle structure
       if (!bundle.signedTransactions || bundle.signedTransactions.length === 0) {
         return { valid: false, reason: 'Empty bundle', score: 0 };

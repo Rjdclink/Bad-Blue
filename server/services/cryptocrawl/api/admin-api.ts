@@ -134,10 +134,9 @@ const cryptoCrawlState = {
     console.log('[CryptoCrawl] Enabling system...');
     this.enabled = true;
     
-    // Start all crypto services
-    await gasOracle.start();
-    await balanceMonitor.start();
-    await networkHealth.start();
+    // STAGE 2: execution nullification — no background schedulers/timers.
+    // Keep services request-driven only; do not start interval-based monitors here.
+    // balanceMonitor.start() is safe (no interval), but we avoid auto-starting any components by default.
     
     console.log('[CryptoCrawl] ✓ System enabled');
   },

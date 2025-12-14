@@ -3,6 +3,7 @@
 
 import { ethers } from 'ethers';
 import logger from '../../../logger.js';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -475,6 +476,10 @@ export class AlchemyProvider {
    * Subscribe to new blocks (WebSocket)
    */
   onBlock(callback: (blockNumber: number) => void): void {
+    // STAGE 2: disable background polling/subscriptions in execution-nullified mode.
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.api.blockchain-providers.onBlock');
+    }
     if (this.wsProvider) {
       this.wsProvider.on('block', callback);
     } else {
@@ -494,6 +499,10 @@ export class AlchemyProvider {
    * Subscribe to pending transactions (WebSocket)
    */
   onPendingTransaction(callback: (txHash: string) => void): void {
+    // STAGE 2: disable background subscriptions in execution-nullified mode.
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.api.blockchain-providers.onPendingTransaction');
+    }
     if (this.wsProvider) {
       this.wsProvider.on('pending', callback);
     }
@@ -503,6 +512,9 @@ export class AlchemyProvider {
    * Send raw transaction
    */
   async sendTransaction(signedTx: string): Promise<string> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.api.blockchain-providers.sendTransaction');
+    }
     await this.rateLimiter.waitForSlot();
 
     const start = Date.now();

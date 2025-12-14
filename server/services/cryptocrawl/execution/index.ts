@@ -2,6 +2,7 @@ import { MultiRelaySubmitter } from './multi-relay-submitter.js';
 import { FlashLoanAggregator } from './flash-loan-aggregator.js';
 import { UltraLowLatencyExecutor } from './ultra-low-latency-executor.js';
 import logger from '../../../logger.js';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 interface Opportunity {
   id: string;
@@ -30,6 +31,9 @@ export const ultraLowLatency = new UltraLowLatencyExecutor();
 
 // Unified execution function that combines all systems
 export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionResult> {
+  if (!CRYPTO_EXECUTION_RELEASED) {
+    assertCryptoExecutionReleased('cryptocrawl.execution.executeWithMaxProfit');
+  }
   logger.info('Executing opportunity with max profit strategy', {
     component: 'ExecutionOrchestrator',
     opportunityId: opp.id,

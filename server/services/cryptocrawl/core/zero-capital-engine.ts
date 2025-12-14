@@ -29,6 +29,7 @@
 import { ethers, Contract, Wallet, providers, BigNumber } from 'ethers';
 import { FlashbotsBundleProvider, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
+import { CRYPTO_EXECUTION_RELEASED, assertCryptoExecutionReleased } from '../../../../shared/cryptoExecutionPolicy';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -192,6 +193,9 @@ export class AutonomousZeroCapitalEngine {
    * Private key only needed when executing (and even then, can use relayers)
    */
   async initialize(): Promise<void> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.zero-capital-engine.initialize');
+    }
     logger.info('[ZeroCapitalEngine] Initializing providers...', { component: 'ZeroCapitalEngine' });
 
     // Initialize providers for each chain
@@ -243,6 +247,9 @@ export class AutonomousZeroCapitalEngine {
    * THIS IS WHERE THE MAGIC HAPPENS - ZERO CAPITAL REQUIRED
    */
   async start(): Promise<void> {
+    if (!CRYPTO_EXECUTION_RELEASED) {
+      assertCryptoExecutionReleased('cryptocrawl.zero-capital-engine.start');
+    }
     if (this.state.isRunning) {
       logger.warn('[ZeroCapitalEngine] Engine already running', { component: 'ZeroCapitalEngine' });
       return;
