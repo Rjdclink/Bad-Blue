@@ -119,16 +119,17 @@ const DEFAULT_CONFIG: DecisionEngineConfig = {
     enableWeightedFusion: true,
   },
   monteCarlo: {
-    simulations: 3000,              // Reduced for live path (1k-5k range)
-    confidenceLevel: 0.95,
+    simulations: 3000,              // FIXED for Stage 5 (deterministic)
+    confidenceLevel: 0.95,          // FIXED
     stressTestVolatility: true,
     stressTestFees: true,
     stressTestSlippage: true,
     stressTestLatency: true,
-    minPassThreshold: 0.7,
-    enableEarlyAbort: true,          // Enable early abort for live path
-    earlyAbortDrawdownThreshold: 0.3, // Abort if drawdown exceeds 30%
-    earlyAbortCheckInterval: 100,    // Check every 100 simulations
+    minPassThreshold: 0.7,          // FIXED
+    enableEarlyAbort: true,          // FIXED for Stage 5
+    earlyAbortDrawdownThreshold: 0.3, // FIXED: 30% for Stage 5
+    earlyAbortCheckInterval: 100,    // FIXED: Check every 100 simulations
+    deterministic: true,             // Stage 5: No adaptive behavior
   },
   riskGovernor: {
     maxPositionSize: 10000,           // USD

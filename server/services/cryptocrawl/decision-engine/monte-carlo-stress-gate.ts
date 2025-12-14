@@ -21,17 +21,19 @@ const log = createLogger('MonteCarloStressGate');
 // ============================================================================
 
 export interface StressTestConfig {
-  simulations: number;              // Number of Monte Carlo iterations (1k-5k for live path)
-  confidenceLevel: number;          // Confidence level for VaR (0.95 = 95%)
+  simulations: number;              // Number of Monte Carlo iterations (FIXED for Stage 5: 3000)
+  confidenceLevel: number;          // Confidence level for VaR (FIXED: 0.95 = 95%)
   stressTestVolatility: boolean;
   stressTestFees: boolean;
   stressTestSlippage: boolean;
   stressTestLatency: boolean;
-  minPassThreshold: number;         // Minimum confidence to pass (0-1)
-  // NEW: Early abort for live path
-  enableEarlyAbort: boolean;        // Enable early abort if drawdown exceeds threshold
-  earlyAbortDrawdownThreshold: number; // Abort if drawdown exceeds this (default: 0.3 = 30%)
-  earlyAbortCheckInterval: number;   // Check for abort every N simulations (default: 100)
+  minPassThreshold: number;         // Minimum confidence to pass (FIXED: 0.7)
+  // Stage 5: Deterministic gating (no adaptive behavior)
+  enableEarlyAbort: boolean;        // Enable early abort (FIXED: true for Stage 5)
+  earlyAbortDrawdownThreshold: number; // Abort threshold (FIXED: 0.3 = 30% for Stage 5)
+  earlyAbortCheckInterval: number;   // Check interval (FIXED: 100 for Stage 5)
+  // Stage 5: No adaptive sampling, no parameter adjustments, no retries
+  deterministic: boolean;           // If true, all parameters are fixed, no adaptive behavior
 }
 
 export interface StressTestResult {

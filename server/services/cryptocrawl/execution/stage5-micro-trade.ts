@@ -22,6 +22,17 @@ import {
   logViolation,
   getViolationLog,
 } from './compliance-enforcer';
+import {
+  getExecutionChokePoint,
+  gateSignalAcceptance,
+  gateValidationRun,
+  gateOrderIntentCreation,
+  gateOrderSend,
+  type ChokePointResult,
+} from './execution-choke-point';
+import { checkPilotAction, PilotCapability } from './pilot-narrow-mode';
+import { checkEditAllowed } from './pause-edit-lock';
+import { generateDeterministicTestSignal, checkFaucetMeshFailure } from './deterministic-test-signal';
 
 const log = createLogger('Stage5MicroTrade');
 
@@ -48,6 +59,28 @@ export interface MicroTradeResult {
   success: boolean;
   timestamp: Date;
   config: typeof TRADE_CONFIG;
+  
+  // Telemetry (Required)
+  telemetry: {
+    actorId: string;
+    capability: 'pilot' | 'advisor';
+    gateFailed?: 'faucet' | 'monte_carlo' | 'risk_governor' | 'execution';
+    workaroundAttempt: boolean;
+    workaroundReason?: string;
+    chokePointResults: {
+      signal?: ChokePointResult;
+      validation?: ChokePointResult;
+      execution?: ChokePointResult;
+    };
+  };
+  
+  // Current Flags
+  flags: {
+    UNPAUSE: boolean;
+    GLOBAL_EXECUTION: 'ENABLED' | 'DISABLED';
+    LOCKED: boolean;
+    PAUSED: boolean;
+  };
   
   // Pre-filtering
   faucetMeshFilter: {
@@ -116,10 +149,24 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
   log.info('COMPLIANCE: Adaptive logic disabled - static, deterministic behavior only');
   log.info('COMPLIANCE: Human intent:', STAGE_5_HUMAN_INTENT);
 
+  const actorId = 'cryptara-pilot';
+  const capability = 'pilot' as const;
+  
+  // Get current flags
+  const chokePoint = getExecutionChokePoint();
+  const flags = chokePoint.getCurrentFlags();
+  
   const result: MicroTradeResult = {
     success: false,
     timestamp: new Date(),
     config: TRADE_CONFIG,
+    telemetry: {
+      actorId,
+      capability,
+      workaroundAttempt: false,
+      chokePointResults: {},
+    },
+    flags,
     faucetMeshFilter: { passed: false, reason: '' },
     metrics: {
       signalFusionConfidence: 0,
@@ -147,9 +194,43 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
     log.info('✓ All components initialized');
 
     // ========================================================================
-    // STEP 2: Generate Passing Test Signal
+    // CHOKE-POINT: Check signal acceptance
     // ========================================================================
-    log.info('Step 2: Generating passing test signal...', TRADE_CONFIG);
+    const signalChokeResult = gateSignalAcceptance(
+      actorId,
+      capability,
+      'Generate deterministic test signal for Stage 5 micro trade'
+    );
+    result.telemetry.chokePointResults.signal = signalChokeResult;
+    
+    if (!signalChokeResult.allowed) {
+      result.errors.push(`Choke-point blocked signal acceptance: ${signalChokeResult.reason}`);
+      result.telemetry.workaroundAttempt = signalChokeResult.telemetry.workaroundAttempt;
+      result.telemetry.workaroundReason = signalChokeResult.telemetry.workaroundReason;
+      if (signalChokeResult.telemetry.workaroundAttempt) {
+        log.error('WORKAROUND_ATTEMPT detected at signal acceptance', signalChokeResult.telemetry);
+      }
+      return result;
+    }
+
+    // ========================================================================
+    // PILOT-NARROW MODE: Check pilot action
+    // ========================================================================
+    const pilotCheck = checkPilotAction({
+      actorId,
+      capability: PilotCapability.STAGE_5_MICRO_TRADE,
+      action: 'Generate deterministic test signal',
+    });
+    
+    if (!pilotCheck.allowed) {
+      result.errors.push(`Pilot action blocked: ${pilotCheck.reason}`);
+      return result;
+    }
+
+    // ========================================================================
+    // STEP 2: Generate Deterministic Test Signal (Exactly One)
+    // ========================================================================
+    log.info('Step 2: Generating deterministic test signal (Stage 5)...', TRADE_CONFIG);
     // Calculate profit percent based on fees × multiplier
     const makerFeeRate = 0.0008; // 0.08% maker fee
     const estimatedGasFee = 0.0001;
@@ -166,19 +247,20 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
       calculatedProfitPercent: `${(calculatedProfitPercent * 100).toFixed(2)}%`,
     });
 
-    const testSignals = generatePassingTestSignal({
-      pair: TRADE_CONFIG.pair,
-      exchange: TRADE_CONFIG.exchange,
-      size: TRADE_CONFIG.size,
-      baseAmount: TRADE_CONFIG.baseAmount,
-      profitPercent: calculatedProfitPercent,
-      volatility: 0.3, // Low volatility
-      liquidityScore: 0.92, // High liquidity (slightly lower for wider-spread pair)
-      spreadMultiplier: TRADE_CONFIG.spreadMultiplier,
-      useMakerOnlyFees: TRADE_CONFIG.useMakerOnlyFees,
-      preferOffPeakHours: TRADE_CONFIG.preferOffPeakHours,
-    });
-    log.info(`✓ Generated ${testSignals.length} test signals`);
+    // Generate deterministic test signal (exactly one, no optimization)
+    const deterministicSignalResult = generateDeterministicTestSignal();
+    
+    if (!deterministicSignalResult.passed || !deterministicSignalResult.signal) {
+      result.errors.push(`Deterministic signal generation failed: ${deterministicSignalResult.reason}`);
+      if (deterministicSignalResult.requiresHumanPermission) {
+        result.warnings.push('Human permission required for parameter adjustment', deterministicSignalResult.permissionRequest);
+        log.warn('HUMAN PERMISSION REQUIRED', deterministicSignalResult.permissionRequest);
+      }
+      return result;
+    }
+    
+    const testSignals = [deterministicSignalResult.signal];
+    log.info('✓ Generated exactly one deterministic test signal');
 
     // ========================================================================
     // STEP 3: Pre-Filter Through Faucet Mesh
@@ -191,6 +273,9 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
       const failedFilter = filterResults.find(f => !f.passed);
       const failureReason = failedFilter?.reason || 'Faucet mesh filter failed';
       
+      // Check if human permission required for parameter adjustment
+      const faucetFailureResult = checkFaucetMeshFailure(testSignals[0], failureReason);
+      
       // COMPLIANCE: Gate failure = STOP AND REPORT ONLY (no retries, no alternatives)
       const gateFailure = handleGateFailure('FaucetMeshFilter', failureReason, 'Stage5MicroTrade');
       
@@ -198,7 +283,13 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
         passed: false,
         reason: gateFailure.reason,
       };
+      result.telemetry.gateFailed = 'faucet';
       result.errors.push(gateFailure.reason);
+      
+      if (faucetFailureResult.requiresHumanPermission) {
+        result.warnings.push('HUMAN PERMISSION REQUIRED for parameter adjustment', faucetFailureResult.permissionRequest);
+        log.warn('HUMAN PERMISSION REQUIRED - Faucet mesh failure', faucetFailureResult.permissionRequest);
+      }
       
       // Log exact spread vs fee numbers for reporting (not for retry)
       const spread = testSignals[0].signal.opportunity?.profitEstimate || 0;
@@ -218,14 +309,31 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
         compliance: 'STOPPED - No retries or alternatives permitted',
       });
       
-      // COMPLIANCE: Any retry attempt would be logged as violation
-      // No retry logic here - stop and report only
-      
       return result;
     }
     
     result.faucetMeshFilter = { passed: true, reason: 'All faucet mesh filters passed' };
     log.info('✓ Faucet mesh filter passed');
+
+    // ========================================================================
+    // CHOKE-POINT: Check validation run
+    // ========================================================================
+    const validationChokeResult = gateValidationRun(
+      actorId,
+      capability,
+      'Process signals through Decision Engine gates'
+    );
+    result.telemetry.chokePointResults.validation = validationChokeResult;
+    
+    if (!validationChokeResult.allowed) {
+      result.errors.push(`Choke-point blocked validation: ${validationChokeResult.reason}`);
+      result.telemetry.workaroundAttempt = validationChokeResult.telemetry.workaroundAttempt;
+      result.telemetry.workaroundReason = validationChokeResult.telemetry.workaroundReason;
+      if (validationChokeResult.telemetry.workaroundAttempt) {
+        log.error('WORKAROUND_ATTEMPT detected at validation', validationChokeResult.telemetry);
+      }
+      return result;
+    }
 
     // ========================================================================
     // STEP 4: Process Through Decision Engine
@@ -268,6 +376,13 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
           decisionResult.gates.monteCarloStress.reason) :
         decisionResult.gates.signalFusion.reason;
       
+      // Record which gate failed for telemetry
+      if (!decisionResult.gates.monteCarloStress.passed) {
+        result.telemetry.gateFailed = 'monte_carlo';
+      } else if (!decisionResult.gates.riskGovernor.passed) {
+        result.telemetry.gateFailed = 'risk_governor';
+      }
+      
       // COMPLIANCE: Gate failure = STOP AND REPORT ONLY
       const gateFailure = handleGateFailure(failedGate, failureReason, 'Stage5MicroTrade');
       
@@ -283,9 +398,30 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
     }
 
     // ========================================================================
-    // STEP 5: Execute Micro Trade (Stub Mode)
+    // CHOKE-POINT: Check order intent creation and order send
     // ========================================================================
     if (decisionResult.verdict === 'PASS') {
+      const executionChokeResult = gateOrderIntentCreation(
+        actorId,
+        capability,
+        'Execute Stage 5 micro trade (stub mode)'
+      );
+      result.telemetry.chokePointResults.execution = executionChokeResult;
+      
+      if (!executionChokeResult.allowed) {
+        result.errors.push(`Choke-point blocked execution: ${executionChokeResult.reason}`);
+        result.telemetry.workaroundAttempt = executionChokeResult.telemetry.workaroundAttempt;
+        result.telemetry.workaroundReason = executionChokeResult.telemetry.workaroundReason;
+        result.telemetry.gateFailed = 'execution';
+        if (executionChokeResult.telemetry.workaroundAttempt) {
+          log.error('WORKAROUND_ATTEMPT detected at execution', executionChokeResult.telemetry);
+        }
+        return result;
+      }
+
+      // ========================================================================
+      // STEP 5: Execute Micro Trade (Stub Mode)
+      // ========================================================================
       log.info('Step 5: Executing micro trade (STUB MODE)...');
       const execution = await executionOrchestrator.orchestrateExecution(decisionResult);
       
@@ -356,6 +492,22 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
     } else {
       log.info('COMPLIANCE: No violations detected');
     }
+    
+    // ========================================================================
+    // TELEMETRY REPORT (Required)
+    // ========================================================================
+    log.info('='.repeat(80));
+    log.info('TELEMETRY REPORT (Required)');
+    log.info('='.repeat(80));
+    log.info('Actor ID:', result.telemetry.actorId);
+    log.info('Capability:', result.telemetry.capability);
+    log.info('Gate Failed:', result.telemetry.gateFailed || 'none');
+    log.info('Workaround Attempt:', result.telemetry.workaroundAttempt);
+    if (result.telemetry.workaroundReason) {
+      log.info('Workaround Reason:', result.telemetry.workaroundReason);
+    }
+    log.info('Current Flags:', result.flags);
+    log.info('Choke-Point Results:', result.telemetry.chokePointResults);
     log.info('='.repeat(80));
 
     return result;
