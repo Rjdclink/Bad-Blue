@@ -3713,6 +3713,79 @@ Contact: ${foiaRequest.userEmail || userEmail}
   });
 
   // ============================================
+  // GEOCODING API - PANTHEON Location Intelligence
+  // ============================================
+  
+  app.post('/api/geocode', asyncHandler(async (req: Request, res: Response) => {
+    const { address } = req.body;
+    
+    if (!address || typeof address !== 'string') {
+      return res.status(400).json({ error: 'Address is required' });
+    }
+    
+    try {
+      // Use a free geocoding service (Nominatim/OpenStreetMap)
+      const encodedAddress = encodeURIComponent(address);
+      const geocodeUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodedAddress}&limit=1`;
+      
+      // Use Node's built-in fetch (Node 18+) or fallback to https module
+      let response: Response;
+      if (typeof fetch !== 'undefined') {
+        response = await fetch(geocodeUrl, {
+          headers: {
+            'User-Agent': 'LegalWhat-Pantheon/1.0',
+          },
+        });
+      } else {
+        // Fallback for older Node versions
+        const https = await import('https');
+        const url = await import('url');
+        const parsedUrl = url.parse(geocodeUrl);
+        const data = await new Promise<string>((resolve, reject) => {
+          const req = https.get({
+            hostname: parsedUrl.hostname,
+            path: parsedUrl.path,
+            headers: { 'User-Agent': 'LegalWhat-Pantheon/1.0' },
+          }, (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => resolve(body));
+          });
+          req.on('error', reject);
+        });
+        // Create a Response-like object
+        response = {
+          ok: true,
+          json: async () => JSON.parse(data),
+        } as Response;
+      }
+      
+      if (!response.ok) {
+        throw new Error('Geocoding service unavailable');
+      }
+      
+      const data = await response.json();
+      
+      if (data && data.length > 0) {
+        const result = data[0];
+        return res.json({
+          lat: parseFloat(result.lat),
+          lng: parseFloat(result.lon),
+          address: result.display_name,
+        });
+      }
+      
+      return res.status(404).json({ error: 'Address not found' });
+    } catch (error) {
+      console.error('[Geocode] Error:', error);
+      return res.status(500).json({ 
+        error: 'Geocoding failed',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }));
+
+  // ============================================
   // CORRUPT LAW ENFORCEMENT & SNITCH EVIDENCE HUB ROUTES
   // ============================================
   

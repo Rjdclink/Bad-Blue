@@ -6,7 +6,7 @@
  * Advanced intelligence platform for comprehensive identity profiling
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DoomsdayClockSelector } from '@/components/DoomsdayClockSelector';
 import { PantheonProgressTracker } from '@/components/PantheonProgressTracker';
 import { LocationHeatmap } from '@/components/LocationHeatmap';
@@ -60,6 +60,9 @@ export default function PantheonPage() {
   const [results, setResults] = useState<PeopleSearchReport | null>(null);
   const [searchConfig, setSearchConfig] = useState<SearchConfig | null>(null);
   const [searchAbortController, setSearchAbortController] = useState<AbortController | null>(null);
+  const [locationData, setLocationData] = useState<Array<[number, number, number]>>([]);
+  const [locationMarkers, setLocationMarkers] = useState<Array<{ pos: [number, number]; popup: string }>>([]);
+  const [geocodingInProgress, setGeocodingInProgress] = useState(false);
   const { toast } = useToast();
   
   // Timeout durations in milliseconds based on search depth
@@ -166,6 +169,66 @@ export default function PantheonPage() {
       searchAbortController.abort();
     }
   };
+
+  // Geocode location data when results change - PANTHEON single source of truth
+  useEffect(() => {
+    if (!results?.locationHistory || results.locationHistory.length === 0) {
+      setLocationData([]);
+      setLocationMarkers([]);
+      return;
+    }
+
+    let cancelled = false;
+    setGeocodingInProgress(true);
+
+    // Geocode locations from Pantheon data
+    const geocodeLocations = async () => {
+      const coords: Array<[number, number, number]> = [];
+      const markers: Array<{ pos: [number, number]; popup: string }> = [];
+
+      for (const location of results.locationHistory.slice(0, MAX_HEATMAP_POINTS)) {
+        if (cancelled) break;
+        
+        try {
+          const geocodeResponse = await fetch('/api/geocode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address: location }),
+          });
+          
+          if (geocodeResponse.ok) {
+            const data = await geocodeResponse.json();
+            if (data.lat && data.lng) {
+              const intensity = MIN_INTENSITY + Math.random() * (1 - MIN_INTENSITY);
+              coords.push([data.lat, data.lng, intensity]);
+              
+              if (markers.length < MAX_MAP_MARKERS) {
+                markers.push({
+                  pos: [data.lat, data.lng] as [number, number],
+                  popup: location,
+                });
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('[Pantheon] Geocoding failed for:', location, error);
+          // Continue with other locations
+        }
+      }
+
+      if (!cancelled) {
+        setLocationData(coords);
+        setLocationMarkers(markers);
+        setGeocodingInProgress(false);
+      }
+    };
+
+    geocodeLocations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [results?.locationHistory]);
   
   return (
     <>
@@ -443,16 +506,26 @@ export default function PantheonPage() {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <LocationHeatmap
-                        data={generateMockLocationData(results.locationHistory)}
-                        markers={generateLocationMarkers(results.locationHistory)}
-                        center={[40.7128, -74.0060]}
-                        zoom={10}
-                        config={{ radius: 30, blur: 20, maxZoom: 18 }}
-                      />
+                      {geocodingInProgress ? (
+                        <div className="flex items-center justify-center py-8">
+                          <p className="text-sm text-muted-foreground">Geocoding locations from PANTHEON data...</p>
+                        </div>
+                      ) : locationData.length > 0 ? (
+                        <LocationHeatmap
+                          data={locationData}
+                          markers={locationMarkers}
+                          center={locationData.length > 0 ? [locationData[0][0], locationData[0][1]] : [40.7128, -74.0060]}
+                          zoom={10}
+                          config={{ radius: 30, blur: 20, maxZoom: 18 }}
+                        />
+                      ) : (
+                        <div className="flex items-center justify-center py-8">
+                          <p className="text-sm text-muted-foreground">No geocodable locations found in PANTHEON data</p>
+                        </div>
+                      )}
                       <p className="text-xs text-muted-foreground mt-3">
-                        Note: Map displays approximate locations based on address data. 
-                        Actual GPS coordinates require EXIF data from images.
+                        Location data sourced from PANTHEON intelligence report. 
+                        Coordinates derived from address geocoding.
                       </p>
                     </CardContent>
                   </Card>
@@ -598,37 +671,5 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
   );
 }
 
-// Helper: Generate mock location data for heatmap
-// In production, this would parse actual GPS coordinates from location history
-function generateMockLocationData(locationHistory: string[]): Array<[number, number, number]> {
-  // Base coordinates around New York City
-  const baseCoords: [number, number] = [40.7128, -74.0060];
-  
-  return locationHistory.slice(0, MAX_HEATMAP_POINTS).map((_, idx) => {
-    // Generate semi-random coordinates within a reasonable range
-    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const intensity = MIN_INTENSITY + Math.random() * (1 - MIN_INTENSITY);
-    
-    return [
-      baseCoords[0] + latOffset,
-      baseCoords[1] + lngOffset,
-      intensity,
-    ];
-  });
-}
-
-// Helper: Generate location markers for map
-function generateLocationMarkers(locationHistory: string[]): Array<{ pos: [number, number]; popup: string }> {
-  const baseCoords: [number, number] = [40.7128, -74.0060];
-  
-  return locationHistory.slice(0, MAX_MAP_MARKERS).map((location, idx) => {
-    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    
-    return {
-      pos: [baseCoords[0] + latOffset, baseCoords[1] + lngOffset] as [number, number],
-      popup: location,
-    };
-  });
-}
+// NOTE: Location geocoding now handled in useEffect hook above
+// PANTHEON is the single source of truth - no mock data generation

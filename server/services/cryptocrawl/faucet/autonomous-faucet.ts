@@ -16,6 +16,8 @@ import { gasOracle } from '../bridge/gas-oracle.js';
 import { MultiOraclePriceValidator } from '../validation/multi-oracle-validator.js';
 import { MasterOrchestrator } from '../core/master-orchestrator.js';
 import logger from '../../../logger.js';
+import { dailyCapLadder, type DailyCapState } from './daily-cap-ladder.js';
+import { riskKillLogic, HaltReason, type RiskMetrics } from './risk-kill-logic.js';
 
 // Babel Integration - IP Protection Systems + Cain Reasoning
 import {
@@ -1559,6 +1561,17 @@ class AutonomousCryptoFaucet {
             await this.transitionState('open', 'Opening sequence complete');
           }
         } else if (this.state.mode === 'open') {
+          // STAGE 4.2: Check risk/kill logic before continuing
+          if (riskKillLogic.isHalted()) {
+            logger.warn('[FAUCET] ⛔ Risk/kill logic triggered halt', {
+              component: 'AutonomousFaucet',
+              reason: riskKillLogic.getHaltReason(),
+              metrics: riskKillLogic.getRiskMetrics(),
+            });
+            await this.transitionState('emergency', `Risk halt: ${riskKillLogic.getHaltReason()}`);
+            continue;
+          }
+          
           // Should we CLOSE?
           const closeDecision = await this.makeCloseDecision();
           if (closeDecision.shouldClose) {
@@ -1719,12 +1732,26 @@ class AutonomousCryptoFaucet {
    * and anti-detection measures for $35K daily target
    */
   private async executeWithStealth(): Promise<void> {
-    // Check daily target progress - avoid overshooting
-    if (this.state.profitThisDay >= DAILY_TARGET_CONFIG.dailyTarget) {
-      logger.info('[FAUCET] 💰 Daily target achieved, entering stealth', {
+    // STAGE 4.2: Check risk/kill logic first - halt if needed
+    if (riskKillLogic.isHalted()) {
+      const haltReason = riskKillLogic.getHaltReason();
+      logger.warn('[FAUCET] ⛔ Execution halted by risk/kill logic', {
+        component: 'AutonomousFaucet',
+        reason: haltReason,
+        state: riskKillLogic.getState(),
+      });
+      await this.transitionState('emergency', `Halted: ${haltReason}`);
+      return;
+    }
+
+    // STAGE 4.1: Check daily cap ladder - use progressive cap instead of fixed target
+    const dailyCap = dailyCapLadder.getDailyCap();
+    if (this.state.profitThisDay >= dailyCap) {
+      logger.info('[FAUCET] 💰 Daily cap reached, entering stealth', {
         component: 'AutonomousFaucet',
         dailyProfit: this.state.profitThisDay,
-        target: DAILY_TARGET_CONFIG.dailyTarget,
+        dailyCap,
+        currentTier: dailyCapLadder.getCurrentTier(),
       });
       return;
     }
@@ -1799,15 +1826,41 @@ class AutonomousCryptoFaucet {
         this.state.tradesThisHour += 1;
         this.state.tradesThisDay += 1;
         
+        // STAGE 4.1: Record profit with daily cap ladder
+        dailyCapLadder.recordDailyProfit(this.state.profitThisDay);
+        const newDailyCap = dailyCapLadder.getDailyCap();
+        if (newDailyCap > dailyCapLadder.getCurrentTier()) {
+          logger.info('[FAUCET] 🎯 Daily cap tier advanced', {
+            component: 'AutonomousFaucet',
+            newCap: newDailyCap,
+            stabilityDays: dailyCapLadder.getState().stabilityDays,
+          });
+        }
+        
+        // STAGE 4.2: Update risk/kill logic with profit
+        riskKillLogic.updateProfit(this.state.profitThisDay);
+        if (riskKillLogic.isHalted()) {
+          logger.error('[FAUCET] ⛔ Halted after profit update', {
+            component: 'AutonomousFaucet',
+            reason: riskKillLogic.getHaltReason(),
+          });
+          await this.transitionState('emergency', `Risk threshold breached: ${riskKillLogic.getHaltReason()}`);
+          return;
+        }
+        
         // Update exchange distribution
         const currentExchangeProfit = this.state.exchangeDistribution.get(exchange) || 0;
         this.state.exchangeDistribution.set(exchange, currentExchangeProfit + profit);
         
-        // Update daily progress
-        this.state.dailyTargetProgress = (this.state.profitThisDay / DAILY_TARGET_CONFIG.dailyTarget) * 100;
+        // Update daily progress (use current cap instead of fixed target)
+        const currentCap = dailyCapLadder.getDailyCap();
+        this.state.dailyTargetProgress = (this.state.profitThisDay / currentCap) * 100;
 
         // Record success - resets consecutive failures
         this.recordSuccess();
+        
+        // STAGE 4.2: Reset anomaly counter on success
+        riskKillLogic.resetAnomalyCounter();
 
         // Increase stealth level proportionally to profit (slower rate)
         this.state.stealthLevel = Math.min(
@@ -1826,6 +1879,18 @@ class AutonomousCryptoFaucet {
       } else {
         // Trade failed
         this.recordFailure('trade_execution');
+        
+        // STAGE 4.2: Record anomaly
+        riskKillLogic.recordAnomaly('medium');
+        if (riskKillLogic.isHalted()) {
+          logger.error('[FAUCET] ⛔ Halted due to execution anomaly', {
+            component: 'AutonomousFaucet',
+            reason: riskKillLogic.getHaltReason(),
+          });
+          await this.transitionState('emergency', `Execution anomaly: ${riskKillLogic.getHaltReason()}`);
+          return;
+        }
+        
         logger.warn('[FAUCET] Trade execution failed', {
           component: 'AutonomousFaucet',
           consecutiveFailures: this.state.consecutiveFailures,
@@ -1833,6 +1898,19 @@ class AutonomousCryptoFaucet {
       }
     } catch (error) {
       this.recordFailure('trade_exception');
+      
+      // STAGE 4.2: Record high-severity anomaly
+      riskKillLogic.recordAnomaly('high');
+      if (riskKillLogic.isHalted()) {
+        logger.error('[FAUCET] ⛔ Halted due to exception', {
+          component: 'AutonomousFaucet',
+          reason: riskKillLogic.getHaltReason(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await this.transitionState('emergency', `Exception: ${riskKillLogic.getHaltReason()}`);
+        return;
+      }
+      
       logger.error('[FAUCET] Trade execution exception', {
         component: 'AutonomousFaucet',
         error: error instanceof Error ? error.message : String(error),
