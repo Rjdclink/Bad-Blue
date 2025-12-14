@@ -1,10 +1,6 @@
 node_modules
 dist
 .DS_Store
-
-# Core dumps
-core
-core.*
 server/public
 vite.config.ts.*
 *.tar.gz
@@ -12,6 +8,10 @@ test-*.mjs
 test-*.js
 test-*.ts
 test_*.ts
+
+# Core dumps / crash artifacts
+core
+core.*
 
 # Build artifacts in public/ directory
 # (Keep public/images and other git-tracked files, but ignore build output)
@@ -37,10 +37,6 @@ logs/
 data/
 storage/
 !server/services/storage/
-
-# Core dumps (accidental binary crash artifacts)
-core
-core.*
 
 # Uploads directory (Stage 2A - Media Upload System)
 uploads/
