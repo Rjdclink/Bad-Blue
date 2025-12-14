@@ -1,5 +1,21 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+// Global event bus for correlation IDs
+export const CORRELATION_ID_EVENT = 'correlation-id-updated';
+
+function dispatchCorrelationId(data: any) {
+  try {
+    if (data?.meta?.correlationId) {
+      const event = new CustomEvent(CORRELATION_ID_EVENT, { 
+        detail: data.meta.correlationId 
+      });
+      window.dispatchEvent(event);
+    }
+  } catch (e) {
+    // Ignore errors in event dispatching
+  }
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     let errorMessage = res.statusText;
@@ -27,6 +43,19 @@ export async function apiRequest(
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
+  
+  // Capture correlation ID without consuming the response stream
+  try {
+    const clone = res.clone();
+    clone.json().then(responseData => {
+      dispatchCorrelationId(responseData);
+    }).catch(() => {
+      // Ignore if not JSON
+    });
+  } catch (e) {
+    // Ignore cloning errors
+  }
+
   await throwIfResNotOk(res);
   return res;
 }
@@ -46,7 +75,12 @@ export const getQueryFn: <T>(options: {
     }
 
     await throwIfResNotOk(res);
-    return await res.json();
+    const data = await res.json();
+    
+    // Capture correlation ID from query results
+    dispatchCorrelationId(data);
+    
+    return data;
   };
 
 export const queryClient = new QueryClient({
