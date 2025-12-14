@@ -444,7 +444,7 @@ export default function PantheonPage() {
                     </CardHeader>
                     <CardContent>
                       <LocationHeatmap
-                        data={generateMockLocationData(results.locationHistory)}
+                        data={generateApproxLocationData(results.locationHistory)}
                         markers={generateLocationMarkers(results.locationHistory)}
                         center={[40.7128, -74.0060]}
                         zoom={10}
@@ -600,15 +600,25 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
 
 // Helper: Generate mock location data for heatmap
 // In production, this would parse actual GPS coordinates from location history
-function generateMockLocationData(locationHistory: string[]): Array<[number, number, number]> {
-  // Base coordinates around New York City
+function hashString(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0; // 32-bit
+  }
+  return Math.abs(hash);
+}
+
+function generateApproxLocationData(locationHistory: string[]): Array<[number, number, number]> {
+  // Base coordinates around New York City (placeholder until real geocoding/GPS exists)
   const baseCoords: [number, number] = [40.7128, -74.0060];
   
-  return locationHistory.slice(0, MAX_HEATMAP_POINTS).map((_, idx) => {
-    // Generate semi-random coordinates within a reasonable range
-    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const intensity = MIN_INTENSITY + Math.random() * (1 - MIN_INTENSITY);
+  return locationHistory.slice(0, MAX_HEATMAP_POINTS).map((loc, idx) => {
+    // Deterministic offsets to avoid random "motion" between renders
+    const h = hashString(`${loc}::${idx}`);
+    const latOffset = ((h % 10000) / 10000 - 0.5) * COORD_OFFSET_RANGE;
+    const lngOffset = (((h * 7) % 10000) / 10000 - 0.5) * COORD_OFFSET_RANGE;
+    const intensity = MIN_INTENSITY + (((h * 13) % 1000) / 1000) * (1 - MIN_INTENSITY);
     
     return [
       baseCoords[0] + latOffset,
@@ -623,8 +633,9 @@ function generateLocationMarkers(locationHistory: string[]): Array<{ pos: [numbe
   const baseCoords: [number, number] = [40.7128, -74.0060];
   
   return locationHistory.slice(0, MAX_MAP_MARKERS).map((location, idx) => {
-    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
+    const h = hashString(`${location}::marker::${idx}`);
+    const latOffset = ((h % 10000) / 10000 - 0.5) * COORD_OFFSET_RANGE;
+    const lngOffset = (((h * 7) % 10000) / 10000 - 0.5) * COORD_OFFSET_RANGE;
     
     return {
       pos: [baseCoords[0] + latOffset, baseCoords[1] + lngOffset] as [number, number],

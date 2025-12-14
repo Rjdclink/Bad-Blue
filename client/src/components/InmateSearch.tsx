@@ -263,7 +263,7 @@ export default function InmateSearch() {
       case 'completed':
         return <Badge variant="default" className="bg-green-600 text-xs">{status.source}: {status.resultsCount}</Badge>;
       case 'searching':
-        return <Badge variant="secondary" className="text-xs animate-pulse">{status.source}: Searching...</Badge>;
+        return <Badge variant="secondary" className="text-xs animate-pulse">{status.source}: Executing...</Badge>;
       case 'error':
         return <Badge variant="destructive" className="text-xs">{status.source}: Error</Badge>;
       case 'timeout':
@@ -448,7 +448,7 @@ export default function InmateSearch() {
                   {searchMutation.isPending ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Searching Facilities...
+                      Executing queries...
                     </>
                   ) : (
                     <>
@@ -466,7 +466,7 @@ export default function InmateSearch() {
                 <div className="flex items-center justify-between text-sm text-muted-foreground">
                   <span className="flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Searching multiple facilities and data sources...
+                    Executing across multiple sources...
                   </span>
                   <span>{Math.round(searchProgress)}%</span>
                 </div>
