@@ -900,6 +900,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   console.log('[MOUNT] Lexara Chat mounted at: /api/lexara/chat');
 
   // ============================================
+  // HEALTH & ROUTE INVENTORY
+  // ============================================
+  const healthRoutes = await import('./routes/health.routes');
+  app.use('/api/health', healthRoutes.default);
+  console.log('[MOUNT] Health routes mounted at: /api/health');
+
+  // ============================================
   // VERIFICATION ROUTES - Job Status & Data Retrieval
   // ============================================
   const verificationRoutes = await import('./routes/verification.routes');
@@ -3574,10 +3581,27 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
 
   app.post('/api/osint/full-search', async (req, res) => {
+    const startTime = Date.now();
+    const correlationId = require('crypto').randomBytes(16).toString('hex');
     const { name, department, badge, location, domain, searchDepth = 2 } = req.body;
     
-    if (!name) {
-      return res.status(400).json({ error: 'Name required' });
+    console.log('[OSINT] Request started', { correlationId, name, searchDepth });
+    
+    // Validation
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      console.log('[OSINT] Validation failed: invalid name', { correlationId });
+      const { sendValidationError } = await import('./lib/apiResponse');
+      return sendValidationError(res, 'Name is required and must be a non-empty string', {
+        name: 'Required field, must be non-empty string',
+      }, correlationId);
+    }
+    
+    if (searchDepth && (searchDepth < 1 || searchDepth > 4)) {
+      console.log('[OSINT] Validation failed: invalid searchDepth', { correlationId, searchDepth });
+      const { sendValidationError } = await import('./lib/apiResponse');
+      return sendValidationError(res, 'Search depth must be between 1 and 4', {
+        searchDepth: 'Must be integer 1-4',
+      }, correlationId);
     }
 
     // Get user ID if authenticated
@@ -3591,13 +3615,15 @@ Contact: ${foiaRequest.userEmail || userEmail}
           userId,
           searchQuery: name,
           subjectName: name,
-          reportData: { status: 'processing', searchDepth },
+          reportData: { status: 'processing', searchDepth, correlationId },
           status: 'processing',
         });
         reportId = initialReport.id;
       }
 
       const { conductFullOSINT } = await import('./peopleSearch');
+      
+      console.log('[OSINT] Executing search', { correlationId, reportId });
       
       // Pass search depth to the OSINT function
       const report = await conductFullOSINT(name, { 
@@ -3617,15 +3643,27 @@ Contact: ${foiaRequest.userEmail || userEmail}
         );
       }
       
-      // Return report with job completion status
+      const processingTimeMs = Date.now() - startTime;
+      console.log('[OSINT] Search completed', { correlationId, processingTimeMs, reportId });
+      
+      // Return report with job completion status and correlation ID
       res.json({
-        ...report,
-        jobId: reportId,
-        jobCompleted: true,
-        jobStatus: 'completed',
+        type: 'success',
+        success: true,
+        data: {
+          ...report,
+          jobId: reportId,
+          jobCompleted: true,
+          jobStatus: 'completed',
+        },
+        meta: {
+          correlationId,
+          timestamp: new Date().toISOString(),
+          processingTimeMs,
+        },
       });
     } catch (error: any) {
-      console.error('[OSINT API] Error:', error);
+      console.error('[OSINT API] Error:', { correlationId, error: error.message });
 
       // Update report with error if we have a report ID
       if (reportId && userId) {
@@ -3636,13 +3674,12 @@ Contact: ${foiaRequest.userEmail || userEmail}
           error.message
         );
       }
-
-      res.status(500).json({ 
-        error: error.message,
+      
+      const { sendSystemError } = await import('./lib/apiResponse');
+      return sendSystemError(res, error.message, {
         jobId: reportId,
-        jobCompleted: true,
-        jobStatus: 'failed',
-      });
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      }, correlationId);
     }
   });
 

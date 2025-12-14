@@ -39,11 +39,13 @@ const InmateSearchSchema = z.object({
  */
 router.post('/', apiRateLimit, async (req, res) => {
   // Declare reportId outside try block for error handling access
+  const startTime = Date.now();
+  const correlationId = require('crypto').randomBytes(16).toString('hex');
   let reportId: string | null = null;
   const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
   
   console.log('[INMATE SEARCH] Handler entered', {
-    requestId: Date.now(),
+    correlationId,
     hasBody: !!req.body,
     firstName: req.body?.firstName,
     lastName: req.body?.lastName,
@@ -54,15 +56,20 @@ router.post('/', apiRateLimit, async (req, res) => {
     const validation = InmateSearchSchema.safeParse(req.body);
     
     if (!validation.success) {
-      console.log('[INMATE SEARCH] Validation failed', validation.error.errors);
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: validation.error.errors,
+      console.log('[INMATE SEARCH] Validation failed', { correlationId, errors: validation.error.errors });
+      
+      // Convert Zod errors to field map
+      const fields: Record<string, string> = {};
+      validation.error.errors.forEach(err => {
+        const path = err.path.join('.');
+        fields[path] = err.message;
       });
+      
+      const { sendValidationError } = await import('../lib/apiResponse');
+      return sendValidationError(res, 'Validation failed', fields, correlationId);
     }
     
-    console.log('[INMATE SEARCH] Validation passed, executing search');
+    console.log('[INMATE SEARCH] Validation passed, executing search', { correlationId });
     
     const query: InmateSearchQuery = {
       firstName: validation.data.firstName || '',
@@ -75,6 +82,7 @@ router.post('/', apiRateLimit, async (req, res) => {
     };
     
     console.log('[Inmate Search API] Searching for:', {
+      correlationId,
       firstName: query.firstName,
       lastName: query.lastName,
       state: query.state,
@@ -90,7 +98,7 @@ router.post('/', apiRateLimit, async (req, res) => {
         firstName: query.firstName,
         lastName: query.lastName,
         state: query.state,
-        reportData: { status: 'processing' },
+        reportData: { status: 'processing', correlationId },
         status: 'processing',
       });
       reportId = initialReport.id;
@@ -98,6 +106,39 @@ router.post('/', apiRateLimit, async (req, res) => {
     
     // Execute the actual search
     const result = await searchInmates(query);
+    
+    const processingTimeMs = Date.now() - startTime;
+    console.log('[INMATE SEARCH] Search completed', {
+      correlationId,
+      processingTimeMs,
+      resultsCount: result.inmates?.length || 0,
+      reportId,
+    });
+
+    // Check if no providers were available
+    if (result.sources && result.sources.length > 0) {
+      const allUnavailable = result.sources.every(s => s.status === 'error' || s.status === 'timeout');
+      if (allUnavailable && result.inmates.length === 0) {
+        console.log('[INMATE SEARCH] All providers unavailable', { correlationId });
+        const { sendUpstreamUnavailable } = await import('../lib/apiResponse');
+        return sendUpstreamUnavailable(
+          res,
+          'No inmate search providers are currently available',
+          { sources: result.sources, jobId: reportId },
+          correlationId
+        );
+      }
+    }
+    
+    // Check for upstream blocks (rate limits, etc)
+    if (result.sources && result.sources.length > 0) {
+      const blockedSources = result.sources.filter(s => 
+        s.error && (s.error.includes('403') || s.error.includes('429') || s.error.includes('blocked'))
+      );
+      if (blockedSources.length > 0) {
+        console.log('[INMATE SEARCH] Some providers blocked', { correlationId, blockedCount: blockedSources.length });
+      }
+    }
 
     // Update report with completed data
     if (reportId && userId) {
@@ -109,15 +150,31 @@ router.post('/', apiRateLimit, async (req, res) => {
       );
     }
     
+    // Return success or no_results
+    if (result.inmates.length === 0) {
+      const { sendNoResults } = await import('../lib/apiResponse');
+      return sendNoResults(
+        res,
+        'No inmates found matching search criteria',
+        correlationId
+      );
+    }
+    
     return res.json({
+      type: 'success',
       success: true,
       data: result,
-      jobId: reportId,
-      jobCompleted: true,
-      jobStatus: 'completed',
+      meta: {
+        correlationId,
+        timestamp: new Date().toISOString(),
+        processingTimeMs,
+        jobId: reportId,
+        jobCompleted: true,
+        jobStatus: 'completed',
+      },
     });
   } catch (error: any) {
-    console.error('[Inmate Search API] Error:', error);
+    console.error('[Inmate Search API] Error:', { correlationId, error: error.message });
 
     // Update report with error if we have a reportId
     if (reportId && userId) {
@@ -134,13 +191,11 @@ router.post('/', apiRateLimit, async (req, res) => {
       }
     }
     
-    return res.status(500).json({
-      success: false,
-      error: error.message || 'Internal server error',
+    const { sendSystemError } = await import('../lib/apiResponse');
+    return sendSystemError(res, error.message, {
       jobId: reportId,
-      jobCompleted: true,
-      jobStatus: 'failed',
-    });
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    }, correlationId);
   }
 });
 
