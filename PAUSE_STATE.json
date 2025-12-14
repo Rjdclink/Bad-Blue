@@ -1,0 +1,61 @@
+{
+  "pauseStatus": {
+    "unpause": false,
+    "globalExecution": "DISABLED",
+    "systemLocked": true,
+    "timestamp": "2025-12-14T21:16:38Z"
+  },
+  "pausePolicy": {
+    "codeEditsProhibited": true,
+    "autoRefactorsProhibited": true,
+    "allowedActions": [
+      "logging",
+      "state_inspection",
+      "reports"
+    ],
+    "singleAuthorityRequired": [
+      "compliance_module_edits",
+      "gate_logic_changes",
+      "micro_trade_logic_changes"
+    ]
+  },
+  "adaptiveBehaviorFreeze": {
+    "monteCarloAdaptiveLogic": "DISABLED",
+    "parameterAutoTuning": "DISABLED",
+    "retryAlternatePathGeneration": "DISABLED"
+  },
+  "currentFlags": {
+    "pauseActive": true,
+    "globalExecutionDisabled": true,
+    "adaptiveLogicDisabled": true,
+    "complianceEnforcementActive": true,
+    "violationTelemetryActive": true
+  },
+  "lastExecution": {
+    "timestamp": "2025-12-14T21:16:38Z",
+    "result": "FAILURE",
+    "reason": "Monte Carlo Stress Gate failed (drawdown 32.8% > 30% threshold)",
+    "gates": {
+      "faucetMeshFilter": "PASSED",
+      "signalFusion": "PASSED",
+      "monteCarloStress": "FAILED",
+      "riskGovernor": "NOT_EVALUATED"
+    }
+  },
+  "remainingPaused": {
+    "prohibited": [
+      "signal_generation",
+      "validation_reruns",
+      "execution_attempts",
+      "code_edits",
+      "auto_refactors"
+    ],
+    "allowed": [
+      "logging",
+      "state_inspection",
+      "report_generation",
+      "compliance_auditing"
+    ]
+  },
+  "awaiting": "explicit_human_instruction"
+}
