@@ -15,6 +15,7 @@ import { NeurofusionEngine } from '../core/neurofusion.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import { MultiOraclePriceValidator } from '../validation/multi-oracle-validator.js';
 import { MasterOrchestrator } from '../core/master-orchestrator.js';
+import { ArbitrageVerifier } from './arbitrage-verifier.js';
 import logger from '../../../logger.js';
 
 // Babel Integration - IP Protection Systems + Cain Reasoning
@@ -1779,13 +1780,18 @@ class AutonomousCryptoFaucet {
       // Translate to external format
       const externalMessage = TranslationFirewall.translateToExternal(internalMessage, 'json');
       
-      // SIMULATION: In production, this would call MasterOrchestrator.execute()
-      const tradeSuccess = Math.random() > (1 - TRADE_CONFIG.successRateThreshold);
+      // Verify arbitrage opportunity (Real verification logic)
+      const verification = await ArbitrageVerifier.verifyOpportunity(
+        'polygon', 
+        'ETH',
+        STEALTH_CONFIG.maxSingleTrade
+      );
 
-      if (tradeSuccess) {
+      if (verification.verified && verification.metrics) {
         // Calculate profit with adaptive sizing based on daily progress
         const progressMultiplier = this.calculateProgressMultiplier();
-        const baseProfit = TRADE_CONFIG.minProfit + Math.random() * (TRADE_CONFIG.maxProfit - TRADE_CONFIG.minProfit);
+        // Use real verified metrics
+        const baseProfit = verification.metrics.netProfit; 
         const profit = Math.min(
           baseProfit * sizeVariation * progressMultiplier,
           STEALTH_CONFIG.maxSingleTrade // Cap single trade
