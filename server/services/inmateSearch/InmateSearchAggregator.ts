@@ -45,7 +45,7 @@ const SEARCH_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes max (reduced for speed)
 const searchCache = new Map<string, CachedInmateSearch>();
 
 // Standard disclaimer for all searches
-const SEARCH_DISCLAIMER = `This search accesses publicly available inmate information from official government sources. Information may not be current or complete. Always verify with the appropriate correctional facility.`;
+const SEARCH_DISCLAIMER = `This search uses AI assistance to query public inmate information. Results are not guaranteed to be real-time or 100% accurate. Always verify with the official correctional facility links provided.`;
 
 // Violent offense keywords for classification
 const VIOLENT_OFFENSE_KEYWORDS = [
@@ -225,6 +225,8 @@ ${query.dateOfBirth ? `Date of Birth: ${query.dateOfBirth}` : ''}
 ${query.inmateId ? `Register Number: ${query.inmateId}` : ''}
 
 The BOP Inmate Locator URL is: https://www.bop.gov/inmateloc/
+
+IMPORTANT: You must only return data if you can ACTUALLY retrieve it from the live database or have high confidence it is real. DO NOT hallucinate or invent inmates. If you cannot verify the inmate exists, return an empty array.
 
 Search and return any matching federal inmates. Return a JSON array of inmates with this structure:
 {

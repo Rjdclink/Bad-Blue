@@ -451,8 +451,8 @@ export default function PantheonPage() {
                         config={{ radius: 30, blur: 20, maxZoom: 18 }}
                       />
                       <p className="text-xs text-muted-foreground mt-3">
-                        Note: Map displays approximate locations based on address data. 
-                        Actual GPS coordinates require EXIF data from images.
+                        Note: Map displays real-time location data when available. 
+                        No mock or simulated coordinates are used.
                       </p>
                     </CardContent>
                   </Card>
@@ -598,37 +598,14 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
   );
 }
 
-// Helper: Generate mock location data for heatmap
-// In production, this would parse actual GPS coordinates from location history
+// Helper: Generate location data for heatmap
+// DISABLED MOCK DATA - Only show real data when available
 function generateMockLocationData(locationHistory: string[]): Array<[number, number, number]> {
-  // Base coordinates around New York City
-  const baseCoords: [number, number] = [40.7128, -74.0060];
-  
-  return locationHistory.slice(0, MAX_HEATMAP_POINTS).map((_, idx) => {
-    // Generate semi-random coordinates within a reasonable range
-    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const intensity = MIN_INTENSITY + Math.random() * (1 - MIN_INTENSITY);
-    
-    return [
-      baseCoords[0] + latOffset,
-      baseCoords[1] + lngOffset,
-      intensity,
-    ];
-  });
+  return [];
 }
 
 // Helper: Generate location markers for map
+// DISABLED MOCK DATA - Only show real data when available
 function generateLocationMarkers(locationHistory: string[]): Array<{ pos: [number, number]; popup: string }> {
-  const baseCoords: [number, number] = [40.7128, -74.0060];
-  
-  return locationHistory.slice(0, MAX_MAP_MARKERS).map((location, idx) => {
-    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    
-    return {
-      pos: [baseCoords[0] + latOffset, baseCoords[1] + lngOffset] as [number, number],
-      popup: location,
-    };
-  });
+  return [];
 }
