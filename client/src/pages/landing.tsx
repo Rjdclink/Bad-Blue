@@ -45,7 +45,7 @@ export default function Landing() {
         '/images/Legal%20What%20Icon.png',
         '/images/Constitution.webp',
         '/images/Tweed_Court.jpg',
-        '/images/OIP.webp'
+        '/images/oip.webp'
       ];
       
       imagesToCheck.forEach(src => {
@@ -351,7 +351,7 @@ export default function Landing() {
                 <div className="mb-6">
                   {!lexaraImageError ? (
                     <img
-                      src="/images/OIP.webp"
+                      src="/images/oip.webp"
                       alt="LEXARA - Legal Expert AI Resource Advisor"
                       className="w-full h-auto rounded-2xl object-cover shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
                       onError={(e) => {

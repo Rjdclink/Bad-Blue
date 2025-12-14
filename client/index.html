@@ -295,7 +295,10 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background: white;
+        background:
+          radial-gradient(1200px 800px at 18% 12%, rgba(59, 130, 246, 0.14) 0%, rgba(2, 6, 23, 0) 55%),
+          radial-gradient(900px 650px at 82% 18%, rgba(234, 179, 8, 0.08) 0%, rgba(2, 6, 23, 0) 60%),
+          linear-gradient(180deg, #020817 0%, #030712 100%);
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -319,8 +322,8 @@
       .spinner {
         width: 48px;
         height: 48px;
-        border: 3px solid #e5e7eb;
-        border-top-color: #2563eb;
+        border: 3px solid rgba(148, 163, 184, 0.28);
+        border-top-color: rgba(248, 250, 252, 0.85);
         border-radius: 50%;
         animation: spin 1s linear infinite;
       }
@@ -330,7 +333,7 @@
       }
       
       .loading-text {
-        color: #1f2937;
+        color: rgba(248, 250, 252, 0.88);
         font-family: 'Inter', system-ui, sans-serif;
         font-size: 1.125rem;
         font-weight: 500;
@@ -338,23 +341,26 @@
       }
       
       @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.6; }
+        0%, 100% { opacity: 0.95; }
+        50% { opacity: 0.78; }
       }
       
       /* Dark mode support */
       @media (prefers-color-scheme: dark) {
         #initial-loader {
-          background: #020817;
+          background:
+            radial-gradient(1200px 800px at 18% 12%, rgba(59, 130, 246, 0.14) 0%, rgba(2, 6, 23, 0) 55%),
+            radial-gradient(900px 650px at 82% 18%, rgba(234, 179, 8, 0.08) 0%, rgba(2, 6, 23, 0) 60%),
+            linear-gradient(180deg, #020817 0%, #030712 100%);
         }
         
         .spinner {
-          border-color: #334155;
-          border-top-color: #f8fafc;
+          border-color: rgba(148, 163, 184, 0.28);
+          border-top-color: rgba(248, 250, 252, 0.85);
         }
         
         .loading-text {
-          color: #f8fafc;
+          color: rgba(248, 250, 252, 0.88);
         }
       }
     </style>
