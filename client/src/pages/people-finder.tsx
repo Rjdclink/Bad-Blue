@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import PeopleFinderSearch from "@/components/PeopleFinderSearch";
 import { useLocation } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
@@ -63,7 +63,13 @@ export default function PeopleFinderPage() {
   }
 
   // Initialize GeoConsole with sample location data for demonstration
+  // SINGLE EXECUTOR: Use ref to prevent double-running
+  const geoConsoleInitializedRef = useRef(false);
   useEffect(() => {
+    // Prevent double initialization
+    if (geoConsoleInitializedRef.current) return;
+    geoConsoleInitializedRef.current = true;
+    
     // Generate sample GPS data for demonstration (production would use actual data)
     const sampleLocations: GPSPoint[] = [
       {
@@ -120,6 +126,10 @@ export default function PeopleFinderPage() {
     
     setGeoData(sampleLocations);
     setGeoConsoleStatus('ready');
+    
+    return () => {
+      geoConsoleInitializedRef.current = false;
+    };
   }, []);
 
   // Convert person location history to GPSPoints for GeoConsole

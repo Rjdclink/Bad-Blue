@@ -49,11 +49,11 @@ export function BackButton({ fallbackRoute, className, onBeforeNavigate }: BackB
       variant="ghost"
       size="sm"
       onClick={handleBack}
-      className={`flex items-center gap-2 hover:bg-accent ${className || ""}`}
+      className={`flex items-center gap-2 hover:bg-accent min-w-[44px] min-h-[44px] touch-manipulation ${className || ""}`}
       aria-label="Go back"
     >
       <ArrowLeft className="w-4 h-4" />
-      <span className="text-sm">Back</span>
+      <span className="text-sm hidden sm:inline">Back</span>
     </Button>
   );
 }

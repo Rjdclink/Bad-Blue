@@ -86,11 +86,11 @@ export function LogoutButton({ className, onBeforeLogout }: LogoutButtonProps) {
       size="sm"
       onClick={handleLogout}
       disabled={isLoggingOut}
-      className={`flex items-center gap-2 hover:bg-accent ${className || ""}`}
+      className={`flex items-center gap-2 hover:bg-accent min-w-[44px] min-h-[44px] touch-manipulation ${className || ""}`}
       aria-label="Logout"
     >
       <LogOut className="w-4 h-4" />
-      <span className="text-sm">Logout</span>
+      <span className="text-sm hidden sm:inline">Logout</span>
     </Button>
   );
 }

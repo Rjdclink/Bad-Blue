@@ -289,8 +289,9 @@ export const LexaraAvatar = memo(function LexaraAvatar({
 
   const speakingPulseStyle = useMemo(() => ({
     boxShadow: `0 0 35px ${colors.glow}, 0 0 70px ${colors.aura}`,
-    animation: 'lexara-pulse-glow 0.35s ease-in-out infinite',
-  }), [colors.glow, colors.aura]);
+    animation: isSpeaking ? 'lexara-pulse-glow 0.35s ease-in-out infinite' : 'none',
+    transition: 'opacity 0.3s ease-in-out',
+  }), [colors.glow, colors.aura, isSpeaking]);
 
   const thinkingGlowStyle = useMemo(() => ({
     boxShadow: `0 0 45px ${colors.accent}50, 0 0 90px ${colors.accent}25`,

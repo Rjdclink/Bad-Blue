@@ -624,6 +624,81 @@ export default function AdminConsole() {
             </Card>
           </div>
 
+          {/* Dashboard Access Toggles */}
+          <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card className="bg-gray-800/50 border-white/10">
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-cyan-500/20">
+                      <Brain className="w-5 h-5 text-cyan-400" />
+                    </div>
+                    <div>
+                      <p className="text-white font-medium">CryptoCrawler Dashboard</p>
+                      <p className="text-xs text-gray-400">Trading & faucet controls</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLocation('/cryptocrawler-dashboard')}
+                    className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                  >
+                    Open
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+            
+            <Card className="bg-gray-800/50 border-white/10">
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-purple-500/20">
+                      <Gauge className="w-5 h-5 text-purple-400" />
+                    </div>
+                    <div>
+                      <p className="text-white font-medium">Monte Carlo Dashboard</p>
+                      <p className="text-xs text-gray-400">Optimization & simulation</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLocation('/monte-carlo-dashboard')}
+                    className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
+                  >
+                    Open
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+            
+            <Card className="bg-gray-800/50 border-white/10">
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-orange-500/20">
+                      <Zap className="w-5 h-5 text-orange-400" />
+                    </div>
+                    <div>
+                      <p className="text-white font-medium">Reactor Controls</p>
+                      <p className="text-xs text-gray-400">System orchestration</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLocation('/reactor-controls')}
+                    className="border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                  >
+                    Open
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
           {/* Main Tabs */}
           <Tabs defaultValue="faucet" className="space-y-6">
             <TabsList className="bg-gray-800/50 border border-white/10">

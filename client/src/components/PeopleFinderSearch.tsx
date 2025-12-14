@@ -104,23 +104,30 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
   }, []);
 
   // Auto-search if name parameter is provided
+  // SINGLE EXECUTOR: Use ref to prevent double-running
+  const autoSearchExecutedRef = useRef(false);
   useEffect(() => {
-    if (nameParam && nameParam.trim()) {
-      console.log('[PEOPLE FINDER SEARCH] Auto-search triggered', { name: nameParam });
-      // Small delay to ensure component is mounted
-      autoSearchTimeoutRef.current = setTimeout(() => {
-        // Avoid triggering work after route changes/unmount
-        if (!mountedRef.current) return;
-        handleSearch();
-      }, 500);
-    }
+    // Prevent double execution
+    if (autoSearchExecutedRef.current) return;
+    if (!nameParam || !nameParam.trim()) return;
+    
+    autoSearchExecutedRef.current = true;
+    console.log('[PEOPLE FINDER SEARCH] Auto-search triggered', { name: nameParam });
+    // Small delay to ensure component is mounted
+    autoSearchTimeoutRef.current = setTimeout(() => {
+      // Avoid triggering work after route changes/unmount
+      if (!mountedRef.current) return;
+      handleSearch();
+    }, 500);
+    
     return () => {
       if (autoSearchTimeoutRef.current) {
         clearTimeout(autoSearchTimeoutRef.current);
         autoSearchTimeoutRef.current = null;
       }
+      autoSearchExecutedRef.current = false;
     };
-  }, []); // Run only once on mount
+  }, [nameParam]); // Include nameParam in deps but guard with ref
 
   const searchMutation = useMutation({
     mutationFn: async (searchData: { name: string; location?: string; department?: string; domain?: string }) => {
