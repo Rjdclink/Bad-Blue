@@ -12,11 +12,43 @@ import type { GPSPoint } from '@shared/geoconsoleTypes';
 
 export default function PeopleFinderPage() {
   const [, setLocation] = useLocation();
+  
+  // PASS 3: Add missing state to prevent crash
+  const [searchResults, setSearchResults] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // State for SPECTRA GeoConsole integration
   const [geoConsoleTab, setGeoConsoleTab] = useState<'timeline' | 'map' | 'satellite'>('satellite');
   const [geoData, setGeoData] = useState<GPSPoint[]>([]);
   const [geoConsoleStatus, setGeoConsoleStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
+  
+  // PASS 3: Page boot log
+  useEffect(() => {
+    console.log('[PEOPLE FINDER] Page mounted', {
+      timestamp: new Date().toISOString(),
+      path: window.location.pathname,
+    });
+  }, []);
+  
+  // PASS 3: Handle search results
+  const handleSearchResults = useCallback((results: any, err?: string) => {
+    console.log('[PEOPLE FINDER] Results received', {
+      hasResults: !!results,
+      hasError: !!err,
+      timestamp: new Date().toISOString(),
+    });
+    
+    if (err) {
+      setError(err);
+      setSearchResults(null);
+      setIsLoading(false);
+    } else {
+      setSearchResults(results);
+      setError(null);
+      setIsLoading(false);
+    }
+  }, []);
   
   // Deterministic hash function for confidence calculation
   function hashString(str: string): number {
@@ -219,6 +251,24 @@ export default function PeopleFinderPage() {
             </CardContent>
           </Card>
         </div>
+        
+        {/* Error Banner - PASS 3 */}
+        {error && (
+          <div className="container max-w-7xl mx-auto px-4 py-4">
+            <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <Shield className="w-5 h-5 text-red-400 mt-0.5" />
+                <div>
+                  <h3 className="font-semibold text-red-400 mb-1">Search Failed</h3>
+                  <p className="text-sm text-red-300">{error}</p>
+                  <p className="text-xs text-red-400/70 mt-2">
+                    The search service encountered an error. Please try again or contact support if the issue persists.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Main Search Component */}
         <PeopleFinderSearch 
