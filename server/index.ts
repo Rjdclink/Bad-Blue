@@ -275,6 +275,15 @@ async function initializeServices(): Promise<void> {
   } catch (error: any) {
     console.warn('[STARTUP] ⚠ Maintenance Worker failed:', error?.message ?? error);
   }
+
+  // Initialize PR Merge Coordinator for automatic conflict resolution
+  try {
+    const { prMergeCoordinator } = await import('./services/pr-merge-coordinator');
+    // Coordinator auto-initializes on import and listens to task completion events
+    console.log('[STARTUP] ✓ PR Merge Coordinator initialized (auto-resolves conflicts with develop)');
+  } catch (error: any) {
+    console.warn('[STARTUP] ⚠ PR Merge Coordinator failed:', error?.message ?? error);
+  }
 }
 
 app.use(express.json({
