@@ -179,10 +179,22 @@ Build the decision engine as:
 
 **PAUSE** = immediate halt, memory freeze
 
+**CONDITIONAL UNLOCK PROTOCOL**:
+- Upon completion of each phase/stage, ALL agents will automatically pause
+- Hard-lock will resume immediately after phase completion
+- System returns to LOCKED state until next explicit unpause command
+
 **RESUME requires**:
 - Explicit stage
 - Explicit task
 - Explicit scope
+
+**Format required**:
+```
+UNPAUSE STAGE X
+TASK: [one sentence]
+SCOPE: [files/area]
+```
 
 ## 6. FAILURE HANDLING
 
