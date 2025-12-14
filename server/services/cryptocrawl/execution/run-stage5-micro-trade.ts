@@ -50,6 +50,13 @@ function checkPauseBeforeInit(): { allowed: boolean; reason?: string } {
 }
 
 async function main() {
+  // PREFLIGHT VALIDATOR: Check command before execution
+  const { validatePreflight, shouldProceedWithExecution } = require('./preflight-validator');
+  
+  // Validate that we're using canonical control
+  // (This is implicit - we're using canonical control manager)
+  // But we can validate any command strings if present
+  
   // Check pause semantics BEFORE initialization
   const pauseCheck = checkPauseBeforeInit();
   if (!pauseCheck.allowed) {

@@ -62,6 +62,15 @@ class CanonicalControlManager {
     issuer: string;
   }> = [];
 
+  // Runtime reject log: records all rejected commands
+  private rejectLog: Array<{
+    timestamp: Date;
+    rawInput: string;
+    rejectionReason: string;
+    canonicalReplacement?: string;
+    issuer: string;
+  }> = [];
+
   /**
    * Validate command uses canonical form
    */
@@ -151,12 +160,39 @@ class CanonicalControlManager {
     });
 
     if (!validation.valid) {
-      log.warn('Invalid command rejected', {
-        command: typeof command === 'string' ? command : JSON.stringify(command),
-        reason: validation.reason,
+      // Record in reject log
+      const rawInput = typeof command === 'string' ? command : JSON.stringify(command);
+      const rejectionReason = validation.reason || 'Command does not match canonical form';
+      
+      // Suggest canonical replacement if possible
+      let canonicalReplacement: string | undefined;
+      const commandLower = rawInput.toLowerCase();
+      if (commandLower.includes('pause') && !commandLower.includes('global_full')) {
+        canonicalReplacement = 'GLOBAL_FULL_AGENT_PAUSE';
+      } else if (commandLower.includes('lock') && !commandLower.includes('global_full')) {
+        canonicalReplacement = 'GLOBAL_FULL_EXECUTION_LOCK';
+      } else if (commandLower.includes('freeze') && !commandLower.includes('global_full')) {
+        canonicalReplacement = 'GLOBAL_FULL_STATE_FREEZE';
+      } else if (commandLower.includes('unpause') || commandLower.includes('proceed')) {
+        canonicalReplacement = 'GLOBAL_FULL_UNPAUSE_AND_PROCEED(stage, scope)';
+      }
+
+      this.rejectLog.push({
+        timestamp: new Date(),
+        rawInput,
+        rejectionReason,
+        canonicalReplacement,
         issuer,
       });
-      return { success: false, reason: validation.reason };
+
+      log.warn('Invalid command rejected', {
+        rawInput,
+        rejectionReason,
+        canonicalReplacement,
+        issuer,
+      });
+      
+      return { success: false, reason: rejectionReason };
     }
 
     if (!validation.canonicalCommand) {
@@ -237,6 +273,27 @@ class CanonicalControlManager {
   }
 
   /**
+   * Get reject log (runtime rejections)
+   */
+  getRejectLog(): Array<{
+    timestamp: Date;
+    rawInput: string;
+    rejectionReason: string;
+    canonicalReplacement?: string;
+    issuer: string;
+  }> {
+    return [...this.rejectLog];
+  }
+
+  /**
+   * Clear reject log (for testing/maintenance)
+   */
+  clearRejectLog(): void {
+    this.rejectLog = [];
+    log.info('Reject log cleared');
+  }
+
+  /**
    * Check if execution is locked
    */
   isExecutionLocked(): boolean {
@@ -288,6 +345,20 @@ export function validateCanonicalCommand(command: string): {
     valid: validation.valid,
     reason: validation.reason,
   };
+}
+
+/**
+ * Get reject log (exported for inspection)
+ */
+export function getRejectLog(): Array<{
+  timestamp: Date;
+  rawInput: string;
+  rejectionReason: string;
+  canonicalReplacement?: string;
+  issuer: string;
+}> {
+  const manager = getCanonicalControlManager();
+  return manager.getRejectLog();
 }
 
 /**
