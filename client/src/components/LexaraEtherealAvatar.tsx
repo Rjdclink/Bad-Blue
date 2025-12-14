@@ -484,7 +484,7 @@ export const LEXARAEtherealAvatar = memo(function LEXARAEtherealAvatar({
         <div className={cn(
           "px-4 py-1.5 rounded-full text-xs font-medium tracking-wider backdrop-blur-md border",
           isSpeaking ? "bg-blue-500/20 border-blue-400/40 text-blue-300" :
-          isListening ? "bg-emerald-500/20 border-emerald-400/40 text-emerald-300" :
+          isListening ? "bg-white/10 border-amber-200/25 text-amber-100" :
           isThinking ? "bg-amber-500/20 border-amber-400/40 text-amber-300" :
           "bg-slate-800/60 border-slate-600/40 text-slate-400"
         )}>
@@ -540,7 +540,7 @@ export const LEXARAStatusIndicator: React.FC<LEXARAStatusIndicatorProps> = ({
       {/* Mic indicator */}
       <div className={cn(
         "w-2 h-2 rounded-full transition-colors",
-        isListening ? "bg-emerald-400 animate-pulse" : "bg-slate-600"
+        isListening ? "bg-amber-200/80 animate-pulse" : "bg-slate-600"
       )} />
       
       {/* Speaker indicator */}

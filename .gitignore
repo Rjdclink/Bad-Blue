@@ -9,6 +9,10 @@ test-*.js
 test-*.ts
 test_*.ts
 
+# Core dumps / crash artifacts
+core
+core.*
+
 # Build artifacts in public/ directory
 # (Keep public/images and other git-tracked files, but ignore build output)
 public/assets/
@@ -33,10 +37,6 @@ logs/
 data/
 storage/
 !server/services/storage/
-
-# Crash dumps / core files
-core
-core.*
 
 # Uploads directory (Stage 2A - Media Upload System)
 uploads/

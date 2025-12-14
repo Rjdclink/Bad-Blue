@@ -44,7 +44,7 @@ interface ActivationState {
 // ============================================================================
 
 // Lexara image - the female sitting at desk (existing Lexara avatar)
-const DEFAULT_LEXARA_IMAGE = '/images/OIP.webp';
+const DEFAULT_LEXARA_IMAGE = '/images/oip.webp';
 const ACTIVATION_ICON = '/icon-512x512.png';
 
 const STEP_MESSAGES: Record<ActivationStep, string> = {
