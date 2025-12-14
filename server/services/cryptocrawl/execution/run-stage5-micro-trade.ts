@@ -2,15 +2,53 @@
  * Run Stage 5 Micro Trade Script
  * 
  * Execute: tsx server/services/cryptocrawl/execution/run-stage5-micro-trade.ts
+ * 
+ * COMMAND LANGUAGE: Only accepts exact command:
+ * "Unpause and proceed with Stage-5 deterministic micro test."
  */
 
 import { executeStage5MicroTrade } from './stage5-micro-trade';
 import { createLogger } from '../../../logger';
-import { getExecutionChokePoint } from './execution-choke-point';
+import { getExecutionChokePoint, type Stage5Token } from './execution-choke-point';
 
 const log = createLogger('Stage5MicroTradeRunner');
 
+// ============================================================================
+// COMMAND LANGUAGE VALIDATION
+// ============================================================================
+
+const REQUIRED_COMMAND = 'Unpause and proceed with Stage-5 deterministic micro test.';
+
+function validateCommand(command: string): boolean {
+  return command.trim() === REQUIRED_COMMAND.trim();
+}
+
+// ============================================================================
+// PAUSE SEMANTICS: Check if paused before initialization
+// ============================================================================
+
+function checkPauseBeforeInit(): { allowed: boolean; reason?: string } {
+  const chokePoint = getExecutionChokePoint();
+  const flags = chokePoint.getCurrentFlags();
+  
+  if (flags.PAUSED) {
+    return {
+      allowed: false,
+      reason: 'PAUSE = true - No runner may initialize while paused',
+    };
+  }
+  
+  return { allowed: true };
+}
+
 async function main() {
+  // Check pause semantics BEFORE initialization
+  const pauseCheck = checkPauseBeforeInit();
+  if (!pauseCheck.allowed) {
+    log.error('Runner initialization blocked', { reason: pauseCheck.reason });
+    process.exit(1);
+  }
+
   log.info('='.repeat(80));
   log.info('STAGE 5 MICRO LIVE TRADE RUNNER');
   log.info('Scope: Single exchange (uniswap-v3), single pair (LINK/USDT)');
@@ -18,36 +56,29 @@ async function main() {
   log.info('Auto-pause: Immediately after fill or failure');
   log.info('='.repeat(80));
 
-  // Set execution tokens and unpause system
+  // Set unified Stage-5 token (same process)
   const chokePoint = getExecutionChokePoint();
   
-  chokePoint.setHumanUnpauseToken({
-    token: 'HUMAN_UNPAUSE_TOKEN',
-    issuedBy: 'human',
-    timestamp: new Date(),
-    explicit: true,
-  });
-
-  chokePoint.setStageScopeToken({
-    token: 'STAGE_SCOPE_TOKEN',
+  const stage5Token: Stage5Token = {
+    token: 'STAGE_5_TOKEN',
     stage: 5,
-    scope: 'single exchange (uniswap-v3), single pair (LINK/USDT), dust size',
+    scope: {
+      exchange: 'uniswap-v3',        // Single exchange (locked)
+      pair: 'LINK/USDT',              // Single pair (locked)
+      testType: 'deterministic_micro_test',
+      maxNotional: 0.2,               // Test ceiling: 0.2 ETH (~$400-600)
+    },
+    lifecycle: {
+      currentPhase: 'signal',
+      startedAt: new Date(),
+    },
     issuedBy: 'human',
     timestamp: new Date(),
     explicit: true,
-  });
+    consumed: false,
+  };
 
-  // Set token for signal acceptance (first gate in cycle)
-  // Token will be consumed as it passes through gates
-  chokePoint.setOneActionToken({
-    token: 'ONE_ACTION_TOKEN',
-    actionType: 'signal', // Start with signal, allows cascade through validation and execution
-    singleUse: true,
-    issuedBy: 'human',
-    timestamp: new Date(),
-    used: false,
-    explicit: true,
-  });
+  chokePoint.setStage5Token(stage5Token);
 
   chokePoint.setSystemFlags({
     paused: false,
@@ -55,9 +86,12 @@ async function main() {
     locked: false,
   });
 
-  chokePoint.setLastHumanDirective('Execute Stage 5 micro trade: single exchange, single pair, dust size, mode: stub');
+  chokePoint.setLastHumanDirective(REQUIRED_COMMAND);
 
-  log.info('Tokens set and system unpaused', { flags: chokePoint.getCurrentFlags() });
+  log.info('STAGE_5_TOKEN set and system unpaused', { 
+    flags: chokePoint.getCurrentFlags(),
+    scope: stage5Token.scope,
+  });
 
   try {
     const result = await executeStage5MicroTrade();
@@ -93,13 +127,36 @@ async function main() {
       log.warn('Warnings:', result.warnings);
     }
 
+    // Token lifecycle trace
+    const tokenLifecycleTrace = chokePoint.getTokenLifecycleTrace();
+    log.info('Token Lifecycle Trace:', tokenLifecycleTrace);
+
+    // Choke-point confirmation hash
+    const chokePointConfirmationHash = chokePoint.getChokePointConfirmationHash();
+    log.info('Choke-Point Confirmation Hash:', chokePointConfirmationHash);
+
     log.info('='.repeat(80));
     log.info('AUTO-PAUSING: Micro trade complete - pausing immediately');
     log.info('='.repeat(80));
 
+    // Auto-pause
+    chokePoint.setSystemFlags({
+      paused: true,
+      globalExecution: 'DISABLED',
+      locked: true,
+    });
+
     process.exit(result.success ? 0 : 1);
   } catch (error) {
     log.error('Micro trade runner failed', { error });
+    
+    // Auto-pause on error
+    chokePoint.setSystemFlags({
+      paused: true,
+      globalExecution: 'DISABLED',
+      locked: true,
+    });
+    
     process.exit(1);
   }
 }

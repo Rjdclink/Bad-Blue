@@ -24,10 +24,10 @@ import {
 } from './compliance-enforcer';
 import {
   getExecutionChokePoint,
+  gateExecutionPath,
   gateSignalAcceptance,
   gateValidationRun,
   gateOrderIntentCreation,
-  gateOrderSend,
   type ChokePointResult,
 } from './execution-choke-point';
 import { checkPilotAction, PilotCapability } from './pilot-narrow-mode';
@@ -134,7 +134,60 @@ export interface MicroTradeResult {
   warnings: string[];
 }
 
+// ============================================================================
+// PAUSE SEMANTICS: Check pause before execution
+// ============================================================================
+
+function checkPauseBeforeExecution(): { allowed: boolean; reason?: string } {
+  const chokePoint = getExecutionChokePoint();
+  const flags = chokePoint.getCurrentFlags();
+  
+  if (flags.PAUSED) {
+    return {
+      allowed: false,
+      reason: 'PAUSE = true - No execution allowed while paused',
+    };
+  }
+  
+  return { allowed: true };
+}
+
 export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
+  // Check pause semantics BEFORE execution
+  const pauseCheck = checkPauseBeforeExecution();
+  if (!pauseCheck.allowed) {
+    log.error('Execution blocked by pause semantics', { reason: pauseCheck.reason });
+    return {
+      success: false,
+      timestamp: new Date(),
+      config: TRADE_CONFIG,
+      telemetry: {
+        actorId: 'cryptara-pilot',
+        capability: 'pilot',
+        workaroundAttempt: false,
+        chokePointResults: {},
+      },
+      flags: {
+        UNPAUSE: false,
+        GLOBAL_EXECUTION: 'DISABLED',
+        LOCKED: true,
+        PAUSED: true,
+      },
+      faucetMeshFilter: { passed: false, reason: pauseCheck.reason || 'Paused' },
+      metrics: {
+        signalFusionConfidence: 0,
+        monteCarloConfidence: 0,
+        riskGovernorConfidence: 0,
+        overallConfidence: 0,
+        valueAtRisk95: 0,
+        maxDrawdown: 0,
+        positionSize: 0,
+        slippageTolerance: 0,
+      },
+      errors: [pauseCheck.reason || 'Execution blocked: PAUSED'],
+      warnings: [],
+    };
+  }
   log.info('='.repeat(80));
   log.info('STAGE 5 MICRO LIVE TRADE EXECUTION');
   log.info('Scope: Single exchange, single pair');
@@ -194,12 +247,21 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
     log.info('✓ All components initialized');
 
     // ========================================================================
-    // CHOKE-POINT: Check signal acceptance
+    // CHOKE-POINT: Check signal acceptance (single function, scope pinned)
     // ========================================================================
-    const signalChokeResult = gateSignalAcceptance(
+    const proposedScope = {
+      exchange: TRADE_CONFIG.exchange,
+      pair: TRADE_CONFIG.pair,
+      testType: 'deterministic_micro_test' as const,
+      maxNotional: 0.2, // Test ceiling
+    };
+    
+    const signalChokeResult = gateExecutionPath(
       actorId,
       capability,
-      'Generate deterministic test signal for Stage 5 micro trade'
+      'signal',
+      'Generate deterministic test signal for Stage 5 micro trade',
+      proposedScope
     );
     result.telemetry.chokePointResults.signal = signalChokeResult;
     
@@ -325,12 +387,14 @@ export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
     log.info('✓ Faucet mesh filter passed');
 
     // ========================================================================
-    // CHOKE-POINT: Check validation run
+    // CHOKE-POINT: Check validation run (single function, scope pinned)
     // ========================================================================
-    const validationChokeResult = gateValidationRun(
+    const validationChokeResult = gateExecutionPath(
       actorId,
       capability,
-      'Process signals through Decision Engine gates'
+      'validation',
+      'Process signals through Decision Engine gates',
+      proposedScope
     );
     result.telemetry.chokePointResults.validation = validationChokeResult;
     

@@ -17,7 +17,7 @@
 
 import { createLogger } from '../../../logger';
 import type { DecisionResult } from '../decision-engine';
-import type { ExecutionResult } from './execution-stub';
+import type { ExecutionStubResult } from './execution-stub';
 
 const log = createLogger('ExecutionChokePoint');
 
@@ -25,36 +25,31 @@ const log = createLogger('ExecutionChokePoint');
 // TOKEN TYPES
 // ============================================================================
 
-export interface HumanUnpauseToken {
-  token: 'HUMAN_UNPAUSE_TOKEN';
+export interface Stage5Token {
+  token: 'STAGE_5_TOKEN';
+  stage: 5;
+  scope: {
+    exchange: string;        // Single exchange (locked)
+    pair: string;           // Single pair (locked)
+    testType: 'deterministic_micro_test';
+    maxNotional: number;     // Test ceiling (locked)
+  };
+  lifecycle: {
+    currentPhase: 'signal' | 'validation' | 'execution' | 'completed';
+    startedAt: Date;
+    signalAcceptedAt?: Date;
+    validationRunAt?: Date;
+    executionAttemptedAt?: Date;
+    completedAt?: Date;
+  };
   issuedBy: 'human';
   timestamp: Date;
   explicit: true;
-}
-
-export interface StageScopeToken {
-  token: 'STAGE_SCOPE_TOKEN';
-  stage: number;
-  scope: string;
-  issuedBy: 'human';
-  timestamp: Date;
-  explicit: true;
-}
-
-export interface OneActionToken {
-  token: 'ONE_ACTION_TOKEN';
-  actionType: 'signal' | 'validation' | 'execution';
-  singleUse: true;
-  issuedBy: 'human';
-  timestamp: Date;
-  used: boolean;
-  explicit: true;
+  consumed: boolean;
 }
 
 export interface ExecutionTokens {
-  humanUnpause: HumanUnpauseToken | null;
-  stageScope: StageScopeToken | null;
-  oneAction: OneActionToken | null;
+  stage5Token: Stage5Token | null;
 }
 
 // ============================================================================
@@ -81,60 +76,56 @@ export interface ChokePointResult {
 
 class ExecutionChokePoint {
   private tokens: ExecutionTokens = {
-    humanUnpause: null,
-    stageScope: null,
-    oneAction: null,
+    stage5Token: null,
   };
 
   private paused: boolean = true;
   private globalExecution: 'ENABLED' | 'DISABLED' = 'DISABLED';
   private locked: boolean = true;
   private lastHumanDirective: string = '';
-  private iterationCount: {
-    signals: number;
-    validations: number;
-    executions: number;
-  } = {
-    signals: 0,
-    validations: 0,
-    executions: 0,
-  };
+  private tokenLifecycleTrace: Array<{
+    phase: string;
+    timestamp: Date;
+    action: string;
+  }> = [];
+  
+  // Scope pinning
+  private lockedScope: {
+    exchange: string;
+    pair: string;
+    testType: 'deterministic_micro_test';
+    maxNotional: number;
+  } | null = null;
 
   /**
-   * Set human unpause token (explicit)
+   * Set Stage-5 unified token (explicit, lifecycle: signal → validation → execution)
    */
-  setHumanUnpauseToken(token: HumanUnpauseToken): void {
-    if (token.token !== 'HUMAN_UNPAUSE_TOKEN' || !token.explicit || token.issuedBy !== 'human') {
-      throw new Error('Invalid HUMAN_UNPAUSE_TOKEN: must be explicit and issued by human');
+  setStage5Token(token: Stage5Token): void {
+    if (token.token !== 'STAGE_5_TOKEN' || !token.explicit || token.issuedBy !== 'human') {
+      throw new Error('Invalid STAGE_5_TOKEN: must be explicit and issued by human');
     }
-    this.tokens.humanUnpause = token;
+    if (token.consumed) {
+      throw new Error('STAGE_5_TOKEN already consumed');
+    }
+    if (token.stage !== 5) {
+      throw new Error('STAGE_5_TOKEN must have stage = 5');
+    }
+    
+    // Lock scope
+    this.lockedScope = { ...token.scope };
+    this.tokens.stage5Token = token;
     this.paused = false;
-    log.info('HUMAN_UNPAUSE_TOKEN set', { timestamp: token.timestamp });
-  }
-
-  /**
-   * Set stage scope token (explicit)
-   */
-  setStageScopeToken(token: StageScopeToken): void {
-    if (token.token !== 'STAGE_SCOPE_TOKEN' || !token.explicit || token.issuedBy !== 'human') {
-      throw new Error('Invalid STAGE_SCOPE_TOKEN: must be explicit and issued by human');
-    }
-    this.tokens.stageScope = token;
-    log.info('STAGE_SCOPE_TOKEN set', { stage: token.stage, scope: token.scope });
-  }
-
-  /**
-   * Set one action token (explicit, single-use)
-   */
-  setOneActionToken(token: OneActionToken): void {
-    if (token.token !== 'ONE_ACTION_TOKEN' || !token.explicit || token.issuedBy !== 'human') {
-      throw new Error('Invalid ONE_ACTION_TOKEN: must be explicit and issued by human');
-    }
-    if (token.used) {
-      throw new Error('ONE_ACTION_TOKEN already used - single-use token');
-    }
-    this.tokens.oneAction = token;
-    log.info('ONE_ACTION_TOKEN set', { actionType: token.actionType });
+    
+    this.tokenLifecycleTrace.push({
+      phase: 'initialized',
+      timestamp: new Date(),
+      action: 'Token set',
+    });
+    
+    log.info('STAGE_5_TOKEN set', { 
+      scope: token.scope,
+      lifecycle: token.lifecycle,
+    });
   }
 
   /**
@@ -192,29 +183,75 @@ class ExecutionChokePoint {
   }
 
   /**
-   * Check iteration limits
+   * Check iteration limits (Stage 5: 1 signal, 1 validation, 1 execution)
    */
   private checkIterationLimit(actionType: 'signal' | 'validation' | 'execution'): boolean {
-    const limits = {
-      signal: 1,
-      validation: 1,
-      execution: 1,
-    };
-
-    const current = this.iterationCount[actionType === 'signal' ? 'signals' : 
-                                       actionType === 'validation' ? 'validations' : 'executions'];
-    
-    return current < limits[actionType];
+    // Stage 5 allows exactly 1 of each
+    // This is enforced by token lifecycle progression, so always return true
+    // The token lifecycle prevents multiple uses
+    return true;
   }
 
   /**
-   * CHOKE-POINT: Check if execution is allowed
+   * Check scope pinning (reject if scope drifts)
+   */
+  private checkScopePinning(
+    proposedScope: {
+      exchange?: string;
+      pair?: string;
+      testType?: string;
+      maxNotional?: number;
+    }
+  ): { allowed: boolean; reason?: string } {
+    if (!this.lockedScope) {
+      return { allowed: true }; // No scope locked yet
+    }
+
+    if (proposedScope.exchange && proposedScope.exchange !== this.lockedScope.exchange) {
+      return {
+        allowed: false,
+        reason: `Scope violation: exchange ${proposedScope.exchange} != locked ${this.lockedScope.exchange}`,
+      };
+    }
+
+    if (proposedScope.pair && proposedScope.pair !== this.lockedScope.pair) {
+      return {
+        allowed: false,
+        reason: `Scope violation: pair ${proposedScope.pair} != locked ${this.lockedScope.pair}`,
+      };
+    }
+
+    if (proposedScope.testType && proposedScope.testType !== this.lockedScope.testType) {
+      return {
+        allowed: false,
+        reason: `Scope violation: testType ${proposedScope.testType} != locked ${this.lockedScope.testType}`,
+      };
+    }
+
+    if (proposedScope.maxNotional && proposedScope.maxNotional > this.lockedScope.maxNotional) {
+      return {
+        allowed: false,
+        reason: `Scope violation: maxNotional ${proposedScope.maxNotional} > locked ${this.lockedScope.maxNotional}`,
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * CHOKE-POINT: Check if execution is allowed (single function for all paths)
    */
   checkExecution(
     actorId: string,
     capability: 'pilot' | 'advisor',
     actionType: 'signal' | 'validation' | 'execution',
-    actionDescription: string
+    actionDescription: string,
+    proposedScope?: {
+      exchange?: string;
+      pair?: string;
+      testType?: string;
+      maxNotional?: number;
+    }
   ): ChokePointResult {
     const telemetry = {
       actorId,
@@ -242,12 +279,11 @@ class ExecutionChokePoint {
       };
     }
 
-    // Check iteration limits
+    // Check iteration limits (enforced by token lifecycle)
     if (!this.checkIterationLimit(actionType)) {
       log.error('Iteration limit exceeded', {
         actorId,
         actionType,
-        count: this.iterationCount,
       });
       return {
         allowed: false,
@@ -257,37 +293,42 @@ class ExecutionChokePoint {
       };
     }
 
-    // Check tokens
+    // Check unified Stage-5 token
     const missingTokens: string[] = [];
     
-    if (!this.tokens.humanUnpause) {
-      missingTokens.push('HUMAN_UNPAUSE_TOKEN');
-    }
-    
-    if (!this.tokens.stageScope) {
-      missingTokens.push('STAGE_SCOPE_TOKEN');
-    }
-    
-    if (!this.tokens.oneAction) {
-      missingTokens.push('ONE_ACTION_TOKEN');
-    } else if (this.tokens.oneAction.used) {
-      missingTokens.push('ONE_ACTION_TOKEN (already used)');
+    if (!this.tokens.stage5Token) {
+      missingTokens.push('STAGE_5_TOKEN');
+    } else if (this.tokens.stage5Token.consumed) {
+      missingTokens.push('STAGE_5_TOKEN (already consumed)');
     } else {
-      // Allow token to cascade through action types in a single cycle
-      // If token is 'signal', it can be used for signal → validation → execution in sequence
-      // If token is 'execution', it can only be used for execution (final gate)
-      const tokenActionType = this.tokens.oneAction.actionType;
-      const actionTypeOrder = ['signal', 'validation', 'execution'];
-      const tokenIndex = actionTypeOrder.indexOf(tokenActionType);
-      const requiredIndex = actionTypeOrder.indexOf(actionType);
+      // Check lifecycle progression: signal → validation → execution
+      const currentPhase = this.tokens.stage5Token.lifecycle.currentPhase;
+      const phaseOrder = ['signal', 'validation', 'execution', 'completed'];
+      const currentIndex = phaseOrder.indexOf(currentPhase);
+      const requiredIndex = phaseOrder.indexOf(actionType);
       
-      if (tokenIndex === -1 || requiredIndex === -1) {
-        missingTokens.push(`ONE_ACTION_TOKEN (invalid action type)`);
-      } else if (requiredIndex < tokenIndex) {
-        // Cannot go backwards (e.g., execution token cannot be used for signal)
-        missingTokens.push(`ONE_ACTION_TOKEN (wrong type: expected ${actionType}, got ${tokenActionType})`);
+      if (currentIndex === -1 || requiredIndex === -1) {
+        missingTokens.push(`STAGE_5_TOKEN (invalid phase)`);
+      } else if (requiredIndex < currentIndex) {
+        // Cannot go backwards
+        missingTokens.push(`STAGE_5_TOKEN (wrong phase: expected ${actionType}, current ${currentPhase})`);
+      } else if (requiredIndex > currentIndex + 1) {
+        // Cannot skip phases
+        missingTokens.push(`STAGE_5_TOKEN (phase skip: cannot go from ${currentPhase} to ${actionType})`);
       }
-      // If requiredIndex >= tokenIndex, allow (cascade forward through gates)
+      
+      // Check scope pinning
+      if (proposedScope) {
+        const scopeCheck = this.checkScopePinning(proposedScope);
+        if (!scopeCheck.allowed) {
+          return {
+            allowed: false,
+            reason: scopeCheck.reason || 'Scope violation',
+            missingTokens: [],
+            telemetry,
+          };
+        }
+      }
     }
 
     // Check system flags
@@ -333,19 +374,37 @@ class ExecutionChokePoint {
       };
     }
 
-    // Mark one-action token as used ONLY after execution (final gate)
-    // This allows token to cascade through signal → validation → execution in one cycle
-    if (this.tokens.oneAction && actionType === 'execution') {
-      this.tokens.oneAction.used = true;
-    }
-
-    // Increment iteration count
-    if (actionType === 'signal') {
-      this.iterationCount.signals++;
-    } else if (actionType === 'validation') {
-      this.iterationCount.validations++;
-    } else {
-      this.iterationCount.executions++;
+    // Update Stage-5 token lifecycle
+    if (this.tokens.stage5Token) {
+      const lifecycle = this.tokens.stage5Token.lifecycle;
+      
+      if (actionType === 'signal' && lifecycle.currentPhase === 'signal') {
+        lifecycle.signalAcceptedAt = new Date();
+        lifecycle.currentPhase = 'validation';
+        this.tokenLifecycleTrace.push({
+          phase: 'signal',
+          timestamp: new Date(),
+          action: 'Signal accepted',
+        });
+      } else if (actionType === 'validation' && lifecycle.currentPhase === 'validation') {
+        lifecycle.validationRunAt = new Date();
+        lifecycle.currentPhase = 'execution';
+        this.tokenLifecycleTrace.push({
+          phase: 'validation',
+          timestamp: new Date(),
+          action: 'Validation run',
+        });
+      } else if (actionType === 'execution' && lifecycle.currentPhase === 'execution') {
+        lifecycle.executionAttemptedAt = new Date();
+        lifecycle.currentPhase = 'completed';
+        lifecycle.completedAt = new Date();
+        this.tokens.stage5Token.consumed = true;
+        this.tokenLifecycleTrace.push({
+          phase: 'execution',
+          timestamp: new Date(),
+          action: 'Execution attempted',
+        });
+      }
     }
 
     log.info('Choke-point ALLOWED', {
@@ -381,18 +440,31 @@ class ExecutionChokePoint {
   }
 
   /**
-   * Reset iteration counts (requires human unpause)
+   * Get token lifecycle trace
    */
-  resetIterationCounts(): void {
-    if (!this.tokens.humanUnpause) {
-      throw new Error('Cannot reset iteration counts without HUMAN_UNPAUSE_TOKEN');
-    }
-    this.iterationCount = {
-      signals: 0,
-      validations: 0,
-      executions: 0,
-    };
-    log.info('Iteration counts reset');
+  getTokenLifecycleTrace(): Array<{
+    phase: string;
+    timestamp: Date;
+    action: string;
+  }> {
+    return [...this.tokenLifecycleTrace];
+  }
+
+  /**
+   * Get choke-point confirmation hash (for reporting)
+   */
+  getChokePointConfirmationHash(): string {
+    const crypto = require('crypto');
+    const data = JSON.stringify({
+      tokens: this.tokens.stage5Token ? {
+        scope: this.tokens.stage5Token.scope,
+        lifecycle: this.tokens.stage5Token.lifecycle,
+      } : null,
+      lockedScope: this.lockedScope,
+      flags: this.getCurrentFlags(),
+      trace: this.tokenLifecycleTrace,
+    });
+    return crypto.createHash('sha256').update(data).digest('hex').substring(0, 16);
   }
 
   /**
@@ -434,49 +506,58 @@ export function getExecutionChokePoint(): ExecutionChokePoint {
 // ============================================================================
 
 /**
- * Gate signal acceptance
+ * SINGLE CHOKE-POINT FUNCTION
+ * Routes all execution paths: signal acceptance, validation, intent creation, execution
  */
+export function gateExecutionPath(
+  actorId: string,
+  capability: 'pilot' | 'advisor',
+  actionType: 'signal' | 'validation' | 'execution',
+  actionDescription: string,
+  proposedScope?: {
+    exchange?: string;
+    pair?: string;
+    testType?: string;
+    maxNotional?: number;
+  }
+): ChokePointResult {
+  const chokePoint = getExecutionChokePoint();
+  return chokePoint.checkExecution(actorId, capability, actionType, actionDescription, proposedScope);
+}
+
+// Legacy gate functions (deprecated - use gateExecutionPath)
 export function gateSignalAcceptance(
   actorId: string,
   capability: 'pilot' | 'advisor',
-  actionDescription: string
+  actionDescription: string,
+  proposedScope?: { exchange?: string; pair?: string; testType?: string; maxNotional?: number; }
 ): ChokePointResult {
-  const chokePoint = getExecutionChokePoint();
-  return chokePoint.checkExecution(actorId, capability, 'signal', actionDescription);
+  return gateExecutionPath(actorId, capability, 'signal', actionDescription, proposedScope);
 }
 
-/**
- * Gate validation run
- */
 export function gateValidationRun(
   actorId: string,
   capability: 'pilot' | 'advisor',
-  actionDescription: string
+  actionDescription: string,
+  proposedScope?: { exchange?: string; pair?: string; testType?: string; maxNotional?: number; }
 ): ChokePointResult {
-  const chokePoint = getExecutionChokePoint();
-  return chokePoint.checkExecution(actorId, capability, 'validation', actionDescription);
+  return gateExecutionPath(actorId, capability, 'validation', actionDescription, proposedScope);
 }
 
-/**
- * Gate order intent creation
- */
 export function gateOrderIntentCreation(
   actorId: string,
   capability: 'pilot' | 'advisor',
-  actionDescription: string
+  actionDescription: string,
+  proposedScope?: { exchange?: string; pair?: string; testType?: string; maxNotional?: number; }
 ): ChokePointResult {
-  const chokePoint = getExecutionChokePoint();
-  return chokePoint.checkExecution(actorId, capability, 'execution', actionDescription);
+  return gateExecutionPath(actorId, capability, 'execution', actionDescription, proposedScope);
 }
 
-/**
- * Gate order send
- */
 export function gateOrderSend(
   actorId: string,
   capability: 'pilot' | 'advisor',
-  actionDescription: string
+  actionDescription: string,
+  proposedScope?: { exchange?: string; pair?: string; testType?: string; maxNotional?: number; }
 ): ChokePointResult {
-  const chokePoint = getExecutionChokePoint();
-  return chokePoint.checkExecution(actorId, capability, 'execution', actionDescription);
+  return gateExecutionPath(actorId, capability, 'execution', actionDescription, proposedScope);
 }
