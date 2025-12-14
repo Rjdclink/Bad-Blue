@@ -10,23 +10,23 @@ import { EDEN_CONFIG } from '../eden/config';
 
 export const MAX_PROFIT_CONFIG = {
   // =========================================================================
-  // CORE OPTIMIZATION - Maximum throughput, minimum waste
+  // CORE OPTIMIZATION - TRUTH CHECK MODE (SAFE)
   // =========================================================================
   
-  // Execution Parameters (unrestricted for maximum performance)
-  MAX_CONCURRENT_EXECUTIONS: 10000, // Massively parallel execution
-  EXECUTION_BATCH_SIZE: 500, // Large batch sizes for efficiency
-  EXECUTION_PRIORITY_QUEUE_SIZE: 50000, // Deep queue for opportunity buffering
+  // Execution Parameters (RESTRICTED for Truth Check)
+  MAX_CONCURRENT_EXECUTIONS: 1, // Single execution only
+  EXECUTION_BATCH_SIZE: 1, // One at a time
+  EXECUTION_PRIORITY_QUEUE_SIZE: 100, // Small queue
   
-  // Timing Optimization (sub-millisecond precision)
-  REACTION_TIME_TARGET_MS: 1, // 1ms target reaction time
-  SUB_BLOCK_PRECISION_MS: 10, // 10ms sub-block timing
-  MEMPOOL_FORECAST_WINDOW_MS: 5000, // 5s lookahead window
+  // Timing Optimization (Relaxed)
+  REACTION_TIME_TARGET_MS: 100, 
+  SUB_BLOCK_PRECISION_MS: 100, 
+  MEMPOOL_FORECAST_WINDOW_MS: 1000, 
   
-  // Resource Utilization (aggressive)
-  CPU_UTILIZATION_TARGET: 0.95, // Use 95% CPU capacity
-  MEMORY_UTILIZATION_TARGET: 0.90, // Use 90% memory
-  NETWORK_BANDWIDTH_TARGET: 0.98, // Use 98% available bandwidth
+  // Resource Utilization (Conservative)
+  CPU_UTILIZATION_TARGET: 0.20, // Use 20% CPU capacity
+  MEMORY_UTILIZATION_TARGET: 0.20, // Use 20% memory
+  NETWORK_BANDWIDTH_TARGET: 0.20, // Use 20% available bandwidth
   
   // =========================================================================
   // MEMOIZATION & CACHING - Zero redundant computation
@@ -48,13 +48,13 @@ export const MAX_PROFIT_CONFIG = {
   LOCAL_COMPUTATION_PREFERENCE: 0.9, // 90% local computation preference
   
   // =========================================================================
-  // PROFIT MAXIMIZATION - Aggressive parameters
+  // PROFIT MAXIMIZATION - TRUTH CHECK MODE (Conservative)
   // =========================================================================
   
-  MIN_PROFIT_THRESHOLD_USD: 0.0001, // $0.0001 minimum (capture micro-profits)
-  PROFIT_REINVESTMENT_RATE: 0.95, // Reinvest 95% of profits
-  COMPOUND_FREQUENCY_MS: 1000, // Compound every second
-  OPPORTUNITY_DECAY_TOLERANCE: 0.99, // Accept 99% of original profit
+  MIN_PROFIT_THRESHOLD_USD: 5.0, // $5.00 minimum (filter noise)
+  PROFIT_REINVESTMENT_RATE: 0.0, // No reinvestment in signal mode
+  COMPOUND_FREQUENCY_MS: 3600000, // Low frequency
+  OPPORTUNITY_DECAY_TOLERANCE: 0.90, // Strict decay tolerance
   
   // Risk-Adjusted Profitability (optimized for maximum gain)
   LAMBDA_RISK: 0.1, // Lower risk penalty (more aggressive)
@@ -86,14 +86,14 @@ export const MAX_PROFIT_CONFIG = {
   CROSS_REGION_ARBITRAGE_ENABLED: true,
   
   // =========================================================================
-  // GAS OPTIMIZATION - Zero friction strategies
+  // GAS OPTIMIZATION - Pessimistic Strategy
   // =========================================================================
   
-  GAS_ESTIMATION_BUFFER: 1.05, // Only 5% buffer (minimal overhead)
-  MAX_GAS_PRICE_GWEI: 1000, // High tolerance for urgent txs
+  GAS_ESTIMATION_BUFFER: 1.50, // 50% buffer (pessimistic)
+  MAX_GAS_PRICE_GWEI: 50, // Strict cap
   GAS_PRICE_PREDICTION_WINDOW_MS: 30000, // 30s prediction window
-  FLASHBOTS_ENABLED: true,
-  PRIVATE_MEMPOOL_ROUTING: true,
+  FLASHBOTS_ENABLED: false, // Disabled for simple signal check
+  PRIVATE_MEMPOOL_ROUTING: false, // Disabled
   
   // Gas-Free Strategies
   META_TRANSACTION_ENABLED: true,

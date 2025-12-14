@@ -59,16 +59,16 @@ interface ExecutionRecord {
 }
 
 const DEFAULT_CONFIG: CircuitBreakerConfig = {
-  maxDailyLoss: 1.0,              // 1 ETH daily loss limit
-  maxHourlyLoss: 0.2,             // 0.2 ETH hourly loss limit
-  maxConsecutiveLosses: 5,        // 5 consecutive losses
-  maxPositionSize: 0.5,           // 0.5 ETH max position
-  maxTotalExposure: 2.0,          // 2 ETH total exposure
-  maxPositionsPerChain: 3,        // 3 concurrent positions per chain
-  maxExecutionsPerMinute: 10,     // 10 executions per minute
-  maxSlippage: 0.02,              // 2% max slippage
+  maxDailyLoss: 0.05,             // 0.05 ETH daily loss limit (~$150-200, strictly capped)
+  maxHourlyLoss: 0.02,            // 0.02 ETH hourly loss limit
+  maxConsecutiveLosses: 3,        // Reduced to 3 for tighter safety
+  maxPositionSize: 0.1,           // Reduced position size
+  maxTotalExposure: 0.5,          // Reduced total exposure
+  maxPositionsPerChain: 1,        // 1 concurrent position per chain for safety
+  maxExecutionsPerMinute: 5,      // Reduced rate limit
+  maxSlippage: 0.01,              // 1% max slippage
   minProfitThreshold: 0.001,      // 0.001 ETH minimum profit
-  recoveryPeriodMs: 300000,       // 5 minutes recovery
+  recoveryPeriodMs: 600000,       // 10 minutes recovery
   gradualRecoverySteps: 5         // 5 steps to full capacity
 };
 

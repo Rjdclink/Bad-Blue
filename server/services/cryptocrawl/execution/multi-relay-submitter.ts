@@ -61,6 +61,7 @@ class MultiRelaySubmitter {
   private initialized = false;
   private provider: providers.JsonRpcProvider;
   private wallet: Wallet;
+  private readonly SIGNAL_ONLY = true; // FORCE SIGNAL ONLY MODE
 
   constructor() {
     this.provider = new JsonRpcProvider(process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo');
@@ -90,6 +91,12 @@ class MultiRelaySubmitter {
   }
 
   async initialize(): Promise<void> {
+    if (this.SIGNAL_ONLY) {
+        logger.info('SIGNAL ONLY: Skipping relay connection', { component: 'MultiRelaySubmitter' });
+        this.initialized = true;
+        return;
+    }
+
     if (this.initialized) return;
 
     logger.info('Initializing multi-relay connections...', { component: 'MultiRelaySubmitter' });
@@ -120,6 +127,15 @@ class MultiRelaySubmitter {
   }
 
   async submitBundle(bundle: Bundle, targetBlock: number): Promise<SubmissionResult> {
+    if (this.SIGNAL_ONLY) {
+        logger.info('SIGNAL ONLY: Skipping real bundle submission', { component: 'MultiRelaySubmitter', bundle });
+        return {
+            submitted: 0,
+            successful: [],
+            failed: []
+        };
+    }
+
     if (!this.initialized) {
       await this.initialize();
     }

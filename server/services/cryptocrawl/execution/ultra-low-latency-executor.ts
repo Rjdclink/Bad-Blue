@@ -43,6 +43,7 @@ class UltraLowLatencyExecutor {
   private flashbotsUrl: string;
   private bloxrouteUrl: string;
   private gasHistory: number[] = []; // 2024: Gas history tracking
+  private readonly SIGNAL_ONLY = true; // FORCE SIGNAL ONLY MODE
 
   constructor() {
     this.privateRpcUrl = process.env.PRIVATE_RPC_URL || process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo';
@@ -62,6 +63,29 @@ class UltraLowLatencyExecutor {
     logger.info('Initializing ultra-low-latency executor...', { 
       component: 'UltraLowLatencyExecutor' 
     });
+
+    if (this.SIGNAL_ONLY) {
+       logger.info('Initializing in SIGNAL_ONLY mode - Using mock transactions & Skipping Network', { component: 'UltraLowLatencyExecutor' });
+       this.currentNonce = 0;
+       
+       for (let i = 0; i < 100; i++) {
+         this.preSignedTxPool.push({
+           nonce: this.currentNonce + i,
+           transaction: {
+             nonce: this.currentNonce + i,
+             gasPrice: ethers.BigNumber.from(20000000000), // 20 gwei
+             gasLimit: ethers.BigNumber.from(500000),
+             to: this.wallet.address,
+             value: ethers.BigNumber.from(0),
+             data: '0x',
+             chainId: 1
+           } as any,
+           used: false
+         });
+       }
+       this.initialized = true;
+       return;
+    }
 
     // Get current nonce
     this.currentNonce = await this.wallet.getTransactionCount();
@@ -144,6 +168,19 @@ class UltraLowLatencyExecutor {
       preSignedTx.used = true;
 
       // Submit via private RPC
+      if (this.SIGNAL_ONLY) {
+        logger.info('SIGNAL ONLY: Skipping real execution', { 
+          component: 'UltraLowLatencyExecutor', 
+          tx: updatedTx 
+        });
+        return {
+          success: true,
+          txHash: `0x_MOCK_SIGNAL_ONLY_${Date.now()}`,
+          latency: Date.now() - startTime,
+          method: 'instant'
+        };
+      }
+
       const signedTx = await this.wallet.signTransaction(updatedTx);
       const response = await this.provider.sendTransaction(signedTx);
 
@@ -236,6 +273,9 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaFlashbots(tx: any): Promise<{ txHash: string; path: string }> {
+    if (this.SIGNAL_ONLY) {
+        return { txHash: `0x_MOCK_FLASHBOTS_${Date.now()}`, path: 'flashbots' };
+    }
     const signedTx = await this.wallet.signTransaction(tx);
     const flashbotsProvider = new JsonRpcProvider(this.flashbotsUrl);
     const response = await flashbotsProvider.sendTransaction(signedTx);
@@ -243,6 +283,9 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaBloxroute(tx: any): Promise<{ txHash: string; path: string }> {
+    if (this.SIGNAL_ONLY) {
+        return { txHash: `0x_MOCK_BLOXROUTE_${Date.now()}`, path: 'bloxroute' };
+    }
     const signedTx = await this.wallet.signTransaction(tx);
     const bloxrouteProvider = new JsonRpcProvider(this.bloxrouteUrl);
     const response = await bloxrouteProvider.sendTransaction(signedTx);
@@ -250,6 +293,9 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitDirect(tx: any): Promise<{ txHash: string; path: string }> {
+    if (this.SIGNAL_ONLY) {
+        return { txHash: `0x_MOCK_DIRECT_${Date.now()}`, path: 'direct' };
+    }
     const signedTx = await this.wallet.signTransaction(tx);
     const response = await this.provider.sendTransaction(signedTx);
     return { txHash: response.hash, path: 'direct' };

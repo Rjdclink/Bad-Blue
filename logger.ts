@@ -5,46 +5,60 @@ import * as path from 'path';
 const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 // Define the log file path and name
-const LOG_FILE_PATH = path.join(__dirname, 'application.log');
+// Use process.cwd() to ensure it's relative to workspace root if __dirname is tricky in ESM/TS
+const LOG_FILE_PATH = path.join(process.cwd(), 'application.log');
 
 // Function to check and rotate logs
 function checkAndRotateLogs(): void {
-  // Check if the log file exists
-  if (fs.existsSync(LOG_FILE_PATH)) {
-    // Get the current log file size
-    const logFileSize = fs.statSync(LOG_FILE_PATH).size;
-
-    // Check if the log file size exceeds the maximum allowed size
-    if (logFileSize > MAX_LOG_FILE_SIZE) {
-      // Rotate the log file
-      rotateLog();
+  try {
+    if (fs.existsSync(LOG_FILE_PATH)) {
+      const logFileSize = fs.statSync(LOG_FILE_PATH).size;
+      if (logFileSize > MAX_LOG_FILE_SIZE) {
+        rotateLog();
+      }
     }
+  } catch (err) {
+    // Ignore rotation errors to avoid crashing
+    console.error('Log rotation failed:', err);
   }
 }
 
 // Function to rotate the log file
 function rotateLog(): void {
-  // Define the backup log file path and name
-  const BACKUP_LOG_FILE_PATH = `${LOG_FILE_PATH}.backup`;
-
-  // Check if a backup log file already exists
-  if (fs.existsSync(BACKUP_LOG_FILE_PATH)) {
-    // Remove the existing backup log file
-    fs.unlinkSync(BACKUP_LOG_FILE_PATH);
+  try {
+    const BACKUP_LOG_FILE_PATH = `${LOG_FILE_PATH}.backup`;
+    if (fs.existsSync(BACKUP_LOG_FILE_PATH)) {
+      fs.unlinkSync(BACKUP_LOG_FILE_PATH);
+    }
+    fs.renameSync(LOG_FILE_PATH, BACKUP_LOG_FILE_PATH);
+  } catch (err) {
+    console.error('Log rotation failed:', err);
   }
-
-  // Rename the current log file to the backup log file
-  fs.renameSync(LOG_FILE_PATH, BACKUP_LOG_FILE_PATH);
 }
 
-// Function to log messages
-export function log(message: string): void {
-  // Check and rotate logs before writing a new log message
+function writeLog(level: string, message: string, meta?: any): void {
   checkAndRotateLogs();
+  const metaStr = meta ? ` ${JSON.stringify(meta)}` : '';
+  const logMessage = `${new Date().toISOString()} [${level.toUpperCase()}] - ${message}${metaStr}\n`;
+  
+  // Also print to console for visibility
+  if (level === 'error') console.error(logMessage.trim());
+  else if (level === 'warn') console.warn(logMessage.trim());
+  else console.log(logMessage.trim());
 
-  // Write the log message to the log file
-  fs.appendFileSync(LOG_FILE_PATH, `${new Date().toISOString()} - ${message}\n`);
+  try {
+    fs.appendFileSync(LOG_FILE_PATH, logMessage);
+  } catch (err) {
+    console.error('Failed to write to log file:', err);
+  }
 }
 
-// Export for use in other modules
-export default { log };
+export const logger = {
+  log: (message: string) => writeLog('info', message),
+  info: (message: string, meta?: any) => writeLog('info', message, meta),
+  warn: (message: string, meta?: any) => writeLog('warn', message, meta),
+  error: (message: string, meta?: any) => writeLog('error', message, meta),
+  debug: (message: string, meta?: any) => writeLog('debug', message, meta),
+};
+
+export default logger;
