@@ -56,7 +56,7 @@ async function main() {
   // Process canonical unpause command FIRST (before pause check)
   // This allows the command to be processed in the same process as the runner
   const canonicalControl = getCanonicalControlManager();
-  const canonicalCommand = 'GLOBAL_FULL_UNPAUSE_AND_PROCEED(5,"single_exchange|single_pair|micro_size|maker_only|auto_pause_on_completion")';
+  const canonicalCommand = 'GLOBAL_FULL_UNPAUSE_AND_PROCEED(5, "single exchange, single pair, micro size, maker-only, auto pause on completion")';
   const unpauseResult = canonicalControl.processCommand(canonicalCommand, 'composer');
   
   if (!unpauseResult.success) {
