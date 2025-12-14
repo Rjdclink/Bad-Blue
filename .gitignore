@@ -45,3 +45,7 @@ evidence-maps/
 # Volume Engine cache
 .cache/test-opportunity-system.mjs
 .cache/test-elite-scanner.ts
+
+# Core dumps (system crash dumps - should never be committed)
+core
+core.*
