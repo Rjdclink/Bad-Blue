@@ -79,13 +79,11 @@ export interface FeatureExtractionConfig {
 export interface GateResult {
   passed: boolean;
   reason?: string;
-  metrics?: Record<string, number | undefined>;
+  metrics?: Record<string, number>;
   duration_ms: number;
 }
 
 export interface FeasibilityMetrics {
-  // Allow metrics to be treated as a numeric map when needed for generic gate plumbing
-  [key: string]: number | undefined;
   net_spread_after_fees: number;
   expected_slippage: number;
   expected_fill_time_ms: number;
@@ -472,7 +470,7 @@ export class ReactorCore extends EventEmitter {
 
   // ==================== GATE IMPLEMENTATIONS ====================
 
-  private async gateFeasibility(domain: Domain, obs: Observation, features: Record<string, unknown>): Promise<GateResult & { metrics?: FeasibilityMetrics }> {
+  private async gateFeasibility(domain: Domain, obs: Observation, features: Record<string, unknown>): Promise<GateResult> {
     const startTime = Date.now();
 
     if (domain === 'crypto') {
@@ -499,12 +497,12 @@ export class ReactorCore extends EventEmitter {
         return {
           passed: false,
           reason: `Net spread after fees too low: ${(netSpreadAfterFees * 10000).toFixed(2)} bps`,
-          metrics,
+          metrics: metrics as unknown as Record<string, number>,
           duration_ms: Date.now() - startTime,
         };
       }
 
-      return { passed: true, metrics, duration_ms: Date.now() - startTime };
+      return { passed: true, metrics: metrics as unknown as Record<string, number>, duration_ms: Date.now() - startTime };
     }
 
     if (domain === 'voice') {
