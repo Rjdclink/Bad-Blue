@@ -277,9 +277,9 @@ function Router() {
             <Route path="/tshpe-locator" component={TSHPELocatorPage} />
             <Route path="/positioning" component={TSHPELocatorPage} />
             
-            {/* Nationwide Inmate Locator */}
-            <Route path="/inmate-locator" component={InmateLocatorPage} />
-            <Route path="/inmate-locator/dashboard" component={InmateLocatorPage} />
+            {/* Nationwide Inmate Locator - Redirect to V2 for single brain execution */}
+            <Route path="/inmate-locator" component={InmateLocatorV2Page} />
+            <Route path="/inmate-locator/dashboard" component={InmateLocatorV2Page} />
             
             {/* V2 Pages - Clean implementations without wrappers */}
             <Route path="/inmate-locator-v2" component={InmateLocatorV2Page} />

@@ -624,6 +624,45 @@ export default function AdminConsole() {
             </Card>
           </div>
 
+          {/* Quick Launch Control */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <Card className="bg-gradient-to-br from-blue-900/40 to-cyan-900/40 border-cyan-500/20 hover:border-cyan-500/40 transition-all cursor-pointer group" onClick={() => setLocation('/cryptocrawler-v2')}>
+              <CardContent className="pt-6 flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-cyan-200 group-hover:text-cyan-100 mb-1">CryptoCrawler Dashboard</h3>
+                  <p className="text-xs text-cyan-400/60">Full trading & Monte Carlo interface</p>
+                </div>
+                <div className="p-3 rounded-full bg-cyan-500/10 group-hover:bg-cyan-500/20 text-cyan-400">
+                  <Database className="w-5 h-5" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-purple-900/40 to-indigo-900/40 border-purple-500/20 hover:border-purple-500/40 transition-all cursor-pointer group" onClick={() => setLocation('/spectra')}>
+              <CardContent className="pt-6 flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-purple-200 group-hover:text-purple-100 mb-1">Monte Carlo & Spectra</h3>
+                  <p className="text-xs text-purple-400/60">Geo-intelligence & simulations</p>
+                </div>
+                <div className="p-3 rounded-full bg-purple-500/10 group-hover:bg-purple-500/20 text-purple-400">
+                  <Activity className="w-5 h-5" />
+                </div>
+              </CardContent>
+            </Card>
+            
+            <Card className="bg-gradient-to-br from-amber-900/40 to-orange-900/40 border-amber-500/20 hover:border-amber-500/40 transition-all cursor-pointer group" onClick={() => setLocation('/control-room')}>
+              <CardContent className="pt-6 flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-amber-200 group-hover:text-amber-100 mb-1">Reactor Control Room</h3>
+                  <p className="text-xs text-amber-400/60">System core & logs</p>
+                </div>
+                <div className="p-3 rounded-full bg-amber-500/10 group-hover:bg-amber-500/20 text-amber-400">
+                  <Terminal className="w-5 h-5" />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
           {/* Main Tabs */}
           <Tabs defaultValue="faucet" className="space-y-6">
             <TabsList className="bg-gray-800/50 border border-white/10">
