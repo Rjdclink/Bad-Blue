@@ -3583,11 +3583,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
   app.post('/api/osint/full-search', async (req, res) => {
     const startTime = Date.now();
     const correlationId = require('crypto').randomBytes(16).toString('hex');
-    const { name, department, badge, location, domain, searchDepth = 2 } = req.body;
+    let { name, department, badge, location, domain, searchDepth = 2 } = req.body;
     
-    console.log('[OSINT] Request started', { correlationId, name, searchDepth });
+    console.log('[OSINT] Request started', { correlationId, name, searchDepth, domain });
     
-    // Validation
+    // Validation - Name
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       console.log('[OSINT] Validation failed: invalid name', { correlationId });
       const { sendValidationError } = await import('./lib/apiResponse');
@@ -3596,12 +3596,34 @@ Contact: ${foiaRequest.userEmail || userEmail}
       }, correlationId);
     }
     
+    // Validation - Search Depth
     if (searchDepth && (searchDepth < 1 || searchDepth > 4)) {
       console.log('[OSINT] Validation failed: invalid searchDepth', { correlationId, searchDepth });
       const { sendValidationError } = await import('./lib/apiResponse');
       return sendValidationError(res, 'Search depth must be between 1 and 4', {
         searchDepth: 'Must be integer 1-4',
       }, correlationId);
+    }
+    
+    // PASS 6: URL/Domain normalization and validation
+    if (domain && domain.trim().length > 0) {
+      try {
+        // Normalize URL - add https:// if missing
+        const urlString = domain.startsWith('http://') || domain.startsWith('https://') 
+          ? domain 
+          : `https://${domain}`;
+        
+        const url = new URL(urlString);
+        domain = url.hostname; // Extract just the domain
+        
+        console.log('[OSINT] Domain normalized', { correlationId, original: req.body.domain, normalized: domain });
+      } catch (e) {
+        console.log('[OSINT] Validation failed: invalid domain', { correlationId, domain });
+        const { sendValidationError } = await import('./lib/apiResponse');
+        return sendValidationError(res, 'Invalid domain or URL format', {
+          domain: 'Must be a valid URL or domain name (e.g., example.com or https://example.com)',
+        }, correlationId);
+      }
     }
 
     // Get user ID if authenticated
@@ -5032,6 +5054,31 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Apply notFoundHandler ONLY to API routes
   app.use('/api', notFoundHandler);
   
+  // PASS 7: SPA fallback routing - serve index.html for non-API routes
+  // This prevents 404 errors on direct navigation to /people-finder, /inmate-locator, etc.
+  app.get('*', (req, res, next) => {
+    // Skip if this is an API route (already handled above)
+    if (req.path.startsWith('/api/')) {
+      return next();
+    }
+    
+    // Skip if this is a static asset request
+    if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/)) {
+      return next();
+    }
+    
+    console.log('[SPA FALLBACK] Serving index.html for:', req.path);
+    
+    // Serve the SPA index.html for all other routes
+    const path = require('path');
+    const indexPath = path.join(__dirname, '../dist/public/index.html');
+    res.sendFile(indexPath, (err) => {
+      if (err) {
+        console.error('[SPA FALLBACK] Error serving index.html:', err);
+        res.status(500).send('Error loading application');
+      }
+    });
+  });
 
       // Apply the general error handler globally
   app.use(errorHandler);

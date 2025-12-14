@@ -3,6 +3,7 @@
  */
 
 import express, { Request, Response } from 'express';
+import { runReleaseGateChecks, getReleaseGateSummary } from '../lib/releaseGate';
 
 const router = express.Router();
 
@@ -179,6 +180,28 @@ router.get('/', (req: Request, res: Response) => {
     uptime: process.uptime(),
     memory: process.memoryUsage(),
   });
+});
+
+/**
+ * GET /api/health/release-gate
+ * PASS 8: Pre-deployment checks
+ */
+router.get('/release-gate', async (req: Request, res: Response) => {
+  try {
+    const checks = await runReleaseGateChecks();
+    const summary = getReleaseGateSummary(checks);
+    
+    res.json({
+      timestamp: new Date().toISOString(),
+      summary,
+      checks,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to run release gate checks',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
 });
 
 export default router;
