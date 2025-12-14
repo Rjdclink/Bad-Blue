@@ -6,7 +6,7 @@ export const ADMIN_BYPASS_USER_ID = 'admin-bypass';
 // Get admin credentials from environment or use defaults
 export function getAdminCredentials() {
   return {
-    email: process.env.ADMIN_BYPASS_EMAIL || 'Rjdclink@outlook.com',
+    email: process.env.ADMIN_BYPASS_EMAIL || 'rjdclink@outlook.com',
     password: process.env.ADMIN_BYPASS_PASSWORD || 'SARBEAR',
     firstName: process.env.ADMIN_BYPASS_FIRST_NAME || 'Robert',
     lastName: process.env.ADMIN_BYPASS_LAST_NAME || 'Clink',
