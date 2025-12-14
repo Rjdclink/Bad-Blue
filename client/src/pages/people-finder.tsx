@@ -133,7 +133,7 @@ export default function PeopleFinderPage() {
     // In production, this would use actual geocoding API
     const baseCoords: [number, number] = [40.7128, -74.0060]; // NYC default
     
-    return searchResults.locationHistory.map((location, idx) => {
+    return searchResults.locationHistory.map((location: string, idx: number) => {
       const hash = hashString(location);
       const latOffset = ((hash % 10000) / 100000) - 0.05;
       const lngOffset = (((hash * 7) % 10000) / 100000) - 0.05;
@@ -313,7 +313,7 @@ export default function PeopleFinderPage() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              {/* Tab Navigation - tabs are visual indicators only since GeoconsoleRadarDashboard handles view switching internally */}
+              {/* Tab Navigation - visual indicators only (single dashboard instance below) */}
               <Tabs value={geoConsoleTab} onValueChange={(v) => setGeoConsoleTab(v as any)} className="w-full">
                 <TabsList className="w-full justify-start bg-slate-800/50 rounded-none border-b border-slate-700/50">
                   <TabsTrigger value="timeline" className="flex items-center gap-1.5 data-[state=active]:bg-slate-700/50">
@@ -329,24 +329,12 @@ export default function PeopleFinderPage() {
                     Satellite
                   </TabsTrigger>
                 </TabsList>
-                
-                {/* GeoConsole Dashboard - visible for all tabs, internally handles view mode */}
-                <TabsContent value="timeline" className="m-0">
-                  <div className="h-[400px]">
-                    <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
-                  </div>
-                </TabsContent>
-                <TabsContent value="map" className="m-0">
-                  <div className="h-[400px]">
-                    <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
-                  </div>
-                </TabsContent>
-                <TabsContent value="satellite" className="m-0">
-                  <div className="h-[400px]">
-                    <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
-                  </div>
-                </TabsContent>
               </Tabs>
+
+              {/* GeoConsole Dashboard - render ONCE for stability */}
+              <div className="h-[400px]">
+                <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
+              </div>
             </CardContent>
           </Card>
         </div>

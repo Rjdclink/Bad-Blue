@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Card,
@@ -78,6 +78,21 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
   const [department, setDepartment] = useState("");
   const [additionalInfo, setAdditionalInfo] = useState("");
   const [results, setResults] = useState<PeopleSearchReport | null>(null);
+
+  // Guard against state updates after unmount (e.g., delayed auto-search)
+  const mountedRef = useRef(true);
+  const autoSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (autoSearchTimeoutRef.current) {
+        clearTimeout(autoSearchTimeoutRef.current);
+        autoSearchTimeoutRef.current = null;
+      }
+    };
+  }, []);
   
   // PASS 3: Component boot log
   useEffect(() => {
@@ -93,10 +108,18 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
     if (nameParam && nameParam.trim()) {
       console.log('[PEOPLE FINDER SEARCH] Auto-search triggered', { name: nameParam });
       // Small delay to ensure component is mounted
-      setTimeout(() => {
+      autoSearchTimeoutRef.current = setTimeout(() => {
+        // Avoid triggering work after route changes/unmount
+        if (!mountedRef.current) return;
         handleSearch();
       }, 500);
     }
+    return () => {
+      if (autoSearchTimeoutRef.current) {
+        clearTimeout(autoSearchTimeoutRef.current);
+        autoSearchTimeoutRef.current = null;
+      }
+    };
   }, []); // Run only once on mount
 
   const searchMutation = useMutation({
@@ -121,6 +144,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
       return data;
     },
     onSuccess: (data: any) => {
+      if (!mountedRef.current) return;
       console.log('[PEOPLE FINDER SEARCH] Search successful', {
         timestamp: new Date().toISOString(),
         hasResults: !!data,
@@ -141,6 +165,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
       });
     },
     onError: (error: Error) => {
+      if (!mountedRef.current) return;
       console.error('[PEOPLE FINDER SEARCH] Search failed', {
         timestamp: new Date().toISOString(),
         error: error.message,
