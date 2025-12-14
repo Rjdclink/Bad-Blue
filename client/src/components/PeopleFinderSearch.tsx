@@ -78,10 +78,20 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
   const [department, setDepartment] = useState("");
   const [additionalInfo, setAdditionalInfo] = useState("");
   const [results, setResults] = useState<PeopleSearchReport | null>(null);
+  
+  // PASS 3: Component boot log
+  useEffect(() => {
+    console.log('[PEOPLE FINDER SEARCH] Component mounted', {
+      timestamp: new Date().toISOString(),
+      hasNameParam: !!nameParam,
+      hasLocationParam: !!locationParam,
+    });
+  }, []);
 
   // Auto-search if name parameter is provided
   useEffect(() => {
     if (nameParam && nameParam.trim()) {
+      console.log('[PEOPLE FINDER SEARCH] Auto-search triggered', { name: nameParam });
       // Small delay to ensure component is mounted
       setTimeout(() => {
         handleSearch();
@@ -91,19 +101,51 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
 
   const searchMutation = useMutation({
     mutationFn: async (searchData: { name: string; location?: string; department?: string; domain?: string }) => {
+      const requestStart = Date.now();
+      console.log('[PEOPLE FINDER SEARCH] Request started', {
+        timestamp: new Date().toISOString(),
+        searchData,
+      });
+      
       const response = await apiRequest("/api/osint/full-search", "POST", searchData);
-      return response.json();
+      const data = await response.json();
+      
+      const requestEnd = Date.now();
+      console.log('[PEOPLE FINDER SEARCH] Request finished', {
+        timestamp: new Date().toISOString(),
+        duration: requestEnd - requestStart,
+        success: response.ok,
+        hasData: !!data,
+      });
+      
+      return data;
     },
-    onSuccess: (data: PeopleSearchReport) => {
-      setResults(data);
-      // Notify parent component of results for GeoConsole integration
-      onResults?.(data);
+    onSuccess: (data: any) => {
+      console.log('[PEOPLE FINDER SEARCH] Search successful', {
+        timestamp: new Date().toISOString(),
+        hasResults: !!data,
+      });
+      
+      // Handle both old format and new structured response
+      const report = data.data || data;
+      setResults(report);
+      
+      // Notify parent component of results
+      if (onResults) {
+        onResults(report);
+      }
+      
       toast({
         title: "Search Complete",
-        description: `Found intelligence report for ${data.identitySummary.name}`,
+        description: `Found intelligence report for ${report.identitySummary?.name || 'subject'}`,
       });
     },
     onError: (error: Error) => {
+      console.error('[PEOPLE FINDER SEARCH] Search failed', {
+        timestamp: new Date().toISOString(),
+        error: error.message,
+      });
+      
       toast({
         title: "Search Failed",
         description: error.message,

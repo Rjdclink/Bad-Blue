@@ -2,6 +2,7 @@
 import type { Express, Request, Response, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
+import crypto from 'crypto';
 
 // Extend Express types for authentication
 declare global {
@@ -824,6 +825,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
   setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
   app.use(peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
+  console.log('[MOUNT] People Search mounted at: /api/people-search (NO PREFIX)');
   
   // ============================================
   // AUTH & SUBSCRIPTION ROUTES (Phase 3)
@@ -878,6 +880,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
   const inmateSearchRoutes = await import('./routes/inmateSearch.routes');
   app.use('/api/inmate-search', inmateSearchRoutes.default);
+  console.log('[MOUNT] Inmate Search mounted at: /api/inmate-search');
 
   // ============================================
   // REACTOR ROUTES - Computational Engine API
@@ -895,6 +898,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Chat routes (AI conversation with persona kernel)
   const lexaraChatRoutes = await import('./routes/lexara.chat.routes');
   app.use('/api/lexara', lexaraChatRoutes.default);
+  console.log('[MOUNT] Lexara Chat mounted at: /api/lexara/chat');
+
+  // ============================================
+  // HEALTH & ROUTE INVENTORY
+  // ============================================
+  const healthRoutes = await import('./routes/health.routes');
+  app.use('/api/health', healthRoutes.default);
+  console.log('[MOUNT] Health routes mounted at: /api/health');
+
+  // ============================================
+  // VERIFICATION ROUTES - Job Status & Data Retrieval
+  // ============================================
+  const verificationRoutes = await import('./routes/verification.routes');
+  app.use('/api/verify', verificationRoutes.default);
 
   // ============================================
   // GEOCONSOLE ROUTES - Hybrid GPS Intelligence
@@ -3565,14 +3582,71 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // ============================================
 
   app.post('/api/osint/full-search', async (req, res) => {
-    const { name, department, badge, location, domain, searchDepth = 2 } = req.body;
+    const startTime = Date.now();
+    const correlationId = crypto.randomBytes(16).toString('hex');
+    let { name, department, badge, location, domain, searchDepth = 2 } = req.body;
     
-    if (!name) {
-      return res.status(400).json({ error: 'Name required' });
+    console.log('[OSINT] Request started', { correlationId, name, searchDepth, domain });
+    
+    // Validation - Name
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      console.log('[OSINT] Validation failed: invalid name', { correlationId });
+      const { sendValidationError } = await import('./lib/apiResponse');
+      return sendValidationError(res, 'Name is required and must be a non-empty string', {
+        name: 'Required field, must be non-empty string',
+      }, correlationId);
+    }
+    
+    // Validation - Search Depth
+    if (searchDepth && (searchDepth < 1 || searchDepth > 4)) {
+      console.log('[OSINT] Validation failed: invalid searchDepth', { correlationId, searchDepth });
+      const { sendValidationError } = await import('./lib/apiResponse');
+      return sendValidationError(res, 'Search depth must be between 1 and 4', {
+        searchDepth: 'Must be integer 1-4',
+      }, correlationId);
+    }
+    
+    // PASS 6: URL/Domain normalization and validation
+    if (domain && domain.trim().length > 0) {
+      try {
+        // Normalize URL - add https:// if missing
+        const urlString = domain.startsWith('http://') || domain.startsWith('https://') 
+          ? domain 
+          : `https://${domain}`;
+        
+        const url = new URL(urlString);
+        domain = url.hostname; // Extract just the domain
+        
+        console.log('[OSINT] Domain normalized', { correlationId, original: req.body.domain, normalized: domain });
+      } catch (e) {
+        console.log('[OSINT] Validation failed: invalid domain', { correlationId, domain });
+        const { sendValidationError } = await import('./lib/apiResponse');
+        return sendValidationError(res, 'Invalid domain or URL format', {
+          domain: 'Must be a valid URL or domain name (e.g., example.com or https://example.com)',
+        }, correlationId);
+      }
     }
 
+    // Get user ID if authenticated
+    const userId = req.user?.id || req.user?.claims?.sub;
+    let reportId: string | null = null;
+
     try {
+      // Create initial report record if user is authenticated
+      if (userId) {
+        const initialReport = await storage.createPeopleSearchReport({
+          userId,
+          searchQuery: name,
+          subjectName: name,
+          reportData: { status: 'processing', searchDepth, correlationId },
+          status: 'processing',
+        });
+        reportId = initialReport.id;
+      }
+
       const { conductFullOSINT } = await import('./peopleSearch');
+      
+      console.log('[OSINT] Executing search', { correlationId, reportId });
       
       // Pass search depth to the OSINT function
       const report = await conductFullOSINT(name, { 
@@ -3582,11 +3656,53 @@ Contact: ${foiaRequest.userEmail || userEmail}
         domain,
         searchDepth 
       });
+
+      // Update report with completed data if we have a report ID
+      if (reportId && userId) {
+        await storage.updatePeopleSearchReportStatus(
+          reportId,
+          'completed',
+          report
+        );
+      }
       
-      res.json(report);
+      const processingTimeMs = Date.now() - startTime;
+      console.log('[OSINT] Search completed', { correlationId, processingTimeMs, reportId });
+      
+      // Return report with job completion status and correlation ID
+      res.json({
+        type: 'success',
+        success: true,
+        data: {
+          ...report,
+          jobId: reportId,
+          jobCompleted: true,
+          jobStatus: 'completed',
+        },
+        meta: {
+          correlationId,
+          timestamp: new Date().toISOString(),
+          processingTimeMs,
+        },
+      });
     } catch (error: any) {
-      console.error('[OSINT API] Error:', error);
-      res.status(500).json({ error: error.message });
+      console.error('[OSINT API] Error:', { correlationId, error: error.message });
+
+      // Update report with error if we have a report ID
+      if (reportId && userId) {
+        await storage.updatePeopleSearchReportStatus(
+          reportId,
+          'failed',
+          undefined,
+          error.message
+        );
+      }
+      
+      const { sendSystemError } = await import('./lib/apiResponse');
+      return sendSystemError(res, error.message, {
+        jobId: reportId,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      }, correlationId);
     }
   });
 
@@ -4939,6 +5055,31 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Apply notFoundHandler ONLY to API routes
   app.use('/api', notFoundHandler);
   
+  // PASS 7: SPA fallback routing - serve index.html for non-API routes
+  // This prevents 404 errors on direct navigation to /people-finder, /inmate-locator, etc.
+  app.get('*', (req, res, next) => {
+    // Skip if this is an API route (already handled above)
+    if (req.path.startsWith('/api/')) {
+      return next();
+    }
+    
+    // Skip if this is a static asset request
+    if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/)) {
+      return next();
+    }
+    
+    console.log('[SPA FALLBACK] Serving index.html for:', req.path);
+    
+    // Serve the SPA index.html for all other routes
+    const path = require('path');
+    const indexPath = path.join(__dirname, '../dist/public/index.html');
+    res.sendFile(indexPath, (err) => {
+      if (err) {
+        console.error('[SPA FALLBACK] Error serving index.html:', err);
+        res.status(500).send('Error loading application');
+      }
+    });
+  });
 
       // Apply the general error handler globally
   app.use(errorHandler);

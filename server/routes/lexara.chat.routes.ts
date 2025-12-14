@@ -26,6 +26,13 @@ const log = createLogger('LEXARARoutes');
  * - If ElevenLabs TTS is unavailable, returns text only
  */
 router.post('/chat', express.json(), async (req: Request, res: Response) => {
+  console.log('[LEXARA CHAT] Handler entered', {
+    requestId: Date.now(),
+    hasBody: !!req.body,
+    hasPrompt: !!req.body?.prompt,
+    promptLength: req.body?.prompt?.length,
+  });
+  
   try {
     const { prompt, context, systemPrompt, includeAudio = true } = req.body;
     
@@ -33,11 +40,14 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     req.body.persona = mergePersonaWithKernel(req.body.persona);
     
     if (!prompt || typeof prompt !== 'string') {
+      console.log('[LEXARA CHAT] Validation failed: invalid prompt');
       return res.status(400).json({
         success: false,
         error: 'Prompt is required',
       });
     }
+    
+    console.log('[LEXARA CHAT] Validation passed, generating response');
     
     log.info('[LEXARA] Chat request received with persona kernel', {
       promptLength: prompt.length,
@@ -132,12 +142,48 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         });
       }
     }
+
+    // Persist conversation to database
+    const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
+    const sessionId = context?.sessionId || null;
+    let conversationId: string | null = null;
+    let persistenceSuccess = true;
+
+    try {
+      const { storage } = await import('../storage');
+      const conversation = await storage.createLexaraConversation({
+        userId,
+        sessionId,
+        userPrompt: prompt,
+        lexaraResponse: aiResponse.content,
+        audioGenerated: !!audioData,
+        audioBase64: audioData?.audioBase64 || undefined,
+        audioDurationMs: audioData?.durationMs || undefined,
+        model: aiResponse.model,
+        context: context || null,
+      });
+      conversationId = conversation.id;
+
+      log.info('[LEXARA] Conversation persisted', {
+        conversationId,
+        userId,
+        sessionId,
+      });
+    } catch (dbError) {
+      log.error('[LEXARA] Failed to persist conversation', { error: dbError });
+      persistenceSuccess = false;
+      // Continue even if persistence fails - don't block the response
+    }
     
     return res.json({
       success: true,
       response: aiResponse.content,
       model: aiResponse.model,
       audio: audioData,
+      conversationId,
+      persistenceSuccess, // Indicate if conversation was saved
+      jobCompleted: true,
+      jobStatus: 'completed',
     });
     
   } catch (error) {
@@ -145,6 +191,8 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'Internal server error',
+      jobCompleted: true,
+      jobStatus: 'failed',
     });
   }
 });

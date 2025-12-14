@@ -21,6 +21,9 @@ import {
   subAgentSearchCycles,
   departmentUrls,
   officerProfiles,
+  peopleSearchReports,
+  inmateSearchReports,
+  lexaraConversations,
   type User,
   type UpsertUser,
   type BadgeLookup,
@@ -62,6 +65,12 @@ import {
   deviceFingerprints,
   type DeviceFingerprint,
   type InsertDeviceFingerprint,
+  type PeopleSearchReport,
+  type InsertPeopleSearchReport,
+  type InmateSearchReport,
+  type InsertInmateSearchReport,
+  type LexaraConversation,
+  type InsertLexaraConversation,
 } from "@shared/schema";
 
 // Define types for PublicEvidence (Corrupt Law Enforcement & Informant Hub)
@@ -1391,6 +1400,250 @@ export class DatabaseStorage implements IStorage {
       .select({ count: sql<number>`count(*)::int` })
       .from(users);
     return result[0]?.count || 0;
+  }
+
+  // ============================================
+  // PEOPLE SEARCH REPORTS (Pantheon/OSINT)
+  // ============================================
+  
+  /**
+   * Create a new people search report
+   */
+  async createPeopleSearchReport(data: {
+    userId: string;
+    searchQuery: string;
+    subjectName?: string;
+    reportData: any;
+    status?: 'processing' | 'completed' | 'failed';
+    errorMessage?: string;
+  }): Promise<PeopleSearchReport> {
+    const [report] = await db
+      .insert(peopleSearchReports)
+      .values({
+        userId: data.userId,
+        searchQuery: data.searchQuery,
+        subjectName: data.subjectName || null,
+        reportData: data.reportData,
+        status: data.status || 'processing',
+        errorMessage: data.errorMessage || null,
+        createdAt: new Date(),
+        completedAt: data.status === 'completed' ? new Date() : null,
+      })
+      .returning();
+    return report;
+  }
+
+  /**
+   * Update a people search report status
+   */
+  async updatePeopleSearchReportStatus(
+    reportId: string,
+    status: 'processing' | 'completed' | 'failed',
+    reportData?: any,
+    errorMessage?: string
+  ): Promise<PeopleSearchReport> {
+    const updateData: any = {
+      status,
+      errorMessage: errorMessage || null,
+      completedAt: status === 'completed' ? new Date() : null,
+    };
+    
+    // Only update reportData if provided
+    if (reportData !== undefined) {
+      updateData.reportData = reportData;
+    }
+    
+    const [updated] = await db
+      .update(peopleSearchReports)
+      .set(updateData)
+      .where(eq(peopleSearchReports.id, reportId))
+      .returning();
+    return updated;
+  }
+
+  /**
+   * Get people search report by ID
+   */
+  async getPeopleSearchReport(reportId: string): Promise<PeopleSearchReport | undefined> {
+    const [report] = await db
+      .select()
+      .from(peopleSearchReports)
+      .where(eq(peopleSearchReports.id, reportId))
+      .limit(1);
+    return report;
+  }
+
+  /**
+   * Get user's people search reports
+   */
+  async getUserPeopleSearchReports(userId: string, limit = 50): Promise<PeopleSearchReport[]> {
+    return await db
+      .select()
+      .from(peopleSearchReports)
+      .where(eq(peopleSearchReports.userId, userId))
+      .orderBy(desc(peopleSearchReports.createdAt))
+      .limit(limit);
+  }
+
+  // ============================================
+  // INMATE SEARCH REPORTS
+  // ============================================
+  
+  /**
+   * Create a new inmate search report
+   */
+  async createInmateSearchReport(data: {
+    userId?: string;
+    searchQuery: any;
+    firstName?: string;
+    lastName?: string;
+    state?: string;
+    reportData: any;
+    status?: 'processing' | 'completed' | 'failed';
+    errorMessage?: string;
+  }): Promise<InmateSearchReport> {
+    const [report] = await db
+      .insert(inmateSearchReports)
+      .values({
+        userId: data.userId || null,
+        searchQuery: data.searchQuery,
+        firstName: data.firstName || null,
+        lastName: data.lastName || null,
+        state: data.state || null,
+        reportData: data.reportData,
+        status: data.status || 'processing',
+        errorMessage: data.errorMessage || null,
+        createdAt: new Date(),
+        completedAt: data.status === 'completed' ? new Date() : null,
+      })
+      .returning();
+    return report;
+  }
+
+  /**
+   * Update an inmate search report status
+   */
+  async updateInmateSearchReportStatus(
+    reportId: string,
+    status: 'processing' | 'completed' | 'failed',
+    reportData?: any,
+    errorMessage?: string
+  ): Promise<InmateSearchReport> {
+    const updateData: any = {
+      status,
+      errorMessage: errorMessage || null,
+      completedAt: status === 'completed' ? new Date() : null,
+    };
+    
+    // Only update reportData if provided
+    if (reportData !== undefined) {
+      updateData.reportData = reportData;
+    }
+    
+    const [updated] = await db
+      .update(inmateSearchReports)
+      .set(updateData)
+      .where(eq(inmateSearchReports.id, reportId))
+      .returning();
+    return updated;
+  }
+
+  /**
+   * Get inmate search report by ID
+   */
+  async getInmateSearchReport(reportId: string): Promise<InmateSearchReport | undefined> {
+    const [report] = await db
+      .select()
+      .from(inmateSearchReports)
+      .where(eq(inmateSearchReports.id, reportId))
+      .limit(1);
+    return report;
+  }
+
+  /**
+   * Get user's inmate search reports
+   */
+  async getUserInmateSearchReports(userId: string, limit = 50): Promise<InmateSearchReport[]> {
+    return await db
+      .select()
+      .from(inmateSearchReports)
+      .where(eq(inmateSearchReports.userId, userId))
+      .orderBy(desc(inmateSearchReports.createdAt))
+      .limit(limit);
+  }
+
+  // ============================================
+  // LEXARA CONVERSATIONS
+  // ============================================
+  
+  /**
+   * Create a new Lexara conversation record
+   */
+  async createLexaraConversation(data: {
+    userId?: string;
+    sessionId?: string;
+    userPrompt: string;
+    lexaraResponse: string;
+    audioGenerated?: boolean;
+    audioUrl?: string;
+    audioBase64?: string;
+    audioDurationMs?: number;
+    model?: string;
+    context?: any;
+  }): Promise<LexaraConversation> {
+    const [conversation] = await db
+      .insert(lexaraConversations)
+      .values({
+        userId: data.userId || null,
+        sessionId: data.sessionId || null,
+        userPrompt: data.userPrompt,
+        lexaraResponse: data.lexaraResponse,
+        audioGenerated: data.audioGenerated || false,
+        audioUrl: data.audioUrl || null,
+        audioBase64: data.audioBase64 || null,
+        audioDurationMs: data.audioDurationMs || null,
+        model: data.model || null,
+        context: data.context || null,
+        createdAt: new Date(),
+      })
+      .returning();
+    return conversation;
+  }
+
+  /**
+   * Get Lexara conversation by ID
+   */
+  async getLexaraConversation(conversationId: string): Promise<LexaraConversation | undefined> {
+    const [conversation] = await db
+      .select()
+      .from(lexaraConversations)
+      .where(eq(lexaraConversations.id, conversationId))
+      .limit(1);
+    return conversation;
+  }
+
+  /**
+   * Get user's Lexara conversation history
+   */
+  async getUserLexaraConversations(userId: string, limit = 50): Promise<LexaraConversation[]> {
+    return await db
+      .select()
+      .from(lexaraConversations)
+      .where(eq(lexaraConversations.userId, userId))
+      .orderBy(desc(lexaraConversations.createdAt))
+      .limit(limit);
+  }
+
+  /**
+   * Get Lexara conversations by session ID
+   */
+  async getLexaraConversationsBySession(sessionId: string, limit = 100): Promise<LexaraConversation[]> {
+    return await db
+      .select()
+      .from(lexaraConversations)
+      .where(eq(lexaraConversations.sessionId, sessionId))
+      .orderBy(lexaraConversations.createdAt)
+      .limit(limit);
   }
 }
 
