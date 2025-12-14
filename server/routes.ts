@@ -2,6 +2,7 @@
 import type { Express, Request, Response, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
+import crypto from 'crypto';
 
 // Extend Express types for authentication
 declare global {
@@ -3582,7 +3583,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
   app.post('/api/osint/full-search', async (req, res) => {
     const startTime = Date.now();
-    const correlationId = require('crypto').randomBytes(16).toString('hex');
+    const correlationId = crypto.randomBytes(16).toString('hex');
     let { name, department, badge, location, domain, searchDepth = 2 } = req.body;
     
     console.log('[OSINT] Request started', { correlationId, name, searchDepth, domain });

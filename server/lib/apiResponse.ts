@@ -18,7 +18,7 @@ export type ApiResponseType =
   | 'invalid_request'
   | 'upstream_blocked'
   | 'upstream_unavailable'
-  | 'system_error';
+  | 'system_error'
 
 export interface ApiResponse<T = any> {
   type: ApiResponseType;

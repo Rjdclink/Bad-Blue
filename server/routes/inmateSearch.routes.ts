@@ -8,6 +8,7 @@
  */
 
 import express from 'express';
+import crypto from 'crypto';
 import { z } from 'zod';
 import { 
   searchInmates, 
@@ -17,6 +18,7 @@ import {
 } from '../services/inmateSearch';
 import type { InmateSearchQuery } from '../services/inmateSearch/types';
 import { apiRateLimit } from '../rateLimit';
+import { sendValidationError, sendNoResults, sendUpstreamUnavailable, sendSystemError } from '../lib/apiResponse';
 
 const router = express.Router();
 
@@ -40,7 +42,7 @@ const InmateSearchSchema = z.object({
 router.post('/', apiRateLimit, async (req, res) => {
   // Declare reportId outside try block for error handling access
   const startTime = Date.now();
-  const correlationId = require('crypto').randomBytes(16).toString('hex');
+  const correlationId = crypto.randomBytes(16).toString('hex');
   let reportId: string | null = null;
   const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
   
@@ -65,7 +67,6 @@ router.post('/', apiRateLimit, async (req, res) => {
         fields[path] = err.message;
       });
       
-      const { sendValidationError } = await import('../lib/apiResponse');
       return sendValidationError(res, 'Validation failed', fields, correlationId);
     }
     
@@ -120,7 +121,6 @@ router.post('/', apiRateLimit, async (req, res) => {
       const allUnavailable = result.sources.every(s => s.status === 'error' || s.status === 'timeout');
       if (allUnavailable && result.inmates.length === 0) {
         console.log('[INMATE SEARCH] All providers unavailable', { correlationId });
-        const { sendUpstreamUnavailable } = await import('../lib/apiResponse');
         return sendUpstreamUnavailable(
           res,
           'No inmate search providers are currently available',
@@ -152,7 +152,6 @@ router.post('/', apiRateLimit, async (req, res) => {
     
     // Return success or no_results
     if (result.inmates.length === 0) {
-      const { sendNoResults } = await import('../lib/apiResponse');
       return sendNoResults(
         res,
         'No inmates found matching search criteria',
