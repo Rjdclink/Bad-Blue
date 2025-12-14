@@ -173,12 +173,46 @@ export default function AdminConsole() {
   
   // Loading States
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingFaucet, setLoadingFaucet] = useState(false);
   const [togglingFaucet, setTogglingFaucet] = useState(false);
   const [startingSystem, setStartingSystem] = useState(false);
   const [stoppingSystem, setStoppingSystem] = useState(false);
   
   // Console Logs
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([]);
+
+  // Admin feature flags (client-side gating for dashboard access)
+  const [featureFlags, setFeatureFlags] = useState<{
+    cryptocrawler: boolean;
+    monteCarlo: boolean;
+    reactor: boolean;
+  }>(() => {
+    try {
+      const raw = localStorage.getItem('adminFeatureFlags');
+      if (!raw) return { cryptocrawler: true, monteCarlo: true, reactor: true };
+      const parsed = JSON.parse(raw);
+      return {
+        cryptocrawler: parsed?.cryptocrawler ?? true,
+        monteCarlo: parsed?.monteCarlo ?? true,
+        reactor: parsed?.reactor ?? true,
+      };
+    } catch {
+      return { cryptocrawler: true, monteCarlo: true, reactor: true };
+    }
+  });
+
+  const setFeatureFlag = useCallback((key: keyof typeof featureFlags, value: boolean) => {
+    setFeatureFlags(prev => {
+      const next = { ...prev, [key]: value };
+      try {
+        localStorage.setItem('adminFeatureFlags', JSON.stringify(next));
+        window.dispatchEvent(new Event('adminFeatureFlagsChanged'));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
   
   // Add console log helper
   const addConsoleLog = useCallback((level: string, message: string) => {
@@ -623,6 +657,86 @@ export default function AdminConsole() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Admin Control Surface (navigation + access toggles) */}
+          <Card className="bg-gray-800/50 border-white/10 mb-6">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <Shield className="w-5 h-5 text-purple-400" />
+                Admin Control Surface
+              </CardTitle>
+              <CardDescription className="text-gray-400">
+                Toggle access and jump to critical dashboards (CryptoCrawler, Monte Carlo, Reactor).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded-lg bg-black/30 border border-white/10">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-white font-medium">CryptoCrawler Dashboard</p>
+                    <p className="text-xs text-gray-400">Route: /cryptocrawler-v2</p>
+                  </div>
+                  <Switch
+                    checked={featureFlags.cryptocrawler}
+                    onCheckedChange={(v) => setFeatureFlag('cryptocrawler', v)}
+                    className="data-[state=checked]:bg-purple-500"
+                  />
+                </div>
+                <Button
+                  className="mt-3 w-full h-11"
+                  variant="outline"
+                  disabled={!featureFlags.cryptocrawler}
+                  onClick={() => setLocation('/cryptocrawler-v2')}
+                >
+                  Open CryptoCrawler
+                </Button>
+              </div>
+
+              <div className="p-4 rounded-lg bg-black/30 border border-white/10">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-white font-medium">Monte Carlo Dashboard</p>
+                    <p className="text-xs text-gray-400">Route: /orchestrator-console</p>
+                  </div>
+                  <Switch
+                    checked={featureFlags.monteCarlo}
+                    onCheckedChange={(v) => setFeatureFlag('monteCarlo', v)}
+                    className="data-[state=checked]:bg-purple-500"
+                  />
+                </div>
+                <Button
+                  className="mt-3 w-full h-11"
+                  variant="outline"
+                  disabled={!featureFlags.monteCarlo}
+                  onClick={() => setLocation('/orchestrator-console')}
+                >
+                  Open Monte Carlo
+                </Button>
+              </div>
+
+              <div className="p-4 rounded-lg bg-black/30 border border-white/10">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-white font-medium">Reactor Controls</p>
+                    <p className="text-xs text-gray-400">Route: /control-room</p>
+                  </div>
+                  <Switch
+                    checked={featureFlags.reactor}
+                    onCheckedChange={(v) => setFeatureFlag('reactor', v)}
+                    className="data-[state=checked]:bg-purple-500"
+                  />
+                </div>
+                <Button
+                  className="mt-3 w-full h-11"
+                  variant="outline"
+                  disabled={!featureFlags.reactor}
+                  onClick={() => setLocation('/control-room')}
+                >
+                  Open Reactor
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Main Tabs */}
           <Tabs defaultValue="faucet" className="space-y-6">

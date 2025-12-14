@@ -32,6 +32,11 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
+// StrictMode/dev can mount -> unmount -> mount, which can double-fire "auto search".
+// We guard against immediate duplicate auto-search triggers (same URL) within a short window.
+let lastAutoSearchKey: string | null = null;
+let lastAutoSearchAt = 0;
+
 interface PeopleFinderSearchProps {
   onBack?: () => void;
   onResults?: (results: PeopleSearchReport | null) => void;
@@ -106,6 +111,16 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
   // Auto-search if name parameter is provided
   useEffect(() => {
     if (nameParam && nameParam.trim()) {
+      const key = `${window.location.pathname}${window.location.search || ''}`;
+      const now = Date.now();
+      const isImmediateDuplicate = lastAutoSearchKey === key && (now - lastAutoSearchAt) < 2500;
+      if (isImmediateDuplicate) {
+        console.warn('[PEOPLE FINDER SEARCH] Auto-search suppressed (duplicate mount)', { key });
+        return;
+      }
+      lastAutoSearchKey = key;
+      lastAutoSearchAt = now;
+
       console.log('[PEOPLE FINDER SEARCH] Auto-search triggered', { name: nameParam });
       // Small delay to ensure component is mounted
       autoSearchTimeoutRef.current = setTimeout(() => {
