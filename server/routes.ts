@@ -3,6 +3,12 @@ import type { Express, Request, Response, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
 import crypto from 'crypto';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// ES Module __dirname polyfill
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Extend Express types for authentication
 declare global {
@@ -5071,7 +5077,6 @@ Contact: ${foiaRequest.userEmail || userEmail}
     console.log('[SPA FALLBACK] Serving index.html for:', req.path);
     
     // Serve the SPA index.html for all other routes
-    const path = require('path');
     const indexPath = path.join(__dirname, '../dist/public/index.html');
     res.sendFile(indexPath, (err) => {
       if (err) {
