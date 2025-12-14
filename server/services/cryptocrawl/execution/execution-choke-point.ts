@@ -19,6 +19,7 @@
  * If any token missing → hard stop + report only
  */
 
+import { createHash } from 'crypto';
 import { createLogger } from '../../../logger';
 import type { DecisionResult } from '../decision-engine';
 import type { ExecutionStubResult } from './execution-stub';
@@ -494,7 +495,6 @@ class ExecutionChokePoint {
    * Get choke-point confirmation hash (for reporting)
    */
   getChokePointConfirmationHash(): string {
-    const crypto = require('crypto');
     const data = JSON.stringify({
       tokens: this.tokens.stage5Token ? {
         scope: this.tokens.stage5Token.scope,
@@ -504,7 +504,7 @@ class ExecutionChokePoint {
       flags: this.getCurrentFlags(),
       trace: this.tokenLifecycleTrace,
     });
-    return crypto.createHash('sha256').update(data).digest('hex').substring(0, 16);
+    return createHash('sha256').update(data).digest('hex').substring(0, 16);
   }
 
   /**

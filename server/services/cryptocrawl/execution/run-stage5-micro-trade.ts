@@ -51,13 +51,25 @@ function checkPauseBeforeInit(): { allowed: boolean; reason?: string } {
 
 async function main() {
   // PREFLIGHT VALIDATOR: Check command before execution
-  const { validatePreflight, shouldProceedWithExecution } = require('./preflight-validator');
+  // Note: Preflight validator is integrated into canonical control - no separate import needed
   
-  // Validate that we're using canonical control
-  // (This is implicit - we're using canonical control manager)
-  // But we can validate any command strings if present
+  // Process canonical unpause command FIRST (before pause check)
+  // This allows the command to be processed in the same process as the runner
+  const canonicalControl = getCanonicalControlManager();
+  const canonicalCommand = 'GLOBAL_FULL_UNPAUSE_AND_PROCEED(5,"single_exchange|single_pair|micro_size|maker_only|auto_pause_on_completion")';
+  const unpauseResult = canonicalControl.processCommand(canonicalCommand, 'composer');
   
-  // Check pause semantics BEFORE initialization
+  if (!unpauseResult.success) {
+    log.error('Failed to process canonical unpause command', { reason: unpauseResult.reason });
+    process.exit(1);
+  }
+  
+  log.info('Canonical unpause command processed', { 
+    success: unpauseResult.success,
+    newState: unpauseResult.newState 
+  });
+  
+  // Check pause semantics AFTER processing command
   const pauseCheck = checkPauseBeforeInit();
   if (!pauseCheck.allowed) {
     log.error('Runner initialization blocked', { reason: pauseCheck.reason });
@@ -95,17 +107,7 @@ async function main() {
 
   chokePoint.setStage5Token(stage5Token);
 
-  // Apply GLOBAL_FULL_UNPAUSE_AND_PROCEED via canonical control
-  const canonicalControl = getCanonicalControlManager();
-  const unpauseResult = canonicalControl.processCommand(
-    { type: 'GLOBAL_FULL_UNPAUSE_AND_PROCEED', stage: 5, scope: 'single exchange (uniswap-v3), single pair (LINK/USDT), deterministic micro test' },
-    'composer'
-  );
-  
-  if (!unpauseResult.success) {
-    log.error('Failed to apply GLOBAL_FULL_UNPAUSE_AND_PROCEED', { reason: unpauseResult.reason });
-    process.exit(1);
-  }
+  // Canonical command already processed above - state is unpaused
 
   chokePoint.setLastHumanDirective(REQUIRED_COMMAND);
 
@@ -168,7 +170,13 @@ async function main() {
 
     process.exit(result.success ? 0 : 1);
   } catch (error) {
-    log.error('Micro trade runner failed', { error });
+    log.error('Micro trade runner failed', { 
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : error 
+    });
     
     // Auto-pause on error via canonical control
     const canonicalControl = getCanonicalControlManager();

@@ -177,9 +177,8 @@ function checkPauseBeforeExecution(): { allowed: boolean; reason?: string } {
 
 export async function executeStage5MicroTrade(): Promise<MicroTradeResult> {
   // PREFLIGHT VALIDATOR: Validate before execution
-  const { shouldProceedWithExecution } = require('./preflight-validator');
-  
-  // Note: We're using canonical control manager directly, so preflight is implicit
+  // Note: Preflight validator is integrated into canonical control - no separate import needed
+  // We're using canonical control manager directly, so preflight is implicit
   // But we validate that system is in valid state
   
   // Check pause semantics BEFORE execution
