@@ -2,27 +2,6 @@ type Venue = 'binance' | 'kraken';
 
 export type Pair = 'BTS-USDT' | 'ETH-USDT' | 'SOL-USDT';
 
-export interface SignalResult {
-  signals: Array<{
-    id: string;
-    pair: Pair;
-    buyVenue: Venue;
-    sellVenue: Venue;
-    notionalUsd: number;
-    baseQty: number;
-    buyVwap: number;
-    sellVwap: number;
-    feesUsd: number;
-    slippageBufferUsd: number;
-    gasUsd: number;
-    netProfitUsd: number;
-    netProfitBps: number;
-    timestamp: number;
-    sources: Record<Venue, { ok: boolean; detail: string }>;
-  }>;
-  noSignalReasons: string[];
-}
-
 type OrderbookLevel = { price: number; qty: number };
 type Orderbook = { bids: OrderbookLevel[]; asks: OrderbookLevel[]; ts: number };
 
@@ -31,45 +10,31 @@ const PAIRS: Pair[] = ['BTS-USDT', 'ETH-USDT', 'SOL-USDT'];
 const BINANCE_BASE = 'https://api.binance.com';
 const KRAKEN_BASE = 'https://api.kraken.com';
 
-function envNumber(name: string): number | null {
-  const raw = process.env[name];
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
+// ============================================================================
+// STAGE 1 RULES (DO NOT EXPAND):
+// - SIGNAL-ONLY (no execution)
+// - CEX SPOT arbitrage only (two-venue, same pair)
+// - NO triangular
+// - NO gas modeling
+// - Fees only, pessimistic: maker + taker (per venue, applied per leg)
+// - If live fees cannot be fetched, use fixed conservative defaults (do not guess)
+// - If any required market data is unavailable -> NO SIGNAL
+// - Output decision must be SIGNAL or NO SIGNAL only
+// ============================================================================
 
-function requireConfig(): { ok: true; cfg: { dailyCapUsd: number; fees: Record<Venue, number>; slippageBps: number; gasUsd: number } } | { ok: false; reasons: string[] } {
-  const reasons: string[] = [];
+const DAILY_CAP_USD = 200;
 
-  const dailyCapUsd = envNumber('CRYPTO_SIGNAL_DAILY_CAP_USD') ?? 200;
-  if (!(dailyCapUsd > 0)) reasons.push('Invalid CRYPTO_SIGNAL_DAILY_CAP_USD');
+// Fixed conservative defaults (fractional rates). Used unless a future live-fee fetch is added.
+const DEFAULT_FEE_RATES: Record<Venue, { maker: number; taker: number }> = {
+  // Conservative blanket defaults; errs on the side of rejecting signals.
+  binance: { maker: 0.004, taker: 0.004 },
+  kraken: { maker: 0.004, taker: 0.004 },
+};
 
-  const binanceFee = envNumber('CRYPTO_SIGNAL_TAKER_FEE_BINANCE');
-  const krakenFee = envNumber('CRYPTO_SIGNAL_TAKER_FEE_KRAKEN');
-  const slippageBps = envNumber('CRYPTO_SIGNAL_SLIPPAGE_BPS');
-  const gasUsd = envNumber('CRYPTO_SIGNAL_GAS_USD');
-
-  // Do not guess: all of these must be explicitly provided.
-  if (binanceFee === null) reasons.push('Missing CRYPTO_SIGNAL_TAKER_FEE_BINANCE');
-  if (krakenFee === null) reasons.push('Missing CRYPTO_SIGNAL_TAKER_FEE_KRAKEN');
-  if (slippageBps === null) reasons.push('Missing CRYPTO_SIGNAL_SLIPPAGE_BPS');
-  if (gasUsd === null) reasons.push('Missing CRYPTO_SIGNAL_GAS_USD');
-
-  if (binanceFee !== null && (binanceFee < 0 || binanceFee > 0.05)) reasons.push('CRYPTO_SIGNAL_TAKER_FEE_BINANCE out of expected range');
-  if (krakenFee !== null && (krakenFee < 0 || krakenFee > 0.05)) reasons.push('CRYPTO_SIGNAL_TAKER_FEE_KRAKEN out of expected range');
-  if (slippageBps !== null && (slippageBps < 0 || slippageBps > 500)) reasons.push('CRYPTO_SIGNAL_SLIPPAGE_BPS out of expected range');
-  if (gasUsd !== null && gasUsd < 0) reasons.push('CRYPTO_SIGNAL_GAS_USD must be >= 0');
-
-  if (reasons.length) return { ok: false, reasons };
-  return {
-    ok: true,
-    cfg: {
-      dailyCapUsd,
-      fees: { binance: binanceFee!, kraken: krakenFee! },
-      slippageBps: slippageBps!,
-      gasUsd: gasUsd!,
-    },
-  };
+function getPessimisticFeeRate(venue: Venue): number {
+  // Pessimistic: maker + taker
+  const r = DEFAULT_FEE_RATES[venue];
+  return r.maker + r.taker;
 }
 
 async function fetchJson(url: string, timeoutMs: number): Promise<any> {
@@ -168,143 +133,71 @@ function proceedsForBaseSell(bids: OrderbookLevel[], baseQty: number): { quotePr
   return { quoteProceeds: proceeds, avgPrice: proceeds / sold, filledBase: sold };
 }
 
-function applySlippageBuffer(price: number, slippageBps: number, side: 'buy' | 'sell'): number {
-  const m = slippageBps / 10000;
-  return side === 'buy' ? price * (1 + m) : price * (1 - m);
-}
-
-export async function computeCexArbSignals(): Promise<SignalResult> {
-  const cfgRes = requireConfig();
-  if (!cfgRes.ok) {
-    return { signals: [], noSignalReasons: cfgRes.reasons };
-  }
-  const cfg = cfgRes.cfg;
-
+export async function getCexSpotArbDecision(): Promise<'SIGNAL' | 'NO SIGNAL'> {
   // Fetch orderbooks (real-time, authoritative). If any required source is unavailable -> NO SIGNAL.
-  const sources: Record<Venue, { ok: boolean; detail: string }> = {
-    binance: { ok: true, detail: 'ok' },
-    kraken: { ok: true, detail: 'ok' },
-  };
-
   const binanceBooks = new Map<Pair, Orderbook>();
   const krakenBooks = new Map<Pair, Orderbook>();
-  const noSignalReasons: string[] = [];
 
-  // Binance (environment may be restricted)
+  // Binance (may be geo-restricted in some environments)
   for (const pair of PAIRS) {
     try {
       binanceBooks.set(pair, await fetchBinanceDepth(pair));
-    } catch (e: any) {
-      sources.binance = { ok: false, detail: e?.message ? String(e.message) : String(e) };
-      break;
+    } catch {
+      return 'NO SIGNAL';
     }
   }
 
-  // Kraken
+  // Kraken (if a pair is not listed, it will throw; that pair yields no arb)
   for (const pair of PAIRS) {
     try {
       krakenBooks.set(pair, await fetchKrakenDepth(pair));
-    } catch (e: any) {
-      // Kraken may not list the pair (e.g. BTS-USDT)
-      // We treat this as pair-unavailable (and therefore no signal for that pair).
-      // We do NOT guess or substitute symbols.
+    } catch {
+      // Pair unavailable on Kraken (e.g. BTS-USDT) => no signal for that pair
     }
   }
 
-  if (!sources.binance.ok) {
-    noSignalReasons.push(`Binance market data unavailable: ${sources.binance.detail}`);
-  }
-
-  // Build signals only when both venues have real orderbooks for the pair
-  const signals: SignalResult['signals'] = [];
-  const ts = Date.now();
-
+  // Build decision: SIGNAL only if any pair has positive net profit after pessimistic fees.
   for (const pair of PAIRS) {
     const b = binanceBooks.get(pair);
     const k = krakenBooks.get(pair);
-    if (!b || !k) {
-      if (!k) noSignalReasons.push(`Kraken spot pair unavailable: ${pair}`);
-      if (!b && sources.binance.ok) noSignalReasons.push(`Binance spot pair unavailable: ${pair}`);
-      continue;
-    }
+    if (!b || !k) continue; // need both venues for CEX spot arbitrage
 
-    // Evaluate both directions: buy on A sell on B, and vice versa.
     const directions: Array<{ buy: Venue; sell: Venue; buyBook: Orderbook; sellBook: Orderbook }> = [
       { buy: 'binance', sell: 'kraken', buyBook: b, sellBook: k },
       { buy: 'kraken', sell: 'binance', buyBook: k, sellBook: b },
     ];
 
     for (const d of directions) {
-      // Determine fill sizes using real orderbook depth under the $200/day cap.
-      const buyFill = vwapForQuoteSpend(d.buyBook.asks, cfg.dailyCapUsd);
+      // Notional is capped at $200/day (hard law).
+      const buyFill = vwapForQuoteSpend(d.buyBook.asks, DAILY_CAP_USD);
       if (!buyFill) continue;
 
       const sellFill = proceedsForBaseSell(d.sellBook.bids, buyFill.baseQty);
       if (!sellFill) continue;
 
-      // If sell side cannot fill full base qty, recompute buy side for that smaller qty (pessimistic).
-      let baseQty = sellFill.filledBase;
-      const sellProceedsRaw = sellFill.quoteProceeds;
+      const baseQty = sellFill.filledBase;
+      const sellProceeds = sellFill.quoteProceeds;
 
       // Recompute buy cost for exact baseQty (walk asks)
       let remainingBase = baseQty;
-      let buyCostRaw = 0;
+      let buyCost = 0;
       for (const lvl of d.buyBook.asks) {
         if (remainingBase <= 0) break;
         const qtyHere = Math.min(remainingBase, lvl.qty);
-        buyCostRaw += qtyHere * lvl.price;
+        buyCost += qtyHere * lvl.price;
         remainingBase -= qtyHere;
       }
-      if (remainingBase > 1e-12) continue; // cannot fill even this qty on buy side
+      if (remainingBase > 1e-12) continue;
 
-      // Slippage buffer (pessimistic): apply extra bps against both legs.
-      const buyVwapBuffered = applySlippageBuffer(buyCostRaw / baseQty, cfg.slippageBps, 'buy');
-      const sellVwapBuffered = applySlippageBuffer(sellProceedsRaw / baseQty, cfg.slippageBps, 'sell');
-      const slippageBufferUsd =
-        (buyVwapBuffered - (buyCostRaw / baseQty)) * baseQty +
-        ((sellProceedsRaw / baseQty) - sellVwapBuffered) * baseQty;
+      const buyFeeRate = getPessimisticFeeRate(d.buy);
+      const sellFeeRate = getPessimisticFeeRate(d.sell);
+      const feesUsd = buyCost * buyFeeRate + sellProceeds * sellFeeRate;
 
-      const buyCostBuffered = buyVwapBuffered * baseQty;
-      const sellProceedsBuffered = sellVwapBuffered * baseQty;
-
-      // Fees (explicit, not guessed)
-      const buyFee = cfg.fees[d.buy];
-      const sellFee = cfg.fees[d.sell];
-      const feesUsd = buyCostBuffered * buyFee + sellProceedsBuffered * sellFee;
-
-      // Gas (explicit, not guessed)
-      const gasUsd = cfg.gasUsd;
-
-      const netProfitUsd = sellProceedsBuffered - buyCostBuffered - feesUsd - gasUsd;
-      if (!(netProfitUsd > 0)) continue; // Reject unless profit survives fees + gas + slippage
-
-      const notionalUsd = Math.min(cfg.dailyCapUsd, buyCostBuffered);
-      const netProfitBps = (netProfitUsd / buyCostBuffered) * 10000;
-
-      signals.push({
-        id: `cex-arb:${pair}:${d.buy}->${d.sell}:${ts}`,
-        pair,
-        buyVenue: d.buy,
-        sellVenue: d.sell,
-        notionalUsd,
-        baseQty,
-        buyVwap: buyVwapBuffered,
-        sellVwap: sellVwapBuffered,
-        feesUsd,
-        slippageBufferUsd,
-        gasUsd,
-        netProfitUsd,
-        netProfitBps,
-        timestamp: ts,
-        sources,
-      });
+      const netProfitUsd = sellProceeds - buyCost - feesUsd;
+      if (netProfitUsd > 0) return 'SIGNAL';
     }
   }
 
-  if (signals.length === 0 && noSignalReasons.length === 0) {
-    noSignalReasons.push('No profitable opportunities after fees + gas + slippage');
-  }
-
-  return { signals, noSignalReasons };
+  return 'NO SIGNAL';
 }
 

@@ -3,6 +3,7 @@ import {WebSocketServer} from 'ws';
 import { autonomousFaucet } from '../faucet/autonomous-faucet';
 import { balanceMonitor } from '../bridge/balance-monitor';
 import { scheduledMonteCarloTraining } from '../training/scheduled-monte-carlo-training';
+import { getCexSpotArbDecision } from '../signal/cex-arb-signals';
 
 const router = express.Router();
 const wss = new WebSocketServer({noServer: true});
@@ -887,23 +888,14 @@ router.get('/stats', async (req, res) => {
 
 // GET /api/crypto/opportunities - Current opportunities
 router.get('/opportunities', async (req, res) => {
-  // Stage 1: do not claim real market opportunities until fee-aware pipeline is verified.
-  const opportunities: any[] = [];
-  
-  res.json({
-    count: opportunities.length,
-    opportunities: opportunities.slice(0, 50).map(opp => ({
-      id: `${opp.asset}-${opp.chain}-${opp.timestamp}`,
-      asset: opp.asset,
-      chain: opp.chain,
-      profit: opp.profitEstimate,
-      successProbability: 0.85, // TODO: Calculate from historical data
-      tier: opp.priority > 70 ? 'A' : opp.priority > 40 ? 'B' : 'C',
-      age: Date.now() - opp.timestamp
-    })),
-    signalOnly: SIGNAL_ONLY,
-    note: 'Stage 1 truth check: opportunity engine not yet validated for fee-aware real-market signals',
-  });
+  // Stage 1: Output must be SIGNAL or NO SIGNAL only.
+  // CEX spot arbitrage only (Binance + Kraken), no simulation/placeholders.
+  try {
+    const decision = await getCexSpotArbDecision();
+    res.type('text/plain').send(decision);
+  } catch {
+    res.type('text/plain').send('NO SIGNAL');
+  }
 });
 
 // GET /api/crypto/balances - Wallet balances
