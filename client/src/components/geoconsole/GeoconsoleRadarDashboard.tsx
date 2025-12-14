@@ -206,6 +206,31 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const layerRefs = useRef<MapLayerRefs>({ trailSegments: [], heatLayer: null, currentMarker: null, trailMarkers: [], futurecastLine: null, futurecastMarkers: [] });
   const initRef = useRef(false);
 
+  // Prevent post-unmount timeouts from touching Leaflet/state
+  const mountedRef = useRef(true);
+  const initInvalidateTimeoutRef = useRef<number | null>(null);
+  const visibleInvalidateTimeoutRef = useRef<number | null>(null);
+  const processResetTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (initInvalidateTimeoutRef.current) {
+        window.clearTimeout(initInvalidateTimeoutRef.current);
+        initInvalidateTimeoutRef.current = null;
+      }
+      if (visibleInvalidateTimeoutRef.current) {
+        window.clearTimeout(visibleInvalidateTimeoutRef.current);
+        visibleInvalidateTimeoutRef.current = null;
+      }
+      if (processResetTimeoutRef.current) {
+        window.clearTimeout(processResetTimeoutRef.current);
+        processResetTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   // === MAP INITIALIZATION (ONCE) ===
   useEffect(() => {
     if (!containerRef.current || initRef.current) return;
@@ -224,9 +249,27 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     style.textContent = '.geo-reticle,.geo-dot{background:transparent!important;border:none!important;}';
     if (!document.getElementById('geo-styles')) document.head.appendChild(style);
 
-    setTimeout(() => map.invalidateSize(), 100);
+    initInvalidateTimeoutRef.current = window.setTimeout(() => {
+      if (!mountedRef.current) return;
+      // Avoid calling into Leaflet after map has been removed
+      if (mapRef.current === map) map.invalidateSize();
+    }, 100);
 
-    return () => { map.remove(); mapRef.current = null; initRef.current = false; };
+    return () => {
+      if (initInvalidateTimeoutRef.current) {
+        window.clearTimeout(initInvalidateTimeoutRef.current);
+        initInvalidateTimeoutRef.current = null;
+      }
+      // Ensure dynamic layers are removed before teardown
+      try {
+        clearLayers(map, layerRefs.current);
+      } catch {
+        // ignore
+      }
+      map.remove();
+      mapRef.current = null;
+      initRef.current = false;
+    };
   }, []);
 
   // === TILE LAYER CHANGE ===
@@ -262,10 +305,27 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     const map = mapRef.current;
     if (!map) return;
     const onResize = () => map.invalidateSize();
-    const onVisible = () => { if (document.visibilityState === 'visible') setTimeout(() => map.invalidateSize(), 50); };
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (visibleInvalidateTimeoutRef.current) {
+        window.clearTimeout(visibleInvalidateTimeoutRef.current);
+        visibleInvalidateTimeoutRef.current = null;
+      }
+      visibleInvalidateTimeoutRef.current = window.setTimeout(() => {
+        if (!mountedRef.current) return;
+        if (mapRef.current === map) map.invalidateSize();
+      }, 50);
+    };
     window.addEventListener('resize', onResize);
     document.addEventListener('visibilitychange', onVisible);
-    return () => { window.removeEventListener('resize', onResize); document.removeEventListener('visibilitychange', onVisible); };
+    return () => {
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVisible);
+      if (visibleInvalidateTimeoutRef.current) {
+        window.clearTimeout(visibleInvalidateTimeoutRef.current);
+        visibleInvalidateTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   // === STEP HANDLERS ===
@@ -286,7 +346,17 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       if (res.ok) { setProgressMsg('Done!'); if (onProcess) await onProcess(state.trail as any); }
       else setProgressMsg('Error');
     } catch (e) { setProgressMsg('Error'); }
-    finally { setTimeout(() => { setProcessing(false); setProgressMsg(''); }, 2000); }
+    finally {
+      if (processResetTimeoutRef.current) {
+        window.clearTimeout(processResetTimeoutRef.current);
+        processResetTimeoutRef.current = null;
+      }
+      processResetTimeoutRef.current = window.setTimeout(() => {
+        if (!mountedRef.current) return;
+        setProcessing(false);
+        setProgressMsg('');
+      }, 2000);
+    }
   }, [state.trail, onProcess]);
 
   const handleExport = useCallback(() => {
