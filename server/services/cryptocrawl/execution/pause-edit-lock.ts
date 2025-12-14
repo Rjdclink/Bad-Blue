@@ -12,6 +12,7 @@
 
 import { createLogger } from '../../../logger';
 import { getExecutionChokePoint } from './execution-choke-point';
+import { getCanonicalControlManager } from './canonical-control';
 
 const log = createLogger('PauseEditLock');
 
@@ -36,11 +37,10 @@ export interface EditLockResult {
  * Check if edit is allowed (blocked when paused)
  */
 export function checkEditAllowed(request: EditRequest): EditLockResult {
-  const chokePoint = getExecutionChokePoint();
-  const flags = chokePoint.getCurrentFlags();
-
-  // If paused, block all edits
-  if (flags.PAUSED) {
+  const canonicalControl = getCanonicalControlManager();
+  
+  // If GLOBAL_FULL_AGENT_PAUSE is active, block all edits
+  if (canonicalControl.areAgentsPaused()) {
     log.error('Edit blocked: System is PAUSED', {
       actorId: request.actorId,
       filePath: request.filePath,
@@ -50,8 +50,8 @@ export function checkEditAllowed(request: EditRequest): EditLockResult {
 
     return {
       allowed: false,
-      reason: 'System is PAUSED - edits prohibited. Allowed: state inspection + report generation only.',
-      paused: true,
+      reason: 'GLOBAL_FULL_AGENT_PAUSE is active - edits prohibited. Allowed: state inspection + report generation only.',
+      paused: true, // Legacy field name (maintained for compatibility)
     };
   }
 
@@ -78,7 +78,7 @@ export function checkEditAllowed(request: EditRequest): EditLockResult {
 
   return {
     allowed: true,
-    reason: 'Edit allowed - system not paused',
-    paused: false,
+    reason: 'Edit allowed - GLOBAL_FULL_AGENT_PAUSE not active',
+    paused: false, // Legacy field name (maintained for compatibility)
   };
 }

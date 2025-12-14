@@ -135,17 +135,32 @@ export interface MicroTradeResult {
 }
 
 // ============================================================================
-// PAUSE SEMANTICS: Check pause before execution
+// CANONICAL CONTROL: Check GLOBAL_FULL_AGENT_PAUSE before execution
 // ============================================================================
 
+import { getCanonicalControlManager } from './canonical-control';
+
 function checkPauseBeforeExecution(): { allowed: boolean; reason?: string } {
-  const chokePoint = getExecutionChokePoint();
-  const flags = chokePoint.getCurrentFlags();
+  const canonicalControl = getCanonicalControlManager();
   
-  if (flags.PAUSED) {
+  if (canonicalControl.areAgentsPaused()) {
     return {
       allowed: false,
-      reason: 'PAUSE = true - No execution allowed while paused',
+      reason: 'GLOBAL_FULL_AGENT_PAUSE is active - No execution allowed while agents are paused',
+    };
+  }
+  
+  if (canonicalControl.isExecutionLocked()) {
+    return {
+      allowed: false,
+      reason: 'GLOBAL_FULL_EXECUTION_LOCK is active - All execution paths disabled',
+    };
+  }
+  
+  if (canonicalControl.isStateFrozen()) {
+    return {
+      allowed: false,
+      reason: 'GLOBAL_FULL_STATE_FREEZE is active - State immutable',
     };
   }
   

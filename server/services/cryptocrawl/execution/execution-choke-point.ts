@@ -8,9 +8,13 @@
  * - Order send
  * 
  * Requires explicit tokens:
- * - HUMAN_UNPAUSE_TOKEN (explicit)
- * - STAGE_SCOPE_TOKEN (explicit)
- * - ONE_ACTION_TOKEN (single-use)
+ * - STAGE_5_TOKEN (unified, lifecycle: signal → validation → execution)
+ * 
+ * Canonical control vocabulary enforced:
+ * - GLOBAL_FULL_EXECUTION_LOCK
+ * - GLOBAL_FULL_AGENT_PAUSE
+ * - GLOBAL_FULL_STATE_FREEZE
+ * - GLOBAL_FULL_UNPAUSE_AND_PROCEED(stage, scope)
  * 
  * If any token missing → hard stop + report only
  */
@@ -18,6 +22,10 @@
 import { createLogger } from '../../../logger';
 import type { DecisionResult } from '../decision-engine';
 import type { ExecutionStubResult } from './execution-stub';
+import {
+  getCanonicalControlManager,
+  type CanonicalControlCommand,
+} from './canonical-control';
 
 const log = createLogger('ExecutionChokePoint');
 
@@ -79,9 +87,9 @@ class ExecutionChokePoint {
     stage5Token: null,
   };
 
-  private paused: boolean = true;
-  private globalExecution: 'ENABLED' | 'DISABLED' = 'DISABLED';
-  private locked: boolean = true;
+  // Canonical control state (replaces vague terms)
+  private canonicalControl = getCanonicalControlManager();
+  
   private lastHumanDirective: string = '';
   private tokenLifecycleTrace: Array<{
     phase: string;
@@ -96,6 +104,27 @@ class ExecutionChokePoint {
     testType: 'deterministic_micro_test';
     maxNotional: number;
   } | null = null;
+
+  /**
+   * Get current pause state (canonical: GLOBAL_FULL_AGENT_PAUSE)
+   */
+  private isPaused(): boolean {
+    return this.canonicalControl.areAgentsPaused();
+  }
+
+  /**
+   * Get current execution lock state (canonical: GLOBAL_FULL_EXECUTION_LOCK)
+   */
+  private isExecutionLocked(): boolean {
+    return this.canonicalControl.isExecutionLocked();
+  }
+
+  /**
+   * Get current state freeze state (canonical: GLOBAL_FULL_STATE_FREEZE)
+   */
+  private isStateFrozen(): boolean {
+    return this.canonicalControl.isStateFrozen();
+  }
 
   /**
    * Set Stage-5 unified token (explicit, lifecycle: signal → validation → execution)
@@ -114,7 +143,10 @@ class ExecutionChokePoint {
     // Lock scope
     this.lockedScope = { ...token.scope };
     this.tokens.stage5Token = token;
-    this.paused = false;
+    
+    // Apply GLOBAL_FULL_UNPAUSE_AND_PROCEED (via canonical control)
+    // Note: Token setting implies unpause, but canonical control must be set separately
+    // This maintains separation of concerns
     
     this.tokenLifecycleTrace.push({
       phase: 'initialized',
@@ -331,30 +363,32 @@ class ExecutionChokePoint {
       }
     }
 
-    // Check system flags
-    if (this.paused) {
+    // Check canonical control state (GLOBAL_FULL_AGENT_PAUSE)
+    if (this.isPaused()) {
       return {
         allowed: false,
-        reason: 'System is PAUSED',
-        missingTokens: ['PAUSED = TRUE'],
+        reason: 'GLOBAL_FULL_AGENT_PAUSE is active - all agents paused',
+        missingTokens: ['GLOBAL_FULL_AGENT_PAUSE'],
         telemetry,
       };
     }
 
-    if (this.globalExecution === 'DISABLED') {
+    // Check canonical control state (GLOBAL_FULL_EXECUTION_LOCK)
+    if (this.isExecutionLocked()) {
       return {
         allowed: false,
-        reason: 'GLOBAL_EXECUTION = DISABLED',
-        missingTokens: ['GLOBAL_EXECUTION'],
+        reason: 'GLOBAL_FULL_EXECUTION_LOCK is active - all execution paths disabled',
+        missingTokens: ['GLOBAL_FULL_EXECUTION_LOCK'],
         telemetry,
       };
     }
 
-    if (this.locked) {
+    // Check canonical control state (GLOBAL_FULL_STATE_FREEZE)
+    if (this.isStateFrozen()) {
       return {
         allowed: false,
-        reason: 'System is LOCKED',
-        missingTokens: ['LOCKED = TRUE'],
+        reason: 'GLOBAL_FULL_STATE_FREEZE is active - state immutable',
+        missingTokens: ['GLOBAL_FULL_STATE_FREEZE'],
         telemetry,
       };
     }
@@ -423,19 +457,25 @@ class ExecutionChokePoint {
   }
 
   /**
-   * Get current flags
+   * Get current flags (canonical control state)
    */
   getCurrentFlags(): {
-    UNPAUSE: boolean;
-    GLOBAL_EXECUTION: 'ENABLED' | 'DISABLED';
-    LOCKED: boolean;
-    PAUSED: boolean;
+    GLOBAL_FULL_EXECUTION_LOCK: boolean;
+    GLOBAL_FULL_AGENT_PAUSE: boolean;
+    GLOBAL_FULL_STATE_FREEZE: boolean;
+    GLOBAL_FULL_UNPAUSE_AND_PROCEED?: {
+      stage: number;
+      scope: string;
+    };
   } {
+    const state = this.canonicalControl.getState();
     return {
-      UNPAUSE: !this.paused,
-      GLOBAL_EXECUTION: this.globalExecution,
-      LOCKED: this.locked,
-      PAUSED: this.paused,
+      GLOBAL_FULL_EXECUTION_LOCK: state.executionLock,
+      GLOBAL_FULL_AGENT_PAUSE: state.agentPause,
+      GLOBAL_FULL_STATE_FREEZE: state.stateFreeze,
+      GLOBAL_FULL_UNPAUSE_AND_PROCEED: state.unpauseStage !== undefined
+        ? { stage: state.unpauseStage, scope: state.unpauseScope || '' }
+        : undefined,
     };
   }
 
@@ -468,23 +508,37 @@ class ExecutionChokePoint {
   }
 
   /**
-   * Set system flags (human control only)
+   * Set system flags via canonical control (Composer authority only)
+   * 
+   * DEPRECATED: Use canonical control commands instead.
+   * This method is maintained for backward compatibility but should use
+   * getCanonicalControlManager().processCommand() directly.
    */
   setSystemFlags(flags: {
     paused?: boolean;
     globalExecution?: 'ENABLED' | 'DISABLED';
     locked?: boolean;
   }): void {
+    // Map legacy flags to canonical control commands
     if (flags.paused !== undefined) {
-      this.paused = flags.paused;
+      const command: CanonicalControlCommand = flags.paused
+        ? 'GLOBAL_FULL_AGENT_PAUSE'
+        : { type: 'GLOBAL_FULL_UNPAUSE_AND_PROCEED', stage: 5, scope: 'legacy_unpause' };
+      this.canonicalControl.processCommand(command, 'legacy_compatibility');
     }
     if (flags.globalExecution !== undefined) {
-      this.globalExecution = flags.globalExecution;
+      const command: CanonicalControlCommand = flags.globalExecution === 'DISABLED'
+        ? 'GLOBAL_FULL_EXECUTION_LOCK'
+        : { type: 'GLOBAL_FULL_UNPAUSE_AND_PROCEED', stage: 5, scope: 'legacy_execution_enable' };
+      this.canonicalControl.processCommand(command, 'legacy_compatibility');
     }
     if (flags.locked !== undefined) {
-      this.locked = flags.locked;
+      const command: CanonicalControlCommand = flags.locked
+        ? 'GLOBAL_FULL_STATE_FREEZE'
+        : { type: 'GLOBAL_FULL_UNPAUSE_AND_PROCEED', stage: 5, scope: 'legacy_unlock' };
+      this.canonicalControl.processCommand(command, 'legacy_compatibility');
     }
-    log.info('System flags updated', flags);
+    log.info('System flags updated via canonical control', flags);
   }
 }
 

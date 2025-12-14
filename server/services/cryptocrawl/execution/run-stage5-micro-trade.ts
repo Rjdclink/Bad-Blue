@@ -24,17 +24,25 @@ function validateCommand(command: string): boolean {
 }
 
 // ============================================================================
-// PAUSE SEMANTICS: Check if paused before initialization
+// CANONICAL CONTROL: Check GLOBAL_FULL_AGENT_PAUSE before initialization
 // ============================================================================
 
+import { getCanonicalControlManager } from './canonical-control';
+
 function checkPauseBeforeInit(): { allowed: boolean; reason?: string } {
-  const chokePoint = getExecutionChokePoint();
-  const flags = chokePoint.getCurrentFlags();
+  const canonicalControl = getCanonicalControlManager();
   
-  if (flags.PAUSED) {
+  if (canonicalControl.areAgentsPaused()) {
     return {
       allowed: false,
-      reason: 'PAUSE = true - No runner may initialize while paused',
+      reason: 'GLOBAL_FULL_AGENT_PAUSE is active - No runner may initialize while agents are paused',
+    };
+  }
+  
+  if (canonicalControl.isExecutionLocked()) {
+    return {
+      allowed: false,
+      reason: 'GLOBAL_FULL_EXECUTION_LOCK is active - All execution paths disabled',
     };
   }
   
@@ -80,11 +88,17 @@ async function main() {
 
   chokePoint.setStage5Token(stage5Token);
 
-  chokePoint.setSystemFlags({
-    paused: false,
-    globalExecution: 'ENABLED',
-    locked: false,
-  });
+  // Apply GLOBAL_FULL_UNPAUSE_AND_PROCEED via canonical control
+  const canonicalControl = getCanonicalControlManager();
+  const unpauseResult = canonicalControl.processCommand(
+    { type: 'GLOBAL_FULL_UNPAUSE_AND_PROCEED', stage: 5, scope: 'single exchange (uniswap-v3), single pair (LINK/USDT), deterministic micro test' },
+    'composer'
+  );
+  
+  if (!unpauseResult.success) {
+    log.error('Failed to apply GLOBAL_FULL_UNPAUSE_AND_PROCEED', { reason: unpauseResult.reason });
+    process.exit(1);
+  }
 
   chokePoint.setLastHumanDirective(REQUIRED_COMMAND);
 
@@ -139,23 +153,21 @@ async function main() {
     log.info('AUTO-PAUSING: Micro trade complete - pausing immediately');
     log.info('='.repeat(80));
 
-    // Auto-pause
-    chokePoint.setSystemFlags({
-      paused: true,
-      globalExecution: 'DISABLED',
-      locked: true,
-    });
+    // Auto-pause via canonical control (GLOBAL_FULL_AGENT_PAUSE)
+    const canonicalControl = getCanonicalControlManager();
+    canonicalControl.processCommand('GLOBAL_FULL_AGENT_PAUSE', 'composer');
+    canonicalControl.processCommand('GLOBAL_FULL_EXECUTION_LOCK', 'composer');
+    canonicalControl.processCommand('GLOBAL_FULL_STATE_FREEZE', 'composer');
 
     process.exit(result.success ? 0 : 1);
   } catch (error) {
     log.error('Micro trade runner failed', { error });
     
-    // Auto-pause on error
-    chokePoint.setSystemFlags({
-      paused: true,
-      globalExecution: 'DISABLED',
-      locked: true,
-    });
+    // Auto-pause on error via canonical control
+    const canonicalControl = getCanonicalControlManager();
+    canonicalControl.processCommand('GLOBAL_FULL_AGENT_PAUSE', 'composer');
+    canonicalControl.processCommand('GLOBAL_FULL_EXECUTION_LOCK', 'composer');
+    canonicalControl.processCommand('GLOBAL_FULL_STATE_FREEZE', 'composer');
     
     process.exit(1);
   }

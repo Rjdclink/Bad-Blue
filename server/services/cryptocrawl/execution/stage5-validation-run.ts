@@ -13,6 +13,7 @@ import { createLogger } from '../../../logger';
 import { generateDeterministicTestSignal } from './deterministic-test-signal';
 import { getFaucetMeshFilter } from '../decision-engine/faucet-mesh-filter';
 import { getExecutionChokePoint, gateExecutionPath, type Stage5Token } from './execution-choke-point';
+import { getCanonicalControlManager } from './canonical-control';
 
 const log = createLogger('Stage5ValidationRun');
 
@@ -68,11 +69,17 @@ export function runStage5Validation(): ValidationRunResult {
   };
 
   chokePoint.setStage5Token(stage5Token);
-  chokePoint.setSystemFlags({
-    paused: false,
-    globalExecution: 'ENABLED',
-    locked: false,
-  });
+  
+  // Apply GLOBAL_FULL_UNPAUSE_AND_PROCEED via canonical control
+  const canonicalControl = getCanonicalControlManager();
+  const unpauseResult = canonicalControl.processCommand(
+    { type: 'GLOBAL_FULL_UNPAUSE_AND_PROCEED', stage: 5, scope: 'validation run (100 deterministic signals)' },
+    'composer'
+  );
+  
+  if (!unpauseResult.success) {
+    throw new Error(`Failed to apply GLOBAL_FULL_UNPAUSE_AND_PROCEED: ${unpauseResult.reason}`);
+  }
 
   const actorId = 'cryptara-pilot';
   const capability = 'pilot' as const;
