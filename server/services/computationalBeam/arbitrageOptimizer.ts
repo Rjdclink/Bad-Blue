@@ -59,6 +59,35 @@ export interface ExecutionResult {
 }
 
 /**
+ * Fee mode for arbitrage execution
+ * AGGRESSIVE: Optimistic estimates, higher risk
+ * CONSERVATIVE: Safer estimates, lower risk (recommended)
+ * ULTRA_SAFE: Maximum safety buffers, minimal risk
+ */
+export type FeeMode = 'AGGRESSIVE' | 'CONSERVATIVE' | 'ULTRA_SAFE';
+
+export const FEE_MODE_CONFIGS = {
+  AGGRESSIVE: { 
+    slippageBuffer: 1.25,    // 25% buffer
+    gasBuffer: 1.15,         // 15% buffer
+    minConfidence: 0.70,     // 70% confidence
+    description: 'Higher risk, higher potential returns'
+  },
+  CONSERVATIVE: { 
+    slippageBuffer: 1.50,    // 50% buffer
+    gasBuffer: 1.30,         // 30% buffer
+    minConfidence: 0.80,     // 80% confidence
+    description: 'Balanced risk-reward (RECOMMENDED)'
+  },
+  ULTRA_SAFE: { 
+    slippageBuffer: 2.00,    // 100% buffer
+    gasBuffer: 1.50,         // 50% buffer
+    minConfidence: 0.90,     // 90% confidence
+    description: 'Minimal risk, conservative returns'
+  },
+} as const;
+
+/**
  * Arbitrage Execution Optimizer
  * 
  * Improves arbitrage accuracy by:
@@ -73,12 +102,23 @@ export class ArbitrageOptimizer {
   private executionHistory: ExecutionResult[] = [];
   private priceSourceWeights: Map<string, number> = new Map();
   
+  // Current fee mode (default to CONSERVATIVE for safety)
+  private currentFeeMode: FeeMode = 'CONSERVATIVE';
+  
   // Optimization parameters (tuned for 200% improvement)
   private readonly MIN_PRICE_SOURCES = 3; // Verify with at least 3 sources
   private readonly PRICE_DEVIATION_THRESHOLD = 0.02; // 2% max deviation allowed
-  private readonly MIN_CONFIDENCE_SCORE = 0.75; // 75% minimum confidence
-  private readonly SLIPPAGE_BUFFER = 1.25; // 25% safety buffer on slippage
-  private readonly GAS_OPTIMIZATION_FACTOR = 1.15; // 15% gas optimization target
+  
+  // Dynamic parameters based on fee mode
+  private get MIN_CONFIDENCE_SCORE(): number {
+    return FEE_MODE_CONFIGS[this.currentFeeMode].minConfidence;
+  }
+  private get SLIPPAGE_BUFFER(): number {
+    return FEE_MODE_CONFIGS[this.currentFeeMode].slippageBuffer;
+  }
+  private get GAS_OPTIMIZATION_FACTOR(): number {
+    return FEE_MODE_CONFIGS[this.currentFeeMode].gasBuffer;
+  }
   
   private constructor() {
     // Enforce safety rules
@@ -96,6 +136,37 @@ export class ArbitrageOptimizer {
     log.info('✅ Arbitrage Optimizer initialized');
     log.info('   Purpose: 200% improvement in arbitrage execution accuracy');
     log.info('   Features: Multi-source verification, Slippage prediction, Gas optimization');
+    log.info(`   Fee Mode: ${this.currentFeeMode} - ${FEE_MODE_CONFIGS[this.currentFeeMode].description}`);
+    log.info(`   Slippage Buffer: ${(this.SLIPPAGE_BUFFER - 1) * 100}%`);
+    log.info(`   Gas Buffer: ${(this.GAS_OPTIMIZATION_FACTOR - 1) * 100}%`);
+  }
+  
+  /**
+   * Set the fee mode for arbitrage calculations
+   * CONSERVATIVE is recommended for production
+   */
+  setFeeMode(mode: FeeMode): void {
+    const previousMode = this.currentFeeMode;
+    this.currentFeeMode = mode;
+    
+    log.info('💰 Fee mode changed', {
+      previousMode,
+      newMode: mode,
+      description: FEE_MODE_CONFIGS[mode].description,
+      slippageBuffer: `${(this.SLIPPAGE_BUFFER - 1) * 100}%`,
+      gasBuffer: `${(this.GAS_OPTIMIZATION_FACTOR - 1) * 100}%`,
+      minConfidence: `${this.MIN_CONFIDENCE_SCORE * 100}%`,
+    });
+  }
+  
+  /**
+   * Get current fee mode configuration
+   */
+  getFeeMode(): { mode: FeeMode; config: typeof FEE_MODE_CONFIGS[FeeMode] } {
+    return {
+      mode: this.currentFeeMode,
+      config: FEE_MODE_CONFIGS[this.currentFeeMode],
+    };
   }
   
   /**
@@ -430,6 +501,8 @@ export class ArbitrageOptimizer {
     averageAccuracy: number;
     successRate: number;
     accuracyImprovement: number; // percentage improvement over baseline
+    feeMode: FeeMode;
+    feeModeConfig: typeof FEE_MODE_CONFIGS[FeeMode];
   } {
     const baseline = 0.50; // Assume 50% baseline accuracy
     const currentAccuracy = this.calculateAverageAccuracy();
@@ -445,6 +518,8 @@ export class ArbitrageOptimizer {
       averageAccuracy: currentAccuracy,
       successRate,
       accuracyImprovement: improvement,
+      feeMode: this.currentFeeMode,
+      feeModeConfig: FEE_MODE_CONFIGS[this.currentFeeMode],
     };
   }
 }

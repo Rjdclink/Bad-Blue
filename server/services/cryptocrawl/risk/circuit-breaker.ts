@@ -27,6 +27,23 @@ export interface CircuitBreakerConfig {
   // Recovery settings
   recoveryPeriodMs: number;       // Cooldown period after trigger
   gradualRecoverySteps: number;   // Steps to full capacity
+  
+  // === NEW: PROFIT CAP LADDER ===
+  // Daily profit caps for controlled scaling ($200 → $400 → $800 → $1600)
+  profitCapLadder: {
+    tier1Cap: number;             // $200 equivalent in ETH
+    tier2Cap: number;             // $400 equivalent in ETH
+    tier3Cap: number;             // $800 equivalent in ETH
+    tier4Cap: number;             // $1600 equivalent in ETH
+  };
+  stableDaysRequiredPerTier: number; // Days of stable operation before tier upgrade (3-5)
+  
+  // === NEW: DATA DESYNC DETECTION ===
+  desyncDetection: {
+    maxPriceDeviationPercent: number;  // Max allowed price deviation between sources
+    minAgreementSources: number;        // Minimum sources that must agree
+    staleDataThresholdMs: number;       // Max age of price data before considered stale
+  };
 }
 
 export interface BreakerState {
@@ -47,6 +64,17 @@ export interface BreakerMetrics {
   executionsLastHour: number;
   lastExecutionTime: number;
   positionsPerChain: Record<ChainId, number>;
+  
+  // === NEW: PROFIT CAP TRACKING ===
+  dailyProfit: number;            // Total profit today (positive PnL only)
+  currentProfitTier: number;      // Current tier (1-4)
+  consecutiveStableDays: number;  // Days meeting tier requirements without violations
+  lastTierUpgrade: number;        // Timestamp of last tier upgrade
+  
+  // === NEW: DESYNC TRACKING ===
+  lastDesyncCheck: number;        // Timestamp of last desync check
+  desyncViolations: number;       // Count of desync violations today
+  priceSourceAgreement: number;   // 0-1 agreement score
 }
 
 export type BreakerLevel = 'green' | 'yellow' | 'orange' | 'red';
@@ -69,7 +97,23 @@ const DEFAULT_CONFIG: CircuitBreakerConfig = {
   maxSlippage: 0.02,              // 2% max slippage
   minProfitThreshold: 0.001,      // 0.001 ETH minimum profit
   recoveryPeriodMs: 300000,       // 5 minutes recovery
-  gradualRecoverySteps: 5         // 5 steps to full capacity
+  gradualRecoverySteps: 5,        // 5 steps to full capacity
+  
+  // === PROFIT CAP LADDER (assuming $2000/ETH) ===
+  profitCapLadder: {
+    tier1Cap: 0.1,                // $200 = 0.1 ETH
+    tier2Cap: 0.2,                // $400 = 0.2 ETH
+    tier3Cap: 0.4,                // $800 = 0.4 ETH
+    tier4Cap: 0.8,                // $1600 = 0.8 ETH
+  },
+  stableDaysRequiredPerTier: 3,   // 3 stable days before tier upgrade
+  
+  // === DATA DESYNC DETECTION ===
+  desyncDetection: {
+    maxPriceDeviationPercent: 2.0, // Max 2% price deviation allowed
+    minAgreementSources: 3,        // Need at least 3 sources to agree
+    staleDataThresholdMs: 30000,   // Data older than 30s is stale
+  },
 };
 
 class CircuitBreaker {
@@ -123,7 +167,18 @@ class CircuitBreaker {
         positionsPerChain: SUPPORTED_CHAINS.reduce((acc, chain) => {
           acc[chain] = 0;
           return acc;
-        }, {} as Record<ChainId, number>)
+        }, {} as Record<ChainId, number>),
+        
+        // === NEW: PROFIT CAP TRACKING ===
+        dailyProfit: 0,
+        currentProfitTier: 1,             // Start at tier 1
+        consecutiveStableDays: 0,
+        lastTierUpgrade: Date.now(),
+        
+        // === NEW: DESYNC TRACKING ===
+        lastDesyncCheck: 0,
+        desyncViolations: 0,
+        priceSourceAgreement: 1.0,        // Start assuming full agreement
       }
     };
   }
@@ -148,6 +203,31 @@ class CircuitBreaker {
 
     // Update metrics before checks
     this.updateMetrics();
+
+    // === NEW: PROFIT CAP CHECK ===
+    const currentCap = this.getCurrentProfitCap();
+    if (this.state.metrics.dailyProfit >= currentCap) {
+      return { 
+        allowed: false, 
+        reason: `Daily profit cap reached (${this.state.metrics.dailyProfit.toFixed(4)} ETH >= ${currentCap} ETH at tier ${this.state.metrics.currentProfitTier}). Wait for tier upgrade or next day.` 
+      };
+    }
+
+    // Check if this trade would exceed the cap
+    if (this.state.metrics.dailyProfit + params.expectedProfit > currentCap) {
+      return { 
+        allowed: false, 
+        reason: `Trade would exceed daily profit cap. Current: ${this.state.metrics.dailyProfit.toFixed(4)}, Expected: ${params.expectedProfit.toFixed(4)}, Cap: ${currentCap} ETH` 
+      };
+    }
+
+    // === NEW: DATA DESYNC CHECK ===
+    if (this.state.metrics.priceSourceAgreement < (1 - this.config.desyncDetection.maxPriceDeviationPercent / 100)) {
+      return {
+        allowed: false,
+        reason: `Price source desync detected (agreement: ${(this.state.metrics.priceSourceAgreement * 100).toFixed(1)}%). Waiting for price convergence.`
+      };
+    }
 
     // Check position size
     if (params.size > this.getAdjustedLimit('maxPositionSize')) {
@@ -185,6 +265,140 @@ class CircuitBreaker {
     }
 
     return { allowed: true };
+  }
+
+  /**
+   * Get current profit cap based on tier
+   */
+  private getCurrentProfitCap(): number {
+    const tier = this.state.metrics.currentProfitTier;
+    switch (tier) {
+      case 1: return this.config.profitCapLadder.tier1Cap;
+      case 2: return this.config.profitCapLadder.tier2Cap;
+      case 3: return this.config.profitCapLadder.tier3Cap;
+      case 4: return this.config.profitCapLadder.tier4Cap;
+      default: return this.config.profitCapLadder.tier1Cap;
+    }
+  }
+
+  /**
+   * Check and potentially upgrade profit tier
+   * Called at end of each day
+   */
+  checkTierUpgrade(): { upgraded: boolean; newTier: number; reason: string } {
+    const currentTier = this.state.metrics.currentProfitTier;
+    const stableDays = this.state.metrics.consecutiveStableDays;
+    const requiredDays = this.config.stableDaysRequiredPerTier;
+
+    // Can't upgrade past tier 4
+    if (currentTier >= 4) {
+      return { upgraded: false, newTier: 4, reason: 'Already at maximum tier' };
+    }
+
+    // Check if enough stable days
+    if (stableDays >= requiredDays) {
+      this.state.metrics.currentProfitTier = currentTier + 1;
+      this.state.metrics.consecutiveStableDays = 0;
+      this.state.metrics.lastTierUpgrade = Date.now();
+
+      logger.info('Profit tier upgraded', {
+        component: 'CircuitBreaker',
+        previousTier: currentTier,
+        newTier: currentTier + 1,
+        newCap: this.getCurrentProfitCap()
+      });
+
+      return { 
+        upgraded: true, 
+        newTier: currentTier + 1, 
+        reason: `Upgraded after ${stableDays} stable days` 
+      };
+    }
+
+    return { 
+      upgraded: false, 
+      newTier: currentTier, 
+      reason: `Need ${requiredDays - stableDays} more stable days` 
+    };
+  }
+
+  /**
+   * Update price source agreement score
+   * Call this with price data from multiple sources
+   */
+  updatePriceAgreement(prices: { source: string; price: number; timestamp: number }[]): void {
+    const now = Date.now();
+    const freshPrices = prices.filter(
+      p => (now - p.timestamp) < this.config.desyncDetection.staleDataThresholdMs
+    );
+
+    // Need minimum sources
+    if (freshPrices.length < this.config.desyncDetection.minAgreementSources) {
+      this.state.metrics.priceSourceAgreement = 0;
+      this.state.metrics.desyncViolations++;
+      
+      logger.warn('Insufficient price sources', {
+        component: 'CircuitBreaker',
+        required: this.config.desyncDetection.minAgreementSources,
+        available: freshPrices.length
+      });
+      return;
+    }
+
+    // Calculate price deviation
+    const priceValues = freshPrices.map(p => p.price);
+    const avgPrice = priceValues.reduce((a, b) => a + b, 0) / priceValues.length;
+    const maxDeviation = Math.max(...priceValues.map(p => Math.abs(p - avgPrice) / avgPrice));
+
+    // Convert deviation to agreement score (0-1)
+    const agreement = Math.max(0, 1 - (maxDeviation / (this.config.desyncDetection.maxPriceDeviationPercent / 100)));
+    
+    this.state.metrics.priceSourceAgreement = agreement;
+    this.state.metrics.lastDesyncCheck = now;
+
+    if (maxDeviation * 100 > this.config.desyncDetection.maxPriceDeviationPercent) {
+      this.state.metrics.desyncViolations++;
+      
+      logger.warn('Price desync detected', {
+        component: 'CircuitBreaker',
+        maxDeviation: (maxDeviation * 100).toFixed(2) + '%',
+        threshold: this.config.desyncDetection.maxPriceDeviationPercent + '%',
+        agreement: (agreement * 100).toFixed(1) + '%'
+      });
+    }
+  }
+
+  /**
+   * Record end of day and update stable day tracking
+   */
+  recordEndOfDay(): void {
+    const hadViolations = this.state.metrics.desyncViolations > 0 || 
+                          this.state.metrics.dailyPnL < 0 ||
+                          this.state.status !== 'active';
+
+    if (!hadViolations) {
+      this.state.metrics.consecutiveStableDays++;
+      logger.info('Stable day recorded', {
+        component: 'CircuitBreaker',
+        consecutiveStableDays: this.state.metrics.consecutiveStableDays,
+        currentTier: this.state.metrics.currentProfitTier
+      });
+    } else {
+      this.state.metrics.consecutiveStableDays = 0;
+      logger.info('Stable day streak reset due to violations', {
+        component: 'CircuitBreaker',
+        desyncViolations: this.state.metrics.desyncViolations,
+        dailyPnL: this.state.metrics.dailyPnL,
+        status: this.state.status
+      });
+    }
+
+    // Reset daily metrics
+    this.state.metrics.dailyProfit = 0;
+    this.state.metrics.desyncViolations = 0;
+
+    // Check for tier upgrade
+    this.checkTierUpgrade();
   }
 
   /**
@@ -232,11 +446,33 @@ class CircuitBreaker {
     this.state.metrics.hourlyPnL += result.pnl;
     this.state.metrics.lastExecutionTime = record.timestamp;
 
-    // Track consecutive losses (only for completed trades)
-    if (result.pnl < 0) {
-      this.state.metrics.consecutiveLosses++;
-    } else if (result.pnl > 0) {
+    // === NEW: Track daily profit for cap enforcement ===
+    if (result.pnl > 0) {
+      this.state.metrics.dailyProfit += result.pnl;
       this.state.metrics.consecutiveLosses = 0;
+      
+      // Log profit cap progress
+      const currentCap = this.getCurrentProfitCap();
+      const capUtilization = (this.state.metrics.dailyProfit / currentCap) * 100;
+      
+      logger.info('Daily profit updated', {
+        component: 'CircuitBreaker',
+        dailyProfit: this.state.metrics.dailyProfit.toFixed(4),
+        currentCap: currentCap.toFixed(4),
+        capUtilization: capUtilization.toFixed(1) + '%',
+        tier: this.state.metrics.currentProfitTier
+      });
+      
+      // Warning when approaching cap
+      if (capUtilization >= 80) {
+        logger.warn('Approaching daily profit cap', {
+          component: 'CircuitBreaker',
+          utilization: capUtilization.toFixed(1) + '%',
+          remaining: (currentCap - this.state.metrics.dailyProfit).toFixed(4) + ' ETH'
+        });
+      }
+    } else if (result.pnl < 0) {
+      this.state.metrics.consecutiveLosses++;
     }
     // Note: pnl === 0 (break-even) doesn't reset or increment consecutive losses
 
