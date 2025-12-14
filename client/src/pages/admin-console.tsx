@@ -173,6 +173,7 @@ export default function AdminConsole() {
   
   // Loading States
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingFaucet, setLoadingFaucet] = useState(false);
   const [togglingFaucet, setTogglingFaucet] = useState(false);
   const [startingSystem, setStartingSystem] = useState(false);
   const [stoppingSystem, setStoppingSystem] = useState(false);
