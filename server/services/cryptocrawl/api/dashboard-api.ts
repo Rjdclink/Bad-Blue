@@ -4,6 +4,7 @@ import { autonomousFaucet } from '../faucet/autonomous-faucet';
 import { balanceMonitor } from '../bridge/balance-monitor';
 import { scheduledMonteCarloTraining } from '../training/scheduled-monte-carlo-training';
 import { getCexSpotArbDecision } from '../signal/cex-arb-signals';
+import { cryptoDecisionEngine } from '../decision/decision-engine';
 
 const router = express.Router();
 const wss = new WebSocketServer({noServer: true});
@@ -944,9 +945,18 @@ wss.on('connection', (ws) => {
       }));
     }
   }, 2000);
+
+  // Decision engine: Signal → Decision → Eligibility → Envelope (no execution).
+  // Runs only while there is at least one websocket subscriber.
+  const unsubscribeDecision = cryptoDecisionEngine.subscribe((decision) => {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'decision', data: decision }));
+    }
+  });
   
   ws.on('close', () => {
     clearInterval(interval);
+    unsubscribeDecision();
     console.log('📡 WebSocket client disconnected');
   });
 });

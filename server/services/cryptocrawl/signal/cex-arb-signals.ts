@@ -37,6 +37,20 @@ function getPessimisticFeeRate(venue: Venue): number {
   return r.maker + r.taker;
 }
 
+export interface BaseCandidate {
+  pair: Pair;
+  notionalUsd: 200;
+  buyVenue: Venue;
+  sellVenue: Venue;
+  buyBestBid: number;
+  buyBestAsk: number;
+  sellBestBid: number;
+  sellBestAsk: number;
+  pessimisticFeeRateBuy: number;
+  pessimisticFeeRateSell: number;
+  computedAt: number;
+}
+
 async function fetchJson(url: string, timeoutMs: number): Promise<any> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -199,5 +213,93 @@ export async function getCexSpotArbDecision(): Promise<'SIGNAL' | 'NO SIGNAL'> {
   }
 
   return 'NO SIGNAL';
+}
+
+/**
+ * Base signal → candidate details (offline use by decision engine).
+ * Returns the best (highest net profit) candidate found under the hard $200 notional cap.
+ * If any required venue data is unavailable, returns null (NO SIGNAL).
+ */
+export async function getCexSpotArbBaseCandidate(): Promise<BaseCandidate | null> {
+  const binanceBooks = new Map<Pair, Orderbook>();
+  const krakenBooks = new Map<Pair, Orderbook>();
+
+  // Binance must be available (hard requirement for cross-venue CEX arb as specified).
+  for (const pair of PAIRS) {
+    try {
+      binanceBooks.set(pair, await fetchBinanceDepth(pair));
+    } catch {
+      return null;
+    }
+  }
+
+  // Kraken: only pairs that exist will be present.
+  for (const pair of PAIRS) {
+    try {
+      krakenBooks.set(pair, await fetchKrakenDepth(pair));
+    } catch {
+      // pair unavailable on Kraken
+    }
+  }
+
+  const now = Date.now();
+  let best: { c: BaseCandidate; netUsd: number } | null = null;
+
+  for (const pair of PAIRS) {
+    const b = binanceBooks.get(pair);
+    const k = krakenBooks.get(pair);
+    if (!b || !k) continue;
+
+    const directions: Array<{ buy: Venue; sell: Venue; buyBook: Orderbook; sellBook: Orderbook }> = [
+      { buy: 'binance', sell: 'kraken', buyBook: b, sellBook: k },
+      { buy: 'kraken', sell: 'binance', buyBook: k, sellBook: b },
+    ];
+
+    for (const d of directions) {
+      const buyFill = vwapForQuoteSpend(d.buyBook.asks, DAILY_CAP_USD);
+      if (!buyFill) continue;
+      const sellFill = proceedsForBaseSell(d.sellBook.bids, buyFill.baseQty);
+      if (!sellFill) continue;
+
+      const baseQty = sellFill.filledBase;
+      // Recompute buy cost for exact baseQty (walk asks)
+      let remainingBase = baseQty;
+      let buyCost = 0;
+      for (const lvl of d.buyBook.asks) {
+        if (remainingBase <= 0) break;
+        const qtyHere = Math.min(remainingBase, lvl.qty);
+        buyCost += qtyHere * lvl.price;
+        remainingBase -= qtyHere;
+      }
+      if (remainingBase > 1e-12) continue;
+
+      const sellProceeds = sellFill.quoteProceeds;
+      const buyFeeRate = getPessimisticFeeRate(d.buy);
+      const sellFeeRate = getPessimisticFeeRate(d.sell);
+      const feesUsd = buyCost * buyFeeRate + sellProceeds * sellFeeRate;
+      const netProfitUsd = sellProceeds - buyCost - feesUsd;
+      if (!(netProfitUsd > 0)) continue;
+
+      const candidate: BaseCandidate = {
+        pair,
+        notionalUsd: 200,
+        buyVenue: d.buy,
+        sellVenue: d.sell,
+        buyBestBid: d.buyBook.bids[0]?.price ?? 0,
+        buyBestAsk: d.buyBook.asks[0]?.price ?? 0,
+        sellBestBid: d.sellBook.bids[0]?.price ?? 0,
+        sellBestAsk: d.sellBook.asks[0]?.price ?? 0,
+        pessimisticFeeRateBuy: buyFeeRate,
+        pessimisticFeeRateSell: sellFeeRate,
+        computedAt: now,
+      };
+
+      if (!best || netProfitUsd > best.netUsd) {
+        best = { c: candidate, netUsd: netProfitUsd };
+      }
+    }
+  }
+
+  return best ? best.c : null;
 }
 
