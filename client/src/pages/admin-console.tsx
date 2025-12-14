@@ -173,6 +173,7 @@ export default function AdminConsole() {
   
   // Loading States
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingFaucet, setLoadingFaucet] = useState(false);
   const [togglingFaucet, setTogglingFaucet] = useState(false);
   const [startingSystem, setStartingSystem] = useState(false);
   const [stoppingSystem, setStoppingSystem] = useState(false);
@@ -622,6 +623,46 @@ export default function AdminConsole() {
                 </div>
               </CardContent>
             </Card>
+          </div>
+
+          {/* Quick Navigation to Dashboards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => setLocation('/cryptocrawler-v2')}
+              className="h-16 border-orange-500/30 bg-orange-900/10 hover:bg-orange-900/30 text-orange-300 hover:text-orange-200"
+            >
+              <DollarSign className="w-6 h-6 mr-3" />
+              <div className="text-left">
+                <div className="font-semibold">CryptoCrawler Dashboard</div>
+                <div className="text-xs opacity-70">Flash Loan Arbitrage</div>
+              </div>
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => setLocation('/orchestrator-console')}
+              className="h-16 border-purple-500/30 bg-purple-900/10 hover:bg-purple-900/30 text-purple-300 hover:text-purple-200"
+            >
+              <Brain className="w-6 h-6 mr-3" />
+              <div className="text-left">
+                <div className="font-semibold">Monte Carlo / 4JI</div>
+                <div className="text-xs opacity-70">AI Orchestrator Console</div>
+              </div>
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => setLocation('/control-room')}
+              className="h-16 border-cyan-500/30 bg-cyan-900/10 hover:bg-cyan-900/30 text-cyan-300 hover:text-cyan-200"
+            >
+              <Shield className="w-6 h-6 mr-3" />
+              <div className="text-left">
+                <div className="font-semibold">Reactor / Control Room</div>
+                <div className="text-xs opacity-70">Bug Bounty Operations</div>
+              </div>
+            </Button>
           </div>
 
           {/* Main Tabs */}

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import PeopleFinderSearch from "@/components/PeopleFinderSearch";
 import { useLocation } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
@@ -23,8 +23,11 @@ export default function PeopleFinderPage() {
   const [geoData, setGeoData] = useState<GPSPoint[]>([]);
   const [geoConsoleStatus, setGeoConsoleStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
   
-  // PASS 3: Page boot log
+  // PASS 3: Page boot log (single execution guard)
+  const mountedRef = useRef(false);
   useEffect(() => {
+    if (mountedRef.current) return; // Prevent double-run in strict mode
+    mountedRef.current = true;
     console.log('[PEOPLE FINDER] Page mounted', {
       timestamp: new Date().toISOString(),
       path: window.location.pathname,
@@ -62,8 +65,12 @@ export default function PeopleFinderPage() {
     return Math.abs(hash);
   }
 
-  // Initialize GeoConsole with sample location data for demonstration
+  // Initialize GeoConsole with sample location data for demonstration (single executor)
+  const geoInitRef = useRef(false);
   useEffect(() => {
+    if (geoInitRef.current) return; // One brain = one executor
+    geoInitRef.current = true;
+    
     // Generate sample GPS data for demonstration (production would use actual data)
     const sampleLocations: GPSPoint[] = [
       {
