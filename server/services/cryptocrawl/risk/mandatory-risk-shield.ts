@@ -1,7 +1,10 @@
 // Mandatory Risk Shield - 7-Layer Validation System
 // All trades MUST pass multi-layer validation before execution
+// 
+// SAFETY INTEGRATION: Works with MANDATORY_SAFETY_SHIELD for signal-only mode
 
 import type { Opportunity } from '../core/lux-swarm';
+import { SAFETY_CONSTANTS } from '../safety/index.js';
 
 interface OpportunityScore {
   opportunity: Opportunity;
@@ -28,16 +31,18 @@ interface ValidationResult {
 class MandatoryRiskShield {
   
   // All trades MUST pass this validation
+  // SAFETY: Uses pessimistic thresholds from SAFETY_CONSTANTS
   async validate(opportunity: OpportunityScore): Promise<ValidationResult> {
     const checks: ValidationCheck[] = [];
     
-    // Layer 1: Slippage prediction
+    // Layer 1: Slippage prediction (PESSIMISTIC: 3% from SAFETY_CONSTANTS)
     const slippage = await this.predictSlippage(opportunity);
+    const pessimisticSlippageThreshold = SAFETY_CONSTANTS.SLIPPAGE_PESSIMISM_PERCENT / 100;
     checks.push({
       name: 'Slippage',
-      passed: slippage < 0.02,
+      passed: slippage < pessimisticSlippageThreshold,
       value: slippage,
-      threshold: 0.02
+      threshold: pessimisticSlippageThreshold
     });
     
     // Layer 2: Multi-oracle price validation (SNOWBALL MOD)

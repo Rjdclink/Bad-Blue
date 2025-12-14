@@ -17,6 +17,9 @@ import { MultiOraclePriceValidator } from '../validation/multi-oracle-validator.
 import { MasterOrchestrator } from '../core/master-orchestrator.js';
 import logger from '../../../logger.js';
 
+// SAFETY: Import mandatory safety shield - ensures signal-only mode
+import { getSafetyShield, SAFETY_CONSTANTS } from '../safety/index.js';
+
 // Babel Integration - IP Protection Systems + Cain Reasoning
 import {
   TowerOfBabel,
@@ -191,26 +194,34 @@ export const DAILY_TARGET_CONFIG = Object.freeze({
   timingJitter: 30000,             // ±30 second timing randomization
 });
 
-/** Stealth configuration to avoid market attention */
+/** 
+ * Stealth configuration to avoid market attention
+ * 
+ * SAFETY ENFORCEMENT (STAGE 1 HARD LAWS):
+ * - Daily cap: $200/day MAXIMUM (hypothetical profit only)
+ * - Hourly cap: ~$8.33/hour (200/24)
+ * - This is SIGNAL-ONLY mode - no actual execution
+ */
 export const STEALTH_CONFIG = Object.freeze({
-  // Hourly limits (derived from daily target)
-  maxHourlyProfit: 2500,           // ~$2500/hour max (slightly over 35K/14hrs)
-  maxTradesPerHour: 150,           // Higher trade count but smaller sizes
-  volumeCapPercent: 0.02,          // Max 2% of market volume per trade
-  minProfitToActivate: 50,         // Minimum expected profit to activate
-  cooldownMinutes: 10,             // Shorter cooldown for higher throughput
-  stealthIncreaseRate: 0.05,       // Slower stealth increase
+  // SAFETY LIMITS - $200/day cap (HARD LAW)
+  maxDailyProfit: 200,             // HARD LIMIT: $200/day maximum (hypothetical)
+  maxHourlyProfit: 8.33,           // ~$200/24 hours = $8.33/hour
+  maxTradesPerHour: 50,            // Reduced trade count for signal-only mode
+  volumeCapPercent: 0.01,          // Max 1% of market volume per trade
+  minProfitToActivate: 0.10,       // Minimum expected profit to generate signal
+  cooldownMinutes: 15,             // Conservative cooldown
+  stealthIncreaseRate: 0.02,       // Conservative stealth increase
   
-  // Anti-detection measures
+  // Anti-detection measures (for realistic signal generation)
   patternBreakingEnabled: true,    // Randomize trading patterns
   exchangeRotation: true,          // Rotate between exchanges
   pairDiversification: true,       // Spread across trading pairs
   orderTypeVariation: true,        // Mix limit/market orders
   
-  // Compliance thresholds
-  maxSingleTrade: 5000,            // Max $5K per single trade
-  minTimeBetweenTrades: 500,       // Min 500ms between trades
-  maxTradesPerMinute: 20,          // Max 20 trades/minute
+  // Compliance thresholds (CONSERVATIVE for signal-only)
+  maxSingleTrade: 50,              // Max $50 per single signal (was $5K)
+  minTimeBetweenTrades: 2000,      // Min 2s between signals (was 500ms)
+  maxTradesPerMinute: 5,           // Max 5 signals/minute (was 20)
 });
 
 /**

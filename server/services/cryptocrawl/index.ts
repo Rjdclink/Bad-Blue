@@ -312,8 +312,27 @@ export {
  * 28. **9-Model AI Orchestration** - Gemini 3, Claude, Groq, Mistral, DeepSeek, Grok, Kimi working in harmony
  */
 
-export const SYSTEM_VERSION = '5.0.0';
-export const SYSTEM_NAME = 'Divine Optimization Crawler System - Maximum Profitability';
+// MANDATORY SAFETY SHIELD - Stage 1 Truth Enforcement
+// This MUST be imported and active for any operation
+export {
+  MandatorySafetyShield,
+  getSafetyShield,
+  resetSafetyShield,
+  SAFETY_CONSTANTS,
+  isSignalOnlyMode,
+  isSigningBlocked,
+  isBroadcastingBlocked,
+  getRemainingDailyCap,
+  SAFETY_VERSION,
+  SAFETY_NAME,
+  type ArbitrageSignal,
+  type SafetyState,
+  type AuditEntry,
+  type ValidationResult,
+} from './safety/index.js';
+
+export const SYSTEM_VERSION = '5.1.0'; // Updated for safety shield integration
+export const SYSTEM_NAME = 'Divine Optimization Crawler System - SIGNAL ONLY MODE';
 export const CAPABILITIES = [
   'Multi-network Eden storage',
   'Cain evolution engine',
@@ -383,4 +402,14 @@ export const CAPABILITIES = [
   'Gas-free strategies',
   'Flash loan arbitrage',
   'Cross-chain optimization',
+  // SAFETY CAPABILITIES (v5.1 - Stage 1 Truth Enforcement)
+  'SIGNAL_ONLY_MODE - No execution',
+  'NO_SIGNING - All signing blocked',
+  'NO_BROADCASTING - All broadcasts blocked',
+  '$200/day hypothetical profit cap',
+  'Pessimistic fee modeling (2x gas, 3% slippage, 1.5x fees)',
+  'Immutable safety constants',
+  'Watchdog safety monitoring',
+  'Emergency halt capability',
+  'Full audit trail',
 ];

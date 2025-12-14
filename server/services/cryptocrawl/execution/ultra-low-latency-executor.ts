@@ -1,8 +1,29 @@
 import { Wallet, providers, ethers } from 'ethers';
 import logger from '../../../logger.js';
+import { getSafetyShield, SAFETY_CONSTANTS, isSignalOnlyMode } from '../safety/index.js';
 
 const { JsonRpcProvider } = providers;
 const { parseEther, parseUnits } = ethers.utils;
+
+// ============================================================================
+// SAFETY ENFORCEMENT - All execution blocked in signal-only mode
+// ============================================================================
+
+/**
+ * SAFETY CHECK: Verify we can proceed with execution
+ * In SIGNAL_ONLY_MODE, this always throws
+ */
+function enforceSignalOnlyMode(operation: string): void {
+  if (SAFETY_CONSTANTS.SIGNAL_ONLY_MODE) {
+    const shield = getSafetyShield();
+    logger.warn(`🚫 BLOCKED: ${operation} - System is in SIGNAL_ONLY_MODE`, {
+      component: 'UltraLowLatencyExecutor',
+      operation,
+      signalOnlyMode: true,
+    });
+    shield.attemptSign({ operation, blocked: true });
+  }
+}
 
 interface OpportunityData {
   to: string;
@@ -59,6 +80,15 @@ class UltraLowLatencyExecutor {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
+    // SAFETY: In signal-only mode, skip pre-signing
+    if (SAFETY_CONSTANTS.SIGNAL_ONLY_MODE) {
+      logger.info('🛡️ SIGNAL_ONLY_MODE: Skipping transaction pre-signing', { 
+        component: 'UltraLowLatencyExecutor' 
+      });
+      this.initialized = true;
+      return;
+    }
+
     logger.info('Initializing ultra-low-latency executor...', { 
       component: 'UltraLowLatencyExecutor' 
     });
@@ -71,6 +101,9 @@ class UltraLowLatencyExecutor {
     
     for (let i = 0; i < 100; i++) {
       try {
+        // SAFETY: This path should never be reached in signal-only mode
+        enforceSignalOnlyMode('pre-sign-transaction');
+        
         const tx = await this.wallet.signTransaction({
           nonce: this.currentNonce + i,
           gasPrice: gasPrice.recommended,
@@ -105,6 +138,22 @@ class UltraLowLatencyExecutor {
   async executeInstant(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
 
+    // SAFETY: Block execution in signal-only mode
+    if (SAFETY_CONSTANTS.SIGNAL_ONLY_MODE) {
+      logger.info('🛡️ SIGNAL_ONLY_MODE: Execution blocked, returning signal result', {
+        component: 'UltraLowLatencyExecutor',
+        operation: 'executeInstant',
+        to: opp.to,
+      });
+      
+      return {
+        success: false,
+        latency: Date.now() - startTime,
+        method: 'instant',
+        // Signal-only: no actual execution
+      };
+    }
+
     if (!this.initialized) {
       await this.initialize();
     }
@@ -124,6 +173,9 @@ class UltraLowLatencyExecutor {
     }
 
     try {
+      // SAFETY: Enforce signal-only mode before signing
+      enforceSignalOnlyMode('sign-and-execute-instant');
+      
       // Update transaction parameters (takes ~2ms)
       // Extract only the properties needed for TransactionRequest
       const updatedTx: ethers.providers.TransactionRequest = {
@@ -181,6 +233,25 @@ class UltraLowLatencyExecutor {
   async executeMultiPath(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
 
+    // SAFETY: Block execution in signal-only mode
+    if (SAFETY_CONSTANTS.SIGNAL_ONLY_MODE) {
+      logger.info('🛡️ SIGNAL_ONLY_MODE: Multi-path execution blocked, returning signal result', {
+        component: 'UltraLowLatencyExecutor',
+        operation: 'executeMultiPath',
+        to: opp.to,
+      });
+      
+      return {
+        success: false,
+        latency: Date.now() - startTime,
+        method: 'multipath',
+        // Signal-only: no actual execution
+      };
+    }
+
+    // SAFETY: Double-check before any signing
+    enforceSignalOnlyMode('execute-multi-path');
+
     // Prepare transaction
     const tx = {
       to: opp.to,
@@ -236,6 +307,9 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaFlashbots(tx: any): Promise<{ txHash: string; path: string }> {
+    // SAFETY: Block in signal-only mode
+    enforceSignalOnlyMode('submit-via-flashbots');
+    
     const signedTx = await this.wallet.signTransaction(tx);
     const flashbotsProvider = new JsonRpcProvider(this.flashbotsUrl);
     const response = await flashbotsProvider.sendTransaction(signedTx);
@@ -243,6 +317,9 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaBloxroute(tx: any): Promise<{ txHash: string; path: string }> {
+    // SAFETY: Block in signal-only mode
+    enforceSignalOnlyMode('submit-via-bloxroute');
+    
     const signedTx = await this.wallet.signTransaction(tx);
     const bloxrouteProvider = new JsonRpcProvider(this.bloxrouteUrl);
     const response = await bloxrouteProvider.sendTransaction(signedTx);
@@ -250,6 +327,9 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitDirect(tx: any): Promise<{ txHash: string; path: string }> {
+    // SAFETY: Block in signal-only mode
+    enforceSignalOnlyMode('submit-direct');
+    
     const signedTx = await this.wallet.signTransaction(tx);
     const response = await this.provider.sendTransaction(signedTx);
     return { txHash: response.hash, path: 'direct' };

@@ -2,6 +2,7 @@ import { MultiRelaySubmitter } from './multi-relay-submitter.js';
 import { FlashLoanAggregator } from './flash-loan-aggregator.js';
 import { UltraLowLatencyExecutor } from './ultra-low-latency-executor.js';
 import logger from '../../../logger.js';
+import { getSafetyShield, SAFETY_CONSTANTS, isSignalOnlyMode } from '../safety/index.js';
 
 interface Opportunity {
   id: string;
@@ -29,7 +30,27 @@ export const flashLoans = new FlashLoanAggregator();
 export const ultraLowLatency = new UltraLowLatencyExecutor();
 
 // Unified execution function that combines all systems
+// SAFETY: This function is BLOCKED in signal-only mode
 export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionResult> {
+  // CRITICAL SAFETY CHECK: Block execution in signal-only mode
+  if (SAFETY_CONSTANTS.SIGNAL_ONLY_MODE) {
+    logger.info('🛡️ SIGNAL_ONLY_MODE: Execution blocked at entry point', {
+      component: 'ExecutionOrchestrator',
+      opportunityId: opp.id,
+      type: opp.type,
+      profit: opp.profit,
+      message: 'Signal-only mode: Returning hypothetical result without execution',
+    });
+    
+    // Return signal result without actual execution
+    return {
+      success: false,
+      profit: 0,
+      method: 'signal-only-blocked',
+      error: 'SIGNAL_ONLY_MODE: Execution blocked - this is a signal, not an execution',
+    };
+  }
+  
   logger.info('Executing opportunity with max profit strategy', {
     component: 'ExecutionOrchestrator',
     opportunityId: opp.id,

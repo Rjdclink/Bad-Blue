@@ -1,6 +1,7 @@
 import { providers, Wallet } from 'ethers';
 import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
+import { getSafetyShield, SAFETY_CONSTANTS } from '../safety/index.js';
 
 const { JsonRpcProvider } = providers;
 
@@ -92,6 +93,15 @@ class MultiRelaySubmitter {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
+    // SAFETY: In signal-only mode, skip relay initialization
+    if (SAFETY_CONSTANTS.SIGNAL_ONLY_MODE) {
+      logger.info('🛡️ SIGNAL_ONLY_MODE: Skipping relay initialization', { 
+        component: 'MultiRelaySubmitter' 
+      });
+      this.initialized = true;
+      return;
+    }
+
     logger.info('Initializing multi-relay connections...', { component: 'MultiRelaySubmitter' });
 
     const initPromises = RELAYS.map(async (relay) => {
@@ -120,6 +130,22 @@ class MultiRelaySubmitter {
   }
 
   async submitBundle(bundle: Bundle, targetBlock: number): Promise<SubmissionResult> {
+    // SAFETY: Block bundle submission in signal-only mode
+    if (SAFETY_CONSTANTS.SIGNAL_ONLY_MODE) {
+      logger.info('🛡️ SIGNAL_ONLY_MODE: Bundle submission blocked', {
+        component: 'MultiRelaySubmitter',
+        targetBlock,
+        transactionCount: bundle.signedTransactions.length,
+        message: 'Signal-only mode: No bundles submitted',
+      });
+      
+      return {
+        submitted: 0,
+        successful: [],
+        failed: ['SIGNAL_ONLY_MODE']
+      };
+    }
+    
     if (!this.initialized) {
       await this.initialize();
     }
