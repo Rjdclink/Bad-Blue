@@ -1,16 +1,25 @@
 /**
- * Crypto Execution Policy (Stage 2: Execution Nullification)
+ * Crypto Execution Policy
  *
- * Goal: provable zero-execution state.
+ * Current constraints:
+ * - Execution is "technically unpaused" ONLY for wiring/routing/validation.
+ * - No capital deployment, no live orders, no withdrawals.
  *
- * This flag is intentionally a hard-coded constant.
- * Execution can only be enabled by an explicit code change (and redeploy),
- * not by environment variables, UI toggles, or runtime mutation.
+ * These flags are intentionally hard-coded constants.
+ * They can only be changed by an explicit code edit + redeploy.
  */
 
-export const CRYPTO_EXECUTION_RELEASED = false as const;
+// Allows starting wiring components (routing/validation harnesses only).
+export const CRYPTO_EXECUTION_WIRING_RELEASED = true as const;
 
-export function assertCryptoExecutionReleased(_context: string): never {
-  throw new Error('CRYPTO_EXECUTION_DISABLED');
+// Hard blocker for anything that can move funds / place real orders / broadcast tx.
+export const CRYPTO_CAPITAL_DEPLOYMENT_RELEASED = false as const;
+
+export function assertCryptoExecutionWiringReleased(_context: string): never {
+  throw new Error('CRYPTO_EXECUTION_WIRING_DISABLED');
+}
+
+export function assertCryptoCapitalDeploymentReleased(_context: string): never {
+  throw new Error('CRYPTO_CAPITAL_DEPLOYMENT_DISABLED');
 }
 
