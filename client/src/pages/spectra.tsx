@@ -88,47 +88,36 @@ interface ViewState {
 }
 
 // ============================================================================
-// FAKE DATA FOR DEMO
+// PRODUCTION: Demo data is DISABLED
+// ============================================================================
+// In production, all track points must come from real sources:
+// - Device GPS
+// - EXIF extraction
+// - Verified surveillance footage
+// - Public record APIs
+//
+// Demo/fake data generation has been disabled for real-world operations.
 // ============================================================================
 
-const generateFakeHistory = (): TrackPoint[] => [
-  {
-    id: 'track-1',
-    label: 'Device ping – phone',
-    lat: 42.5006,
-    lon: -94.1922,
-    timestamp: new Date(Date.now() - 72 * 3600 * 1000).toISOString(),
-    confidence: 0.92,
-    source: 'device',
-  },
-  {
-    id: 'track-2',
-    label: 'Public camera hit',
-    lat: 42.511,
-    lon: -94.2001,
-    timestamp: new Date(Date.now() - 48 * 3600 * 1000).toISOString(),
-    confidence: 0.88,
-    source: 'camera',
-  },
-  {
-    id: 'track-3',
-    label: 'Social media EXIF',
-    lat: 42.5155,
-    lon: -94.2103,
-    timestamp: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
-    confidence: 0.95,
-    source: 'social',
-  },
-  {
-    id: 'track-4',
-    label: 'Current device location',
-    lat: 42.5159,
-    lon: -94.2137,
-    timestamp: new Date().toISOString(),
-    confidence: 0.99,
-    source: 'device',
-  },
-];
+/**
+ * DISABLED: Fake history generation
+ * 
+ * @deprecated Do not use in production - returns empty array
+ */
+const generateFakeHistory = (): TrackPoint[] => {
+  // PRODUCTION: Demo data is disabled - return empty array
+  const isProduction = typeof import.meta !== 'undefined' && 
+    (import.meta.env?.PROD || import.meta.env?.MODE === 'production');
+  
+  if (isProduction) {
+    console.log('[SPECTRA] Demo data disabled in production - real data only');
+    return [];
+  }
+  
+  // Development mode: Still return empty - developers must use real test data
+  console.warn('[SPECTRA] DEV MODE: No demo data - use real test data or staging API');
+  return [];
+};
 
 // ============================================================================
 // ETHEREAL BACKGROUND
@@ -462,17 +451,18 @@ export default function SpectraPage() {
   const { toast } = useToast();
   
   // SPECTRA mode
+  // PRODUCTION: Initialize with empty data - real data will be loaded from API
   const [spectraMode, setSpectraMode] = useState<SpectraMode>('live');
   const [trackPoints, setTrackPoints] = useState<TrackPoint[]>(generateFakeHistory());
   const [selectedPoint, setSelectedPoint] = useState<TrackPoint | null>(null);
   const [showRadar, setShowRadar] = useState(true);
   const [radarMaximized, setRadarMaximized] = useState(false);
   
-  // Map view state
+  // Map view state - PRODUCTION: World view until real data arrives (no hardcoded location)
   const [viewState, setViewState] = useState<ViewState>({
-    latitude: 42.51,
-    longitude: -94.2,
-    zoom: 11,
+    latitude: 0,  // Center of world - will update when real data loads
+    longitude: 0,
+    zoom: 2,      // World view zoom until data available
   });
   
   // Conversation state
@@ -904,7 +894,7 @@ export default function SpectraPage() {
         <footer className="px-4 py-2 bg-slate-900/30 backdrop-blur-sm border-t border-slate-700/30">
           <div className="flex items-center justify-center gap-2 text-xs text-slate-500">
             <AlertCircle className="h-3 w-3" />
-            <span>SPECTRA Intelligence Platform • Location data is simulated for demonstration</span>
+            <span>SPECTRA Intelligence Platform • Real-world location intelligence operations</span>
           </div>
         </footer>
       </div>

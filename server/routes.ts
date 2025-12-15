@@ -3686,7 +3686,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         // Small delay so UI never appears to "instant return" with no work.
         await new Promise((r) => setTimeout(r, 400));
 
-        const normalizedLocation = (location && String(location).trim()) ? String(location).trim() : 'New York, NY';
+        // PRODUCTION: No hardcoded default location - require real location data
+        const normalizedLocation = (location && String(location).trim()) ? String(location).trim() : 'Unknown Location';
         const report = {
           identitySummary: {
             name,

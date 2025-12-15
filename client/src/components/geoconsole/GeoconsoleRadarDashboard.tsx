@@ -237,11 +237,27 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   }, []);
 
   // === MAP INITIALIZATION (ONCE) ===
+  // PRODUCTION: Map center is determined dynamically from actual data
+  // No hardcoded coordinates - center defaults to world view until real data arrives
   useEffect(() => {
     if (!containerRef.current || initRef.current) return;
     initRef.current = true;
 
-    const map = L.map(containerRef.current, { center: [40.7128, -74.0060], zoom: 14, zoomControl: false, attributionControl: false });
+    // Determine initial center from data or use world view (no hardcoded locations)
+    const getInitialCenter = (): [number, number] => {
+      // If we have initial data, center on first point
+      if (initialData && initialData.length > 0) {
+        const firstPoint = initialData[0];
+        return [firstPoint.latitude, firstPoint.longitude];
+      }
+      // No data: default to world view (0,0 with low zoom)
+      return [0, 0];
+    };
+    
+    const initialCenter = getInitialCenter();
+    const initialZoom = initialData && initialData.length > 0 ? 14 : 2;
+
+    const map = L.map(containerRef.current, { center: initialCenter, zoom: initialZoom, zoomControl: false, attributionControl: false });
     L.control.zoom({ position: 'topleft' }).addTo(map);
 
     tileRef.current = L.tileLayer(TILE_LAYERS.satellite.url, { maxZoom: 19 }).addTo(map);
