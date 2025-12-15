@@ -4,6 +4,7 @@ import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { getCryptocrawlGovernance, GovernanceError } from '../governance/index.js';
 import { getCryptara } from '../../cryptara/index.js';
+import { verifyCanonicalCryptoSetup } from '../verification/canonicalCryptoVerifier.js';
 import { 
   authenticateWithPassword, 
   requireCryptoCrawlAuth,
@@ -221,6 +222,16 @@ router.post('/cryptara/evaluate-gates', (req, res) => {
     const cryptara = getCryptara();
     const report = cryptara.evaluateMarketGates(req.body || {}, req.body?.config || undefined);
     res.json({ success: true, report });
+  } catch (err) {
+    return handleGovernanceError(res, err);
+  }
+});
+
+// GET /admin/crypto/verify-canonical - Canonical instruction set verifier (no secrets printed)
+router.get('/verify-canonical', (_req, res) => {
+  try {
+    const report = verifyCanonicalCryptoSetup();
+    res.json({ success: report.ok, report });
   } catch (err) {
     return handleGovernanceError(res, err);
   }

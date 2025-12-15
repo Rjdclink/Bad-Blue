@@ -51,10 +51,12 @@ class UltraLowLatencyExecutor {
     this.bloxrouteUrl = process.env.BLOXROUTE_RPC || 'https://mev.api.bloxroute.com';
     
     this.provider = new JsonRpcProvider(this.privateRpcUrl);
-    this.wallet = new Wallet(
-      process.env.PRIVATE_KEY || Wallet.createRandom().privateKey,
-      this.provider
-    );
+    const pk = process.env.PRIVATE_KEY;
+    if (!pk || pk.trim().length === 0) {
+      // Canonical rule: signer must be loaded only from env and system must hard-fail if missing.
+      throw new Error('Missing PRIVATE_KEY (required for UltraLowLatencyExecutor signer)');
+    }
+    this.wallet = new Wallet(pk.trim(), this.provider);
   }
 
   async initialize(): Promise<void> {

@@ -40,8 +40,8 @@ export class WithdrawDepositManager {
 
     const privateKey = process.env.WALLET_PRIVATE_KEY;
     if (!privateKey) {
-      console.warn('[WithdrawDepositManager] ⚠️ WALLET_PRIVATE_KEY not set - withdraw disabled');
-      return;
+      // Canonical rule: system hard-fails if signer missing (do not silently degrade).
+      throw new Error('WALLET_PRIVATE_KEY not set (required for withdraw/deposit signer)');
     }
 
     for (const [chainId, config] of Object.entries(SUPPORTED_CHAINS)) {
