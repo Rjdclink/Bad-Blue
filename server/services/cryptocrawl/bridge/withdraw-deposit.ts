@@ -1,6 +1,7 @@
 import { ethers, providers, Wallet, Contract } from 'ethers';
 import { ChainId } from './types';
 import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, DEFAULT_GAS_LIMIT, TOKEN_TRANSFER_GAS_LIMIT, NATIVE_TOKEN_PRICES } from './chain-config';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 
 const { JsonRpcProvider } = providers;
 const { parseEther, parseUnits, formatEther, isAddress } = ethers.utils;
@@ -72,6 +73,7 @@ export class WithdrawDepositManager {
   }
 
   async withdrawNative(chain: ChainId, amount: number, toAddress: string): Promise<WithdrawResult> {
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain });
     const wallet = this.wallets.get(chain);
     if (!wallet) return { success: false, error: 'Wallet not initialized. Set WALLET_PRIVATE_KEY.' };
     if (!isAddress(toAddress)) return { success: false, error: 'Invalid address' };
@@ -91,6 +93,7 @@ export class WithdrawDepositManager {
   }
 
   async withdrawToken(chain: ChainId, token: 'USDT' | 'USDC', amount: number, toAddress: string): Promise<WithdrawResult> {
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain });
     const wallet = this.wallets.get(chain);
     if (!wallet) return { success: false, error: 'Wallet not initialized. Set WALLET_PRIVATE_KEY.' };
     if (!isAddress(toAddress)) return { success: false, error: 'Invalid address' };

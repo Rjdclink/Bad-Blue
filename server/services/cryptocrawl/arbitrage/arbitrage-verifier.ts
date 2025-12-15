@@ -14,6 +14,7 @@ import { gasOracle } from '../bridge/gas-oracle.js';
 import { routeOptimizer } from '../bridge/route-optimizer.js';
 import type { ChainId as BridgeChainId } from '../bridge/types';
 import logger from '../../../logger.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 
 export type QuoteVenue = 'coinbase' | 'kraken' | 'okx';
 
@@ -178,78 +179,87 @@ export class ArbitrageVerifier {
    * Unlike `verifyOnce`, this does NOT apply a profitability threshold.
    */
   async evaluateOnce(req: Omit<VerifyRequest, 'minNetProfitUsd'>): Promise<VerifiedArbitragePlan | null> {
+    const governance = getCryptocrawlGovernance();
     const symbol = req.symbol.trim().toUpperCase();
     if (!symbol) throw new Error('symbol is required');
     if (!Number.isFinite(req.notionalUsd) || req.notionalUsd <= 0) throw new Error('notionalUsd must be > 0');
 
-    const quotes = await fetchQuotes(symbol);
-    if (quotes.length < 2) return null;
+    // Stage governance: advisory-only in Stage 1; explicit envelope required when paused.
+    governance.requireAllowed('ADVISE', { chain: req.gas?.chain, pair: symbol });
 
-    const now = Date.now();
-    const freshestTs = Math.max(...quotes.map(q => q.timestamp));
-    const quoteAgeMs = now - freshestTs;
-    if (quoteAgeMs > req.maxQuoteAgeMs) return null;
+    try {
+      const quotes = await fetchQuotes(symbol);
+      if (quotes.length < 2) return null;
 
-    const buy = [...quotes].sort((a, b) => a.ask - b.ask)[0];
-    const sell = [...quotes].sort((a, b) => b.bid - a.bid)[0];
-    if (!buy || !sell) return null;
-    if (buy.venue === sell.venue) return null;
-    if (sell.bid <= buy.ask) return null;
+      const now = Date.now();
+      const freshestTs = Math.max(...quotes.map(q => q.timestamp));
+      const quoteAgeMs = now - freshestTs;
+      if (quoteAgeMs > req.maxQuoteAgeMs) return null;
 
-    const baseQty = req.notionalUsd / buy.ask;
-    const grossSellUsd = baseQty * sell.bid;
-    const grossProfitUsd = grossSellUsd - req.notionalUsd;
+      const buy = [...quotes].sort((a, b) => a.ask - b.ask)[0];
+      const sell = [...quotes].sort((a, b) => b.bid - a.bid)[0];
+      if (!buy || !sell) return null;
+      if (buy.venue === sell.venue) return null;
+      if (sell.bid <= buy.ask) return null;
 
-    const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? 10; // default 0.10%
-    const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? 10; // default 0.10%
-    const buyFeeUsd = feeUsd(req.notionalUsd, buyFeeBps);
-    const sellFeeUsd = feeUsd(grossSellUsd, sellFeeBps);
+      const baseQty = req.notionalUsd / buy.ask;
+      const grossSellUsd = baseQty * sell.bid;
+      const grossProfitUsd = grossSellUsd - req.notionalUsd;
 
-    let gasUsd = 0;
-    if (req.gas?.enabled) {
-      try {
-        const gp = await gasOracle.getGasPrice(req.gas.chain);
-        gasUsd = gp.usdCost;
-      } catch {
-        gasUsd = 0;
+      const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? 10; // default 0.10%
+      const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? 10; // default 0.10%
+      const buyFeeUsd = feeUsd(req.notionalUsd, buyFeeBps);
+      const sellFeeUsd = feeUsd(grossSellUsd, sellFeeBps);
+
+      let gasUsd = 0;
+      if (req.gas?.enabled) {
+        try {
+          const gp = await gasOracle.getGasPrice(req.gas.chain);
+          gasUsd = gp.usdCost;
+        } catch {
+          gasUsd = 0;
+        }
       }
-    }
 
-    let bridgeFeeUsd = 0;
-    let bridge: VerifiedArbitragePlan['bridge'] | undefined;
-    if (req.bridge?.enabled) {
-      const route = routeOptimizer.getBestRoute(req.bridge.fromChain, req.bridge.toChain, req.bridge.token, req.notionalUsd);
-      if (route) {
-        bridgeFeeUsd = route.feeUsd;
-        bridge = {
-          from: route.fromChain,
-          to: route.toChain,
-          token: route.token,
-          feeUsd: route.feeUsd,
-          estimatedTimeSec: route.estimatedTime,
-        };
+      let bridgeFeeUsd = 0;
+      let bridge: VerifiedArbitragePlan['bridge'] | undefined;
+      if (req.bridge?.enabled) {
+        const route = routeOptimizer.getBestRoute(req.bridge.fromChain, req.bridge.toChain, req.bridge.token, req.notionalUsd);
+        if (route) {
+          bridgeFeeUsd = route.feeUsd;
+          bridge = {
+            from: route.fromChain,
+            to: route.toChain,
+            token: route.token,
+            feeUsd: route.feeUsd,
+            estimatedTimeSec: route.estimatedTime,
+          };
+        }
       }
+
+      const totalCostsUsd = buyFeeUsd + sellFeeUsd + gasUsd + bridgeFeeUsd;
+      const netProfitUsd = grossProfitUsd - totalCostsUsd;
+      const spreadPct = ((sell.bid - buy.ask) / buy.ask) * 100;
+
+      return {
+        symbol,
+        notionalUsd: req.notionalUsd,
+        buyVenue: buy.venue,
+        sellVenue: sell.venue,
+        buyAsk: buy.ask,
+        sellBid: sell.bid,
+        baseQty,
+        grossProfitUsd,
+        netProfitUsd,
+        spreadPct,
+        costs: { buyFeeUsd, sellFeeUsd, gasUsd, bridgeFeeUsd, totalCostsUsd },
+        quoteAgeMs,
+        bridge,
+      };
+    } finally {
+      // Stage 1 requirement: automatic pause after each advisory cycle.
+      governance.completeAdvisoryCycle('system', 'arb_verifier_cycle_complete');
     }
-
-    const totalCostsUsd = buyFeeUsd + sellFeeUsd + gasUsd + bridgeFeeUsd;
-    const netProfitUsd = grossProfitUsd - totalCostsUsd;
-    const spreadPct = ((sell.bid - buy.ask) / buy.ask) * 100;
-
-    return {
-      symbol,
-      notionalUsd: req.notionalUsd,
-      buyVenue: buy.venue,
-      sellVenue: sell.venue,
-      buyAsk: buy.ask,
-      sellBid: sell.bid,
-      baseQty,
-      grossProfitUsd,
-      netProfitUsd,
-      spreadPct,
-      costs: { buyFeeUsd, sellFeeUsd, gasUsd, bridgeFeeUsd, totalCostsUsd },
-      quoteAgeMs,
-      bridge,
-    };
   }
 
   async verifyOnce(req: VerifyRequest): Promise<VerifiedArbitragePlan | null> {

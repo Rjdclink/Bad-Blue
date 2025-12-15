@@ -2,6 +2,7 @@ import express from 'express';
 import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
+import { getCryptocrawlGovernance, GovernanceError } from '../governance/index.js';
 import { 
   authenticateWithPassword, 
   requireCryptoCrawlAuth,
@@ -115,6 +116,100 @@ router.get('/health', async (req, res) => {
 // ============================================
 router.use(requireCryptoCrawlAuth);
 
+// ============================================
+// GOVERNANCE ROUTES (Stage 1–6 control plane)
+// ============================================
+const governance = getCryptocrawlGovernance();
+
+function handleGovernanceError(res: any, err: unknown) {
+  if (err instanceof GovernanceError) {
+    return res.status(400).json({
+      success: false,
+      error: err.message,
+      code: err.code,
+      details: err.details || null,
+    });
+  }
+  return res.status(500).json({
+    success: false,
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
+
+// GET /admin/crypto/governance - Current governance state
+router.get('/governance', (req, res) => {
+  res.json({
+    success: true,
+    state: governance.getState(),
+  });
+});
+
+// POST /admin/crypto/governance/stage - Set stage (always pauses)
+router.post('/governance/stage', (req, res) => {
+  try {
+    const stage = Number(req.body?.stage);
+    if (![1, 2, 3, 4, 5, 6].includes(stage)) {
+      return res.status(400).json({ success: false, error: 'stage must be 1..6' });
+    }
+    const reason = String(req.body?.reason || 'manual_stage_set');
+    governance.setStage(stage as any, 'human', reason);
+    res.json({ success: true, state: governance.getState() });
+  } catch (err) {
+    return handleGovernanceError(res, err);
+  }
+});
+
+// POST /admin/crypto/governance/pause - Pause immediately
+router.post('/governance/pause', (req, res) => {
+  try {
+    const reason = String(req.body?.reason || 'manual_pause');
+    governance.pause('human', reason);
+    res.json({ success: true, state: governance.getState() });
+  } catch (err) {
+    return handleGovernanceError(res, err);
+  }
+});
+
+// POST /admin/crypto/governance/unpause - UNPAUSE with explicit envelope
+router.post('/governance/unpause', (req, res) => {
+  try {
+    const body = req.body || {};
+    const envelope = governance.unpauseWithEnvelope({
+      stage: Number(body.stage) as any,
+      scope: String(body.scope || 'unspecified_scope'),
+      authority: 'human',
+      durationMs: Number(body.durationMs || 0),
+      allowedActions: Array.isArray(body.allowedActions) ? body.allowedActions : [],
+      constraints: body.constraints || {},
+    });
+    res.json({ success: true, envelope, state: governance.getState() });
+  } catch (err) {
+    return handleGovernanceError(res, err);
+  }
+});
+
+// POST /admin/crypto/governance/kill-switch/arm - Arm kill switch (required before any execution)
+router.post('/governance/kill-switch/arm', (req, res) => {
+  try {
+    const reason = String(req.body?.reason || 'manual_arm');
+    governance.armKillSwitch('human', reason);
+    res.json({ success: true, state: governance.getState() });
+  } catch (err) {
+    return handleGovernanceError(res, err);
+  }
+});
+
+// POST /admin/crypto/governance/kill-switch/engage - Engage kill switch (immediate stop + pause)
+router.post('/governance/kill-switch/engage', (req, res) => {
+  try {
+    const reason = String(req.body?.reason || 'manual_engage');
+    governance.engageKillSwitch('human', reason);
+    res.json({ success: true, state: governance.getState() });
+  } catch (err) {
+    return handleGovernanceError(res, err);
+  }
+});
+
 // CryptoCrawl system state manager
 const cryptoCrawlState = {
   enabled: false,
@@ -182,6 +277,15 @@ router.post('/start', async (req, res) => {
   }
   
   try {
+    // Stage 1 is advisory-only; keep system from starting background loops.
+    if (governance.getState().stage === 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Governance Stage 1 is advisory-only. Set stage >= 2 and UNPAUSE with an envelope before starting.',
+        governance: governance.getState(),
+      });
+    }
+
     // Enable CryptoCrawl services
     await cryptoCrawlState.enable();
     

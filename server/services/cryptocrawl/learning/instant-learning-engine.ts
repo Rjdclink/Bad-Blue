@@ -13,6 +13,7 @@ import logger from '../../../logger.js';
 import { deepLearningStore, type LearnedParameter } from './deep-learning-store';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { EDEN_CONFIG } from '../eden/config';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 import type { MarketConditionLevel } from '../core/market-condition-detector.js';
 import type { SimulationResult, StrategyProfile, MarketCondition } from '../validation/monte-carlo-engine';
 
@@ -141,6 +142,15 @@ class InstantLearningEngine {
   async initialize(): Promise<void> {
     if (this.state.isInitialized) return;
 
+    if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) {
+      logger.warn('InstantLearningEngine disabled by governance (no long-term memory in Stage 1–3)', {
+        component: 'InstantLearningEngine',
+        governance: getCryptocrawlGovernance().getState(),
+      });
+      this.state.isInitialized = true;
+      return;
+    }
+
     logger.info('InstantLearningEngine: Initializing and loading learned parameters...', {
       component: 'InstantLearningEngine',
     });
@@ -258,6 +268,13 @@ class InstantLearningEngine {
     conditionLevel: MarketConditionLevel,
     result: SimulationResult
   ): Promise<void> {
+    if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) return;
+    // Deny-by-default: learning persistence/mutation requires explicit envelope permission.
+    try {
+      getCryptocrawlGovernance().requireAllowed('PERSIST_LONG_TERM_MEMORY');
+    } catch {
+      return;
+    }
     // ============================================
     // PHASE 1: GENEROUS METRIC EXTRACTION
     // Extract every possible learning signal

@@ -1,5 +1,6 @@
 import { Wallet, providers, ethers } from 'ethers';
 import logger from '../../../logger.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 
 const { JsonRpcProvider } = providers;
 const { parseEther, parseUnits } = ethers.utils;
@@ -57,6 +58,8 @@ class UltraLowLatencyExecutor {
   }
 
   async initialize(): Promise<void> {
+    // Any initialization here can touch RPC and prepare transactions: treat as execution-adjacent.
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     if (this.initialized) return;
 
     logger.info('Initializing ultra-low-latency executor...', { 
@@ -104,6 +107,7 @@ class UltraLowLatencyExecutor {
 
   async executeInstant(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
 
     if (!this.initialized) {
       await this.initialize();
@@ -180,6 +184,7 @@ class UltraLowLatencyExecutor {
 
   async executeMultiPath(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
 
     // Prepare transaction
     const tx = {
@@ -236,6 +241,7 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaFlashbots(tx: any): Promise<{ txHash: string; path: string }> {
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     const signedTx = await this.wallet.signTransaction(tx);
     const flashbotsProvider = new JsonRpcProvider(this.flashbotsUrl);
     const response = await flashbotsProvider.sendTransaction(signedTx);
@@ -243,6 +249,7 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaBloxroute(tx: any): Promise<{ txHash: string; path: string }> {
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     const signedTx = await this.wallet.signTransaction(tx);
     const bloxrouteProvider = new JsonRpcProvider(this.bloxrouteUrl);
     const response = await bloxrouteProvider.sendTransaction(signedTx);
@@ -250,6 +257,7 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitDirect(tx: any): Promise<{ txHash: string; path: string }> {
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     const signedTx = await this.wallet.signTransaction(tx);
     const response = await this.provider.sendTransaction(signedTx);
     return { txHash: response.hash, path: 'direct' };
