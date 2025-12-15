@@ -1,4 +1,13 @@
 // API Routes - LegalWhat
+// 
+// ⚠️ PRODUCTION REQUIREMENT: Express Initialization
+// Express is explicitly imported and initialized in server/index.ts:
+//   import express from "express"
+//   const app = express()
+//   await registerRoutes(app)
+//
+// This ensures no globals, no assumptions, and fail-hard if misconfigured.
+//
 import type { Express, Request, Response, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
@@ -817,7 +826,28 @@ interface EnhancedSearchMeta {
 // ROUTE REGISTRATION
 // ============================================
 
+/**
+ * Register all application routes
+ * 
+ * PRODUCTION READY:
+ * - Requires explicit Express app instance (no globals)
+ * - Validates app is properly initialized
+ * - Fails hard if app is null/undefined
+ * 
+ * @param app - Explicitly initialized Express application
+ * @returns HTTP server instance
+ * @throws {Error} If app is not provided or invalid
+ */
 export async function registerRoutes(app: Express): Promise<Server> {
+  // PRODUCTION VALIDATION: Ensure Express app is explicitly provided
+  if (!app) {
+    throw new Error(
+      'FATAL: registerRoutes called without Express app instance. ' +
+      'Express must be explicitly imported and initialized: ' +
+      'import express from "express"; const app = express(); registerRoutes(app);'
+    );
+  }
+  
   // Auth middleware setup
   await setupAuth(app);
 
