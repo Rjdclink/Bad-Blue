@@ -52,6 +52,7 @@ import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
+import { setupPulseRoutes } from "./routes/pulse.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import { verifyCanonicalCryptoSetup } from "./services/cryptocrawl/verification/canonicalCryptoVerifier.js";
@@ -818,6 +819,9 @@ interface EnhancedSearchMeta {
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware setup
   await setupAuth(app);
+
+  // Packetized “laser pulse” channel (signature-only, no sessions).
+  setupPulseRoutes(app);
 
   // Usage tracking middleware - learns usage patterns for auto-repair timing
   app.use((req, res, next) => {
