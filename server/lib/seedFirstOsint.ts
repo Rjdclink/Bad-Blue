@@ -213,12 +213,21 @@ export async function crawlSeedOnceWithCrawlers(seedUrl: string, timeoutMs = 10_
   const globalTimer = setTimeout(() => globalController.abort(), timeoutMs);
 
   // Register this seed so crawlers can observe abort when a winner is chosen.
-  registerSeed(seedUrl);
+  const host = new URL(seedUrl).host;
+  registerSeed(seedUrl, {
+    host,
+    userAgent: `SeedFirst/1.0 (${host})`,
+    acceptLanguage: 'en-US,en;q=0.9',
+    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.1',
+  });
+
+  // TIME-SLICE GOVERNOR: allocate remaining budget only (bounded by fixed global timeout).
+  const remainingMs = () => Math.max(1, timeoutMs - (Date.now() - startedAt));
 
   const runOne = async (crawler: (typeof SEED_FIRST_CRAWLERS)[number]) => {
     const cStart = Date.now();
     try {
-      const result = await crawler.crawlSeed(seedUrl, timeoutMs);
+      const result = await crawler.crawlSeed(seedUrl, remainingMs());
       const status: 'success' | 'fail' | 'timeout' =
         globalController.signal.aborted || result.timedOut
           ? 'timeout'

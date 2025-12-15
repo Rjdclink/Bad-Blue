@@ -1,5 +1,5 @@
 import type { SeedFirstCrawler } from '../seedFirstCrawlerSet';
-import { getSeedSignal } from './seedAbortBus.ts';
+import { getSeedSignal, getSeedFingerprint } from './seedAbortBus.ts';
 import FirecrawlApp from '@mendable/firecrawl-js';
 import { MIN_CONTENT_LENGTH } from '../../../lib/seedFirstConfig';
 
@@ -16,6 +16,11 @@ export const SeedFetchStarTrek: SeedFirstCrawler = {
       const seedSignal = getSeedSignal(seedUrl);
       if (seedSignal?.aborted) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: true };
 
+      const fp = getSeedFingerprint(seedUrl);
+      const userAgent = fp?.userAgent || 'SeedFirst/1.0';
+      const accept = fp?.accept || 'text/html,text/plain;q=0.9,*/*;q=0.1';
+      const acceptLanguage = fp?.acceptLanguage || 'en-US,en;q=0.9';
+
       const client = new FirecrawlApp({ apiKey });
       const resp = await client.scrapeUrl(seedUrl, {
         // Single request only; no recursion/link expansion.
@@ -26,8 +31,9 @@ export const SeedFetchStarTrek: SeedFirstCrawler = {
         removeBase64Images: true,
         blockAds: true,
         headers: {
-          'User-Agent': 'SeedFetchStarTrek/1.0',
-          'Accept': 'text/html,text/plain;q=0.9,*/*;q=0.1',
+          'User-Agent': userAgent,
+          'Accept': accept,
+          'Accept-Language': acceptLanguage,
         },
       } as any);
 

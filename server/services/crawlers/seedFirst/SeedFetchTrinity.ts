@@ -1,6 +1,6 @@
 import type { SeedFirstCrawler } from '../seedFirstCrawlerSet';
 import { sanitizeUrlStrict } from '../../../lib/seedFirstOsint.ts';
-import { getSeedSignal } from './seedAbortBus.ts';
+import { getSeedSignal, getSeedFingerprint } from './seedAbortBus.ts';
 
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
@@ -20,8 +20,9 @@ export const SeedFetchTrinity: SeedFirstCrawler = {
         redirect: 'manual',
         signal,
         headers: {
-          'User-Agent': 'SeedFetchTrinity/1.0',
-          'Accept': 'text/html,application/xhtml+xml;q=0.9,text/plain;q=0.8,*/*;q=0.1',
+          'User-Agent': getSeedFingerprint(seedUrl)?.userAgent || 'SeedFirst/1.0',
+          'Accept': getSeedFingerprint(seedUrl)?.accept || 'text/html,application/xhtml+xml;q=0.9,text/plain;q=0.8,*/*;q=0.1',
+          'Accept-Language': getSeedFingerprint(seedUrl)?.acceptLanguage || 'en-US,en;q=0.9',
         },
       });
 

@@ -8,8 +8,16 @@
  * This avoids adding extra parameters to the mandated crawlSeed(seedUrl, timeoutMs) signature.
  */
 const seedControllers = new Map<string, AbortController>();
+const seedFingerprints = new Map<string, SeedFingerprint>();
 
-export function registerSeed(seedUrl: string): AbortSignal {
+export type SeedFingerprint = {
+  host: string;
+  userAgent: string;
+  acceptLanguage: string;
+  accept: string;
+};
+
+export function registerSeed(seedUrl: string, fingerprint?: SeedFingerprint): AbortSignal {
   // Replace any existing controller for this seed URL
   const existing = seedControllers.get(seedUrl);
   if (existing) {
@@ -17,6 +25,11 @@ export function registerSeed(seedUrl: string): AbortSignal {
   }
   const controller = new AbortController();
   seedControllers.set(seedUrl, controller);
+  if (fingerprint) {
+    seedFingerprints.set(seedUrl, fingerprint);
+  } else {
+    seedFingerprints.delete(seedUrl);
+  }
   return controller.signal;
 }
 
@@ -28,9 +41,14 @@ export function abortSeed(seedUrl: string) {
 
 export function unregisterSeed(seedUrl: string) {
   seedControllers.delete(seedUrl);
+  seedFingerprints.delete(seedUrl);
 }
 
 export function getSeedSignal(seedUrl: string): AbortSignal | null {
   return seedControllers.get(seedUrl)?.signal || null;
+}
+
+export function getSeedFingerprint(seedUrl: string): SeedFingerprint | null {
+  return seedFingerprints.get(seedUrl) || null;
 }
 

@@ -1,5 +1,5 @@
 import type { SeedFirstCrawler } from '../seedFirstCrawlerSet';
-import { getSeedSignal } from './seedAbortBus.ts';
+import { getSeedSignal, getSeedFingerprint } from './seedAbortBus.ts';
 import puppeteer from 'puppeteer';
 import { existsSync } from 'fs';
 import { MIN_CONTENT_LENGTH } from '../../../lib/seedFirstConfig';
@@ -27,6 +27,10 @@ export const SeedFetchBirdOfPrey: SeedFirstCrawler = {
       const signal = seedSignal ? AbortSignal.any([controller.signal, seedSignal]) : controller.signal;
       if (signal.aborted) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: true };
 
+      const fp = getSeedFingerprint(seedUrl);
+      const userAgent = fp?.userAgent || 'SeedFirst/1.0';
+      const acceptLanguage = fp?.acceptLanguage || 'en-US,en;q=0.9';
+
       // Puppeteer HEAVY FALLBACK ONLY
       // Headless: true; single page per seed; no reuse across seeds.
       const isDocker = existsSync('/.dockerenv');
@@ -49,7 +53,10 @@ export const SeedFetchBirdOfPrey: SeedFirstCrawler = {
 
       try {
         const page = await browser.newPage();
-        await page.setUserAgent('SeedFetchBirdOfPrey/1.0');
+        await page.setUserAgent(userAgent);
+        await page.setExtraHTTPHeaders({
+          'Accept-Language': acceptLanguage,
+        });
 
         // Network control: block images/media/fonts/trackers/ads/analytics
         await page.setRequestInterception(true);
