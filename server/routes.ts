@@ -53,6 +53,8 @@ import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import { setupPulseRoutes } from "./routes/pulse.routes";
+import { createBeamRouter } from "./services/cryptocrawl/beam/beamRoutes.js";
+import { startBeamOnBoot } from "./services/cryptocrawl/beam/beam.js";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import { verifyCanonicalCryptoSetup } from "./services/cryptocrawl/verification/canonicalCryptoVerifier.js";
@@ -822,6 +824,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Packetized “laser pulse” channel (signature-only, no sessions).
   setupPulseRoutes(app);
+
+  // Beam test: default ON when BEAM_ENABLED=true (no UI dependency).
+  // Missing BEAM_ENABLED is treated as false (no beam = no cost).
+  app.use('/beam', createBeamRouter());
+  startBeamOnBoot();
 
   // Usage tracking middleware - learns usage patterns for auto-repair timing
   app.use((req, res, next) => {
