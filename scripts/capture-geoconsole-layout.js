@@ -58,6 +58,7 @@ async function main() {
   // Start Vite dev server (client-only) on a fixed port.
   const port = Number(process.env.UI_PREVIEW_PORT || 4173);
   const baseUrl = `http://127.0.0.1:${port}`;
+  const capturePath = process.env.UI_CAPTURE_PATH || '/geoconsole';
 
   const vite = spawn(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
@@ -87,16 +88,24 @@ async function main() {
       });
       await page.setViewport({ width: 1600, height: 1000, deviceScaleFactor: 1 });
 
-      await page.goto(`${baseUrl}/geoconsole`, { waitUntil: 'networkidle2' });
+      await page.goto(`${baseUrl}${capturePath}`, { waitUntil: 'networkidle2' });
 
-      // Confirm the key widgets exist (header + layer switches + timeline buttons).
-      await page.waitForFunction(() => {
+      // Confirm the key widgets exist (route-sensitive).
+      await page.waitForFunction((capturePath) => {
         const bodyText = document.body?.innerText || '';
-        const hasTitle = bodyText.includes('Hybrid Geoconsole') || bodyText.includes('SPECTRA GeoConsole');
-        const hasExport = bodyText.includes('Export');
-        const hasProcess = bodyText.includes('Process');
-        return hasTitle && hasExport && hasProcess;
-      }, { timeout: 60_000 });
+        const hasGeoConsole = bodyText.includes('SPECTRA GeoConsole');
+
+        // Dedicated /geoconsole page: require both timeline buttons.
+        if (String(capturePath).startsWith('/geoconsole')) {
+          const hasTitle = bodyText.includes('Hybrid Geoconsole') || hasGeoConsole;
+          const hasExport = bodyText.includes('Export');
+          const hasProcess = bodyText.includes('Process');
+          return hasTitle && hasExport && hasProcess;
+        }
+
+        // Embedded contexts (e.g. /people-finder): require the embedded console title.
+        return hasGeoConsole;
+      }, { timeout: 90_000 }, capturePath);
 
       // If Vite/runtime overlays appear, remove them so the screenshot proves
       // widget visibility (layout-only verification).
