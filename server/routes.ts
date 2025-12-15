@@ -5020,7 +5020,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
     //
     // This is intentionally narrow and does NOT touch any other /admin/crypto/* routes.
     const fullPath = String((req as any).originalUrl || '').split('?')[0];
-    if (fullPath.startsWith('/admin/crypto/verify')) {
+    const isVerifyRoute =
+      fullPath.startsWith('/admin/crypto/verify') ||
+      (String((req as any).baseUrl || '') === '/admin/crypto' && String((req as any).path || '').startsWith('/verify'));
+
+    if (isVerifyRoute) {
       const provided = String(req.header('X-Internal-Verify') || '');
       const secret = String(process.env.INTERNAL_VERIFY_SECRET || '');
       if (provided && secret && provided === secret) {
