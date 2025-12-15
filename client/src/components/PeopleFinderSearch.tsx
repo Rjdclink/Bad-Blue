@@ -27,7 +27,6 @@ import {
   FileText,
   AlertCircle,
 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -322,13 +321,13 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
               <Label htmlFor="additionalInfo">Verified Domain Homepage (Optional)</Label>
               <Input
                 id="additionalInfo"
-                placeholder="example.com or https://example.com"
+                placeholder="https://example.com"
                 value={additionalInfo}
                 onChange={(e) => setAdditionalInfo(e.target.value)}
                 onKeyPress={handleKeyPress}
               />
               <p className="text-xs text-muted-foreground">
-                Used only if no explicit profile URL seed is supplied.
+                Used only if no explicit profile URL seed is supplied. Must include scheme (https://).
               </p>
             </div>
 
