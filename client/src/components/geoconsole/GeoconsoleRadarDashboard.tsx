@@ -370,7 +370,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const { currentFrame, isPlaying, isLive, stats, timeline, totalFrames, currentIndex } = state;
 
   return (
-    <div className="flex flex-col h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-hidden">
+    <div className="flex flex-col min-h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white" style={{ minHeight: '100%', overflow: 'visible' }}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/50 bg-slate-900/80">
         <div className="flex items-center gap-3">
@@ -401,10 +401,10 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       </div>
 
       {/* Main */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1" style={{ minHeight: '400px' }}>
         {/* Map */}
-        <div className="flex-1 relative">
-          <div ref={containerRef} className="absolute inset-0" style={{ background: '#1a1a2e' }} />
+        <div className="flex-1 relative" style={{ minHeight: '400px' }}>
+          <div ref={containerRef} className="absolute inset-0" style={{ background: '#1a1a2e', minHeight: '400px' }} />
           
           {/* Layer Controls */}
           <div className="absolute top-4 right-4 bg-slate-900/90 rounded-lg p-3 border border-slate-700/50 z-[1000]">
@@ -436,8 +436,8 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           </button>
         </div>
 
-        {/* Stats Panel */}
-        <div className="w-64 border-l border-slate-700/50 flex flex-col bg-slate-900/50">
+        {/* Stats Panel - Full visibility with scroll */}
+        <div className="w-64 border-l border-slate-700/50 flex flex-col bg-slate-900/50" style={{ maxHeight: '100%', overflow: 'auto' }}>
           <div className="p-3 border-b border-slate-700/50">
             <h3 className="text-sm font-medium mb-2 flex items-center gap-2"><Activity className="w-4 h-4 text-cyan-400" />Stats</h3>
             <div className="grid grid-cols-2 gap-2">
@@ -466,10 +466,10 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
         </div>
       </div>
 
-      {/* Timeline */}
-      <div className="p-3 border-t border-slate-700/50 bg-slate-900/80">
+      {/* Timeline - Sticky footer with full visibility */}
+      <div className="p-3 border-t border-slate-700/50 bg-slate-900/95 backdrop-blur-sm" style={{ position: 'sticky', bottom: 0, zIndex: 100, flexShrink: 0 }}>
         {processing && <div className="mb-2"><span className="text-xs text-slate-400">{progressMsg}</span><Progress value={50} className="h-1 mt-1" /></div>}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
             <Button variant="ghost" size="icon" onClick={actions.stop} className="h-8 w-8 text-slate-400 hover:text-white"><SkipBack className="w-4 h-4" /></Button>
             <Button variant="ghost" size="icon" onClick={stepBack} className="h-8 w-8 text-slate-400 hover:text-white"><ChevronLeft className="w-4 h-4" /></Button>

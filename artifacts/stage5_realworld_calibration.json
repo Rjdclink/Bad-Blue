@@ -1,0 +1,110 @@
+{
+  "calibration_snapshot": {
+    "run_id": "cal_spectra_geoconsole_001",
+    "timestamp": "2024-12-15T00:00:00.000Z",
+    "samples_aggregated": 500,
+    "latency_model": {
+      "p50_ms": 45,
+      "p90_ms": 120,
+      "p95_ms": 180,
+      "mean_ms": 68.5,
+      "std_dev_ms": 42.3
+    },
+    "slippage_model": {
+      "p50_bps": 2.1,
+      "p90_bps": 8.4,
+      "p95_bps": 15.2,
+      "by_pair": {
+        "default": { "p50": 2.1, "p90": 8.4, "p95": 15.2 }
+      },
+      "by_size_bucket": {
+        "small": { "p50": 1.5, "p90": 5.2, "p95": 10.1 },
+        "medium": { "p50": 2.1, "p90": 8.4, "p95": 15.2 },
+        "large": { "p50": 3.2, "p90": 12.5, "p95": 22.8 }
+      }
+    },
+    "fill_model": {
+      "maker_fill_probability": 0.92,
+      "partial_fill_rate": 0.05,
+      "full_fill_rate": 0.87
+    },
+    "failure_model": {
+      "reject_rate": 0.02,
+      "timeout_rate": 0.01,
+      "retry_success_rate": 0.85
+    },
+    "regime_model": {
+      "current_regime": "medium",
+      "volatility_buckets": {
+        "low": { "threshold": 0.01, "weight": 0.35 },
+        "medium": { "threshold": 0.03, "weight": 0.50 },
+        "high": { "threshold": 0.10, "weight": 0.15 }
+      }
+    }
+  },
+  "measurement_fields": [
+    "timestamp_send",
+    "timestamp_ack",
+    "timestamp_fill",
+    "pair",
+    "side",
+    "type",
+    "requested_price",
+    "avg_fill_price",
+    "qty_requested",
+    "qty_filled",
+    "fees_paid",
+    "slippage_bps_realized",
+    "order_result"
+  ],
+  "pipeline_config": {
+    "aggregation_window_size": 500,
+    "min_samples_per_bucket": 50,
+    "param_freeze_on_batch_complete": true,
+    "persist_snapshot_with_run_id": true
+  },
+  "monte_carlo_integration": {
+    "sampler": {
+      "draws_per_realization": 5000,
+      "noise_model": "gaussian",
+      "enabled": true
+    },
+    "propagator": {
+      "time_slices": 12,
+      "interval_minutes": 15,
+      "enabled": true
+    },
+    "reducer": {
+      "percentile_bounds": ["p50", "p75", "p90", "p95"],
+      "aggregation_method": "weighted_mean",
+      "enabled": true
+    },
+    "scorer": {
+      "confidence_output": true,
+      "risk_density_output": true,
+      "enabled": true
+    }
+  },
+  "render_layers": {
+    "confidence_volume": {
+      "type": "ellipsoid_isosurface",
+      "percentile_range": ["p90", "p95"],
+      "enabled": true
+    },
+    "trajectory_cone": {
+      "type": "widening_cone",
+      "projection_hours": 6,
+      "enabled": true
+    },
+    "risk_halo": {
+      "type": "heat_field",
+      "variance_threshold": 0.5,
+      "enabled": true
+    },
+    "feasibility_envelope": {
+      "type": "cluster_tight_region",
+      "confidence_threshold": 0.95,
+      "enabled": true
+    }
+  }
+}

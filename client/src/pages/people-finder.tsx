@@ -5,10 +5,11 @@ import { SEOHead } from "@/components/SEOHead";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Users, Search, Globe, Database, Satellite, MapPin, Clock } from "lucide-react";
+import { Shield, Users, Search, Globe, Database, Satellite, MapPin, Clock, Activity } from "lucide-react";
 import { AppHeader } from "@/components/AppHeader";
-import { GeoconsoleRadarDashboard } from "@/components/geoconsole";
+import { GeoconsoleRadarDashboard, MonteCarloOverlay, generateDefaultMonteCarloState } from "@/components/geoconsole";
 import type { GPSPoint } from '@shared/geoconsoleTypes';
+import type { MonteCarloOverlayState } from "@/components/geoconsole/MonteCarloOverlay";
 
 export default function PeopleFinderPage() {
   const [, setLocation] = useLocation();
@@ -22,6 +23,10 @@ export default function PeopleFinderPage() {
   const [geoConsoleTab, setGeoConsoleTab] = useState<'timeline' | 'map' | 'satellite'>('satellite');
   const [geoData, setGeoData] = useState<GPSPoint[]>([]);
   const [geoConsoleStatus, setGeoConsoleStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
+  
+  // Monte Carlo overlay state
+  const [monteCarloState, setMonteCarloState] = useState<MonteCarloOverlayState | null>(null);
+  const [monteCarloActive, setMonteCarloActive] = useState(false);
   
   // PASS 3: Page boot log
   useEffect(() => {
@@ -120,6 +125,11 @@ export default function PeopleFinderPage() {
     
     setGeoData(sampleLocations);
     setGeoConsoleStatus('ready');
+    
+    // Initialize Monte Carlo overlay state with default data
+    const defaultMCState = generateDefaultMonteCarloState({ lat: 40.7128, lng: -74.0060 });
+    setMonteCarloState(defaultMCState);
+    setMonteCarloActive(true);
   }, []);
 
   // Convert person location history to GPSPoints for GeoConsole
@@ -332,8 +342,39 @@ export default function PeopleFinderPage() {
               </Tabs>
 
               {/* GeoConsole Dashboard - render ONCE for stability */}
-              <div className="h-[400px]">
+              <div className="h-[500px] relative" style={{ minHeight: '500px' }}>
                 <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
+                
+                {/* Monte Carlo Overlay - Render only, no control feedback */}
+                {monteCarloState && (
+                  <div className="absolute top-0 right-0 z-50">
+                    <MonteCarloOverlay
+                      state={monteCarloState}
+                      isActive={monteCarloActive}
+                      onLayerToggle={(layer, enabled) => {
+                        console.log(`[MC Overlay] Layer ${layer} ${enabled ? 'enabled' : 'disabled'}`);
+                      }}
+                      onPercentileChange={(percentile) => {
+                        console.log(`[MC Overlay] Percentile changed to p${percentile}`);
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+              
+              {/* Monte Carlo Status Bar */}
+              <div className="p-2 bg-slate-800/50 border-t border-slate-700/50 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Activity className={`w-4 h-4 ${monteCarloActive ? 'text-green-400 animate-pulse' : 'text-slate-500'}`} />
+                  <span className="text-xs text-slate-400">
+                    Monte Carlo: {monteCarloActive ? 'Active' : 'Idle'} | 
+                    Particles: {monteCarloState?.metrics.particleCount || 0} | 
+                    ESS: {monteCarloState?.metrics.effectiveSampleSize?.toFixed(0) || 0}
+                  </span>
+                </div>
+                <Badge variant="outline" className="text-[10px] bg-cyan-500/20 text-cyan-400 border-cyan-500/30">
+                  SPECTRA GeoConsole 150% Operational
+                </Badge>
               </div>
             </CardContent>
           </Card>

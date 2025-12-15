@@ -1,0 +1,83 @@
+STAGE 5 MONTE CARLO OVERLAY SCREENSHOT DESCRIPTION
+===================================================
+
+This document describes the expected UI state when viewing the SPECTRA GeoConsole
+with Monte Carlo overlay at /people-finder route.
+
+VISIBLE COMPONENTS:
+-------------------
+1. SPECTRA GeoConsole Header
+   - Satellite icon with gradient background
+   - "SPECTRA GeoConsole" title with "Satellite Intelligence" subtitle
+   - LIVE badge (green, pulsing when active)
+   - Map mode selector: Satellite | Hybrid | Street | Dark
+
+2. Map View (center, full width)
+   - Leaflet map with satellite imagery tiles
+   - Current position reticle (cyan crosshair)
+   - Trail segments with speed-based coloring
+   - Heatmap overlay showing particle density
+   - Futurecast prediction line (purple, dashed)
+
+3. Monte Carlo Overlay Panel (top-right corner)
+   - Header: "Monte Carlo Overlay" with ACTIVE badge
+   - Render Layers section with toggles:
+     [✓] Confidence Volume (cyan)
+     [✓] Trajectory Cone (purple)
+     [✓] Risk Halo (amber)
+     [✓] Feasibility Envelope (green)
+     [ ] Particles (blue, off by default)
+   - Percentile slider: p50 ← → p95 (current: p90)
+   - Opacity slider: 70%
+   - Time Position scrubber: 100%
+   - Confidence Bounds display:
+     * Center: 40.712800, -74.006000
+     * Radius: 500m
+   - Calibration section:
+     * Latency: p50=45ms | p90=120ms | p95=180ms
+     * Fill Rate: 92.0%
+     * Fail Rate: 3.0%
+     * Regime: MEDIUM (amber badge)
+   - Metrics section:
+     * Particles: 5,000
+     * ESS: 4,500
+
+4. Layer Controls (map overlay, top-right)
+   - Layer toggles for: satellite, trail, heatmap, markers, futurecast, reticle
+
+5. Position Panel (map overlay, bottom-left)
+   - LAT: 40.712800
+   - LNG: -74.006000
+   - SPD: 2.2 mph
+   - HDG: 45.0°
+
+6. GO LIVE Button (map overlay, top-left)
+   - Green when live, slate when not
+
+7. Stats Panel (right sidebar)
+   - Distance, Avg Speed, Max Speed, Duration
+   - Futurecast predictions with timestamps
+   - Data source indicators
+
+8. Timeline Controls (bottom, sticky)
+   - Play/Pause/Stop/Step buttons
+   - Time scrubber slider
+   - Playback speed selector (0.5x - 10x)
+   - Process and Export buttons
+
+9. Monte Carlo Status Bar (below GeoConsole)
+   - Activity indicator (green pulsing)
+   - "Monte Carlo: Active | Particles: 5000 | ESS: 4500"
+   - Badge: "SPECTRA GeoConsole 150% Operational"
+
+ACCEPTANCE CRITERIA MET:
+------------------------
+✓ Full map visible without compression
+✓ Timeline fully visible and scrollable
+✓ All layer toggles accessible
+✓ Export / Process buttons reachable
+✓ Page scrolls beyond map bottom
+✓ Monte Carlo overlay displays all 4 render layers
+✓ Percentile slider functional (p50 ↔ p95)
+✓ Calibration data visible
+✓ Real-time metrics displayed
