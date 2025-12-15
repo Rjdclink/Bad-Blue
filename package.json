@@ -13,6 +13,7 @@
     "build:server": "esbuild server/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --packages=external --define:process.env.NODE_ENV=\"'production'\"",
     "start": "NODE_ENV=production node dist/index.js",
     "check": "tsc",
+    "wire-check": "NO_EXECUTION=true NO_INTERVALS=true CRYPTARA_MODE=SILENT_WATCHER_ONLY tsx scripts/wire-check.ts",
     "db:push": "drizzle-kit push",
     "migrate": "tsx server/migrations/runMigrations.ts",
     "verify": "node scripts/verify-stage-1.cjs && node scripts/verify-stage-2.cjs && node scripts/verify-stage-3.cjs && node scripts/verify-stage-4.cjs && node scripts/verify-stage-5.cjs && node scripts/verify-stage-6.cjs && node scripts/verify-stage-16.cjs && node scripts/verify-stage-19.cjs && node scripts/verify-stage-20.cjs",
