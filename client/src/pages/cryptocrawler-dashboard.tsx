@@ -914,6 +914,10 @@ export default function CryptoCrawlerDashboard() {
               <Terminal className="w-4 h-4 mr-2" />
               Console
             </TabsTrigger>
+            <TabsTrigger value="governance" className="data-[state=active]:bg-purple-500/20">
+              <Shield className="w-4 h-4 mr-2" />
+              Governance
+            </TabsTrigger>
           </TabsList>
 
           {/* Faucet Tab - Autonomous Profit Optimization */}
@@ -1565,6 +1569,11 @@ export default function CryptoCrawlerDashboard() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Governance Tab - Stage Governor Control */}
+          <TabsContent value="governance">
+            <StageGovernorPanel />
           </TabsContent>
         </Tabs>
 

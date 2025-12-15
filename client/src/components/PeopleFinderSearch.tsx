@@ -108,34 +108,8 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
     });
   }, []);
 
-  // Auto-search if name parameter is provided
-  useEffect(() => {
-    if (nameParam && nameParam.trim()) {
-      const key = `${window.location.pathname}${window.location.search || ''}`;
-      const now = Date.now();
-      const isImmediateDuplicate = lastAutoSearchKey === key && (now - lastAutoSearchAt) < 2500;
-      if (isImmediateDuplicate) {
-        console.warn('[PEOPLE FINDER SEARCH] Auto-search suppressed (duplicate mount)', { key });
-        return;
-      }
-      lastAutoSearchKey = key;
-      lastAutoSearchAt = now;
-
-      console.log('[PEOPLE FINDER SEARCH] Auto-search triggered', { name: nameParam });
-      // Small delay to ensure component is mounted
-      autoSearchTimeoutRef.current = setTimeout(() => {
-        // Avoid triggering work after route changes/unmount
-        if (!mountedRef.current) return;
-        handleSearch();
-      }, 500);
-    }
-    return () => {
-      if (autoSearchTimeoutRef.current) {
-        clearTimeout(autoSearchTimeoutRef.current);
-        autoSearchTimeoutRef.current = null;
-      }
-    };
-  }, []); // Run only once on mount
+  // Stability rule: do NOT auto-run searches on mount (refresh must not re-fire searches).
+  // We still prefill from query params to support deep-linking, but execution must be explicit.
 
   const searchMutation = useMutation({
     mutationFn: async (searchData: { name: string; location?: string; department?: string; domain?: string }) => {

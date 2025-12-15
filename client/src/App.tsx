@@ -125,6 +125,9 @@ const LexaraViewport = lazyWithRetry(() => import("@/components/LexaraViewport")
 // SPECTRA - LEXARA + GeoConsole + People Radar
 const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
 
+// DEV-ONLY: GeoConsole layout preview (UI verification without auth)
+const GeoConsolePage = lazyWithRetry(() => import("@/pages/geoconsole"), 'GeoConsole');
+
 // Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 
@@ -321,6 +324,9 @@ function Router() {
         {/* LegalWhat Platform Landing Page - Public Entry Point */}
         <Route path="/" component={Landing} />
         <Route path="/landing" component={Landing} />
+
+        {/* DEV-ONLY: GeoConsole layout surface (no auth required) */}
+        {import.meta.env.DEV && <Route path="/geoconsole" component={GeoConsolePage} />}
         
         {/* Public routes - accessible to everyone */}
         <Route path="/subscription-success" component={SubscriptionSuccess} />

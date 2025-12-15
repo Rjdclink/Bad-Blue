@@ -180,8 +180,13 @@ function renderFrame(
     map.panTo([currentFrame.position.latitude, currentFrame.position.longitude], { animate: true, duration: 0.2 });
   }
 
-  // Force redraw
-  map.invalidateSize();
+  // Force redraw (guard zero-sized containers to avoid leaflet.heat canvas errors)
+  try {
+    const size = map.getSize();
+    if (size.x > 0 && size.y > 0) map.invalidateSize();
+  } catch {
+    // ignore
+  }
 }
 
 // ============================================================================
@@ -304,7 +309,18 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const onResize = () => map.invalidateSize();
+    const safeInvalidate = () => {
+      const el = containerRef.current;
+      if (!el) return;
+      // If the container is temporarily hidden or not laid out, skip.
+      if (el.offsetWidth === 0 || el.offsetHeight === 0) return;
+      try {
+        map.invalidateSize();
+      } catch {
+        // ignore
+      }
+    };
+    const onResize = () => safeInvalidate();
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       if (visibleInvalidateTimeoutRef.current) {
@@ -313,7 +329,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       }
       visibleInvalidateTimeoutRef.current = window.setTimeout(() => {
         if (!mountedRef.current) return;
-        if (mapRef.current === map) map.invalidateSize();
+        if (mapRef.current === map) safeInvalidate();
       }, 50);
     };
     window.addEventListener('resize', onResize);
@@ -370,7 +386,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const { currentFrame, isPlaying, isLive, stats, timeline, totalFrames, currentIndex } = state;
 
   return (
-    <div className="flex flex-col h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-hidden">
+    <div className="flex flex-col h-full min-h-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-x-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/50 bg-slate-900/80">
         <div className="flex items-center gap-3">
@@ -401,27 +417,46 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       </div>
 
       {/* Main */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-x-hidden">
         {/* Map */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative min-h-0">
           <div ref={containerRef} className="absolute inset-0" style={{ background: '#1a1a2e' }} />
-          
-          {/* Layer Controls */}
-          <div className="absolute top-4 right-4 bg-slate-900/90 rounded-lg p-3 border border-slate-700/50 z-[1000]">
-            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-700/50"><Layers className="w-4 h-4 text-cyan-400" /><span className="text-sm font-medium">Layers</span></div>
-            {Object.entries(layerCfg).map(([k, v]) => (
-              <div key={k} className="flex items-center justify-between py-1">
-                <span className="text-xs text-slate-400 capitalize">{k}</span>
-                <Switch checked={v} onCheckedChange={c => setLayerCfg(p => ({ ...p, [k]: c }))} className="scale-75" />
+        </div>
+
+        {/* Stats Panel */}
+        <div className="w-72 border-l border-slate-700/50 flex flex-col bg-slate-900/50 min-h-0">
+          {/* Controls */}
+          <div className="p-3 border-b border-slate-700/50">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium flex items-center gap-2"><Radio className="w-4 h-4 text-cyan-400" />Controls</h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={actions.toggleLive}
+                className={isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}
+              >
+                {isLive ? 'LIVE' : 'GO LIVE'}
+              </Button>
+            </div>
+            <div className="bg-slate-800/30 rounded-lg p-2 border border-slate-700/40">
+              <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-700/40">
+                <Layers className="w-4 h-4 text-cyan-400" />
+                <span className="text-sm font-medium">Layers</span>
               </div>
-            ))}
+              {Object.entries(layerCfg).map(([k, v]) => (
+                <div key={k} className="flex items-center justify-between py-1">
+                  <span className="text-xs text-slate-400 capitalize">{k}</span>
+                  <Switch checked={v} onCheckedChange={c => setLayerCfg(p => ({ ...p, [k]: c }))} className="scale-75" />
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Position */}
           {currentFrame && (
-            <div className="absolute bottom-4 left-4 bg-slate-900/90 rounded-lg p-3 border border-slate-700/50 z-[1000] min-w-[180px]">
-              <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-700/50"><Crosshair className="w-4 h-4 text-cyan-400" /><span className="text-sm font-medium">Position</span></div>
-              <div className="space-y-1 text-xs font-mono">
+            <div className="p-3 border-b border-slate-700/50">
+              <h3 className="text-sm font-medium mb-2 flex items-center gap-2"><Crosshair className="w-4 h-4 text-cyan-400" />Position</h3>
+              <div className="space-y-1 text-xs font-mono bg-slate-800/30 rounded-lg p-2 border border-slate-700/40">
                 <p><span className="text-slate-500">LAT:</span> <span className="text-cyan-400">{currentFrame.position.latitude.toFixed(6)}</span></p>
                 <p><span className="text-slate-500">LNG:</span> <span className="text-cyan-400">{currentFrame.position.longitude.toFixed(6)}</span></p>
                 <p><span className="text-slate-500">SPD:</span> <span className="text-green-400">{formatSpeed(currentFrame.velocity?.speed || 0)}</span></p>
@@ -430,14 +465,6 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             </div>
           )}
 
-          {/* LIVE */}
-          <button onClick={actions.toggleLive} className={`absolute top-4 left-4 px-4 py-2 rounded-lg font-bold text-sm z-[1000] ${isLive ? 'bg-green-500 text-white shadow-lg shadow-green-500/30' : 'bg-slate-800/90 text-slate-400 border border-slate-700/50'}`}>
-            <Radio className="w-4 h-4 inline mr-2" />{isLive ? 'LIVE' : 'GO LIVE'}
-          </button>
-        </div>
-
-        {/* Stats Panel */}
-        <div className="w-64 border-l border-slate-700/50 flex flex-col bg-slate-900/50">
           <div className="p-3 border-b border-slate-700/50">
             <h3 className="text-sm font-medium mb-2 flex items-center gap-2"><Activity className="w-4 h-4 text-cyan-400" />Stats</h3>
             <div className="grid grid-cols-2 gap-2">
@@ -456,7 +483,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               <div className="space-y-1">{state.futurecast.slice(0, 4).map((f, i) => (<div key={i} className="flex items-center text-xs bg-slate-800/30 rounded p-1"><Clock className="w-3 h-3 text-slate-500 mr-1" /><span className="text-slate-400 flex-1">{formatTime(f.timestamp)}</span><span className="text-purple-400">{(f.confidence * 100).toFixed(0)}%</span></div>))}</div>
             ) : <p className="text-xs text-slate-500">Play to generate</p>}
           </div>
-          <div className="p-3 flex-1 overflow-auto">
+          <div className="p-3 flex-1 min-h-0 overflow-auto">
             <h3 className="text-sm font-medium mb-2 flex items-center gap-2"><Target className="w-4 h-4 text-cyan-400" />Sources</h3>
             {['device_gps', 'wifi_handoff', 'public_record', 'interpolated'].map(s => {
               const active = state.trail.some(f => f.source === s);
@@ -467,9 +494,9 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       </div>
 
       {/* Timeline */}
-      <div className="p-3 border-t border-slate-700/50 bg-slate-900/80">
+      <div className="p-3 border-t border-slate-700/50 bg-slate-900/80 sticky bottom-0 z-[1100]">
         {processing && <div className="mb-2"><span className="text-xs text-slate-400">{progressMsg}</span><Progress value={50} className="h-1 mt-1" /></div>}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
             <Button variant="ghost" size="icon" onClick={actions.stop} className="h-8 w-8 text-slate-400 hover:text-white"><SkipBack className="w-4 h-4" /></Button>
             <Button variant="ghost" size="icon" onClick={stepBack} className="h-8 w-8 text-slate-400 hover:text-white"><ChevronLeft className="w-4 h-4" /></Button>
@@ -479,7 +506,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             <Button variant="ghost" size="icon" onClick={stepForward} className="h-8 w-8 text-slate-400 hover:text-white"><ChevronRight className="w-4 h-4" /></Button>
             <Button variant="ghost" size="icon" onClick={() => actions.seekTo(totalFrames - 1)} className="h-8 w-8 text-slate-400 hover:text-white"><SkipForward className="w-4 h-4" /></Button>
           </div>
-          <div className="flex-1">
+          <div className="flex-1 min-w-[260px]">
             <Slider value={[currentIndex]} min={0} max={Math.max(0, totalFrames - 1)} step={1} onValueChange={([v]) => actions.seekTo(v)} className="cursor-pointer" />
             <div className="flex justify-between mt-1 text-xs text-slate-500">
               <span>{formatTime(timeline.start)}</span>

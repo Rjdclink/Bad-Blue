@@ -142,7 +142,6 @@ import {
   insertSubscriptionTierSchema,
   DOCUMENT_CREATOR_PRICING_CENTS,
 } from "@shared/schema";
-import crypto from 'crypto';
 import archiver from 'archiver';
 import { eq, and, sql, desc, asc, inArray } from 'drizzle-orm';
 import { db } from './db';
@@ -1274,7 +1273,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const user = await storage.getUser(userId);
 
+      // Dev-lite stability: if storage is DB-disabled or does not have the user record yet,
+      // fall back to the session user object so the UI can render protected routes.
       if (!user) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn("[AUTH] User not found in storage; returning session fallback user", {
+            userId,
+            hasClaims: !!req.user?.claims,
+          });
+          const fallbackUser = {
+            id: userId,
+            email: req.user?.claims?.email || null,
+            firstName: req.user?.claims?.firstName || null,
+            lastName: req.user?.claims?.lastName || null,
+            hasPaidForAccess: true,
+          };
+          return res.json({ ...fallbackUser, isAdmin: userId === "admin-bypass" });
+        }
         return res.status(404).json({ message: "User not found" });
       }
 
@@ -3604,7 +3619,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // OSINT FULL SEARCH ROUTE (Phase 4)
   // ============================================
 
-  app.post('/api/osint/full-search', async (req, res) => {
+  app.post('/api/osint/full-search', apiRateLimit, isAuthenticated, async (req, res) => {
     const startTime = Date.now();
     const correlationId = crypto.randomBytes(16).toString('hex');
     let { name, department, badge, location, domain, searchDepth = 2 } = req.body;
@@ -3667,17 +3682,82 @@ Contact: ${foiaRequest.userEmail || userEmail}
         reportId = initialReport.id;
       }
 
+      // Dev-lite safety: if AI/search providers are not configured (common in CI/dev without secrets),
+      // return a deterministic "partial" report instead of erroring or hanging.
+      const devLite =
+        process.env.NODE_ENV !== 'production' &&
+        !process.env.GROQ_API_KEY &&
+        !process.env.GEMINI_API_KEY &&
+        !process.env.MISTRAL_API_KEY &&
+        !process.env.ANTHROPIC_API_KEY;
+
+      if (devLite) {
+        console.warn('[OSINT] Dev-lite mode: returning stub report (no AI keys configured)', { correlationId, reportId });
+        // Small delay so UI never appears to "instant return" with no work.
+        await new Promise((r) => setTimeout(r, 400));
+
+        const normalizedLocation = (location && String(location).trim()) ? String(location).trim() : 'New York, NY';
+        const report = {
+          identitySummary: {
+            name,
+            verificationStatus: 'Dev-lite (no external providers configured)',
+          },
+          contactInformation: [],
+          socialMediaPresence: [],
+          employmentAndEducation: [],
+          locationHistory: [normalizedLocation],
+          publicRecords: [],
+          onlineMentions: [],
+          riskAndReputation: [],
+          summary:
+            'This is a dev-lite stability report generated without external providers. Configure AI keys to enable full OSINT crawling.',
+          confidenceScore: 10,
+          sources: [
+            {
+              name: 'Dev-lite Stub',
+              data: { correlationId, searchDepth, domain: domain || null },
+              confidence: 10,
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        };
+
+        if (reportId && userId) {
+          await storage.updatePeopleSearchReportStatus(reportId, 'completed', report);
+        }
+
+        const processingTimeMs = Date.now() - startTime;
+        console.log('[OSINT] Dev-lite search completed', { correlationId, processingTimeMs, reportId });
+
+        return res.json({
+          type: 'success',
+          success: true,
+          data: {
+            ...report,
+            jobId: reportId,
+            jobCompleted: true,
+            jobStatus: 'completed',
+          },
+          meta: {
+            correlationId,
+            timestamp: new Date().toISOString(),
+            processingTimeMs,
+            devLite: true,
+          },
+        });
+      }
+
       const { conductFullOSINT } = await import('./peopleSearch');
-      
+
       console.log('[OSINT] Executing search', { correlationId, reportId });
-      
+
       // Pass search depth to the OSINT function
-      const report = await conductFullOSINT(name, { 
-        department, 
-        badge, 
-        location, 
+      const report = await conductFullOSINT(name, {
+        department,
+        badge,
+        location,
         domain,
-        searchDepth 
+        searchDepth
       });
 
       // Update report with completed data if we have a report ID
@@ -5198,6 +5278,16 @@ Contact: ${foiaRequest.userEmail || userEmail}
   app.use('/api/bridge', bridgeApi);
   
   // ============================================
+  // STAGE GOVERNOR API - Staged Autonomy Control
+  // ============================================
+  app.use('/api/governance', stageGovernorRoutes);
+  
+  // ============================================
+  // ARBITRAGE AGENTS API - 6-Agent Verification & Control
+  // ============================================
+  app.use('/api/arbitrage', arbitrageAgentsRoutes);
+  
+  // ============================================
   // 4JI ORCHESTRATOR API
   // ============================================
   
@@ -5217,29 +5307,33 @@ Contact: ${foiaRequest.userEmail || userEmail}
   app.use('/api', notFoundHandler);
   
   // PASS 7: SPA fallback routing - serve index.html for non-API routes
-  // This prevents 404 errors on direct navigation to /people-finder, /inmate-locator, etc.
-  app.get('*', (req, res, next) => {
-    // Skip if this is an API route (already handled above)
-    if (req.path.startsWith('/api/')) {
-      return next();
-    }
-    
-    // Skip if this is a static asset request
-    if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/)) {
-      return next();
-    }
-    
-    console.log('[SPA FALLBACK] Serving index.html for:', req.path);
-    
-    // Serve the SPA index.html for all other routes
-    const indexPath = path.join(__dirname, '../dist/public/index.html');
-    res.sendFile(indexPath, (err) => {
-      if (err) {
-        console.error('[SPA FALLBACK] Error serving index.html:', err);
-        res.status(500).send('Error loading application');
+  // IMPORTANT: Only enable this in production. In development, Vite middleware
+  // is responsible for serving the SPA (see server/index.ts -> setupVite()).
+  if (process.env.NODE_ENV === 'production') {
+    // This prevents 404 errors on direct navigation to /people-finder, /inmate-locator, etc.
+    app.get('*', (req, res, next) => {
+      // Skip if this is an API route (already handled above)
+      if (req.path.startsWith('/api/')) {
+        return next();
       }
+      
+      // Skip if this is a static asset request
+      if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/)) {
+        return next();
+      }
+      
+      console.log('[SPA FALLBACK] Serving index.html for:', req.path);
+      
+      // Serve the SPA index.html for all other routes
+      const indexPath = path.join(__dirname, '../dist/public/index.html');
+      res.sendFile(indexPath, (err) => {
+        if (err) {
+          console.error('[SPA FALLBACK] Error serving index.html:', err);
+          res.status(500).send('Error loading application');
+        }
+      });
     });
-  });
+  }
 
       // Apply the general error handler globally
   app.use(errorHandler);

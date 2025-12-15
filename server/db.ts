@@ -36,6 +36,7 @@ const isProduction = isProductionHelper();
 
 // Get database URL from config (handles SUPABASE_DATABASE_URL, SUPABASE_DB_URL, DATABASE_URL fallback)
 const databaseUrl = getDatabaseUrl();
+export const isDatabaseConfigured = !!(databaseUrl && databaseUrl.trim().length > 0);
 
 // Helper to detect if a connection string is a valid PostgreSQL Supabase connection
 const isSupabaseConnectionString = (url: string | undefined): boolean => {
@@ -81,17 +82,20 @@ if (!isUsingSupabase) {
 }
 console.log(`[DATABASE] Environment: ${isProduction ? 'production' : 'development'}, Platform: ${isRailway ? 'Railway' : 'Replit/local'}`);
 
-if (!databaseUrl) {
-  throw new Error(
-    "SUPABASE_URL, SUPABASE_DATABASE_URL, or DATABASE_URL must be set. Did you forget to provision a database?",
-  );
+// Dev-lite/no-secrets boot: allow server to start without a database configured.
+// Production safety is enforced by config.ts (loadConfig()).
+if (!isDatabaseConfigured) {
+  console.warn('[DATABASE] ⚠️ No database configured - running in dev-lite mode (DB features disabled)');
 }
 
 // Connection configuration - simplified without IPv4 forcing (removed as it doesn't work on Railway)
 // ISSUE: Railway cannot reach Supabase's IPv6 addresses, and the pg Pool's lookup option doesn't help
 const getPoolConfig = () => {
+  // If no DB is configured, use a fast-failing localhost connection string so any accidental
+  // DB access errors quickly (instead of hanging). This keeps the runtime object shape stable.
+  const connectionString = isDatabaseConfigured ? databaseUrl : 'postgresql://127.0.0.1:1/devlite';
   const baseConfig: any = {
-    connectionString: databaseUrl,
+    connectionString,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: (isRailway || isProduction) ? 30000 : 10000,
     max: 8,
