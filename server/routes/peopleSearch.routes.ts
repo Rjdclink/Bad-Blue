@@ -7,16 +7,16 @@
  * - Main app does NOT import Playwright directly
  * - Worker handles all browser operations
  * - Server startup does NOT depend on worker availability
+ * 
+ * LAZY LOADING:
+ * - All People Search imports are deferred until first request
+ * - No module-level imports of peopleSearchProxy or related services
+ * - This ensures the app boots without loading Playwright/browser code
+ * - Type-only imports are safe (removed at compile time)
  */
 import express, { Router, Request, Response } from 'express';
-import { 
-  peopleSearchProxy,
-  isWorkerReady,
-  checkWorkerHealth,
-  validateWorkerBrowser,
-  PeopleSearchProxyError,
-  PROXY_ERROR_CODES 
-} from '../services/peopleSearchProxy';
+
+// Type-only imports are safe - removed at compile time, no runtime effect
 import type { SearchQuery } from '../services/peopleSearch/types';
 
 // EXPLICIT: Express Router initialization - no globals, no assumptions
@@ -25,6 +25,19 @@ if (!express || !express.Router) {
 }
 
 const router: Router = express.Router();
+
+/**
+ * Lazy-loaded People Search proxy module
+ * Only loaded on first request to any People Search endpoint
+ */
+let proxyModule: typeof import('../services/peopleSearchProxy') | null = null;
+
+async function getProxyModule() {
+  if (!proxyModule) {
+    proxyModule = await import('../services/peopleSearchProxy');
+  }
+  return proxyModule;
+}
 
 /**
  * POST /api/people-search
@@ -40,6 +53,9 @@ router.post('/', async (req, res) => {
     firstName: req.body?.firstName,
     lastName: req.body?.lastName,
   });
+  
+  // Lazy load the People Search proxy module on first request
+  const { peopleSearchProxy, PeopleSearchProxyError } = await getProxyModule();
   
   try {
     const { firstName, lastName, city, state, age } = req.body;
@@ -137,6 +153,9 @@ router.post('/', async (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
+    // Lazy load the proxy module on first health check
+    const { checkWorkerHealth, isWorkerReady } = await getProxyModule();
+    
     const health = await checkWorkerHealth();
     const ready = await isWorkerReady();
     
@@ -163,6 +182,10 @@ router.get('/health', async (req, res) => {
 router.post('/validate', async (req, res) => {
   try {
     console.log('[People Search API] Running browser validation...');
+    
+    // Lazy load the proxy module
+    const { validateWorkerBrowser } = await getProxyModule();
+    
     const validation = await validateWorkerBrowser();
     
     res.status(validation.success ? 200 : 500).json({

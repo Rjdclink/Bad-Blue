@@ -877,10 +877,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
 
   // Lazy-load People Search routes to avoid importing Playwright/Chromium on startup
+  // The router module is only imported when the first request is made to /api/people-search
   let peopleSearchRouter: Router | null = null;
   app.use('/api/people-search', async (req, res, next) => {
     try {
       if (!peopleSearchRouter) {
+        console.log('[LAZY LOAD] Loading People Search module on first request');
         peopleSearchRouter = (await import('./routes/peopleSearch.routes')).default;
       }
       return peopleSearchRouter(req, res, next);
@@ -888,7 +890,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return next(error);
     }
   });
-  console.log('[MOUNT] People Search mounted at: /api/people-search');
+  console.log('[MOUNT] People Search registered at: /api/people-search (lazy-loaded)');
   
   // ============================================
   // AUTH & SUBSCRIPTION ROUTES (Phase 3)
