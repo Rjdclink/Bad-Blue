@@ -5012,26 +5012,20 @@ Contact: ${foiaRequest.userEmail || userEmail}
       'Expires': '0',
     });
 
-    // INTERNAL VERIFIER BYPASS:
-    // Allow unauthenticated access to /admin/crypto/verify-* endpoints iff
-    // header X-Internal-Verify matches INTERNAL_VERIFY_SECRET (or CRYPTO_INTERNAL_VERIFY_SECRET).
-    // This bypass is intentionally narrow and does NOT apply to any other route.
-    try {
-      const path = String((req as any).path || '');
-      const isVerifyRoute = path.startsWith('/verify-');
-      if (isVerifyRoute) {
-        const provided = String(req.header('X-Internal-Verify') || '');
-        const secret = String(process.env.INTERNAL_VERIFY_SECRET || process.env.CRYPTO_INTERNAL_VERIFY_SECRET || '');
-        if (provided && secret && provided.length === secret.length) {
-          const a = Buffer.from(provided, 'utf8');
-          const b = Buffer.from(secret, 'utf8');
-          if (crypto.timingSafeEqual(a, b)) {
-            return next();
-          }
-        }
+    // VERIFIER BYPASS (as requested):
+    // If request path starts with /admin/crypto/verify
+    // AND header X-Internal-Verify === INTERNAL_VERIFY_SECRET
+    // THEN bypass session + passport
+    // ELSE enforce normal session auth
+    //
+    // This is intentionally narrow and does NOT touch any other /admin/crypto/* routes.
+    const fullPath = String((req as any).originalUrl || '').split('?')[0];
+    if (fullPath.startsWith('/admin/crypto/verify')) {
+      const provided = String(req.header('X-Internal-Verify') || '');
+      const secret = String(process.env.INTERNAL_VERIFY_SECRET || '');
+      if (provided && secret && provided === secret) {
+        return next();
       }
-    } catch {
-      // Fall through to normal auth checks.
     }
     
     // STRICT: Check if user is authenticated via passport
