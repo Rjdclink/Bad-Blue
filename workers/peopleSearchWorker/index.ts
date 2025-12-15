@@ -37,9 +37,18 @@ const CONFIG = {
   maxPoolSize: parseInt(process.env.PEOPLE_SEARCH_BROWSER_POOL_SIZE || '3', 10),
   searchTimeout: parseInt(process.env.PEOPLE_SEARCH_TIMEOUT || '30000', 10),
   maxRetries: parseInt(process.env.PEOPLE_SEARCH_MAX_RETRIES || '3', 10),
+  // Bind to localhost by default for security; set to 0.0.0.0 if external access needed
+  host: process.env.PEOPLE_SEARCH_WORKER_HOST || '127.0.0.1',
 };
 
-const cache = new PeopleSearchCache();
+// Initialize cache with error handling
+let cache: PeopleSearchCache;
+try {
+  cache = new PeopleSearchCache();
+} catch (error: any) {
+  console.warn('[PeopleSearchWorker] Cache initialization failed, using in-memory fallback:', error.message);
+  cache = new PeopleSearchCache('/tmp/people-search-cache');
+}
 
 /**
  * Launch a browser instance with production settings
@@ -259,7 +268,10 @@ async function scrapeFastPeopleSearch(query: SearchQuery, page: Page): Promise<P
       fullName: raw.fullName,
       age: raw.age,
       addresses: raw.addressStrings.map(parseAddress).filter((a: Address | null): a is Address => a !== null),
-      phones: raw.phoneStrings.map((p: string) => ({ number: p.replace(/\D/g, '').slice(-10) })),
+      phones: raw.phoneStrings
+        .map((p: string) => p.replace(/\D/g, ''))
+        .filter((digits: string) => digits.length >= 10)
+        .map((digits: string) => ({ number: digits.slice(-10) })),
       emails: raw.emails,
       relatives: [],
       aliases: [],
@@ -583,12 +595,12 @@ async function start(): Promise<void> {
     await validateBrowser();
   }
   
-  // Start HTTP server
-  app.listen(CONFIG.port, '0.0.0.0', () => {
-    console.log(`[PeopleSearchWorker] ✓ Worker listening on port ${CONFIG.port}`);
-    console.log(`[PeopleSearchWorker]   - Health: http://localhost:${CONFIG.port}/health`);
-    console.log(`[PeopleSearchWorker]   - Search: POST http://localhost:${CONFIG.port}/search`);
-    console.log(`[PeopleSearchWorker]   - Validate: POST http://localhost:${CONFIG.port}/validate`);
+  // Start HTTP server - bind to configured host (default: localhost for security)
+  app.listen(CONFIG.port, CONFIG.host, () => {
+    console.log(`[PeopleSearchWorker] ✓ Worker listening on ${CONFIG.host}:${CONFIG.port}`);
+    console.log(`[PeopleSearchWorker]   - Health: http://${CONFIG.host}:${CONFIG.port}/health`);
+    console.log(`[PeopleSearchWorker]   - Search: POST http://${CONFIG.host}:${CONFIG.port}/search`);
+    console.log(`[PeopleSearchWorker]   - Validate: POST http://${CONFIG.host}:${CONFIG.port}/validate`);
   });
 }
 

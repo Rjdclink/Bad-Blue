@@ -13,7 +13,9 @@ import {
   peopleSearchProxy,
   isWorkerReady,
   checkWorkerHealth,
-  validateWorkerBrowser 
+  validateWorkerBrowser,
+  PeopleSearchProxyError,
+  PROXY_ERROR_CODES 
 } from '../services/peopleSearchProxy';
 import type { SearchQuery } from '../services/peopleSearch/types';
 
@@ -111,14 +113,16 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('[People Search API] Error:', error);
     
-    // Check if this is a worker unavailable error
+    // Use structured error detection via PeopleSearchProxyError
+    const isProxyError = error instanceof PeopleSearchProxyError;
+    const isWorkerError = isProxyError && error.isWorkerError;
+    const errorCode = isProxyError ? error.code : 'UNKNOWN_ERROR';
     const errorMessage = error instanceof Error ? error.message : 'Internal server error';
-    const isWorkerError = errorMessage.includes('Worker is not available') || 
-                          errorMessage.includes('Worker validation');
     
     return res.status(isWorkerError ? 503 : 500).json({
       success: false,
       error: errorMessage,
+      errorCode,
       workerUnavailable: isWorkerError,
       jobCompleted: true,
       jobStatus: 'failed',

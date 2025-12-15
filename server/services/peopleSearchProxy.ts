@@ -13,6 +13,32 @@
 
 import type { SearchQuery, PersonRecord } from './peopleSearch/types';
 
+/**
+ * Error codes for structured error handling
+ */
+export const PROXY_ERROR_CODES = {
+  WORKER_UNAVAILABLE: 'WORKER_UNAVAILABLE',
+  WORKER_TIMEOUT: 'WORKER_TIMEOUT',
+  WORKER_ERROR: 'WORKER_ERROR',
+  VALIDATION_FAILED: 'VALIDATION_FAILED',
+} as const;
+
+export type ProxyErrorCode = typeof PROXY_ERROR_CODES[keyof typeof PROXY_ERROR_CODES];
+
+/**
+ * Custom error class for proxy errors with error codes
+ */
+export class PeopleSearchProxyError extends Error {
+  constructor(
+    message: string,
+    public readonly code: ProxyErrorCode,
+    public readonly isWorkerError: boolean = false
+  ) {
+    super(message);
+    this.name = 'PeopleSearchProxyError';
+  }
+}
+
 interface WorkerHealth {
   status: 'healthy' | 'unhealthy';
   browserPoolSize: number;
@@ -231,7 +257,20 @@ export class PeopleSearchProxyAggregator {
     }
     
     if (!result.success) {
-      throw new Error(result.error || 'Search failed');
+      // Detect worker-specific errors and throw with appropriate code
+      const isWorkerUnavailable = result.error?.includes('Worker is not available') || 
+                                   result.error?.includes('not initialized');
+      const isTimeout = result.error?.includes('timed out');
+      
+      const code = isWorkerUnavailable ? PROXY_ERROR_CODES.WORKER_UNAVAILABLE :
+                   isTimeout ? PROXY_ERROR_CODES.WORKER_TIMEOUT :
+                   PROXY_ERROR_CODES.WORKER_ERROR;
+      
+      throw new PeopleSearchProxyError(
+        result.error || 'Search failed',
+        code,
+        isWorkerUnavailable || isTimeout
+      );
     }
     
     return result.data!;
@@ -285,17 +324,24 @@ export class PeopleSearchProxyAggregator {
     console.log('[PeopleSearchProxy] Cleanup managed by worker');
   }
   
+  // Metrics configuration constants
+  private static readonly METRICS_HISTORY_SIZE = 100;
+  private static readonly SUCCESS_RATE_DECAY = 0.01;    // Rate decrease on failure
+  private static readonly SUCCESS_RATE_RECOVERY = 0.001; // Rate increase on success
+  
   private updateMetrics(responseTime: number, success: boolean): void {
     this.responseTimes.push(responseTime);
-    if (this.responseTimes.length > 100) this.responseTimes.shift();
+    if (this.responseTimes.length > PeopleSearchProxyAggregator.METRICS_HISTORY_SIZE) {
+      this.responseTimes.shift();
+    }
     
     this.metrics.avgResponseTimeMs = 
       this.responseTimes.reduce((a, b) => a + b, 0) / this.responseTimes.length;
     
     if (!success) {
-      this.metrics.successRate = Math.max(0, this.metrics.successRate - 0.01);
+      this.metrics.successRate = Math.max(0, this.metrics.successRate - PeopleSearchProxyAggregator.SUCCESS_RATE_DECAY);
     } else {
-      this.metrics.successRate = Math.min(1, this.metrics.successRate + 0.001);
+      this.metrics.successRate = Math.min(1, this.metrics.successRate + PeopleSearchProxyAggregator.SUCCESS_RATE_RECOVERY);
     }
   }
 }
