@@ -7,16 +7,9 @@
  * - Main app does NOT import Playwright directly
  * - Worker handles all browser operations
  * - Server startup does NOT depend on worker availability
+ * - All runtime imports are dynamic (inside handlers) to avoid module-load side effects
  */
-import express, { Router, Request, Response } from 'express';
-import { 
-  peopleSearchProxy,
-  isWorkerReady,
-  checkWorkerHealth,
-  validateWorkerBrowser,
-  PeopleSearchProxyError,
-  PROXY_ERROR_CODES 
-} from '../services/peopleSearchProxy';
+import express, { Router } from 'express';
 import type { SearchQuery } from '../services/peopleSearch/types';
 
 // EXPLICIT: Express Router initialization - no globals, no assumptions
@@ -42,6 +35,13 @@ router.post('/', async (req, res) => {
   });
   
   try {
+    // Dynamic imports - only loaded on first request, not at module load
+    const { peopleSearchProxy, PeopleSearchProxyError, PROXY_ERROR_CODES } = await import('../services/peopleSearchProxy');
+    const { validatePeopleSearchConfig } = await import('../services/peopleSearch/config');
+    
+    // Validate configuration on first use (not at module load)
+    validatePeopleSearchConfig();
+    
     const { firstName, lastName, city, state, age } = req.body;
 
     // Validate required fields
@@ -113,6 +113,9 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('[People Search API] Error:', error);
     
+    // Dynamic import for error type checking
+    const { PeopleSearchProxyError } = await import('../services/peopleSearchProxy');
+    
     // Use structured error detection via PeopleSearchProxyError
     const isProxyError = error instanceof PeopleSearchProxyError;
     const isWorkerError = isProxyError && error.isWorkerError;
@@ -137,6 +140,9 @@ router.post('/', async (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
+    // Dynamic import - only loaded when health check is requested
+    const { checkWorkerHealth, isWorkerReady } = await import('../services/peopleSearchProxy');
+    
     const health = await checkWorkerHealth();
     const ready = await isWorkerReady();
     
@@ -162,6 +168,9 @@ router.get('/health', async (req, res) => {
  */
 router.post('/validate', async (req, res) => {
   try {
+    // Dynamic import - only loaded when validation is requested
+    const { validateWorkerBrowser } = await import('../services/peopleSearchProxy');
+    
     console.log('[People Search API] Running browser validation...');
     const validation = await validateWorkerBrowser();
     
