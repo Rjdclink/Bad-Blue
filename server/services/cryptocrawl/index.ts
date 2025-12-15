@@ -167,6 +167,50 @@ export {
   type HarmonyResult
 } from './ai';
 
+// Governance Module - Control & Oversight
+export {
+  Composer,
+  composer,
+  SystemScope,
+  LockType,
+  StageController,
+  stageController,
+  StageStatus,
+  ProfitRampGovernor,
+  profitRampGovernor,
+  ExecutionGate,
+  executionGate,
+  ExecutionMode,
+  initializeGovernance,
+  getGovernanceStatus,
+  type Lock,
+  type StageCommand,
+  type ComposerState,
+  type StageDefinition,
+  type StageState,
+  type RampTier,
+  type TierStatus,
+  type RampMetrics,
+  type OrderIntent,
+  type ExecutionResult,
+  type GateMetrics,
+} from './governance';
+
+// Signals Module - Signal & Intelligence Layer
+export {
+  Faucet,
+  primaryFaucet,
+  SignalType,
+  FaucetMesh,
+  faucetMesh,
+  initializeSignals,
+  type Signal,
+  type FaucetMetrics,
+  type MeshNode,
+  type AggregatedSignal,
+  type MeshMetrics,
+} from './signals';
+
 // Evolution Module - Hyper-Evolution & Swarm Intelligence
 export {
   HyperEvolutionEngine,
@@ -383,4 +427,19 @@ export const CAPABILITIES = [
   'Gas-free strategies',
   'Flash loan arbitrage',
   'Cross-chain optimization',
+  // Governance & Control Capabilities (v6.0)
+  'Composer canonical authority',
+  'Stage controller enforcement',
+  'Profit ramp governor',
+  'Daily cap ladder ($200-$35k)',
+  'Execution gate control',
+  'Paper/live mode switching',
+  'Faucet signal emission',
+  'Faucet mesh aggregation',
+  'Cross-venue correlation',
+  'Monte Carlo advancement justification',
+  'Stage PASS/FAIL tracking',
+  'Execution lock enforcement',
+  'Background loop governor',
+  'Anomaly detection and response',
 ];
