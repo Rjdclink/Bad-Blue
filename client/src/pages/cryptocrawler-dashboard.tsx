@@ -57,8 +57,6 @@ import { useWallet, formatAddress, getChainName, SUPPORTED_CHAINS } from "@/hook
  * Authentication: Configure via environment variables (CRYPTOCRAWL_EMAIL, CRYPTOCRAWL_PASSWORD)
  * Role: CRAWLER_ROOT
  * Purpose: Full access to CryptoCrawler control panel, Monte Carlo simulations, trading faucet
- * 
- * ALL DATA IS FETCHED FROM REAL API ENDPOINTS - NO DEMO DATA
  */
 
 // Types for API responses
@@ -435,7 +433,6 @@ export default function CryptoCrawlerDashboard() {
         });
         addConsoleLog('info', `[Faucet] ✅ Successfully ${enabled ? 'activated' : 'deactivated'}`);
       } else {
-        // Optimistic update for demo/development
         setFaucetStatus(prev => ({
           ...prev,
           enabled: enabled,

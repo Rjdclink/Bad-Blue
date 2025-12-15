@@ -253,16 +253,18 @@ class MonteCarloSimulator {
 // ============================================================================
 
 export function useTSHPELocator() {
-  // State
+  // PRODUCTION: No hardcoded default position
+  // Position must be determined from actual device/network sources
+  // Initial state is undefined/null until real data is acquired
   const [currentPosition, setCurrentPosition] = useState<Position>({
-    lat: 40.7128,
-    lon: -74.0060,
-    accuracy: 100,
+    lat: 0,  // Unknown until real position acquired
+    lon: 0,  // Unknown until real position acquired
+    accuracy: Number.MAX_SAFE_INTEGER, // Worst possible accuracy until real fix
     heading: 0,
     speed: 0,
     altitude: 0,
     timestamp: Date.now(),
-    source: 'ip',
+    source: undefined, // No position source until real acquisition
   });
   
   const [positionHistory, setPositionHistory] = useState<Position[]>([]);

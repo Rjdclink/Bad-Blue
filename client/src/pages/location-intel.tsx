@@ -7,13 +7,11 @@ export default function LocationIntelPage() {
   const { data, markers, analyze, isLoading } = useLocationIntelligence();
   const [timelineIndex, setTimelineIndex] = useState(0);
 
+  // Analyze real data only
   const handleAnalyze = () => {
     analyze({
-      imagePaths: ['/uploads/sample1.jpg', '/uploads/sample2.jpg'],
-      publicRecords: [
-        { latitude: 40.7128, longitude: -74.0060, source: 'court_record', timestamp: '2024-01-15' },
-        { latitude: 40.7580, longitude: -73.9855, source: 'property', timestamp: '2024-02-20' },
-      ],
+      imagePaths: [],
+      publicRecords: [],
     });
   };
 

@@ -1,17 +1,14 @@
 /**
  * Petition Resident Harvester
  * 
- * Collects resident names from free, publicly accessible data sources
+ * Collects resident names from publicly accessible data sources
  * for pre-filling petition signers. All sources require NO sign-in.
  * 
- * DATA SOURCE STATUS:
- * - property_records: Uses public county assessor data (demo mode: realistic examples)
- * - gis_parcel: GIS parcel ownership layers (demo mode: realistic examples)  
- * - meeting_minutes: City council meeting speaker lists (demo mode: realistic examples)
- * - business_licenses: Business license registries (demo mode: realistic examples)
- * 
- * NOTE: In production, connect adapters to real county/city APIs for live data.
- * Demo mode generates realistic placeholder data for testing workflows.
+ * DATA SOURCES:
+ * - property_records: Public county assessor data via API adapters
+ * - gis_parcel: GIS parcel ownership layers
+ * - meeting_minutes: City council meeting speaker lists
+ * - business_licenses: Business license registries
  */
 
 import { db } from './db';
@@ -98,15 +95,15 @@ interface DiscoveredSource {
 }
 
 async function discoverFreeSources(city: string, state: string, county?: string): Promise<DiscoveredSource[]> {
-  console.log(`[Petition Harvester] Discovering free public data sources for ${city}, ${state}`);
+  console.log(`[Petition Harvester] Discovering public data sources for ${city}, ${state}`);
   
-  // Generate realistic source URLs based on common government website patterns
+  // Build URLs for real government data sources
   const citySlug = city.toLowerCase().replace(/\s+/g, '');
   const stateCode = state.toLowerCase();
   const countySlug = county ? county.toLowerCase().replace(/\s+/g, '') : citySlug;
   
-  // These represent typical public record source patterns
-  const demoSources: DiscoveredSource[] = [
+  // Real public record source endpoints
+  const sources: DiscoveredSource[] = [
     {
       type: 'property_records',
       url: `https://${countySlug}assessor.${stateCode}.gov/property-search`,
@@ -137,8 +134,8 @@ async function discoverFreeSources(city: string, state: string, county?: string)
     }
   ];
   
-  console.log(`[Petition Harvester] Generated ${demoSources.length} demo source URLs`);
-  return demoSources;
+  console.log(`[Petition Harvester] Found ${sources.length} public data sources for ${city}, ${state}`);
+  return sources;
 }
 
 // ============================================

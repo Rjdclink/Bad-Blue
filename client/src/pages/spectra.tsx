@@ -87,48 +87,6 @@ interface ViewState {
   zoom: number;
 }
 
-// ============================================================================
-// FAKE DATA FOR DEMO
-// ============================================================================
-
-const generateFakeHistory = (): TrackPoint[] => [
-  {
-    id: 'track-1',
-    label: 'Device ping – phone',
-    lat: 42.5006,
-    lon: -94.1922,
-    timestamp: new Date(Date.now() - 72 * 3600 * 1000).toISOString(),
-    confidence: 0.92,
-    source: 'device',
-  },
-  {
-    id: 'track-2',
-    label: 'Public camera hit',
-    lat: 42.511,
-    lon: -94.2001,
-    timestamp: new Date(Date.now() - 48 * 3600 * 1000).toISOString(),
-    confidence: 0.88,
-    source: 'camera',
-  },
-  {
-    id: 'track-3',
-    label: 'Social media EXIF',
-    lat: 42.5155,
-    lon: -94.2103,
-    timestamp: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
-    confidence: 0.95,
-    source: 'social',
-  },
-  {
-    id: 'track-4',
-    label: 'Current device location',
-    lat: 42.5159,
-    lon: -94.2137,
-    timestamp: new Date().toISOString(),
-    confidence: 0.99,
-    source: 'device',
-  },
-];
 
 // ============================================================================
 // ETHEREAL BACKGROUND
@@ -269,8 +227,7 @@ const PeopleRadarMap = memo(function PeopleRadarMap({
             </div>
           </div>
           
-          {/* Coordinate markers are intentionally not rendered on this panel
-              until a real map projection is implemented (no fake XY placement). */}
+          {/* Use GeoConsole for coordinate rendering with proper map projection */}
         </div>
       </div>
       
@@ -461,18 +418,18 @@ export default function SpectraPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   
-  // SPECTRA mode
+  // SPECTRA mode - real data only
   const [spectraMode, setSpectraMode] = useState<SpectraMode>('live');
-  const [trackPoints, setTrackPoints] = useState<TrackPoint[]>(generateFakeHistory());
+  const [trackPoints, setTrackPoints] = useState<TrackPoint[]>([]);
   const [selectedPoint, setSelectedPoint] = useState<TrackPoint | null>(null);
   const [showRadar, setShowRadar] = useState(true);
   const [radarMaximized, setRadarMaximized] = useState(false);
   
-  // Map view state
+  // Map view state - PRODUCTION: World view until real data arrives (no hardcoded location)
   const [viewState, setViewState] = useState<ViewState>({
-    latitude: 42.51,
-    longitude: -94.2,
-    zoom: 11,
+    latitude: 0,  // Center of world - will update when real data loads
+    longitude: 0,
+    zoom: 2,      // World view zoom until data available
   });
   
   // Conversation state
@@ -904,7 +861,7 @@ export default function SpectraPage() {
         <footer className="px-4 py-2 bg-slate-900/30 backdrop-blur-sm border-t border-slate-700/30">
           <div className="flex items-center justify-center gap-2 text-xs text-slate-500">
             <AlertCircle className="h-3 w-3" />
-            <span>SPECTRA Intelligence Platform • Location data is simulated for demonstration</span>
+            <span>SPECTRA Intelligence Platform • Real-world location intelligence operations</span>
           </div>
         </footer>
       </div>

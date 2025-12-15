@@ -150,42 +150,6 @@ export default function GeoconsoleProcessScreen() {
     }
   }, [inputs, sessionId]);
 
-  const loadSampleData = () => {
-    const sampleInputs: GPSInput[] = [
-      {
-        id: crypto.randomUUID(),
-        latitude: '40.7128',
-        longitude: '-74.0060',
-        altitude: '10',
-        accuracy: '5',
-        timestamp: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 16),
-        source: 'device_gps',
-        confidence: '0.95',
-      },
-      {
-        id: crypto.randomUUID(),
-        latitude: '40.7580',
-        longitude: '-73.9855',
-        altitude: '15',
-        accuracy: '8',
-        timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().slice(0, 16),
-        source: 'exif_photo',
-        confidence: '0.88',
-      },
-      {
-        id: crypto.randomUUID(),
-        latitude: '40.7484',
-        longitude: '-73.9857',
-        altitude: '12',
-        accuracy: '6',
-        timestamp: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString().slice(0, 16),
-        source: 'device_gps',
-        confidence: '0.92',
-      },
-    ];
-    setInputs(sampleInputs);
-  };
-
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -212,9 +176,6 @@ export default function GeoconsoleProcessScreen() {
                 GPS Input Points
               </CardTitle>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={loadSampleData}>
-                  Load Sample
-                </Button>
                 <Button variant="outline" size="sm" onClick={addInput}>
                   <Plus className="w-4 h-4 mr-1" />
                   Add Point
