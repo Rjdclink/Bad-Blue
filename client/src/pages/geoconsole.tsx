@@ -85,17 +85,17 @@ export default function GeoconsolePage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-900">
+    <div className="min-h-screen bg-slate-900 overflow-y-auto">
       {/* Header */}
-      <div className="bg-slate-800 border-b border-slate-700 px-6 py-4">
+      <div className="bg-slate-800 border-b border-slate-700 px-6 py-4 sticky top-0 z-50">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
               <Satellite className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">Hybrid Geoconsole</h1>
-              <p className="text-slate-400">Personal Security Tracking System</p>
+              <h1 className="text-2xl font-bold text-white">SPECTRA GeoConsole</h1>
+              <p className="text-slate-400">Satellite Intelligence System</p>
             </div>
           </div>
 
@@ -220,9 +220,9 @@ export default function GeoconsolePage() {
             </Card>
           </div>
 
-          {/* Main Area - Geoconsole Dashboard */}
+          {/* Main Area - Geoconsole Dashboard - FULL HEIGHT, NO CLIPPING */}
           <div className="col-span-9">
-            <Card className="bg-slate-800 border-slate-700 h-[800px]">
+            <Card className="bg-slate-800 border-slate-700 flex flex-col" style={{ minHeight: 'calc(100vh - 200px)' }}>
               <GeoconsoleRadarDashboard initialData={locationData} />
             </Card>
           </div>

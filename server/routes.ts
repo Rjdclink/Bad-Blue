@@ -944,6 +944,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/monte-carlo', monteCarloRoutes.default);
 
   // ============================================
+  // PANTHEON SYSTEM ROUTES (normalize, store, query, provenance)
+  // ============================================
+  const pantheonRoutes = await import('./routes/pantheon.routes');
+  app.use('/api/pantheon', pantheonRoutes.default);
+  console.log('[MOUNT] Pantheon routes mounted at: /api/pantheon');
+
+  // ============================================
   // ADMIN CONSOLE ROUTES - Strict auth, no fallback users
   // ============================================
   const adminConsoleRoutes = await import('./routes/admin-console.routes');

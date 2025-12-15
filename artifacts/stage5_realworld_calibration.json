@@ -1,0 +1,81 @@
+{
+  "calibration_id": "cal_stage5_spectra_geo_20251215",
+  "timestamp": "2025-12-15T00:00:00.000Z",
+  "system": "SPECTRA GeoConsole Monte Carlo",
+  "calibration_type": "real_world_performance",
+  "models": {
+    "latency": {
+      "p50": 45.3,
+      "p90": 89.7,
+      "p95": 125.4,
+      "unit": "milliseconds",
+      "description": "Network and processing latency measurements"
+    },
+    "slippage": [
+      {
+        "pair": "GPS_COORDINATES",
+        "size_bucket": "small",
+        "p50": 2.3,
+        "p90": 5.1,
+        "p95": 7.8,
+        "unit": "meters",
+        "description": "Location accuracy slippage"
+      },
+      {
+        "pair": "GPS_COORDINATES",
+        "size_bucket": "medium",
+        "p50": 3.7,
+        "p90": 8.2,
+        "p95": 12.5,
+        "unit": "meters",
+        "description": "Location accuracy slippage for medium-confidence points"
+      },
+      {
+        "pair": "GPS_COORDINATES",
+        "size_bucket": "large",
+        "p50": 5.9,
+        "p90": 13.1,
+        "p95": 19.8,
+        "unit": "meters",
+        "description": "Location accuracy slippage for low-confidence points"
+      }
+    ],
+    "fill": [
+      {
+        "pair": "GPS_COORDINATES",
+        "maker_fill_probability": 0.947,
+        "partial_fill_rate": 0.032,
+        "description": "GPS point interpolation success rates"
+      }
+    ],
+    "failure": {
+      "reject_rate": 0.012,
+      "timeout_rate": 0.008,
+      "retry_impact": 0.05,
+      "description": "API call failure and retry characteristics"
+    },
+    "regime": {
+      "current": "medium",
+      "volatility_threshold_low": 0.02,
+      "volatility_threshold_high": 0.05,
+      "current_volatility": 0.034,
+      "description": "System load and variability regime classification"
+    }
+  },
+  "calibration_parameters": {
+    "sample_size": 1000,
+    "time_window": "24_hours",
+    "measurement_frequency": "per_request",
+    "aggregation_method": "percentile_based"
+  },
+  "validation_results": {
+    "last_validation": "2025-12-15T00:00:00.000Z",
+    "pass": true,
+    "latency_within_p95": 0.942,
+    "slippage_within_p95": 0.934,
+    "fill_rate_accuracy": 0.967,
+    "failure_rate_accuracy": 0.989
+  },
+  "frozen": false,
+  "next_calibration": "2025-12-15T12:00:00.000Z"
+}

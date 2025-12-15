@@ -14,8 +14,10 @@ import {
   ConstraintType,
   type SimulationConfig,
 } from '../services/monteCarlo';
+import { getCalibrationEngine, OrderMeasurement } from '../services/monteCarloCalibration';
 
 const router = Router();
+const calibrationEngine = getCalibrationEngine();
 
 // Store active simulations
 const simulations: Map<string, MonteCarloEngine> = new Map();
@@ -450,6 +452,160 @@ router.delete('/simulations/:id', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to destroy simulation',
+    });
+  }
+});
+
+// ============================================================================
+// CALIBRATION ENDPOINTS
+// ============================================================================
+
+/**
+ * POST /api/monte-carlo/calibration/record
+ * Record an order measurement for calibration
+ */
+router.post('/calibration/record', async (req: Request, res: Response) => {
+  try {
+    const measurement: OrderMeasurement = req.body;
+    calibrationEngine.recordMeasurement(measurement);
+    
+    res.json({
+      success: true,
+      message: 'Measurement recorded',
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to record measurement',
+    });
+  }
+});
+
+/**
+ * POST /api/monte-carlo/calibration/calibrate
+ * Trigger calibration with recent measurements
+ */
+router.post('/calibration/calibrate', async (req: Request, res: Response) => {
+  try {
+    const { sampleSize = 200 } = req.body;
+    const snapshot = calibrationEngine.calibrate(sampleSize);
+    
+    res.json({
+      success: true,
+      data: snapshot,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Calibration failed',
+    });
+  }
+});
+
+/**
+ * POST /api/monte-carlo/calibration/validate
+ * Validate calibration against real-world performance
+ */
+router.post('/calibration/validate', async (req: Request, res: Response) => {
+  try {
+    const { attempts } = req.body;
+    const result = calibrationEngine.validate(attempts);
+    
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Validation failed',
+    });
+  }
+});
+
+/**
+ * GET /api/monte-carlo/calibration/snapshot
+ * Get current calibration snapshot
+ */
+router.get('/calibration/snapshot', async (req: Request, res: Response) => {
+  try {
+    const snapshot = calibrationEngine.getSnapshot();
+    
+    if (!snapshot) {
+      return res.status(404).json({
+        success: false,
+        error: 'No calibration snapshot available',
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: snapshot,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to get snapshot',
+    });
+  }
+});
+
+/**
+ * GET /api/monte-carlo/calibration/history
+ * Get validation history
+ */
+router.get('/calibration/history', async (req: Request, res: Response) => {
+  try {
+    const history = calibrationEngine.getValidationHistory();
+    
+    res.json({
+      success: true,
+      data: history,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to get history',
+    });
+  }
+});
+
+/**
+ * POST /api/monte-carlo/calibration/freeze
+ * Freeze current calibration
+ */
+router.post('/calibration/freeze', async (req: Request, res: Response) => {
+  try {
+    calibrationEngine.freeze();
+    
+    res.json({
+      success: true,
+      message: 'Calibration frozen',
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to freeze calibration',
+    });
+  }
+});
+
+/**
+ * POST /api/monte-carlo/calibration/unfreeze
+ * Unfreeze calibration
+ */
+router.post('/calibration/unfreeze', async (req: Request, res: Response) => {
+  try {
+    calibrationEngine.unfreeze();
+    
+    res.json({
+      success: true,
+      message: 'Calibration unfrozen',
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to unfreeze calibration',
     });
   }
 });
