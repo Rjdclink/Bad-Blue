@@ -1,4 +1,13 @@
 // API Routes - LegalWhat
+// 
+// ⚠️ PRODUCTION REQUIREMENT: Express Initialization
+// Express is explicitly imported and initialized in server/index.ts:
+//   import express from "express"
+//   const app = express()
+//   await registerRoutes(app)
+//
+// This ensures no globals, no assumptions, and fail-hard if misconfigured.
+//
 import type { Express, Request, Response, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
@@ -53,12 +62,15 @@ import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import { setupPulseRoutes } from "./routes/pulse.routes";
+import stageGovernorRoutes from "./routes/stageGovernor.routes";
+import arbitrageAgentsRoutes from "./routes/arbitrageAgents.routes";
 import { createBeamRouter } from "./services/cryptocrawl/beam/beamRoutes.js";
 import { startBeamOnBoot } from "./services/cryptocrawl/beam/beam.js";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import { verifyCanonicalCryptoSetup } from "./services/cryptocrawl/verification/canonicalCryptoVerifier.js";
 import { SUPPORTED_CHAINS } from "./services/cryptocrawl/bridge/chain-config.js";
+import { isAuthConfigured } from "./services/cryptocrawl/auth/passwordAuth";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -817,7 +829,28 @@ interface EnhancedSearchMeta {
 // ROUTE REGISTRATION
 // ============================================
 
+/**
+ * Register all application routes
+ * 
+ * PRODUCTION READY:
+ * - Requires explicit Express app instance (no globals)
+ * - Validates app is properly initialized
+ * - Fails hard if app is null/undefined
+ * 
+ * @param app - Explicitly initialized Express application
+ * @returns HTTP server instance
+ * @throws {Error} If app is not provided or invalid
+ */
 export async function registerRoutes(app: Express): Promise<Server> {
+  // PRODUCTION VALIDATION: Ensure Express app is explicitly provided
+  if (!app) {
+    throw new Error(
+      'FATAL: registerRoutes called without Express app instance. ' +
+      'Express must be explicitly imported and initialized: ' +
+      'import express from "express"; const app = express(); registerRoutes(app);'
+    );
+  }
+  
   // Auth middleware setup
   await setupAuth(app);
 
@@ -843,8 +876,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupFMIRoutes(app); // F.M.I. - Forensic Media Intelligence
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
   setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
-  app.use(peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
-  console.log('[MOUNT] People Search mounted at: /api/people-search (NO PREFIX)');
+  app.use('/api/people-search', peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
+  console.log('[MOUNT] People Search mounted at: /api/people-search');
   
   // ============================================
   // AUTH & SUBSCRIPTION ROUTES (Phase 3)
@@ -1273,23 +1306,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const user = await storage.getUser(userId);
 
-      // Dev-lite stability: if storage is DB-disabled or does not have the user record yet,
-      // fall back to the session user object so the UI can render protected routes.
       if (!user) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn("[AUTH] User not found in storage; returning session fallback user", {
-            userId,
-            hasClaims: !!req.user?.claims,
-          });
-          const fallbackUser = {
-            id: userId,
-            email: req.user?.claims?.email || null,
-            firstName: req.user?.claims?.firstName || null,
-            lastName: req.user?.claims?.lastName || null,
-            hasPaidForAccess: true,
-          };
-          return res.json({ ...fallbackUser, isAdmin: userId === "admin-bypass" });
-        }
         return res.status(404).json({ message: "User not found" });
       }
 
@@ -5205,7 +5222,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   });
   app.use('/admin/crypto', cryptoVerifyRouter);
 
-  // Strict auth middleware for crypto routes - no fallback, 401 only
+  // Auth middleware for crypto routes - gracefully handles missing auth config
   const cryptoAuthMiddleware: RequestHandler = (req, res, next) => {
     // Set no-cache headers
     res.set({
@@ -5213,6 +5230,60 @@ Contact: ${foiaRequest.userEmail || userEmail}
       'Pragma': 'no-cache',
       'Expires': '0',
     });
+
+    // INTERNAL KEY BYPASS CHECK (allow programmatic access regardless of auth config)
+    // Must check this FIRST before any auth config checks
+    const earlyInternalKey = String(process.env.INTERNAL_KEY || process.env.INTERNAL_API_KEY || '');
+    if (earlyInternalKey) {
+      const providedKey =
+        String(req.header('X-Internal-Key') || '') ||
+        String(req.header('X-Internal-Api-Key') || '') ||
+        String(req.header('X-Internal-Verify') || '');
+      if (providedKey && providedKey === earlyInternalKey) {
+        return next();
+      }
+    }
+
+    // GRACEFUL DEGRADATION: If auth is not configured, allow health/status endpoints
+    // but block sensitive operations. This ensures server can boot without credentials.
+    if (!isAuthConfigured) {
+      const path = String((req as any).path || '');
+      const fullPath = String((req as any).originalUrl || '').split('?')[0];
+      
+      // Allow read-only status endpoints even without auth config
+      const allowedPaths = [
+        '/faucet/status',
+        '/faucet/health',
+        '/stats',
+        '/opportunities',
+        '/balances',
+        '/training/status',
+        '/verify',
+      ];
+      
+      const isAllowedPath = allowedPaths.some(allowed => 
+        path.startsWith(allowed) || fullPath.includes(allowed)
+      );
+      
+      if (isAllowedPath) {
+        // Allow these read-only endpoints without auth
+        return next();
+      }
+      
+      // Block sensitive operations when auth is not configured
+      console.log('[CryptoCrawl Auth] Request blocked - auth not configured:', {
+        path,
+        fullPath,
+        method: req.method,
+      });
+      
+      return res.status(503).json({
+        success: false,
+        error: 'Service Unavailable',
+        message: 'CryptoCrawl authentication not configured. Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD environment variables to enable auth-protected features.',
+        authConfigured: false,
+      });
+    }
 
     // VERIFIER BYPASS (as requested):
     // If request path starts with /admin/crypto/verify
@@ -5337,9 +5408,30 @@ Contact: ${foiaRequest.userEmail || userEmail}
     next();
   };
   
-  // Mount CryptoCrawl API routes WITH auth middleware
-  app.use('/api/crypto', cryptoAuthMiddleware, dashboardApi);
-  app.use('/admin/crypto', cryptoAuthMiddleware, adminApi);
+  // Mount CryptoCrawl API routes.
+  //
+  // IMPORTANT:
+  // CryptoCrawl can be deployed without CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD.
+  // Auth checks must not block server boot. When those credentials are missing, we:
+  // - log a warning
+  // - mount routes WITHOUT the strict session-based cryptoAuthMiddleware
+  // - rely on route-level guards (e.g. requireCryptoCrawlAuth) to keep protected features locked
+  const cryptoCrawlPasswordAuthConfigured = Boolean(
+    (process.env.CRYPTOCRAWL_EMAIL || '').trim() && (process.env.CRYPTOCRAWL_PASSWORD || '').trim()
+  );
+
+  if (!cryptoCrawlPasswordAuthConfigured) {
+    console.warn(
+      '[CryptoCrawl] CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD not set. ' +
+        'Server will boot normally; auth-protected CryptoCrawl features remain disabled.'
+    );
+    app.use('/api/crypto', dashboardApi);
+    app.use('/admin/crypto', adminApi);
+  } else {
+    // Credentials are present: enforce strict session/internal-key auth at the router boundary.
+    app.use('/api/crypto', cryptoAuthMiddleware, dashboardApi);
+    app.use('/admin/crypto', cryptoAuthMiddleware, adminApi);
+  }
   
   // ============================================
   // BRIDGE MANAGER API

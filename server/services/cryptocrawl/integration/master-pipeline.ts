@@ -54,8 +54,8 @@ class MasterPipeline {
 
     // In production, initialize wallet and providers from WalletManager
     // For now, create placeholder
-    if (process.env.PRIVATE_KEY) {
-      this.wallet = new Wallet(process.env.PRIVATE_KEY);
+    if (process.env.WALLET_PRIVATE_KEY) {
+      this.wallet = new Wallet(process.env.WALLET_PRIVATE_KEY);
     }
 
     // Known working public RPC endpoints by chain

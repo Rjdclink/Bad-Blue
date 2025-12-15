@@ -82,69 +82,6 @@ router.post('/', apiRateLimit, async (req, res) => {
       searchScope: validation.data.searchScope,
     };
 
-    // Dev-lite stability mode: allow deterministic end-to-end UI verification without relying on
-    // upstream providers (which may be blocked in CI/dev environments).
-    if (process.env.LEGALWHAT_DEV_LITE === '1' || process.env.LEGALWHAT_DEV_LITE === 'true') {
-      await new Promise((r) => setTimeout(r, 300));
-      const stubInmate = {
-        id: `devlite-${correlationId}`,
-        source: 'BOP',
-        firstName: query.firstName || 'JOHN',
-        lastName: query.lastName || 'DOE',
-        inmateNumber: query.inmateId || '12345-678',
-        facilityName: 'Dev-lite Federal Detention Center',
-        facilityType: 'Federal Prison',
-        facilityLocation: { city: 'Washington', state: 'DC' },
-        custodyStatus: 'In Custody',
-        releaseDate: undefined,
-        confidence: 25,
-        sourceUrl: 'https://www.bop.gov/inmateloc/',
-      };
-
-      const result = {
-        query,
-        totalResults: 1,
-        inmates: [stubInmate],
-        sources: [
-          { source: 'BOP', searched: true, resultsCount: 1, status: 'completed', searchTimeMs: 300 },
-        ],
-        searchDuration: Date.now() - startTime,
-        cached: false,
-        partial: true,
-        disclaimer:
-          'Dev-lite mode: stub result for stability verification. Configure providers for real searches.',
-      };
-
-      if (userId) {
-        const { storage } = await import('../storage');
-        const initialReport = await storage.createInmateSearchReport({
-          userId,
-          searchQuery: query,
-          firstName: query.firstName,
-          lastName: query.lastName,
-          state: query.state,
-          reportData: { status: 'completed', correlationId, devLite: true },
-          status: 'completed',
-        });
-        reportId = initialReport.id;
-      }
-
-      return res.json({
-        type: 'success',
-        success: true,
-        data: result,
-        meta: {
-          correlationId,
-          timestamp: new Date().toISOString(),
-          processingTimeMs: result.searchDuration,
-          jobId: reportId,
-          jobCompleted: true,
-          jobStatus: 'completed',
-          devLite: true,
-        },
-      });
-    }
-    
     console.log('[Inmate Search API] Searching for:', {
       correlationId,
       firstName: query.firstName,

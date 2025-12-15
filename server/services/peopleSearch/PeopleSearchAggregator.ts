@@ -1,12 +1,16 @@
 /**
  * Main people search aggregator orchestrator
- * Coordinates parallel scraping across multiple sources with caching
  * 
- * RECURSIVE OPTIMIZATION PASS:
- * - Enhanced parallel processing (squared speed)
- * - Stealth mode with randomized timing
- * - Improved cache hit rates
- * - Faster fusion algorithms
+ * PRODUCTION READY - REAL-WORLD OPERATIONS CAPABLE
+ * 
+ * Key Features:
+ * - NO DEMO FALLBACKS: All data sources must be explicitly configured
+ * - FAIL HARD: Missing browser dependencies or configs throw immediately
+ * - REAL SCRAPER INTEGRATION: Actual data extraction from public sources
+ * - Enhanced parallel processing
+ * - Stealth mode with anti-detection
+ * - LRU caching for performance
+ * - Data fusion algorithms
  */
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
@@ -18,6 +22,16 @@ import { WhitePagesScraper } from './sources/WhitePagesScraper';
 import { BaseScraper } from './sources/BaseScraper';
 import { DataFusion } from './fusion/DataFusion';
 import { PeopleSearchCache } from './cache/PeopleSearchCache';
+import { validatePeopleSearchConfig, getPeopleSearchConfig } from './config';
+
+// PRODUCTION VALIDATION: Validate configuration on module load
+// This ensures the service fails immediately on startup if misconfigured
+try {
+  validatePeopleSearchConfig();
+} catch (error: any) {
+  console.error('[PeopleSearch] FATAL: Configuration validation failed', error);
+  throw new Error(`People Search service cannot start: ${error.message}`);
+}
 
 // Add stealth plugin to chromium
 chromium.use(StealthPlugin());

@@ -33,8 +33,8 @@ const log = createLogger('CompensationEngine');
 
 // Load configuration from environment variables
 const ENV_CONFIG = {
-  payoutWallet: process.env.CRYPTO_PAYOUT_WALLET_ADDRESS || '',
-  backupWallet: process.env.CRYPTO_BACKUP_WALLET_ADDRESS || '',
+  payoutWallet: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '',
+  backupWallet: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '', // Backup same as primary
   preferredToken: process.env.CRYPTO_PAYOUT_TOKEN || 'ETH',
   preferredChain: process.env.CRYPTO_PAYOUT_CHAIN || 'ethereum',
   minPayoutAmount: process.env.CRYPTO_MIN_PAYOUT_AMOUNT || '0.001',

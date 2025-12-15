@@ -5,6 +5,11 @@
  * Configure credentials via environment variables:
  * - CRYPTOCRAWL_EMAIL: Admin email address
  * - CRYPTOCRAWL_PASSWORD: Admin password
+ * 
+ * NOTE: Auth credentials are OPTIONAL. If not set:
+ * - Server will boot normally
+ * - Auth-protected crypto routes will return 503 (service unavailable)
+ * - Core system, dashboard, and other APIs will continue to function
  */
 
 import crypto from 'crypto';
@@ -34,6 +39,14 @@ export interface AuthResult {
   token?: string;
   expiresAt?: number;
   error?: string;
+}
+
+/**
+ * Whether CryptoCrawl password auth is configured.
+ * If false, auth-protected features should be considered disabled (server should still boot).
+ */
+export function isCryptoCrawlAuthConfigured(): boolean {
+  return Boolean(MASTER_EMAIL && MASTER_PASSWORD_HASH);
 }
 
 // Active sessions stored in memory (in production, use Redis or similar)

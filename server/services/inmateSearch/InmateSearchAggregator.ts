@@ -1,20 +1,18 @@
 /**
  * Nationwide Inmate Locator - Search Aggregator Service
  * 
- * RECURSIVE OPTIMIZATION PASS:
- * - Warp speed² parallel processing
- * - Enhanced LRU cache with smart eviction
- * - Instant search with aggressive timeout
- * - Source prioritization by reliability
- * - Batch optimization for multiple searches
+ * PRODUCTION READY - REAL-WORLD OPERATIONS CAPABLE
  * 
- * Features:
- * - LRU caching for memoization
+ * Key Features:
+ * - NO DEMO FALLBACKS: All providers must be explicitly configured
+ * - FAIL HARD: Missing credentials or configs throw immediately
+ * - REAL API INTEGRATION: Direct BOP endpoint calls with proper error handling
+ * - LRU caching for performance
  * - Parallel batch requests for efficiency
  * - Rate limit handling
  * - Source deduplication
  * - Offense classification (VIOLENT/SEXUAL badges)
- * - 2-minute search timeout with partial results (optimized from 5 min)
+ * - 2-minute search timeout with partial results
  * - Modular data source adapter pattern
  */
 
@@ -30,7 +28,17 @@ import {
   SourceSearchStatus
 } from './types';
 import { STATE_CORRECTIONS, getStateCorrectionsInfo } from './stateData';
+import { validateInmateSearchConfig } from './config';
 import crypto from 'crypto';
+
+// PRODUCTION VALIDATION: Validate configuration on module load
+// This ensures the service fails immediately on startup if misconfigured
+try {
+  validateInmateSearchConfig();
+} catch (error: any) {
+  logger.error('[InmateSearch] FATAL: Configuration validation failed', error);
+  throw new Error(`Inmate Search service cannot start: ${error.message}`);
+}
 
 // LRU Cache Configuration - OPTIMIZED
 const CACHE_MAX_SIZE = 1000; // Increased for better hit rate

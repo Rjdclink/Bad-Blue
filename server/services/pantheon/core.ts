@@ -1,18 +1,30 @@
 import { createLogger } from '../../logger';
 import { EventEmitter } from 'events';
+import { validatePantheonConfig } from './config';
 
 const log = createLogger('PantheonCore');
 
 /**
- * RECURSIVE OPTIMIZATION PASS - PANTHEON CORE
+ * PANTHEON CORE - PRODUCTION READY
  * 
- * Enhanced with:
- * - Warp speed² task processing
+ * REAL-WORLD OPERATIONS CAPABLE:
+ * - NO DEMO FALLBACKS: All configurations validated on startup
+ * - FAIL HARD: Missing or invalid configs throw immediately
+ * - Warp speed task processing
  * - Quantum entropy compression
  * - Adaptive resource throttling
  * - Stealth mode operations
  * - Priority queue optimization
  */
+
+// PRODUCTION VALIDATION: Validate configuration on module load
+// This ensures the service fails immediately on startup if misconfigured
+try {
+  validatePantheonConfig();
+} catch (error: any) {
+  log.error('FATAL: PANTHEON configuration validation failed', error);
+  throw new Error(`PANTHEON Core cannot start: ${error.message}`);
+}
 
 // Entropy signature: compressed data representation (48 bytes vs MB)
 export interface EntropySignature {

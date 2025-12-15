@@ -14,7 +14,8 @@
 
 import { EventEmitter } from 'events';
 import logger from '../../../logger.js';
-import { stageGovernor, riskGovernor } from './index.js';
+import { stageGovernor } from './stage-governor.js';
+import { riskGovernor } from './risk-governor.js';
 import * as crypto from 'crypto';
 
 // ============================================================================
@@ -179,7 +180,7 @@ export class ArbitrageControlSystem extends EventEmitter {
     return {
       mode: 'DISABLED',
       bridgeWalletAddress: process.env.BRIDGE_WALLET_ADDRESS || null,
-      profitWalletAddress: process.env.CRYPTO_PAYOUT_WALLET_ADDRESS || null,
+      profitWalletAddress: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || null,
       signerConfigured: false,
       faucetCapsEnabled: true,
       evolutionLockOn: true,
@@ -252,7 +253,7 @@ export class ArbitrageControlSystem extends EventEmitter {
     });
     
     // Check 2: Bridge wallet private key exists (check for presence, not value)
-    const hasPrivateKey = !!process.env.PRIVATE_KEY || !!process.env.BRIDGE_WALLET_PRIVATE_KEY;
+    const hasPrivateKey = !!process.env.WALLET_PRIVATE_KEY || !!process.env.BRIDGE_SIGNER_PRIVATE_KEY;
     checks.push({
       name: 'Bridge Wallet Private Key (Signer)',
       passed: hasPrivateKey,
@@ -263,9 +264,9 @@ export class ArbitrageControlSystem extends EventEmitter {
     // Check 3: Profit wallet address
     checks.push({
       name: 'Profit Wallet Address',
-      passed: !!process.env.CRYPTO_PAYOUT_WALLET_ADDRESS,
-      details: process.env.CRYPTO_PAYOUT_WALLET_ADDRESS 
-        ? `Configured: ${process.env.CRYPTO_PAYOUT_WALLET_ADDRESS.substring(0, 10)}...`
+      passed: !!process.env.CRYPTO_PROFIT_WALLET_ADDRESS,
+      details: process.env.CRYPTO_PROFIT_WALLET_ADDRESS 
+        ? `Configured: ${process.env.CRYPTO_PROFIT_WALLET_ADDRESS.substring(0, 10)}...`
         : 'NOT SET - REQUIRED',
       critical: true,
     });
@@ -401,7 +402,7 @@ export class ArbitrageControlSystem extends EventEmitter {
     });
     
     // Check 3: Signer loaded from env var
-    const signerFromEnv = !!process.env.PRIVATE_KEY || !!process.env.BRIDGE_WALLET_PRIVATE_KEY;
+    const signerFromEnv = !!process.env.WALLET_PRIVATE_KEY || !!process.env.BRIDGE_SIGNER_PRIVATE_KEY;
     checks.push({
       name: 'Signer Loaded From Env',
       passed: signerFromEnv,
@@ -674,7 +675,7 @@ export class ArbitrageControlSystem extends EventEmitter {
     
     // Check 2: Profits route only to profit wallet (if executed)
     if (executionResult.executed) {
-      const profitWallet = process.env.CRYPTO_PAYOUT_WALLET_ADDRESS;
+      const profitWallet = process.env.CRYPTO_PROFIT_WALLET_ADDRESS;
       
       if (profitWallet) {
         executionResult.profitRouted = true;
@@ -1031,9 +1032,9 @@ export class ArbitrageControlSystem extends EventEmitter {
       },
       {
         name: 'Correct profit routing',
-        met: !!process.env.CRYPTO_PAYOUT_WALLET_ADDRESS,
-        details: process.env.CRYPTO_PAYOUT_WALLET_ADDRESS 
-          ? `Routing to ${process.env.CRYPTO_PAYOUT_WALLET_ADDRESS.substring(0, 10)}...`
+        met: !!process.env.CRYPTO_PROFIT_WALLET_ADDRESS,
+        details: process.env.CRYPTO_PROFIT_WALLET_ADDRESS 
+          ? `Routing to ${process.env.CRYPTO_PROFIT_WALLET_ADDRESS.substring(0, 10)}...`
           : 'Profit wallet NOT configured',
       },
       {
