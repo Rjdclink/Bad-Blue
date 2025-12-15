@@ -51,6 +51,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
 import { apiRequest, getInternalAuthHeaders } from "@/lib/queryClient";
 import { useWallet, formatAddress, getChainName, SUPPORTED_CHAINS } from "@/hooks/useWallet";
+import { StageGovernorPanel } from "@/components/stage-governor-panel";
 
 /**
  * CryptoCrawler Command Dashboard - Access Zone C

@@ -55,6 +55,8 @@ import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import { setupPulseRoutes } from "./routes/pulse.routes";
 import { createBeamRouter } from "./services/cryptocrawl/beam/beamRoutes.js";
 import { startBeamOnBoot } from "./services/cryptocrawl/beam/beam.js";
+import stageGovernorRoutes from "./routes/stageGovernor.routes";
+import arbitrageAgentsRoutes from "./routes/arbitrageAgents.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import { verifyCanonicalCryptoSetup } from "./services/cryptocrawl/verification/canonicalCryptoVerifier.js";
