@@ -28,6 +28,28 @@ import { createLogger } from '../../logger';
 const log = createLogger('CRYPTARA');
 
 // ============================================================================
+// STAGE 5 SAFETY GATES (NO BACKGROUND LOOPS)
+// ============================================================================
+//
+// Requirements (Stage 5 wiring):
+// - CRYPTARA_MODE=SILENT_WATCHER_ONLY => analysis-only, on-demand calls allowed
+// - NO_INTERVALS=true => absolutely no timers/intervals created
+// - NO_EXECUTION=true => execution layer must remain stubbed elsewhere
+//
+// IMPORTANT: This module must never start setInterval/setTimeout loops when
+// NO_INTERVALS is enabled (or when in SILENT_WATCHER_ONLY mode).
+type CryptaraMode = 'NORMAL' | 'SILENT_WATCHER_ONLY';
+
+function getCryptaraMode(): CryptaraMode {
+  const raw = (process.env.CRYPTARA_MODE || '').toUpperCase().trim();
+  return raw === 'SILENT_WATCHER_ONLY' ? 'SILENT_WATCHER_ONLY' : 'NORMAL';
+}
+
+function isNoIntervals(): boolean {
+  return process.env.NO_INTERVALS === 'true' || getCryptaraMode() === 'SILENT_WATCHER_ONLY';
+}
+
+// ============================================================================
 // TYPES AND INTERFACES
 // ============================================================================
 
@@ -219,15 +241,21 @@ export class Cryptara extends EventEmitter {
     this.startTime = new Date();
     this.status.isRunning = true;
     this.status.faucetStatus = 'ready';
-    
-    // Start continuous surveillance
-    if (this.config.enabled && this.config.surveillanceMode === 'continuous') {
-      this.startSurveillance();
-    }
+    this.status.isSurveillanceActive = false;
 
-    // Schedule Monte Carlo simulations
-    if (this.config.enabled) {
-      this.scheduleSimulations();
+    // Stage 5: SILENT_WATCHER_ONLY + NO_INTERVALS => no background timers.
+    if (isNoIntervals()) {
+      log.info('CRYPTARA initialized in NO_INTERVALS/SILENT_WATCHER_ONLY mode (no background loops)');
+    } else {
+      // Start continuous surveillance
+      if (this.config.enabled && this.config.surveillanceMode === 'continuous') {
+        this.startSurveillance();
+      }
+
+      // Schedule Monte Carlo simulations
+      if (this.config.enabled) {
+        this.scheduleSimulations();
+      }
     }
 
     this.emit('initialized', { timestamp: new Date() });
@@ -241,6 +269,11 @@ export class Cryptara extends EventEmitter {
    * Start continuous market surveillance
    */
   private startSurveillance(): void {
+    if (isNoIntervals()) {
+      log.info('Surveillance timers disabled (NO_INTERVALS/SILENT_WATCHER_ONLY)');
+      this.status.isSurveillanceActive = false;
+      return;
+    }
     this.status.isSurveillanceActive = true;
     
     // Run surveillance every minute
@@ -337,6 +370,10 @@ export class Cryptara extends EventEmitter {
    * Schedule Monte Carlo simulations
    */
   private scheduleSimulations(): void {
+    if (isNoIntervals()) {
+      log.info('Monte Carlo scheduling disabled (NO_INTERVALS/SILENT_WATCHER_ONLY)');
+      return;
+    }
     const intervalMs = this.config.monteCarloInterval * 60 * 60 * 1000;
     
     this.simulationInterval = setInterval(async () => {
