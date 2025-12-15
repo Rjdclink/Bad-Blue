@@ -15,6 +15,7 @@ export interface BeamState {
 let state: BeamState = { enabled: false };
 
 function isEnabled(): boolean {
+  if (String(process.env.BEAM_KILL || '').toLowerCase() === 'true') return false;
   return String(process.env.BEAM_ENABLED || '').toLowerCase() === 'true';
 }
 
@@ -115,6 +116,9 @@ export async function emitBeamPulse(kind: 'boot' | 'manual' | 'cron'): Promise<{
 }
 
 export function startBeamOnBoot(): void {
+  const enabled = String(process.env.BEAM_ENABLED || '').toLowerCase() === 'true';
+  const killed = String(process.env.BEAM_KILL || '').toLowerCase() === 'true';
+  console.log('[BEAM]', { enabled, killed, nodeEnv: process.env.NODE_ENV || 'unknown' });
   if (!isEnabled()) return;
   // No scheduler here: only a boot pulse. Cron can call /beam/pulse for periodic wake-ups.
   void emitBeamPulse('boot');
