@@ -3,6 +3,7 @@
 
 import { ethers } from 'ethers';
 import logger from '../../../logger.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -503,6 +504,7 @@ export class AlchemyProvider {
    * Send raw transaction
    */
   async sendTransaction(signedTx: string): Promise<string> {
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: this.chain });
     await this.rateLimiter.waitForSlot();
 
     const start = Date.now();

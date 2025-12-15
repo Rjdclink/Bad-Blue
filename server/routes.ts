@@ -52,8 +52,13 @@ import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
+import { setupPulseRoutes } from "./routes/pulse.routes";
+import { createBeamRouter } from "./services/cryptocrawl/beam/beamRoutes.js";
+import { startBeamOnBoot } from "./services/cryptocrawl/beam/beam.js";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
+import { verifyCanonicalCryptoSetup } from "./services/cryptocrawl/verification/canonicalCryptoVerifier.js";
+import { SUPPORTED_CHAINS } from "./services/cryptocrawl/bridge/chain-config.js";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -137,7 +142,6 @@ import {
   insertSubscriptionTierSchema,
   DOCUMENT_CREATOR_PRICING_CENTS,
 } from "@shared/schema";
-import crypto from 'crypto';
 import archiver from 'archiver';
 import { eq, and, sql, desc, asc, inArray } from 'drizzle-orm';
 import { db } from './db';
@@ -817,6 +821,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware setup
   await setupAuth(app);
 
+  // Packetized “laser pulse” channel (signature-only, no sessions).
+  setupPulseRoutes(app);
+
+  // Beam test: default ON when BEAM_ENABLED=true (no UI dependency).
+  // Missing BEAM_ENABLED is treated as false (no beam = no cost).
+  app.use('/beam', createBeamRouter());
+  startBeamOnBoot();
+
   // Usage tracking middleware - learns usage patterns for auto-repair timing
   app.use((req, res, next) => {
     trackUsage({ action: req.method, tokens: 0, path: req.path }).catch(() => {});
@@ -1132,14 +1144,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loginIdentifier = email || username;
       const clientIp = req.ip || req.connection.remoteAddress || "unknown";
 
-      // THREE-TIER MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
-      // Zone A: SARBEAR -> LegalWhat Access (works with ANY email or without email)
-      // Zone B: FORGEAI -> 4JI Orchestrator Admin Console
-      // Zone C: CRPTCRWLR -> CryptoCrawler Command Dashboard
-      const accessZone = checkMasterPassword(password);
+      // MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
+      // STRICT: master password requires matching email (see masterPassword.ts)
+      const accessZone = checkMasterPassword(password, loginIdentifier);
       
       if (accessZone) {
-        const zoneConfig = getAccessZoneConfig(password)!;
+        const zoneConfig = getAccessZoneConfig(password, loginIdentifier)!;
         console.log(`[SECURITY ALERT] ${accessZone.toUpperCase()} master password used. Role: ${zoneConfig.role}. Email: ${loginIdentifier || 'none'}, IP: ${clientIp}`);
         
         // Let passport strategy handle the master password authentication
@@ -5087,6 +5097,44 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // No fallback users, no auto-create, 401 only
   // ============================================
   
+  // ============================================
+  // CRYPTO VERIFIER ROUTES (HEADER-ONLY, NO SESSION)
+  // Only /admin/crypto/verify-* bypasses session auth via header match.
+  // ============================================
+
+  const requireInternalVerifyHeader: RequestHandler = (req, res, next) => {
+    const provided = String(req.header('X-Internal-Verify') || '');
+    const secret = String(process.env.INTERNAL_VERIFY_SECRET || '');
+    if (provided && secret && provided === secret) return next();
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized',
+      message: 'Verifier header auth failed',
+    });
+  };
+
+  // Mount verifier handlers BEFORE the session-protected /admin/crypto router.
+  // This guarantees verifier access does not depend on passport/session middleware.
+  const cryptoVerifyRouter = express.Router();
+  cryptoVerifyRouter.get('/verify-canonical', requireInternalVerifyHeader, (_req, res) => {
+    const report = verifyCanonicalCryptoSetup();
+    res.json({ success: report.ok, report });
+  });
+  cryptoVerifyRouter.get('/verify-chains', requireInternalVerifyHeader, (_req, res) => {
+    const issues: Array<{ chain: string; issue: string }> = [];
+    for (const [chain, cfg] of Object.entries(SUPPORTED_CHAINS)) {
+      if (!cfg.chainId || typeof cfg.chainId !== 'number') issues.push({ chain, issue: 'Missing/invalid chainId' });
+      if (!cfg.rpcUrl || String(cfg.rpcUrl).trim().length === 0) issues.push({ chain, issue: 'Missing rpcUrl' });
+      if (!cfg.usdc || !cfg.usdt) issues.push({ chain, issue: 'Missing stablecoin addresses (usdc/usdt)' });
+    }
+    res.json({
+      success: issues.length === 0,
+      supportedChains: Object.keys(SUPPORTED_CHAINS),
+      issues,
+    });
+  });
+  app.use('/admin/crypto', cryptoVerifyRouter);
+
   // Strict auth middleware for crypto routes - no fallback, 401 only
   const cryptoAuthMiddleware: RequestHandler = (req, res, next) => {
     // Set no-cache headers
@@ -5095,9 +5143,98 @@ Contact: ${foiaRequest.userEmail || userEmail}
       'Pragma': 'no-cache',
       'Expires': '0',
     });
+
+    // VERIFIER BYPASS (as requested):
+    // If request path starts with /admin/crypto/verify
+    // AND header X-Internal-Verify === INTERNAL_VERIFY_SECRET
+    // THEN bypass session + passport
+    // ELSE enforce normal session auth
+    //
+    // This is intentionally narrow and does NOT touch any other /admin/crypto/* routes.
+    const fullPath = String((req as any).originalUrl || '').split('?')[0];
+    const isVerifyRoute =
+      fullPath.startsWith('/admin/crypto/verify') ||
+      (String((req as any).baseUrl || '') === '/admin/crypto' && String((req as any).path || '').startsWith('/verify'));
+
+    if (isVerifyRoute) {
+      // Force execution visibility (no secrets).
+      const serviceName = process.env.RAILWAY_SERVICE_NAME || process.env.SERVICE_NAME || 'unknown';
+      const commit =
+        process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || process.env.SOURCE_VERSION || 'unknown';
+      const nodeEnv = process.env.NODE_ENV || 'unknown';
+
+      const provided = String(req.header('X-Internal-Verify') || '');
+      const secret = String(process.env.INTERNAL_VERIFY_SECRET || '');
+      if (provided && secret && provided === secret) return next();
+
+      console.log('[VERIFIER_V2_REACHED]', {
+        ts: new Date().toISOString(),
+        serviceName,
+        commit,
+        nodeEnv,
+        originalUrl: String((req as any).originalUrl || ''),
+        baseUrl: String((req as any).baseUrl || ''),
+        path: String((req as any).path || ''),
+        host: String(req.headers?.host || ''),
+        hasInternalVerifyHeader: Boolean(provided),
+        headerLength: provided.length,
+        hasInternalVerifySecret: Boolean(secret),
+        secretLength: secret.length,
+        headerMatches: Boolean(provided && secret && provided === secret),
+      });
+
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Verifier header auth failed',
+        marker: 'VERIFIER_V2_REACHED',
+        diagnostics: {
+          serviceName,
+          commit,
+          nodeEnv,
+          fullPath,
+          baseUrl: String((req as any).baseUrl || ''),
+          path: String((req as any).path || ''),
+          hasHeader: Boolean(provided),
+          headerLength: provided.length,
+          hasSecret: Boolean(secret),
+          secretLength: secret.length,
+          // Avoid leaking values; provide only a boolean match indicator.
+          matches: Boolean(provided && secret && provided === secret),
+        },
+      });
+    }
+
+    // INTERNAL KEY BYPASS (for /api/crypto/* and /admin/crypto/*):
+    // If INTERNAL_KEY is set, requests may authenticate via header instead of session.
+    // This is required for non-browser callers (cron/agents) and UI toggles where session isn't reliable.
+    const internalKey = String(process.env.INTERNAL_KEY || process.env.INTERNAL_API_KEY || '');
+    if (internalKey) {
+      const provided =
+        String(req.header('X-Internal-Key') || '') ||
+        String(req.header('X-Internal-Api-Key') || '') ||
+        String(req.header('X-Internal-Verify') || '');
+      if (provided && provided === internalKey) {
+        return next();
+      }
+    }
     
     // STRICT: Check if user is authenticated via passport
     if (!req.isAuthenticated || !req.isAuthenticated()) {
+      // TEMP DIAGNOSTICS: identify why crypto auth failed (no secrets)
+      console.log('[CRYPTO_AUTH_FAIL]', {
+        ts: new Date().toISOString(),
+        reason: 'not_authenticated',
+        originalUrl: String((req as any).originalUrl || ''),
+        host: String(req.headers?.host || ''),
+        hasCookie: Boolean(req.headers?.cookie),
+        hasAuthorization: Boolean(req.headers?.authorization),
+        hasInternalVerifyHeader: Boolean(req.headers?.['x-internal-verify']),
+        hasInternalKeyHeader: Boolean(req.headers?.['x-internal-key'] || req.headers?.['x-internal-api-key']),
+        nodeEnv: process.env.NODE_ENV || 'unknown',
+        hasInternalVerifySecret: Boolean(process.env.INTERNAL_VERIFY_SECRET),
+        hasInternalKey: Boolean(process.env.INTERNAL_KEY || process.env.INTERNAL_API_KEY),
+      });
       return res.status(401).json({
         success: false,
         error: 'Unauthorized',
@@ -5109,6 +5246,17 @@ Contact: ${foiaRequest.userEmail || userEmail}
     
     // STRICT: Must be master password user (admin)
     if (!user.isMasterBypass) {
+      console.log('[CRYPTO_AUTH_FAIL]', {
+        ts: new Date().toISOString(),
+        reason: 'not_master_bypass',
+        originalUrl: String((req as any).originalUrl || ''),
+        host: String(req.headers?.host || ''),
+        userFlags: {
+          isMasterBypass: Boolean((user as any).isMasterBypass),
+          isAdmin: Boolean((user as any).isAdmin),
+          isAdminBypass: Boolean((user as any).isAdminBypass),
+        },
+      });
       return res.status(403).json({
         success: false,
         error: 'Forbidden',
@@ -5129,6 +5277,16 @@ Contact: ${foiaRequest.userEmail || userEmail}
   
   // Mount Bridge API routes
   app.use('/api/bridge', bridgeApi);
+  
+  // ============================================
+  // STAGE GOVERNOR API - Staged Autonomy Control
+  // ============================================
+  app.use('/api/governance', stageGovernorRoutes);
+  
+  // ============================================
+  // ARBITRAGE AGENTS API - 6-Agent Verification & Control
+  // ============================================
+  app.use('/api/arbitrage', arbitrageAgentsRoutes);
   
   // ============================================
   // 4JI ORCHESTRATOR API

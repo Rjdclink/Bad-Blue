@@ -67,7 +67,15 @@ export async function setupAuth(app: Express) {
   // Middleware that conditionally applies session only to API routes
   app.use((req, res, next) => {
     // Only apply session middleware to API routes or specific auth paths
-    if (req.path.startsWith('/api/') || req.path === '/login' || req.path === '/signup' || req.path === '/') {
+    // NOTE: /admin/crypto is protected by cryptoAuthMiddleware which relies on passport sessions.
+    // If we don't attach sessions here, crypto admin routes will always return 401 even with a valid cookie.
+    if (
+      req.path.startsWith('/api/') ||
+      req.path.startsWith('/admin/crypto') ||
+      req.path === '/login' ||
+      req.path === '/signup' ||
+      req.path === '/'
+    ) {
       sessionMiddleware(req, res, (err) => {
         if (err) return next(err);
         passportInit(req, res, (err) => {

@@ -21,6 +21,7 @@
 import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import { createMonteCarloEngine, ELITE_STRATEGIES, MARKET_CONDITIONS, type SimulationResult, type StrategyProfile, type MarketCondition } from '../validation/monte-carlo-engine.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 
 // ============================================
 // DIVINE TRAINING CONFIGURATION
@@ -174,6 +175,26 @@ class ScheduledMonteCarloTraining {
       return;
     }
 
+    const governance = getCryptocrawlGovernance();
+    // Stage 1–3: no background loops; Stage 4+ only when explicitly unpaused and permitted.
+    try {
+      if (!governance.isLongTermMemoryAllowed()) {
+        logger.warn('[MonteCarloTraining] Not starting: governance disallows long-term learning in Stage 1–3', {
+          component: 'ScheduledMCTraining',
+          governance: governance.getState(),
+        });
+        return;
+      }
+      governance.requireAllowed('EVOLVE_STRATEGY');
+      governance.requireAllowed('PERSIST_LONG_TERM_MEMORY');
+    } catch {
+      logger.warn('[MonteCarloTraining] Not starting: requires UNPAUSE envelope allowing EVOLVE_STRATEGY + PERSIST_LONG_TERM_MEMORY', {
+        component: 'ScheduledMCTraining',
+        governance: governance.getState(),
+      });
+      return;
+    }
+
     this.isRunning = true;
     logger.info('[MonteCarloTraining] 🎓 Divine Monte Carlo Training System ACTIVATED', {
       component: 'ScheduledMCTraining',
@@ -226,6 +247,16 @@ class ScheduledMonteCarloTraining {
    * Check if it's time to run training (every 6 hours, 1 strategy at a time)
    */
   private async checkAndRunTraining(): Promise<void> {
+    // Deny-by-default: scheduled training is an autonomous loop.
+    // Require an explicit envelope each time (if paused/expired, do nothing).
+    try {
+      const governance = getCryptocrawlGovernance();
+      governance.requireAllowed('EVOLVE_STRATEGY');
+      governance.requireAllowed('PERSIST_LONG_TERM_MEMORY');
+    } catch {
+      return;
+    }
+
     const now = Date.now();
     const intervalMs = TRAINING_CONFIG.TRAINING_INTERVAL_HOURS * 60 * 60 * 1000;
 
@@ -248,7 +279,7 @@ class ScheduledMonteCarloTraining {
     const baseTimeCap = TRAINING_CONFIG.MIN_TIME_CAP_MS + 
       Math.random() * (TRAINING_CONFIG.MAX_TIME_CAP_MS - TRAINING_CONFIG.MIN_TIME_CAP_MS);
     
-    if (TRAINING_CONFIG.ZERO_CAPITAL_STRATEGIES.includes(strategyName)) {
+    if (TRAINING_CONFIG.ZERO_CAPITAL_STRATEGIES.includes(strategyName as any)) {
       return baseTimeCap * TRAINING_CONFIG.ZERO_CAPITAL_TIME_MULTIPLIER;
     }
     return baseTimeCap;
@@ -326,7 +357,7 @@ class ScheduledMonteCarloTraining {
     }
     
     const timeCap = this.getTimeCap(strategyName);
-    const isZeroCapital = TRAINING_CONFIG.ZERO_CAPITAL_STRATEGIES.includes(strategyName);
+    const isZeroCapital = TRAINING_CONFIG.ZERO_CAPITAL_STRATEGIES.includes(strategyName as any);
     
     this.currentSession = {
       sessionId,

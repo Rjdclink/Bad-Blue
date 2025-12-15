@@ -2,6 +2,7 @@ import { MultiRelaySubmitter } from './multi-relay-submitter.js';
 import { FlashLoanAggregator } from './flash-loan-aggregator.js';
 import { UltraLowLatencyExecutor } from './ultra-low-latency-executor.js';
 import logger from '../../../logger.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 
 interface Opportunity {
   id: string;
@@ -30,6 +31,10 @@ export const ultraLowLatency = new UltraLowLatencyExecutor();
 
 // Unified execution function that combines all systems
 export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionResult> {
+  const governance = getCryptocrawlGovernance();
+  // Hard gate: deny-by-default unless explicitly UNPAUSED inside an envelope.
+  governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opp.chain, pair: opp.asset });
+
   logger.info('Executing opportunity with max profit strategy', {
     component: 'ExecutionOrchestrator',
     opportunityId: opp.id,
@@ -39,6 +44,10 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
   });
 
   try {
+    // Live execution implies transaction submission. Gate again with chain context.
+    governance.requireAllowed('SUBMIT_TX', { chain: opp.chain, pair: opp.asset });
+    governance.recordExecutionAttempt();
+
     // Initialize systems if needed
     await multiRelay.initialize();
     await ultraLowLatency.initialize();
