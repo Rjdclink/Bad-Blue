@@ -2,6 +2,11 @@
  * People Search Aggregator - PRODUCTION READY
  * Full functionality with fail-fast retry pattern
  * 
+ * ARCHITECTURE NOTE:
+ * This module is used by the People Search Worker service, NOT the main app.
+ * The main app uses the PeopleSearchProxy client instead, which proxies
+ * requests to the worker. This ensures the main app does not import Playwright.
+ * 
  * Features:
  * - Parallel scraping across multiple sources
  * - Stealth mode with anti-detection
@@ -20,13 +25,15 @@ import { DataFusion } from './fusion/DataFusion';
 import { PeopleSearchCache } from './cache/PeopleSearchCache';
 import { validatePeopleSearchConfig, getPeopleSearchConfig } from './config';
 
-// PRODUCTION VALIDATION: Validate configuration on module load
-// This ensures the service fails immediately on startup if misconfigured
+// CONFIGURATION CHECK: Run validation but don't throw on failure
+// This ensures the module can be loaded even if Playwright isn't available
+// The actual browser validation happens at runtime in the worker
 try {
   validatePeopleSearchConfig();
 } catch (error: any) {
-  console.error('[PeopleSearch] FATAL: Configuration validation failed', error);
-  throw new Error(`People Search service cannot start: ${error.message}`);
+  // Log warning but don't block module load
+  console.warn('[PeopleSearch] Configuration validation warning:', error.message);
+  console.warn('[PeopleSearch] Browser operations may fail at runtime');
 }
 
 // PRODUCTION: Add stealth plugin
