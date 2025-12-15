@@ -11,9 +11,9 @@
  * 7. Progressive report filling
  */
 
-import { dailyCapLadder, globalHaltController } from '../server/services/cryptocrawl/risk';
-import { crawlerJobManager } from '../server/services/crawlers/CrawlerJobManager';
-import { logger } from '../server/logger';
+import { dailyCapLadder, globalHaltController } from '../server/services/cryptocrawl/risk/index.js';
+import { crawlerJobManager } from '../server/services/crawlers/CrawlerJobManager.js';
+import { logger } from '../server/logger.js';
 
 interface VerificationResult {
   name: string;

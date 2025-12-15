@@ -16,7 +16,7 @@
  * - Integration with global halt controller
  */
 
-import { logger } from '../../../logger';
+import { logger } from '../../../logger.js';
 import crypto from 'crypto';
 
 // ============================================================================

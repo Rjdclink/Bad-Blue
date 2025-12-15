@@ -18,7 +18,7 @@
  * - All execution engines
  */
 
-import { logger } from '../../../logger';
+import { logger } from '../../../logger.js';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
 

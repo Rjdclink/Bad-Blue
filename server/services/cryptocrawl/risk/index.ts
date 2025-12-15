@@ -16,7 +16,7 @@ export {
   type DailyPerformance,
   type TierAdvancementCheck,
   type CapStatus,
-} from './daily-cap-ladder';
+} from './daily-cap-ladder.js';
 
 export {
   GlobalHaltController,
@@ -26,18 +26,18 @@ export {
   type HaltEvent,
   type ResumeEvent,
   type SystemState,
-} from './global-halt-controller';
+} from './global-halt-controller.js';
 
 export {
   calculateKellyCriterion,
   getKellyRecommendations,
   type KellyCriterionResult,
   type KellyRecommendation,
-} from './kelly-criterion';
+} from './kelly-criterion.js';
 
 export {
   MandatoryRiskShield,
   mandatoryRiskShield,
   type RiskShieldConfig,
   type RiskShieldStatus,
-} from './mandatory-risk-shield';
+} from './mandatory-risk-shield.js';
