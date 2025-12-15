@@ -131,6 +131,11 @@ const TRADINGVIEW_CONFIG = {
     'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
     'ADAUSDT', 'AVAXUSDT', 'DOTUSDT', 'MATICUSDT', 'LINKUSDT',
   ],
+  // Production mode requires real API integration
+  productionMode: process.env.TRADINGVIEW_PRODUCTION === 'true',
+  // Real data source endpoints (requires TradingView subscription)
+  realDataEndpoint: process.env.TRADINGVIEW_API_ENDPOINT || '',
+  apiKey: process.env.TRADINGVIEW_API_KEY || '',
 };
 
 /**
@@ -168,8 +173,11 @@ export class TradingViewEngine {
 
   /**
    * Get technical analysis for a symbol
-   * NOTE: In production, this would call TradingView's API or use websockets
-   * Current implementation generates realistic simulated data
+   * 
+   * PRODUCTION MODE: Fetches real data from TradingView API or configured endpoint
+   * DEVELOPMENT MODE: Uses simulated data for testing
+   * 
+   * Set TRADINGVIEW_PRODUCTION=true and configure TRADINGVIEW_API_ENDPOINT for real data
    */
   static async getAnalysis(
     symbol: string = TRADINGVIEW_CONFIG.defaultSymbol,
@@ -183,18 +191,85 @@ export class TradingViewEngine {
       return cached;
     }
 
-    // Generate analysis (in production: fetch from TradingView)
-    const analysis = this.generateAnalysis(symbol);
-    this.analysisCache.set(cacheKey, analysis);
+    let analysis: TechnicalAnalysis;
 
+    // PRODUCTION MODE: Fetch real data
+    if (TRADINGVIEW_CONFIG.productionMode && TRADINGVIEW_CONFIG.realDataEndpoint) {
+      try {
+        analysis = await this.fetchRealAnalysis(symbol, _timeframe);
+        logger.info('[TRADINGVIEW] Real data fetched successfully', {
+          component: 'TradingView',
+          symbol,
+          timeframe: _timeframe,
+          mode: 'PRODUCTION'
+        });
+      } catch (error) {
+        logger.error('[TRADINGVIEW] Production fetch failed, halting (no fallback to simulated data)', {
+          component: 'TradingView',
+          symbol,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // In production mode, DO NOT fall back to simulated data - throw error
+        throw new Error(`TradingView production data unavailable for ${symbol}. Configure API or disable production mode.`);
+      }
+    } else {
+      // DEVELOPMENT MODE: Use simulated data with clear warning
+      logger.warn('[TRADINGVIEW] Using SIMULATED data - NOT for production trading', {
+        component: 'TradingView',
+        symbol,
+        mode: 'DEVELOPMENT',
+        warning: 'Set TRADINGVIEW_PRODUCTION=true for real data'
+      });
+      analysis = this.generateSimulatedAnalysis(symbol);
+    }
+
+    this.analysisCache.set(cacheKey, analysis);
     return analysis;
   }
 
   /**
-   * Generate realistic technical analysis data
-   * NOTE: Replace with actual TradingView API integration in production
+   * Fetch real analysis from TradingView API or configured endpoint
+   * Requires proper API credentials
    */
-  private static generateAnalysis(symbol: string): TechnicalAnalysis {
+  private static async fetchRealAnalysis(symbol: string, timeframe: string): Promise<TechnicalAnalysis> {
+    const endpoint = TRADINGVIEW_CONFIG.realDataEndpoint;
+    const apiKey = TRADINGVIEW_CONFIG.apiKey;
+
+    if (!endpoint || !apiKey) {
+      throw new Error('TradingView API endpoint or key not configured');
+    }
+
+    const url = `${endpoint}/analysis?symbol=${symbol}&timeframe=${timeframe}`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`TradingView API returned ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    
+    // Validate response structure
+    if (!data.oscillators || !data.movingAverages || !data.summary) {
+      throw new Error('Invalid TradingView API response structure');
+    }
+
+    return data as TechnicalAnalysis;
+  }
+
+  /**
+   * Generate SIMULATED technical analysis data for DEVELOPMENT/TESTING only
+   * 
+   * WARNING: This data is NOT real and should NEVER be used for actual trading decisions
+   * Set TRADINGVIEW_PRODUCTION=true and configure API for real data
+   */
+  private static generateSimulatedAnalysis(symbol: string): TechnicalAnalysis {
     // Generate seed using symbol hash for consistent pseudo-random values
     // Using a hash of the symbol ensures unique seeds per symbol
     const symbolHash = symbol.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);

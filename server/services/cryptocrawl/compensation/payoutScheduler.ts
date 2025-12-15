@@ -3,15 +3,22 @@
  * 
  * Hourly cryptocurrency deposit system that:
  * - Consolidates compensation every hour (CCC-60)
- * - Sends payouts directly to wallet
+ * - Sends payouts directly to wallet via REAL blockchain transactions
  * - Verifies transactions with 4-layer validation
  * - Implements automatic retry with backup chains
  * - Ensures no hour is ever skipped
+ * 
+ * PRODUCTION MODE: Executes real blockchain transactions
+ * SIMULATION MODE: Logs what would happen (for testing)
+ * 
+ * Set PAYOUT_PRODUCTION_MODE=true for real transactions
  */
 
 import { EventEmitter } from 'events';
+import { ethers } from 'ethers';
 import { createLogger } from '../../../logger';
 import { compensationEngine } from './compensationEngine';
+import { blockchainAPI } from '../api/blockchain-providers';
 import type {
   PayoutCycle,
   PayoutTransaction,
@@ -20,6 +27,10 @@ import type {
 } from './types';
 
 const log = createLogger('PayoutScheduler');
+
+// Production mode flag - MUST be explicitly enabled for real transactions
+const PRODUCTION_MODE = process.env.PAYOUT_PRODUCTION_MODE === 'true';
+const PRIVATE_KEY = process.env.PAYOUT_WALLET_PRIVATE_KEY || ''; // Required for signing transactions
 
 // ============================================================================
 // CONSTANTS
@@ -80,6 +91,9 @@ export class PayoutScheduler extends EventEmitter {
 
   /**
    * Start hourly payout scheduler
+   * 
+   * PRODUCTION MODE: Executes real blockchain transactions
+   * SIMULATION MODE: Logs what would happen (default for safety)
    */
   start(walletAddress: string, token = 'ETH', chain = 'ethereum'): void {
     if (this.isActive) {
@@ -93,14 +107,25 @@ export class PayoutScheduler extends EventEmitter {
     this.isActive = true;
 
     log.info('🚀 Starting APE-60 Hourly Payout Scheduler');
+    log.info(`   Mode: ${PRODUCTION_MODE ? '🔴 PRODUCTION (REAL TRANSACTIONS)' : '🟡 SIMULATION (NO REAL TXS)'}`);
     log.info(`   Wallet: ${walletAddress.substring(0, 10)}...`);
     log.info(`   Token: ${token} on ${chain}`);
     log.info('   Interval: Every hour on the hour');
+    
+    if (!PRODUCTION_MODE) {
+      log.warn('⚠️ SIMULATION MODE ACTIVE - No real transactions will be executed');
+      log.warn('   Set PAYOUT_PRODUCTION_MODE=true to enable real payouts');
+    } else {
+      log.info('✅ Production mode enabled - Real transactions will be executed');
+      if (!PRIVATE_KEY) {
+        log.error('❌ CRITICAL: PAYOUT_WALLET_PRIVATE_KEY not set - transactions will fail!');
+      }
+    }
 
     // Schedule first payout at next hour mark
     this.scheduleNextPayout();
 
-    this.emit('started', { walletAddress, token, chain });
+    this.emit('started', { walletAddress, token, chain, productionMode: PRODUCTION_MODE });
   }
 
   /**
@@ -342,9 +367,17 @@ export class PayoutScheduler extends EventEmitter {
 
   /**
    * Execute payout transaction
+   * 
+   * PRODUCTION MODE: Executes real blockchain transaction
+   * SIMULATION MODE: Logs what would happen without executing
    */
   private async executePayout(amount: string): Promise<PayoutTransaction> {
-    log.info('📤 Executing payout transaction...');
+    log.info('📤 Executing payout transaction...', {
+      mode: PRODUCTION_MODE ? 'PRODUCTION' : 'SIMULATION',
+      amount,
+      token: this.preferredToken,
+      chain: this.preferredChain,
+    });
     
     const transaction: PayoutTransaction = {
       id: this.generateId(),
@@ -360,16 +393,89 @@ export class PayoutScheduler extends EventEmitter {
       verifications: [],
     };
 
-    // Simulate transaction execution
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Simulate transaction hash
-    transaction.txHash = `0x${Math.random().toString(16).substring(2, 66)}`;
-    transaction.status = 'sent';
-    
-    log.info(`✅ Transaction sent: ${transaction.txHash}`);
-    
-    return transaction;
+    if (!PRODUCTION_MODE) {
+      // SIMULATION MODE - Log what would happen but don't execute
+      log.warn('⚠️ SIMULATION MODE - Transaction not executed', {
+        wouldSend: amount,
+        to: this.walletAddress,
+        chain: this.preferredChain,
+        enableRealTx: 'Set PAYOUT_PRODUCTION_MODE=true to enable real transactions',
+      });
+      
+      // Generate simulated hash for testing flow
+      transaction.txHash = `SIM_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+      transaction.status = 'sent';
+      transaction.simulatedOnly = true;
+      
+      return transaction;
+    }
+
+    // PRODUCTION MODE - Execute real blockchain transaction
+    if (!PRIVATE_KEY) {
+      throw new Error('PAYOUT_WALLET_PRIVATE_KEY not configured - cannot sign transaction');
+    }
+
+    try {
+      // Get the Alchemy provider for the target chain
+      const supportedChain = this.preferredChain as 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'base';
+      const provider = blockchainAPI.getAlchemy(supportedChain);
+      
+      // Create wallet signer
+      const httpProvider = new ethers.providers.JsonRpcProvider(
+        `https://${supportedChain === 'ethereum' ? 'eth' : supportedChain}-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
+      );
+      const wallet = new ethers.Wallet(PRIVATE_KEY, httpProvider);
+
+      // Get current gas prices
+      const gasData = await provider.getGasData();
+      
+      // Build transaction
+      const tx = {
+        to: this.walletAddress!,
+        value: ethers.utils.parseEther(amount),
+        maxFeePerGas: ethers.BigNumber.from(gasData.maxFee),
+        maxPriorityFeePerGas: ethers.BigNumber.from(gasData.maxPriorityFee),
+        type: 2, // EIP-1559
+      };
+
+      log.info('📝 Signing and sending transaction...', {
+        to: tx.to,
+        value: amount,
+        maxFee: ethers.utils.formatGwei(tx.maxFeePerGas) + ' gwei',
+      });
+
+      // Send transaction
+      const sentTx = await wallet.sendTransaction(tx);
+      transaction.txHash = sentTx.hash;
+      transaction.status = 'sent';
+      
+      log.info(`✅ REAL Transaction sent: ${transaction.txHash}`, {
+        hash: transaction.txHash,
+        chain: this.preferredChain,
+      });
+
+      // Wait for confirmation (1 block)
+      log.info('⏳ Waiting for confirmation...');
+      const receipt = await sentTx.wait(1);
+      
+      if (receipt.status === 1) {
+        transaction.status = 'confirmed';
+        transaction.confirmations = 1;
+        transaction.blockNumber = receipt.blockNumber;
+        log.info(`✅ Transaction confirmed in block ${receipt.blockNumber}`);
+      } else {
+        transaction.status = 'failed';
+        log.error('❌ Transaction failed on-chain');
+      }
+      
+      return transaction;
+
+    } catch (error) {
+      log.error('❌ Transaction execution failed:', error);
+      transaction.status = 'failed';
+      transaction.error = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 
   /**
@@ -440,12 +546,54 @@ export class PayoutScheduler extends EventEmitter {
   }
 
   /**
-   * Verify transaction on-chain
+   * Verify transaction on-chain using real blockchain data
    */
   private async verifyOnChain(transaction: PayoutTransaction): Promise<boolean> {
-    // Simulate on-chain verification
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    return true; // In production, would check actual blockchain
+    // Skip real verification for simulated transactions
+    if ((transaction as any).simulatedOnly) {
+      log.warn('⚠️ Skipping on-chain verification for simulated transaction');
+      return true;
+    }
+
+    if (!transaction.txHash || !PRODUCTION_MODE) {
+      return true; // Simulation mode always passes
+    }
+
+    try {
+      const supportedChain = this.preferredChain as 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'base';
+      const provider = blockchainAPI.getAlchemy(supportedChain);
+      
+      // Get transaction receipt from blockchain
+      const receipt = await provider.getTransactionReceipt(transaction.txHash);
+      
+      if (!receipt) {
+        log.warn('Transaction not yet confirmed on-chain');
+        return false;
+      }
+
+      // Verify transaction succeeded
+      const verified = receipt.status === 1;
+      
+      if (verified) {
+        transaction.confirmations = receipt.confirmations;
+        transaction.blockNumber = receipt.blockNumber;
+        log.info('✅ On-chain verification passed', {
+          hash: transaction.txHash,
+          block: receipt.blockNumber,
+          confirmations: receipt.confirmations,
+        });
+      } else {
+        log.error('❌ Transaction failed on-chain', {
+          hash: transaction.txHash,
+          status: receipt.status,
+        });
+      }
+
+      return verified;
+    } catch (error) {
+      log.error('On-chain verification error:', error);
+      return false;
+    }
   }
 
   /**
@@ -466,12 +614,50 @@ export class PayoutScheduler extends EventEmitter {
   }
 
   /**
-   * Verify with multiple block explorers
+   * Verify with multiple block explorers using Etherscan API
    */
   private async verifyWithExplorers(transaction: PayoutTransaction): Promise<boolean> {
-    // Simulate explorer verification
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    return true;
+    // Skip real verification for simulated transactions
+    if ((transaction as any).simulatedOnly || !PRODUCTION_MODE) {
+      log.warn('⚠️ Skipping explorer verification for simulated transaction');
+      return true;
+    }
+
+    if (!transaction.txHash) {
+      return false;
+    }
+
+    try {
+      const supportedChain = this.preferredChain as 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'base';
+      const etherscan = blockchainAPI.getEtherscan(supportedChain);
+      
+      // Query transaction from Etherscan
+      const txList = await etherscan.getTransactions(this.walletAddress!, {
+        page: 1,
+        offset: 10,
+      });
+
+      // Look for our transaction in recent transactions
+      const foundTx = txList.find(tx => tx.hash.toLowerCase() === transaction.txHash!.toLowerCase());
+      
+      if (foundTx) {
+        log.info('✅ Transaction verified on block explorer', {
+          hash: transaction.txHash,
+          explorer: 'Etherscan',
+          status: foundTx.status,
+        });
+        return foundTx.status === 'confirmed';
+      }
+
+      // Transaction not found yet - might need more time to index
+      log.warn('Transaction not yet indexed by explorer', {
+        hash: transaction.txHash,
+      });
+      return false;
+    } catch (error) {
+      log.error('Explorer verification error:', error);
+      return false;
+    }
   }
 
   /**
