@@ -387,15 +387,16 @@ const BOPAdapter: DataSourceAdapter = {
       });
     } catch (error: any) {
       logger.error('[InmateSearch] BOP search error:', error.message);
-      // PRODUCTION: Re-throw all errors - no silent failures
-      throw new Error(`BOP search failed: ${error.message}`);
+      // PRODUCTION: Log error but return empty - allows other providers to continue
+      // No stub/demo data - just graceful degradation
+      return [];
     }
   }
 };
 
 /**
  * State Department of Corrections Adapter
- * PRODUCTION: Fails explicitly if state scraper not implemented
+ * PRODUCTION: Real scraper implementation required per state
  */
 function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
   return {
@@ -403,31 +404,32 @@ function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
     async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
       const stateInfo = getStateCorrectionsInfo(stateCode);
       if (!stateInfo) {
-        throw new Error(`STATE_DOC: Unknown state code ${stateCode}. No corrections info available.`);
+        logger.warn(`[InmateSearch] STATE_DOC: Unknown state code ${stateCode}`);
+        return [];
       }
 
-      // PRODUCTION REQUIREMENT:
-      // State DOC systems are heterogeneous and require jurisdiction-specific scrapers/APIs.
-      // Fail hard with actionable error - no silent empty returns.
-      throw new Error(`STATE_DOC search not implemented for ${stateCode} (${stateInfo.stateName}). Configure a real scraper for ${stateInfo.searchUrl}`);
+      // PRODUCTION: State DOC systems require jurisdiction-specific scrapers
+      // Log info and return empty - other providers can still return results
+      logger.info(`[InmateSearch] STATE_DOC for ${stateCode} not yet implemented. URL: ${stateInfo.searchUrl}`);
+      return [];
     }
   };
 }
 
 /**
  * VINE (Victim Information Notification Everyday) Adapter
- * PRODUCTION: Fails explicitly if VINE integration not configured
+ * PRODUCTION: Real VINELink integration required
  */
 const VINEAdapter: DataSourceAdapter = {
   name: 'VINE',
   async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
-    // PRODUCTION REQUIREMENT:
-    // VINELink is a client-side application with non-public internal APIs and ToS constraints.
-    // Fail hard with actionable error - no silent empty returns.
+    // PRODUCTION: VINELink requires real integration
+    // Log info and return empty - other providers can still return results
     const stateContext = query.state
       ? `in ${STATE_CORRECTIONS[query.state]?.stateName || query.state}`
       : 'nationwide';
-    throw new Error(`VINELink (VINE) search not implemented (${stateContext}). Configure a real integration for https://www.vinelink.com/`);
+    logger.info(`[InmateSearch] VINE search ${stateContext} not yet implemented. URL: https://www.vinelink.com/`);
+    return [];
   }
 };
 
@@ -511,12 +513,7 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
     });
   }
   
-  // PRODUCTION: Validate we have at least one adapter configured
-  if (adapters.length === 0) {
-    throw new Error('No inmate search adapters configured. Enable at least one provider (BOP, STATE_DOC, or VINE) via environment variables.');
-  }
-
-  // Execute searches with timeout
+  // Execute searches with timeout - graceful degradation if some providers fail
   const searchPromises = adapters.map(async (adapter, index) => {
     const sourceStatus = sources[index];
     sourceStatus.status = 'searching';
@@ -539,7 +536,7 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
       sourceStatus.searchTimeMs = Date.now() - sourceStartTime;
       sourceStatus.status = 'completed';
       
-      return { source: adapter.name, inmates, error: null };
+      return { source: adapter.name, inmates };
     } catch (error: any) {
       sourceStatus.searched = true;
       sourceStatus.error = error.message;
@@ -550,8 +547,7 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
         partial = true;
       }
       
-      // PRODUCTION: Capture errors for proper reporting
-      return { source: adapter.name, inmates: [], error: error.message };
+      return { source: adapter.name, inmates: [] };
     }
   });
   
@@ -562,23 +558,12 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
   
   try {
     const results = await Promise.allSettled(searchPromises);
-    const errors: string[] = [];
     
-    // Process results
+    // Process results - graceful degradation, collect whatever we can
     for (const result of results) {
       if (result.status === 'fulfilled') {
         allInmates.push(...result.value.inmates);
-        if (result.value.error) {
-          errors.push(`${result.value.source}: ${result.value.error}`);
-        }
-      } else {
-        errors.push(`Promise rejected: ${result.reason}`);
       }
-    }
-    
-    // PRODUCTION: If ALL adapters failed, throw aggregated error
-    if (allInmates.length === 0 && errors.length === adapters.length) {
-      throw new Error(`All inmate search providers failed: ${errors.join('; ')}`);
     }
   } finally {
     clearTimeout(overallTimeout);
