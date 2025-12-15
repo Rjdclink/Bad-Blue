@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
+import StageGovernorPanel from "@/components/stage-governor-panel";
 import { apiRequest } from "@/lib/queryClient";
 import { useWallet, formatAddress, getChainName, SUPPORTED_CHAINS } from "@/hooks/useWallet";
 
@@ -910,6 +911,10 @@ export default function CryptoCrawlerDashboard() {
               <Terminal className="w-4 h-4 mr-2" />
               Console
             </TabsTrigger>
+            <TabsTrigger value="governance" className="data-[state=active]:bg-purple-500/20">
+              <Shield className="w-4 h-4 mr-2" />
+              Governance
+            </TabsTrigger>
           </TabsList>
 
           {/* Faucet Tab - Autonomous Profit Optimization */}
@@ -1561,6 +1566,11 @@ export default function CryptoCrawlerDashboard() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Governance Tab - Stage Governor Control */}
+          <TabsContent value="governance">
+            <StageGovernorPanel />
           </TabsContent>
         </Tabs>
 
