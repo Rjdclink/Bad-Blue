@@ -250,8 +250,7 @@ class T0StaticHandler implements TierHandler {
   }
   
   private buildCacheKey(query: SearchQuery): string {
-    // Use JSON serialization to avoid collisions from delimiter ambiguity
-    // e.g., "John-Jane" + "Doe" vs "John" + "Jane-Doe" would collide with simple delimiter
+    // JSON serialization provides collision-safe cache keys by structuring field values
     return JSON.stringify({
       fn: query.firstName.toLowerCase(),
       ln: query.lastName.toLowerCase(),
@@ -572,8 +571,7 @@ export class CapabilityRouter {
             remainingFields = remainingFields.filter(f => !result.satisfiedFields.includes(f));
             
             // Cache successful result for T0 re-use
-            // Note: T0 handler has a 1-hour TTL (cacheTtlMs = 3600000) to ensure data freshness
-            // Future enhancement: consider different TTLs for different data types
+            // Note: T0 handler TTL is defined in T0StaticHandler (see cacheTtlMs) to ensure data freshness
             if (tier !== CapabilityTier.T0_STATIC && result.data) {
               this.t0Handler.cacheResult(query, result.data);
             }
