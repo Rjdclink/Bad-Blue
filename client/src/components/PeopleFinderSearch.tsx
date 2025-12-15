@@ -70,6 +70,26 @@ export interface PeopleSearchReport {
   sources: OSINTSource[];
 }
 
+type PeopleFinderEmptyStateCode = 'no_seed' | 'no_data_found' | 'invalid_request' | 'unavailable';
+
+interface PeopleFinderEmptyState {
+  code: PeopleFinderEmptyStateCode;
+  message: string;
+}
+
+interface SeedFirstResponse {
+  success: boolean;
+  data: PeopleSearchReport | null;
+  emptyState?: PeopleFinderEmptyState;
+  meta?: {
+    correlationId?: string;
+    seedUrl?: string | null;
+    seedType?: string | null;
+    itemsFound?: number;
+    durationMs?: number;
+  };
+}
+
 export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSearchProps) {
   const { toast } = useToast();
   
@@ -81,8 +101,10 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
   const [name, setName] = useState(nameParam);
   const [location, setLocation] = useState(locationParam);
   const [department, setDepartment] = useState("");
+  const [profileUrl, setProfileUrl] = useState("");
   const [additionalInfo, setAdditionalInfo] = useState("");
   const [results, setResults] = useState<PeopleSearchReport | null>(null);
+  const [emptyState, setEmptyState] = useState<PeopleFinderEmptyState | null>(null);
 
   // Guard against state updates after unmount (e.g., delayed auto-search)
   const mountedRef = useRef(true);
@@ -112,59 +134,94 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
   // We still prefill from query params to support deep-linking, but execution must be explicit.
 
   const searchMutation = useMutation({
-    mutationFn: async (searchData: { name: string; location?: string; department?: string; domain?: string }) => {
+    mutationFn: async (searchData: { name: string; location?: string; department?: string; domain?: string; profileUrl?: string }) => {
       const requestStart = Date.now();
       console.log('[PEOPLE FINDER SEARCH] Request started', {
         timestamp: new Date().toISOString(),
         searchData,
       });
-      
-      const response = await apiRequest("/api/osint/full-search", "POST", searchData);
-      const data = await response.json();
-      
+
+      // UI UNBLOCK: Always resolve to a controlled response object (never throw to the UI).
+      let payload: SeedFirstResponse | null = null;
+      try {
+        const response = await fetch("/api/osint/full-search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(searchData),
+          credentials: "include",
+        });
+        payload = (await response.json().catch(() => null)) as SeedFirstResponse | null;
+      } catch (e: any) {
+        payload = {
+          success: true,
+          data: null,
+          emptyState: {
+            code: 'unavailable',
+            message: 'Search service is temporarily unavailable. Please try again.',
+          },
+        };
+      }
+
       const requestEnd = Date.now();
       console.log('[PEOPLE FINDER SEARCH] Request finished', {
         timestamp: new Date().toISOString(),
         duration: requestEnd - requestStart,
-        success: response.ok,
-        hasData: !!data,
+        success: !!payload?.success,
+        hasData: !!payload?.data,
       });
-      
-      return data;
+
+      // Ensure we always return a normalized envelope
+      if (!payload || typeof payload !== 'object') {
+        return {
+          success: true,
+          data: null,
+          emptyState: { code: 'unavailable', message: 'Search returned an unexpected response.' },
+        } as SeedFirstResponse;
+      }
+
+      return payload;
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data: SeedFirstResponse) => {
       if (!mountedRef.current) return;
       console.log('[PEOPLE FINDER SEARCH] Search successful', {
         timestamp: new Date().toISOString(),
         hasResults: !!data,
       });
       
-      // Handle both old format and new structured response
-      const report = data.data || data;
+      const report = data?.data ?? null;
       setResults(report);
+      setEmptyState(data?.emptyState ?? null);
       
       // Notify parent component of results
       if (onResults) {
         onResults(report);
       }
       
-      toast({
-        title: "Search Complete",
-        description: `Found intelligence report for ${report.identitySummary?.name || 'subject'}`,
-      });
+      if (report) {
+        toast({
+          title: "Search Complete",
+          description: `Found intelligence report for ${report.identitySummary?.name || 'subject'}`,
+        });
+      } else {
+        toast({
+          title: "Search Complete",
+          description: data?.emptyState?.message || "No results found.",
+        });
+      }
     },
     onError: (error: Error) => {
       if (!mountedRef.current) return;
-      console.error('[PEOPLE FINDER SEARCH] Search failed', {
+      // UI UNBLOCK: Even on unexpected react-query errors, keep UI stable with empty-state.
+      console.warn('[PEOPLE FINDER SEARCH] Search failed (mapped to empty-state)', {
         timestamp: new Date().toISOString(),
         error: error.message,
       });
-      
-      toast({
-        title: "Search Failed",
-        description: error.message,
-        variant: "destructive",
+      setResults(null);
+      setEmptyState({
+        code: 'unavailable',
+        message: 'Search service is temporarily unavailable. Please try again.',
       });
+      if (onResults) onResults(null);
     },
   });
 
@@ -183,6 +240,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
       location: location.trim() || undefined,
       department: department.trim() || undefined,
       domain: additionalInfo.trim() || undefined,
+      profileUrl: profileUrl.trim() || undefined,
     });
   };
 
@@ -247,14 +305,31 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="additionalInfo">Additional Context (Optional)</Label>
+              <Label htmlFor="profileUrl">Profile URL Seed (Recommended)</Label>
+              <Input
+                id="profileUrl"
+                placeholder="https://example.com/profile or https://linkedin.com/in/..."
+                value={profileUrl}
+                onChange={(e) => setProfileUrl(e.target.value)}
+                onKeyPress={handleKeyPress}
+              />
+              <p className="text-xs text-muted-foreground">
+                Seed-first mode: Provide a single canonical profile URL to crawl (one-pass, 10s max).
+              </p>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="additionalInfo">Verified Domain Homepage (Optional)</Label>
               <Input
                 id="additionalInfo"
-                placeholder="e.g., domain, alias, known associates"
+                placeholder="example.com or https://example.com"
                 value={additionalInfo}
                 onChange={(e) => setAdditionalInfo(e.target.value)}
                 onKeyPress={handleKeyPress}
               />
+              <p className="text-xs text-muted-foreground">
+                Used only if no explicit profile URL seed is supplied.
+              </p>
             </div>
 
             <Button
@@ -301,10 +376,32 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
       </Card>
 
       {/* Results Display */}
-      {results && (
+      {(results || emptyState) && (
         <div className="space-y-6">
+          {emptyState && !results && (
+            <Card className="border-slate-200 dark:border-slate-800">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5" />
+                  {emptyState.code === 'no_seed' ? 'No Seed Provided' : 'No Data Found'}
+                </CardTitle>
+                <CardDescription>
+                  {emptyState.message}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Seed-first mode requires exactly one canonical seed. Provide either:
+                </p>
+                <ul className="mt-2 text-sm text-muted-foreground list-disc pl-5 space-y-1">
+                  <li>Explicit profile URL (recommended)</li>
+                  <li>Verified domain homepage</li>
+                </ul>
+              </CardContent>
+            </Card>
+          )}
           {/* Identity Summary */}
-          <Card>
+          {results && <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-2">
@@ -359,10 +456,10 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
                 </>
               )}
             </CardContent>
-          </Card>
+          </Card>}
 
           {/* Contact Information */}
-          {results.contactInformation.length > 0 && (
+          {results && results.contactInformation.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -384,7 +481,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
           )}
 
           {/* Location History */}
-          {results.locationHistory.length > 0 && (
+          {results && results.locationHistory.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -406,7 +503,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
           )}
 
           {/* Employment & Education */}
-          {results.employmentAndEducation.length > 0 && (
+          {results && results.employmentAndEducation.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -428,7 +525,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
           )}
 
           {/* Social Media Presence */}
-          {results.socialMediaPresence.length > 0 && (
+          {results && results.socialMediaPresence.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -450,7 +547,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
           )}
 
           {/* Public Records */}
-          {results.publicRecords.length > 0 && (
+          {results && results.publicRecords.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -472,7 +569,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
           )}
 
           {/* Online Mentions */}
-          {results.onlineMentions.length > 0 && (
+          {results && results.onlineMentions.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -495,7 +592,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
           )}
 
           {/* Risk & Reputation */}
-          {results.riskAndReputation.length > 0 && (
+          {results && results.riskAndReputation.length > 0 && (
             <Card className="border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-900">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-amber-800 dark:text-amber-400">
@@ -514,7 +611,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
           )}
 
           {/* Data Sources */}
-          <Card>
+          {results && <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <FileText className="w-5 h-5" />
@@ -538,7 +635,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
                 ))}
               </div>
             </CardContent>
-          </Card>
+          </Card>}
 
           {/* Legal Disclaimer */}
           <Card className="border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900">
