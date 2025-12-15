@@ -131,9 +131,9 @@ export async function performStartupTestCrawl(browser?: Browser): Promise<Startu
 
     console.log(`[PlaywrightValidator] Starting test crawl to ${TEST_CRAWL_URL}...`);
 
-    // Create a new context and page
+    // Create a new context and page with a recent user agent
     const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 720 },
     });
 

@@ -76,10 +76,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure Puppeteer and Playwright to use system Chromium
+# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 since we install browsers manually
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     PUPPETEER_ARGS="--no-sandbox --disable-setuid-sandbox" \
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
     PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
 
@@ -93,7 +94,10 @@ RUN rm -rf node_modules || true && \
 
 # Install Playwright Chromium browser in production stage
 # This ensures browser is available at runtime
-RUN npx playwright install chromium --with-deps || true
+# Log any installation errors but don't fail the build (system chromium is fallback)
+RUN echo "[Playwright] Installing Chromium browser..." && \
+    npx playwright install chromium --with-deps 2>&1 || \
+    echo "[Playwright] Warning: Browser install had issues, will use system chromium as fallback"
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
@@ -101,9 +105,6 @@ COPY --from=builder /app/public ./public
 
 # Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts
-
-# Copy Playwright browser cache from builder (if not already installed)
-COPY --from=builder /root/.cache/ms-playwright /app/.cache/ms-playwright 2>/dev/null || true
 
 # Expose application port (Railway will use PORT env var at runtime)
 EXPOSE 5000
