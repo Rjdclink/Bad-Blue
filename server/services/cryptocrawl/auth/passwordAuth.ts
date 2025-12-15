@@ -5,17 +5,29 @@
  * Configure credentials via environment variables:
  * - CRYPTOCRAWL_EMAIL: Admin email address
  * - CRYPTOCRAWL_PASSWORD: Admin password
+ * 
+ * NOTE: Auth credentials are OPTIONAL. If not set:
+ * - Server will boot normally
+ * - Auth-protected crypto routes will return 503 (service unavailable)
+ * - Core system, dashboard, and other APIs will continue to function
  */
 
 import crypto from 'crypto';
 
-// Authentication credentials from environment variables (required in production)
-// CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD must be set via Railway environment variables
+// Authentication credentials from environment variables (OPTIONAL)
+// When not configured, auth-protected features will be disabled but server will run
 const MASTER_EMAIL = process.env.CRYPTOCRAWL_EMAIL;
 const MASTER_PASSWORD = process.env.CRYPTOCRAWL_PASSWORD;
 
-if (!MASTER_EMAIL || !MASTER_PASSWORD) {
-  console.warn('[CryptoCrawl Auth] CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD must be set in environment variables');
+// Export auth configuration status for route handlers to check
+export const isAuthConfigured = Boolean(MASTER_EMAIL && MASTER_PASSWORD);
+
+// Log auth status on module load (one-time informational message)
+if (!isAuthConfigured) {
+  console.log('[CryptoCrawl Auth] Auth credentials not configured - auth-protected routes will be disabled');
+  console.log('[CryptoCrawl Auth] Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD to enable authentication');
+} else {
+  console.log('[CryptoCrawl Auth] ✓ Authentication configured');
 }
 
 const MASTER_PASSWORD_HASH = MASTER_PASSWORD
@@ -203,5 +215,6 @@ export default {
   revokeSession,
   getSessionInfo,
   requireCryptoCrawlAuth,
-  checkPassword
+  checkPassword,
+  isAuthConfigured
 };
