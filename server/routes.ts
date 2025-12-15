@@ -5011,6 +5011,28 @@ Contact: ${foiaRequest.userEmail || userEmail}
       'Pragma': 'no-cache',
       'Expires': '0',
     });
+
+    // INTERNAL VERIFIER BYPASS:
+    // Allow unauthenticated access to /admin/crypto/verify-* endpoints iff
+    // header X-Internal-Verify matches INTERNAL_VERIFY_SECRET (or CRYPTO_INTERNAL_VERIFY_SECRET).
+    // This bypass is intentionally narrow and does NOT apply to any other route.
+    try {
+      const path = String((req as any).path || '');
+      const isVerifyRoute = path.startsWith('/verify-');
+      if (isVerifyRoute) {
+        const provided = String(req.header('X-Internal-Verify') || '');
+        const secret = String(process.env.INTERNAL_VERIFY_SECRET || process.env.CRYPTO_INTERNAL_VERIFY_SECRET || '');
+        if (provided && secret && provided.length === secret.length) {
+          const a = Buffer.from(provided, 'utf8');
+          const b = Buffer.from(secret, 'utf8');
+          if (crypto.timingSafeEqual(a, b)) {
+            return next();
+          }
+        }
+      }
+    } catch {
+      // Fall through to normal auth checks.
+    }
     
     // STRICT: Check if user is authenticated via passport
     if (!req.isAuthenticated || !req.isAuthenticated()) {
