@@ -59,7 +59,6 @@ import { setupConsultationRoutes } from "./routes/consultation.routes";
 import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
-import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import { setupPulseRoutes } from "./routes/pulse.routes";
 import stageGovernorRoutes from "./routes/stageGovernor.routes";
@@ -876,7 +875,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupFMIRoutes(app); // F.M.I. - Forensic Media Intelligence
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
   setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
-  app.use('/api/people-search', peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
+
+  // Lazy-load People Search routes to avoid importing Playwright/Chromium on startup
+  let peopleSearchRouter: RequestHandler | null = null;
+  app.use('/api/people-search', async (req, res, next) => {
+    try {
+      if (!peopleSearchRouter) {
+        peopleSearchRouter = (await import('./routes/peopleSearch.routes')).default;
+      }
+      return (peopleSearchRouter as RequestHandler)(req, res, next);
+    } catch (error) {
+      return next(error);
+    }
+  });
   console.log('[MOUNT] People Search mounted at: /api/people-search');
   
   // ============================================
