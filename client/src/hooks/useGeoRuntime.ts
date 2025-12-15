@@ -37,6 +37,11 @@ export interface GeoRuntimeConfig {
   autoFetch: boolean;
   interpolationEnabled: boolean;
   predictiveEnabled: boolean;
+  /**
+   * When true, generates synthetic frames when no data is provided.
+   * Default false to avoid "motion without report" desync.
+   */
+  allowMockData: boolean;
 }
 
 export interface GeoRuntimeState {
@@ -79,6 +84,7 @@ const DEFAULT_CONFIG: GeoRuntimeConfig = {
   autoFetch: true,
   interpolationEnabled: true,
   predictiveEnabled: true,
+  allowMockData: false,
 };
 
 // ============================================================================
@@ -305,13 +311,34 @@ export function useGeoRuntime(
       let newFrames: GeoFrame[];
       
       if (points.length === 0) {
-        console.log('[GeoRuntime] Generating mock frames');
+        if (!cfg.allowMockData) {
+          // No synthetic motion by default
+          setFrames([]);
+          setFuturecastFrames([]);
+          setCurrentIndex(0);
+          setIsPlaying(false);
+          setIsLive(false);
+          setVersion(v => v + 1);
+          setStatus('idle');
+          return;
+        }
+        console.log('[GeoRuntime] Generating mock frames (allowMockData=true)');
         newFrames = generateMockFrames();
       } else {
         newFrames = convertToFrames(points);
       }
 
       if (newFrames.length === 0) {
+        if (!cfg.allowMockData) {
+          setFrames([]);
+          setFuturecastFrames([]);
+          setCurrentIndex(0);
+          setIsPlaying(false);
+          setIsLive(false);
+          setVersion(v => v + 1);
+          setStatus('idle');
+          return;
+        }
         newFrames = generateMockFrames();
       }
 
@@ -499,10 +526,13 @@ export function useGeoRuntime(
   // === ACTIONS ===
 
   const play = useCallback(() => {
-    if (frames.length === 0) loadData([]);
+    if (framesRef.current.length === 0) {
+      // Nothing to play
+      return;
+    }
     setIsPlaying(true);
     setVersion(v => v + 1);
-  }, [frames.length, loadData]);
+  }, []);
 
   const pause = useCallback(() => {
     setIsPlaying(false);
@@ -518,6 +548,8 @@ export function useGeoRuntime(
   const toggleLive = useCallback(() => {
     setIsLive(prev => {
       if (!prev) {
+        // Can't go live without frames
+        if (framesRef.current.length === 0) return prev;
         // Going live - jump to end
         setCurrentIndex(framesRef.current.length - 1);
         setIsPlaying(true);

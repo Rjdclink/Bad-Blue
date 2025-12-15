@@ -50,7 +50,9 @@ export const ERC20_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
-export const USER_WALLET = process.env.BRIDGE_WALLET_ADDRESS || '0x3d9bf00bB691793Cd256563fd14819B395306f62';
+// Wallet address to display/track balances for bridge-related monitoring.
+// Intentionally no hardcoded default: requiring an explicit env var prevents accidental misrouting.
+export const USER_WALLET = process.env.BRIDGE_WALLET_ADDRESS || '';
 
 // Fallback prices when CoinGecko API is unavailable
 export const FALLBACK_PRICES = {
