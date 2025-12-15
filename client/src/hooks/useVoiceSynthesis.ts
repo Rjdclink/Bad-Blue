@@ -55,6 +55,8 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const currentOptionsRef = useRef<VoiceSynthesisOptions>({});
+  const pendingSpeakRef = useRef<{ text: string; options: VoiceSynthesisOptions } | null>(null);
+  const retryListenerAttachedRef = useRef(false);
   
   // Store current emotional modulation state
   const emotionalStateRef = useRef<PersonaKernelSpeech | null>(null);
@@ -94,6 +96,29 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     
     // Notify Lexara of speaking end
     Lexara.notify(Lexara.events.SPEAKING_END);
+  }, []);
+
+  /**
+   * If audio is blocked until user interaction (autoplay restrictions),
+   * queue a one-shot retry that will re-attempt speaking on the next click/tap/key.
+   */
+  const scheduleRetryOnUserInteraction = useCallback((text: string, options: VoiceSynthesisOptions) => {
+    pendingSpeakRef.current = { text, options };
+    if (retryListenerAttachedRef.current) return;
+    retryListenerAttachedRef.current = true;
+
+    const handler = () => {
+      retryListenerAttachedRef.current = false;
+      const pending = pendingSpeakRef.current;
+      pendingSpeakRef.current = null;
+      if (!pending) return;
+      // Re-attempt with the same content/options
+      speak(pending.text, pending.options).catch(() => {});
+    };
+
+    document.addEventListener('click', handler, { once: true });
+    document.addEventListener('touchstart', handler, { once: true });
+    document.addEventListener('keydown', handler, { once: true });
   }, []);
 
   /**
@@ -202,6 +227,35 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     return selectedVoice;
   }, [selectFemaleVoice]);
 
+  const waitForVoices = useCallback(async (timeoutMs: number = 800): Promise<SpeechSynthesisVoice[]> => {
+    if (!('speechSynthesis' in window)) return [];
+    const existing = window.speechSynthesis.getVoices();
+    if (existing.length) return existing;
+
+    return await new Promise<SpeechSynthesisVoice[]>((resolve) => {
+      let done = false;
+      const timer = window.setTimeout(() => {
+        if (done) return;
+        done = true;
+        resolve(window.speechSynthesis.getVoices());
+      }, timeoutMs);
+
+      const onVoicesChanged = () => {
+        if (done) return;
+        const voices = window.speechSynthesis.getVoices();
+        if (voices.length) {
+          done = true;
+          window.clearTimeout(timer);
+          window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged as any);
+          resolve(voices);
+        }
+      };
+
+      // Some browsers fire this; others don’t. Timeout handles the rest.
+      window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged as any);
+    });
+  }, []);
+
   /**
    * Apply emotional modulation to voice settings
    * A7: Makes Lexara feel alive, reactive, and human
@@ -252,6 +306,9 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     // Stop any ongoing speech
     window.speechSynthesis.cancel();
 
+    // Ensure voices have had a chance to load (Safari/Chrome can be async)
+    await waitForVoices(900);
+
     // Create utterance - A7: Replace new SpeechSynthesisUtterance with controlled instance
     const utterance = new SpeechSynthesisUtterance(text);
     utteranceRef.current = utterance;
@@ -300,7 +357,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     // Speak
     window.speechSynthesis.speak(utterance);
     setProvider('browser-lexara');
-  }, [getLexaraVoice, getModulatedVoiceSettings]);
+  }, [getLexaraVoice, getModulatedVoiceSettings, waitForVoices]);
 
   /**
    * Speak using server-side synthesis with ElevenLabs via LexaraServerTTS
@@ -397,9 +454,26 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         });
         
       } catch (serverError) {
-        // Log the error - don't fallback to browser TTS (per requirements)
-        console.error('[useVoiceSynthesis] ElevenLabs TTS failed:', serverError);
-        throw serverError;
+        // Autoplay restrictions (no user gesture yet): queue retry instead of hard-failing.
+        const msg = serverError instanceof Error ? serverError.message : String(serverError);
+        const looksLikeAutoplayBlock =
+          msg.toLowerCase().includes('notallowed') ||
+          msg.toLowerCase().includes('play()') ||
+          msg.toLowerCase().includes('user gesture') ||
+          msg.toLowerCase().includes('suspended');
+
+        if (looksLikeAutoplayBlock) {
+          console.warn('[useVoiceSynthesis] Audio blocked until user interaction; will retry on next gesture');
+          setProvider('elevenlabs-pending');
+          setIsLoading(false);
+          setIsSpeaking(false);
+          scheduleRetryOnUserInteraction(text, options);
+          return;
+        }
+
+        // If server TTS is unavailable/misconfigured, fall back to browser TTS (female voice selection)
+        console.warn('[useVoiceSynthesis] ElevenLabs TTS failed; falling back to browser voice:', serverError);
+        await speakWithBrowser(text, text, options);
       }
 
     } catch (err) {
@@ -416,7 +490,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         variant: 'destructive',
       });
     }
-  }, [stop, speakWithServer, toast]);
+  }, [stop, speakWithServer, toast, speakWithBrowser, scheduleRetryOnUserInteraction]);
 
   return {
     speak,

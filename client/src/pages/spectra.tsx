@@ -34,7 +34,7 @@ import {
   type LEXARAGazeHint,
 } from '@/components/LexaraEtherealAvatar';
 import { 
-  LEXARABrain,
+  getLEXARABrain,
   type LEXARABrainContext,
 } from '@shared/lexaraBrain';
 
@@ -44,8 +44,8 @@ import {
 
 const LEXARA_CONSENT_KEY = 'lexara_auto_start';
 
-// Singleton brain instance
-const lexaraBrain = new LEXARABrain();
+// Singleton brain instance (one brain = one executor)
+const lexaraBrain = getLEXARABrain();
 
 // ============================================================================
 // TYPES
@@ -252,12 +252,10 @@ const PeopleRadarMap = memo(function PeopleRadarMap({
           ref={mapRef}
           className="absolute inset-0 bg-slate-800"
           style={{
-            backgroundImage: 'url("https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/-94.2,42.51,11,0/600x400?access_token=pk.placeholder")',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
           }}
         >
-          {/* Placeholder for Leaflet/Mapbox map */}
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center">
               <Satellite className="h-12 w-12 text-cyan-400/50 mx-auto mb-2" />
@@ -265,39 +263,14 @@ const PeopleRadarMap = memo(function PeopleRadarMap({
               <p className="text-xs text-slate-500">
                 {viewState.latitude.toFixed(4)}, {viewState.longitude.toFixed(4)}
               </p>
+              <p className="text-[11px] text-slate-500 mt-2 max-w-[260px]">
+                Satellite imagery is not configured on this panel. Provide real coordinates and use GeoConsole for map rendering.
+              </p>
             </div>
           </div>
           
-          {/* Track Points Overlay */}
-          <div className="absolute inset-0">
-            {trackPoints.map((point, index) => (
-              <div
-                key={point.id}
-                className={cn(
-                  "absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all",
-                  selectedPoint?.id === point.id ? "scale-125 z-10" : "hover:scale-110"
-                )}
-                style={{
-                  left: `${20 + (index * 15)}%`,
-                  top: `${30 + (index * 12)}%`,
-                }}
-                onClick={() => onSelectPoint(selectedPoint?.id === point.id ? null : point)}
-              >
-                <div className={cn(
-                  "w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-lg",
-                  selectedPoint?.id === point.id 
-                    ? "bg-cyan-500 ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900" 
-                    : "bg-slate-700 hover:bg-slate-600"
-                )}>
-                  {getSourceIcon(point.source)}
-                </div>
-                {/* Connection line to next point */}
-                {index < trackPoints.length - 1 && (
-                  <div className="absolute top-1/2 left-full w-12 h-0.5 bg-gradient-to-r from-cyan-500/50 to-transparent" />
-                )}
-              </div>
-            ))}
-          </div>
+          {/* Coordinate markers are intentionally not rendered on this panel
+              until a real map projection is implemented (no fake XY placement). */}
         </div>
       </div>
       
@@ -539,6 +512,17 @@ export default function SpectraPage() {
   
   const voiceSynthesis = useVoiceSynthesis();
 
+  // Prevent feedback loops: pause ASR while LEXARA is speaking (then resume).
+  useEffect(() => {
+    if (voiceSynthesis.isSpeaking) {
+      voiceMode.stopListening();
+      return;
+    }
+    if (voiceMode.isEnabled) {
+      voiceMode.startListening();
+    }
+  }, [voiceSynthesis.isSpeaking, voiceMode.isEnabled, voiceMode.startListening, voiceMode.stopListening]);
+
   // ============================================================================
   // DEVICE DETECTION
   // ============================================================================
@@ -748,7 +732,9 @@ export default function SpectraPage() {
       return;
     }
     const interval = setInterval(() => {
-      setAudioLevel(0.3 + Math.random() * 0.5);
+      // Real-world mode: do not fabricate "audio levels" with randomness.
+      // Keep a steady visualization while speech synthesis is active.
+      setAudioLevel(0.55);
     }, 80);
     return () => {
       clearInterval(interval);

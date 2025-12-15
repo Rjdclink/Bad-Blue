@@ -6,7 +6,7 @@
  * Advanced intelligence platform for comprehensive identity profiling
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { DoomsdayClockSelector } from '@/components/DoomsdayClockSelector';
 import { PantheonProgressTracker } from '@/components/PantheonProgressTracker';
 import { LocationHeatmap } from '@/components/LocationHeatmap';
@@ -23,10 +23,6 @@ import './pantheon.css';
 const NETWORK_HEAD_IMAGE = '/images/digital-mind-abstract-representation-human-intelligence-neural-network_191095-87127.jpg';
 const MAX_HEATMAP_POINTS = 10; // Maximum number of points to display on heatmap
 const MAX_MAP_MARKERS = 5; // Maximum number of markers to display on map
-
-// Location data generation constants
-const COORD_OFFSET_RANGE = 0.1; // Geographic offset range for mock coordinates (degrees)
-const MIN_INTENSITY = 0.5; // Minimum intensity value for heatmap points (0-1)
 
 interface SearchConfig {
   name: string;
@@ -61,6 +57,13 @@ export default function PantheonPage() {
   const [searchConfig, setSearchConfig] = useState<SearchConfig | null>(null);
   const [searchAbortController, setSearchAbortController] = useState<AbortController | null>(null);
   const { toast } = useToast();
+
+  const locationMap = useMemo(() => {
+    if (!results?.locationHistory?.length) {
+      return { heatmap: [] as Array<[number, number, number]>, markers: [] as Array<{ pos: [number, number]; popup: string }>, center: [0, 0] as [number, number] };
+    }
+    return buildCoordinateMapData(results.locationHistory);
+  }, [results?.locationHistory]);
   
   // Timeout durations in milliseconds based on search depth
   const DEPTH_TIMEOUTS: Record<number, number> = {
@@ -433,7 +436,7 @@ export default function PantheonPage() {
               </section>
               
               {/* GPS Map Section - Display if location data exists */}
-              {results.locationHistory && results.locationHistory.length > 0 && (
+              {locationMap.heatmap.length > 0 && (
                 <section className="gps-map-section" style={{ marginTop: '2rem' }}>
                   <Card>
                     <CardHeader>
@@ -442,21 +445,17 @@ export default function PantheonPage() {
                         Location Intelligence Map
                       </CardTitle>
                       <CardDescription>
-                        Geographic visualization of known locations and movement patterns
+                        Geographic visualization of known coordinates
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <LocationHeatmap
-                        data={generateMockLocationData(results.locationHistory)}
-                        markers={generateLocationMarkers(results.locationHistory)}
-                        center={[40.7128, -74.0060]}
+                        data={locationMap.heatmap}
+                        markers={locationMap.markers}
+                        center={locationMap.center}
                         zoom={10}
                         config={{ radius: 30, blur: 20, maxZoom: 18 }}
                       />
-                      <p className="text-xs text-muted-foreground mt-3">
-                        Note: Map displays approximate locations based on address data. 
-                        Actual GPS coordinates require EXIF data from images.
-                      </p>
                     </CardContent>
                   </Card>
                 </section>
@@ -601,37 +600,38 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
   );
 }
 
-// Helper: Generate mock location data for heatmap
-// In production, this would parse actual GPS coordinates from location history
-function generateMockLocationData(locationHistory: string[]): Array<[number, number, number]> {
-  // Base coordinates around New York City
-  const baseCoords: [number, number] = [40.7128, -74.0060];
-  
-  return locationHistory.slice(0, MAX_HEATMAP_POINTS).map((_, idx) => {
-    // Generate semi-random coordinates within a reasonable range
-    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const intensity = MIN_INTENSITY + Math.random() * (1 - MIN_INTENSITY);
-    
-    return [
-      baseCoords[0] + latOffset,
-      baseCoords[1] + lngOffset,
-      intensity,
-    ];
-  });
+function parseLatLng(input: string): [number, number] | null {
+  // Accept decimal degrees in the form: "lat, lng" anywhere in the string
+  const m = input.match(/(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lng = Number(m[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90) return null;
+  if (lng < -180 || lng > 180) return null;
+  return [lat, lng];
 }
 
-// Helper: Generate location markers for map
-function generateLocationMarkers(locationHistory: string[]): Array<{ pos: [number, number]; popup: string }> {
-  const baseCoords: [number, number] = [40.7128, -74.0060];
-  
-  return locationHistory.slice(0, MAX_MAP_MARKERS).map((location, idx) => {
-    const latOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    const lngOffset = (Math.random() - 0.5) * COORD_OFFSET_RANGE;
-    
-    return {
-      pos: [baseCoords[0] + latOffset, baseCoords[1] + lngOffset] as [number, number],
-      popup: location,
-    };
-  });
+function buildCoordinateMapData(locationHistory: string[]): {
+  heatmap: Array<[number, number, number]>;
+  markers: Array<{ pos: [number, number]; popup: string }>;
+  center: [number, number];
+} {
+  const coords = locationHistory
+    .map((s) => ({ raw: s, coord: parseLatLng(s) }))
+    .filter((x): x is { raw: string; coord: [number, number] } => !!x.coord)
+    .slice(0, MAX_HEATMAP_POINTS);
+
+  const heatmap: Array<[number, number, number]> = coords.map(({ coord }) => [coord[0], coord[1], 0.8]);
+  const markers = coords.slice(0, MAX_MAP_MARKERS).map(({ raw, coord }) => ({ pos: coord, popup: raw }));
+
+  const center: [number, number] =
+    heatmap.length > 0
+      ? ([
+          heatmap.reduce((sum, p) => sum + p[0], 0) / heatmap.length,
+          heatmap.reduce((sum, p) => sum + p[1], 0) / heatmap.length,
+        ] as [number, number])
+      : ([0, 0] as [number, number]);
+
+  return { heatmap, markers, center };
 }

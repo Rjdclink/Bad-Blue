@@ -23,19 +23,9 @@ import {
 } from 'lucide-react';
 import type { GPSPoint, DataSource } from '@shared/geoconsoleTypes';
 
-// Sample GPS data for demonstration
-const SAMPLE_DATA: GPSPoint[] = [
-  { latitude: 40.7128, longitude: -74.0060, timestamp: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), source: 'device_gps' as DataSource, confidence: 0.95 },
-  { latitude: 40.7138, longitude: -74.0050, timestamp: new Date(Date.now() - 2.5 * 24 * 60 * 60 * 1000), source: 'exif_photo' as DataSource, confidence: 0.90 },
-  { latitude: 40.7148, longitude: -74.0040, timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), source: 'device_gps' as DataSource, confidence: 0.92 },
-  { latitude: 40.7158, longitude: -74.0030, timestamp: new Date(Date.now() - 1.5 * 24 * 60 * 60 * 1000), source: 'public_record' as DataSource, confidence: 0.85 },
-  { latitude: 40.7168, longitude: -74.0020, timestamp: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), source: 'device_gps' as DataSource, confidence: 0.94 },
-  { latitude: 40.7178, longitude: -74.0010, timestamp: new Date(Date.now() - 0.5 * 24 * 60 * 60 * 1000), source: 'exif_photo' as DataSource, confidence: 0.88 },
-  { latitude: 40.7188, longitude: -74.0000, timestamp: new Date(), source: 'device_gps' as DataSource, confidence: 0.96 },
-];
-
 export default function GeoconsolePage() {
-  const [locationData, setLocationData] = useState<GPSPoint[]>(SAMPLE_DATA);
+  // Real-world default: no demo data
+  const [locationData, setLocationData] = useState<GPSPoint[]>([]);
   const [systemStatus, setSystemStatus] = useState<any>(null);
 
   // Fetch system status on mount
@@ -59,17 +49,12 @@ export default function GeoconsolePage() {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
-    // In a real implementation, this would extract EXIF data from uploaded files
-    // For now, we add sample points
-    const newPoints: GPSPoint[] = Array.from(files).map((file, idx) => ({
-      latitude: 40.7128 + Math.random() * 0.02,
-      longitude: -74.0060 + Math.random() * 0.02,
-      timestamp: new Date(Date.now() - Math.random() * 3 * 24 * 60 * 60 * 1000),
-      source: 'exif_photo' as DataSource,
-      confidence: 0.85 + Math.random() * 0.1,
-    }));
-
-    setLocationData(prev => [...prev, ...newPoints]);
+    // Fail closed: do not fabricate coordinates from uploads.
+    // EXIF extraction is not implemented on this page; use Geoconsole Process screen to input real points.
+    console.warn('[Geoconsole] File upload received but EXIF extraction is not implemented yet', {
+      fileCount: files.length,
+      names: Array.from(files).map(f => f.name),
+    });
   }, []);
 
   // Handle manual location input
@@ -85,7 +70,7 @@ export default function GeoconsolePage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-900">
+    <div className="min-h-screen bg-slate-900 flex flex-col overflow-y-auto">
       {/* Header */}
       <div className="bg-slate-800 border-b border-slate-700 px-6 py-4">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
@@ -116,11 +101,11 @@ export default function GeoconsolePage() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="grid grid-cols-12 gap-6">
+      <div className="max-w-7xl mx-auto p-6 flex-1 min-h-0 w-full">
+        <div className="grid grid-cols-12 gap-6 items-stretch min-h-0 flex-1">
           {/* Left Sidebar - Data Input */}
-          <div className="col-span-3">
-            <Card className="bg-slate-800 border-slate-700">
+          <div className="col-span-3 min-h-0">
+            <Card className="bg-slate-800 border-slate-700 h-full">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
                   <Database className="w-5 h-5" />
@@ -221,8 +206,8 @@ export default function GeoconsolePage() {
           </div>
 
           {/* Main Area - Geoconsole Dashboard */}
-          <div className="col-span-9">
-            <Card className="bg-slate-800 border-slate-700 h-[800px]">
+          <div className="col-span-9 flex flex-col min-h-0">
+            <Card className="bg-slate-800 border-slate-700 flex flex-col flex-1 min-h-0">
               <GeoconsoleRadarDashboard initialData={locationData} />
             </Card>
           </div>

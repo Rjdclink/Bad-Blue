@@ -9,6 +9,10 @@ test-*.js
 test-*.ts
 test_*.ts
 
+# Core dumps / crash artifacts
+core
+core.*
+
 # Build artifacts in public/ directory
 # (Keep public/images and other git-tracked files, but ignore build output)
 public/assets/
@@ -22,6 +26,10 @@ public/index.html
 # Application logs
 logs/
 *.log
+
+# Core dumps (should never be committed)
+core
+core.*
 
 # Backup files
 *.backup
@@ -45,3 +53,8 @@ evidence-maps/
 # Volume Engine cache
 .cache/test-opportunity-system.mjs
 .cache/test-elite-scanner.ts
+
+# Core dumps
+core
+core.*
+*.core

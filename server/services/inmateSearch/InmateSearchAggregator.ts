@@ -30,8 +30,6 @@ import {
   SourceSearchStatus
 } from './types';
 import { STATE_CORRECTIONS, getStateCorrectionsInfo } from './stateData';
-import { generateGeminiStructuredResponse, isGeminiAvailable } from '../../gemini';
-import { isClaudeAvailable, generateClaudeJSON } from '../../claude';
 import crypto from 'crypto';
 
 // LRU Cache Configuration - OPTIMIZED
@@ -212,6 +210,84 @@ interface DataSourceAdapter {
   search(query: InmateSearchQuery): Promise<InmateRecord[]>;
 }
 
+function getEnvFlag(name: string, defaultValue: boolean): boolean {
+  const raw = process.env[name];
+  if (raw == null) return defaultValue;
+  const v = String(raw).trim().toLowerCase();
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'y' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'no' || v === 'n' || v === 'off') return false;
+  return defaultValue;
+}
+
+const INMATE_ENABLE_STATE_DOC = getEnvFlag('INMATE_ENABLE_STATE_DOC', false);
+const INMATE_ENABLE_VINE = getEnvFlag('INMATE_ENABLE_VINE', false);
+
+function normalizeSex(value: unknown): 'Male' | 'Female' | 'Unknown' | undefined {
+  if (value == null) return undefined;
+  const v = String(value).trim().toLowerCase();
+  if (!v) return undefined;
+  if (v === 'm' || v === 'male') return 'Male';
+  if (v === 'f' || v === 'female') return 'Female';
+  return 'Unknown';
+}
+
+type BopApiResponse = {
+  Captcha?: boolean;
+  Messages?: any;
+  FormToken?: string;
+  InmateLocator?: Array<{
+    nameFirst?: string;
+    nameMiddle?: string;
+    nameLast?: string;
+    inmateNum?: string;
+    age?: string | number;
+    race?: string;
+    sex?: string;
+    faclURL?: string;
+    faclName?: string;
+    faclType?: string;
+    actRelDate?: string;
+    projRelDate?: string;
+    releaseCode?: string;
+    faclCode?: string;
+  }>;
+};
+
+async function bopExecuteInmateloc(form: Record<string, string>, timeoutMs: number = 20000): Promise<BopApiResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const body = new URLSearchParams(form);
+    const res = await fetch('https://www.bop.gov/PublicInfo/execute/inmateloc', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'accept': 'application/json, text/javascript, */*; q=0.01',
+        'x-requested-with': 'XMLHttpRequest',
+        'origin': 'https://www.bop.gov',
+        'referer': 'https://www.bop.gov/inmateloc/',
+        'user-agent': 'PANTHEON-InmateSearch/1.0',
+      },
+      body: body.toString(),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      throw new Error(`BOP inmateloc request failed: ${res.status} ${res.statusText}`);
+    }
+
+    const json = (await res.json()) as BopApiResponse;
+    return json || {};
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error('BOP request timeout');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Federal Bureau of Prisons (BOP) Adapter
  */
@@ -219,85 +295,102 @@ const BOPAdapter: DataSourceAdapter = {
   name: 'BOP',
   async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
     try {
-      const prompt = `Search the Federal Bureau of Prisons inmate locator for:
-Name: ${query.firstName} ${query.lastName}${query.middleName ? ` ${query.middleName}` : ''}
-${query.dateOfBirth ? `Date of Birth: ${query.dateOfBirth}` : ''}
-${query.inmateId ? `Register Number: ${query.inmateId}` : ''}
+      // REAL-WORLD execution: directly call BOP's JSON endpoint.
+      // Website flow: POST https://www.bop.gov/PublicInfo/execute/inmateloc with todo=query&output=json&...
+      let bop: BopApiResponse;
 
-The BOP Inmate Locator URL is: https://www.bop.gov/inmateloc/
+      const inmateId = (query.inmateId || '').trim();
+      const hasInmateId = inmateId.length > 0;
 
-Search and return any matching federal inmates. Return a JSON array of inmates with this structure:
-{
-  "inmates": [
-    {
-      "inmateNumber": "register number",
-      "firstName": "first name",
-      "lastName": "last name",
-      "middleName": "middle name if any",
-      "age": age as number,
-      "sex": "Male" or "Female",
-      "race": "race",
-      "facilityName": "federal prison name",
-      "releaseDate": "projected release date if available",
-      "arrestDate": "arrest date if available",
-      "convictionDate": "conviction date if available",
-      "charges": ["list of federal charges with statute codes"],
-      "sourceUrl": "https://www.bop.gov/inmateloc/"
-    }
-  ]
-}
-
-Return empty array if no matches found. Only return factual information from BOP records.`;
-
-      let results: any = null;
-      
-      if (isGeminiAvailable()) {
-        results = await generateGeminiStructuredResponse<{ inmates: any[] }>(prompt, { useJSON: true });
-      } else if (isClaudeAvailable()) {
-        results = await generateClaudeJSON<{ inmates: any[] }>(prompt, {
-          systemPrompt: 'You are a federal inmate records research assistant. Return only factual information from BOP records.',
-          maxTokens: 2000,
+      if (hasInmateId) {
+        // Default to BOP Register Number (IRN) unless a different type is explicitly provided
+        // (UI supports IRN, DCDC, FBI, INS).
+        bop = await bopExecuteInmateloc({
+          todo: 'query',
+          output: 'json',
+          inmateNumType: 'IRN',
+          inmateNum: inmateId,
         });
       } else {
-        // No AI providers available - log warning but return empty (no mock data)
-        logger.warn('[InmateSearch] No AI providers available for BOP search - returning empty results');
-        // Return empty array - UI will show "no results" with manual search links
-        return [];
+        const first = (query.firstName || '').trim();
+        const last = (query.lastName || '').trim();
+        if (!first || !last) {
+          // BOP name search requires first + last; fail closed instead of fabricating.
+          throw new Error('BOP search requires firstName and lastName (or inmateId)');
+        }
+
+        bop = await bopExecuteInmateloc({
+          todo: 'query',
+          output: 'json',
+          nameFirst: first,
+          nameMiddle: (query.middleName || '').trim(),
+          nameLast: last,
+          race: '',
+          age: '',
+          sex: '',
+        });
       }
-      
-      if (!results?.inmates?.length) {
-        return [];
+
+      if (bop?.Captcha) {
+        // Fail closed: can't proceed if the upstream requires interactive CAPTCHA.
+        throw new Error('BOP search requires CAPTCHA (upstream blocked automated access)');
       }
-      
-      return results.inmates.map((inmate: any, index: number) => {
+
+      const hits = Array.isArray(bop?.InmateLocator) ? bop.InmateLocator : [];
+      if (hits.length === 0) return [];
+
+      return hits.map((inmate, index) => {
+        const actRelDate = (inmate.actRelDate || '').trim();
+        const projRelDate = (inmate.projRelDate || '').trim();
+        const releaseCode = (inmate.releaseCode || '').trim();
+
+        const facilityName = [inmate.faclName, inmate.faclType].filter(Boolean).join(' ').trim() || 'Federal Facility';
+
+        const custodyStatus =
+          releaseCode === 'R' || releaseCode === 'D'
+            ? 'Released'
+            : actRelDate || projRelDate
+              ? 'In Custody'
+              : 'Unknown';
+
         const record: InmateRecord = {
-          id: `bop-${query.lastName}-${index}-${Date.now()}`,
+          id: `bop-${(inmate.nameLast || query.lastName || 'unknown').toLowerCase()}-${index}-${Date.now()}`,
           source: 'BOP',
-          firstName: inmate.firstName || query.firstName,
-          lastName: inmate.lastName || query.lastName,
-          middleName: inmate.middleName,
-          inmateNumber: inmate.inmateNumber || 'Unknown',
-          facilityName: inmate.facilityName || 'Federal Facility',
+          firstName: inmate.nameFirst || query.firstName,
+          lastName: inmate.nameLast || query.lastName,
+          middleName: inmate.nameMiddle || query.middleName,
+          inmateNumber: inmate.inmateNum || inmateId || 'Unknown',
+          facilityName,
           facilityType: 'Federal Prison',
-          facilityLocation: {
-            state: 'Federal',
-          },
-          custodyStatus: inmate.releaseDate ? 'In Custody' : 'Unknown',
-          releaseDate: inmate.releaseDate,
-          arrestDate: inmate.arrestDate,
-          convictionDate: inmate.convictionDate,
-          age: inmate.age,
-          sex: inmate.sex,
+          facilityLocation: { state: 'Federal' },
+          custodyStatus: custodyStatus as any,
+          releaseDate: actRelDate || projRelDate || undefined,
+          age: typeof inmate.age === 'string' ? Number(inmate.age) || undefined : inmate.age,
+          sex: normalizeSex(inmate.sex),
           race: inmate.race,
-          charges: inmate.charges || [],
-          confidence: 75,
+          charges: [],
+          confidence: 95,
           lastUpdated: new Date(),
           sourceUrl: 'https://www.bop.gov/inmateloc/',
         };
+
+        // Preserve upstream fields (non-sensitive) for downstream diagnostics
+        (record as any).bop = {
+          faclURL: inmate.faclURL,
+          faclCode: inmate.faclCode,
+          releaseCode: releaseCode || undefined,
+          actRelDate: actRelDate || undefined,
+          projRelDate: projRelDate || undefined,
+        };
+
         return processCharges(record);
       });
     } catch (error: any) {
       logger.error('[InmateSearch] BOP search error:', error.message);
+      // Preserve meaningful upstream-unavailable semantics
+      if (String(error?.message || '').includes('No upstream providers available')) {
+        throw error;
+      }
       return [];
     }
   }
@@ -315,88 +408,11 @@ function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
         if (!stateInfo) {
           return [];
         }
-        
-        const prompt = `Search the ${stateInfo.departmentName} inmate locator for:
-Name: ${query.firstName} ${query.lastName}${query.middleName ? ` ${query.middleName}` : ''}
-${query.dateOfBirth ? `Date of Birth: ${query.dateOfBirth}` : ''}
-${query.inmateId ? `Inmate/DOC Number: ${query.inmateId}` : ''}
 
-The ${stateInfo.stateName} DOC Inmate Search URL is: ${stateInfo.searchUrl}
-
-Search and return any matching state inmates. Return a JSON array with this structure:
-{
-  "inmates": [
-    {
-      "inmateNumber": "DOC number",
-      "firstName": "first name",
-      "lastName": "last name",
-      "middleName": "middle name if any",
-      "age": age as number,
-      "sex": "Male" or "Female",
-      "race": "race",
-      "facilityName": "state prison/facility name",
-      "facilityCity": "city",
-      "custodyStatus": "In Custody" or "Released" or "Paroled",
-      "releaseDate": "projected release date if available",
-      "admissionDate": "date admitted if available",
-      "arrestDate": "arrest date if available",
-      "convictionDate": "conviction date if available",
-      "charges": ["list of charges/offenses with statute codes"]
-    }
-  ]
-}
-
-Return empty array if no matches found. Only return factual information.`;
-
-        let results: any = null;
-        
-        if (isGeminiAvailable()) {
-          results = await generateGeminiStructuredResponse<{ inmates: any[] }>(prompt, { useJSON: true });
-        } else if (isClaudeAvailable()) {
-          results = await generateClaudeJSON<{ inmates: any[] }>(prompt, {
-            systemPrompt: `You are a ${stateInfo.stateName} corrections records research assistant. Return only factual information.`,
-            maxTokens: 2000,
-          });
-        } else {
-          // No AI providers available - log warning but return empty (no mock data)
-          logger.warn(`[InmateSearch] No AI providers available for State DOC search (${stateCode}) - returning empty results`);
-          // Return empty array - UI will show "no results" with manual search links
-          return [];
-        }
-        
-        if (!results?.inmates?.length) {
-          return [];
-        }
-        
-        return results.inmates.map((inmate: any, index: number) => {
-          const record: InmateRecord = {
-            id: `state-${stateCode}-${query.lastName}-${index}-${Date.now()}`,
-            source: 'STATE_DOC',
-            firstName: inmate.firstName || query.firstName,
-            lastName: inmate.lastName || query.lastName,
-            middleName: inmate.middleName,
-            inmateNumber: inmate.inmateNumber || 'Unknown',
-            facilityName: inmate.facilityName || `${stateInfo.stateName} State Facility`,
-            facilityType: 'State Prison',
-            facilityLocation: {
-              city: inmate.facilityCity,
-              state: stateCode,
-            },
-            custodyStatus: (inmate.custodyStatus || 'Unknown') as any,
-            releaseDate: inmate.releaseDate,
-            admissionDate: inmate.admissionDate,
-            arrestDate: inmate.arrestDate,
-            convictionDate: inmate.convictionDate,
-            age: inmate.age,
-            sex: inmate.sex,
-            race: inmate.race,
-            charges: inmate.charges || [],
-            confidence: 70,
-            lastUpdated: new Date(),
-            sourceUrl: stateInfo.searchUrl,
-          };
-          return processCharges(record);
-        });
+        // REAL-WORLD REQUIREMENT:
+        // State DOC systems are heterogeneous and require jurisdiction-specific scrapers/APIs.
+        // Until a real scraper is implemented for this state, fail closed (do not use LLM "search").
+        throw new Error(`STATE_DOC search not implemented for ${stateCode}. Configure a real scraper for ${stateInfo.searchUrl}`);
       } catch (error: any) {
         logger.error(`[InmateSearch] State DOC search error (${stateCode}):`, error.message);
         return [];
@@ -412,76 +428,13 @@ const VINEAdapter: DataSourceAdapter = {
   name: 'VINE',
   async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
     try {
-      const stateContext = query.state 
-        ? `in ${STATE_CORRECTIONS[query.state]?.stateName || query.state}` 
+      // REAL-WORLD REQUIREMENT:
+      // VINELink is a client-side application with non-public internal APIs and ToS constraints.
+      // Until a real VINELink integration is implemented (and legally permissible), fail closed.
+      const stateContext = query.state
+        ? `in ${STATE_CORRECTIONS[query.state]?.stateName || query.state}`
         : 'nationwide';
-      
-      const prompt = `Search the VINE (VINELink) victim notification system for inmate:
-Name: ${query.firstName} ${query.lastName}
-${query.dateOfBirth ? `Date of Birth: ${query.dateOfBirth}` : ''}
-Search scope: ${stateContext}
-
-VINELink URL: https://www.vinelink.com/
-
-Return any matching inmates with custody status. Return JSON:
-{
-  "inmates": [
-    {
-      "inmateNumber": "facility ID",
-      "firstName": "first name",
-      "lastName": "last name",
-      "facilityName": "jail/prison name",
-      "facilityCity": "city",
-      "facilityState": "state code",
-      "custodyStatus": "In Custody" or "Released",
-      "charges": ["charges if available"]
-    }
-  ]
-}
-
-Return empty array if no matches.`;
-
-      let results: any = null;
-      
-      if (isGeminiAvailable()) {
-        results = await generateGeminiStructuredResponse<{ inmates: any[] }>(prompt, { useJSON: true });
-      } else if (isClaudeAvailable()) {
-        results = await generateClaudeJSON<{ inmates: any[] }>(prompt, {
-          systemPrompt: 'You are a VINE victim notification system research assistant.',
-          maxTokens: 1500,
-        });
-      } else {
-        // No AI providers available - log warning but return empty (no mock data)
-        logger.warn('[InmateSearch] No AI providers available for VINE search - returning empty results');
-        // Return empty array - UI will show "no results" with manual search links
-        return [];
-      }
-      
-      if (!results?.inmates?.length) {
-        return [];
-      }
-      
-      return results.inmates.map((inmate: any, index: number) => {
-        const record: InmateRecord = {
-          id: `vine-${query.lastName}-${index}-${Date.now()}`,
-          source: 'VINE',
-          firstName: inmate.firstName || query.firstName,
-          lastName: inmate.lastName || query.lastName,
-          inmateNumber: inmate.inmateNumber || 'Unknown',
-          facilityName: inmate.facilityName || 'Unknown Facility',
-          facilityType: 'Other',
-          facilityLocation: {
-            city: inmate.facilityCity,
-            state: inmate.facilityState,
-          },
-          custodyStatus: (inmate.custodyStatus || 'Unknown') as any,
-          charges: inmate.charges || [],
-          confidence: 65,
-          lastUpdated: new Date(),
-          sourceUrl: 'https://www.vinelink.com/',
-        };
-        return processCharges(record);
-      });
+      throw new Error(`VINELink (VINE) search not implemented (${stateContext}). Configure a real integration for https://www.vinelink.com/`);
     } catch (error: any) {
       logger.error('[InmateSearch] VINE search error:', error.message);
       return [];
@@ -547,14 +500,16 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
   
   // State DOC search (if scope includes state)
   if (searchScope === 'all' || searchScope === 'state') {
-    if (query.state) {
+    if (INMATE_ENABLE_STATE_DOC && query.state) {
       adapters.push(createStateDOCAdapter(query.state));
     }
   }
   
   // VINE search (covers both state and county)
   if (searchScope === 'all' || searchScope === 'state' || searchScope === 'county') {
-    adapters.push(VINEAdapter);
+    if (INMATE_ENABLE_VINE) {
+      adapters.push(VINEAdapter);
+    }
   }
   
   // Initialize source statuses

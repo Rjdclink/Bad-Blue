@@ -73,10 +73,14 @@ class GasOracle {
 
   async getGasPrice(chain: ChainId): Promise<GasPrice> {
     try {
-      const provider = this.providers.get(chain);
-      if (!provider) {
-        throw new Error(`Provider not initialized for ${chain}`);
+      // Lazy provider initialization so callers don't have to remember to call start().
+      // This keeps the faucet/arbitrage verifier deterministic and avoids a "null cheapest chain" trap.
+      if (this.providers.size === 0) {
+        this.initializeProviders();
       }
+
+      const provider = this.providers.get(chain);
+      if (!provider) throw new Error(`Provider not initialized for ${chain}`);
 
       await this.updateNativePrices();
 
@@ -153,12 +157,19 @@ class GasOracle {
     
     console.log('[GasOracle] Starting...');
     this.running = true;
+    const startNonce = Date.now();
     
     // Initialize providers
     this.initializeProviders();
     
     // Do initial update
     await this.updateAllGasPrices();
+
+    // If stop() was called while we were awaiting the initial update, abort cleanly.
+    if (!this.running) {
+      console.log('[GasOracle] Start aborted (stopped during initialization)', { startNonce });
+      return;
+    }
     
     // Start update interval (60 seconds instead of 15)
     this.updateInterval = setInterval(() => {

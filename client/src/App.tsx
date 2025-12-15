@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -7,8 +7,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { ClientSessionProvider } from "@/contexts/ClientSessionContext";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { MaintenanceMode } from "@/components/MaintenanceMode";
-import { lazy, Suspense, useEffect, Component, ErrorInfo, ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, Component, ErrorInfo, ReactNode } from "react";
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
+import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
 
 // Performance monitoring
 if (typeof window !== 'undefined') {
@@ -124,6 +125,9 @@ const LexaraViewport = lazyWithRetry(() => import("@/components/LexaraViewport")
 // SPECTRA - LEXARA + GeoConsole + People Radar
 const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
 
+// DEV-ONLY: GeoConsole layout preview (UI verification without auth)
+const GeoConsolePage = lazyWithRetry(() => import("@/pages/geoconsole"), 'GeoConsole');
+
 // Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 
@@ -143,6 +147,8 @@ const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 
 // No AppLayout, no feature guards, no auth gates, no global error boundary
 const InmateLocatorV2Page = lazyWithRetry(() => import("@/pages/inmate-locator-v2"), 'InmateLocatorV2');
 const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-v2"), 'CryptoCrawlerV2');
+const ControlRoomPage = lazyWithRetry(() => import("@/pages/control-room"), 'ControlRoom');
+const OrchestratorConsole = lazyWithRetry(() => import("@/pages/orchestrator-console"), 'OrchestratorConsole');
 
 // PANTHEON Administrator - Single Master Password (rjdclink@outlook.com + SARBEAR)
 const AdminConsole = lazyWithRetry(() => import("@/pages/admin-console"), 'AdminConsole');
@@ -161,8 +167,132 @@ const AdminEvidenceHub = lazyWithRetry(() => import("@/pages/admin-evidence-hub"
 // Loading fallback component with better UX
 const PageLoader = () => <PageSkeleton />;
 
+function GeoConsoleRedirect() {
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    // Redirect geo-console to legal-consultation without forcing a full page reload
+    setLocation('/legal-consultation?geo=true', { replace: true });
+  }, [setLocation]);
+
+  return null;
+}
+
+// ----------------------------------------------------------------------------
+// Admin feature gating (client-side, controlled by Administrator Console)
+// ----------------------------------------------------------------------------
+
+const ADMIN_FEATURE_FLAGS_KEY = "adminFeatureFlags";
+
+function readAdminFeatureFlags(): { cryptocrawler: boolean; monteCarlo: boolean; reactor: boolean } {
+  try {
+    const raw = localStorage.getItem(ADMIN_FEATURE_FLAGS_KEY);
+    if (!raw) return { cryptocrawler: true, monteCarlo: true, reactor: true };
+    const parsed = JSON.parse(raw);
+    return {
+      cryptocrawler: parsed?.cryptocrawler ?? true,
+      monteCarlo: parsed?.monteCarlo ?? true,
+      reactor: parsed?.reactor ?? true,
+    };
+  } catch {
+    return { cryptocrawler: true, monteCarlo: true, reactor: true };
+  }
+}
+
+function useAdminFeatureEnabled(feature: "cryptocrawler" | "monteCarlo" | "reactor"): boolean {
+  const [enabled, setEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return readAdminFeatureFlags()[feature];
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const sync = () => setEnabled(readAdminFeatureFlags()[feature]);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === ADMIN_FEATURE_FLAGS_KEY) sync();
+    };
+    const onCustom = () => sync();
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("adminFeatureFlagsChanged", onCustom as any);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("adminFeatureFlagsChanged", onCustom as any);
+    };
+  }, [feature]);
+
+  return enabled;
+}
+
+function FeatureGate({
+  feature,
+  children,
+}: {
+  feature: "cryptocrawler" | "monteCarlo" | "reactor";
+  children: ReactNode;
+}) {
+  const enabled = useAdminFeatureEnabled(feature);
+  const [, setLocation] = useLocation();
+
+  if (enabled) return <>{children}</>;
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background p-6">
+      <div className="max-w-md w-full text-center border rounded-lg p-6 bg-card">
+        <h1 className="text-xl font-semibold mb-2">Access Disabled</h1>
+        <p className="text-sm text-muted-foreground mb-4">
+          This surface has been disabled by the Administrator control panel.
+        </p>
+        <button
+          onClick={() => setLocation("/administrator")}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-md w-full"
+        >
+          Go to Administrator
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GatedCryptoCrawlerV2() {
+  return (
+    <FeatureGate feature="cryptocrawler">
+      <CryptoCrawlerV2Dashboard />
+    </FeatureGate>
+  );
+}
+
+function GatedOrchestratorConsole() {
+  return (
+    <FeatureGate feature="monteCarlo">
+      <OrchestratorConsole />
+    </FeatureGate>
+  );
+}
+
+function GatedControlRoom() {
+  return (
+    <FeatureGate feature="reactor">
+      <ControlRoomPage />
+    </FeatureGate>
+  );
+}
+
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
+
+  // Global navigation contract (mobile-first, absolute)
+  // Swipe Up    -> Welcome / Overview
+  // Swipe Left  -> Monte Carlo
+  // Swipe Right -> CryptoCrawler
+  // Swipe Down / PageDown -> Control Room
+  useGlobalGestureNavigation({
+    up: "/welcome",
+    left: "/orchestrator-console",
+    right: "/cryptocrawler-v2",
+    down: "/control-room",
+  });
   
   // Performance monitoring for auth check
   useEffect(() => {
@@ -194,9 +324,14 @@ function Router() {
         {/* LegalWhat Platform Landing Page - Public Entry Point */}
         <Route path="/" component={Landing} />
         <Route path="/landing" component={Landing} />
+
+        {/* DEV-ONLY: GeoConsole layout surface (no auth required) */}
+        {import.meta.env.DEV && <Route path="/geoconsole" component={GeoConsolePage} />}
         
         {/* Public routes - accessible to everyone */}
         <Route path="/subscription-success" component={SubscriptionSuccess} />
+        <Route path="/control-room" component={GatedControlRoom} />
+        <Route path="/orchestrator-console" component={GatedOrchestratorConsole} />
         
         {/* Other public routes */}
         <Route path="/login" component={Login} />
@@ -216,6 +351,8 @@ function Router() {
             {/* PANTHEON ADMINISTRATOR - Single Master Password Access */}
             {/* Email: rjdclink@outlook.com, Password: SARBEAR */}
             <Route path="/administrator" component={AdminConsole} />
+            {/* Stable alias route (fixes navigation/bookmarks) */}
+            <Route path="/admin" component={AdminConsole} />
             
             {/* Welcome Page - LegalWhat law type selection (post-login) */}
             <Route path="/welcome" component={WelcomePage} />
@@ -236,13 +373,7 @@ function Router() {
             <Route path="/spectra" component={SpectraPage} />
             
             {/* GEO Console - Redirects to legal-consultation */}
-            <Route path="/geo-console">
-              {() => {
-                // Redirect geo-console to legal-consultation
-                window.location.href = '/legal-consultation?geo=true';
-                return null;
-              }}
-            </Route>
+            <Route path="/geo-console" component={GeoConsoleRedirect} />
             
             {/* Domain Consultation - 4JI Orchestrator Integration */}
             <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
@@ -261,7 +392,9 @@ function Router() {
             
             {/* V2 Pages - Clean implementations without wrappers */}
             <Route path="/inmate-locator-v2" component={InmateLocatorV2Page} />
-            <Route path="/cryptocrawler-v2" component={CryptoCrawlerV2Dashboard} />
+            {/* Stable alias for invariant scripts + bookmarks */}
+            <Route path="/cryptocrawler" component={GatedCryptoCrawlerV2} />
+            <Route path="/cryptocrawler-v2" component={GatedCryptoCrawlerV2} />
             
             {/* BadBlue routes - Law Enforcement Accountability */}
             <Route path="/badblue" component={Home} />

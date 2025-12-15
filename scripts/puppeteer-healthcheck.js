@@ -261,7 +261,8 @@ async function testPuppeteer() {
     console.log('\n✅ All Puppeteer tests passed!\n');
     process.exit(0);
   } catch (error) {
-    console.error('\n❌ Puppeteer test failed:', error.message);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('\n❌ Puppeteer test failed:', message);
     process.exit(1);
   }
 }

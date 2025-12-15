@@ -134,6 +134,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
   const [analysis, setAnalysis] = useState<any>(null);
   const [greetingPlayed, setGreetingPlayed] = useState(false);
   const [emotionalState, setEmotionalState] = useState<EmotionalState>('neutral');
+  const [ttsAudioLevel, setTtsAudioLevel] = useState(0);
   const [autoInitialized, setAutoInitialized] = useState(false);
   const initAttempted = useRef(false);
 
@@ -150,6 +151,32 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
   });
 
   const voiceSynthesis = useVoiceSynthesis();
+
+  // Prevent feedback loops: pause ASR while LEXARA is speaking (then resume).
+  useEffect(() => {
+    if (voiceSynthesis.isSpeaking) {
+      voiceMode.stopListening();
+      return;
+    }
+    if (voiceMode.isEnabled) {
+      voiceMode.startListening();
+    }
+  }, [voiceSynthesis.isSpeaking, voiceMode.isEnabled, voiceMode.startListening, voiceMode.stopListening]);
+
+  // Synthetic audio level while TTS is speaking (keeps avatar glow responsive even when mic is quiet).
+  useEffect(() => {
+    if (!voiceSynthesis.isSpeaking) {
+      setTtsAudioLevel(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setTtsAudioLevel(0.25 + Math.random() * 0.55);
+    }, 80);
+    return () => {
+      clearInterval(interval);
+      setTtsAudioLevel(0);
+    };
+  }, [voiceSynthesis.isSpeaking]);
 
   // LEXARA Media Integration (Webcam + Microphone) - AUTOMATIC
   const lexaraMedia = useLexaraMedia({
@@ -356,6 +383,11 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
   // Media is AUTOMATIC - always on when initialized
   const isMediaActive = autoInitialized && lexaraMedia.state.isVideoReady;
 
+  // Use mic level OR synthetic TTS level to drive glows.
+  const displayAudioLevel = useMemo(() => {
+    return Math.max(lexaraMedia.state.audioLevel || 0, ttsAudioLevel || 0);
+  }, [lexaraMedia.state.audioLevel, ttsAudioLevel]);
+
   const handleFileComplaint = () => {
     if (!user) {
       window.location.href = "/api/login";
@@ -425,7 +457,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
         <LexaraPresence
           emotionalState={currentEmotionalState}
           isActive={true}
-          audioLevel={lexaraMedia.state.audioLevel}
+          audioLevel={displayAudioLevel}
           transcript={voiceMode.interimTranscript}
           isListening={voiceMode.isListening}
           isSpeaking={voiceSynthesis.isSpeaking}
@@ -440,7 +472,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
                 isListening={voiceMode.isListening || lexaraMedia.state.isSpeaking}
                 isSpeaking={voiceSynthesis.isSpeaking}
                 isProcessing={analyzeMutation.isPending}
-                audioLevel={lexaraMedia.state.audioLevel}
+                audioLevel={displayAudioLevel}
                 showAura={true}
                 showParticles={true}
                 interactive={false}
@@ -458,7 +490,7 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
                 </p>
                 <div className="flex items-center gap-4 mt-3">
                   <LexaraWaveform
-                    audioLevel={lexaraMedia.state.audioLevel}
+                    audioLevel={displayAudioLevel}
                     isActive={voiceMode.isListening || lexaraMedia.state.isSpeaking}
                     color="hsl(var(--primary))"
                     barCount={9}

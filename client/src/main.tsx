@@ -1,12 +1,25 @@
+const originalFetch = window.fetch;
+
+window.fetch = (input, init = {}) => {
+  return originalFetch(input, {
+    ...init,
+    credentials: 'include',
+  });
+};
+
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import { markPerformance, logResourceSizes, generatePerformanceReport } from "./lib/performance";
+import { setupAudioUnlock } from "./lib/lexaraSpeechClient";
 
 // Performance monitoring
 const mountStartTime = performance.now();
 console.log('[Performance] React mounting started at:', mountStartTime);
 markPerformance('react:mount-start');
+
+// Enable mobile/browser audio playback as soon as possible (first user interaction).
+setupAudioUnlock();
 
 // Declare global function type
 declare global {

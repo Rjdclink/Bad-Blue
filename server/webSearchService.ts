@@ -22,15 +22,8 @@
  * - Legal research: Statutes, case law, code updates
  */
 
-import { GoogleGenAI } from "@google/genai";
-import { 
-  orchestratedWebSearch, 
-  isOpenRouterWebSearchAvailable,
-  type WebSearchResult 
-} from './openRouterWebSearch';
+import { canActivatePantheon, pantheonOrchestrator, type CrawlerResult } from './services/pantheonCrawlerOrchestrator';
 
-const BING_API_KEY = process.env.BING_API_KEY || process.env.BING_SEARCH_KEY || '';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 const WEB_SEARCH_ENABLED = process.env.WEB_SEARCH_ENABLED !== 'false';
 
 // Circuit breaker state to prevent constant retries on failing APIs
@@ -41,17 +34,14 @@ interface CircuitBreakerState {
   errorMessage?: string;
 }
 
-const circuitBreaker: Record<string, CircuitBreakerState> = {
-  bing: { failures: 0, lastFailure: 0, disabled: false },
-  gemini: { failures: 0, lastFailure: 0, disabled: false },
-};
+const circuitBreaker: Record<string, CircuitBreakerState> = {};
 
 const MAX_FAILURES = 3;
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown after max failures
 
-function isCircuitOpen(service: 'bing' | 'gemini'): boolean {
+function isCircuitOpen(service: string): boolean {
   const state = circuitBreaker[service];
-  if (!state.disabled) return false;
+  if (!state || !state.disabled) return false;
   
   // Check if cooldown has passed
   if (Date.now() - state.lastFailure > COOLDOWN_MS) {
@@ -64,8 +54,8 @@ function isCircuitOpen(service: 'bing' | 'gemini'): boolean {
   return true;
 }
 
-function recordFailure(service: 'bing' | 'gemini', errorMessage: string) {
-  const state = circuitBreaker[service];
+function recordFailure(service: string, errorMessage: string) {
+  const state = circuitBreaker[service] || (circuitBreaker[service] = { failures: 0, lastFailure: 0, disabled: false });
   state.failures++;
   state.lastFailure = Date.now();
   state.errorMessage = errorMessage;
@@ -76,8 +66,8 @@ function recordFailure(service: 'bing' | 'gemini', errorMessage: string) {
   }
 }
 
-function recordSuccess(service: 'bing' | 'gemini') {
-  const state = circuitBreaker[service];
+function recordSuccess(service: string) {
+  const state = circuitBreaker[service] || (circuitBreaker[service] = { failures: 0, lastFailure: 0, disabled: false });
   state.failures = 0;
   state.disabled = false;
   state.errorMessage = undefined;
@@ -85,13 +75,9 @@ function recordSuccess(service: 'bing' | 'gemini') {
 
 export function getSearchStatus(): Record<string, { available: boolean; error?: string }> {
   return {
-    bing: {
-      available: !!BING_API_KEY && !isCircuitOpen('bing'),
-      error: circuitBreaker.bing.errorMessage,
-    },
-    gemini: {
-      available: !!GEMINI_API_KEY && !isCircuitOpen('gemini'),
-      error: circuitBreaker.gemini.errorMessage,
+    crawler: {
+      available: WEB_SEARCH_ENABLED && canActivatePantheon().available && !isCircuitOpen('pantheon'),
+      error: circuitBreaker.pantheon?.errorMessage,
     },
   };
 }
@@ -143,42 +129,26 @@ export interface OfficerSearchResult {
   dataQuality: number;
 }
 
-let geminiClient: GoogleGenAI | null = null;
-
-function getGeminiClient(): GoogleGenAI {
-  if (!geminiClient && GEMINI_API_KEY) {
-    geminiClient = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-  }
-  if (!geminiClient) {
-    throw new Error('Gemini API not configured');
-  }
-  return geminiClient;
-}
+// CRAWLER-ONLY MODE: no LLM "search" providers here.
 
 /**
  * Search using Bing Web Search API
- * @deprecated Bing API requires paid subscription. Use OpenRouter 3-model orchestration instead.
- * This function returns empty results and logs a deprecation warning.
  */
 export async function bingSearch(
   query: string, 
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  console.warn('[Web Search] bingSearch is DEPRECATED - use orchestratedWebSearch from openRouterWebSearch.ts');
-  return [];
+  throw new Error('Bing web search disabled: crawler-only mode is enforced');
 }
 
 /**
  * Search using Bing News API
- * @deprecated Bing API requires paid subscription. Use OpenRouter 3-model orchestration instead.
- * This function returns empty results and logs a deprecation warning.
  */
 export async function bingNewsSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  console.warn('[Web Search] bingNewsSearch is DEPRECATED - use orchestratedWebSearch from openRouterWebSearch.ts');
-  return [];
+  throw new Error('Bing news search disabled: crawler-only mode is enforced');
 }
 
 /**
@@ -189,190 +159,76 @@ export async function geminiSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<EnhancedSearchResult[]> {
-  if (!GEMINI_API_KEY) {
-    return [];
-  }
+  throw new Error('Gemini web search disabled: crawler-only mode is enforced');
 
-  // Check circuit breaker before attempting
-  if (isCircuitOpen('gemini')) {
-    return [];
-  }
-
-  try {
-    const client = getGeminiClient();
-    
-    const prompt = `Search the web for: "${query}"
-    
-Provide comprehensive, accurate information with sources. Focus on:
-- Official government sources (.gov)
-- Verified news sources
-- Public records databases
-- Academic or professional sources
-
-Return detailed findings with specific URLs and facts.`;
-    
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-pro",
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        temperature: 0.1,
-        tools: [{ googleSearch: {} }],
-      },
-    });
-
-    // @google/genai SDK returns .text directly (not .response?.text())
-    const text = response.text || "";
-    const sources: string[] = [];
-
-    try {
-      const candidate = response.candidates?.[0];
-      if (candidate?.groundingMetadata?.groundingChunks) {
-        for (const chunk of candidate.groundingMetadata.groundingChunks) {
-          if ((chunk as any).web?.uri) {
-            sources.push((chunk as any).web.uri);
-          }
-        }
-      }
-    } catch (e) {
-      // Silently handle grounding extraction errors
-    }
-
-    const results: EnhancedSearchResult[] = [];
-    
-    if (sources.length > 0) {
-      for (const url of sources.slice(0, options.limit || 10)) {
-        results.push({
-          title: extractTitleFromUrl(url),
-          url,
-          snippet: '',
-          source: 'gemini',
-          aiSummary: text.substring(0, 500),
-          reliability: url.includes('.gov') ? 'high' : 'medium',
-        });
-      }
-    }
-
-    if (text && results.length === 0) {
-      results.push({
-        title: 'AI Search Summary',
-        url: '',
-        snippet: text.substring(0, 500),
-        source: 'gemini',
-        aiSummary: text,
-        reliability: 'medium',
-      });
-    }
-
-    if (results.length > 0) {
-      recordSuccess('gemini');
-    }
-    return results;
-  } catch (error: any) {
-    recordFailure('gemini', error?.message || 'Unknown error');
-    return [];
-  }
 }
 
 /**
  * Unified search using OpenRouter 3-model orchestration (PRIMARY)
- * Primary web search system using OpenRouter free models:
- *   - Qwen 2.5 72B (multilingual reasoning)
- *   - DeepSeek R1 (advanced reasoning)
- *   - Meta Llama 3.3 70B (general purpose)
- * Falls back to Gemini grounding, then Zero-API local intelligence
+ * REAL-WORLD MODE:
+ * - CRAWLER ONLY: uses PANTHEON crawler orchestrator to pull from predefined sources.
  */
 export async function unifiedSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<EnhancedSearchResult[]> {
   if (!WEB_SEARCH_ENABLED) {
-    console.log('[Unified Search] Web search disabled');
-    return [];
+    throw new Error('Web search disabled (WEB_SEARCH_ENABLED=false)');
   }
 
-  // Primary: Use OpenRouter 3-model orchestration
-  if (isOpenRouterWebSearchAvailable()) {
-    try {
-      const openRouterResult = await orchestratedWebSearch(query, {
-        useOnlinePlugin: false, // Don't use :online to avoid costs
-        timeout: options.timeout || 30000,
-      });
-
-      // Convert OpenRouter results to EnhancedSearchResult format
-      const enhancedResults: EnhancedSearchResult[] = [];
-
-      // Add sources as individual results
-      for (const url of openRouterResult.sources.slice(0, options.limit || 20)) {
-        enhancedResults.push({
-          title: extractTitleFromUrl(url),
-          url,
-          snippet: '',
-          source: 'combined',
-          aiSummary: enhancedResults.length === 0 ? openRouterResult.aggregatedAnswer : undefined,
-          reliability: determineReliability(url),
-          relevanceScore: openRouterResult.confidence,
-        });
-      }
-
-      // If no sources but we have aggregated answer, add summary result
-      if (enhancedResults.length === 0 && openRouterResult.aggregatedAnswer) {
-        enhancedResults.push({
-          title: 'OpenRouter AI Search Summary',
-          url: '',
-          snippet: openRouterResult.aggregatedAnswer.substring(0, 500),
-          source: 'combined',
-          aiSummary: openRouterResult.aggregatedAnswer,
-          reliability: 'medium',
-          relevanceScore: openRouterResult.confidence,
-        });
-      }
-
-      console.log(`[Unified Search] OpenRouter: ${enhancedResults.length} results (confidence: ${openRouterResult.confidence}%)`);
-      return enhancedResults;
-    } catch (error: any) {
-      console.warn('[Unified Search] OpenRouter search failed:', error.message);
-      // Fall through to Gemini fallback
-    }
+  // Basic circuit breaker for crawler failures
+  if (isCircuitOpen('pantheon')) {
+    throw new Error('PANTHEON crawler circuit open (temporarily disabled due to failures)');
   }
 
-  // Fallback: Use Gemini grounding if OpenRouter unavailable
-  if (GEMINI_API_KEY && !isCircuitOpen('gemini')) {
-    console.log('[Unified Search] Using Gemini fallback (OpenRouter unavailable)');
-    try {
-      const geminiResults = await geminiSearch(query, options);
-      return geminiResults.slice(0, options.limit || 20);
-    } catch (error: any) {
-      console.warn('[Unified Search] Gemini fallback failed:', error.message);
-    }
+  const pantheonAvailability = canActivatePantheon();
+  if (!pantheonAvailability.available) {
+    throw new Error(pantheonAvailability.reason || 'PANTHEON crawler unavailable');
   }
 
-  // ZERO-API FALLBACK: Use local intelligence when no external APIs available
-  console.log('[Unified Search] Using Zero-API local intelligence fallback');
   try {
-    const { generateZeroApiResponse } = await import('./zeroApiIntelligence');
-    const zeroApiResult = await generateZeroApiResponse(query, {
-      type: options.category === 'officer' ? 'officer-search' : 'legal-consultation',
-    });
-    
-    return [{
-      title: 'PANTHEON Local Intelligence',
-      url: '',
-      snippet: zeroApiResult.content.substring(0, 500),
-      source: 'combined',
-      aiSummary: zeroApiResult.content,
-      reliability: zeroApiResult.confidence >= 0.8 ? 'high' : zeroApiResult.confidence >= 0.6 ? 'medium' : 'low',
-      relevanceScore: zeroApiResult.confidence * 100,
-      metadata: {
-        source: zeroApiResult.source,
-        patterns: zeroApiResult.metadata?.patterns,
-      },
-    }];
-  } catch (zeroApiError: any) {
-    console.warn('[Unified Search] Zero-API fallback failed:', zeroApiError.message);
-  }
+    await pantheonOrchestrator.initialize();
 
-  console.warn('[Unified Search] No search providers available');
-  return [];
+    const crawlerResults: CrawlerResult[] = await pantheonOrchestrator.search([query], {
+      depth: 2,
+      // Keep this to crawlers that are designed for general discovery.
+      // (Avoid SixDegrees unless explicitly needed to prevent noise.)
+      crawlers: ['startrek', 'birdofprey'],
+      maxResultsPerCrawler: Math.min(options.limit || 10, 25),
+      timeout: options.timeout || 20000,
+      stealth: true,
+    });
+
+    recordSuccess('pantheon');
+
+    if (!crawlerResults || crawlerResults.length === 0) return [];
+
+    // Convert and lightly normalize/deduplicate by URL when present
+    const mapped = crawlerResults.map((r, idx) => {
+      const url = (r.metadata as any)?.url || (r.metadata as any)?.sourceUrl || '';
+      return {
+        title: (r.metadata as any)?.title || `${r.crawler.toUpperCase()} Result ${idx + 1}`,
+        url,
+        snippet: (r.content || '').slice(0, 500),
+        source: 'combined' as const,
+        aiSummary: r.content,
+        reliability: r.confidence >= 0.85 ? 'high' : r.confidence >= 0.7 ? 'medium' : 'low',
+        relevanceScore: Math.round((r.confidence || 0) * 100),
+        metadata: r.metadata,
+      };
+    });
+
+    const seen = new Set<string>();
+    return mapped.filter((r) => {
+      const key = r.url ? r.url : `${r.title}:${r.snippet}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  } catch (error: any) {
+    recordFailure('pantheon', error?.message || 'Unknown error');
+    throw error;
+  }
 }
 
 /**
@@ -638,9 +494,10 @@ export function isWebSearchAvailable(): {
   any: boolean 
 } {
   return {
-    openrouter: isOpenRouterWebSearchAvailable(),
-    gemini: !!GEMINI_API_KEY && !isCircuitOpen('gemini'),
-    any: isOpenRouterWebSearchAvailable() || (!!GEMINI_API_KEY && !isCircuitOpen('gemini') && WEB_SEARCH_ENABLED),
+    // LLM-only OpenRouter is not treated as real-world web search here.
+    openrouter: false,
+    gemini: false,
+    any: WEB_SEARCH_ENABLED && canActivatePantheon().available,
   };
 }
 
@@ -677,6 +534,7 @@ export class EnhancedWebSearchService {
 
     const dorks = advancedSearch.generatePersonDorks(name, options);
     const results: any[] = [];
+    let lastFatalError: Error | null = null;
 
     // Execute searches sequentially with rate limiting
     const dorkLimit = options?.maxDorks || this.maxDorks;
@@ -694,8 +552,18 @@ export class EnhancedWebSearchService {
           });
         }
       } catch (error) {
+        const msg = String((error as any)?.message || error);
+        // Fail closed for upstream-unavailable conditions (do not silently return "no results").
+        if (msg.includes('PANTHEON') || msg.includes('crawler') || msg.includes('system lock')) {
+          lastFatalError = error as Error;
+          break;
+        }
         console.error(`Dork search failed for: ${dork}`, error);
       }
+    }
+
+    if (results.length === 0 && lastFatalError) {
+      throw lastFatalError;
     }
 
     // Cache for 6 hours
@@ -705,83 +573,9 @@ export class EnhancedWebSearchService {
   }
 
   private async executeSearch(query: string): Promise<any[]> {
-    // Unified search: Try OpenRouter first (preferred for web search),
-    // fallback to Gemini grounding if unavailable
-    try {
-      // Try OpenRouter orchestrated web search first (preferred)
-      if (isOpenRouterWebSearchAvailable()) {
-        const webSearchResult = await orchestratedWebSearch(query, {
-          useOnlinePlugin: false, // Keep it free
-          timeout: 15000,
-        });
-
-        // Convert WebSearchResult to array of results
-        if (webSearchResult.aggregatedAnswer) {
-          return [{
-            title: `Web Search Results for "${query}"`,
-            snippet: webSearchResult.aggregatedAnswer,
-            url: '',
-            source: 'openrouter-orchestrated',
-            confidence: webSearchResult.confidence,
-            sources: webSearchResult.sources,
-            timestamp: webSearchResult.timestamp,
-          }];
-        }
-      }
-      
-      // Fallback to Gemini grounding search if OpenRouter unavailable
-      console.log('[Enhanced Search] Falling back to Gemini grounding search');
-      return await this.geminiGroundingSearch(query);
-      
-    } catch (error) {
-      console.error('[Enhanced Search] Search failed:', error);
-      // Try Gemini as last resort
-      try {
-        return await this.geminiGroundingSearch(query);
-      } catch (geminiError) {
-        console.error('[Enhanced Search] Gemini fallback also failed:', geminiError);
-        return [];
-      }
-    }
-  }
-
-  private async geminiGroundingSearch(query: string): Promise<any[]> {
-    // Implement Gemini grounding search as fallback
-    if (!GEMINI_API_KEY) {
-      return [];
-    }
-
-    try {
-      // Use shared client for efficiency - new @google/genai API
-      const genai = getGeminiClient();
-
-      const result = await genai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{
-          role: 'user',
-          parts: [{
-            text: `Search and provide information about: ${query}`
-          }]
-        }]
-      });
-
-      const text = result.text || '';
-
-      if (text) {
-        return [{
-          title: `Search Results for "${query}"`,
-          snippet: text,
-          url: '',
-          source: 'gemini-grounding',
-          confidence: 0.7,
-          timestamp: new Date(),
-        }];
-      }
-    } catch (error) {
-      console.error('[Enhanced Search] Gemini search error:', error);
-    }
-
-    return [];
+    // REAL-WORLD execution: delegate to unifiedSearch (Bing / Gemini grounding).
+    const results = await unifiedSearch(query, { limit: 10, timeout: 20000 });
+    return results;
   }
 
   private delay(ms: number): Promise<void> {
@@ -839,9 +633,8 @@ export class EnhancedWebSearchService {
 export const enhancedWebSearch = new EnhancedWebSearchService();
 
 console.log('[Web Search Service] Initialized:', {
-  openRouterWebSearch: isOpenRouterWebSearchAvailable(),
-  geminiGroundingFallback: !!GEMINI_API_KEY,
-  bingDeprecated: true, // Marked as deprecated
+  mode: 'crawler-only',
+  pantheonAvailable: canActivatePantheon().available,
 });
 
 /**

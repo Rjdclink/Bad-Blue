@@ -51,6 +51,7 @@ import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
+import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import {
@@ -918,6 +919,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
   const verificationRoutes = await import('./routes/verification.routes');
   app.use('/api/verify', verificationRoutes.default);
+
+  // ============================================
+  // STAGE 5: CRYPTO WIRING ROUTES (NO EXECUTION)
+  // ============================================
+  app.use('/api/crypto', cryptoWiringRoutes);
 
   // ============================================
   // GEOCONSOLE ROUTES - Hybrid GPS Intelligence
@@ -3603,7 +3609,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // OSINT FULL SEARCH ROUTE (Phase 4)
   // ============================================
 
-  app.post('/api/osint/full-search', async (req, res) => {
+  app.post('/api/osint/full-search', apiRateLimit, isAuthenticated, async (req, res) => {
     const startTime = Date.now();
     const correlationId = crypto.randomBytes(16).toString('hex');
     let { name, department, badge, location, domain, searchDepth = 2 } = req.body;

@@ -198,7 +198,7 @@ export const LexaraAvatar: React.FC<LexaraAvatarProps> = ({
         }}
       >
         <img
-          src="/images/OIP.webp"
+          src="/images/oip.webp"
           alt="LEXARA - Legal Expert AI Resource Advisor"
           className="w-full h-full object-cover"
           loading="eager"
