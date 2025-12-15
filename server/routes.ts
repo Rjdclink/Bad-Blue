@@ -52,6 +52,8 @@ import { setupPlansRoutes } from "./routes/plans.routes";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
+import stageGovernorRoutes from "./routes/stageGovernor.routes";
+import arbitrageAgentsRoutes from "./routes/arbitrageAgents.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import {
@@ -137,7 +139,6 @@ import {
   insertSubscriptionTierSchema,
   DOCUMENT_CREATOR_PRICING_CENTS,
 } from "@shared/schema";
-import crypto from 'crypto';
 import archiver from 'archiver';
 import { eq, and, sql, desc, asc, inArray } from 'drizzle-orm';
 import { db } from './db';
@@ -5128,6 +5129,16 @@ Contact: ${foiaRequest.userEmail || userEmail}
   
   // Mount Bridge API routes
   app.use('/api/bridge', bridgeApi);
+  
+  // ============================================
+  // STAGE GOVERNOR API - Staged Autonomy Control
+  // ============================================
+  app.use('/api/governance', stageGovernorRoutes);
+  
+  // ============================================
+  // ARBITRAGE AGENTS API - 6-Agent Verification & Control
+  // ============================================
+  app.use('/api/arbitrage', arbitrageAgentsRoutes);
   
   // ============================================
   // 4JI ORCHESTRATOR API
