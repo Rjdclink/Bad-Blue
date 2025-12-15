@@ -32,8 +32,8 @@ const RETRY_DELAY_MS = 60000; // 1 minute
 
 // Environment-based configuration for wallet payouts
 const ENV_WALLET_CONFIG = {
-  primaryWallet: process.env.CRYPTO_PAYOUT_WALLET_ADDRESS || '',
-  backupWallet: process.env.CRYPTO_BACKUP_WALLET_ADDRESS || '',
+  primaryWallet: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '',
+  backupWallet: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '', // Backup same as primary
   preferredToken: process.env.CRYPTO_PAYOUT_TOKEN || 'ETH',
   preferredChain: process.env.CRYPTO_PAYOUT_CHAIN || 'ethereum',
   gcpServiceAccount: process.env.GCP_SERVICE_ACCOUNT_EMAIL || '',
