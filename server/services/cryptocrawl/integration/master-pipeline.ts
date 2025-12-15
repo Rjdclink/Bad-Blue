@@ -17,6 +17,7 @@ import { getCryptara } from '../../cryptara/index.js';
 import { networkHealth } from '../bridge/network-health.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { PER_CHAIN_RISK } from '../config/perChainRisk.js';
 
 const { JsonRpcProvider } = providers;
 
@@ -202,6 +203,7 @@ class MasterPipeline {
       const governance = getCryptocrawlGovernance();
       const cryptara = getCryptara();
       const utcHour = new Date().getUTCHours();
+      const risk = PER_CHAIN_RISK[opp.chain as keyof typeof PER_CHAIN_RISK] || PER_CHAIN_RISK.polygon;
 
       // Latency gate: use chain health latency as a proxy until venue-specific latency is wired.
       let chainLatencyMs: number | undefined;
@@ -236,10 +238,10 @@ class MasterPipeline {
               p50Ms: {
                 chain_rpc: chainLatencyMs ?? 9999,
               },
-              maxP50Ms: 800, // conservative; can be tightened per stage/envelope
+              maxP50Ms: risk.maxLatencyMs,
             },
             slippage: {
-              maxSlippageBps: 50, // default: 0.50% adverse slippage cap
+              maxSlippageBps: risk.maxSlippageBps,
             },
             timeOfDay: { utcHour },
           },

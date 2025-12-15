@@ -5,6 +5,8 @@ import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { getCryptocrawlGovernance, GovernanceError } from '../governance/index.js';
 import { getCryptara } from '../../cryptara/index.js';
 import { verifyCanonicalCryptoSetup } from '../verification/canonicalCryptoVerifier.js';
+import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
+import { getProfitLadderGovernor } from '../governance/profitLadder.js';
 import { 
   authenticateWithPassword, 
   requireCryptoCrawlAuth,
@@ -237,6 +239,63 @@ router.get('/verify-canonical', (_req, res) => {
   }
 });
 
+// GET /admin/crypto/verify-chains - Chain ID + RPC mapping verification
+router.get('/verify-chains', (_req, res) => {
+  const issues: Array<{ chain: string; issue: string }> = [];
+  for (const [chain, cfg] of Object.entries(SUPPORTED_CHAINS)) {
+    if (!cfg.chainId || typeof cfg.chainId !== 'number') issues.push({ chain, issue: 'Missing/invalid chainId' });
+    if (!cfg.rpcUrl || String(cfg.rpcUrl).trim().length === 0) issues.push({ chain, issue: 'Missing rpcUrl' });
+    if (!cfg.usdc || !cfg.usdt) issues.push({ chain, issue: 'Missing stablecoin addresses (usdc/usdt)' });
+  }
+  res.json({
+    success: issues.length === 0,
+    supportedChains: Object.keys(SUPPORTED_CHAINS),
+    issues,
+  });
+});
+
+// ============================================
+// PROFIT LADDER GOVERNOR (Agent 6)
+// ============================================
+
+// GET /admin/crypto/ladder - Get current tier + recent cycle history
+router.get('/ladder', (_req, res) => {
+  const ladder = getProfitLadderGovernor();
+  res.json({ success: true, state: ladder.getState(), promotion: ladder.canPromote() });
+});
+
+// POST /admin/crypto/ladder/record-cycle - Record one cycle's metrics (used by supervisor)
+router.post('/ladder/record-cycle', (req, res) => {
+  try {
+    const ladder = getProfitLadderGovernor();
+    const body = req.body || {};
+    ladder.recordCycle({
+      timestamp: Date.now(),
+      profitUsd: Number(body.profitUsd || 0),
+      anomaly: Boolean(body.anomaly),
+      slippageWithinBounds: Boolean(body.slippageWithinBounds),
+      latencyWithinBounds: Boolean(body.latencyWithinBounds),
+      signalConfidenceAvg: Number(body.signalConfidenceAvg || 0),
+      volatilityRegimeAcceptable: Boolean(body.volatilityRegimeAcceptable),
+      drawdownWithinThreshold: Boolean(body.drawdownWithinThreshold),
+    });
+    res.json({ success: true, state: ladder.getState(), promotion: ladder.canPromote() });
+  } catch (err) {
+    return handleGovernanceError(res, err);
+  }
+});
+
+// POST /admin/crypto/ladder/promote - Promote to next tier (requires paused state)
+router.post('/ladder/promote', (_req, res) => {
+  try {
+    const ladder = getProfitLadderGovernor();
+    const next = ladder.promote();
+    res.json({ success: true, nextTierTargetUsd: next, state: ladder.getState() });
+  } catch (err) {
+    return handleGovernanceError(res, err);
+  }
+});
+
 // CryptoCrawl system state manager
 const cryptoCrawlState = {
   enabled: false,
@@ -289,6 +348,7 @@ const cryptoCrawlState = {
 let systemState = {
   running: false,
   startedAt: 0,
+  mode: 'MANUAL' as 'MANUAL' | 'AUTOMATIC',
   config: {
     minProfitThreshold: 10,
     maxGasPrice: 100,
@@ -296,6 +356,49 @@ let systemState = {
     riskLevel: 'balanced'
   }
 };
+
+// GET /admin/crypto/mode - Get current arbitrage mode
+router.get('/mode', (_req, res) => {
+  res.json({ success: true, mode: systemState.mode });
+});
+
+// POST /admin/crypto/mode - Set arbitrage mode (AUTOMATIC gated behind canonical verifier + governance)
+router.post('/mode', (req, res) => {
+  const mode = String(req.body?.mode || '').toUpperCase();
+  if (mode !== 'MANUAL' && mode !== 'AUTOMATIC') {
+    return res.status(400).json({ success: false, error: 'mode must be MANUAL or AUTOMATIC' });
+  }
+
+  if (mode === 'AUTOMATIC') {
+    const canonical = verifyCanonicalCryptoSetup();
+    if (!canonical.ok) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot enable AUTOMATIC: canonical verifier failed',
+        report: canonical,
+      });
+    }
+
+    // Governance requirements: stage >= 2 and kill-switch armed and system unpaused via envelope.
+    const gov = governance.getState();
+    if (gov.stage < 2) {
+      return res.status(400).json({ success: false, error: 'Cannot enable AUTOMATIC: governance stage must be >= 2', governance: gov });
+    }
+    if (!gov.killSwitch.armed) {
+      return res.status(400).json({ success: false, error: 'Cannot enable AUTOMATIC: kill-switch must be armed', governance: gov });
+    }
+    if (gov.paused || !gov.activeEnvelope) {
+      return res.status(400).json({ success: false, error: 'Cannot enable AUTOMATIC: system must be UNPAUSED with an active envelope', governance: gov });
+    }
+  }
+
+  systemState.mode = mode as any;
+  return res.json({
+    success: true,
+    mode: systemState.mode,
+    note: 'Mode is stored in-memory; persistence across restart requires external storage.',
+  });
+});
 
 // POST /admin/crypto/start - Start the system
 router.post('/start', async (req, res) => {
