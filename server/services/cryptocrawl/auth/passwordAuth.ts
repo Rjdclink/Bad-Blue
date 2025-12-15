@@ -14,20 +14,20 @@
 
 import crypto from 'crypto';
 
-// Authentication credentials from environment variables (OPTIONAL)
-// When not configured, auth-protected features will be disabled but server will run
+// Authentication credentials from environment variables (optional - system can start without them)
+// When not set, auth-protected features will be disabled but core system will run
 const MASTER_EMAIL = process.env.CRYPTOCRAWL_EMAIL;
 const MASTER_PASSWORD = process.env.CRYPTOCRAWL_PASSWORD;
 
-// Export auth configuration status for route handlers to check
-export const isAuthConfigured = Boolean(MASTER_EMAIL && MASTER_PASSWORD);
+// Track whether authentication is configured
+const AUTH_CONFIGURED = !!(MASTER_EMAIL && MASTER_PASSWORD);
 
-// Log auth status on module load (one-time informational message)
-if (!isAuthConfigured) {
-  console.log('[CryptoCrawl Auth] Auth credentials not configured - auth-protected routes will be disabled');
-  console.log('[CryptoCrawl Auth] Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD to enable authentication');
+if (!AUTH_CONFIGURED) {
+  console.warn('⚠️  [CryptoCrawl Auth] CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD not set');
+  console.warn('⚠️  [CryptoCrawl Auth] Auth-protected features will be disabled');
+  console.warn('⚠️  [CryptoCrawl Auth] Core system will continue without authentication');
 } else {
-  console.log('[CryptoCrawl Auth] ✓ Authentication configured');
+  console.log('✓ [CryptoCrawl Auth] Authentication configured successfully');
 }
 
 const MASTER_PASSWORD_HASH = MASTER_PASSWORD
@@ -180,21 +180,27 @@ function cleanupExpiredSessions(): void {
 }
 
 /**
+ * Check if authentication is properly configured
+ */
+export function isAuthConfigured(): boolean {
+  return AUTH_CONFIGURED;
+}
+
+/**
  * Middleware for Express routes that require authentication
+ * Returns helpful error if auth is not configured
  */
 export function requireCryptoCrawlAuth(req: any, res: any, next: any): void {
-  // If auth is not configured, do not crash or block server boot.
-  // Keep the feature locked and return a clear "disabled" response.
-  if (!isCryptoCrawlAuthConfigured()) {
-    res.status(503).json({
+  // If auth is not configured, block access with helpful message
+  if (!AUTH_CONFIGURED) {
+    return res.status(503).json({
       success: false,
-      error: 'CryptoCrawl auth is not configured',
-      message:
-        'Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD to enable auth-protected CryptoCrawl routes.',
+      error: 'Authentication not configured',
+      message: 'CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD environment variables must be set to access this feature',
+      configured: false
     });
-    return;
   }
-
+  
   const authHeader = req.headers.authorization;
   
   // Check for Bearer token
@@ -210,7 +216,8 @@ export function requireCryptoCrawlAuth(req: any, res: any, next: any): void {
   res.status(401).json({
     success: false,
     error: 'Unauthorized. Please authenticate with the master password.',
-    authEndpoint: '/api/cryptocrawl/auth'
+    authEndpoint: '/api/crypto/auth',
+    configured: true
   });
 }
 
