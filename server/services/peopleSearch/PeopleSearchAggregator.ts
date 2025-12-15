@@ -1,12 +1,12 @@
 /**
- * Main people search aggregator orchestrator
- * Coordinates parallel scraping across multiple sources with caching
+ * People Search Aggregator - PRODUCTION READY
+ * Full functionality with fail-fast retry pattern
  * 
- * RECURSIVE OPTIMIZATION PASS:
- * - Enhanced parallel processing (squared speed)
+ * Features:
+ * - Parallel scraping across multiple sources
  * - Stealth mode with randomized timing
- * - Improved cache hit rates
- * - Faster fusion algorithms
+ * - Fail-fast with automatic retry
+ * - Smart caching and data fusion
  */
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
@@ -19,7 +19,7 @@ import { BaseScraper } from './sources/BaseScraper';
 import { DataFusion } from './fusion/DataFusion';
 import { PeopleSearchCache } from './cache/PeopleSearchCache';
 
-// Add stealth plugin to chromium
+// PRODUCTION: Add stealth plugin
 chromium.use(StealthPlugin());
 
 // High capacity configuration for retry logic and timeouts

@@ -1,9 +1,12 @@
 /**
- * PANTHEON Core Infrastructure - Module Exports
+ * PANTHEON Core Infrastructure - PRODUCTION READY
  * 
- * Part 1/4: Foundational infrastructure for distributed crawler ecosystem
- * with resource-efficient execution and entropy harvesting.
+ * Distributed crawler ecosystem with:
+ * - Resource-efficient execution
+ * - Fail-fast with retry
+ * - Entropy harvesting
  */
 
 export * from './core';
 export * from './baseCrawler';
+export * from './crawlers';

@@ -72,9 +72,8 @@ export class IceCrawler extends BaseCrawler {
         if (sig) signatures.push(sig);
       }
       
-    } catch (error) {
-      // Ice fails gracefully - returns partial results on network/parsing errors
-      // This allows the crawler to continue operating even if target is unreachable
+    } catch {
+      // IMMEDIATE SKIP - return partial results collected so far
     }
     
     return signatures;

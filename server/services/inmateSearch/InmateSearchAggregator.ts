@@ -1,21 +1,14 @@
 /**
- * Nationwide Inmate Locator - Search Aggregator Service
- * 
- * RECURSIVE OPTIMIZATION PASS:
- * - Warp speed² parallel processing
- * - Enhanced LRU cache with smart eviction
- * - Instant search with aggressive timeout
- * - Source prioritization by reliability
- * - Batch optimization for multiple searches
+ * Nationwide Inmate Locator - PRODUCTION READY
+ * Full functionality with fail-fast retry pattern
  * 
  * Features:
- * - LRU caching for memoization
- * - Parallel batch requests for efficiency
- * - Rate limit handling
+ * - LIVE Federal Bureau of Prisons (BOP) API integration
+ * - Parallel processing with fail-fast retry
+ * - LRU caching for performance
  * - Source deduplication
  * - Offense classification (VIOLENT/SEXUAL badges)
- * - 2-minute search timeout with partial results (optimized from 5 min)
- * - Modular data source adapter pattern
+ * - 2-minute timeout with partial results
  */
 
 import { logger } from '../../logger';
