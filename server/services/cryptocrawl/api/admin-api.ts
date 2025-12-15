@@ -3,6 +3,7 @@ import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { getCryptocrawlGovernance, GovernanceError } from '../governance/index.js';
+import { getCryptara } from '../../cryptara/index.js';
 import { 
   authenticateWithPassword, 
   requireCryptoCrawlAuth,
@@ -205,6 +206,21 @@ router.post('/governance/kill-switch/engage', (req, res) => {
     const reason = String(req.body?.reason || 'manual_engage');
     governance.engageKillSwitch('human', reason);
     res.json({ success: true, state: governance.getState() });
+  } catch (err) {
+    return handleGovernanceError(res, err);
+  }
+});
+
+// ============================================
+// CRYPTARA ADVISORY ROUTES
+// ============================================
+
+// POST /admin/crypto/cryptara/evaluate-gates - Evaluate market gates (advisory)
+router.post('/cryptara/evaluate-gates', (req, res) => {
+  try {
+    const cryptara = getCryptara();
+    const report = cryptara.evaluateMarketGates(req.body || {}, req.body?.config || undefined);
+    res.json({ success: true, report });
   } catch (err) {
     return handleGovernanceError(res, err);
   }

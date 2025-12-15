@@ -1,0 +1,27 @@
+export { CryptaraMarketGateEngine } from './engine.js';
+export type {
+  GateEvaluation,
+  GateSignal,
+  GateDecision,
+  GateActions,
+  SignalStatus,
+  CryptaraMarketGateContext,
+  CryptaraMarketGateConfig,
+  OrderFlowContext,
+  OrderFlowTrade,
+  MarketProfileContext,
+  LiquidityHeatmapContext,
+  VolatilityRegimeContext,
+  FundingRatesContext,
+  CorrelationContext,
+  TimeOfDayContext,
+  OptionsImpliedContext,
+  VenueLatencyContext,
+  FeeRebateContext,
+  CrossVenueFeeAsymmetryContext,
+  FundingCaptureNoInventoryContext,
+  DrawdownCapsContext,
+  ProfitReinvestmentLadderContext,
+  SlippageContext,
+} from './types.js';
+
