@@ -24,7 +24,6 @@ import {
 import type { GPSPoint, DataSource } from '@shared/geoconsoleTypes';
 
 export default function GeoconsolePage() {
-  // Real-world default: no demo data
   const [locationData, setLocationData] = useState<GPSPoint[]>([]);
   const [systemStatus, setSystemStatus] = useState<any>(null);
 
