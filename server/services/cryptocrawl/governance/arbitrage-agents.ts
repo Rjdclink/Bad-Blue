@@ -14,7 +14,8 @@
 
 import { EventEmitter } from 'events';
 import logger from '../../../logger.js';
-import { stageGovernor, riskGovernor } from './index.js';
+import { stageGovernor } from './stage-governor.js';
+import { riskGovernor } from './risk-governor.js';
 import * as crypto from 'crypto';
 
 // ============================================================================
