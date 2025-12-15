@@ -8,7 +8,7 @@
  * - Direct imperative map updates on every frame change
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.heat';
@@ -32,6 +32,11 @@ import type { GPSPoint } from '@shared/geoconsoleTypes';
 interface GeoconsoleProps {
   initialData?: GPSPoint[];
   onProcess?: (data: GPSPoint[]) => Promise<void>;
+  /**
+   * Optional nav mode provided by the parent "People Finder" GeoConsole tabs.
+   * When set, the dashboard will respond by switching to the appropriate view defaults.
+   */
+  navMode?: 'timeline' | 'map' | 'satellite';
 }
 
 interface LayerState {
@@ -59,6 +64,9 @@ const TILE_LAYERS: Record<string, { url: string; attribution: string }> = {
 const SPEED_COLORS = { stationary: '#3b82f6', walking: '#22c55e', running: '#eab308', cycling: '#f97316', driving: '#ef4444' };
 const MPS_TO_MPH = 2.237;
 
+const SOURCE_KEYS = ['device_gps', 'wifi_handoff', 'public_record', 'interpolated'] as const;
+type SourceKey = typeof SOURCE_KEYS[number];
+
 // ============================================================================
 // HELPERS
 // ============================================================================
@@ -68,6 +76,16 @@ const formatDuration = (s: number): string => { const h = Math.floor(s / 3600), 
 const formatDistance = (m: number): string => m >= 1609.34 ? `${(m / 1609.34).toFixed(2)} mi` : m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
 const formatSpeed = (mps: number): string => `${(mps * MPS_TO_MPH).toFixed(1)} mph`;
 const getSpeedColor = (speed: number): string => speed < 0.5 ? SPEED_COLORS.stationary : speed < 2 ? SPEED_COLORS.walking : speed < 5 ? SPEED_COLORS.running : speed < 10 ? SPEED_COLORS.cycling : SPEED_COLORS.driving;
+
+const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371000;
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
 
 // ============================================================================
 // ICONS
@@ -121,7 +139,8 @@ function renderFrame(
   trail: GeoFrame[],
   futurecast: GeoFrame[],
   layerCfg: LayerState,
-  isLive: boolean
+  isLive: boolean,
+  lockOnTarget: boolean
 ): void {
   // Always clear first - no conditional
   clearLayers(map, refs);
@@ -176,8 +195,10 @@ function renderFrame(
       { icon: createReticleIcon(isLive ? '#00ff00' : '#00f0ff', 50), zIndexOffset: 1000 }
     ).addTo(map);
     
-    // Pan to current
-    map.panTo([currentFrame.position.latitude, currentFrame.position.longitude], { animate: true, duration: 0.2 });
+    // Pan to current (when "FIX" lock is enabled)
+    if (lockOnTarget) {
+      map.panTo([currentFrame.position.latitude, currentFrame.position.longitude], { animate: true, duration: 0.2 });
+    }
   }
 
   // Force redraw (guard zero-sized containers to avoid leaflet.heat canvas errors)
@@ -202,6 +223,62 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true });
   const [processing, setProcessing] = useState(false);
   const [progressMsg, setProgressMsg] = useState('');
+  const [lockOnTarget, setLockOnTarget] = useState(true);
+
+  // Source filter ("signal links")
+  const [sourceCfg, setSourceCfg] = useState<Record<SourceKey, boolean>>({
+    device_gps: true,
+    wifi_handoff: true,
+    public_record: true,
+    interpolated: true,
+  });
+
+  const sourceEnabled = useCallback((s: string) => {
+    if ((SOURCE_KEYS as readonly string[]).includes(s)) return sourceCfg[s as SourceKey];
+    // Default allow for unknown/extra sources so we don't silently hide data.
+    return true;
+  }, [sourceCfg]);
+
+  // Derive the frames actually rendered (filters affect map + stats + sources panel)
+  const renderData = useMemo(() => {
+    const trailWithIndex = state.trail.map((f, idx) => ({ f, idx }));
+    const filteredTrail = trailWithIndex.filter(({ f }) => sourceEnabled(f.source));
+    const filteredFuturecast = sourceEnabled('interpolated')
+      ? state.futurecast
+      : [];
+
+    const current = filteredTrail.length > 0 ? filteredTrail[filteredTrail.length - 1].f : null;
+
+    // Stats computed over the rendered trail
+    let totalDistance = 0;
+    let maxSpeed = 0;
+    const speeds: number[] = [];
+    for (let i = 1; i < filteredTrail.length; i++) {
+      const prev = filteredTrail[i - 1].f;
+      const curr = filteredTrail[i].f;
+      totalDistance += haversineDistance(
+        prev.position.latitude, prev.position.longitude,
+        curr.position.latitude, curr.position.longitude
+      );
+      if (curr.velocity?.speed) {
+        speeds.push(curr.velocity.speed);
+        maxSpeed = Math.max(maxSpeed, curr.velocity.speed);
+      }
+    }
+    const duration = filteredTrail.length >= 2
+      ? (filteredTrail[filteredTrail.length - 1].f.timestamp.getTime() - filteredTrail[0].f.timestamp.getTime()) / 1000
+      : 0;
+    const averageSpeed = speeds.length > 0 ? speeds.reduce((a, b) => a + b, 0) / speeds.length : 0;
+
+    return {
+      trail: filteredTrail.map(x => x.f),
+      currentFrame: current,
+      futurecast: filteredFuturecast,
+      stats: { totalDistance, averageSpeed, maxSpeed, duration },
+      // for timeline list interaction
+      trailIndices: filteredTrail.map(x => x.idx),
+    };
+  }, [state.trail, state.futurecast, sourceEnabled]);
 
   // Map refs - single instance
   const containerRef = useRef<HTMLDivElement>(null);
@@ -301,9 +378,28 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     if (!map) return;
 
     // Direct render - no memoization, no debounce
-    renderFrame(map, layerRefs.current, state.currentFrame, state.trail, state.futurecast, layerCfg, state.isLive);
+    renderFrame(
+      map,
+      layerRefs.current,
+      renderData.currentFrame,
+      renderData.trail,
+      renderData.futurecast,
+      layerCfg,
+      state.isLive,
+      lockOnTarget
+    );
 
-  }, [state.currentIndex, state._version, state.trail.length, state.futurecast.length, layerCfg, state.isLive, state.currentFrame]);
+  }, [
+    state.currentIndex,
+    state._version,
+    state.trail.length,
+    state.futurecast.length,
+    layerCfg,
+    state.isLive,
+    state.currentFrame,
+    renderData,
+    lockOnTarget,
+  ]);
 
   // === RESIZE/VISIBILITY ===
   useEffect(() => {
@@ -383,7 +479,9 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   }, [actions]);
 
   // Destructure
-  const { currentFrame, isPlaying, isLive, stats, timeline, totalFrames, currentIndex } = state;
+  const { isPlaying, isLive, timeline, totalFrames, currentIndex } = state;
+  const { currentFrame } = renderData;
+  const stats = renderData.stats;
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-x-hidden">
@@ -429,14 +527,25 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           <div className="p-3 border-b border-slate-700/50">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-medium flex items-center gap-2"><Radio className="w-4 h-4 text-cyan-400" />Controls</h3>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={actions.toggleLive}
-                className={isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}
-              >
-                {isLive ? 'LIVE' : 'GO LIVE'}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLockOnTarget(v => !v)}
+                  className={lockOnTarget ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}
+                  title={lockOnTarget ? 'FIX lock: on (auto-recenter)' : 'FIX lock: off'}
+                >
+                  FIX
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={actions.toggleLive}
+                  className={isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}
+                >
+                  {isLive ? 'LIVE' : 'GO LIVE'}
+                </Button>
+              </div>
             </div>
             <div className="bg-slate-800/30 rounded-lg p-2 border border-slate-700/40">
               <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-700/40">
@@ -485,9 +594,34 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           </div>
           <div className="p-3 flex-1 min-h-0 overflow-auto">
             <h3 className="text-sm font-medium mb-2 flex items-center gap-2"><Target className="w-4 h-4 text-cyan-400" />Sources</h3>
-            {['device_gps', 'wifi_handoff', 'public_record', 'interpolated'].map(s => {
-              const active = state.trail.some(f => f.source === s);
-              return (<div key={s} className="flex items-center justify-between text-xs py-1"><span className="text-slate-400 capitalize">{s.replace('_', ' ')}</span><Badge variant="outline" className={active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}>{active ? 'Active' : 'Idle'}</Badge></div>);
+            {SOURCE_KEYS.map((s) => {
+              const hasAny = state.trail.some(f => f.source === s);
+              const enabled = sourceCfg[s];
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSourceCfg(prev => ({ ...prev, [s]: !prev[s] }))}
+                  className="w-full flex items-center justify-between text-xs py-1 hover:bg-slate-800/30 rounded px-1"
+                  title={enabled ? 'Click to hide this source' : 'Click to show this source'}
+                >
+                  <span className={`capitalize ${enabled ? 'text-slate-200' : 'text-slate-500 line-through'}`}>{s.replace('_', ' ')}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={hasAny ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}
+                    >
+                      {hasAny ? 'Active' : 'Idle'}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className={enabled ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : 'bg-slate-700/30 text-slate-500 border-slate-600/30'}
+                    >
+                      {enabled ? 'On' : 'Off'}
+                    </Badge>
+                  </div>
+                </button>
+              );
             })}
           </div>
         </div>
