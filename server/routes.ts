@@ -5123,6 +5123,20 @@ Contact: ${foiaRequest.userEmail || userEmail}
         },
       });
     }
+
+    // INTERNAL KEY BYPASS (for /api/crypto/* and /admin/crypto/*):
+    // If INTERNAL_KEY is set, requests may authenticate via header instead of session.
+    // This is required for non-browser callers (cron/agents) and UI toggles where session isn't reliable.
+    const internalKey = String(process.env.INTERNAL_KEY || process.env.INTERNAL_API_KEY || '');
+    if (internalKey) {
+      const provided =
+        String(req.header('X-Internal-Key') || '') ||
+        String(req.header('X-Internal-Api-Key') || '') ||
+        String(req.header('X-Internal-Verify') || '');
+      if (provided && provided === internalKey) {
+        return next();
+      }
+    }
     
     // STRICT: Check if user is authenticated via passport
     if (!req.isAuthenticated || !req.isAuthenticated()) {
@@ -5135,8 +5149,10 @@ Contact: ${foiaRequest.userEmail || userEmail}
         hasCookie: Boolean(req.headers?.cookie),
         hasAuthorization: Boolean(req.headers?.authorization),
         hasInternalVerifyHeader: Boolean(req.headers?.['x-internal-verify']),
+        hasInternalKeyHeader: Boolean(req.headers?.['x-internal-key'] || req.headers?.['x-internal-api-key']),
         nodeEnv: process.env.NODE_ENV || 'unknown',
         hasInternalVerifySecret: Boolean(process.env.INTERNAL_VERIFY_SECRET),
+        hasInternalKey: Boolean(process.env.INTERNAL_KEY || process.env.INTERNAL_API_KEY),
       });
       return res.status(401).json({
         success: false,

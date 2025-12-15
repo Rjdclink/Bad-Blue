@@ -5,10 +5,10 @@ import { getRecombined } from '../../pulse/recombiner.js';
 function requireInternalAuth(req: any, res: any, next: any): any {
   // Internal/admin auth only (no user session dependency).
   // Prefer INTERNAL_API_KEY if configured; otherwise use INTERNAL_VERIFY_SECRET (same header as verifier).
-  const apiKey = String(process.env.INTERNAL_API_KEY || '');
+  const apiKey = String(process.env.INTERNAL_KEY || process.env.INTERNAL_API_KEY || '');
   const verifySecret = String(process.env.INTERNAL_VERIFY_SECRET || '');
 
-  const providedApiKey = String(req.header('X-Internal-Api-Key') || '');
+  const providedApiKey = String(req.header('X-Internal-Key') || req.header('X-Internal-Api-Key') || '');
   const providedVerify = String(req.header('X-Internal-Verify') || '');
 
   const ok =
@@ -20,7 +20,7 @@ function requireInternalAuth(req: any, res: any, next: any): any {
       ok: false,
       error: 'Unauthorized',
       message: 'Internal auth required',
-      expected: apiKey ? 'X-Internal-Api-Key' : verifySecret ? 'X-Internal-Verify' : 'NO_SECRET_CONFIGURED',
+      expected: apiKey ? 'X-Internal-Key' : verifySecret ? 'X-Internal-Verify' : 'NO_SECRET_CONFIGURED',
     });
   }
   return next();
