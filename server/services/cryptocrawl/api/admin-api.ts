@@ -233,7 +233,7 @@ router.post('/cryptara/evaluate-gates', (req, res) => {
 router.get('/verify-canonical', (_req, res) => {
   try {
     const report = verifyCanonicalCryptoSetup();
-    res.json({ success: report.ok, report });
+    res.json({ success: report.ok, marker: 'VERIFIER_V2_REACHED', report });
   } catch (err) {
     return handleGovernanceError(res, err);
   }
@@ -249,6 +249,7 @@ router.get('/verify-chains', (_req, res) => {
   }
   res.json({
     success: issues.length === 0,
+    marker: 'VERIFIER_V2_REACHED',
     supportedChains: Object.keys(SUPPORTED_CHAINS),
     issues,
   });

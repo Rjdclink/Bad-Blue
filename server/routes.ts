@@ -5065,17 +5065,41 @@ Contact: ${foiaRequest.userEmail || userEmail}
       (String((req as any).baseUrl || '') === '/admin/crypto' && String((req as any).path || '').startsWith('/verify'));
 
     if (isVerifyRoute) {
+      // Force execution visibility (no secrets).
+      const serviceName = process.env.RAILWAY_SERVICE_NAME || process.env.SERVICE_NAME || 'unknown';
+      const commit =
+        process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || process.env.SOURCE_VERSION || 'unknown';
+      const nodeEnv = process.env.NODE_ENV || 'unknown';
+
       const provided = String(req.header('X-Internal-Verify') || '');
       const secret = String(process.env.INTERNAL_VERIFY_SECRET || '');
       if (provided && secret && provided === secret) return next();
 
-      // Diagnostics (no secrets): helps confirm header/env reach runtime.
-      // This ONLY executes for /admin/crypto/verify-* and does not affect any other /admin/crypto/* route.
+      console.log('[VERIFIER_V2_REACHED]', {
+        ts: new Date().toISOString(),
+        serviceName,
+        commit,
+        nodeEnv,
+        originalUrl: String((req as any).originalUrl || ''),
+        baseUrl: String((req as any).baseUrl || ''),
+        path: String((req as any).path || ''),
+        host: String(req.headers?.host || ''),
+        hasInternalVerifyHeader: Boolean(provided),
+        headerLength: provided.length,
+        hasInternalVerifySecret: Boolean(secret),
+        secretLength: secret.length,
+        headerMatches: Boolean(provided && secret && provided === secret),
+      });
+
       return res.status(401).json({
         success: false,
         error: 'Unauthorized',
         message: 'Verifier header auth failed',
+        marker: 'VERIFIER_V2_REACHED',
         diagnostics: {
+          serviceName,
+          commit,
+          nodeEnv,
           fullPath,
           baseUrl: String((req as any).baseUrl || ''),
           path: String((req as any).path || ''),
