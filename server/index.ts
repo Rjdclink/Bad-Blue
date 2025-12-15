@@ -244,6 +244,22 @@ async function runMigrations(): Promise<void> {
 async function initializeServices(): Promise<void> {
   console.log('[STARTUP] Stage 3: Initializing services...');
   
+  // Initialize Playwright browser validation with test crawl
+  // This runs FIRST to ensure browser is ready before other services that depend on it
+  // It will NOT crash if Playwright loads slowly - uses retry logic with backoff
+  try {
+    const { initializePlaywrightWithValidation } = await import('./services/playwrightBrowserValidator');
+    const playwrightReady = await initializePlaywrightWithValidation();
+    if (playwrightReady) {
+      console.log('[STARTUP] ✓ Playwright browser validated with test crawl');
+    } else {
+      console.warn('[STARTUP] ⚠ Playwright browser validation failed - crawling features may be limited');
+    }
+  } catch (error: any) {
+    // DO NOT crash on Playwright initialization failure
+    console.warn('[STARTUP] ⚠ Playwright validation skipped:', error?.message ?? error);
+  }
+
   try {
     const { persistenceManager } = await import('./persistenceManager');
     await persistenceManager.start();

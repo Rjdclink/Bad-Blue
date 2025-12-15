@@ -1,15 +1,17 @@
-# Production-grade Puppeteer Dockerfile with multi-stage build
-# Build stage - for compiling the application
+# Production-grade Playwright/Puppeteer Dockerfile with multi-stage build
+# Build stage - for compiling the application and installing browsers
 FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies for native modules (needed for build stage)
+# Install build dependencies for native modules and Playwright browser installation
 RUN apt-get update && apt-get install -y \
     python3 \
     build-essential \
     g++ \
     make \
+    wget \
+    ca-certificates \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,6 +21,10 @@ COPY package*.json ./
 # Clean any existing node_modules and install ALL dependencies (needed for build)
 RUN rm -rf node_modules || true && \
     npm ci --legacy-peer-deps
+
+# Install Playwright Chromium browser and Linux dependencies during build
+# This is REQUIRED for Railway deployment
+RUN npx playwright install chromium --with-deps
 
 # Copy application code
 COPY . .
@@ -35,7 +41,7 @@ FROM node:20-bookworm-slim AS production
 ENV NPM_CONFIG_OPTIONAL=false
 ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
 
-# Install Chromium and all required runtime dependencies
+# Install Chromium and all required runtime dependencies for both Playwright and Puppeteer
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-sandbox \
@@ -61,13 +67,22 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     wget \
     ca-certificates \
+    # Additional Playwright dependencies
+    libglib2.0-0 \
+    libnssutil3 \
+    libpango-1.0-0 \
+    libcairo2 \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure Puppeteer to use system Chromium
+# Configure Puppeteer and Playwright to use system Chromium
+# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 since we install browsers manually
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    PUPPETEER_ARGS="--no-sandbox --disable-setuid-sandbox"
+    PUPPETEER_ARGS="--no-sandbox --disable-setuid-sandbox" \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
+    PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
 
 WORKDIR /app
 
@@ -76,6 +91,13 @@ WORKDIR /app
 COPY package*.json ./
 RUN rm -rf node_modules || true && \
     npm ci --omit=dev --legacy-peer-deps --ignore-optional
+
+# Install Playwright Chromium browser in production stage
+# This ensures browser is available at runtime
+# Log any installation errors but don't fail the build (system chromium is fallback)
+RUN echo "[Playwright] Installing Chromium browser..." && \
+    npx playwright install chromium --with-deps 2>&1 || \
+    echo "[Playwright] Warning: Browser install had issues, will use system chromium as fallback"
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
