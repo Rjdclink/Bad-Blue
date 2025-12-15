@@ -5115,6 +5115,18 @@ Contact: ${foiaRequest.userEmail || userEmail}
     
     // STRICT: Check if user is authenticated via passport
     if (!req.isAuthenticated || !req.isAuthenticated()) {
+      // TEMP DIAGNOSTICS: identify why crypto auth failed (no secrets)
+      console.log('[CRYPTO_AUTH_FAIL]', {
+        ts: new Date().toISOString(),
+        reason: 'not_authenticated',
+        originalUrl: String((req as any).originalUrl || ''),
+        host: String(req.headers?.host || ''),
+        hasCookie: Boolean(req.headers?.cookie),
+        hasAuthorization: Boolean(req.headers?.authorization),
+        hasInternalVerifyHeader: Boolean(req.headers?.['x-internal-verify']),
+        nodeEnv: process.env.NODE_ENV || 'unknown',
+        hasInternalVerifySecret: Boolean(process.env.INTERNAL_VERIFY_SECRET),
+      });
       return res.status(401).json({
         success: false,
         error: 'Unauthorized',
@@ -5126,6 +5138,17 @@ Contact: ${foiaRequest.userEmail || userEmail}
     
     // STRICT: Must be master password user (admin)
     if (!user.isMasterBypass) {
+      console.log('[CRYPTO_AUTH_FAIL]', {
+        ts: new Date().toISOString(),
+        reason: 'not_master_bypass',
+        originalUrl: String((req as any).originalUrl || ''),
+        host: String(req.headers?.host || ''),
+        userFlags: {
+          isMasterBypass: Boolean((user as any).isMasterBypass),
+          isAdmin: Boolean((user as any).isAdmin),
+          isAdminBypass: Boolean((user as any).isAdminBypass),
+        },
+      });
       return res.status(403).json({
         success: false,
         error: 'Forbidden',
