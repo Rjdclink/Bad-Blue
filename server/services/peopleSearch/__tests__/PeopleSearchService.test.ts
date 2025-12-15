@@ -429,7 +429,7 @@ const testResultStructureConsistent = test('Result structure is consistent regar
 
 async function runTests() {
   console.log('\n🧪 Running PeopleSearchService Tests (Step 1 Verification)...\n');
-  console.log('=' .repeat(60) + '\n');
+  console.log('='.repeat(60) + '\n');
 
   // Run all tests
   await testNoSideEffectsAtImport();
@@ -448,9 +448,9 @@ async function runTests() {
   console.warn = originalConsoleWarn;
   console.error = originalConsoleError;
 
-  console.log('\n' + '=' .repeat(60));
+  console.log('\n' + '='.repeat(60));
   console.log('TEST SUMMARY');
-  console.log('=' .repeat(60));
+  console.log('='.repeat(60));
 
   const passed = results.filter(r => r.passed).length;
   const failed = results.filter(r => !r.passed).length;
