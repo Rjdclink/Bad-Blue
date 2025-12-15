@@ -80,6 +80,11 @@ async function main() {
 
     try {
       const page = await browser.newPage();
+      const errors = [];
+      page.on('pageerror', (err) => errors.push(`[pageerror] ${err?.message || String(err)}`));
+      page.on('console', (msg) => {
+        if (msg.type() === 'error') errors.push(`[console.error] ${msg.text()}`);
+      });
       await page.setViewport({ width: 1600, height: 1000, deviceScaleFactor: 1 });
 
       await page.goto(`${baseUrl}/geoconsole`, { waitUntil: 'networkidle2' });
@@ -104,6 +109,12 @@ async function main() {
         }
       });
       await new Promise((r) => setTimeout(r, 100));
+
+      // Fail if we saw known stability errors during render.
+      const fatal = errors.find((e) => e.includes('getImageData') || e.includes('leaflet.heat'));
+      if (fatal) {
+        throw new Error(`GeoConsole render error: ${fatal}`);
+      }
 
       await page.screenshot({ path: outPath, fullPage: true });
 

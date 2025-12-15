@@ -3593,7 +3593,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // OSINT FULL SEARCH ROUTE (Phase 4)
   // ============================================
 
-  app.post('/api/osint/full-search', async (req, res) => {
+  app.post('/api/osint/full-search', apiRateLimit, isAuthenticated, async (req, res) => {
     const startTime = Date.now();
     const correlationId = crypto.randomBytes(16).toString('hex');
     let { name, department, badge, location, domain, searchDepth = 2 } = req.body;

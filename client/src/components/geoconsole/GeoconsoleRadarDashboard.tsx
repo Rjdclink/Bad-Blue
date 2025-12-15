@@ -180,8 +180,13 @@ function renderFrame(
     map.panTo([currentFrame.position.latitude, currentFrame.position.longitude], { animate: true, duration: 0.2 });
   }
 
-  // Force redraw
-  map.invalidateSize();
+  // Force redraw (guard zero-sized containers to avoid leaflet.heat canvas errors)
+  try {
+    const size = map.getSize();
+    if (size.x > 0 && size.y > 0) map.invalidateSize();
+  } catch {
+    // ignore
+  }
 }
 
 // ============================================================================
@@ -304,7 +309,18 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const onResize = () => map.invalidateSize();
+    const safeInvalidate = () => {
+      const el = containerRef.current;
+      if (!el) return;
+      // If the container is temporarily hidden or not laid out, skip.
+      if (el.offsetWidth === 0 || el.offsetHeight === 0) return;
+      try {
+        map.invalidateSize();
+      } catch {
+        // ignore
+      }
+    };
+    const onResize = () => safeInvalidate();
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       if (visibleInvalidateTimeoutRef.current) {
@@ -313,7 +329,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       }
       visibleInvalidateTimeoutRef.current = window.setTimeout(() => {
         if (!mountedRef.current) return;
-        if (mapRef.current === map) map.invalidateSize();
+        if (mapRef.current === map) safeInvalidate();
       }, 50);
     };
     window.addEventListener('resize', onResize);
