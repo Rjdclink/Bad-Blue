@@ -212,6 +212,10 @@ interface DataSourceAdapter {
   search(query: InmateSearchQuery): Promise<InmateRecord[]>;
 }
 
+function noProvidersError(source: string): Error {
+  return new Error(`No upstream providers available for ${source}`);
+}
+
 /**
  * Federal Bureau of Prisons (BOP) Adapter
  */
@@ -259,10 +263,9 @@ Return empty array if no matches found. Only return factual information from BOP
           maxTokens: 2000,
         });
       } else {
-        // No AI providers available - log warning but return empty (no mock data)
-        logger.warn('[InmateSearch] No AI providers available for BOP search - returning empty results');
-        // Return empty array - UI will show "no results" with manual search links
-        return [];
+        // Fail closed: do not return "no results" when the executor cannot run
+        logger.warn('[InmateSearch] No AI providers available for BOP search');
+        throw noProvidersError('BOP');
       }
       
       if (!results?.inmates?.length) {
@@ -298,6 +301,10 @@ Return empty array if no matches found. Only return factual information from BOP
       });
     } catch (error: any) {
       logger.error('[InmateSearch] BOP search error:', error.message);
+      // Preserve meaningful upstream-unavailable semantics
+      if (String(error?.message || '').includes('No upstream providers available')) {
+        throw error;
+      }
       return [];
     }
   }
@@ -358,10 +365,9 @@ Return empty array if no matches found. Only return factual information.`;
             maxTokens: 2000,
           });
         } else {
-          // No AI providers available - log warning but return empty (no mock data)
-          logger.warn(`[InmateSearch] No AI providers available for State DOC search (${stateCode}) - returning empty results`);
-          // Return empty array - UI will show "no results" with manual search links
-          return [];
+          // Fail closed: do not return "no results" when the executor cannot run
+          logger.warn(`[InmateSearch] No AI providers available for State DOC search (${stateCode})`);
+          throw noProvidersError(`STATE_DOC:${stateCode}`);
         }
         
         if (!results?.inmates?.length) {
@@ -399,6 +405,9 @@ Return empty array if no matches found. Only return factual information.`;
         });
       } catch (error: any) {
         logger.error(`[InmateSearch] State DOC search error (${stateCode}):`, error.message);
+        if (String(error?.message || '').includes('No upstream providers available')) {
+          throw error;
+        }
         return [];
       }
     }
@@ -451,10 +460,9 @@ Return empty array if no matches.`;
           maxTokens: 1500,
         });
       } else {
-        // No AI providers available - log warning but return empty (no mock data)
-        logger.warn('[InmateSearch] No AI providers available for VINE search - returning empty results');
-        // Return empty array - UI will show "no results" with manual search links
-        return [];
+        // Fail closed: do not return "no results" when the executor cannot run
+        logger.warn('[InmateSearch] No AI providers available for VINE search');
+        throw noProvidersError('VINE');
       }
       
       if (!results?.inmates?.length) {
@@ -484,6 +492,9 @@ Return empty array if no matches.`;
       });
     } catch (error: any) {
       logger.error('[InmateSearch] VINE search error:', error.message);
+      if (String(error?.message || '').includes('No upstream providers available')) {
+        throw error;
+      }
       return [];
     }
   }
