@@ -39,7 +39,11 @@ import { Cryptara, getCryptara, type CryptaraConfig } from '../cryptara';
 const log = createLogger('4JI-GENIE');
 
 function isNoIntervals(): boolean {
-  return process.env.NO_INTERVALS === 'true' || (process.env.CRYPTARA_MODE || '').toUpperCase().trim() === 'SILENT_WATCHER_ONLY';
+  const cryptaraMode = (process.env.CRYPTARA_MODE || '').toUpperCase().trim();
+  if (cryptaraMode === 'SILENT_WATCHER_ONLY') return true;
+  if (process.env.NO_INTERVALS === 'true') return true;
+  // Default-deny: do not schedule background work unless explicitly allowed
+  return process.env.ALLOW_INTERVALS !== 'true';
 }
 
 // ============================================================================

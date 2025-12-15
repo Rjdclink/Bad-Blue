@@ -46,7 +46,11 @@ function getCryptaraMode(): CryptaraMode {
 }
 
 function isNoIntervals(): boolean {
-  return process.env.NO_INTERVALS === 'true' || getCryptaraMode() === 'SILENT_WATCHER_ONLY';
+  // Default-deny: background loops are OFF unless explicitly allowed.
+  // SILENT_WATCHER_ONLY always disables intervals.
+  if (getCryptaraMode() === 'SILENT_WATCHER_ONLY') return true;
+  if (process.env.NO_INTERVALS === 'true') return true;
+  return process.env.ALLOW_INTERVALS !== 'true';
 }
 
 // ============================================================================

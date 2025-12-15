@@ -29,10 +29,16 @@ if (!routesContent.includes('setupLawTypesRoutes')) {
 
 console.log('✅ Routes properly registered');
 // Stage 5 checkpoint: wiring (offline, no server, no network)
-if (!fs.existsSync('scripts/wire-check.cjs')) {
-  console.error('❌ scripts/wire-check.cjs not found');
+if (!routesContent.includes("app.use('/api/crypto'")) {
+  console.error('❌ server/routes.ts missing /api/crypto wiring mount');
   process.exit(1);
 }
-console.log('✅ scripts/wire-check.cjs exists');
+console.log('✅ Crypto wiring routes mounted at /api/crypto');
+
+if (!fs.existsSync('scripts/wire-check.ts')) {
+  console.error('❌ scripts/wire-check.ts not found');
+  process.exit(1);
+}
+console.log('✅ scripts/wire-check.ts exists');
 
 console.log('✅ Stage 5 checkpoint saved');
