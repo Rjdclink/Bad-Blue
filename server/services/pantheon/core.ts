@@ -7,13 +7,15 @@ const log = createLogger('PantheonCore');
 /**
  * PANTHEON CORE - PRODUCTION READY
  * 
- * REAL-WORLD OPERATIONS CAPABLE:
- * - NO DEMO FALLBACKS: All configurations validated on startup
- * - FAIL HARD: Missing or invalid configs throw immediately
- * - Warp speed task processing
+ * TWO-STAGE DEPLOYMENT SYSTEM:
+ *   Stage 1 (PRIMARY): 10 RAZORS - Fast, specialized extractors
+ *   Stage 2 (SECONDARY): Legacy crawlers (Hydra, Wraith, Ice)
+ * 
+ * Features:
+ * - Two-stage deployment (Razors first, Crawlers second)
+ * - Parallel task processing with retry
  * - Quantum entropy compression
  * - Adaptive resource throttling
- * - Stealth mode operations
  * - Priority queue optimization
  */
 
@@ -337,13 +339,55 @@ export class PantheonCore extends EventEmitter {
   }
 
   /**
-   * Get performance metrics - NEW
+   * Get performance metrics
    */
   getMetrics(): { queueSize: number; entropyCount: number; isActive: boolean } {
     return {
       queueSize: this.taskQueue.length,
       entropyCount: this.entropyField.size,
       isActive: this.swarmActive,
+    };
+  }
+
+  /**
+   * TWO-STAGE DEPLOYMENT (DEFAULT)
+   * Stage 1: 10 RAZORS (fast, specialized)
+   * Stage 2: Legacy crawlers (deep, thorough) - only if needed
+   */
+  async deployTwoStage(target: string, html?: string): Promise<{
+    stage: 1 | 2;
+    razorResults: unknown[];
+    entropySignatures: EntropySignature[];
+    totalTimeMs: number;
+    promoted: boolean;
+  }> {
+    const startTime = Date.now();
+    
+    // Dynamic import to avoid circular dependency
+    const { twoStageDeployer } = await import('./razors/TwoStageDeployer');
+    
+    const result = await twoStageDeployer.deploy(target, html);
+    
+    // Store any entropy from the deployment
+    for (const r of result.results) {
+      if (r.success && r.confidence > 0.5) {
+        this.storeEntropy({
+          hash: `razor-${r.razorType}-${Date.now()}`,
+          probability: r.confidence,
+          constraints: [],
+          temporalDrift: Date.now(),
+          structuralDensity: r.confidence,
+          timestamp: new Date(),
+        });
+      }
+    }
+
+    return {
+      stage: result.stage,
+      razorResults: result.results,
+      entropySignatures: this.getEntropyField(),
+      totalTimeMs: Date.now() - startTime,
+      promoted: result.promoted,
     };
   }
 }

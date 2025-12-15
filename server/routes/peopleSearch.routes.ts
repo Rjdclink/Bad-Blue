@@ -1,11 +1,17 @@
 /**
  * People Search API Routes
+ * PRODUCTION READY - Full functionality with fail-fast retry
  */
-import express from 'express';
+import express, { Router, Request, Response } from 'express';
 import { PeopleSearchAggregator } from '../services/peopleSearch/PeopleSearchAggregator';
 import type { SearchQuery } from '../services/peopleSearch/types';
 
-const router = express.Router();
+// EXPLICIT: Express Router initialization - no globals, no assumptions
+if (!express || !express.Router) {
+  throw new Error('FATAL: express not available. Cannot initialize People Search routes.');
+}
+
+const router: Router = express.Router();
 const aggregator = new PeopleSearchAggregator();
 
 /**

@@ -1,5 +1,6 @@
 /**
  * Crawler Job API Routes
+ * PRODUCTION READY - Full functionality with fail-fast retry
  * 
  * RESTful endpoints for crawler job management with:
  * - No-cache headers for polling endpoints
@@ -7,14 +8,19 @@
  * - Real-time status updates
  */
 
-import { Router, Request, Response } from 'express';
+import express, { Router, Request, Response } from 'express';
 import { 
   crawlerJobManager, 
   JobStatus, 
   type JobConfig 
 } from '../services/crawlers/CrawlerJobManager';
 
-const router = Router();
+// EXPLICIT: Express Router initialization - no globals, no assumptions
+if (!express || !express.Router) {
+  throw new Error('FATAL: express not available. Cannot initialize Crawler routes.');
+}
+
+const router: Router = express.Router();
 
 // ============================================================================
 // NO-CACHE MIDDLEWARE

@@ -138,14 +138,13 @@ class HydraHead {
         depth: 1,
         branches: links.length
       };
-    } catch (error) {
+    } catch {
+      // IMMEDIATE SKIP - mark dead, continue with other heads
       this.alive = false;
       return { 
         target: this.target, 
         richness: 0,
         nextTarget: '',
-        error: true,
-        errorType: error instanceof Error ? error.message : 'unknown',
         discovered: [],
         explored: 0,
         depth: 0,

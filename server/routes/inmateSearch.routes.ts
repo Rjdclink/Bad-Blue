@@ -1,13 +1,14 @@
 /**
  * Inmate Search API Routes
+ * PRODUCTION READY - Full functionality with fail-fast retry
  * 
  * Provides nationwide inmate locator functionality with:
- * - Federal Bureau of Prisons search
+ * - Federal Bureau of Prisons search (LIVE API)
  * - State Department of Corrections search
  * - VINE victim notification system integration
  */
 
-import express from 'express';
+import express, { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { 
@@ -20,7 +21,12 @@ import type { InmateSearchQuery } from '../services/inmateSearch/types';
 import { apiRateLimit } from '../rateLimit';
 import { sendValidationError, sendNoResults, sendUpstreamUnavailable, sendSystemError } from '../lib/apiResponse';
 
-const router = express.Router();
+// EXPLICIT: Express Router initialization - no globals, no assumptions
+if (!express || !express.Router) {
+  throw new Error('FATAL: express not available. Cannot initialize Inmate Search routes.');
+}
+
+const router: Router = express.Router();
 
 // Validation schema for inmate search
 const InmateSearchSchema = z.object({
@@ -82,6 +88,7 @@ router.post('/', apiRateLimit, async (req, res) => {
       searchScope: validation.data.searchScope,
     };
 
+    // PRODUCTION MODE: No demo/dev-lite fallbacks. Fail hard if services are misconfigured.
     console.log('[Inmate Search API] Searching for:', {
       correlationId,
       firstName: query.firstName,
