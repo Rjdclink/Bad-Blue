@@ -54,6 +54,8 @@ import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
+import { verifyCanonicalCryptoSetup } from "./services/cryptocrawl/verification/canonicalCryptoVerifier.js";
+import { SUPPORTED_CHAINS } from "./services/cryptocrawl/bridge/chain-config.js";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -5003,6 +5005,44 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // No fallback users, no auto-create, 401 only
   // ============================================
   
+  // ============================================
+  // CRYPTO VERIFIER ROUTES (HEADER-ONLY, NO SESSION)
+  // Only /admin/crypto/verify-* bypasses session auth via header match.
+  // ============================================
+
+  const requireInternalVerifyHeader: RequestHandler = (req, res, next) => {
+    const provided = String(req.header('X-Internal-Verify') || '');
+    const secret = String(process.env.INTERNAL_VERIFY_SECRET || '');
+    if (provided && secret && provided === secret) return next();
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized',
+      message: 'Verifier header auth failed',
+    });
+  };
+
+  // Mount verifier handlers BEFORE the session-protected /admin/crypto router.
+  // This guarantees verifier access does not depend on passport/session middleware.
+  const cryptoVerifyRouter = express.Router();
+  cryptoVerifyRouter.get('/verify-canonical', requireInternalVerifyHeader, (_req, res) => {
+    const report = verifyCanonicalCryptoSetup();
+    res.json({ success: report.ok, report });
+  });
+  cryptoVerifyRouter.get('/verify-chains', requireInternalVerifyHeader, (_req, res) => {
+    const issues: Array<{ chain: string; issue: string }> = [];
+    for (const [chain, cfg] of Object.entries(SUPPORTED_CHAINS)) {
+      if (!cfg.chainId || typeof cfg.chainId !== 'number') issues.push({ chain, issue: 'Missing/invalid chainId' });
+      if (!cfg.rpcUrl || String(cfg.rpcUrl).trim().length === 0) issues.push({ chain, issue: 'Missing rpcUrl' });
+      if (!cfg.usdc || !cfg.usdt) issues.push({ chain, issue: 'Missing stablecoin addresses (usdc/usdt)' });
+    }
+    res.json({
+      success: issues.length === 0,
+      supportedChains: Object.keys(SUPPORTED_CHAINS),
+      issues,
+    });
+  });
+  app.use('/admin/crypto', cryptoVerifyRouter);
+
   // Strict auth middleware for crypto routes - no fallback, 401 only
   const cryptoAuthMiddleware: RequestHandler = (req, res, next) => {
     // Set no-cache headers
