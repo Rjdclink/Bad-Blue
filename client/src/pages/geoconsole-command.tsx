@@ -402,19 +402,29 @@ export default function GeoconsoleCommandCenter() {
             {/* Location points visualization */}
             {locationHistory.length > 0 && (
               <div className="absolute inset-0 flex items-center justify-center">
-                {locationHistory.slice(-10).map((point, idx) => (
+                {/* PRODUCTION: Dynamic positioning based on actual data center */}
+              {(() => {
+                // Calculate center from actual data (no hardcoded coordinates)
+                const points = locationHistory.slice(-10);
+                if (points.length === 0) return null;
+                const centerLat = points.reduce((sum, p) => sum + p.lat, 0) / points.length;
+                const centerLng = points.reduce((sum, p) => sum + p.lng, 0) / points.length;
+                
+                return points.map((point, idx) => (
                   <div
                     key={idx}
                     className="absolute w-2 h-2 rounded-full"
                     style={{
                       backgroundColor: COLORS.primary,
                       opacity: 0.3 + (idx * 0.07),
-                      left: `${50 + (point.lng + 74.006) * 1000}%`,
-                      top: `${50 - (point.lat - 40.7128) * 1000}%`,
+                      // Dynamic positioning relative to data center
+                      left: `${50 + (point.lng - centerLng) * 1000}%`,
+                      top: `${50 - (point.lat - centerLat) * 1000}%`,
                       transform: 'translate(-50%, -50%)',
                     }}
                   />
-                ))}
+                ));
+              })()}
                 {/* Current position marker */}
                 {currentLocation && (
                   <div 

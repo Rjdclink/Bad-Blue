@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import logger from '../../../logger.js';
 import { EDEN_CONFIG } from '../eden/config';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 import type { MarketConditionLevel } from '../core/market-condition-detector.js';
 import type { SimulationResult, StrategyProfile, MarketCondition } from '../validation/monte-carlo-engine';
 
@@ -142,6 +143,16 @@ class DeepLearningStore {
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
 
+    // Stage 1–3: no long-term accumulation or persistence.
+    if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) {
+      logger.warn('Deep Learning Store disabled by governance (no long-term memory in Stage 1–3)', {
+        component: 'DeepLearningStore',
+        governance: getCryptocrawlGovernance().getState(),
+      });
+      this.isInitialized = true;
+      return;
+    }
+
     logger.info('Initializing Deep Learning Store...', {
       component: 'DeepLearningStore',
     });
@@ -173,6 +184,7 @@ class DeepLearningStore {
     conditionLevel: MarketConditionLevel,
     result: SimulationResult
   ): Promise<void> {
+    if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) return;
     const performance: StrategyPerformance = {
       id: `perf-${randomUUID()}`,
       strategyName: strategy.name,
@@ -393,6 +405,7 @@ class DeepLearningStore {
     conditionLevel: MarketConditionLevel,
     survived: boolean
   ): Promise<void> {
+    if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) return;
     const record: EvolutionRecord = {
       id: `evo-${randomUUID()}`,
       generation,
@@ -419,6 +432,7 @@ class DeepLearningStore {
    * Run a learning cycle to update adaptive thresholds
    */
   async runLearningCycle(): Promise<void> {
+    if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) return;
     logger.info('Running deep learning cycle...', {
       component: 'DeepLearningStore',
       totalSimulations: this.state.totalSimulations,
@@ -858,10 +872,17 @@ class DeepLearningStore {
 
   private startPeriodicPersistence(): void {
     if (this.persistInterval) return;
+    if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) return;
 
     // Persist every 60 seconds
     this.persistInterval = setInterval(async () => {
-      await this.persistAllState();
+      try {
+        // Gate background persistence behind explicit envelope permission when available.
+        getCryptocrawlGovernance().requireAllowed('PERSIST_LONG_TERM_MEMORY');
+        await this.persistAllState();
+      } catch {
+        // If paused/no envelope, skip persistence (deny-by-default).
+      }
     }, 60000);
   }
 

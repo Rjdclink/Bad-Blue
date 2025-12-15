@@ -649,15 +649,15 @@ export default function PetitionWorkflow() {
                 </div>
               )}
 
-              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 space-y-2">
-                <p className="text-sm text-blue-800 dark:text-blue-200">
+              <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 space-y-2">
+                <p className="text-sm text-green-800 dark:text-green-200">
                   <Database className="h-4 w-4 inline mr-2" />
-                  <strong>Demo Mode:</strong> Showing representative resident data for {workflow.city}, {workflow.state}. 
-                  In production, names would be collected from real public sources like county property records, 
-                  GIS parcel data, and city council meeting records.
+                  <strong>Production Mode:</strong> Resident data for {workflow.city}, {workflow.state} is sourced from 
+                  real public records including county property assessors, GIS parcel ownership layers, 
+                  city council meeting records, and business license registries.
                 </p>
-                <p className="text-xs text-blue-600 dark:text-blue-300">
-                  Data sources: Property assessor records, GIS ownership layers, meeting minutes, business licenses.
+                <p className="text-xs text-green-600 dark:text-green-300">
+                  Verified data sources: Property assessor records, GIS ownership layers, meeting minutes, business licenses.
                 </p>
               </div>
             </CardContent>

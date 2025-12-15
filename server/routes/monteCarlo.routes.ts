@@ -454,4 +454,281 @@ router.delete('/simulations/:id', async (req: Request, res: Response) => {
   }
 });
 
+// ============================================================================
+// CRAWLER OPTIMIZER ENDPOINTS
+// ============================================================================
+
+import {
+  monteCarloCrawlerOptimizer,
+  MONTE_CARLO_CRAWLERS,
+  DEFAULT_MONTE_CARLO_CONFIG,
+} from '../services/monteCarlo';
+
+/**
+ * GET /api/monte-carlo/crawler/config
+ * Get crawler optimizer configuration
+ */
+router.get('/crawler/config', async (req: Request, res: Response) => {
+  try {
+    res.json({
+      success: true,
+      data: {
+        crawlers: MONTE_CARLO_CRAWLERS,
+        config: DEFAULT_MONTE_CARLO_CONFIG,
+      },
+    });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Crawler config error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get configuration' });
+  }
+});
+
+/**
+ * GET /api/monte-carlo/crawler/status
+ * Get crawler optimizer status
+ */
+router.get('/crawler/status', noCache, async (req: Request, res: Response) => {
+  try {
+    const state = monteCarloCrawlerOptimizer.getState();
+    res.json({
+      success: true,
+      data: {
+        status: state.status,
+        seeds: state.seeds.length,
+        completedRuns: state.completedRuns,
+        totalRuns: state.totalRuns,
+        currentBatch: state.currentBatch,
+        convergence: state.convergence,
+        currentWeights: Object.fromEntries(state.currentWeights),
+      },
+    });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Crawler status error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get status' });
+  }
+});
+
+/**
+ * POST /api/monte-carlo/crawler/seeds
+ * Add seed URLs
+ */
+router.post('/crawler/seeds', async (req: Request, res: Response) => {
+  try {
+    const { urls } = req.body as { urls: string[] };
+    if (!urls || !Array.isArray(urls)) {
+      return res.status(400).json({ success: false, error: 'urls array required' });
+    }
+    monteCarloCrawlerOptimizer.addSeeds(urls);
+    const state = monteCarloCrawlerOptimizer.getState();
+    res.json({
+      success: true,
+      data: { added: urls.length, total: state.seeds.length },
+    });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Add seeds error:', error);
+    res.status(500).json({ success: false, error: 'Failed to add seeds' });
+  }
+});
+
+/**
+ * POST /api/monte-carlo/crawler/run
+ * Start optimization
+ */
+router.post('/crawler/run', async (req: Request, res: Response) => {
+  try {
+    const state = monteCarloCrawlerOptimizer.getState();
+    if (state.status === 'running') {
+      return res.status(400).json({ success: false, error: 'Already running' });
+    }
+    if (state.seeds.length === 0) {
+      return res.status(400).json({ success: false, error: 'Add seeds first' });
+    }
+    monteCarloCrawlerOptimizer.runOptimization().catch(console.error);
+    res.json({ success: true, message: 'Optimization started' });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Run error:', error);
+    res.status(500).json({ success: false, error: 'Failed to start' });
+  }
+});
+
+/**
+ * GET /api/monte-carlo/crawler/results
+ * Get optimization results
+ */
+router.get('/crawler/results', noCache, async (req: Request, res: Response) => {
+  try {
+    res.json({ success: true, data: monteCarloCrawlerOptimizer.getResults() });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Results error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get results' });
+  }
+});
+
+/**
+ * POST /api/monte-carlo/crawler/reset
+ * Reset optimizer
+ */
+router.post('/crawler/reset', async (req: Request, res: Response) => {
+  try {
+    monteCarloCrawlerOptimizer.reset();
+    res.json({ success: true, message: 'Reset complete' });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Reset error:', error);
+    res.status(500).json({ success: false, error: 'Failed to reset' });
+  }
+});
+
+// ============================================================================
+// EVOLUTIONARY CYCLE ENDPOINTS
+// ============================================================================
+
+import { evolutionaryCycleEngine } from '../services/monteCarlo';
+
+/**
+ * GET /api/monte-carlo/evolution/state
+ * Get evolutionary cycle state
+ */
+router.get('/evolution/state', noCache, async (req: Request, res: Response) => {
+  try {
+    const state = evolutionaryCycleEngine.getState();
+    res.json({
+      success: true,
+      data: {
+        currentCycle: state.currentCycle,
+        totalCycles: state.totalCycles,
+        status: state.status,
+        activeCrawlerCount: state.activeCrawlers.length,
+        archivedCount: state.archivedCrawlers.length,
+        convergenceStreak: state.convergenceStreak,
+        architectureFrozen: state.architectureFrozen,
+        activeCrawlers: state.activeCrawlers.map(c => ({
+          id: c.id,
+          name: c.name,
+          baseCrawlerId: c.baseCrawlerId,
+          generation: c.generation,
+          posteriorConfidence: c.posteriorConfidence,
+          trainingExposure: c.trainingExposure,
+          averageScore: c.performance.averageScore,
+          status: c.status,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Evolution state error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get state' });
+  }
+});
+
+/**
+ * POST /api/monte-carlo/evolution/cycle
+ * Run a single evolutionary cycle
+ */
+router.post('/evolution/cycle', async (req: Request, res: Response) => {
+  try {
+    const state = evolutionaryCycleEngine.getState();
+    if (state.status === 'running') {
+      return res.status(400).json({ success: false, error: 'Cycle already running' });
+    }
+
+    const cycle = await evolutionaryCycleEngine.runCycle();
+    
+    res.json({
+      success: true,
+      data: {
+        cycleId: cycle.cycleId,
+        cycleNumber: cycle.cycleNumber,
+        convergenceAchieved: cycle.convergenceAchieved,
+        newVariantsIntroduced: cycle.newVariantsIntroduced,
+        architectureFrozen: cycle.architectureFrozen,
+        topPerformers: cycle.topPerformers,
+        archivedCount: cycle.archivedCrawlers.length,
+        duration: cycle.completedAt && cycle.startedAt
+          ? cycle.completedAt.getTime() - cycle.startedAt.getTime()
+          : 0,
+      },
+    });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Run cycle error:', error);
+    res.status(500).json({ success: false, error: 'Failed to run cycle' });
+  }
+});
+
+/**
+ * GET /api/monte-carlo/evolution/history
+ * Get cycle history
+ */
+router.get('/evolution/history', noCache, async (req: Request, res: Response) => {
+  try {
+    const history = evolutionaryCycleEngine.getCycleHistory();
+    res.json({
+      success: true,
+      data: {
+        totalCycles: history.length,
+        cycles: history.map(c => ({
+          cycleId: c.cycleId,
+          cycleNumber: c.cycleNumber,
+          startedAt: c.startedAt,
+          completedAt: c.completedAt,
+          convergenceAchieved: c.convergenceAchieved,
+          newVariantsIntroduced: c.newVariantsIntroduced,
+          architectureFrozen: c.architectureFrozen,
+          topPerformers: c.topPerformers,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('[MonteCarloAPI] History error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get history' });
+  }
+});
+
+/**
+ * GET /api/monte-carlo/evolution/crawlers
+ * Get active crawler variants
+ */
+router.get('/evolution/crawlers', noCache, async (req: Request, res: Response) => {
+  try {
+    const crawlers = evolutionaryCycleEngine.getActiveCrawlers();
+    res.json({
+      success: true,
+      data: {
+        count: crawlers.length,
+        maxAllowed: 4,
+        architectureFrozen: evolutionaryCycleEngine.isArchitectureFrozen(),
+        crawlers: crawlers.map(c => ({
+          id: c.id,
+          name: c.name,
+          baseCrawlerId: c.baseCrawlerId,
+          generation: c.generation,
+          status: c.status,
+          parameters: c.parameters,
+          performance: c.performance,
+          posteriorConfidence: c.posteriorConfidence,
+          trainingExposure: c.trainingExposure,
+          explorationProbability: c.explorationProbability,
+          createdAt: c.createdAt,
+          frozenAt: c.frozenAt,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Crawlers error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get crawlers' });
+  }
+});
+
+/**
+ * POST /api/monte-carlo/evolution/reset
+ * Reset evolutionary engine
+ */
+router.post('/evolution/reset', async (req: Request, res: Response) => {
+  try {
+    evolutionaryCycleEngine.reset();
+    res.json({ success: true, message: 'Evolutionary engine reset' });
+  } catch (error) {
+    console.error('[MonteCarloAPI] Evolution reset error:', error);
+    res.status(500).json({ success: false, error: 'Failed to reset' });
+  }
+});
+
 export default router;

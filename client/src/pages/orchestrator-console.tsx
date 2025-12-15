@@ -39,8 +39,6 @@ import { apiRequest } from "@/lib/queryClient";
  * Master Password: FORGEAI
  * Role: ORCHESTRATOR_ADMIN
  * Purpose: Merged Meta-AI Control Brain - unified 13+ model orchestration
- * 
- * ALL DATA IS FETCHED FROM REAL API ENDPOINTS - NO DEMO DATA
  */
 
 // Types for API responses
