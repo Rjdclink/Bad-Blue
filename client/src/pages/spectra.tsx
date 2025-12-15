@@ -227,8 +227,7 @@ const PeopleRadarMap = memo(function PeopleRadarMap({
             </div>
           </div>
           
-          {/* Coordinate markers are intentionally not rendered on this panel
-              until a real map projection is implemented (no fake XY placement). */}
+          {/* Use GeoConsole for coordinate rendering with proper map projection */}
         </div>
       </div>
       

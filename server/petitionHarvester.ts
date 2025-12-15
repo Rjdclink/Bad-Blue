@@ -1,17 +1,14 @@
 /**
  * Petition Resident Harvester
  * 
- * PRODUCTION: Collects resident names from real, publicly accessible data sources
+ * Collects resident names from publicly accessible data sources
  * for pre-filling petition signers. All sources require NO sign-in.
  * 
- * DATA SOURCES (PRODUCTION):
- * - property_records: Real public county assessor data via API adapters
- * - gis_parcel: Live GIS parcel ownership layers
- * - meeting_minutes: Actual city council meeting speaker lists
- * - business_licenses: Real business license registries
- * 
- * PRODUCTION MODE: Demo/placeholder data generation is disabled.
- * All data must come from verified public record sources.
+ * DATA SOURCES:
+ * - property_records: Public county assessor data via API adapters
+ * - gis_parcel: GIS parcel ownership layers
+ * - meeting_minutes: City council meeting speaker lists
+ * - business_licenses: Business license registries
  */
 
 import { db } from './db';
