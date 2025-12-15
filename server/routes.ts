@@ -5337,9 +5337,30 @@ Contact: ${foiaRequest.userEmail || userEmail}
     next();
   };
   
-  // Mount CryptoCrawl API routes WITH auth middleware
-  app.use('/api/crypto', cryptoAuthMiddleware, dashboardApi);
-  app.use('/admin/crypto', cryptoAuthMiddleware, adminApi);
+  // Mount CryptoCrawl API routes.
+  //
+  // IMPORTANT:
+  // CryptoCrawl can be deployed without CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD.
+  // Auth checks must not block server boot. When those credentials are missing, we:
+  // - log a warning
+  // - mount routes WITHOUT the strict session-based cryptoAuthMiddleware
+  // - rely on route-level guards (e.g. requireCryptoCrawlAuth) to keep protected features locked
+  const cryptoCrawlPasswordAuthConfigured = Boolean(
+    (process.env.CRYPTOCRAWL_EMAIL || '').trim() && (process.env.CRYPTOCRAWL_PASSWORD || '').trim()
+  );
+
+  if (!cryptoCrawlPasswordAuthConfigured) {
+    console.warn(
+      '[CryptoCrawl] CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD not set. ' +
+        'Server will boot normally; auth-protected CryptoCrawl features remain disabled.'
+    );
+    app.use('/api/crypto', dashboardApi);
+    app.use('/admin/crypto', adminApi);
+  } else {
+    // Credentials are present: enforce strict session/internal-key auth at the router boundary.
+    app.use('/api/crypto', cryptoAuthMiddleware, dashboardApi);
+    app.use('/admin/crypto', cryptoAuthMiddleware, adminApi);
+  }
   
   // ============================================
   // BRIDGE MANAGER API

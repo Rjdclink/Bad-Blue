@@ -15,7 +15,10 @@ const MASTER_EMAIL = process.env.CRYPTOCRAWL_EMAIL;
 const MASTER_PASSWORD = process.env.CRYPTOCRAWL_PASSWORD;
 
 if (!MASTER_EMAIL || !MASTER_PASSWORD) {
-  console.warn('[CryptoCrawl Auth] CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD must be set in environment variables');
+  console.warn(
+    '[CryptoCrawl Auth] CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD not set. ' +
+      'CryptoCrawl password auth will be disabled and protected endpoints should be skipped.'
+  );
 }
 
 const MASTER_PASSWORD_HASH = MASTER_PASSWORD
@@ -27,6 +30,14 @@ export interface AuthResult {
   token?: string;
   expiresAt?: number;
   error?: string;
+}
+
+/**
+ * Whether CryptoCrawl password auth is configured.
+ * If false, auth-protected features should be considered disabled (server should still boot).
+ */
+export function isCryptoCrawlAuthConfigured(): boolean {
+  return Boolean(MASTER_EMAIL && MASTER_PASSWORD_HASH);
 }
 
 // Active sessions stored in memory (in production, use Redis or similar)
@@ -163,6 +174,18 @@ function cleanupExpiredSessions(): void {
  * Middleware for Express routes that require authentication
  */
 export function requireCryptoCrawlAuth(req: any, res: any, next: any): void {
+  // If auth is not configured, do not crash or block server boot.
+  // Keep the feature locked and return a clear "disabled" response.
+  if (!isCryptoCrawlAuthConfigured()) {
+    res.status(503).json({
+      success: false,
+      error: 'CryptoCrawl auth is not configured',
+      message:
+        'Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD to enable auth-protected CryptoCrawl routes.',
+    });
+    return;
+  }
+
   const authHeader = req.headers.authorization;
   
   // Check for Bearer token
@@ -203,5 +226,6 @@ export default {
   revokeSession,
   getSessionInfo,
   requireCryptoCrawlAuth,
-  checkPassword
+  checkPassword,
+  isCryptoCrawlAuthConfigured,
 };
