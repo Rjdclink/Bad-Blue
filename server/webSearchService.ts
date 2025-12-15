@@ -23,11 +23,8 @@
  */
 
 import { GoogleGenAI } from "@google/genai";
-import { 
-  orchestratedWebSearch, 
-  isOpenRouterWebSearchAvailable,
-  type WebSearchResult 
-} from './openRouterWebSearch';
+// NOTE: OpenRouter orchestration is intentionally not used for real-world web search
+// unless it is backed by a real web search tool/provider.
 
 const BING_API_KEY = process.env.BING_API_KEY || process.env.BING_SEARCH_KEY || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
@@ -157,28 +154,132 @@ function getGeminiClient(): GoogleGenAI {
 
 /**
  * Search using Bing Web Search API
- * @deprecated Bing API requires paid subscription. Use OpenRouter 3-model orchestration instead.
- * This function returns empty results and logs a deprecation warning.
  */
 export async function bingSearch(
   query: string, 
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  console.warn('[Web Search] bingSearch is DEPRECATED - use orchestratedWebSearch from openRouterWebSearch.ts');
-  return [];
+  if (!BING_API_KEY) {
+    throw new Error('Bing Web Search not configured (missing BING_API_KEY/BING_SEARCH_KEY)');
+  }
+  if (isCircuitOpen('bing')) {
+    throw new Error('Bing Web Search circuit open (temporarily disabled due to failures)');
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = options.timeout || 20000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const params = new URLSearchParams();
+    params.set('q', query);
+    params.set('count', String(Math.min(Math.max(options.limit || 10, 1), 50)));
+    if (options.market) params.set('mkt', options.market);
+    if (options.safeSearch) params.set('safeSearch', options.safeSearch);
+    if (options.freshness && options.freshness !== 'all') params.set('freshness', options.freshness);
+
+    const url = `https://api.bing.microsoft.com/v7.0/search?${params.toString()}`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Ocp-Apim-Subscription-Key': BING_API_KEY,
+        'User-Agent': 'PANTHEON-WebSearch/1.0',
+        'Accept': 'application/json',
+      },
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Bing Web Search failed: ${res.status} ${res.statusText}${text ? ` - ${text.substring(0, 200)}` : ''}`);
+    }
+
+    const data: any = await res.json();
+    const values: any[] = data?.webPages?.value || [];
+    const results: SearchResult[] = values.map(v => ({
+      title: v?.name || 'Untitled',
+      url: v?.url || '',
+      snippet: v?.snippet || '',
+      source: 'bing',
+      metadata: {
+        displayUrl: v?.displayUrl,
+        dateLastCrawled: v?.dateLastCrawled,
+      },
+    })).filter(r => !!r.url);
+
+    recordSuccess('bing');
+    return results;
+  } catch (error: any) {
+    recordFailure('bing', error?.message || 'Unknown error');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
  * Search using Bing News API
- * @deprecated Bing API requires paid subscription. Use OpenRouter 3-model orchestration instead.
- * This function returns empty results and logs a deprecation warning.
  */
 export async function bingNewsSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  console.warn('[Web Search] bingNewsSearch is DEPRECATED - use orchestratedWebSearch from openRouterWebSearch.ts');
-  return [];
+  if (!BING_API_KEY) {
+    throw new Error('Bing News Search not configured (missing BING_API_KEY/BING_SEARCH_KEY)');
+  }
+  if (isCircuitOpen('bing')) {
+    throw new Error('Bing News Search circuit open (temporarily disabled due to failures)');
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = options.timeout || 20000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const params = new URLSearchParams();
+    params.set('q', query);
+    params.set('count', String(Math.min(Math.max(options.limit || 10, 1), 50)));
+    if (options.market) params.set('mkt', options.market);
+    if (options.safeSearch) params.set('safeSearch', options.safeSearch);
+    if (options.freshness && options.freshness !== 'all') params.set('freshness', options.freshness);
+
+    const url = `https://api.bing.microsoft.com/v7.0/news/search?${params.toString()}`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Ocp-Apim-Subscription-Key': BING_API_KEY,
+        'User-Agent': 'PANTHEON-WebSearch/1.0',
+        'Accept': 'application/json',
+      },
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Bing News Search failed: ${res.status} ${res.statusText}${text ? ` - ${text.substring(0, 200)}` : ''}`);
+    }
+
+    const data: any = await res.json();
+    const values: any[] = data?.value || [];
+    const results: SearchResult[] = values.map(v => ({
+      title: v?.name || 'Untitled',
+      url: v?.url || '',
+      snippet: v?.description || '',
+      source: 'bing',
+      metadata: {
+        provider: v?.provider?.[0]?.name,
+        datePublished: v?.datePublished,
+      },
+    })).filter(r => !!r.url);
+
+    recordSuccess('bing');
+    return results;
+  } catch (error: any) {
+    recordFailure('bing', error?.message || 'Unknown error');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
@@ -189,14 +290,8 @@ export async function geminiSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<EnhancedSearchResult[]> {
-  if (!GEMINI_API_KEY) {
-    return [];
-  }
-
-  // Check circuit breaker before attempting
-  if (isCircuitOpen('gemini')) {
-    return [];
-  }
+  if (!GEMINI_API_KEY) throw new Error('Gemini web grounding not configured (missing GEMINI_API_KEY/GOOGLE_API_KEY)');
+  if (isCircuitOpen('gemini')) throw new Error('Gemini web grounding circuit open (temporarily disabled due to failures)');
 
   try {
     const client = getGeminiClient();
@@ -269,110 +364,44 @@ Return detailed findings with specific URLs and facts.`;
     return results;
   } catch (error: any) {
     recordFailure('gemini', error?.message || 'Unknown error');
-    return [];
+    throw error;
   }
 }
 
 /**
  * Unified search using OpenRouter 3-model orchestration (PRIMARY)
- * Primary web search system using OpenRouter free models:
- *   - Qwen 2.5 72B (multilingual reasoning)
- *   - DeepSeek R1 (advanced reasoning)
- *   - Meta Llama 3.3 70B (general purpose)
- * Falls back to Gemini grounding, then Zero-API local intelligence
+ * REAL-WORLD MODE:
+ * - Prefer Bing Web Search API (real results)
+ * - Fallback to Gemini with Google Search grounding tool (real results)
+ *
+ * NOTE: LLM-only "web search" (no real search tool) is not considered a real-world provider.
  */
 export async function unifiedSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<EnhancedSearchResult[]> {
   if (!WEB_SEARCH_ENABLED) {
-    console.log('[Unified Search] Web search disabled');
-    return [];
+    throw new Error('Web search disabled (WEB_SEARCH_ENABLED=false)');
   }
 
-  // Primary: Use OpenRouter 3-model orchestration
-  if (isOpenRouterWebSearchAvailable()) {
-    try {
-      const openRouterResult = await orchestratedWebSearch(query, {
-        useOnlinePlugin: false, // Don't use :online to avoid costs
-        timeout: options.timeout || 30000,
-      });
-
-      // Convert OpenRouter results to EnhancedSearchResult format
-      const enhancedResults: EnhancedSearchResult[] = [];
-
-      // Add sources as individual results
-      for (const url of openRouterResult.sources.slice(0, options.limit || 20)) {
-        enhancedResults.push({
-          title: extractTitleFromUrl(url),
-          url,
-          snippet: '',
-          source: 'combined',
-          aiSummary: enhancedResults.length === 0 ? openRouterResult.aggregatedAnswer : undefined,
-          reliability: determineReliability(url),
-          relevanceScore: openRouterResult.confidence,
-        });
-      }
-
-      // If no sources but we have aggregated answer, add summary result
-      if (enhancedResults.length === 0 && openRouterResult.aggregatedAnswer) {
-        enhancedResults.push({
-          title: 'OpenRouter AI Search Summary',
-          url: '',
-          snippet: openRouterResult.aggregatedAnswer.substring(0, 500),
-          source: 'combined',
-          aiSummary: openRouterResult.aggregatedAnswer,
-          reliability: 'medium',
-          relevanceScore: openRouterResult.confidence,
-        });
-      }
-
-      console.log(`[Unified Search] OpenRouter: ${enhancedResults.length} results (confidence: ${openRouterResult.confidence}%)`);
-      return enhancedResults;
-    } catch (error: any) {
-      console.warn('[Unified Search] OpenRouter search failed:', error.message);
-      // Fall through to Gemini fallback
-    }
+  // Primary: Bing Web Search API (real search results)
+  if (BING_API_KEY && !isCircuitOpen('bing')) {
+    const bingResults = await bingSearch(query, options);
+    return bingResults.map(r => ({
+      ...r,
+      reliability: determineReliability(r.url),
+      extractedFacts: [],
+    }));
   }
 
-  // Fallback: Use Gemini grounding if OpenRouter unavailable
+  // Fallback: Gemini grounding (real search tool)
   if (GEMINI_API_KEY && !isCircuitOpen('gemini')) {
-    console.log('[Unified Search] Using Gemini fallback (OpenRouter unavailable)');
-    try {
-      const geminiResults = await geminiSearch(query, options);
-      return geminiResults.slice(0, options.limit || 20);
-    } catch (error: any) {
-      console.warn('[Unified Search] Gemini fallback failed:', error.message);
-    }
+    const geminiResults = await geminiSearch(query, options);
+    return geminiResults.slice(0, options.limit || 20);
   }
 
-  // ZERO-API FALLBACK: Use local intelligence when no external APIs available
-  console.log('[Unified Search] Using Zero-API local intelligence fallback');
-  try {
-    const { generateZeroApiResponse } = await import('./zeroApiIntelligence');
-    const zeroApiResult = await generateZeroApiResponse(query, {
-      type: options.category === 'officer' ? 'officer-search' : 'legal-consultation',
-    });
-    
-    return [{
-      title: 'PANTHEON Local Intelligence',
-      url: '',
-      snippet: zeroApiResult.content.substring(0, 500),
-      source: 'combined',
-      aiSummary: zeroApiResult.content,
-      reliability: zeroApiResult.confidence >= 0.8 ? 'high' : zeroApiResult.confidence >= 0.6 ? 'medium' : 'low',
-      relevanceScore: zeroApiResult.confidence * 100,
-      metadata: {
-        source: zeroApiResult.source,
-        patterns: zeroApiResult.metadata?.patterns,
-      },
-    }];
-  } catch (zeroApiError: any) {
-    console.warn('[Unified Search] Zero-API fallback failed:', zeroApiError.message);
-  }
-
-  console.warn('[Unified Search] No search providers available');
-  return [];
+  // Fail closed: no real providers configured
+  throw new Error('No real web search providers available (configure BING_API_KEY or GEMINI_API_KEY)');
 }
 
 /**
@@ -638,9 +667,10 @@ export function isWebSearchAvailable(): {
   any: boolean 
 } {
   return {
-    openrouter: isOpenRouterWebSearchAvailable(),
+    // LLM-only OpenRouter is not treated as real-world web search here.
+    openrouter: false,
     gemini: !!GEMINI_API_KEY && !isCircuitOpen('gemini'),
-    any: isOpenRouterWebSearchAvailable() || (!!GEMINI_API_KEY && !isCircuitOpen('gemini') && WEB_SEARCH_ENABLED),
+    any: (WEB_SEARCH_ENABLED && !!BING_API_KEY && !isCircuitOpen('bing')) || (WEB_SEARCH_ENABLED && !!GEMINI_API_KEY && !isCircuitOpen('gemini')),
   };
 }
 
@@ -705,83 +735,9 @@ export class EnhancedWebSearchService {
   }
 
   private async executeSearch(query: string): Promise<any[]> {
-    // Unified search: Try OpenRouter first (preferred for web search),
-    // fallback to Gemini grounding if unavailable
-    try {
-      // Try OpenRouter orchestrated web search first (preferred)
-      if (isOpenRouterWebSearchAvailable()) {
-        const webSearchResult = await orchestratedWebSearch(query, {
-          useOnlinePlugin: false, // Keep it free
-          timeout: 15000,
-        });
-
-        // Convert WebSearchResult to array of results
-        if (webSearchResult.aggregatedAnswer) {
-          return [{
-            title: `Web Search Results for "${query}"`,
-            snippet: webSearchResult.aggregatedAnswer,
-            url: '',
-            source: 'openrouter-orchestrated',
-            confidence: webSearchResult.confidence,
-            sources: webSearchResult.sources,
-            timestamp: webSearchResult.timestamp,
-          }];
-        }
-      }
-      
-      // Fallback to Gemini grounding search if OpenRouter unavailable
-      console.log('[Enhanced Search] Falling back to Gemini grounding search');
-      return await this.geminiGroundingSearch(query);
-      
-    } catch (error) {
-      console.error('[Enhanced Search] Search failed:', error);
-      // Try Gemini as last resort
-      try {
-        return await this.geminiGroundingSearch(query);
-      } catch (geminiError) {
-        console.error('[Enhanced Search] Gemini fallback also failed:', geminiError);
-        return [];
-      }
-    }
-  }
-
-  private async geminiGroundingSearch(query: string): Promise<any[]> {
-    // Implement Gemini grounding search as fallback
-    if (!GEMINI_API_KEY) {
-      return [];
-    }
-
-    try {
-      // Use shared client for efficiency - new @google/genai API
-      const genai = getGeminiClient();
-
-      const result = await genai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{
-          role: 'user',
-          parts: [{
-            text: `Search and provide information about: ${query}`
-          }]
-        }]
-      });
-
-      const text = result.text || '';
-
-      if (text) {
-        return [{
-          title: `Search Results for "${query}"`,
-          snippet: text,
-          url: '',
-          source: 'gemini-grounding',
-          confidence: 0.7,
-          timestamp: new Date(),
-        }];
-      }
-    } catch (error) {
-      console.error('[Enhanced Search] Gemini search error:', error);
-    }
-
-    return [];
+    // REAL-WORLD execution: delegate to unifiedSearch (Bing / Gemini grounding).
+    const results = await unifiedSearch(query, { limit: 10, timeout: 20000 });
+    return results;
   }
 
   private delay(ms: number): Promise<void> {
