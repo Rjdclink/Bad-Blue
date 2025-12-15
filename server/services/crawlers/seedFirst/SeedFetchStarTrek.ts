@@ -1,55 +1,57 @@
 import type { SeedFirstCrawler } from '../seedFirstCrawlerSet';
 import { getSeedSignal } from './seedAbortBus.ts';
-
-function stripHtmlToText(html: string): string {
-  const noScripts = html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, ' ');
-  const text = noScripts.replace(/<\/?[^>]+>/g, ' ');
-  return text.replace(/\s+/g, ' ').trim();
-}
-
-function parseTitle(rawHtml: string): string | undefined {
-  const m = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  if (!m) return undefined;
-  const t = stripHtmlToText(m[1]).trim();
-  return t ? t.slice(0, 120) : undefined;
-}
+import FirecrawlApp from '@mendable/firecrawl-js';
+import { MIN_CONTENT_LENGTH } from '../../../lib/seedFirstConfig';
 
 export const SeedFetchStarTrek: SeedFirstCrawler = {
   name: 'SeedFetchStarTrek',
   async crawlSeed(seedUrl: string, timeoutMs: number) {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      // Firecrawl FAST-PATH ONLY
+      const apiKey = process.env.FIRECRAWL_API_KEY || '';
+      if (!apiKey) {
+        return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
+      }
+
       const seedSignal = getSeedSignal(seedUrl);
-      const signal = seedSignal
-        ? AbortSignal.any([controller.signal, seedSignal])
-        : controller.signal;
-      const res = await fetch(seedUrl, {
-        redirect: 'manual',
-        signal,
+      if (seedSignal?.aborted) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: true };
+
+      const client = new FirecrawlApp({ apiKey });
+      const resp = await client.scrapeUrl(seedUrl, {
+        // Single request only; no recursion/link expansion.
+        formats: ['html'],
+        onlyMainContent: true,
+        timeout: timeoutMs,
+        // Deterministic single-page config
+        removeBase64Images: true,
+        blockAds: true,
         headers: {
           'User-Agent': 'SeedFetchStarTrek/1.0',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.1',
+          'Accept': 'text/html,text/plain;q=0.9,*/*;q=0.1',
         },
-      });
+      } as any);
 
-      if (res.status >= 300 && res.status < 400) {
+      const statusCode = (resp as any)?.metadata?.statusCode;
+      const html = (resp as any)?.html || '';
+      const contentType = ((resp as any)?.metadata?.contentType || '').toString().toLowerCase();
+
+      // Success criteria:
+      // - HTTP 200
+      // - Non-empty body
+      // - Body length >= threshold
+      // - Content type is html/text (best-effort via metadata if present)
+      const looksTextual = !contentType || contentType.includes('text') || contentType.includes('html');
+      const ok = resp?.success === true && statusCode === 200 && looksTextual && html && html.length >= MIN_CONTENT_LENGTH;
+
+      if (!ok) {
         return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
       }
-      if (!res.ok) {
-        return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
-      }
 
-      const contentType = res.headers.get('content-type') || '';
-      const raw = await res.text();
-      const title = parseTitle(raw);
-      const text = contentType.includes('html') ? stripHtmlToText(raw) : raw.trim();
-      const textSnippet = text ? text.slice(0, 800) : undefined;
-
-      const itemsFound = (title ? 1 : 0) + (textSnippet ? 1 : 0);
+      const title = (resp as any)?.metadata?.title ? String((resp as any).metadata.title).slice(0, 120) : undefined;
+      // No raw HTML returned in any snapshot pipeline; but the API report can include a snippet.
+      // Keep deterministic snippet limited.
+      const textSnippet = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800);
+      const itemsFound = 2;
       return {
         title,
         textSnippet,
@@ -63,8 +65,6 @@ export const SeedFetchStarTrek: SeedFirstCrawler = {
     } catch (e: any) {
       const timedOut = e?.name === 'AbortError';
       return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut };
-    } finally {
-      clearTimeout(t);
     }
   },
 };

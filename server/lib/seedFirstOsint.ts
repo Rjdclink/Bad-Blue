@@ -184,15 +184,31 @@ export interface CrawlExtract {
 export async function crawlSeedOnceWithCrawlers(seedUrl: string, timeoutMs = 10_000): Promise<{
   ok: boolean;
   extract: CrawlExtract;
-  attempts: Array<{ crawlerName: string; status: 'success' | 'fail' | 'timeout' | 'aborted'; durationMs: number }>;
+  attempts: Array<{
+    crawlerName: string;
+    status: 'success' | 'fail' | 'timeout' | 'aborted' | 'disabled';
+    durationMs: number;
+    abortReason?: 'winner_selected' | 'seed_timeout' | 'disabled_default';
+    error?: 'exception';
+  }>;
+  winner?: { crawlerName: string; durationMs: number } | null;
 }> {
+  // CONFIG LOCK: ignore caller-provided timeout; use fixed global seed timeout.
+  const { GLOBAL_SEED_TIMEOUT_MS, DEFAULT_DISABLED_CRAWLERS, CRAWLER_EXECUTION_ORDER } = await import('./seedFirstConfig');
+  timeoutMs = GLOBAL_SEED_TIMEOUT_MS;
+
   const startedAt = Date.now();
-  const attempts: Array<{ crawlerName: string; status: 'success' | 'fail' | 'timeout' | 'aborted'; durationMs: number }> = [];
+  const attempts: Array<{
+    crawlerName: string;
+    status: 'success' | 'fail' | 'timeout' | 'aborted' | 'disabled';
+    durationMs: number;
+    abortReason?: 'winner_selected' | 'seed_timeout' | 'disabled_default';
+    error?: 'exception';
+  }> = [];
 
   const { SEED_FIRST_CRAWLERS } = await import('../services/crawlers/seedFirstCrawlerSet.ts');
   const { registerSeed, abortSeed, unregisterSeed } = await import('../services/crawlers/seedFirst/seedAbortBus.ts');
 
-  // Global cap (hard): ensure we never exceed the overall budget.
   const globalController = new AbortController();
   const globalTimer = setTimeout(() => globalController.abort(), timeoutMs);
 
@@ -202,30 +218,118 @@ export async function crawlSeedOnceWithCrawlers(seedUrl: string, timeoutMs = 10_
   const runOne = async (crawler: (typeof SEED_FIRST_CRAWLERS)[number]) => {
     const cStart = Date.now();
     try {
-      const elapsed = Date.now() - startedAt;
-      const remaining = timeoutMs - elapsed;
-      const perCrawlerTimeout = Math.max(1, Math.floor(remaining));
-      const result = await crawler.crawlSeed(seedUrl, perCrawlerTimeout);
-
-      // If global timeout fired, treat as timeout.
+      const result = await crawler.crawlSeed(seedUrl, timeoutMs);
       const status: 'success' | 'fail' | 'timeout' =
         globalController.signal.aborted || result.timedOut
           ? 'timeout'
           : result.itemsFound > 0
             ? 'success'
             : 'fail';
-
       return { crawlerName: crawler.name, status, durationMs: Date.now() - cStart, result };
     } catch {
-      return { crawlerName: crawler.name, status: 'fail' as const, durationMs: Date.now() - cStart, result: null as any };
+      return { crawlerName: crawler.name, status: 'fail' as const, durationMs: Date.now() - cStart, result: null as any, error: 'exception' as const };
     }
   };
 
   try {
-    // Bounded fan-out: run all 4 crawlers concurrently within the remaining time budget.
-    const promises = SEED_FIRST_CRAWLERS.map((c) => runOne(c));
+    // Build map for deterministic lookup.
+    const crawlerByName = new Map(SEED_FIRST_CRAWLERS.map(c => [c.name, c]));
 
-    // First successful result wins
+    // Enforce explicit roster max 4.
+    if (CRAWLER_EXECUTION_ORDER.length !== 4) {
+      throw new Error('CRAWLER_EXECUTION_ORDER must contain exactly 4 entries');
+    }
+
+    // 1) Firecrawl fast-path (StarTrek)
+    const starTrek = crawlerByName.get('SeedFetchStarTrek');
+    if (!starTrek) throw new Error('SeedFetchStarTrek missing from crawler set');
+    const r1 = await runOne(starTrek);
+    attempts.push({
+      crawlerName: r1.crawlerName,
+      status: r1.status,
+      durationMs: r1.durationMs,
+      abortReason: r1.status === 'timeout' ? 'seed_timeout' : undefined,
+      error: (r1 as any).error,
+    });
+    console.log('[OSINT]', { seed: seedUrl, crawlerName: r1.crawlerName, status: r1.status, durationMs: r1.durationMs });
+    if (r1.status === 'success') {
+      abortSeed(seedUrl);
+      // mark others aborted/disabled (not executed)
+      for (const name of ['SeedFetchBirdOfPrey', 'SeedFetchTrinity', 'SeedFetchSixDegrees'] as const) {
+        if (DEFAULT_DISABLED_CRAWLERS.includes(name as any)) {
+          attempts.push({ crawlerName: name, status: 'disabled', durationMs: 0, abortReason: 'disabled_default' });
+        } else {
+          attempts.push({ crawlerName: name, status: 'aborted', durationMs: 0, abortReason: 'winner_selected' });
+        }
+      }
+      const extract: CrawlExtract = {
+        title: r1.result?.title,
+        textSnippet: r1.result?.textSnippet,
+        emails: r1.result?.emails || [],
+        phones: r1.result?.phones || [],
+        links: r1.result?.links || [],
+        coordinates: r1.result?.coordinates || [],
+        itemsFound: r1.result?.itemsFound || 0,
+      };
+      recordSeedOutcome(extract.itemsFound);
+      return { ok: true, extract, attempts, winner: { crawlerName: r1.crawlerName, durationMs: r1.durationMs } };
+    }
+
+    // 2) Puppeteer fallback (BirdOfPrey) - never parallel with Firecrawl
+    const bird = crawlerByName.get('SeedFetchBirdOfPrey');
+    if (!bird) throw new Error('SeedFetchBirdOfPrey missing from crawler set');
+    const r2 = await runOne(bird);
+    attempts.push({
+      crawlerName: r2.crawlerName,
+      status: r2.status,
+      durationMs: r2.durationMs,
+      abortReason: r2.status === 'timeout' ? 'seed_timeout' : undefined,
+      error: (r2 as any).error,
+    });
+    console.log('[OSINT]', { seed: seedUrl, crawlerName: r2.crawlerName, status: r2.status, durationMs: r2.durationMs });
+    if (r2.status === 'success') {
+      abortSeed(seedUrl);
+      // mark remaining aborted/disabled
+      for (const name of ['SeedFetchTrinity', 'SeedFetchSixDegrees'] as const) {
+        if (DEFAULT_DISABLED_CRAWLERS.includes(name as any)) {
+          attempts.push({ crawlerName: name, status: 'disabled', durationMs: 0, abortReason: 'disabled_default' });
+        } else {
+          attempts.push({ crawlerName: name, status: 'aborted', durationMs: 0, abortReason: 'winner_selected' });
+        }
+      }
+      const extract: CrawlExtract = {
+        title: r2.result?.title,
+        textSnippet: r2.result?.textSnippet,
+        emails: r2.result?.emails || [],
+        phones: r2.result?.phones || [],
+        links: r2.result?.links || [],
+        coordinates: r2.result?.coordinates || [],
+        itemsFound: r2.result?.itemsFound || 0,
+      };
+      recordSeedOutcome(extract.itemsFound);
+      return { ok: true, extract, attempts, winner: { crawlerName: r2.crawlerName, durationMs: r2.durationMs } };
+    }
+
+    // 3) Remaining allowed crawlers (Trinity, SixDegrees) — bounded fan-out
+    const remainingNames = ['SeedFetchTrinity', 'SeedFetchSixDegrees'] as const;
+    const remaining = remainingNames
+      .filter(n => !DEFAULT_DISABLED_CRAWLERS.includes(n as any))
+      .map(n => crawlerByName.get(n))
+      .filter(Boolean) as (typeof SEED_FIRST_CRAWLERS)[number][];
+
+    if (remaining.length === 0) {
+      // record disabled entries (deterministic roster)
+      for (const n of remainingNames) {
+        if (DEFAULT_DISABLED_CRAWLERS.includes(n as any)) {
+          attempts.push({ crawlerName: n, status: 'disabled', durationMs: 0, abortReason: 'disabled_default' });
+        }
+      }
+      const extract: CrawlExtract = { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0 };
+      recordSeedOutcome(0);
+      return { ok: false, extract, attempts, winner: null };
+    }
+
+    const promises = remaining.map((c) => runOne(c));
     const winner = await Promise.any(
       promises.map(async (p) => {
         const r = await p;
@@ -233,22 +337,25 @@ export async function crawlSeedOnceWithCrawlers(seedUrl: string, timeoutMs = 10_
         throw new Error('no-success');
       })
     ).catch(() => null);
-
-    if (winner) {
-      // Abort the rest immediately for this seed
-      abortSeed(seedUrl);
-    }
+    if (winner) abortSeed(seedUrl);
 
     const settled = await Promise.allSettled(promises);
     for (const s of settled) {
       if (s.status !== 'fulfilled') continue;
-      const { crawlerName, status, durationMs, result } = s.value;
-      const finalStatus =
-        winner && crawlerName !== winner.crawlerName && status !== 'success'
-          ? 'aborted'
-          : status;
-      attempts.push({ crawlerName, status: finalStatus, durationMs });
+      const { crawlerName, status, durationMs } = s.value as any;
+      const finalStatus: 'success' | 'fail' | 'timeout' | 'aborted' =
+        winner && crawlerName !== winner.crawlerName && status !== 'success' ? 'aborted' : status;
+      attempts.push({
+        crawlerName,
+        status: finalStatus,
+        durationMs,
+        abortReason: finalStatus === 'aborted' ? 'winner_selected' : finalStatus === 'timeout' ? 'seed_timeout' : undefined,
+      });
       console.log('[OSINT]', { seed: seedUrl, crawlerName, status: finalStatus, durationMs });
+    }
+
+    if (DEFAULT_DISABLED_CRAWLERS.includes('SeedFetchSixDegrees' as any)) {
+      attempts.push({ crawlerName: 'SeedFetchSixDegrees', status: 'disabled', durationMs: 0, abortReason: 'disabled_default' });
     }
 
     if (winner) {
@@ -262,12 +369,12 @@ export async function crawlSeedOnceWithCrawlers(seedUrl: string, timeoutMs = 10_
         itemsFound: winner.result.itemsFound,
       };
       recordSeedOutcome(extract.itemsFound);
-      return { ok: true, extract, attempts };
+      return { ok: true, extract, attempts, winner: { crawlerName: winner.crawlerName, durationMs: winner.durationMs } };
     }
 
     const extract: CrawlExtract = { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0 };
     recordSeedOutcome(0);
-    return { ok: false, extract, attempts };
+    return { ok: false, extract, attempts, winner: null };
   } finally {
     clearTimeout(globalTimer);
     unregisterSeed(seedUrl);

@@ -3647,7 +3647,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
         reportId = initialReport.id;
       }
       const { deriveSeedFromRequest, crawlSeedOnceWithCrawlers, sanitizeUrlStrict } = await import('./lib/seedFirstOsint');
-      const MAX_SEEDS = 10;
+      const { MAX_SEEDS_PER_JOB, MAX_CRAWLERS_PER_SEED, GLOBAL_SEED_TIMEOUT_MS, PERMITTED_CRAWLER_NAMES, DEFAULT_DISABLED_CRAWLERS } =
+        await import('./lib/seedFirstConfig');
+      const { writeFile } = await import('node:fs/promises');
 
       const seedDecision = deriveSeedFromRequest({
         profileUrl,
@@ -3679,26 +3681,36 @@ Contact: ${foiaRequest.userEmail || userEmail}
         });
       }
 
-      // ENFORCE SEED SCALE: MAX_SEEDS=10 at orchestration layer.
-      // Seeds are queued concurrently.
+      // PHASE 1 — LOCKED LIMITS (no overrides)
+      // - MAX_SEEDS_PER_JOB = 10
+      // - MAX_CRAWLERS_PER_SEED = 4
+      // - GLOBAL_SEED_TIMEOUT_MS = fixed
       const rawSeedUrls = Array.isArray((req.body || {}).seedUrls) ? (req.body || {}).seedUrls : [];
       const candidateSeeds: string[] = [seedDecision.seedUrl];
       for (const raw of rawSeedUrls.slice(0, 50)) {
         const s = sanitizeUrlStrict(String(raw || ''));
         if (s.ok) candidateSeeds.push(s.normalized);
       }
-      const seeds = Array.from(new Set(candidateSeeds)).slice(0, MAX_SEEDS);
+      const seeds = Array.from(new Set(candidateSeeds)).slice(0, MAX_SEEDS_PER_JOB);
 
-      // Run all seeds concurrently. First seed that yields content wins.
-      const seedPromises = seeds.map(async (seedUrl) => {
-        const r = await crawlSeedOnceWithCrawlers(seedUrl, 10_000);
-        if (r.ok && r.extract.itemsFound > 0) return { seedUrl, r };
-        throw new Error('no-success');
-      });
+      // Run all seeds concurrently (seeds are not serialized).
+      const perSeed = await Promise.all(
+        seeds.map(async (seedUrl) => {
+          const r = await crawlSeedOnceWithCrawlers(seedUrl, GLOBAL_SEED_TIMEOUT_MS);
+          return { seedUrl, result: r };
+        })
+      );
 
-      const winner = await Promise.any(seedPromises).catch(() => null);
-      const crawl = winner?.r || null;
-      const extract = crawl?.extract || null;
+      const successes = perSeed.filter(s => s.result.ok && s.result.extract.itemsFound > 0);
+      const failures = perSeed.filter(s => !s.result.ok || s.result.extract.itemsFound === 0);
+      const jobStatus: 'SUCCESS' | 'PARTIAL' | 'FAIL' =
+        successes.length === 0 ? 'FAIL' : failures.length === 0 ? 'SUCCESS' : 'PARTIAL';
+
+      // Pick a deterministic "best" seed for UI payload (highest itemsFound, tie by seed order)
+      const best = successes
+        .map(s => ({ ...s, items: s.result.extract.itemsFound }))
+        .sort((a, b) => b.items - a.items || seeds.indexOf(a.seedUrl) - seeds.indexOf(b.seedUrl))[0] || null;
+      const extract = best?.result.extract || null;
 
       const processingTimeMs = Date.now() - startTime;
 
@@ -3706,6 +3718,37 @@ Contact: ${foiaRequest.userEmail || userEmail}
         if (reportId && userId) {
           await storage.updatePeopleSearchReportStatus(reportId, 'completed', { status: 'no_data_found' } as any);
         }
+
+        // PHASE 2 — SNAPSHOT PIPELINE (MANDATORY): summary only, no raw HTML
+        const snapshot = {
+          correlationId,
+          jobId: reportId,
+          status: 'FAIL',
+          timings: { durationMs: processingTimeMs },
+          limits: {
+            MAX_SEEDS_PER_JOB,
+            MAX_CRAWLERS_PER_SEED,
+            GLOBAL_SEED_TIMEOUT_MS,
+          },
+          crawlerSet: {
+            permitted: PERMITTED_CRAWLER_NAMES,
+            disabledByDefault: DEFAULT_DISABLED_CRAWLERS,
+          },
+          seedsAttempted: seeds,
+          perSeed: perSeed.map(s => ({
+            seedUrl: s.seedUrl,
+            winner: s.result.winner || null,
+            crawlersAttempted: s.result.attempts,
+            final: s.result.ok ? 'SUCCESS' : 'FAIL',
+          })),
+          errors: perSeed.flatMap(s =>
+            (s.result.attempts || [])
+              .filter((a: any) => !!a?.error)
+              .map((a: any) => ({ seedUrl: s.seedUrl, crawlerName: a.crawlerName, error: a.error }))
+          ),
+        };
+        await writeFile('advisor_snapshot.json', JSON.stringify(snapshot, null, 2), 'utf8').catch(() => {});
+
         return res.json({
           success: true,
           data: null,
@@ -3719,12 +3762,12 @@ Contact: ${foiaRequest.userEmail || userEmail}
             seedType: seedDecision.seedType,
             itemsFound: 0,
             durationMs: processingTimeMs,
-            attempts: crawl?.attempts || [],
+            jobStatus,
           },
         });
       }
 
-      // RESULT GATING: emit partial results immediately (single-pass extraction)
+      // RESULT: emit deterministic, summary-grade report (no search providers, crawl-only)
       const report = {
         identitySummary: {
           name: String(name || '').trim() || 'Subject',
@@ -3746,7 +3789,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
           {
             name: 'Seed-first Crawl',
             data: {
-              seedUrl: winner?.seedUrl || seedDecision.seedUrl,
+              seedUrl: best?.seedUrl || seedDecision.seedUrl,
               seedType: seedDecision.seedType,
               links: extract.links,
             },
@@ -3760,16 +3803,46 @@ Contact: ${foiaRequest.userEmail || userEmail}
         await storage.updatePeopleSearchReportStatus(reportId, 'completed', report as any);
       }
 
+      // PHASE 2 — SNAPSHOT PIPELINE (MANDATORY): exactly one file, summary only
+      const snapshot = {
+        correlationId,
+        jobId: reportId,
+        status: jobStatus,
+        timings: { durationMs: processingTimeMs },
+        limits: {
+          MAX_SEEDS_PER_JOB,
+          MAX_CRAWLERS_PER_SEED,
+          GLOBAL_SEED_TIMEOUT_MS,
+        },
+        crawlerSet: {
+          permitted: PERMITTED_CRAWLER_NAMES,
+          disabledByDefault: DEFAULT_DISABLED_CRAWLERS,
+        },
+        seedsAttempted: seeds,
+        perSeed: perSeed.map(s => ({
+          seedUrl: s.seedUrl,
+          winner: s.result.winner || null,
+          crawlersAttempted: s.result.attempts,
+          final: s.result.ok ? 'SUCCESS' : 'FAIL',
+        })),
+        errors: perSeed.flatMap(s =>
+          (s.result.attempts || [])
+            .filter((a: any) => !!a?.error)
+            .map((a: any) => ({ seedUrl: s.seedUrl, crawlerName: a.crawlerName, error: a.error }))
+        ),
+      };
+      await writeFile('advisor_snapshot.json', JSON.stringify(snapshot, null, 2), 'utf8').catch(() => {});
+
       return res.json({
         success: true,
         data: report,
         meta: {
           correlationId,
-          seedUrl: winner?.seedUrl || seedDecision.seedUrl,
+          seedUrl: best?.seedUrl || seedDecision.seedUrl,
           seedType: seedDecision.seedType,
           itemsFound: extract.itemsFound,
           durationMs: processingTimeMs,
-          attempts: crawl?.attempts || [],
+          jobStatus,
         },
       });
     } catch (error: any) {
