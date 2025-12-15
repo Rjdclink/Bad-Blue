@@ -28,4 +28,11 @@ if (!routesContent.includes('setupLawTypesRoutes')) {
 }
 
 console.log('✅ Routes properly registered');
-console.log('✅ Stage 5 complete - Ready for Stage 6');
+// Stage 5 checkpoint: wiring (offline, no server, no network)
+if (!fs.existsSync('scripts/wire-check.cjs')) {
+  console.error('❌ scripts/wire-check.cjs not found');
+  process.exit(1);
+}
+console.log('✅ scripts/wire-check.cjs exists');
+
+console.log('✅ Stage 5 checkpoint saved');

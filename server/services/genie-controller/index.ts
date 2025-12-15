@@ -38,6 +38,10 @@ import { Cryptara, getCryptara, type CryptaraConfig } from '../cryptara';
 
 const log = createLogger('4JI-GENIE');
 
+function isNoIntervals(): boolean {
+  return process.env.NO_INTERVALS === 'true' || (process.env.CRYPTARA_MODE || '').toUpperCase().trim() === 'SILENT_WATCHER_ONLY';
+}
+
 // ============================================================================
 // CONSTANTS AND CONFIGURATION
 // ============================================================================
@@ -259,8 +263,13 @@ export class GenieController extends EventEmitter {
       this.status.cryptaraStatus = 'running';
       log.info('CRYPTARA module initialized');
 
-      // Schedule weekly updates (Sunday 00:00)
-      this.scheduleWeeklyUpdates();
+      // Stage 5: no background schedulers/intervals allowed
+      if (isNoIntervals()) {
+        log.info('Weekly updates scheduling disabled (NO_INTERVALS/SILENT_WATCHER_ONLY)');
+      } else {
+        // Schedule weekly updates (Sunday 00:00)
+        this.scheduleWeeklyUpdates();
+      }
 
       this.status.isRunning = true;
       this.emit('initialized', { timestamp: new Date() });
