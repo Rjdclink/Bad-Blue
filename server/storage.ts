@@ -72,6 +72,7 @@ import {
   type LexaraConversation,
   type InsertLexaraConversation,
 } from "@shared/schema";
+import crypto from "crypto";
 
 // Define types for PublicEvidence (Corrupt Law Enforcement & Informant Hub)
 type PublicEvidence = {
@@ -101,7 +102,7 @@ type InsertPublicEvidence = {
   incidentDate?: Date | null;
   description?: string | null;
 };
-import { db } from "./db";
+import { db, isDatabaseConfigured } from "./db";
 import { eq, desc, and, gte, sql } from "drizzle-orm";
 
 // Validate database connection on module load
@@ -1647,4 +1648,156 @@ export class DatabaseStorage implements IStorage {
   }
 }
 
-export const storage = new DatabaseStorage();
+/**
+ * Dev-lite storage (no DB configured).
+ *
+ * Goal: keep core UI flows stable (auth + Pantheon/People Finder/Inmate Locator)
+ * even when secrets/DB are unavailable in local/dev environments.
+ *
+ * This is intentionally minimal: methods outside the Stage 1 stability surface
+ * throw a clear error so failures are loud and localized.
+ */
+class DevLiteStorage {
+  private users = new Map<string, User>();
+  private authByUserId = new Map<string, AuthAccount>();
+  private authByUsername = new Map<string, AuthAccount>();
+  private peopleReports = new Map<string, PeopleSearchReport>();
+  private inmateReports = new Map<string, InmateSearchReport>();
+
+  async getUser(id: string): Promise<User | undefined> {
+    return this.users.get(id);
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const lower = email.toLowerCase();
+    for (const u of this.users.values()) {
+      if ((u.email || '').toLowerCase() === lower) return u;
+    }
+    return undefined;
+  }
+
+  async upsertUser(user: UpsertUser): Promise<User> {
+    const existing = this.users.get(user.id as string);
+    const merged: User = {
+      ...(existing as any),
+      ...(user as any),
+      id: user.id as any,
+    };
+    this.users.set(merged.id, merged);
+    return merged;
+  }
+
+  async updateUserLastLogin(userId: string): Promise<User> {
+    const user = await this.getUser(userId);
+    if (!user) throw new Error('DevLiteStorage: user not found');
+    const updated = { ...(user as any), lastLoginAt: new Date() } as User;
+    this.users.set(userId, updated);
+    return updated;
+  }
+
+  async updateUserAccess(userId: string, _paymentId: string, _amountPaid: number): Promise<User> {
+    const user = await this.getUser(userId);
+    if (!user) throw new Error('DevLiteStorage: user not found');
+    const updated = { ...(user as any), hasPaidForAccess: true } as User;
+    this.users.set(userId, updated);
+    return updated;
+  }
+
+  async updateUserSquareCustomerId(_userId: string, _squareCustomerId: string): Promise<User> {
+    throw new Error('DevLiteStorage: DB-disabled feature');
+  }
+
+  async createAuthAccount(authAccount: InsertAuthAccount): Promise<AuthAccount> {
+    const id = crypto.randomUUID();
+    const record = { ...(authAccount as any), id } as AuthAccount;
+    this.authByUserId.set(record.userId, record);
+    if (record.username) this.authByUsername.set(record.username, record);
+    return record;
+  }
+
+  async getAuthAccountByUsername(username: string): Promise<AuthAccount | undefined> {
+    return this.authByUsername.get(username);
+  }
+
+  async getAuthAccountByUserId(userId: string): Promise<AuthAccount | undefined> {
+    return this.authByUserId.get(userId);
+  }
+
+  async updateAuthAccountLastLogin(id: string): Promise<AuthAccount> {
+    for (const acct of this.authByUserId.values()) {
+      if ((acct as any).id === id) {
+        const updated = { ...(acct as any), lastLoginAt: new Date() } as AuthAccount;
+        this.authByUserId.set(updated.userId, updated);
+        if (updated.username) this.authByUsername.set(updated.username, updated);
+        return updated;
+      }
+    }
+    throw new Error('DevLiteStorage: auth account not found');
+  }
+
+  async createAdminAccessLog(_log: InsertAdminAccessLog): Promise<AdminAccessLog> {
+    // Non-critical for Stage 1; accept silently.
+    return { id: crypto.randomUUID() } as any;
+  }
+
+  async getAdminAccessLogs(_limit?: number): Promise<AdminAccessLog[]> {
+    return [];
+  }
+
+  async createPeopleSearchReport(report: InsertPeopleSearchReport): Promise<PeopleSearchReport> {
+    const id = crypto.randomUUID();
+    const rec = { ...(report as any), id, createdAt: new Date(), updatedAt: new Date() } as PeopleSearchReport;
+    this.peopleReports.set(id, rec);
+    return rec;
+  }
+
+  async updatePeopleSearchReportStatus(
+    reportId: string,
+    status: any,
+    reportData?: any,
+    errorMessage?: string
+  ): Promise<PeopleSearchReport> {
+    const existing = this.peopleReports.get(reportId);
+    if (!existing) throw new Error('DevLiteStorage: people search report not found');
+    const updated = {
+      ...(existing as any),
+      status,
+      reportData: reportData ?? (existing as any).reportData,
+      errorMessage: errorMessage ?? null,
+      updatedAt: new Date(),
+    } as PeopleSearchReport;
+    this.peopleReports.set(reportId, updated);
+    return updated;
+  }
+
+  async createInmateSearchReport(report: InsertInmateSearchReport): Promise<InmateSearchReport> {
+    const id = crypto.randomUUID();
+    const rec = { ...(report as any), id, createdAt: new Date(), updatedAt: new Date() } as InmateSearchReport;
+    this.inmateReports.set(id, rec);
+    return rec;
+  }
+
+  async updateInmateSearchReportStatus(
+    reportId: string,
+    status: any,
+    reportData?: any,
+    errorMessage?: string
+  ): Promise<InmateSearchReport> {
+    const existing = this.inmateReports.get(reportId);
+    if (!existing) throw new Error('DevLiteStorage: inmate search report not found');
+    const updated = {
+      ...(existing as any),
+      status,
+      reportData: reportData ?? (existing as any).reportData,
+      errorMessage: errorMessage ?? null,
+      updatedAt: new Date(),
+    } as InmateSearchReport;
+    this.inmateReports.set(reportId, updated);
+    return updated;
+  }
+
+  // Everything else: loud failure (outside Stage 1 surface)
+  [key: string]: any;
+}
+
+export const storage: any = isDatabaseConfigured ? new DatabaseStorage() : new DevLiteStorage();
