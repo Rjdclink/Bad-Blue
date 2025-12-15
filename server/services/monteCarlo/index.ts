@@ -58,3 +58,14 @@ export {
   type MonteCarloConfig,
   type RandomizationParameter,
 } from './MonteCarloConfig';
+
+// Evolutionary Cycle Engine (Bounded 4-Crawler System)
+export {
+  EvolutionaryCycleEngine,
+  evolutionaryCycleEngine,
+  type CrawlerVariant,
+  type VariantParameters,
+  type PerformanceMetrics,
+  type EvolutionaryCycle,
+  type EvolutionaryState,
+} from './EvolutionaryCycleEngine';

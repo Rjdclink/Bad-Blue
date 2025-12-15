@@ -2,10 +2,56 @@
 
 ## Overview
 
-This document describes the Monte Carlo decision layer that continuously samples, scores, and refines crawler behavior under uncertainty using stochastic simulation.
+This document describes the Monte Carlo decision layer that operates in **bounded evolutionary cycles**, continuously sampling, scoring, and refining crawler behavior under uncertainty using stochastic simulation.
 
 **One-Sentence Directive:**
 > "Run Monte Carlo optimization over 50 seeds using 4 specialized crawlers with 10 iterations per seed, randomizing crawler selection and crawl parameters per run, scoring outcomes, and halting when strategy rankings stabilize."
+
+## Evolutionary Cycle System
+
+### Core Constraints
+
+| Constraint | Value | Rationale |
+|------------|-------|-----------|
+| **Max Active Crawlers** | 4 | Enough diversity for exploration, low enough to avoid noise collapse |
+| **New Variants Per Cycle** | Up to 2 | Controlled introduction of new blood |
+| **Convergence Cycles Required** | 3 | Prevents premature convergence |
+| **Min Exploration Probability** | 5% | Prevents crawler monoculture |
+
+### Why "No More Than Four"
+
+Four is not arbitrary. It provides:
+- ✅ Enough diversity for exploration
+- ✅ Low enough dimensionality to avoid noise collapse
+- ✅ Human-auditable outcomes
+
+Above four, Monte Carlo starts optimizing variance instead of performance.
+
+### The Evolutionary Loop
+
+```
+1. PICK 4        → Select from available pool
+2. STRESS THEM   → Run stochastic simulations
+3. SCORE THEM    → Discovery, extraction, speed, reliability
+4. KEEP THE BEST → Retain top performers
+5. INTRODUCE NEW → Up to 2 new variants after convergence
+6. REPEAT        → Controlled evolution, not chaos
+```
+
+### Training Exposure Rule
+
+> "Training exposure must be proportional to Monte Carlo posterior confidence, with exploration probability retained for lower-ranked candidates."
+
+This prevents:
+- Premature convergence
+- Crawler monoculture
+- Overfitting to early seeds
+
+### Architecture Freeze Guardrail
+
+> "Freeze crawler architecture after convergence; only parameterization may evolve between cycles."
+
+This prevents the system from "rewriting itself into something else".
 
 ---
 
