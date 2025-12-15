@@ -86,7 +86,7 @@ export function LogoutButton({ className, onBeforeLogout }: LogoutButtonProps) {
       size="sm"
       onClick={handleLogout}
       disabled={isLoggingOut}
-      className={`flex items-center gap-2 hover:bg-accent ${className || ""}`}
+      className={`flex items-center gap-2 hover:bg-accent min-h-11 px-3 ${className || ""}`}
       aria-label="Logout"
     >
       <LogOut className="w-4 h-4" />

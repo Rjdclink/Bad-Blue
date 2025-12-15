@@ -378,10 +378,11 @@ async function searchPublicRecords(name: string): Promise<OSINTSource> {
     return {
       name: 'Public Records',
       data: {
-        records: records.length > 0 ? records : [`Public records search conducted for: ${name}`],
+        // Fail closed: do not emit placeholder “search conducted” strings
+        records,
         source: 'Enhanced Web Search',
       },
-      confidence: records.length > 0 ? 0.75 : 0.5,
+      confidence: records.length > 0 ? 0.75 : 0,
       timestamp: new Date(),
     };
   } catch (error) {
@@ -456,10 +457,10 @@ async function searchSocialMedia(name: string): Promise<OSINTSource> {
     return {
       name: 'Social Media',
       data: {
-        profiles: [`Social media search conducted for: ${name}`],
+        profiles: [],
         note: 'No profiles found or service temporarily unavailable',
       },
-      confidence: 0.3,
+      confidence: 0,
       timestamp: new Date(),
     };
   } catch (error) {
@@ -514,9 +515,9 @@ async function searchProfessionalNetworks(name: string): Promise<OSINTSource> {
     return {
       name: 'Professional Networks',
       data: {
-        findings: findings.length > 0 ? findings : [`Professional directory search for: ${name}`],
+        findings,
       },
-      confidence: findings.length > 0 ? 0.7 : 0.4,
+      confidence: findings.length > 0 ? 0.7 : 0,
       timestamp: new Date(),
     };
   } catch (error) {
@@ -578,9 +579,9 @@ async function searchNewsAndArticles(name: string): Promise<OSINTSource> {
     return {
       name: 'News and Articles',
       data: {
-        mentions: mentions.length > 0 ? mentions : [`News archive search for: ${name}`],
+        mentions,
       },
-      confidence: mentions.length > 0 ? 0.7 : 0.4,
+      confidence: mentions.length > 0 ? 0.7 : 0,
       timestamp: new Date(),
     };
   } catch (error) {
@@ -643,9 +644,9 @@ async function searchCourtRecords(name: string): Promise<OSINTSource> {
     return {
       name: 'Court Records',
       data: {
-        records: records.length > 0 ? records : [`Court records search for: ${name}`],
+        records,
       },
-      confidence: records.length > 0 ? 0.85 : 0.5,
+      confidence: records.length > 0 ? 0.85 : 0,
       timestamp: new Date(),
     };
   } catch (error) {

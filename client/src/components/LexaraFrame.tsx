@@ -49,7 +49,7 @@ import {
 } from './lexara/LexaraState';
 import { getLexaraSpeech, lexaraSpeak } from './lexara/LexaraSpeech';
 import {
-  LEXARABrain,
+  getLEXARABrain,
   type LEXARABrainContext,
 } from '@shared/lexaraBrain';
 import {
@@ -57,8 +57,8 @@ import {
   setLexaraLiveEnabled,
 } from '@/components/LexaraLiveConsentModal';
 
-// Singleton brain instance
-const lexaraBrain = new LEXARABrain();
+// Singleton brain instance (one brain = one executor)
+const lexaraBrain = getLEXARABrain();
 
 // Mode display configurations
 const MODE_CONFIGS: Record<LexaraMode, {
@@ -403,6 +403,17 @@ export default function LexaraFrame({
   });
 
   const voiceSynthesis = useVoiceSynthesis();
+
+  // Prevent feedback loops: pause ASR while LEXARA is speaking (then resume).
+  useEffect(() => {
+    if (voiceSynthesis.isSpeaking) {
+      voiceMode.stopListening();
+      return;
+    }
+    if (voiceMode.isEnabled) {
+      voiceMode.startListening();
+    }
+  }, [voiceSynthesis.isSpeaking, voiceMode.isEnabled, voiceMode.startListening, voiceMode.stopListening]);
 
   // ============================================================================
   // MODE TRANSITION

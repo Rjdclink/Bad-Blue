@@ -63,6 +63,7 @@ export interface FaucetState {
   tradesThisDay: number;        // Daily trade count
   currentWindow: number;        // Current trading window (0-17)
   lastModeChange: number;
+  lastLoopIterationAt: number;  // Timestamp of last main-loop iteration (stall detection)
   stealthLevel: number;         // 0-10, higher = more invisible
   healthScore: number;          // 0-100, system health
   consecutiveFailures: number;  // Track failure patterns
@@ -673,6 +674,7 @@ class AutonomousCryptoFaucet {
       tradesThisDay: 0,
       currentWindow: 0,
       lastModeChange: Date.now(),
+      lastLoopIterationAt: 0,
       stealthLevel: 0,
       healthScore: 100,
       consecutiveFailures: 0,
@@ -1523,6 +1525,26 @@ class AutonomousCryptoFaucet {
 
     // Initialize Babel IP Protection Systems
     await this.initializeBabelSystems();
+
+    // Ensure gas oracle providers are initialized before use.
+    // Without this, getCheapestChain() will repeatedly log "Provider not initialized" and degrade decisions.
+    try {
+      await gasOracle.start();
+    } catch (error) {
+      logger.warn('[FAUCET] Failed to start gas oracle (continuing with degraded gas data)', {
+        component: 'AutonomousFaucet',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // If stop() was called while we were awaiting initialization, abort before scheduling timers.
+    if (!this.isRunning) {
+      logger.info('[FAUCET] Startup aborted - faucet was stopped during initialization', {
+        component: 'AutonomousFaucet',
+        faucetId: this.faucetId,
+      });
+      return;
+    }
     
     // Start health check timer
     this.healthCheckTimer = setInterval(() => {
@@ -1550,6 +1572,9 @@ class AutonomousCryptoFaucet {
     // Main control loop
     while (this.isRunning) {
       try {
+        // Heartbeat for stall detection/observability
+        this.state.lastLoopIterationAt = Date.now();
+
         // Check circuit breaker recovery
         this.checkCircuitBreakerRecovery();
         
@@ -1629,6 +1654,14 @@ class AutonomousCryptoFaucet {
     
     // Cleanup
     this.cleanup();
+  }
+
+  /**
+   * Returns the unique faucet instance id.
+   * Useful to detect multi-instance duplication (compare across pods/hosts).
+   */
+  getFaucetId(): string {
+    return this.faucetId;
   }
 
   /**
@@ -2711,6 +2744,24 @@ class AutonomousCryptoFaucet {
     });
 
     this.isRunning = false;
+
+    // Best-effort shutdown of dependent systems to avoid "running but unmanaged" state.
+    try {
+      MasterOrchestrator.stop();
+    } catch (error) {
+      logger.warn('[FAUCET] Failed to stop orchestrator during stop()', {
+        component: 'AutonomousFaucet',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    void gasOracle.stop().catch((error) => {
+      logger.warn('[FAUCET] Failed to stop gas oracle during stop()', {
+        component: 'AutonomousFaucet',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
     this.cleanup();
   }
 

@@ -132,47 +132,34 @@ export default function GeoconsoleCommandCenter() {
     setProgressStage('ACQUIRING TARGET');
     setProgressValue(0);
     setCurrentTarget(searchQuery);
-    
-    // Simulate acquisition phases
-    const phases = [
-      { stage: 'INITIALIZING SENSORS', progress: 20 },
-      { stage: 'SCANNING DATA SOURCES', progress: 40 },
-      { stage: 'FUSING MULTIMODAL DATA', progress: 60 },
-      { stage: 'COMPUTING TRAJECTORY', progress: 80 },
-      { stage: 'TARGET ACQUIRED', progress: 100 },
-    ];
-    
-    for (const phase of phases) {
-      setProgressStage(phase.stage);
-      setProgressValue(phase.progress);
-      await new Promise(r => setTimeout(r, 500));
+
+    // REAL-WORLD MODE: do not simulate “acquisition” or fabricate coordinates.
+    // This screen can only operate on explicit coordinate inputs (GPS/EXIF/manual).
+    try {
+      setProgressStage('VALIDATING GEOCONSOLE STATUS');
+      setProgressValue(40);
+
+      const res = await fetch('/api/geoconsole/status', { credentials: 'include' });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.error || `Geoconsole status check failed (${res.status})`);
+      }
+
+      setProgressStage('READY FOR COORDINATE INPUT');
+      setProgressValue(100);
+      setAlerts([
+        'Geoconsole operational',
+        'Provide GPS/EXIF/manual coordinates to build a trail and futurecast',
+      ]);
+      setLocationHistory([]);
+      setPredictions([]);
+    } catch (e: any) {
+      setAlerts([`Acquisition blocked: ${e?.message || 'Geoconsole unavailable'}`]);
+      setLocationHistory([]);
+      setPredictions([]);
+    } finally {
+      setProcessing(false);
     }
-    
-    // Generate sample data
-    const now = Date.now();
-    const sampleHistory: LocationPoint[] = Array.from({ length: 20 }, (_, i) => ({
-      lat: 40.7128 + (Math.random() - 0.5) * 0.1,
-      lng: -74.0060 + (Math.random() - 0.5) * 0.1,
-      timestamp: new Date(now - (20 - i) * 3600000),
-      source: ['device_gps', 'exif_photo', 'wifi_handoff', 'public_record'][Math.floor(Math.random() * 4)],
-      confidence: 0.7 + Math.random() * 0.3,
-    }));
-    
-    setLocationHistory(sampleHistory);
-    
-    // Generate predictions
-    const lastPoint = sampleHistory[sampleHistory.length - 1];
-    const samplePredictions: LocationPoint[] = Array.from({ length: 6 }, (_, i) => ({
-      lat: lastPoint.lat + (Math.random() - 0.5) * 0.02,
-      lng: lastPoint.lng + (Math.random() - 0.5) * 0.02,
-      timestamp: new Date(now + (i + 1) * 3600000),
-      source: 'prediction',
-      confidence: 0.9 - i * 0.1,
-    }));
-    
-    setPredictions(samplePredictions);
-    setAlerts(['Target acquired', 'Historical data loaded', '6-hour futurecast generated']);
-    setProcessing(false);
   }, [searchQuery]);
 
   // Format coordinates

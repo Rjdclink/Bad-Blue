@@ -487,6 +487,9 @@ let faucetState = {
 // GET /api/crypto/faucet/status - Get faucet status with divine insight
 router.get('/faucet/status', async (req, res) => {
   try {
+    const active = autonomousFaucet.isActive();
+    const faucetId = autonomousFaucet.getFaucetId();
+
     // Safely get state from autonomous faucet
     let faucetData;
     let marketConditions;
@@ -502,6 +505,8 @@ router.get('/faucet/status', async (req, res) => {
     }
     
     res.json({
+      active,
+      faucetId,
       enabled: faucetState.enabled,
       mode: faucetData?.mode || 'open',
       executionMode: faucetData?.executionMode || 'paper',
@@ -517,6 +522,9 @@ router.get('/faucet/status', async (req, res) => {
       stealthLevel: faucetData?.stealthLevel || 0,
       healthScore: faucetData?.healthScore || 100,
       consecutiveFailures: faucetData?.consecutiveFailures || 0,
+      lastSuccessfulTrade: faucetData?.lastSuccessfulTrade || 0,
+      lastLoopIterationAt: faucetData?.lastLoopIterationAt || 0,
+      lastModeChange: faucetData?.lastModeChange || 0,
       currentWindow: faucetData?.currentWindow || 0,
       totalWindows: 18,
       autoOptimize: faucetState.autoOptimize,
@@ -541,8 +549,13 @@ router.get('/faucet/status', async (req, res) => {
       },
     });
   } catch (error) {
+    const active = autonomousFaucet.isActive();
+    const faucetId = autonomousFaucet.getFaucetId();
+
     // Return optimistic defaults if faucet not initialized
     res.json({
+      active,
+      faucetId,
       enabled: faucetState.enabled,
       mode: 'open',
       executionMode: 'paper',
@@ -558,6 +571,9 @@ router.get('/faucet/status', async (req, res) => {
       stealthLevel: 0,
       healthScore: 100,
       consecutiveFailures: 0,
+      lastSuccessfulTrade: 0,
+      lastLoopIterationAt: 0,
+      lastModeChange: 0,
       currentWindow: 0,
       totalWindows: 18,
       autoOptimize: faucetState.autoOptimize,
@@ -656,6 +672,8 @@ router.get('/faucet/health', async (req, res) => {
     }));
     
     res.json({
+      active: autonomousFaucet.isActive(),
+      faucetId: autonomousFaucet.getFaucetId(),
       overall: circuitBreaker.isOpen ? 'degraded' : 'healthy',
       faucetEnabled: faucetState.enabled,
       faucetAlwaysOn: DIVINE_OPTIMIZER_CONFIG.FAUCET_ALWAYS_ON,

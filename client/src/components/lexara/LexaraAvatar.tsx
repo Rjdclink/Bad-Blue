@@ -653,7 +653,7 @@ export const LexaraAvatar = memo(function LexaraAvatar({
           className={cn(
             'px-4 py-1.5 rounded-full text-xs font-medium tracking-wider backdrop-blur-md border',
             isSpeaking ? 'bg-blue-500/15 border-blue-400/35 text-blue-300' :
-            isListening ? 'bg-emerald-500/15 border-emerald-400/35 text-emerald-300' :
+            isListening ? 'bg-white/10 border-amber-200/25 text-amber-100' :
             isThinking ? 'bg-amber-500/15 border-amber-400/35 text-amber-300' :
             'bg-slate-800/50 border-slate-600/35 text-slate-400'
           )}
