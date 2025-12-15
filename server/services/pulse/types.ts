@@ -11,7 +11,13 @@ export interface PulseTraceHop {
 }
 
 export interface PulsePacket<TPayload = unknown> {
-  id: string; // packet correlation id
+  /**
+   * Shared coherence ID. Every fragment keeps the same ID.
+   * Used to MERGE partial truth, not to enforce sequencing.
+   */
+  id: string;
+  /** Optional explicit alias for clarity; if present must match `id`. */
+  coherenceId?: string;
   intent: string;
   payload: TPayload;
   ts: number; // epoch ms

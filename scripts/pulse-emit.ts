@@ -24,7 +24,7 @@ async function postJson(url: string, body: any): Promise<void> {
 
 async function main(): Promise<void> {
   const secret = requireEnv('PULSE_SIGNING_SECRET');
-  const targets = splitTargets(requireEnv('PULSE_TARGETS')); // typically mirror endpoints
+  const targets = splitTargets(requireEnv('PULSE_TARGETS')); // typically /api/pulse/node endpoints
 
   const packet: PulsePacket = {
     id: randomB64url(18),
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
 
   const signed = signPacket(packet, secret);
 
-  // Fire-and-forget semantics in spirit; we still await POSTs so the CLI doesn't exit early.
+  // Fire-and-forget semantics: no wait-for-reply logic; we just emit.
   await Promise.allSettled(targets.map(t => postJson(t, signed)));
 
   // Print only packet id for correlation.
