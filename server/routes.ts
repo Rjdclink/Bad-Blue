@@ -821,6 +821,12 @@ interface EnhancedSearchMeta {
 // ============================================
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Fail-fast: routes must be registered on an explicit Express app instance.
+  // No globals. No assumptions.
+  if (!app || typeof (app as any).use !== 'function' || typeof (app as any).get !== 'function') {
+    throw new Error('registerRoutes(app) requires a valid Express app instance (created via express())');
+  }
+
   // Auth middleware setup
   await setupAuth(app);
 
@@ -846,8 +852,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupFMIRoutes(app); // F.M.I. - Forensic Media Intelligence
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
   setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
-  app.use(peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
-  console.log('[MOUNT] People Search mounted at: /api/people-search (NO PREFIX)');
+  app.use('/api/people-search', peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
+  console.log('[MOUNT] People Search mounted at: /api/people-search');
   
   // ============================================
   // AUTH & SUBSCRIPTION ROUTES (Phase 3)
@@ -1276,23 +1282,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const user = await storage.getUser(userId);
 
-      // Dev-lite stability: if storage is DB-disabled or does not have the user record yet,
-      // fall back to the session user object so the UI can render protected routes.
       if (!user) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn("[AUTH] User not found in storage; returning session fallback user", {
-            userId,
-            hasClaims: !!req.user?.claims,
-          });
-          const fallbackUser = {
-            id: userId,
-            email: req.user?.claims?.email || null,
-            firstName: req.user?.claims?.firstName || null,
-            lastName: req.user?.claims?.lastName || null,
-            hasPaidForAccess: true,
-          };
-          return res.json({ ...fallbackUser, isAdmin: userId === "admin-bypass" });
-        }
         return res.status(404).json({ message: "User not found" });
       }
 
@@ -5394,9 +5384,30 @@ Contact: ${foiaRequest.userEmail || userEmail}
     next();
   };
   
-  // Mount CryptoCrawl API routes WITH auth middleware
-  app.use('/api/crypto', cryptoAuthMiddleware, dashboardApi);
-  app.use('/admin/crypto', cryptoAuthMiddleware, adminApi);
+  // Mount CryptoCrawl API routes.
+  //
+  // IMPORTANT:
+  // CryptoCrawl can be deployed without CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD.
+  // Auth checks must not block server boot. When those credentials are missing, we:
+  // - log a warning
+  // - mount routes WITHOUT the strict session-based cryptoAuthMiddleware
+  // - rely on route-level guards (e.g. requireCryptoCrawlAuth) to keep protected features locked
+  const cryptoCrawlPasswordAuthConfigured = Boolean(
+    (process.env.CRYPTOCRAWL_EMAIL || '').trim() && (process.env.CRYPTOCRAWL_PASSWORD || '').trim()
+  );
+
+  if (!cryptoCrawlPasswordAuthConfigured) {
+    console.warn(
+      '[CryptoCrawl] CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD not set. ' +
+        'Server will boot normally; auth-protected CryptoCrawl features remain disabled.'
+    );
+    app.use('/api/crypto', dashboardApi);
+    app.use('/admin/crypto', adminApi);
+  } else {
+    // Credentials are present: enforce strict session/internal-key auth at the router boundary.
+    app.use('/api/crypto', cryptoAuthMiddleware, dashboardApi);
+    app.use('/admin/crypto', cryptoAuthMiddleware, adminApi);
+  }
   
   // ============================================
   // BRIDGE MANAGER API
