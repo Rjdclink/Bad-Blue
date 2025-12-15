@@ -1,3 +1,12 @@
+const originalFetch = window.fetch;
+
+window.fetch = (input, init = {}) => {
+  return originalFetch(input, {
+    ...init,
+    credentials: 'include',
+  });
+};
+
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
