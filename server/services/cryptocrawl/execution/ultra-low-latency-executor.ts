@@ -58,10 +58,10 @@ class UltraLowLatencyExecutor {
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     if (this.initialized) return;
 
-    const pk = process.env.PRIVATE_KEY;
+    const pk = process.env.WALLET_PRIVATE_KEY;
     if (!pk || pk.trim().length === 0) {
       // Canonical rule: signer must be loaded only from env and system must hard-fail if missing.
-      throw new Error('Missing PRIVATE_KEY (required for UltraLowLatencyExecutor signer)');
+      throw new Error('Missing WALLET_PRIVATE_KEY (required for UltraLowLatencyExecutor signer)');
     }
     this.wallet = new Wallet(pk.trim(), this.provider);
 

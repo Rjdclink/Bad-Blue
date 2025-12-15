@@ -18,7 +18,7 @@ const aggregator = new PeopleSearchAggregator();
  * POST /api/people-search
  * Search for person across multiple public data sources
  */
-router.post('/api/people-search', async (req, res) => {
+router.post('/', async (req, res) => {
   console.log('[PEOPLE SEARCH] Handler entered', {
     requestId: Date.now(),
     hasBody: !!req.body,

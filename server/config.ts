@@ -29,8 +29,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: portValidator('PORT').default('5000'),
   BASE_URL: z.string().url().optional(),
-  // In dev/test we provide a stable default to prevent boot failures.
-  SESSION_SECRET: z.string().optional().default('dev-session-secret-legalwhat-000000000000'),
+  // Fail hard if missing/weak. No placeholder/demo secrets.
+  SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
   
   // AI Services
   GEMINI_API_KEY: z.string().optional(),
@@ -95,14 +95,24 @@ export function loadConfig(): Config {
   
   try {
     config = envSchema.parse(process.env);
+    // Fail-fast: never allow placeholder/demo secrets.
+    // This prevents production (and dev) from silently booting with an insecure default.
+    const rawSessionSecret = String(process.env.SESSION_SECRET || '');
+    const bannedSecrets = new Set([
+      'dev-session-secret-legalwhat-000000000000',
+      'generate-a-long-random-string-here',
+    ]);
+    if (!rawSessionSecret || rawSessionSecret.trim().length < 32) {
+      throw new Error('SESSION_SECRET is required and must be at least 32 characters');
+    }
+    if (bannedSecrets.has(rawSessionSecret.trim())) {
+      throw new Error('SESSION_SECRET is set to a placeholder value; generate a real secret (32+ chars) and set it as an env var');
+    }
     // Hard production guardrails (no silent boot with missing secrets).
     if (config.NODE_ENV === 'production') {
       const dbUrl = config.SUPABASE_DATABASE_URL || config.SUPABASE_DB_URL || config.DATABASE_URL;
       if (!dbUrl || !dbUrl.trim()) {
         throw new Error('DATABASE_URL (or SUPABASE_DATABASE_URL / SUPABASE_DB_URL) is required in production');
-      }
-      if (!config.SESSION_SECRET || config.SESSION_SECRET.length < 32) {
-        throw new Error('SESSION_SECRET must be at least 32 characters in production');
       }
       if (!config.SQUARE_ACCESS_TOKEN || !config.SQUARE_ACCESS_TOKEN.trim()) {
         throw new Error('SQUARE_ACCESS_TOKEN is required in production');

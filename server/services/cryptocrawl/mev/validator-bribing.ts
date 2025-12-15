@@ -57,7 +57,7 @@ class ValidatorTippingStrategy {
   async proposeRevenueShare(validatorAddress: string): Promise<boolean> {
     // Revenue sharing agreement following MEV-Share protocol standards
     const proposal = {
-      searcher: process.env.WALLET_ADDRESS,
+      searcher: process.env.WALLET_PUBLIC_KEY,
       validator: validatorAddress,
       profitSharePercentage: 60, // 60% to validator
       durationDays: 30,

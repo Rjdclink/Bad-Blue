@@ -4,7 +4,7 @@
  * 
  * Features:
  * - Parallel scraping across multiple sources
- * - Stealth mode with randomized timing
+ * - Stealth mode with anti-detection
  * - Fail-fast with automatic retry
  * - Smart caching and data fusion
  */
@@ -18,6 +18,16 @@ import { WhitePagesScraper } from './sources/WhitePagesScraper';
 import { BaseScraper } from './sources/BaseScraper';
 import { DataFusion } from './fusion/DataFusion';
 import { PeopleSearchCache } from './cache/PeopleSearchCache';
+import { validatePeopleSearchConfig, getPeopleSearchConfig } from './config';
+
+// PRODUCTION VALIDATION: Validate configuration on module load
+// This ensures the service fails immediately on startup if misconfigured
+try {
+  validatePeopleSearchConfig();
+} catch (error: any) {
+  console.error('[PeopleSearch] FATAL: Configuration validation failed', error);
+  throw new Error(`People Search service cannot start: ${error.message}`);
+}
 
 // PRODUCTION: Add stealth plugin
 chromium.use(StealthPlugin());

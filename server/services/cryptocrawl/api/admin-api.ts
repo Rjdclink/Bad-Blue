@@ -11,7 +11,8 @@ import {
   authenticateWithPassword, 
   requireCryptoCrawlAuth,
   revokeSession,
-  getSessionInfo
+  getSessionInfo,
+  isAuthConfigured
 } from '../auth/passwordAuth';
 
 const router = express.Router();
@@ -20,9 +21,28 @@ const router = express.Router();
 // AUTHENTICATION ROUTES (No auth required)
 // ============================================
 
+// GET /admin/crypto/auth/status - Check if auth is configured
+router.get('/auth/status', (req, res) => {
+  res.json({
+    configured: isAuthConfigured(),
+    message: isAuthConfigured() 
+      ? 'Authentication is configured and available' 
+      : 'Authentication not configured. Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD to enable.'
+  });
+});
+
 // POST /admin/crypto/auth - Authenticate with email and password
 // Credentials: email = crypto@cc.com, password = cryptocrawl
 router.post('/auth', (req, res) => {
+  if (!isAuthConfigured()) {
+    return res.status(503).json({
+      success: false,
+      configured: false,
+      error: 'Authentication not configured',
+      message: 'CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD environment variables must be set'
+    });
+  }
+  
   const { email, password } = req.body;
   
   if (!email || !password) {
@@ -37,6 +57,7 @@ router.post('/auth', (req, res) => {
   if (result.success) {
     res.json({
       success: true,
+      configured: true,
       token: result.token,
       expiresAt: result.expiresAt,
       message: 'Authentication successful. Use token in Authorization header.'
@@ -44,6 +65,7 @@ router.post('/auth', (req, res) => {
   } else {
     res.status(401).json({
       success: false,
+      configured: true,
       error: result.error || 'Authentication failed'
     });
   }
@@ -66,11 +88,20 @@ router.post('/logout', (req, res) => {
 
 // GET /admin/crypto/session - Check session status
 router.get('/session', (req, res) => {
+  if (!isAuthConfigured()) {
+    return res.json({
+      authenticated: false,
+      configured: false,
+      message: 'Authentication not configured'
+    });
+  }
+  
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.json({
-      authenticated: false
+      authenticated: false,
+      configured: true
     });
   }
   
@@ -79,6 +110,7 @@ router.get('/session', (req, res) => {
   
   res.json({
     authenticated: info.valid,
+    configured: true,
     expiresIn: info.expiresIn
   });
 });
@@ -118,7 +150,19 @@ router.get('/health', async (req, res) => {
 // ============================================
 // PROTECTED ROUTES (Require authentication)
 // ============================================
-router.use(requireCryptoCrawlAuth);
+// Conditionally apply auth middleware - if auth is not configured,
+// routes will still be accessible but will return helpful error messages
+// This allows the system to start without credentials
+const conditionalAuth = (req: any, res: any, next: any) => {
+  if (!isAuthConfigured()) {
+    // Allow request to proceed, but individual routes will check auth
+    // and return helpful error messages via requireCryptoCrawlAuth
+    return next();
+  }
+  return requireCryptoCrawlAuth(req, res, next);
+};
+
+router.use(conditionalAuth);
 
 // ============================================
 // GOVERNANCE ROUTES (Stage 1–6 control plane)

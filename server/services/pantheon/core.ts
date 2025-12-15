@@ -1,5 +1,6 @@
 import { createLogger } from '../../logger';
 import { EventEmitter } from 'events';
+import { validatePantheonConfig } from './config';
 
 const log = createLogger('PantheonCore');
 
@@ -17,6 +18,15 @@ const log = createLogger('PantheonCore');
  * - Adaptive resource throttling
  * - Priority queue optimization
  */
+
+// PRODUCTION VALIDATION: Validate configuration on module load
+// This ensures the service fails immediately on startup if misconfigured
+try {
+  validatePantheonConfig();
+} catch (error: any) {
+  log.error('FATAL: PANTHEON configuration validation failed', error);
+  throw new Error(`PANTHEON Core cannot start: ${error.message}`);
+}
 
 // Entropy signature: compressed data representation (48 bytes vs MB)
 export interface EntropySignature {

@@ -5,6 +5,7 @@
  * Features:
  * - LIVE Federal Bureau of Prisons (BOP) API integration
  * - Parallel processing with fail-fast retry
+ * - NO DEMO FALLBACKS: Real API calls only
  * - LRU caching for performance
  * - Source deduplication
  * - Offense classification (VIOLENT/SEXUAL badges)
@@ -23,7 +24,17 @@ import {
   SourceSearchStatus
 } from './types';
 import { STATE_CORRECTIONS, getStateCorrectionsInfo } from './stateData';
+import { validateInmateSearchConfig } from './config';
 import crypto from 'crypto';
+
+// PRODUCTION VALIDATION: Validate configuration on module load
+// This ensures the service fails immediately on startup if misconfigured
+try {
+  validateInmateSearchConfig();
+} catch (error: any) {
+  logger.error('[InmateSearch] FATAL: Configuration validation failed', error);
+  throw new Error(`Inmate Search service cannot start: ${error.message}`);
+}
 
 // LRU Cache Configuration - OPTIMIZED
 const CACHE_MAX_SIZE = 1000; // Increased for better hit rate
