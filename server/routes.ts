@@ -8,7 +8,7 @@
 //
 // This ensures no globals, no assumptions, and fail-hard if misconfigured.
 //
-import type { Express, Request, Response, RequestHandler } from "express";
+import type { Express, Request, Response, RequestHandler, Router } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
 import crypto from 'crypto';
@@ -877,13 +877,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
 
   // Lazy-load People Search routes to avoid importing Playwright/Chromium on startup
-  let peopleSearchRouter: RequestHandler | null = null;
+  let peopleSearchRouter: Router | null = null;
   app.use('/api/people-search', async (req, res, next) => {
     try {
       if (!peopleSearchRouter) {
         peopleSearchRouter = (await import('./routes/peopleSearch.routes')).default;
       }
-      return (peopleSearchRouter as RequestHandler)(req, res, next);
+      return peopleSearchRouter(req, res, next);
     } catch (error) {
       return next(error);
     }
