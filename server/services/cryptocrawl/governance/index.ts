@@ -61,6 +61,31 @@ export type {
 export const stageGovernor = _stageGovernor;
 export const riskGovernor = _riskGovernor;
 
+// Arbitrage Control System - 6-Agent verification and control
+import {
+  ArbitrageControlSystem,
+  arbitrageControl as _arbitrageControl,
+} from './arbitrage-agents.js';
+
+export {
+  ArbitrageControlSystem,
+};
+
+export type {
+  AgentVerificationResult,
+  CheckResult,
+  ArbitrageMode,
+  ArbitrageConfig,
+  ChainRiskConfig,
+  SignalDetectionResult,
+  ExecutionResult,
+  ProfitLadderConfig,
+  ProfitTier,
+  PromotionRules,
+} from './arbitrage-agents.js';
+
+export const arbitrageControl = _arbitrageControl;
+
 /**
  * GOVERNANCE SYSTEM OVERVIEW
  * 

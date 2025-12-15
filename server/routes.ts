@@ -53,6 +53,7 @@ import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import stageGovernorRoutes from "./routes/stageGovernor.routes";
+import arbitrageAgentsRoutes from "./routes/arbitrageAgents.routes";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import {
@@ -5052,6 +5053,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // STAGE GOVERNOR API - Staged Autonomy Control
   // ============================================
   app.use('/api/governance', stageGovernorRoutes);
+  
+  // ============================================
+  // ARBITRAGE AGENTS API - 6-Agent Verification & Control
+  // ============================================
+  app.use('/api/arbitrage', arbitrageAgentsRoutes);
   
   // ============================================
   // 4JI ORCHESTRATOR API
