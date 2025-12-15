@@ -20,7 +20,7 @@ import { Progress } from '@/components/ui/progress';
 import {
   Play, Pause, SkipBack, SkipForward, Clock, Activity, Layers,
   RefreshCw, Download, Satellite, Radio, Crosshair, Zap, Target,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Maximize2, Minimize2,
 } from 'lucide-react';
 import { useGeoRuntime, type GeoFrame } from '@/hooks/useGeoRuntime';
 import type { GPSPoint } from '@shared/geoconsoleTypes';
@@ -214,7 +214,7 @@ function renderFrame(
 // COMPONENT
 // ============================================================================
 
-export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = [], onProcess }) => {
+export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = [], onProcess, navMode }) => {
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
 
@@ -224,6 +224,33 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const [processing, setProcessing] = useState(false);
   const [progressMsg, setProgressMsg] = useState('');
   const [lockOnTarget, setLockOnTarget] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Respond to external navigation ("nav links") from the embedding page.
+  useEffect(() => {
+    if (!navMode) return;
+    if (navMode === 'satellite') setMapMode('satellite');
+    if (navMode === 'map') setMapMode('street');
+    // timeline mode focuses playback; we keep the operator-selected base layer.
+  }, [navMode]);
+
+  // Fullscreen mode: lock body scroll and force Leaflet to re-measure.
+  useEffect(() => {
+    const map = mapRef.current;
+    const previousOverflow = document.body.style.overflow;
+    if (isFullscreen) document.body.style.overflow = 'hidden';
+    const t = window.setTimeout(() => {
+      try {
+        map?.invalidateSize();
+      } catch {
+        // ignore
+      }
+    }, 50);
+    return () => {
+      window.clearTimeout(t);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isFullscreen]);
 
   // Source filter ("signal links")
   const [sourceCfg, setSourceCfg] = useState<Record<SourceKey, boolean>>({
@@ -357,18 +384,23 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   // === TILE LAYER CHANGE ===
   useEffect(() => {
     if (!mapRef.current || !tileRef.current) return;
-    const cfg = mapMode === 'hybrid' ? TILE_LAYERS.satellite : TILE_LAYERS[mapMode];
+    const effectiveMapMode: MapMode =
+      !layerCfg.satellite && (mapMode === 'satellite' || mapMode === 'hybrid')
+        ? 'street'
+        : mapMode;
+
+    const cfg = effectiveMapMode === 'hybrid' ? TILE_LAYERS.satellite : TILE_LAYERS[effectiveMapMode];
     tileRef.current.setUrl(cfg.url);
     
     if (labelsRef.current) {
-      if (mapMode === 'satellite' || mapMode === 'hybrid') {
+      if (layerCfg.satellite && (effectiveMapMode === 'satellite' || effectiveMapMode === 'hybrid')) {
         if (!mapRef.current.hasLayer(labelsRef.current)) labelsRef.current.addTo(mapRef.current);
       } else {
         if (mapRef.current.hasLayer(labelsRef.current)) mapRef.current.removeLayer(labelsRef.current);
       }
     }
     mapRef.current.invalidateSize();
-  }, [mapMode]);
+  }, [mapMode, layerCfg.satellite]);
 
   // === FRAME UPDATE - BOUND TO DATA, NOT FLAGS ===
   // Dependencies: currentIndex, _version (mutation counter), trail length, layerCfg
@@ -484,7 +516,9 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const stats = renderData.stats;
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-x-hidden">
+    <div
+      className={`${isFullscreen ? 'fixed inset-0 z-[5000]' : ''} flex flex-col h-full min-h-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-hidden`}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/50 bg-slate-900/80">
         <div className="flex items-center gap-3">
@@ -511,6 +545,15 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               </button>
             ))}
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsFullscreen(v => !v)}
+            className="bg-slate-800/50 border-slate-700 text-slate-200"
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </Button>
         </div>
       </div>
 

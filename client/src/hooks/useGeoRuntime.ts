@@ -430,45 +430,85 @@ export function useGeoRuntime(
   // LIVE mode - add new frames
   useEffect(() => {
     if (!isLive || !cfg.autoFetch) return;
+    // REAL-WORLD ONLY: use the device geolocation provider (no synthetic motion).
+    // If permissions are denied or geolocation is unavailable, LIVE mode will not fabricate frames.
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      setError('Geolocation is unavailable in this environment');
+      setStatus('error');
+      return;
+    }
 
-    const liveInterval = setInterval(() => {
-      const currentFrames = framesRef.current;
-      if (currentFrames.length === 0) return;
+    const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
-      const lastFrame = currentFrames[currentFrames.length - 1];
-      
-      // Generate new frame - IMMUTABLE
-      const newFrame: GeoFrame = {
-        id: generateId(),
-        timestamp: new Date(),
-        position: {
-          latitude: lastFrame.position.latitude + (Math.random() - 0.5) * 0.0002,
-          longitude: lastFrame.position.longitude + (Math.random() - 0.5) * 0.0002,
-          accuracy: 5 + Math.random() * 10,
-        },
-        velocity: {
-          speed: 1 + Math.random() * 2,
-          heading: (lastFrame.velocity?.heading || 0) + (Math.random() - 0.5) * 20,
-        },
-        source: 'device_gps',
-        confidence: 0.9 + Math.random() * 0.1,
-        metadata: { live: true },
-      };
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const now = new Date(pos.timestamp || Date.now());
+        const coords = pos.coords;
 
-      // IMMUTABLE: Create new array
-      setFrames(prev => {
-        const updated = [...prev, newFrame];
-        if (updated.length > cfg.maxFrameBuffer) {
-          return updated.slice(-cfg.maxFrameBuffer);
+        const latitude = coords.latitude;
+        const longitude = coords.longitude;
+        const accuracy = Number.isFinite(coords.accuracy) ? coords.accuracy : undefined;
+        const altitude = Number.isFinite(coords.altitude) ? coords.altitude ?? undefined : undefined;
+
+        const prevFrames = framesRef.current;
+        const last = prevFrames.length > 0 ? prevFrames[prevFrames.length - 1] : null;
+
+        // Prefer provider-reported values when available.
+        let speed = Number.isFinite(coords.speed) ? (coords.speed ?? undefined) : undefined;
+        let heading = Number.isFinite(coords.heading) ? (coords.heading ?? undefined) : undefined;
+
+        // If the provider does not report speed/heading, compute from last fix.
+        if (last) {
+          const dt = Math.max(1, (now.getTime() - last.timestamp.getTime()) / 1000);
+          const dist = haversineDistance(last.position.latitude, last.position.longitude, latitude, longitude);
+          if (speed === undefined) speed = dist / dt;
+          if (heading === undefined) heading = calculateBearing(last.position.latitude, last.position.longitude, latitude, longitude);
         }
-        return updated;
-      });
-      
-      setCurrentIndex(prev => prev + 1);
-      setVersion(v => v + 1);
-    }, 2000);
 
-    return () => clearInterval(liveInterval);
+        const confidence = accuracy !== undefined ? clamp(1 - accuracy / 100, 0.1, 1) : 0.85;
+
+        const newFrame: GeoFrame = {
+          id: generateId(),
+          timestamp: now,
+          position: { latitude, longitude, altitude, accuracy },
+          velocity: speed !== undefined || heading !== undefined
+            ? { speed: speed ?? 0, heading: heading ?? 0 }
+            : undefined,
+          source: 'device_gps',
+          confidence,
+          metadata: { live: true, provider: 'navigator.geolocation' },
+        };
+
+        setFrames((prev) => {
+          const updated = [...prev, newFrame];
+          const trimmed = updated.length > cfg.maxFrameBuffer ? updated.slice(-cfg.maxFrameBuffer) : updated;
+          // Live mode should always track the latest available fix.
+          setCurrentIndex(trimmed.length - 1);
+          return trimmed;
+        });
+
+        setStatus('playing');
+        setError(null);
+        setVersion((v) => v + 1);
+      },
+      (err) => {
+        setError(err?.message || 'Geolocation watch failed');
+        setStatus('error');
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10_000,
+      }
+    );
+
+    return () => {
+      try {
+        navigator.geolocation.clearWatch(watchId);
+      } catch {
+        // ignore
+      }
+    };
   }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer]);
 
   // === DERIVED STATE (computed from index + frames) ===

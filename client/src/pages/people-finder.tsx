@@ -267,8 +267,8 @@ export default function PeopleFinderPage() {
               </Tabs>
 
               {/* GeoConsole Dashboard - render ONCE for stability */}
-              <div className="w-full aspect-[16/10] min-h-0">
-                <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} />
+              <div className="w-full h-[75vh] min-h-[620px] max-h-[920px]">
+                <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} navMode={geoConsoleTab} />
               </div>
             </CardContent>
           </Card>
