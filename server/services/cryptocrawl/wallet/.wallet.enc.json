@@ -1,0 +1,14 @@
+{
+  "address": "0x09c3Ae643D7BF162FC3E99418A663051364e3096",
+  "encryptedPrivateKey": "e0d6b4fcc2b02cdfc171f993dc066c40a1fe47cc0d1d7dc545bc66905c5828cbcb82690b917a474e2a7c57d043c12f704a7321f61d6f3e8f0216b0b7edff0da01b7f",
+  "salt": "5a29969407a1d118550e49312494415596e267b7fc05964edac8510ee7288bb3",
+  "iv": "53891d03c3c5d5e7866f33b759884650",
+  "authTag": "d75d2e7c40da7dccb5c716c2a0ee9811",
+  "createdAt": "2025-12-15T16:30:43.201Z",
+  "chains": [
+    "polygon",
+    "arbitrum",
+    "avalanche",
+    "bsc"
+  ]
+}

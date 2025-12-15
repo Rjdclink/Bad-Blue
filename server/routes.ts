@@ -1,6 +1,5 @@
 // API Routes - LegalWhat
-import express from "express";
-import type { Express, Request, Response, RequestHandler } from "express";
+import express, { type Express, type Request, type Response, type RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
 import crypto from 'crypto';
@@ -54,12 +53,15 @@ import { setupVoiceRoutes } from "./routes/voice.routes";
 import peopleSearchRoutes from "./routes/peopleSearch.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import { setupPulseRoutes } from "./routes/pulse.routes";
+import stageGovernorRoutes from "./routes/stageGovernor.routes";
+import arbitrageAgentsRoutes from "./routes/arbitrageAgents.routes";
 import { createBeamRouter } from "./services/cryptocrawl/beam/beamRoutes.js";
 import { startBeamOnBoot } from "./services/cryptocrawl/beam/beam.js";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import { verifyCanonicalCryptoSetup } from "./services/cryptocrawl/verification/canonicalCryptoVerifier.js";
 import { SUPPORTED_CHAINS } from "./services/cryptocrawl/bridge/chain-config.js";
+import { isAuthConfigured } from "./services/cryptocrawl/auth/passwordAuth";
 import {
   generateLegalDocument,
   searchPublicRecords,
@@ -5196,7 +5198,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   });
   app.use('/admin/crypto', cryptoVerifyRouter);
 
-  // Strict auth middleware for crypto routes - no fallback, 401 only
+  // Auth middleware for crypto routes - gracefully handles missing auth config
   const cryptoAuthMiddleware: RequestHandler = (req, res, next) => {
     // Set no-cache headers
     res.set({
@@ -5204,6 +5206,60 @@ Contact: ${foiaRequest.userEmail || userEmail}
       'Pragma': 'no-cache',
       'Expires': '0',
     });
+
+    // INTERNAL KEY BYPASS CHECK (allow programmatic access regardless of auth config)
+    // Must check this FIRST before any auth config checks
+    const earlyInternalKey = String(process.env.INTERNAL_KEY || process.env.INTERNAL_API_KEY || '');
+    if (earlyInternalKey) {
+      const providedKey =
+        String(req.header('X-Internal-Key') || '') ||
+        String(req.header('X-Internal-Api-Key') || '') ||
+        String(req.header('X-Internal-Verify') || '');
+      if (providedKey && providedKey === earlyInternalKey) {
+        return next();
+      }
+    }
+
+    // GRACEFUL DEGRADATION: If auth is not configured, allow health/status endpoints
+    // but block sensitive operations. This ensures server can boot without credentials.
+    if (!isAuthConfigured) {
+      const path = String((req as any).path || '');
+      const fullPath = String((req as any).originalUrl || '').split('?')[0];
+      
+      // Allow read-only status endpoints even without auth config
+      const allowedPaths = [
+        '/faucet/status',
+        '/faucet/health',
+        '/stats',
+        '/opportunities',
+        '/balances',
+        '/training/status',
+        '/verify',
+      ];
+      
+      const isAllowedPath = allowedPaths.some(allowed => 
+        path.startsWith(allowed) || fullPath.includes(allowed)
+      );
+      
+      if (isAllowedPath) {
+        // Allow these read-only endpoints without auth
+        return next();
+      }
+      
+      // Block sensitive operations when auth is not configured
+      console.log('[CryptoCrawl Auth] Request blocked - auth not configured:', {
+        path,
+        fullPath,
+        method: req.method,
+      });
+      
+      return res.status(503).json({
+        success: false,
+        error: 'Service Unavailable',
+        message: 'CryptoCrawl authentication not configured. Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD environment variables to enable auth-protected features.',
+        authConfigured: false,
+      });
+    }
 
     // VERIFIER BYPASS (as requested):
     // If request path starts with /admin/crypto/verify
