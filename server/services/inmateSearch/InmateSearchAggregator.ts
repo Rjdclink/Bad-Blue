@@ -385,10 +385,8 @@ const BOPAdapter: DataSourceAdapter = {
 
         return processCharges(record);
       });
-    } catch (error: any) {
-      logger.error('[InmateSearch] BOP search error:', error.message);
-      // PRODUCTION: Log error but return empty - allows other providers to continue
-      // No stub/demo data - just graceful degradation
+    } catch {
+      // IMMEDIATE SKIP - return empty, let other providers continue
       return [];
     }
   }
@@ -396,21 +394,13 @@ const BOPAdapter: DataSourceAdapter = {
 
 /**
  * State Department of Corrections Adapter
- * PRODUCTION: Real scraper implementation required per state
+ * TODO: Implement real scraper per state jurisdiction
  */
 function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
   return {
     name: 'STATE_DOC',
-    async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
-      const stateInfo = getStateCorrectionsInfo(stateCode);
-      if (!stateInfo) {
-        logger.warn(`[InmateSearch] STATE_DOC: Unknown state code ${stateCode}`);
-        return [];
-      }
-
-      // PRODUCTION: State DOC systems require jurisdiction-specific scrapers
-      // Log info and return empty - other providers can still return results
-      logger.info(`[InmateSearch] STATE_DOC for ${stateCode} not yet implemented. URL: ${stateInfo.searchUrl}`);
+    async search(_query: InmateSearchQuery): Promise<InmateRecord[]> {
+      // Not yet implemented - immediate skip
       return [];
     }
   };
@@ -418,17 +408,12 @@ function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
 
 /**
  * VINE (Victim Information Notification Everyday) Adapter
- * PRODUCTION: Real VINELink integration required
+ * TODO: Implement real VINELink integration
  */
 const VINEAdapter: DataSourceAdapter = {
   name: 'VINE',
-  async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
-    // PRODUCTION: VINELink requires real integration
-    // Log info and return empty - other providers can still return results
-    const stateContext = query.state
-      ? `in ${STATE_CORRECTIONS[query.state]?.stateName || query.state}`
-      : 'nationwide';
-    logger.info(`[InmateSearch] VINE search ${stateContext} not yet implemented. URL: https://www.vinelink.com/`);
+  async search(_query: InmateSearchQuery): Promise<InmateRecord[]> {
+    // Not yet implemented - immediate skip
     return [];
   }
 };
@@ -513,41 +498,31 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
     });
   }
   
-  // Execute searches with timeout - graceful degradation if some providers fail
+  // Execute searches - IMMEDIATE SKIP on failure, no waiting
   const searchPromises = adapters.map(async (adapter, index) => {
     const sourceStatus = sources[index];
     sourceStatus.status = 'searching';
     const sourceStartTime = Date.now();
     
     try {
-      // Create timeout promise
-      const timeoutPromise = new Promise<InmateRecord[]>((_, reject) => {
-        setTimeout(() => reject(new Error('Search timeout')), SEARCH_TIMEOUT_MS);
-      });
-      
-      // Race between search and timeout
       const inmates = await Promise.race([
         adapter.search(query),
-        timeoutPromise
+        new Promise<InmateRecord[]>((_, reject) => 
+          setTimeout(() => reject(new Error('timeout')), SEARCH_TIMEOUT_MS)
+        )
       ]);
       
       sourceStatus.searched = true;
       sourceStatus.resultsCount = inmates.length;
       sourceStatus.searchTimeMs = Date.now() - sourceStartTime;
       sourceStatus.status = 'completed';
-      
-      return { source: adapter.name, inmates };
-    } catch (error: any) {
+      return inmates;
+    } catch {
+      // IMMEDIATE SKIP - mark as skipped and return empty
       sourceStatus.searched = true;
-      sourceStatus.error = error.message;
       sourceStatus.searchTimeMs = Date.now() - sourceStartTime;
-      sourceStatus.status = error.message === 'Search timeout' ? 'timeout' : 'error';
-      
-      if (error.message === 'Search timeout') {
-        partial = true;
-      }
-      
-      return { source: adapter.name, inmates: [] };
+      sourceStatus.status = 'error';
+      return []; // Skip immediately
     }
   });
   
@@ -557,13 +532,10 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
   }, SEARCH_TIMEOUT_MS);
   
   try {
-    const results = await Promise.allSettled(searchPromises);
-    
-    // Process results - graceful degradation, collect whatever we can
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        allInmates.push(...result.value.inmates);
-      }
+    const results = await Promise.all(searchPromises);
+    // Flatten all results - failed providers already returned []
+    for (const inmates of results) {
+      allInmates.push(...inmates);
     }
   } finally {
     clearTimeout(overallTimeout);
