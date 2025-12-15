@@ -87,7 +87,13 @@ export class PeopleSearchAggregator {
 
   /**
    * Validate configuration on demand (lazy initialization)
-   * Only runs once per application lifecycle
+   * Only runs once per application lifecycle.
+   * 
+   * NOTE: Configuration validation is marked complete even on failure because:
+   * - validatePeopleSearchConfig() only logs warnings, never throws
+   * - Repeated warning messages on every browser launch would be noisy
+   * - Configuration issues (missing env vars, etc.) won't change during runtime
+   * - The validation is informational, not blocking
    */
   private static validateConfigOnDemand(): void {
     if (!PeopleSearchAggregator.configValidated) {
@@ -97,9 +103,18 @@ export class PeopleSearchAggregator {
       } catch (error: any) {
         console.warn('[PeopleSearch] Configuration validation warning:', error.message);
         console.warn('[PeopleSearch] Browser operations may fail at runtime');
-        PeopleSearchAggregator.configValidated = true; // Don't retry on failure
+        PeopleSearchAggregator.configValidated = true; // Mark complete - warnings already logged
       }
     }
+  }
+
+  /**
+   * Ensure all lazy initialization is complete before browser operations
+   * Consolidates initialization calls to reduce duplication
+   */
+  private static ensureInitialized(): void {
+    ensureStealthPluginInitialized();
+    PeopleSearchAggregator.validateConfigOnDemand();
   }
 
   /**
@@ -108,8 +123,7 @@ export class PeopleSearchAggregator {
    */
   async initializeBrowserPool(): Promise<void> {
     // Initialize stealth plugin and validate config on first use
-    ensureStealthPluginInitialized();
-    PeopleSearchAggregator.validateConfigOnDemand();
+    PeopleSearchAggregator.ensureInitialized();
     
     for (let i = 0; i < this.maxPoolSize; i++) {
       const browser = await chromium.launch({
@@ -129,12 +143,11 @@ export class PeopleSearchAggregator {
 
   /**
    * Get browser from pool (or create new one)
-   * LOAD ON DEMAND: Ensures stealth plugin is initialized before launching browser
+   * LOAD ON DEMAND: Ensures initialization is complete before launching browser
    */
   private async getBrowser(): Promise<Browser> {
-    // Ensure stealth plugin is initialized before launching browsers
-    ensureStealthPluginInitialized();
-    PeopleSearchAggregator.validateConfigOnDemand();
+    // Ensure all lazy initialization is complete
+    PeopleSearchAggregator.ensureInitialized();
     
     if (this.browserPool.length > 0) {
       return this.browserPool.pop()!;
