@@ -184,51 +184,94 @@ export interface CrawlExtract {
 export async function crawlSeedOnceWithCrawlers(seedUrl: string, timeoutMs = 10_000): Promise<{
   ok: boolean;
   extract: CrawlExtract;
-  attempts: Array<{ crawlerName: string; status: 'success' | 'fail' | 'timeout'; durationMs: number }>;
+  attempts: Array<{ crawlerName: string; status: 'success' | 'fail' | 'timeout' | 'aborted'; durationMs: number }>;
 }> {
   const startedAt = Date.now();
-  const attempts: Array<{ crawlerName: string; status: 'success' | 'fail' | 'timeout'; durationMs: number }> = [];
+  const attempts: Array<{ crawlerName: string; status: 'success' | 'fail' | 'timeout' | 'aborted'; durationMs: number }> = [];
 
   const { SEED_FIRST_CRAWLERS } = await import('../services/crawlers/seedFirstCrawlerSet.ts');
+  const { registerSeed, abortSeed, unregisterSeed } = await import('../services/crawlers/seedFirst/seedAbortBus.ts');
 
-  for (const crawler of SEED_FIRST_CRAWLERS) {
-    const elapsed = Date.now() - startedAt;
-    const remaining = timeoutMs - elapsed;
-    if (remaining <= 0) break;
+  // Global cap (hard): ensure we never exceed the overall budget.
+  const globalController = new AbortController();
+  const globalTimer = setTimeout(() => globalController.abort(), timeoutMs);
 
-    const perCrawlerTimeout = Math.max(1, Math.floor(remaining));
+  // Register this seed so crawlers can observe abort when a winner is chosen.
+  registerSeed(seedUrl);
+
+  const runOne = async (crawler: (typeof SEED_FIRST_CRAWLERS)[number]) => {
     const cStart = Date.now();
-    let status: 'success' | 'fail' | 'timeout' = 'fail';
-
     try {
+      const elapsed = Date.now() - startedAt;
+      const remaining = timeoutMs - elapsed;
+      const perCrawlerTimeout = Math.max(1, Math.floor(remaining));
       const result = await crawler.crawlSeed(seedUrl, perCrawlerTimeout);
-      status = result.timedOut ? 'timeout' : result.itemsFound > 0 ? 'success' : 'fail';
-      attempts.push({ crawlerName: crawler.name, status, durationMs: Date.now() - cStart });
-      console.log('[OSINT]', { seed: seedUrl, crawlerName: crawler.name, status, durationMs: Date.now() - cStart });
 
-      if (status === 'success') {
-        const extract: CrawlExtract = {
-          title: result.title,
-          textSnippet: result.textSnippet,
-          emails: result.emails,
-          phones: result.phones,
-          links: result.links,
-          coordinates: result.coordinates,
-          itemsFound: result.itemsFound,
-        };
-        recordSeedOutcome(extract.itemsFound);
-        return { ok: true, extract, attempts };
-      }
+      // If global timeout fired, treat as timeout.
+      const status: 'success' | 'fail' | 'timeout' =
+        globalController.signal.aborted || result.timedOut
+          ? 'timeout'
+          : result.itemsFound > 0
+            ? 'success'
+            : 'fail';
+
+      return { crawlerName: crawler.name, status, durationMs: Date.now() - cStart, result };
     } catch {
-      attempts.push({ crawlerName: crawler.name, status: 'fail', durationMs: Date.now() - cStart });
-      console.log('[OSINT]', { seed: seedUrl, crawlerName: crawler.name, status: 'fail', durationMs: Date.now() - cStart });
-      continue;
+      return { crawlerName: crawler.name, status: 'fail' as const, durationMs: Date.now() - cStart, result: null as any };
     }
-  }
+  };
 
-  const extract: CrawlExtract = { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0 };
-  recordSeedOutcome(0);
-  return { ok: false, extract, attempts };
+  try {
+    // Bounded fan-out: run all 4 crawlers concurrently within the remaining time budget.
+    const promises = SEED_FIRST_CRAWLERS.map((c) => runOne(c));
+
+    // First successful result wins
+    const winner = await Promise.any(
+      promises.map(async (p) => {
+        const r = await p;
+        if (r.status === 'success' && r.result && r.result.itemsFound > 0) return r;
+        throw new Error('no-success');
+      })
+    ).catch(() => null);
+
+    if (winner) {
+      // Abort the rest immediately for this seed
+      abortSeed(seedUrl);
+    }
+
+    const settled = await Promise.allSettled(promises);
+    for (const s of settled) {
+      if (s.status !== 'fulfilled') continue;
+      const { crawlerName, status, durationMs, result } = s.value;
+      const finalStatus =
+        winner && crawlerName !== winner.crawlerName && status !== 'success'
+          ? 'aborted'
+          : status;
+      attempts.push({ crawlerName, status: finalStatus, durationMs });
+      console.log('[OSINT]', { seed: seedUrl, crawlerName, status: finalStatus, durationMs });
+    }
+
+    if (winner) {
+      const extract: CrawlExtract = {
+        title: winner.result.title,
+        textSnippet: winner.result.textSnippet,
+        emails: winner.result.emails,
+        phones: winner.result.phones,
+        links: winner.result.links,
+        coordinates: winner.result.coordinates,
+        itemsFound: winner.result.itemsFound,
+      };
+      recordSeedOutcome(extract.itemsFound);
+      return { ok: true, extract, attempts };
+    }
+
+    const extract: CrawlExtract = { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0 };
+    recordSeedOutcome(0);
+    return { ok: false, extract, attempts };
+  } finally {
+    clearTimeout(globalTimer);
+    unregisterSeed(seedUrl);
+  }
 }
 
 export function recordSeedOutcome(itemsFound: number) {

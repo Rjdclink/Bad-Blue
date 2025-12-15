@@ -41,3 +41,8 @@ export const SEED_FIRST_CRAWLERS: readonly SeedFirstCrawler[] = [
   SeedFetchTrinity,
 ] as const;
 
+// Fail fast if the fixed crawler set is not exactly 4.
+if (SEED_FIRST_CRAWLERS.length !== 4) {
+  throw new Error(`SEED_FIRST_CRAWLERS must contain exactly 4 crawlers (found ${SEED_FIRST_CRAWLERS.length})`);
+}
+

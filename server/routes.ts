@@ -3646,7 +3646,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         });
         reportId = initialReport.id;
       }
-      const { deriveSeedFromRequest, crawlSeedOnceWithCrawlers } = await import('./lib/seedFirstOsint');
+      const { deriveSeedFromRequest, crawlSeedOnceWithCrawlers, sanitizeUrlStrict } = await import('./lib/seedFirstOsint');
+      const MAX_SEEDS = 10;
 
       const seedDecision = deriveSeedFromRequest({
         profileUrl,
@@ -3678,13 +3679,30 @@ Contact: ${foiaRequest.userEmail || userEmail}
         });
       }
 
-      // One seed → one bounded attempt (global cap 10s; sequential crawler fallback inside).
-      const crawl = await crawlSeedOnceWithCrawlers(seedDecision.seedUrl, 10_000);
-      const extract = crawl.extract;
+      // ENFORCE SEED SCALE: MAX_SEEDS=10 at orchestration layer.
+      // Seeds are queued concurrently.
+      const rawSeedUrls = Array.isArray((req.body || {}).seedUrls) ? (req.body || {}).seedUrls : [];
+      const candidateSeeds: string[] = [seedDecision.seedUrl];
+      for (const raw of rawSeedUrls.slice(0, 50)) {
+        const s = sanitizeUrlStrict(String(raw || ''));
+        if (s.ok) candidateSeeds.push(s.normalized);
+      }
+      const seeds = Array.from(new Set(candidateSeeds)).slice(0, MAX_SEEDS);
+
+      // Run all seeds concurrently. First seed that yields content wins.
+      const seedPromises = seeds.map(async (seedUrl) => {
+        const r = await crawlSeedOnceWithCrawlers(seedUrl, 10_000);
+        if (r.ok && r.extract.itemsFound > 0) return { seedUrl, r };
+        throw new Error('no-success');
+      });
+
+      const winner = await Promise.any(seedPromises).catch(() => null);
+      const crawl = winner?.r || null;
+      const extract = crawl?.extract || null;
 
       const processingTimeMs = Date.now() - startTime;
 
-      if (!extract?.itemsFound) {
+      if (!extract || !extract.itemsFound) {
         if (reportId && userId) {
           await storage.updatePeopleSearchReportStatus(reportId, 'completed', { status: 'no_data_found' } as any);
         }
@@ -3701,7 +3719,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
             seedType: seedDecision.seedType,
             itemsFound: 0,
             durationMs: processingTimeMs,
-            attempts: crawl.attempts,
+            attempts: crawl?.attempts || [],
           },
         });
       }
@@ -3728,7 +3746,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
           {
             name: 'Seed-first Crawl',
             data: {
-              seedUrl: seedDecision.seedUrl,
+              seedUrl: winner?.seedUrl || seedDecision.seedUrl,
               seedType: seedDecision.seedType,
               links: extract.links,
             },
@@ -3747,11 +3765,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
         data: report,
         meta: {
           correlationId,
-          seedUrl: seedDecision.seedUrl,
+          seedUrl: winner?.seedUrl || seedDecision.seedUrl,
           seedType: seedDecision.seedType,
           itemsFound: extract.itemsFound,
           durationMs: processingTimeMs,
-          attempts: crawl.attempts,
+          attempts: crawl?.attempts || [],
         },
       });
     } catch (error: any) {

@@ -1,4 +1,5 @@
 import type { SeedFirstCrawler } from '../seedFirstCrawlerSet';
+import { getSeedSignal } from './seedAbortBus.ts';
 
 function stripHtmlToText(html: string): string {
   const noScripts = html
@@ -19,9 +20,13 @@ export const SeedFetchSixDegrees: SeedFirstCrawler = {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const seedSignal = getSeedSignal(seedUrl);
+      const signal = seedSignal
+        ? AbortSignal.any([controller.signal, seedSignal])
+        : controller.signal;
       const res = await fetch(seedUrl, {
         redirect: 'manual',
-        signal: controller.signal,
+        signal,
         headers: {
           'User-Agent': 'SeedFetchSixDegrees/1.0',
           'Accept': 'text/html,text/plain;q=0.9,*/*;q=0.1',

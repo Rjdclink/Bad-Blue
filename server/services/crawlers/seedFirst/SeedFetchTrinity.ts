@@ -1,5 +1,6 @@
 import type { SeedFirstCrawler } from '../seedFirstCrawlerSet';
 import { sanitizeUrlStrict } from '../../../lib/seedFirstOsint.ts';
+import { getSeedSignal } from './seedAbortBus.ts';
 
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
@@ -11,9 +12,13 @@ export const SeedFetchTrinity: SeedFirstCrawler = {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const seedSignal = getSeedSignal(seedUrl);
+      const signal = seedSignal
+        ? AbortSignal.any([controller.signal, seedSignal])
+        : controller.signal;
       const res = await fetch(seedUrl, {
         redirect: 'manual',
-        signal: controller.signal,
+        signal,
         headers: {
           'User-Agent': 'SeedFetchTrinity/1.0',
           'Accept': 'text/html,application/xhtml+xml;q=0.9,text/plain;q=0.8,*/*;q=0.1',
