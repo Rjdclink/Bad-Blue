@@ -1,10 +1,12 @@
 import express from 'express';
 import {WebSocketServer} from 'ws';
+import { utils as ethersUtils } from 'ethers';
 import {pipeline} from '../integration/master-pipeline';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { autonomousFaucet } from '../faucet/autonomous-faucet';
 import { balanceMonitor } from '../bridge/balance-monitor';
 import { WalletManager } from '../core/wallet';
+import type { ChainId as WalletChainId } from '../core/lux-swarm.js';
 import { scheduledMonteCarloTraining } from '../training/scheduled-monte-carlo-training';
 
 const router = express.Router();
@@ -13,17 +15,25 @@ const wss = new WebSocketServer({noServer: true});
 // Wallet manager instance for real wallet operations
 let walletManager: WalletManager | null = null;
 
-// Initialize zero-capital engine on module load
-zeroCapitalEngine.initialize().catch(err => {
-  console.error('[CryptoCrawl] Failed to initialize zero-capital engine:', err);
-});
+// Initialize zero-capital engine ONLY if explicitly enabled.
+// Stage Two focus is arbitrage verification; keep other execution engines opt-in.
+if (process.env.CRYPTOCRAWL_ENABLE_ZERO_CAPITAL_ENGINE === 'true') {
+  zeroCapitalEngine.initialize().catch(err => {
+    console.error('[CryptoCrawl] Failed to initialize zero-capital engine:', err);
+  });
+}
 
 // Initialize balance monitor and wallet manager on module load
 (async () => {
   try {
-    // Start balance monitor for real-time balance tracking
-    await balanceMonitor.start();
-    console.log('[CryptoCrawl] ✅ Balance monitor started - wallet balances connected');
+    // Start balance monitor only if a wallet address is configured.
+    // This prevents accidental "default wallet" usage and avoids RPC errors on empty address.
+    if (process.env.BRIDGE_WALLET_ADDRESS) {
+      await balanceMonitor.start();
+      console.log('[CryptoCrawl] ✅ Balance monitor started - wallet balances connected');
+    } else {
+      console.log('[CryptoCrawl] Balance monitor not started (BRIDGE_WALLET_ADDRESS not configured)');
+    }
     
     // Initialize wallet manager
     walletManager = new WalletManager();
@@ -427,21 +437,23 @@ setTimeout(() => {
   }
 }, 5000); // 5 second delay to allow RPC connections to initialize
 
-// AUTO-START: Initialize scheduled Monte Carlo training for profitability optimization
-// Runs every 6 hours with Divine creativity optimization
-setTimeout(() => {
-  console.log('[CryptoCrawl] 🎓 Starting scheduled Monte Carlo training system...');
-  scheduledMonteCarloTraining.start();
-  console.log('[CryptoCrawl] ✅ Monte Carlo training scheduled - profitability optimization ACTIVE');
-}, 10000); // 10 second delay to allow other systems to initialize first
+// AUTO-START: Monte Carlo training is optional (disabled by default).
+if (process.env.CRYPTOCRAWL_ENABLE_MONTE_CARLO_TRAINING === 'true') {
+  setTimeout(() => {
+    console.log('[CryptoCrawl] 🎓 Starting scheduled Monte Carlo training system...');
+    scheduledMonteCarloTraining.start();
+    console.log('[CryptoCrawl] ✅ Monte Carlo training scheduled');
+  }, 10000);
+}
 
-// AUTO-START: Initialize Divine Recursive Optimizer for 110% faucet operation
-// Ensures faucet is always operational at opportune times
-setTimeout(() => {
-  console.log('[CryptoCrawl] 🌟 Starting Divine Recursive Optimization System...');
-  startDivineOptimizer();
-  console.log('[CryptoCrawl] ✅ Divine optimizer active - 110% operational mode ENGAGED');
-}, 15000); // 15 second delay to allow faucet to initialize first
+// AUTO-START: "Always-on optimizer" is optional (disabled by default).
+if (process.env.CRYPTOCRAWL_ENABLE_DIVINE_OPTIMIZER === 'true') {
+  setTimeout(() => {
+    console.log('[CryptoCrawl] 🌟 Starting recursive optimizer...');
+    startDivineOptimizer();
+    console.log('[CryptoCrawl] ✅ Optimizer active');
+  }, 15000);
+}
 
 // In-memory stats (production: use Redis)
 let stats = {
@@ -496,7 +508,10 @@ router.get('/faucet/status', async (req, res) => {
       active,
       faucetId,
       enabled: faucetState.enabled,
-      mode: faucetData?.mode ?? (active ? 'opening' : 'closed'),
+      mode: faucetData?.mode || 'open',
+      executionMode: faucetData?.executionMode || 'paper',
+      lastArbitrageDecision: faucetData?.lastArbitrageDecision || 'NONE',
+      lastVerifiedArbitrage: faucetData?.lastVerifiedArbitrage || null,
       profitThisSession: faucetData?.profitThisSession || 0,
       profitThisHour: faucetData?.profitThisHour || 0,
       profitThisDay: faucetData?.profitThisDay || 0,
@@ -542,7 +557,10 @@ router.get('/faucet/status', async (req, res) => {
       active,
       faucetId,
       enabled: faucetState.enabled,
-      mode: active ? 'opening' : 'closed',
+      mode: 'open',
+      executionMode: 'paper',
+      lastArbitrageDecision: 'NONE',
+      lastVerifiedArbitrage: null,
       profitThisSession: 0,
       profitThisHour: 0,
       profitThisDay: 0,
@@ -945,14 +963,26 @@ router.post('/withdraw', async (req, res) => {
     return res.status(400).json({error: 'Invalid amount'});
   }
   
-  // Validate Ethereum address format
-  if (!/^0x[a-fA-F0-9]{40}$/.test(toAddress)) {
-    return res.status(400).json({error: 'Invalid Ethereum address format'});
+  // Validate and lock withdrawals to the configured profit wallet
+  const configuredProfitWallet = process.env.CRYPTO_PROFIT_WALLET_ADDRESS;
+  if (!configuredProfitWallet) {
+    return res.status(503).json({ error: 'CRYPTO_PROFIT_WALLET_ADDRESS not configured' });
+  }
+  let normalizedTo: string;
+  let normalizedConfigured: string;
+  try {
+    normalizedTo = ethersUtils.getAddress(toAddress);
+    normalizedConfigured = ethersUtils.getAddress(configuredProfitWallet);
+  } catch {
+    return res.status(400).json({ error: 'Invalid Ethereum address format' });
+  }
+  if (normalizedTo !== normalizedConfigured) {
+    return res.status(403).json({ error: 'Withdrawals are restricted to the configured profit wallet' });
   }
   
   try {
     // TODO: Check available balance before withdrawal
-    const txHash = await executeWithdrawal(amount, token, toAddress);
+    const txHash = await executeWithdrawal(amount, token, normalizedTo);
     res.json({success: true, txHash});
   } catch (error: any) {
     res.status(500).json({error: error.message});
@@ -1020,6 +1050,10 @@ async function getBestTrade() {
  */
 async function getWalletBalances() {
   try {
+    if (!process.env.BRIDGE_WALLET_ADDRESS) {
+      return [];
+    }
+
     // Use real balance monitor if it's running
     if (balanceMonitor.isRunning()) {
       const balances = await balanceMonitor.getAllBalances();
@@ -1081,7 +1115,7 @@ async function executeWithdrawal(amount: number, token: string, to: string, chai
     
     // Determine the appropriate chain for withdrawal
     // If not specified, try to find the chain with sufficient balance
-    let withdrawalChain = chain;
+    let withdrawalChain: WalletChainId | undefined = chain as WalletChainId | undefined;
     if (!withdrawalChain) {
       // Get balances to determine best chain for this token
       const balances = await balanceMonitor.getAllBalances();
@@ -1090,14 +1124,14 @@ async function executeWithdrawal(amount: number, token: string, to: string, chai
       const nativeTokens = ['POL', 'ETH', 'AVAX', 'BNB'];
       if (nativeTokens.includes(token.toUpperCase())) {
         const chainWithBalance = balances.find(b => b.native >= amount);
-        withdrawalChain = chainWithBalance?.chain || 'polygon';
+        withdrawalChain = (chainWithBalance?.chain as WalletChainId | undefined) || ('polygon' as WalletChainId);
       } else {
         // For stablecoins (USDC, USDT), find chain with sufficient balance
         const chainWithStable = balances.find(b => 
           (token.toUpperCase() === 'USDC' && b.usdc >= amount) ||
           (token.toUpperCase() === 'USDT' && b.usdt >= amount)
         );
-        withdrawalChain = chainWithStable?.chain || 'polygon';
+        withdrawalChain = (chainWithStable?.chain as WalletChainId | undefined) || ('polygon' as WalletChainId);
       }
     }
     

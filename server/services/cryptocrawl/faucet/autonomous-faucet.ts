@@ -15,6 +15,7 @@ import { NeurofusionEngine } from '../core/neurofusion.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import { MultiOraclePriceValidator } from '../validation/multi-oracle-validator.js';
 import { MasterOrchestrator } from '../core/master-orchestrator.js';
+import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import logger from '../../../logger.js';
 
 // Babel Integration - IP Protection Systems + Cain Reasoning
@@ -74,6 +75,10 @@ export interface FaucetState {
   lastReasoningConclusion: ReasoningConclusion | null; // Last reasoning result
   securityProofsValid: number;                // Count of valid security proofs
   globalThreatLevel: string;                  // Current threat level
+  // Arbitrage verification (real quotes + all-in costs)
+  executionMode: 'paper' | 'live';            // paper = verify only, live = attempt execution
+  lastVerifiedArbitrage: VerifiedArbitragePlan | null;
+  lastArbitrageDecision: 'EXECUTE' | 'SKIP' | 'ERROR' | 'NONE';
 }
 
 export type FaucetMode = 'closed' | 'opening' | 'open' | 'closing' | 'cooldown' | 'stealth' | 'emergency';
@@ -258,7 +263,9 @@ const DECISION_CONFIG = Object.freeze({
   // Opening thresholds
   minConfidenceToOpen: 0.7,       // Minimum confidence score to open
   minValidatorsToOpen: 4,         // Minimum validators that must pass
-  minExpectedProfitToOpen: 50,    // Minimum expected profit to open ($50)
+  // Stage Two: small, controlled cycles require a low-but-positive threshold.
+  // This threshold is evaluated against an all-in net profit estimate (after fees/gas/bridge).
+  minExpectedProfitToOpen: 1,     // Minimum expected profit to open ($1)
   maxGasToOpen: 10,               // Maximum gas cost to open ($)
   maxCompetitionToOpen: 0.7,      // Maximum competition level to open
   
@@ -266,7 +273,7 @@ const DECISION_CONFIG = Object.freeze({
   maxConfidenceToStayOpen: 0.3,   // Below this, close immediately
   minValidatorsToStayOpen: 2,     // Must have at least this many passing
   maxConsecutiveFailures: 3,      // Close after this many failures
-  emergencyCloseThreshold: 0.1,   // Emergency close if profit drops below
+  emergencyCloseThreshold: 0.01,  // Emergency close if profit drops below
   
   // Timing
   minOpenDuration: 5000,          // Minimum time to stay open (ms)
@@ -646,6 +653,9 @@ class AutonomousCryptoFaucet {
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private hourlyResetTimer: ReturnType<typeof setInterval> | null = null;
 
+  // Last evaluated arbitrage (cached from updateMarketConditions)
+  private lastArbitragePlan: VerifiedArbitragePlan | null = null;
+
   constructor() {
     // Generate unique faucet ID (this becomes the Cain ID)
     this.faucetId = `faucet-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
@@ -676,6 +686,9 @@ class AutonomousCryptoFaucet {
       lastReasoningConclusion: null,
       securityProofsValid: 0,
       globalThreatLevel: 'none',
+      executionMode: process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true' ? 'live' : 'paper',
+      lastVerifiedArbitrage: null,
+      lastArbitrageDecision: 'NONE',
     };
     
     // Initialize communication security state
@@ -1223,24 +1236,30 @@ class AutonomousCryptoFaucet {
   private async executeTransitionActions(from: FaucetMode, to: FaucetMode): Promise<void> {
     // Opening actions
     if (to === 'open') {
-      try {
-        await MasterOrchestrator.start();
-      } catch (error) {
-        this.recordFailure('orchestrator_start');
-        throw error;
+      // Only start the heavy orchestrator if explicitly enabled.
+      // Stage Two focus: arbitrage verification + profit-flow, not unrelated subsystems.
+      if (process.env.CRYPTOCRAWL_ENABLE_ORCHESTRATOR === 'true') {
+        try {
+          await MasterOrchestrator.start();
+        } catch (error) {
+          this.recordFailure('orchestrator_start');
+          throw error;
+        }
       }
     }
     
     // Closing actions
     if (to === 'closed' || to === 'cooldown' || to === 'stealth' || to === 'emergency') {
       if (from === 'open' || from === 'opening') {
-        try {
-          MasterOrchestrator.stop();
-        } catch (error) {
-          logger.warn('[FAUCET] Failed to stop orchestrator during transition', {
-            component: 'AutonomousFaucet',
-            error: error instanceof Error ? error.message : String(error),
-          });
+        if (process.env.CRYPTOCRAWL_ENABLE_ORCHESTRATOR === 'true') {
+          try {
+            MasterOrchestrator.stop();
+          } catch (error) {
+            logger.warn('[FAUCET] Failed to stop orchestrator during transition', {
+              component: 'AutonomousFaucet',
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       }
     }
@@ -1667,69 +1686,48 @@ class AutonomousCryptoFaucet {
    */
   private async updateMarketConditions(): Promise<void> {
     try {
-      // Get gas prices from oracle
+      // Gas efficiency from the gas oracle (USD estimate for a simple tx)
       const cheapestChain = await gasOracle.getCheapestChain();
       if (cheapestChain) {
-        // NOTE: In production, gas efficiency should come from actual chain gas costs
-        // Currently using simulation with bounded random values
+        const gp = await gasOracle.getGasPrice(cheapestChain);
         this.marketConditions.gasEfficiency = Math.max(
           VALIDATION.minGasEfficiency,
-          Math.min(VALIDATION.maxGasEfficiency, Math.random() * 10)
+          Math.min(VALIDATION.maxGasEfficiency, gp.usdCost)
         );
       }
 
-      // Use oracle validator to check price stability (affects volatility estimate)
-      // NOTE: In production, this would use actual price feeds from multiple oracles
-      const priceValidation = await this.oracleValidator.validatePrice('ETH', 'polygon');
-      if (priceValidation.isValid) {
-        // Lower confidence means higher volatility
-        this.marketConditions.volatility = Math.max(
-          VALIDATION.minVolatility,
-          Math.min(VALIDATION.maxVolatility, (1 - priceValidation.confidence) * 100)
-        );
-        
-        // Manipulation risk affects competition level
-        const manipulationRisk = priceValidation.manipulation.honeypotProbability;
-        this.marketConditions.competitionLevel = Math.max(
-          VALIDATION.minCompetition,
-          Math.min(VALIDATION.maxCompetition, 0.3 + manipulationRisk * 0.5)
-        );
-        
-        // Update confidence from validation
-        this.marketConditions.confidence = priceValidation.confidence;
-      } else {
-        // Fallback to simulated values if validation fails
-        this.marketConditions.volatility = Math.max(
-          VALIDATION.minVolatility,
-          Math.min(VALIDATION.maxVolatility, 30 + Math.random() * 40)
-        );
-        this.marketConditions.competitionLevel = Math.max(
-          VALIDATION.minCompetition,
-          Math.min(VALIDATION.maxCompetition, 0.3 + Math.random() * 0.4)
-        );
-        this.marketConditions.confidence = 0.5; // Lower confidence for simulated data
-      }
+      // "Real arbitrage" check (live quotes + explicit fees/costs)
+      const symbol = (process.env.CRYPTO_ARBITRAGE_SYMBOL || 'ETHUSDT').trim().toUpperCase();
+      const notionalUsd = Number(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD || 200);
+      const minNetProfitUsd = Number(process.env.CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD || 0.5);
+      const maxQuoteAgeMs = Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000);
 
-      // NOTE: Spread opportunities simulation - in production, would scan DEX pairs
-      this.marketConditions.spreadOpportunities = Math.max(
-        VALIDATION.minSpreadOpportunities,
-        Math.floor(Math.random() * 20)
-      );
+      const plan = await arbitrageVerifier.verifyOnce({
+        symbol,
+        notionalUsd: Number.isFinite(notionalUsd) && notionalUsd > 0 ? notionalUsd : 200,
+        minNetProfitUsd: Number.isFinite(minNetProfitUsd) ? minNetProfitUsd : 0.5,
+        maxQuoteAgeMs: Number.isFinite(maxQuoteAgeMs) ? maxQuoteAgeMs : 5000,
+        gas: cheapestChain ? { enabled: true, chain: cheapestChain } : { enabled: false, chain: 'polygon' },
+        bridge: process.env.CRYPTO_ARBITRAGE_BRIDGE_ENABLED === 'true'
+          ? {
+              enabled: true,
+              fromChain: (process.env.CRYPTO_ARBITRAGE_BRIDGE_FROM as any) || 'polygon',
+              toChain: (process.env.CRYPTO_ARBITRAGE_BRIDGE_TO as any) || 'arbitrum',
+              token: (process.env.CRYPTO_ARBITRAGE_BRIDGE_TOKEN as any) || 'USDC',
+            }
+          : { enabled: false, fromChain: 'polygon', toChain: 'polygon', token: 'USDC' },
+      });
 
-      // NOTE: Liquidity depth simulation - in production, would query DEX reserves
-      this.marketConditions.liquidityDepth = Math.max(
-        VALIDATION.minLiquidityDepth,
-        50000 + Math.random() * 150000
-      );
+      this.lastArbitragePlan = plan;
+      this.state.lastVerifiedArbitrage = plan;
+      this.marketConditions.spreadOpportunities = plan ? 1 : 0;
 
-      // Determine technical signal based on volatility
-      if (this.marketConditions.volatility > 70) {
-        this.marketConditions.technicalSignal = 'bearish';
-      } else if (this.marketConditions.volatility < 30) {
-        this.marketConditions.technicalSignal = 'bullish';
-      } else {
-        this.marketConditions.technicalSignal = 'neutral';
-      }
+      // Confidence: if we can build an all-in profitable plan, treat as high confidence.
+      this.marketConditions.confidence = plan ? 0.85 : 0.4;
+      this.marketConditions.volatility = plan ? Math.min(VALIDATION.maxVolatility, Math.max(VALIDATION.minVolatility, plan.spreadPct * 10)) : 50;
+      this.marketConditions.competitionLevel = 0.5; // no longer inferred from mock oracle data
+      this.marketConditions.liquidityDepth = 100000; // not modeled by this verifier
+      this.marketConditions.technicalSignal = plan ? 'bullish' : 'neutral';
       
       // Update timestamp
       this.marketConditions.timestamp = Date.now();
@@ -1777,95 +1775,41 @@ class AutonomousCryptoFaucet {
       return;
     }
     
-    // Pattern breaking - add extra randomization
-    if (STEALTH_CONFIG.patternBreakingEnabled) {
-      const extraDelay = Math.random() * DAILY_TARGET_CONFIG.timingJitter;
-      await this.sleep(extraDelay);
-    }
-    
-    // Random delays to avoid pattern detection
-    const randomDelay = TRADE_CONFIG.minRandomDelay + Math.random() * (TRADE_CONFIG.maxRandomDelay - TRADE_CONFIG.minRandomDelay);
-    await this.sleep(randomDelay);
-
-    // Vary trade sizes to look natural - enhanced variance
-    const sizeVariation = TRADE_CONFIG.minSizeVariation + Math.random() * (TRADE_CONFIG.maxSizeVariation - TRADE_CONFIG.minSizeVariation);
-    
-    // Select exchange (rotate to avoid concentration)
-    const exchange = this.selectExchange();
-
     try {
-      // Use Translation Firewall for secure communication
-      const internalMessage: InternalMessage = {
-        id: `trade-${Date.now()}`,
-        intent: 'EXECUTE_TRADE',
-        payload: {
-          sizeVariation,
-          exchange,
-          timestamp: Date.now(),
-        },
-        sourceId: this.faucetId,
-        timestamp: Date.now(),
-        priority: 7,
-        confidentiality: 8,
-      };
-      
-      // Translate to external format
-      const externalMessage = TranslationFirewall.translateToExternal(internalMessage, 'json');
-      
-      // SIMULATION: In production, this would call MasterOrchestrator.execute()
-      const tradeSuccess = Math.random() > (1 - TRADE_CONFIG.successRateThreshold);
-
-      if (tradeSuccess) {
-        // Calculate profit with adaptive sizing based on daily progress
-        const progressMultiplier = this.calculateProgressMultiplier();
-        const baseProfit = TRADE_CONFIG.minProfit + Math.random() * (TRADE_CONFIG.maxProfit - TRADE_CONFIG.minProfit);
-        const profit = Math.min(
-          baseProfit * sizeVariation * progressMultiplier,
-          STEALTH_CONFIG.maxSingleTrade // Cap single trade
-        );
-        
-        // Update all profit trackers
-        this.state.profitThisSession += profit;
-        this.state.profitThisHour += profit;
-        this.state.profitThisDay += profit;
-        this.state.profitThisWindow += profit;
-        this.state.tradesThisHour += 1;
-        this.state.tradesThisDay += 1;
-        
-        // Update exchange distribution
-        const currentExchangeProfit = this.state.exchangeDistribution.get(exchange) || 0;
-        this.state.exchangeDistribution.set(exchange, currentExchangeProfit + profit);
-        
-        // Update daily progress
-        this.state.dailyTargetProgress = (this.state.profitThisDay / DAILY_TARGET_CONFIG.dailyTarget) * 100;
-
-        // Record success - resets consecutive failures
-        this.recordSuccess();
-
-        // Increase stealth level proportionally to profit (slower rate)
-        this.state.stealthLevel = Math.min(
-          10,
-          this.state.stealthLevel + STEALTH_CONFIG.stealthIncreaseRate * (profit / 100)
-        );
-
-        logger.debug('[FAUCET] Trade executed successfully', {
-          component: 'AutonomousFaucet',
-          profit: profit.toFixed(2),
-          exchange,
-          dailyProgress: `${this.state.dailyTargetProgress.toFixed(1)}%`,
-          windowProfit: this.state.profitThisWindow.toFixed(2),
-          tradesThisDay: this.state.tradesThisDay,
-        });
-      } else {
-        // Trade failed
-        this.recordFailure('trade_execution');
-        logger.warn('[FAUCET] Trade execution failed', {
-          component: 'AutonomousFaucet',
-          consecutiveFailures: this.state.consecutiveFailures,
-        });
+      // Ensure we have a fresh verified arbitrage plan.
+      const plan = this.lastArbitragePlan ?? this.state.lastVerifiedArbitrage;
+      if (!plan) {
+        this.state.lastArbitrageDecision = 'SKIP';
+        return;
       }
+
+      // Paper mode: prove consistency using live quotes, but do not execute or claim profits.
+      if (this.state.executionMode === 'paper') {
+        this.state.lastArbitrageDecision = 'SKIP';
+        logger.debug('[FAUCET] Verified arbitrage (paper mode - not executed)', {
+          component: 'AutonomousFaucet',
+          symbol: plan.symbol,
+          buy: { venue: plan.buyVenue, ask: plan.buyAsk },
+          sell: { venue: plan.sellVenue, bid: plan.sellBid },
+          notionalUsd: plan.notionalUsd,
+          netProfitUsd: plan.netProfitUsd,
+          costs: plan.costs,
+          quoteAgeMs: plan.quoteAgeMs,
+          bridge: plan.bridge ?? null,
+        });
+        return;
+      }
+
+      // Live mode is intentionally gated; execution wiring is not provided here.
+      // This prevents the faucet from trading unless you explicitly add an execution adapter.
+      this.state.lastArbitrageDecision = 'ERROR';
+      logger.warn('[FAUCET] Live execution requested but not implemented', {
+        component: 'AutonomousFaucet',
+        symbol: plan.symbol,
+      });
     } catch (error) {
-      this.recordFailure('trade_exception');
+      this.state.lastArbitrageDecision = 'ERROR';
+      this.recordFailure('arbitrage_cycle_exception');
       logger.error('[FAUCET] Trade execution exception', {
         component: 'AutonomousFaucet',
         error: error instanceof Error ? error.message : String(error),
@@ -1982,18 +1926,9 @@ class AutonomousCryptoFaucet {
    * Enhanced with TradingView signal integration
    */
   private async calculateExpectedProfit(): Promise<number> {
-    const spreads = this.marketConditions.spreadOpportunities;
-    
-    // Factor in competition (reduces profit)
-    const competitionFactor = 1 - (this.marketConditions.competitionLevel * TRADE_CONFIG.competitionImpactFactor);
-
-    // Factor in gas costs
-    const gasAdjustment = Math.max(0, 1 - (this.marketConditions.gasEfficiency / TRADE_CONFIG.maxGasCostDivisor));
-    
-    // Factor in TradingView optimization if available
-    const tvMultiplier = this.crawlerOptimization?.aggressiveness ?? 1;
-
-    return spreads * TRADE_CONFIG.avgSpreadProfit * competitionFactor * gasAdjustment * tvMultiplier;
+    // "Real arbitrage": expected profit is the all-in net profit from the last verified plan.
+    // If we have no plan, expected profit is 0.
+    return this.lastArbitragePlan?.netProfitUsd ?? 0;
   }
 
   /**

@@ -73,10 +73,14 @@ class GasOracle {
 
   async getGasPrice(chain: ChainId): Promise<GasPrice> {
     try {
-      const provider = this.providers.get(chain);
-      if (!provider) {
-        throw new Error(`Provider not initialized for ${chain}`);
+      // Lazy provider initialization so callers don't have to remember to call start().
+      // This keeps the faucet/arbitrage verifier deterministic and avoids a "null cheapest chain" trap.
+      if (this.providers.size === 0) {
+        this.initializeProviders();
       }
+
+      const provider = this.providers.get(chain);
+      if (!provider) throw new Error(`Provider not initialized for ${chain}`);
 
       await this.updateNativePrices();
 
