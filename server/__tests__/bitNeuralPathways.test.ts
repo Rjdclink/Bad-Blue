@@ -44,6 +44,8 @@ describe('BitNeuralPathwayManager', () => {
   let manager: BitNeuralPathwayManager;
 
   beforeEach(async () => {
+    // Tests that exercise CRYPTARA must explicitly unlock Stage 8.
+    process.env.CRYPTOCRAWLER_STAGE = '8';
     await shutdownBitNeuralPathways();
     manager = await initializeBitNeuralPathways();
   });

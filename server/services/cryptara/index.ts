@@ -28,6 +28,34 @@ import { createLogger } from '../../logger';
 const log = createLogger('CRYPTARA');
 
 // ============================================================================
+// STAGE GATING (HARD RULE)
+// ============================================================================
+// CRYPTARA must be mute-silent until Stage 8.
+// This means:
+// - No logs, no background loops, no subscriptions, no network calls.
+// - Calls should be safely rejected without side effects.
+function getCryptoCrawlerStage(): number {
+  const raw =
+    process.env.CRYPTOCRAWLER_STAGE ??
+    process.env.CRYPTO_STAGE ??
+    process.env.STAGE ??
+    '0';
+  const n = Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function isCryptaraStageUnlocked(): boolean {
+  return getCryptoCrawlerStage() >= 8;
+}
+
+class CryptaraMutedUntilStage8Error extends Error {
+  readonly code = 'CRYPTARA_SILENT_UNTIL_STAGE_8';
+  constructor() {
+    super('CRYPTARA is silent until Stage 8');
+  }
+}
+
+// ============================================================================
 // STAGE 5 SAFETY GATES (NO BACKGROUND LOOPS)
 // ============================================================================
 //
@@ -195,6 +223,30 @@ export class Cryptara extends EventEmitter {
   private recentPatterns: DetectedPattern[] = [];
   private recentPredictions: MarketPrediction[] = [];
 
+  private silentlyDisable(): void {
+    // Hard requirement: if stage is locked, do not emit logs or events.
+    if (this.surveillanceInterval) {
+      clearInterval(this.surveillanceInterval);
+      this.surveillanceInterval = null;
+    }
+    if (this.simulationInterval) {
+      clearInterval(this.simulationInterval);
+      this.simulationInterval = null;
+    }
+    this.status.isRunning = false;
+    this.status.isSurveillanceActive = false;
+    this.status.faucetStatus = 'idle';
+    this.startTime = null;
+  }
+
+  private assertStageUnlocked(): void {
+    if (!isCryptaraStageUnlocked()) {
+      // Must be side-effect-free and silent.
+      this.silentlyDisable();
+      throw new CryptaraMutedUntilStage8Error();
+    }
+  }
+
   private constructor(config?: Partial<CryptaraConfig>) {
     super();
     
@@ -235,6 +287,12 @@ export class Cryptara extends EventEmitter {
    * Initialize and start CRYPTARA
    */
   async initialize(): Promise<void> {
+    // HARD RULE: mute-silent until Stage 8.
+    if (!isCryptaraStageUnlocked()) {
+      this.silentlyDisable();
+      return;
+    }
+
     if (this.status.isRunning) {
       log.warn('CRYPTARA is already running');
       return;
@@ -393,6 +451,7 @@ export class Cryptara extends EventEmitter {
    * Run Monte Carlo simulation for strategy optimization
    */
   async runMonteCarloSimulation(): Promise<MonteCarloResult> {
+    this.assertStageUnlocked();
     if (!this.status.isRunning) {
       throw new Error('CRYPTARA is not running. Call initialize() first.');
     }
@@ -487,6 +546,7 @@ export class Cryptara extends EventEmitter {
    * Trigger faucet-initiated operations
    */
   async triggerFaucet(operationType: string): Promise<void> {
+    this.assertStageUnlocked();
     if (!this.status.isRunning) {
       throw new Error('CRYPTARA is not running');
     }
@@ -536,6 +596,7 @@ export class Cryptara extends EventEmitter {
    * Analyze sentiment from crypto sources
    */
   async analyzeSentiment(): Promise<SentimentAnalysis> {
+    this.assertStageUnlocked();
     if (!this.status.isRunning) {
       throw new Error('CRYPTARA is not running');
     }
@@ -555,6 +616,16 @@ export class Cryptara extends EventEmitter {
    * Get CRYPTARA status
    */
   getStatus(): CryptaraStatus {
+    if (!isCryptaraStageUnlocked()) {
+      // Must not log; return neutral "not running" status.
+      return {
+        ...this.status,
+        isRunning: false,
+        isSurveillanceActive: false,
+        faucetStatus: 'idle',
+        uptime: 0,
+      };
+    }
     return {
       ...this.status,
       uptime: this.startTime ? Date.now() - this.startTime.getTime() : 0,

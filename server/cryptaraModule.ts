@@ -25,6 +25,20 @@ import {
 const log = createLogger('CRYPTARA');
 
 // ============================================================================
+// STAGE GATING (HARD RULE)
+// ============================================================================
+// CRYPTARA must be mute-silent until Stage 8 (no intervals, no logs, no activity).
+function getCryptoCrawlerStage(): number {
+  const raw =
+    process.env.CRYPTOCRAWLER_STAGE ??
+    process.env.CRYPTO_STAGE ??
+    process.env.STAGE ??
+    '0';
+  const n = Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// ============================================================================
 // CONSTANTS
 // ============================================================================
 
@@ -152,6 +166,12 @@ export class CRYPTARAModule extends EventEmitter {
       return;
     }
 
+    // HARD RULE: mute-silent until Stage 8.
+    // Do not log, do not create timers, do not initialize pathways.
+    if (getCryptoCrawlerStage() < 8) {
+      return;
+    }
+
     log.info('Initializing CRYPTARA (Right Brain Crypto/OSINT Core)...');
 
     // Ensure pathway manager is initialized
@@ -199,6 +219,9 @@ export class CRYPTARAModule extends EventEmitter {
    * Start continuous sandbox boundary monitoring
    */
   private startBoundaryMonitoring(): void {
+    // HARD RULE: mute-silent until Stage 8.
+    if (getCryptoCrawlerStage() < 8) return;
+
     if (this.boundaryCheckInterval) {
       clearInterval(this.boundaryCheckInterval);
     }
@@ -721,7 +744,10 @@ export function getCRYPTARA(): CRYPTARAModule {
 
 export async function initializeCRYPTARA(): Promise<CRYPTARAModule> {
   const cryptara = getCRYPTARA();
-  await cryptara.initialize();
+  // HARD RULE: mute-silent until Stage 8.
+  if (getCryptoCrawlerStage() >= 8) {
+    await cryptara.initialize();
+  }
   return cryptara;
 }
 

@@ -22,6 +22,20 @@ import crypto from 'crypto';
 const log = createLogger('IntegratedBrainArchitecture');
 
 // ============================================================================
+// STAGE GATING (HARD RULE)
+// ============================================================================
+// CRYPTARA must be mute-silent until Stage 8.
+function getCryptoCrawlerStage(): number {
+  const raw =
+    process.env.CRYPTOCRAWLER_STAGE ??
+    process.env.CRYPTO_STAGE ??
+    process.env.STAGE ??
+    '0';
+  const n = Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// ============================================================================
 // CONSTANTS
 // ============================================================================
 
@@ -459,6 +473,11 @@ export class CryptaraRightBrain extends EventEmitter {
    * Initialize CRYPTARA
    */
   async initialize(): Promise<void> {
+    // HARD RULE: mute-silent until Stage 8 (no logs, no activation).
+    if (getCryptoCrawlerStage() < 8) {
+      return;
+    }
+
     log.info('Initializing CRYPTARA (Right Brain) - Crypto & OSINT Intelligence...');
     
     this.state.active = true;
@@ -506,6 +525,11 @@ export class CryptaraRightBrain extends EventEmitter {
     predictions: any[];
     confidence: number;
   }> {
+    // HARD RULE: mute-silent until Stage 8.
+    if (getCryptoCrawlerStage() < 8) {
+      throw new Error('CRYPTARA_SILENT_UNTIL_STAGE_8');
+    }
+
     // DOMAIN ISOLATION CHECK
     if (this.containsLegalData(input)) {
       throw new Error('DOMAIN VIOLATION: CRYPTARA cannot process legal data');

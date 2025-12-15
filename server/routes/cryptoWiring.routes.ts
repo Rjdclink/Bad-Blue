@@ -1,5 +1,5 @@
 import express from 'express';
-import { getCryptara } from '../services/cryptara';
+import { isCryptaraStageUnlocked } from '../services/cryptara';
 import { createLogger } from '../logger';
 
 const log = createLogger('crypto-wiring');
@@ -35,12 +35,14 @@ router.post('/wire-check', async (_req, res) => {
   const noExecution = truthyEnv('NO_EXECUTION');
   const noIntervals = truthyEnv('NO_INTERVALS');
   const cryptaraMode = process.env.CRYPTARA_MODE || 'UNSET';
+  const cryptaraUnlocked = isCryptaraStageUnlocked();
 
   try {
-    // Signal synthesis: on-demand call only (no timers)
-    const cryptara = getCryptara();
-    await cryptara.initialize();
-    const sentiment = await cryptara.analyzeSentiment();
+    // HARD RULE: CRYPTARA is mute-silent until Stage 8.
+    // Stage 5 wire-check must NOT touch CRYPTARA.
+    const sentiment = cryptaraUnlocked
+      ? { suppressed: true, reason: 'Stage 5 wire-check does not invoke CRYPTARA' }
+      : { suppressed: true, reason: 'CRYPTARA_SILENT_UNTIL_STAGE_8' };
 
     // Decision engine: deterministic gate for Stage 5
     const verdict: WireVerdict = (noExecution && noIntervals) ? 'PASS' : 'FAIL';

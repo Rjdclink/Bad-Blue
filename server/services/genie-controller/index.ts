@@ -34,7 +34,7 @@
 import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
 import { Alexara, getAlexara, type LegalResearchRequest, type DocumentGenerationRequest } from '../alexara';
-import { Cryptara, getCryptara, type CryptaraConfig } from '../cryptara';
+import { Cryptara, getCryptara, isCryptaraStageUnlocked } from '../cryptara';
 
 const log = createLogger('4JI-GENIE');
 
@@ -261,11 +261,16 @@ export class GenieController extends EventEmitter {
       this.status.alexaraStatus = 'running';
       log.info('ALEXARA module initialized');
 
-      // Initialize CRYPTARA (Crypto)
-      this.cryptara = getCryptara();
-      await this.cryptara.initialize();
-      this.status.cryptaraStatus = 'running';
-      log.info('CRYPTARA module initialized');
+      // Initialize CRYPTARA (Crypto) - HARD RULE: mute-silent until Stage 8
+      if (isCryptaraStageUnlocked()) {
+        this.cryptara = getCryptara();
+        await this.cryptara.initialize();
+        this.status.cryptaraStatus = 'running';
+        log.info('CRYPTARA module initialized');
+      } else {
+        this.cryptara = null;
+        this.status.cryptaraStatus = 'stopped';
+      }
 
       // Stage 5: no background schedulers/intervals allowed
       if (isNoIntervals()) {
@@ -468,9 +473,11 @@ export class GenieController extends EventEmitter {
    * Cross-domain restrictions removed for enhanced operability
    */
   private async routeToCryptara(request: GenieRequest): Promise<unknown> {
-    if (!this.cryptara) {
-      throw new Error('CRYPTARA is not initialized');
+    // HARD RULE: CRYPTARA is mute-silent until Stage 8
+    if (!isCryptaraStageUnlocked()) {
+      return { error: 'CRYPTARA_SILENT_UNTIL_STAGE_8' };
     }
+    if (!this.cryptara) throw new Error('CRYPTARA is not initialized');
 
     // Cross-domain check disabled for enhanced operability
     // The system now allows flexible routing without blocking legitimate requests

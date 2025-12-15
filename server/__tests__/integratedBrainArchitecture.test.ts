@@ -20,6 +20,8 @@ describe('IntegratedBrainArchitecture', () => {
   let orchestrator: IntegratedBrainOrchestrator;
 
   beforeAll(async () => {
+    // IntegratedBrain tests expect CRYPTARA to initialize; unlock Stage 8.
+    process.env.CRYPTOCRAWLER_STAGE = '8';
     orchestrator = await initializeIntegratedBrain();
   });
 

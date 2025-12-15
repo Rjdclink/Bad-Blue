@@ -1,7 +1,10 @@
 /**
  * STAGE 5 wire-check (offline; no server; no network).
  *
- * Runs: Signals (Cryptara on-demand) -> Decision gate -> Execution stub (no-op).
+ * Runs: Decision gate -> Execution stub (no-op).
+ *
+ * HARD RULE UPDATE:
+ * - CRYPTARA must be mute-silent until Stage 8, so Stage 5 wire-check must NOT invoke it.
  *
  * Constraints:
  * - NO_EXECUTION=true
@@ -29,17 +32,11 @@ async function main(): Promise<void> {
   assert(process.env.NO_INTERVALS === 'true', 'NO_INTERVALS must be true');
   assert(process.env.CRYPTARA_MODE === 'SILENT_WATCHER_ONLY', 'CRYPTARA_MODE must be SILENT_WATCHER_ONLY');
 
-  const { getCryptara } = await import('../server/services/cryptara/index');
-  const cryptara = getCryptara();
-
-  await cryptara.initialize(); // must not create timers due to NO_INTERVALS gate
-  const sentiment = await cryptara.analyzeSentiment();
-
   const decisionPass = process.env.NO_EXECUTION === 'true' && process.env.NO_INTERVALS === 'true';
   const verdict = decisionPass ? 'PASS' : 'FAIL';
 
   // eslint-disable-next-line no-console
-  console.log('✅ Signal:', { type: 'sentiment', timestamp: sentiment?.timestamp ?? null });
+  console.log('✅ Signal:', { suppressed: true, reason: 'CRYPTARA_SILENT_UNTIL_STAGE_8' });
   // eslint-disable-next-line no-console
   console.log('✅ Decision:', {
     verdict,
