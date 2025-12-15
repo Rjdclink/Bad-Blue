@@ -498,33 +498,49 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
     });
   }
   
-  // Execute searches - IMMEDIATE SKIP on failure, no waiting
-  const searchPromises = adapters.map(async (adapter, index) => {
-    const sourceStatus = sources[index];
-    sourceStatus.status = 'searching';
-    const sourceStartTime = Date.now();
-    
-    try {
-      const inmates = await Promise.race([
-        adapter.search(query),
-        new Promise<InmateRecord[]>((_, reject) => 
-          setTimeout(() => reject(new Error('timeout')), SEARCH_TIMEOUT_MS)
-        )
-      ]);
+  // FAIL-FAST WITH RETRY: Try all, skip failures, then retry failed ones
+  const executeWithRetry = async (
+    adapter: DataSourceAdapter, 
+    sourceStatus: SourceSearchStatus,
+    maxRetries: number = 2
+  ): Promise<InmateRecord[]> => {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const attemptStart = Date.now();
+      sourceStatus.status = attempt === 0 ? 'searching' : 'searching';
       
-      sourceStatus.searched = true;
-      sourceStatus.resultsCount = inmates.length;
-      sourceStatus.searchTimeMs = Date.now() - sourceStartTime;
-      sourceStatus.status = 'completed';
-      return inmates;
-    } catch {
-      // IMMEDIATE SKIP - mark as skipped and return empty
-      sourceStatus.searched = true;
-      sourceStatus.searchTimeMs = Date.now() - sourceStartTime;
-      sourceStatus.status = 'error';
-      return []; // Skip immediately
+      try {
+        const inmates = await Promise.race([
+          adapter.search(query),
+          new Promise<InmateRecord[]>((_, reject) => 
+            setTimeout(() => reject(new Error('timeout')), SEARCH_TIMEOUT_MS / (attempt + 1))
+          )
+        ]);
+        
+        sourceStatus.searched = true;
+        sourceStatus.resultsCount = inmates.length;
+        sourceStatus.searchTimeMs = Date.now() - attemptStart;
+        sourceStatus.status = 'completed';
+        return inmates;
+      } catch {
+        // IMMEDIATE SKIP this attempt
+        if (attempt < maxRetries) {
+          // Brief backoff before retry (100ms, 200ms)
+          await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+          continue;
+        }
+        // Final failure - mark and skip
+        sourceStatus.searched = true;
+        sourceStatus.searchTimeMs = Date.now() - attemptStart;
+        sourceStatus.status = 'error';
+        return [];
+      }
     }
-  });
+    return [];
+  };
+
+  const searchPromises = adapters.map((adapter, index) => 
+    executeWithRetry(adapter, sources[index])
+  );
   
   // Wait for all searches with overall timeout
   const overallTimeout = setTimeout(() => {

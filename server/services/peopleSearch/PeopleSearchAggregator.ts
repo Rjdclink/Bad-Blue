@@ -142,72 +142,80 @@ export class PeopleSearchAggregator {
   }
 
   /**
-   * Execute search with retry logic and exponential backoff
+   * Execute single scraper with immediate skip on failure, then retry
+   */
+  private async executeScraperWithRetry(
+    scraper: BaseScraper,
+    query: SearchQuery,
+    page: Page,
+    maxRetries: number = 2
+  ): Promise<PersonRecord[]> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const records = await Promise.race([
+          scraper.search(query, page),
+          new Promise<PersonRecord[]>((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), 10000 / (attempt + 1))
+          )
+        ]);
+        return records;
+      } catch {
+        // IMMEDIATE SKIP this attempt
+        if (attempt < maxRetries) {
+          await this.delay(100 * (attempt + 1)); // Brief backoff
+          continue;
+        }
+        return []; // Final skip
+      }
+    }
+    return [];
+  }
+
+  /**
+   * Execute search with fail-fast + retry pattern
    */
   private async executeSearchWithRetry(query: SearchQuery, retriesLeft: number): Promise<PersonRecord> {
     const startTime = Date.now();
     let browser: Browser | null = null;
     
     try {
-      // Get or create browser from pool
       browser = await this.getBrowser();
       
       const context = await browser.newContext({
         userAgent: this.getRandomUserAgent(),
         viewport: { width: 1920, height: 1080 },
-        // Enhanced stealth settings
         extraHTTPHeaders: {
           'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
         },
       });
 
-      // Create pages for parallel scraping - SQUARED PARALLELIZATION
       const pages = await Promise.all(
         this.scrapers.map(() => context.newPage())
       );
 
-      // Execute all scrapers in parallel with timeout race
-      const timeout = 15000; // 15 second timeout for speed
-      const results = await Promise.race([
-        Promise.allSettled(
-          this.scrapers.map((scraper, index) =>
-            scraper.search(query, pages[index])
-          )
-        ),
-        new Promise<PromiseSettledResult<PersonRecord[]>[]>((resolve) =>
-          setTimeout(() => resolve([]), timeout)
-        ),
-      ]);
+      // FAIL-FAST WITH RETRY: Each scraper retries independently
+      const results = await Promise.all(
+        this.scrapers.map((scraper, index) =>
+          this.executeScraperWithRetry(scraper, query, pages[index])
+        )
+      );
 
-      // Close pages immediately after scraping
+      // Close pages
       await Promise.all(pages.map(page => page.close().catch(() => {})));
 
-      // Filter successful results and flatten
-      const allRecords: PersonRecord[] = [];
-      let successfulSources = 0;
-      
-      results.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-          allRecords.push(...result.value);
-        }
-      });
+      // Flatten results - failed scrapers returned []
+      const allRecords = results.flat();
 
-      // Fuse records with optimized algorithm
       if (allRecords.length === 0) {
         if (retriesLeft > 0) {
-          console.log(`[PeopleSearchAggregator] No records found, retrying... (${retriesLeft} retries left)`);
           await this.delay(HIGH_CAPACITY_CONFIG.retryDelayMs * (HIGH_CAPACITY_CONFIG.maxRetries - retriesLeft + 1));
           return this.executeSearchWithRetry(query, retriesLeft - 1);
         }
-        throw new Error(`No records found from any source after ${HIGH_CAPACITY_CONFIG.maxRetries} attempts`);
+        throw new Error('No records found from any source');
       }
 
-      // Fuse records with confidence weighting
       const fusedRecord = DataFusion.fuseRecords(allRecords);
-      
-      console.log(`[PeopleSearchAggregator] Successfully fused ${allRecords.length} records from ${successfulSources} sources`);
-      
       this.updateMetrics(Date.now() - startTime, true);
       return fusedRecord;
     } catch (error) {

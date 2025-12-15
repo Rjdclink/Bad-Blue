@@ -85,8 +85,8 @@ export class FastPeopleSearchScraper extends BaseScraper {
       }
       
       return records;
-    } catch (error) {
-      console.error('FastPeopleSearch scraper error:', error);
+    } catch {
+      // IMMEDIATE SKIP - let retry logic handle it
       return [];
     }
   }
