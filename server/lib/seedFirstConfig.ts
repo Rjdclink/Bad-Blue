@@ -6,11 +6,11 @@
  * - No dynamic scaling
  */
 
-export const MAX_SEEDS_PER_JOB = 10 as const;
+export const MAX_SEEDS_PER_JOB = 25 as const;
 export const MAX_CRAWLERS_PER_SEED = 4 as const;
 
 // Fixed global timeout per seed.
-export const GLOBAL_SEED_TIMEOUT_MS = 10_000 as const;
+export const GLOBAL_SEED_TIMEOUT_MS = 15_000 as const;
 
 // Content threshold (Firecrawl + Puppeteer success criteria)
 export const MIN_CONTENT_LENGTH = 200 as const;

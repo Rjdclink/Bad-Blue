@@ -3682,7 +3682,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
       }
 
       // PHASE 1 — LOCKED LIMITS (no overrides)
-      // - MAX_SEEDS_PER_JOB = 10
+      // - MAX_SEEDS_PER_JOB = 25
       // - MAX_CRAWLERS_PER_SEED = 4
       // - GLOBAL_SEED_TIMEOUT_MS = fixed
       const rawSeedUrls = Array.isArray((req.body || {}).seedUrls) ? (req.body || {}).seedUrls : [];
