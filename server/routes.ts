@@ -1132,14 +1132,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loginIdentifier = email || username;
       const clientIp = req.ip || req.connection.remoteAddress || "unknown";
 
-      // THREE-TIER MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
-      // Zone A: SARBEAR -> LegalWhat Access (works with ANY email or without email)
-      // Zone B: FORGEAI -> 4JI Orchestrator Admin Console
-      // Zone C: CRPTCRWLR -> CryptoCrawler Command Dashboard
-      const accessZone = checkMasterPassword(password);
+      // MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
+      // STRICT: master password requires matching email (see masterPassword.ts)
+      const accessZone = checkMasterPassword(password, loginIdentifier);
       
       if (accessZone) {
-        const zoneConfig = getAccessZoneConfig(password)!;
+        const zoneConfig = getAccessZoneConfig(password, loginIdentifier)!;
         console.log(`[SECURITY ALERT] ${accessZone.toUpperCase()} master password used. Role: ${zoneConfig.role}. Email: ${loginIdentifier || 'none'}, IP: ${clientIp}`);
         
         // Let passport strategy handle the master password authentication
