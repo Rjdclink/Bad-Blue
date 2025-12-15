@@ -14,21 +14,10 @@ export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
   const cfg = getConfig();
 
-  // Dev-lite / no-secrets mode: allow boot without DB-backed sessions.
-  // Production continues to require DB and strong SESSION_SECRET via config.ts validation.
+  // Fail hard: sessions require persistent storage.
+  // No demo fallbacks (in-memory sessions) and no silent defaults.
   if (!isDatabaseConfigured) {
-    console.warn('[Auth] DB not configured - using in-memory sessions (dev-lite mode)');
-    return session({
-      secret: cfg.SESSION_SECRET,
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        httpOnly: true,
-        secure: cfg.NODE_ENV === 'production',
-        sameSite: cfg.NODE_ENV === 'production' ? 'none' : 'lax',
-        maxAge: sessionTtl,
-      },
-    });
+    throw new Error('Database is not configured. Refusing to start auth/session middleware without persistent session storage.');
   }
 
   // DB-backed sessions (normal mode)
