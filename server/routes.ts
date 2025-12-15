@@ -5027,9 +5027,26 @@ Contact: ${foiaRequest.userEmail || userEmail}
     if (isVerifyRoute) {
       const provided = String(req.header('X-Internal-Verify') || '');
       const secret = String(process.env.INTERNAL_VERIFY_SECRET || '');
-      if (provided && secret && provided === secret) {
-        return next();
-      }
+      if (provided && secret && provided === secret) return next();
+
+      // Diagnostics (no secrets): helps confirm header/env reach runtime.
+      // This ONLY executes for /admin/crypto/verify-* and does not affect any other /admin/crypto/* route.
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Verifier header auth failed',
+        diagnostics: {
+          fullPath,
+          baseUrl: String((req as any).baseUrl || ''),
+          path: String((req as any).path || ''),
+          hasHeader: Boolean(provided),
+          headerLength: provided.length,
+          hasSecret: Boolean(secret),
+          secretLength: secret.length,
+          // Avoid leaking values; provide only a boolean match indicator.
+          matches: Boolean(provided && secret && provided === secret),
+        },
+      });
     }
     
     // STRICT: Check if user is authenticated via passport
