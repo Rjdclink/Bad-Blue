@@ -467,13 +467,14 @@ async function testRiskControls(): Promise<void> {
   // Test 4.1: Circuit Breaker State
   try {
     const cbState = riskGovernor.getCircuitBreakerState();
-    const passed = cbState.status === 'closed' && cbState.failures === 0;
+    // Check status is closed and trigger count is 0 (triggerCount is the correct field name)
+    const passed = cbState.status === 'closed' && cbState.triggerCount === 0;
     
     recordTest(
       'Circuit Breaker Initial State',
       'Risk Controls',
       passed,
-      `Status: ${cbState.status}, Failures: ${cbState.failures}`,
+      `Status: ${cbState.status}, Trigger Count: ${cbState.triggerCount}`,
       Date.now() - start
     );
   } catch (e: any) {
