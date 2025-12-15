@@ -34,9 +34,27 @@ router.post('/', async (req, res) => {
     lastName: req.body?.lastName,
   });
   
+  // Dynamic imports - only loaded on first request, not at module load
+  // Import outside inner try-catch to avoid redundant imports in catch block
+  let peopleSearchProxy: any;
+  let PeopleSearchProxyError: any;
+  
   try {
-    // Dynamic imports - only loaded on first request, not at module load
-    const { peopleSearchProxy, PeopleSearchProxyError, PROXY_ERROR_CODES } = await import('../services/peopleSearchProxy');
+    const proxyModule = await import('../services/peopleSearchProxy');
+    peopleSearchProxy = proxyModule.peopleSearchProxy;
+    PeopleSearchProxyError = proxyModule.PeopleSearchProxyError;
+  } catch (importError) {
+    console.error('[People Search API] Failed to import proxy module:', importError);
+    return res.status(500).json({
+      success: false,
+      error: 'People Search service unavailable',
+      errorCode: 'IMPORT_ERROR',
+      jobCompleted: true,
+      jobStatus: 'failed',
+    });
+  }
+  
+  try {
     const { validatePeopleSearchConfig } = await import('../services/peopleSearch/config');
     
     // Validate configuration on first use (not at module load)
@@ -113,10 +131,7 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('[People Search API] Error:', error);
     
-    // Dynamic import for error type checking
-    const { PeopleSearchProxyError } = await import('../services/peopleSearchProxy');
-    
-    // Use structured error detection via PeopleSearchProxyError
+    // Use the already imported PeopleSearchProxyError for error type checking
     const isProxyError = error instanceof PeopleSearchProxyError;
     const isWorkerError = isProxyError && error.isWorkerError;
     const errorCode = isProxyError ? error.code : 'UNKNOWN_ERROR';
