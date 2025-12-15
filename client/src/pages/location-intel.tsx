@@ -7,24 +7,12 @@ export default function LocationIntelPage() {
   const { data, markers, analyze, isLoading } = useLocationIntelligence();
   const [timelineIndex, setTimelineIndex] = useState(0);
 
-  // PRODUCTION: Real-world analysis only - no hardcoded demo coordinates
-  const isProduction = import.meta.env.PROD || import.meta.env.MODE === 'production';
-  
+  // Analyze real data only
   const handleAnalyze = () => {
-    if (isProduction) {
-      // PRODUCTION: Analyze with empty initial data - will fetch real data from API
-      analyze({
-        imagePaths: [],
-        publicRecords: [],
-      });
-    } else {
-      // DEV: Still no hardcoded locations - must provide real data
-      console.warn('[LocationIntel] Analysis requires real coordinate data');
-      analyze({
-        imagePaths: [],
-        publicRecords: [],
-      });
-    }
+    analyze({
+      imagePaths: [],
+      publicRecords: [],
+    });
   };
 
   const timelineMarkers = data?.timeline[timelineIndex]

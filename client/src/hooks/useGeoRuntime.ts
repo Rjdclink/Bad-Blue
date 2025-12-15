@@ -37,11 +37,6 @@ export interface GeoRuntimeConfig {
   autoFetch: boolean;
   interpolationEnabled: boolean;
   predictiveEnabled: boolean;
-  /**
-   * When true, generates synthetic frames when no data is provided.
-   * Default false to avoid "motion without report" desync.
-   */
-  allowMockData: boolean;
 }
 
 export interface GeoRuntimeState {
@@ -84,7 +79,6 @@ const DEFAULT_CONFIG: GeoRuntimeConfig = {
   autoFetch: true,
   interpolationEnabled: true,
   predictiveEnabled: true,
-  allowMockData: false,
 };
 
 // ============================================================================
@@ -110,50 +104,6 @@ const calculateBearing = (lat1: number, lon1: number, lat2: number, lon2: number
   const y = Math.sin(Δλ) * Math.cos(φ2);
   const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-};
-
-// ============================================================================
-// PRODUCTION MODE: Mock data generation is DISABLED
-// ============================================================================
-// In production, all location data must come from real sources:
-// - Device GPS
-// - EXIF metadata extraction
-// - Public records with explicit coordinates
-// - Verified location APIs
-//
-// Mock/demo data was removed to ensure 100% real-world operations.
-// The system will display an empty state if no real data is available.
-// ============================================================================
-
-/**
- * DISABLED: Mock frame generation
- * 
- * This function has been disabled for production use.
- * Real-world operations require actual coordinate data.
- * 
- * @deprecated Do not use - returns empty array in production
- */
-const generateMockFrames = (
-  _center?: { lat: number; lng: number },
-  _durationMinutes?: number,
-  _intervalSeconds?: number
-): GeoFrame[] => {
-  // PRODUCTION: Mock data is disabled
-  // Return empty array - system must operate on real data only
-  if (import.meta.env.PROD || import.meta.env.MODE === 'production') {
-    console.warn('[GeoRuntime] Mock data generation is disabled in production mode');
-    return [];
-  }
-  
-  // Development only: Allow mock data for testing UI components
-  // This code path should never execute in production builds
-  if (import.meta.env.DEV && import.meta.env.VITE_ALLOW_MOCK_DATA === 'true') {
-    console.warn('[GeoRuntime] DEV MODE: Generating mock data (VITE_ALLOW_MOCK_DATA=true)');
-    // Mock generation code intentionally removed
-    // Developers must set up real test data or use staging environment
-  }
-  
-  return [];
 };
 
 // Generate futurecast predictions
@@ -298,53 +248,36 @@ export function useGeoRuntime(
     });
   }, []);
 
-  // Load data - ALWAYS creates new array
-  // PRODUCTION: Only real-world coordinate data is processed
-  // No mock/demo data generation - system shows empty state without real data
+  // Load data - REAL DATA ONLY
   const loadData = useCallback((points: GPSPoint[]) => {
     setStatus('loading');
     setError(null);
 
-    // PRODUCTION ENFORCEMENT: Check environment
-    const isProduction = import.meta.env.PROD || import.meta.env.MODE === 'production';
-
     try {
-      let newFrames: GeoFrame[];
-      
+      // No data = empty state
       if (points.length === 0) {
-        // PRODUCTION: No data = empty state (no synthetic data)
-        if (isProduction || !cfg.allowMockData) {
-          console.log('[GeoRuntime] No data provided - showing empty state (real-world mode)');
-          setFrames([]);
-          setFuturecastFrames([]);
-          setCurrentIndex(0);
-          setIsPlaying(false);
-          setIsLive(false);
-          setVersion(v => v + 1);
-          setStatus('idle');
-          return;
-        }
-        // DEV ONLY: Mock data generation (disabled by default, requires explicit flag)
-        console.warn('[GeoRuntime] DEV: Mock data requested but generation is disabled');
-        newFrames = generateMockFrames(); // Returns empty array in production
-      } else {
-        newFrames = convertToFrames(points);
+        setFrames([]);
+        setFuturecastFrames([]);
+        setCurrentIndex(0);
+        setIsPlaying(false);
+        setIsLive(false);
+        setVersion(v => v + 1);
+        setStatus('idle');
+        return;
       }
+      
+      // Convert real GPS points to frames
+      let newFrames = convertToFrames(points);
 
       if (newFrames.length === 0) {
-        // PRODUCTION: Empty conversion result = empty state
-        if (isProduction || !cfg.allowMockData) {
-          console.log('[GeoRuntime] No valid frames after conversion - real-world mode');
-          setFrames([]);
-          setFuturecastFrames([]);
-          setCurrentIndex(0);
-          setIsPlaying(false);
-          setIsLive(false);
-          setVersion(v => v + 1);
-          setStatus('idle');
-          return;
-        }
-        newFrames = generateMockFrames(); // Returns empty array in production
+        setFrames([]);
+        setFuturecastFrames([]);
+        setCurrentIndex(0);
+        setIsPlaying(false);
+        setIsLive(false);
+        setVersion(v => v + 1);
+        setStatus('idle');
+        return;
       }
 
       // Limit buffer

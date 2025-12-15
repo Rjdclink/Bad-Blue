@@ -150,39 +150,6 @@ export default function GeoconsoleProcessScreen() {
     }
   }, [inputs, sessionId]);
 
-  // PRODUCTION: Sample data loading is disabled
-  // Real-world operations require actual coordinate data from:
-  // - Device GPS
-  // - EXIF extraction
-  // - Public records
-  // - Verified location APIs
-  const isProduction = import.meta.env.PROD || import.meta.env.MODE === 'production';
-  
-  const loadSampleData = () => {
-    if (isProduction) {
-      // PRODUCTION: No sample/demo data - must use real coordinates
-      console.warn('[GeoConsole] Sample data loading disabled in production mode');
-      alert('Sample data is disabled in production. Please enter real GPS coordinates from verified sources.');
-      return;
-    }
-    
-    // DEV ONLY: Allow sample data for UI testing (but not NYC-specific)
-    console.warn('[GeoConsole] DEV MODE: Loading placeholder data for UI testing');
-    const sampleInputs: GPSInput[] = [
-      {
-        id: crypto.randomUUID(),
-        latitude: '', // Empty - user must enter real data
-        longitude: '',
-        altitude: '',
-        accuracy: '10',
-        timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString().slice(0, 16),
-        source: 'device_gps',
-        confidence: '0.90',
-      },
-    ];
-    setInputs(sampleInputs);
-  };
-
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -209,12 +176,6 @@ export default function GeoconsoleProcessScreen() {
                 GPS Input Points
               </CardTitle>
               <div className="flex gap-2">
-                {/* Sample data button hidden in production - real data only */}
-                {!isProduction && (
-                  <Button variant="outline" size="sm" onClick={loadSampleData} className="opacity-50">
-                    Load Sample (DEV)
-                  </Button>
-                )}
                 <Button variant="outline" size="sm" onClick={addInput}>
                   <Plus className="w-4 h-4 mr-1" />
                   Add Point

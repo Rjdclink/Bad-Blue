@@ -87,37 +87,6 @@ interface ViewState {
   zoom: number;
 }
 
-// ============================================================================
-// PRODUCTION: Demo data is DISABLED
-// ============================================================================
-// In production, all track points must come from real sources:
-// - Device GPS
-// - EXIF extraction
-// - Verified surveillance footage
-// - Public record APIs
-//
-// Demo/fake data generation has been disabled for real-world operations.
-// ============================================================================
-
-/**
- * DISABLED: Fake history generation
- * 
- * @deprecated Do not use in production - returns empty array
- */
-const generateFakeHistory = (): TrackPoint[] => {
-  // PRODUCTION: Demo data is disabled - return empty array
-  const isProduction = typeof import.meta !== 'undefined' && 
-    (import.meta.env?.PROD || import.meta.env?.MODE === 'production');
-  
-  if (isProduction) {
-    console.log('[SPECTRA] Demo data disabled in production - real data only');
-    return [];
-  }
-  
-  // Development mode: Still return empty - developers must use real test data
-  console.warn('[SPECTRA] DEV MODE: No demo data - use real test data or staging API');
-  return [];
-};
 
 // ============================================================================
 // ETHEREAL BACKGROUND
@@ -450,10 +419,9 @@ export default function SpectraPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   
-  // SPECTRA mode
-  // PRODUCTION: Initialize with empty data - real data will be loaded from API
+  // SPECTRA mode - real data only
   const [spectraMode, setSpectraMode] = useState<SpectraMode>('live');
-  const [trackPoints, setTrackPoints] = useState<TrackPoint[]>(generateFakeHistory());
+  const [trackPoints, setTrackPoints] = useState<TrackPoint[]>([]);
   const [selectedPoint, setSelectedPoint] = useState<TrackPoint | null>(null);
   const [showRadar, setShowRadar] = useState(true);
   const [radarMaximized, setRadarMaximized] = useState(false);
