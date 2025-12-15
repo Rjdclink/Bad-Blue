@@ -1,5 +1,6 @@
 import { Wallet, providers, ethers } from 'ethers';
 import logger from '../../../logger.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 
 const { JsonRpcProvider } = providers;
 const { parseEther, parseUnits } = ethers.utils;
@@ -34,7 +35,7 @@ interface GasPrediction {
 }
 
 class UltraLowLatencyExecutor {
-  private wallet: Wallet;
+  private wallet: Wallet | null = null;
   private provider: providers.JsonRpcProvider;
   private preSignedTxPool: PreSignedTx[] = [];
   private currentNonce: number = 0;
@@ -50,14 +51,19 @@ class UltraLowLatencyExecutor {
     this.bloxrouteUrl = process.env.BLOXROUTE_RPC || 'https://mev.api.bloxroute.com';
     
     this.provider = new JsonRpcProvider(this.privateRpcUrl);
-    this.wallet = new Wallet(
-      process.env.PRIVATE_KEY || Wallet.createRandom().privateKey,
-      this.provider
-    );
   }
 
   async initialize(): Promise<void> {
+    // Any initialization here can touch RPC and prepare transactions: treat as execution-adjacent.
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     if (this.initialized) return;
+
+    const pk = process.env.PRIVATE_KEY;
+    if (!pk || pk.trim().length === 0) {
+      // Canonical rule: signer must be loaded only from env and system must hard-fail if missing.
+      throw new Error('Missing PRIVATE_KEY (required for UltraLowLatencyExecutor signer)');
+    }
+    this.wallet = new Wallet(pk.trim(), this.provider);
 
     logger.info('Initializing ultra-low-latency executor...', { 
       component: 'UltraLowLatencyExecutor' 
@@ -104,9 +110,13 @@ class UltraLowLatencyExecutor {
 
   async executeInstant(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
 
     if (!this.initialized) {
       await this.initialize();
+    }
+    if (!this.wallet) {
+      throw new Error('Signer wallet not initialized');
     }
 
     // Find unused pre-signed transaction
@@ -180,6 +190,14 @@ class UltraLowLatencyExecutor {
 
   async executeMultiPath(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
+
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    if (!this.wallet) {
+      throw new Error('Signer wallet not initialized');
+    }
 
     // Prepare transaction
     const tx = {
@@ -236,6 +254,8 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaFlashbots(tx: any): Promise<{ txHash: string; path: string }> {
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
+    if (!this.wallet) throw new Error('Signer wallet not initialized');
     const signedTx = await this.wallet.signTransaction(tx);
     const flashbotsProvider = new JsonRpcProvider(this.flashbotsUrl);
     const response = await flashbotsProvider.sendTransaction(signedTx);
@@ -243,6 +263,8 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitViaBloxroute(tx: any): Promise<{ txHash: string; path: string }> {
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
+    if (!this.wallet) throw new Error('Signer wallet not initialized');
     const signedTx = await this.wallet.signTransaction(tx);
     const bloxrouteProvider = new JsonRpcProvider(this.bloxrouteUrl);
     const response = await bloxrouteProvider.sendTransaction(signedTx);
@@ -250,6 +272,8 @@ class UltraLowLatencyExecutor {
   }
 
   private async submitDirect(tx: any): Promise<{ txHash: string; path: string }> {
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
+    if (!this.wallet) throw new Error('Signer wallet not initialized');
     const signedTx = await this.wallet.signTransaction(tx);
     const response = await this.provider.sendTransaction(signedTx);
     return { txHash: response.hash, path: 'direct' };

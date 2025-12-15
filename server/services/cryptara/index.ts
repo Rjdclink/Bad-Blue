@@ -24,6 +24,9 @@
 
 import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
+import { CryptaraMarketGateEngine } from './marketGates/index.js';
+import type { CryptaraMarketGateConfig, CryptaraMarketGateContext, GateEvaluation } from './marketGates/index.js';
+import { getCryptocrawlGovernance } from '../cryptocrawl/governance/index.js';
 
 const log = createLogger('CRYPTARA');
 
@@ -194,6 +197,7 @@ export class Cryptara extends EventEmitter {
   private startTime: Date | null = null;
   private recentPatterns: DetectedPattern[] = [];
   private recentPredictions: MarketPrediction[] = [];
+  private marketGateEngine = new CryptaraMarketGateEngine();
 
   private constructor(config?: Partial<CryptaraConfig>) {
     super();
@@ -573,6 +577,25 @@ export class Cryptara extends EventEmitter {
    */
   getRecentPredictions(): MarketPrediction[] {
     return [...this.recentPredictions];
+  }
+
+  /**
+   * Cryptara Market Evaluators (advisory gating signals)
+   *
+   * This is analysis-only: it returns a structured gate report, but does not execute anything.
+   * Intended for Cryptocrawl preflight gating (Stages 1–6).
+   */
+  evaluateMarketGates(context: CryptaraMarketGateContext, config?: CryptaraMarketGateConfig): GateEvaluation {
+    const governance = getCryptocrawlGovernance();
+    governance.requireAllowed('ADVISE', { chain: context.chain, pair: context.pairOrSymbol, venue: context.venue });
+    try {
+      const report = this.marketGateEngine.evaluate(context, config);
+      this.emit('gates:evaluated', report);
+      return report;
+    } finally {
+      // Stage 1: auto-pause after each advisory cycle.
+      governance.completeAdvisoryCycle('system', 'cryptara_gates_cycle_complete');
+    }
   }
 
   /**

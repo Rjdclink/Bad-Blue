@@ -49,8 +49,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
-import StageGovernorPanel from "@/components/stage-governor-panel";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getInternalAuthHeaders } from "@/lib/queryClient";
 import { useWallet, formatAddress, getChainName, SUPPORTED_CHAINS } from "@/hooks/useWallet";
 
 /**
@@ -293,6 +292,7 @@ export default function CryptoCrawlerDashboard() {
       const response = await fetch('/api/crypto/stats', {
         method: 'GET',
         credentials: 'include',
+        headers: getInternalAuthHeaders(),
       });
       if (response.ok) {
         const data = await response.json();
@@ -349,6 +349,7 @@ export default function CryptoCrawlerDashboard() {
       const response = await fetch('/api/crypto/history?limit=50', {
         method: 'GET',
         credentials: 'include',
+        headers: getInternalAuthHeaders(),
       });
       if (response.ok) {
         const data = await response.json();
@@ -367,6 +368,7 @@ export default function CryptoCrawlerDashboard() {
       const response = await fetch('/admin/crypto/health', {
         method: 'GET',
         credentials: 'include',
+        headers: getInternalAuthHeaders(),
       });
       if (response.ok) {
         const data = await response.json();
@@ -384,6 +386,7 @@ export default function CryptoCrawlerDashboard() {
       const response = await fetch('/api/crypto/faucet/status', {
         method: 'GET',
         credentials: 'include',
+        headers: getInternalAuthHeaders(),
       });
       if (response.ok) {
         const data = await response.json();
@@ -414,7 +417,7 @@ export default function CryptoCrawlerDashboard() {
     try {
       const response = await fetch('/api/crypto/faucet/toggle', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getInternalAuthHeaders() },
         credentials: 'include',
         body: JSON.stringify({ enabled }),
       });
@@ -465,7 +468,7 @@ export default function CryptoCrawlerDashboard() {
     try {
       await fetch('/api/crypto/faucet/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getInternalAuthHeaders() },
         credentials: 'include',
         body: JSON.stringify(settings),
       });
