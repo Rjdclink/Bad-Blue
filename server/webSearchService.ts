@@ -22,12 +22,8 @@
  * - Legal research: Statutes, case law, code updates
  */
 
-import { GoogleGenAI } from "@google/genai";
-// NOTE: OpenRouter orchestration is intentionally not used for real-world web search
-// unless it is backed by a real web search tool/provider.
+import { canActivatePantheon, pantheonOrchestrator, type CrawlerResult } from './services/pantheonCrawlerOrchestrator';
 
-const BING_API_KEY = process.env.BING_API_KEY || process.env.BING_SEARCH_KEY || '';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 const WEB_SEARCH_ENABLED = process.env.WEB_SEARCH_ENABLED !== 'false';
 
 // Circuit breaker state to prevent constant retries on failing APIs
@@ -38,17 +34,14 @@ interface CircuitBreakerState {
   errorMessage?: string;
 }
 
-const circuitBreaker: Record<string, CircuitBreakerState> = {
-  bing: { failures: 0, lastFailure: 0, disabled: false },
-  gemini: { failures: 0, lastFailure: 0, disabled: false },
-};
+const circuitBreaker: Record<string, CircuitBreakerState> = {};
 
 const MAX_FAILURES = 3;
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown after max failures
 
-function isCircuitOpen(service: 'bing' | 'gemini'): boolean {
+function isCircuitOpen(service: string): boolean {
   const state = circuitBreaker[service];
-  if (!state.disabled) return false;
+  if (!state || !state.disabled) return false;
   
   // Check if cooldown has passed
   if (Date.now() - state.lastFailure > COOLDOWN_MS) {
@@ -61,8 +54,8 @@ function isCircuitOpen(service: 'bing' | 'gemini'): boolean {
   return true;
 }
 
-function recordFailure(service: 'bing' | 'gemini', errorMessage: string) {
-  const state = circuitBreaker[service];
+function recordFailure(service: string, errorMessage: string) {
+  const state = circuitBreaker[service] || (circuitBreaker[service] = { failures: 0, lastFailure: 0, disabled: false });
   state.failures++;
   state.lastFailure = Date.now();
   state.errorMessage = errorMessage;
@@ -73,8 +66,8 @@ function recordFailure(service: 'bing' | 'gemini', errorMessage: string) {
   }
 }
 
-function recordSuccess(service: 'bing' | 'gemini') {
-  const state = circuitBreaker[service];
+function recordSuccess(service: string) {
+  const state = circuitBreaker[service] || (circuitBreaker[service] = { failures: 0, lastFailure: 0, disabled: false });
   state.failures = 0;
   state.disabled = false;
   state.errorMessage = undefined;
@@ -82,13 +75,9 @@ function recordSuccess(service: 'bing' | 'gemini') {
 
 export function getSearchStatus(): Record<string, { available: boolean; error?: string }> {
   return {
-    bing: {
-      available: !!BING_API_KEY && !isCircuitOpen('bing'),
-      error: circuitBreaker.bing.errorMessage,
-    },
-    gemini: {
-      available: !!GEMINI_API_KEY && !isCircuitOpen('gemini'),
-      error: circuitBreaker.gemini.errorMessage,
+    crawler: {
+      available: WEB_SEARCH_ENABLED && canActivatePantheon().available && !isCircuitOpen('pantheon'),
+      error: circuitBreaker.pantheon?.errorMessage,
     },
   };
 }
@@ -140,17 +129,7 @@ export interface OfficerSearchResult {
   dataQuality: number;
 }
 
-let geminiClient: GoogleGenAI | null = null;
-
-function getGeminiClient(): GoogleGenAI {
-  if (!geminiClient && GEMINI_API_KEY) {
-    geminiClient = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-  }
-  if (!geminiClient) {
-    throw new Error('Gemini API not configured');
-  }
-  return geminiClient;
-}
+// CRAWLER-ONLY MODE: no LLM "search" providers here.
 
 /**
  * Search using Bing Web Search API
@@ -159,62 +138,7 @@ export async function bingSearch(
   query: string, 
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  if (!BING_API_KEY) {
-    throw new Error('Bing Web Search not configured (missing BING_API_KEY/BING_SEARCH_KEY)');
-  }
-  if (isCircuitOpen('bing')) {
-    throw new Error('Bing Web Search circuit open (temporarily disabled due to failures)');
-  }
-
-  const controller = new AbortController();
-  const timeoutMs = options.timeout || 20000;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const params = new URLSearchParams();
-    params.set('q', query);
-    params.set('count', String(Math.min(Math.max(options.limit || 10, 1), 50)));
-    if (options.market) params.set('mkt', options.market);
-    if (options.safeSearch) params.set('safeSearch', options.safeSearch);
-    if (options.freshness && options.freshness !== 'all') params.set('freshness', options.freshness);
-
-    const url = `https://api.bing.microsoft.com/v7.0/search?${params.toString()}`;
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Ocp-Apim-Subscription-Key': BING_API_KEY,
-        'User-Agent': 'PANTHEON-WebSearch/1.0',
-        'Accept': 'application/json',
-      },
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Bing Web Search failed: ${res.status} ${res.statusText}${text ? ` - ${text.substring(0, 200)}` : ''}`);
-    }
-
-    const data: any = await res.json();
-    const values: any[] = data?.webPages?.value || [];
-    const results: SearchResult[] = values.map(v => ({
-      title: v?.name || 'Untitled',
-      url: v?.url || '',
-      snippet: v?.snippet || '',
-      source: 'bing',
-      metadata: {
-        displayUrl: v?.displayUrl,
-        dateLastCrawled: v?.dateLastCrawled,
-      },
-    })).filter(r => !!r.url);
-
-    recordSuccess('bing');
-    return results;
-  } catch (error: any) {
-    recordFailure('bing', error?.message || 'Unknown error');
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
+  throw new Error('Bing web search disabled: crawler-only mode is enforced');
 }
 
 /**
@@ -224,62 +148,7 @@ export async function bingNewsSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  if (!BING_API_KEY) {
-    throw new Error('Bing News Search not configured (missing BING_API_KEY/BING_SEARCH_KEY)');
-  }
-  if (isCircuitOpen('bing')) {
-    throw new Error('Bing News Search circuit open (temporarily disabled due to failures)');
-  }
-
-  const controller = new AbortController();
-  const timeoutMs = options.timeout || 20000;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const params = new URLSearchParams();
-    params.set('q', query);
-    params.set('count', String(Math.min(Math.max(options.limit || 10, 1), 50)));
-    if (options.market) params.set('mkt', options.market);
-    if (options.safeSearch) params.set('safeSearch', options.safeSearch);
-    if (options.freshness && options.freshness !== 'all') params.set('freshness', options.freshness);
-
-    const url = `https://api.bing.microsoft.com/v7.0/news/search?${params.toString()}`;
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Ocp-Apim-Subscription-Key': BING_API_KEY,
-        'User-Agent': 'PANTHEON-WebSearch/1.0',
-        'Accept': 'application/json',
-      },
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Bing News Search failed: ${res.status} ${res.statusText}${text ? ` - ${text.substring(0, 200)}` : ''}`);
-    }
-
-    const data: any = await res.json();
-    const values: any[] = data?.value || [];
-    const results: SearchResult[] = values.map(v => ({
-      title: v?.name || 'Untitled',
-      url: v?.url || '',
-      snippet: v?.description || '',
-      source: 'bing',
-      metadata: {
-        provider: v?.provider?.[0]?.name,
-        datePublished: v?.datePublished,
-      },
-    })).filter(r => !!r.url);
-
-    recordSuccess('bing');
-    return results;
-  } catch (error: any) {
-    recordFailure('bing', error?.message || 'Unknown error');
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
+  throw new Error('Bing news search disabled: crawler-only mode is enforced');
 }
 
 /**
@@ -290,91 +159,14 @@ export async function geminiSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<EnhancedSearchResult[]> {
-  if (!GEMINI_API_KEY) throw new Error('Gemini web grounding not configured (missing GEMINI_API_KEY/GOOGLE_API_KEY)');
-  if (isCircuitOpen('gemini')) throw new Error('Gemini web grounding circuit open (temporarily disabled due to failures)');
+  throw new Error('Gemini web search disabled: crawler-only mode is enforced');
 
-  try {
-    const client = getGeminiClient();
-    
-    const prompt = `Search the web for: "${query}"
-    
-Provide comprehensive, accurate information with sources. Focus on:
-- Official government sources (.gov)
-- Verified news sources
-- Public records databases
-- Academic or professional sources
-
-Return detailed findings with specific URLs and facts.`;
-    
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-pro",
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        temperature: 0.1,
-        tools: [{ googleSearch: {} }],
-      },
-    });
-
-    // @google/genai SDK returns .text directly (not .response?.text())
-    const text = response.text || "";
-    const sources: string[] = [];
-
-    try {
-      const candidate = response.candidates?.[0];
-      if (candidate?.groundingMetadata?.groundingChunks) {
-        for (const chunk of candidate.groundingMetadata.groundingChunks) {
-          if ((chunk as any).web?.uri) {
-            sources.push((chunk as any).web.uri);
-          }
-        }
-      }
-    } catch (e) {
-      // Silently handle grounding extraction errors
-    }
-
-    const results: EnhancedSearchResult[] = [];
-    
-    if (sources.length > 0) {
-      for (const url of sources.slice(0, options.limit || 10)) {
-        results.push({
-          title: extractTitleFromUrl(url),
-          url,
-          snippet: '',
-          source: 'gemini',
-          aiSummary: text.substring(0, 500),
-          reliability: url.includes('.gov') ? 'high' : 'medium',
-        });
-      }
-    }
-
-    if (text && results.length === 0) {
-      results.push({
-        title: 'AI Search Summary',
-        url: '',
-        snippet: text.substring(0, 500),
-        source: 'gemini',
-        aiSummary: text,
-        reliability: 'medium',
-      });
-    }
-
-    if (results.length > 0) {
-      recordSuccess('gemini');
-    }
-    return results;
-  } catch (error: any) {
-    recordFailure('gemini', error?.message || 'Unknown error');
-    throw error;
-  }
 }
 
 /**
  * Unified search using OpenRouter 3-model orchestration (PRIMARY)
  * REAL-WORLD MODE:
- * - Prefer Bing Web Search API (real results)
- * - Fallback to Gemini with Google Search grounding tool (real results)
- *
- * NOTE: LLM-only "web search" (no real search tool) is not considered a real-world provider.
+ * - CRAWLER ONLY: uses PANTHEON crawler orchestrator to pull from predefined sources.
  */
 export async function unifiedSearch(
   query: string,
@@ -384,24 +176,59 @@ export async function unifiedSearch(
     throw new Error('Web search disabled (WEB_SEARCH_ENABLED=false)');
   }
 
-  // Primary: Bing Web Search API (real search results)
-  if (BING_API_KEY && !isCircuitOpen('bing')) {
-    const bingResults = await bingSearch(query, options);
-    return bingResults.map(r => ({
-      ...r,
-      reliability: determineReliability(r.url),
-      extractedFacts: [],
-    }));
+  // Basic circuit breaker for crawler failures
+  if (isCircuitOpen('pantheon')) {
+    throw new Error('PANTHEON crawler circuit open (temporarily disabled due to failures)');
   }
 
-  // Fallback: Gemini grounding (real search tool)
-  if (GEMINI_API_KEY && !isCircuitOpen('gemini')) {
-    const geminiResults = await geminiSearch(query, options);
-    return geminiResults.slice(0, options.limit || 20);
+  const pantheonAvailability = canActivatePantheon();
+  if (!pantheonAvailability.available) {
+    throw new Error(pantheonAvailability.reason || 'PANTHEON crawler unavailable');
   }
 
-  // Fail closed: no real providers configured
-  throw new Error('No real web search providers available (configure BING_API_KEY or GEMINI_API_KEY)');
+  try {
+    await pantheonOrchestrator.initialize();
+
+    const crawlerResults: CrawlerResult[] = await pantheonOrchestrator.search([query], {
+      depth: 2,
+      // Keep this to crawlers that are designed for general discovery.
+      // (Avoid SixDegrees unless explicitly needed to prevent noise.)
+      crawlers: ['startrek', 'birdofprey'],
+      maxResultsPerCrawler: Math.min(options.limit || 10, 25),
+      timeout: options.timeout || 20000,
+      stealth: true,
+    });
+
+    recordSuccess('pantheon');
+
+    if (!crawlerResults || crawlerResults.length === 0) return [];
+
+    // Convert and lightly normalize/deduplicate by URL when present
+    const mapped = crawlerResults.map((r, idx) => {
+      const url = (r.metadata as any)?.url || (r.metadata as any)?.sourceUrl || '';
+      return {
+        title: (r.metadata as any)?.title || `${r.crawler.toUpperCase()} Result ${idx + 1}`,
+        url,
+        snippet: (r.content || '').slice(0, 500),
+        source: 'combined' as const,
+        aiSummary: r.content,
+        reliability: r.confidence >= 0.85 ? 'high' : r.confidence >= 0.7 ? 'medium' : 'low',
+        relevanceScore: Math.round((r.confidence || 0) * 100),
+        metadata: r.metadata,
+      };
+    });
+
+    const seen = new Set<string>();
+    return mapped.filter((r) => {
+      const key = r.url ? r.url : `${r.title}:${r.snippet}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  } catch (error: any) {
+    recordFailure('pantheon', error?.message || 'Unknown error');
+    throw error;
+  }
 }
 
 /**
@@ -669,8 +496,8 @@ export function isWebSearchAvailable(): {
   return {
     // LLM-only OpenRouter is not treated as real-world web search here.
     openrouter: false,
-    gemini: !!GEMINI_API_KEY && !isCircuitOpen('gemini'),
-    any: (WEB_SEARCH_ENABLED && !!BING_API_KEY && !isCircuitOpen('bing')) || (WEB_SEARCH_ENABLED && !!GEMINI_API_KEY && !isCircuitOpen('gemini')),
+    gemini: false,
+    any: WEB_SEARCH_ENABLED && canActivatePantheon().available,
   };
 }
 
@@ -707,6 +534,7 @@ export class EnhancedWebSearchService {
 
     const dorks = advancedSearch.generatePersonDorks(name, options);
     const results: any[] = [];
+    let lastFatalError: Error | null = null;
 
     // Execute searches sequentially with rate limiting
     const dorkLimit = options?.maxDorks || this.maxDorks;
@@ -724,8 +552,18 @@ export class EnhancedWebSearchService {
           });
         }
       } catch (error) {
+        const msg = String((error as any)?.message || error);
+        // Fail closed for upstream-unavailable conditions (do not silently return "no results").
+        if (msg.includes('PANTHEON') || msg.includes('crawler') || msg.includes('system lock')) {
+          lastFatalError = error as Error;
+          break;
+        }
         console.error(`Dork search failed for: ${dork}`, error);
       }
+    }
+
+    if (results.length === 0 && lastFatalError) {
+      throw lastFatalError;
     }
 
     // Cache for 6 hours
@@ -795,9 +633,8 @@ export class EnhancedWebSearchService {
 export const enhancedWebSearch = new EnhancedWebSearchService();
 
 console.log('[Web Search Service] Initialized:', {
-  openRouterWebSearch: isOpenRouterWebSearchAvailable(),
-  geminiGroundingFallback: !!GEMINI_API_KEY,
-  bingDeprecated: true, // Marked as deprecated
+  mode: 'crawler-only',
+  pantheonAvailable: canActivatePantheon().available,
 });
 
 /**

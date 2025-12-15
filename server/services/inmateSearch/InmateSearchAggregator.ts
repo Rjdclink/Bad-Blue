@@ -222,6 +222,15 @@ function getEnvFlag(name: string, defaultValue: boolean): boolean {
 const INMATE_ENABLE_STATE_DOC = getEnvFlag('INMATE_ENABLE_STATE_DOC', false);
 const INMATE_ENABLE_VINE = getEnvFlag('INMATE_ENABLE_VINE', false);
 
+function normalizeSex(value: unknown): 'Male' | 'Female' | 'Unknown' | undefined {
+  if (value == null) return undefined;
+  const v = String(value).trim().toLowerCase();
+  if (!v) return undefined;
+  if (v === 'm' || v === 'male') return 'Male';
+  if (v === 'f' || v === 'female') return 'Female';
+  return 'Unknown';
+}
+
 type BopApiResponse = {
   Captcha?: boolean;
   Messages?: any;
@@ -357,7 +366,7 @@ const BOPAdapter: DataSourceAdapter = {
           custodyStatus: custodyStatus as any,
           releaseDate: actRelDate || projRelDate || undefined,
           age: typeof inmate.age === 'string' ? Number(inmate.age) || undefined : inmate.age,
-          sex: inmate.sex,
+          sex: normalizeSex(inmate.sex),
           race: inmate.race,
           charges: [],
           confidence: 95,
