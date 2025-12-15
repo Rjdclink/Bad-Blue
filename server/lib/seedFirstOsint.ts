@@ -8,8 +8,6 @@
  * - Controlled responses (no throwing to UI)
  * - Minimal logging (seed used, crawl started/finished, items found; rejected URLs logged once)
  */
-import crypto from 'node:crypto';
-
 export type SeedType = 'profile_url' | 'domain_homepage' | 'platform_handle';
 
 export interface SeedDecision {
@@ -18,7 +16,6 @@ export interface SeedDecision {
   rejected: { input: string; reason: string }[];
 }
 
-const LOGGED_REJECTIONS = new Set<string>();
 const SEED_METRICS = { total: 0, success: 0 };
 
 const TRACKING_PARAMS = new Set([
@@ -26,13 +23,6 @@ const TRACKING_PARAMS = new Set([
   'gclid', 'fbclid', 'msclkid', 'igshid', 'mc_cid', 'mc_eid',
   'ref', 'ref_src', 'source', 'mkt_tok',
 ]);
-
-function logRejectedOnce(input: string, reason: string) {
-  const key = crypto.createHash('sha256').update(`${input}::${reason}`).digest('hex').slice(0, 16);
-  if (LOGGED_REJECTIONS.has(key)) return;
-  LOGGED_REJECTIONS.add(key);
-  console.warn('[OSINT] URL rejected', { input, reason });
-}
 
 function isSafeHttpProtocol(protocol: string): boolean {
   return protocol === 'http:' || protocol === 'https:';
@@ -123,7 +113,6 @@ export function deriveSeedFromRequest(input: {
     const res = sanitizeUrlStrict(String(input.profileUrl));
     if (!res.ok) {
       rejected.push({ input: String(input.profileUrl), reason: res.reason });
-      logRejectedOnce(String(input.profileUrl), res.reason);
       return { seedUrl: null, seedType: null, rejected };
     }
     return { seedUrl: res.normalized, seedType: 'profile_url', rejected };
@@ -134,7 +123,6 @@ export function deriveSeedFromRequest(input: {
     const res = sanitizeDomainHomepage(String(input.domain));
     if (!res.ok) {
       rejected.push({ input: String(input.domain), reason: res.reason });
-      logRejectedOnce(String(input.domain), res.reason);
       return { seedUrl: null, seedType: null, rejected };
     }
     return { seedUrl: res.normalized, seedType: 'domain_homepage', rejected };
@@ -155,7 +143,6 @@ export function deriveSeedFromRequest(input: {
 
   if (matches.length > 1) {
     rejected.push({ input: haystack, reason: 'Multiple platform handles provided; expected exactly one' });
-    logRejectedOnce(haystack, 'Multiple platform handles provided; expected exactly one');
     return { seedUrl: null, seedType: null, rejected };
   }
 
@@ -171,13 +158,11 @@ export function deriveSeedFromRequest(input: {
             : null;
     if (!mapped) {
       rejected.push({ input: `${platform}:${handle}`, reason: 'Unsupported platform' });
-      logRejectedOnce(`${platform}:${handle}`, 'Unsupported platform');
       return { seedUrl: null, seedType: null, rejected };
     }
     const res = sanitizeUrlStrict(mapped);
     if (!res.ok) {
       rejected.push({ input: mapped, reason: res.reason });
-      logRejectedOnce(mapped, res.reason);
       return { seedUrl: null, seedType: null, rejected };
     }
     return { seedUrl: res.normalized, seedType: 'platform_handle', rejected };
@@ -196,104 +181,54 @@ export interface CrawlExtract {
   itemsFound: number;
 }
 
-function stripHtmlToText(html: string): string {
-  // Remove script/style/noscript blocks
-  const noScripts = html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, ' ');
-  // Remove tags
-  const text = noScripts.replace(/<\/?[^>]+>/g, ' ');
-  // Collapse whitespace
-  return text.replace(/\s+/g, ' ').trim();
-}
+export async function crawlSeedOnceWithCrawlers(seedUrl: string, timeoutMs = 10_000): Promise<{
+  ok: boolean;
+  extract: CrawlExtract;
+  attempts: Array<{ crawlerName: string; status: 'success' | 'fail' | 'timeout'; durationMs: number }>;
+}> {
+  const startedAt = Date.now();
+  const attempts: Array<{ crawlerName: string; status: 'success' | 'fail' | 'timeout'; durationMs: number }> = [];
 
-function uniq<T>(arr: T[]): T[] {
-  return Array.from(new Set(arr));
-}
+  const { SEED_FIRST_CRAWLERS } = await import('../services/crawlers/seedFirstCrawlerSet.ts');
 
-export async function crawlSeedOnce(seedUrl: string, timeoutMs = 10_000): Promise<CrawlExtract> {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
+  for (const crawler of SEED_FIRST_CRAWLERS) {
+    const elapsed = Date.now() - startedAt;
+    const remaining = timeoutMs - elapsed;
+    if (remaining <= 0) break;
 
-  try {
-    // No redirect chains (manual redirect handling)
-    const res = await fetch(seedUrl, {
-      redirect: 'manual',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'LegalWhat-SeedFirst/1.0 (+seed-first)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.1',
-      },
-    });
+    const perCrawlerTimeout = Math.max(1, Math.floor(remaining));
+    const cStart = Date.now();
+    let status: 'success' | 'fail' | 'timeout' = 'fail';
 
-    if (res.status >= 300 && res.status < 400) {
-      // No fallback chains: do not follow redirects.
-      return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0 };
-    }
-    if (!res.ok) {
-      return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0 };
-    }
+    try {
+      const result = await crawler.crawlSeed(seedUrl, perCrawlerTimeout);
+      status = result.timedOut ? 'timeout' : result.itemsFound > 0 ? 'success' : 'fail';
+      attempts.push({ crawlerName: crawler.name, status, durationMs: Date.now() - cStart });
+      console.log('[OSINT]', { seed: seedUrl, crawlerName: crawler.name, status, durationMs: Date.now() - cStart });
 
-    const contentType = res.headers.get('content-type') || '';
-    const raw = await res.text();
-    const titleMatch = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    const title = titleMatch ? stripHtmlToText(titleMatch[1]).slice(0, 120) : undefined;
-
-    const text = contentType.includes('html') ? stripHtmlToText(raw) : raw.trim();
-    const snippet = text.slice(0, 800);
-
-    // Basic extraction (no external services, no geocoding)
-    const emails = uniq((text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || []).slice(0, 20));
-    const phones = uniq((text.match(/(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g) || []).slice(0, 20));
-    const coords = uniq((text.match(/-?\d{1,2}\.\d+\s*,\s*-?\d{1,3}\.\d+/g) || []).slice(0, 20))
-      .map((s) => {
-        const m = s.match(/(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/);
-        if (!m) return null;
-        const lat = Number(m[1]);
-        const lng = Number(m[2]);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-        if (lat < -90 || lat > 90) return null;
-        if (lng < -180 || lng > 180) return null;
-        return { lat, lng };
-      })
-      .filter((x): x is { lat: number; lng: number } => !!x);
-
-    // Extract same-host links only from HTML (no cross-site hopping).
-    const linksRaw = (raw.match(/href\s*=\s*["']([^"']+)["']/gi) || []).slice(0, 200);
-    const links: string[] = [];
-    const seedHost = new URL(seedUrl).host;
-    for (const entry of linksRaw) {
-      const m = entry.match(/href\s*=\s*["']([^"']+)["']/i);
-      if (!m) continue;
-      const href = m[1];
-      if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) continue;
-      try {
-        const u = new URL(href, seedUrl);
-        if (u.host !== seedHost) continue; // no cross-site
-        // sanitize link strictly, but do not crawl them (just report)
-        const s = sanitizeUrlStrict(u.toString());
-        if (s.ok) links.push(s.normalized);
-      } catch {
-        // ignore
+      if (status === 'success') {
+        const extract: CrawlExtract = {
+          title: result.title,
+          textSnippet: result.textSnippet,
+          emails: result.emails,
+          phones: result.phones,
+          links: result.links,
+          coordinates: result.coordinates,
+          itemsFound: result.itemsFound,
+        };
+        recordSeedOutcome(extract.itemsFound);
+        return { ok: true, extract, attempts };
       }
+    } catch {
+      attempts.push({ crawlerName: crawler.name, status: 'fail', durationMs: Date.now() - cStart });
+      console.log('[OSINT]', { seed: seedUrl, crawlerName: crawler.name, status: 'fail', durationMs: Date.now() - cStart });
+      continue;
     }
-
-    const itemsFound = emails.length + phones.length + coords.length + (title ? 1 : 0) + (snippet ? 1 : 0);
-    return {
-      title,
-      textSnippet: snippet || undefined,
-      emails,
-      phones,
-      links: uniq(links).slice(0, 25),
-      coordinates: coords.slice(0, 10),
-      itemsFound,
-    };
-  } catch {
-    return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0 };
-  } finally {
-    clearTimeout(t);
   }
+
+  const extract: CrawlExtract = { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0 };
+  recordSeedOutcome(0);
+  return { ok: false, extract, attempts };
 }
 
 export function recordSeedOutcome(itemsFound: number) {

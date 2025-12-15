@@ -3646,11 +3646,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
         });
         reportId = initialReport.id;
       }
-      const { deriveSeedFromRequest, crawlSeedOnce, recordSeedOutcome, getSeedSuccessRate, sanitizeUrlStrict } = await import('./lib/seedFirstOsint');
-
-      const allowedSeedCounts = new Set([1, 5, 9]);
-      const maxSeedsRaw = Number(process.env.OSINT_MAX_SEEDS || 1);
-      const maxSeeds: number = allowedSeedCounts.has(maxSeedsRaw) ? maxSeedsRaw : 1;
+      const { deriveSeedFromRequest, crawlSeedOnceWithCrawlers } = await import('./lib/seedFirstOsint');
 
       const seedDecision = deriveSeedFromRequest({
         profileUrl,
@@ -3658,13 +3654,6 @@ Contact: ${foiaRequest.userEmail || userEmail}
         name,
         location,
         department,
-      });
-
-      // Logging: seed used (only)
-      console.log('[OSINT] Seed used', {
-        correlationId,
-        seedType: seedDecision.seedType,
-        seedUrl: seedDecision.seedUrl,
       });
 
       if (!seedDecision.seedUrl || !seedDecision.seedType) {
@@ -3689,30 +3678,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
         });
       }
 
-      // Optional additional seeds (explicit, sequential only; never parallel).
-      // Increment gradually via OSINT_MAX_SEEDS=1|5|9 once stable.
-      const extraSeedUrls = Array.isArray((req.body || {}).seedUrls) ? (req.body || {}).seedUrls : [];
-      const candidateSeeds: string[] = [seedDecision.seedUrl];
-      for (const raw of extraSeedUrls.slice(0, 50)) {
-        const s = sanitizeUrlStrict(String(raw || ''));
-        if (s.ok) candidateSeeds.push(s.normalized);
-      }
-      const seeds = Array.from(new Set(candidateSeeds)).slice(0, maxSeeds);
-
-      let extract: any = null;
-      let usedSeedUrl: string = seedDecision.seedUrl;
-      for (const seedUrl of seeds) {
-        usedSeedUrl = seedUrl;
-        // ONE-PASS CRAWL: exactly one pass, 10s hard limit, no fallbacks
-        console.log('[OSINT] Crawl started', { correlationId, seedUrl });
-        extract = await crawlSeedOnce(seedUrl, 10_000);
-        console.log('[OSINT] Crawl finished', { correlationId, seedUrl });
-        console.log('[OSINT] Items found', { correlationId, itemsFound: extract.itemsFound });
-        recordSeedOutcome(extract.itemsFound || 0);
-
-        // RESULT GATING: emit partial results immediately if any content is extracted.
-        if (extract.itemsFound) break;
-      }
+      // One seed → one bounded attempt (global cap 10s; sequential crawler fallback inside).
+      const crawl = await crawlSeedOnceWithCrawlers(seedDecision.seedUrl, 10_000);
+      const extract = crawl.extract;
 
       const processingTimeMs = Date.now() - startTime;
 
@@ -3729,11 +3697,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
           },
           meta: {
             correlationId,
-            seedUrl: usedSeedUrl,
+            seedUrl: seedDecision.seedUrl,
             seedType: seedDecision.seedType,
             itemsFound: 0,
             durationMs: processingTimeMs,
-            seedStats: getSeedSuccessRate(),
+            attempts: crawl.attempts,
           },
         });
       }
@@ -3760,7 +3728,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
           {
             name: 'Seed-first Crawl',
             data: {
-              seedUrl: usedSeedUrl,
+              seedUrl: seedDecision.seedUrl,
               seedType: seedDecision.seedType,
               links: extract.links,
             },
@@ -3779,17 +3747,16 @@ Contact: ${foiaRequest.userEmail || userEmail}
         data: report,
         meta: {
           correlationId,
-          seedUrl: usedSeedUrl,
+          seedUrl: seedDecision.seedUrl,
           seedType: seedDecision.seedType,
           itemsFound: extract.itemsFound,
           durationMs: processingTimeMs,
-          seedStats: getSeedSuccessRate(),
+          attempts: crawl.attempts,
         },
       });
     } catch (error: any) {
       // UI UNBLOCK: never surface errors; map to controlled empty-state.
-      console.warn('[OSINT] Search failed (mapped to empty-state)', { correlationId, error: error?.message });
-
+      // Logging is intentionally suppressed here per seed-first spec (no stacks, no verbose errors).
       // Update report with error if we have a report ID
       if (reportId && userId) {
         await storage.updatePeopleSearchReportStatus(
