@@ -39,7 +39,26 @@ async function runStage1E2E({ executablePath }) {
   const port = Number(process.env.PORT || 5010);
   const baseUrl = `http://localhost:${port}`;
 
-  console.log(`\n🔧 Starting LegalWhat dev server on ${baseUrl} (dev-lite mode)...`);
+  console.log(`\n🔧 Starting LegalWhat dev server on ${baseUrl}...`);
+
+  // Fail fast: no demo fallbacks. Require explicit secrets/credentials.
+  const requiredEnv = [
+    'SESSION_SECRET',
+    // One of these must be set for DB-backed storage/sessions:
+    // SUPABASE_DATABASE_URL / SUPABASE_DB_URL / DATABASE_URL
+  ];
+  for (const key of requiredEnv) {
+    if (!process.env[key] || String(process.env[key]).trim().length === 0) {
+      throw new Error(`Missing required env var: ${key}`);
+    }
+  }
+  const hasDb =
+    !!String(process.env.SUPABASE_DATABASE_URL || '').trim() ||
+    !!String(process.env.SUPABASE_DB_URL || '').trim() ||
+    !!String(process.env.DATABASE_URL || '').trim();
+  if (!hasDb) {
+    throw new Error('Missing database configuration: set SUPABASE_DATABASE_URL (or SUPABASE_DB_URL / DATABASE_URL)');
+  }
 
   // Spawn "npm run dev" and let this script own lifecycle.
   const serverProc = spawn('npm', ['run', 'dev'], {
@@ -48,9 +67,6 @@ async function runStage1E2E({ executablePath }) {
       ...process.env,
       PORT: String(port),
       NODE_ENV: 'development',
-      LEGALWHAT_DEV_LITE: '1',
-      // Ensure stable sessions even in dev-lite mode.
-      SESSION_SECRET: process.env.SESSION_SECRET || 'dev-session-secret-legalwhat-000000000000',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -103,8 +119,13 @@ async function runStage1E2E({ executablePath }) {
       // -----------------------
       console.log('\n▶ Login');
       await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle2' });
-      await page.type('#login-email', 'rjdclink@outlook.com', { delay: 10 });
-      await page.type('#login-password', 'SARBEAR', { delay: 10 });
+      const loginEmail = String(process.env.LEGALWHAT_E2E_EMAIL || '').trim();
+      const loginPassword = String(process.env.LEGALWHAT_E2E_PASSWORD || '').trim();
+      if (!loginEmail || !loginPassword) {
+        throw new Error('Missing E2E credentials: set LEGALWHAT_E2E_EMAIL and LEGALWHAT_E2E_PASSWORD');
+      }
+      await page.type('#login-email', loginEmail, { delay: 10 });
+      await page.type('#login-password', loginPassword, { delay: 10 });
       // Click the actual submit button (avoid the "Login" tab trigger).
       await page.click('button[type="submit"]');
 

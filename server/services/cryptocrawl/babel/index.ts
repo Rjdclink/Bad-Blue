@@ -17,36 +17,49 @@
 // Tower of Babel - Dimensional Interference Engine
 export {
   TowerOfBabel,
+  TOWER_CONFIG,
+} from './tower-of-babel.js';
+
+export type {
   MeaningLayers,
   DimensionalLadder,
   ScramblingResult,
   EntitySignature,
-  TOWER_CONFIG,
 } from './tower-of-babel.js';
 
 // Crawler Fingerprint - Unique Identity System
 export {
   CrawlerFingerprintEngine,
+  FINGERPRINT_CONFIG,
+} from './crawler-fingerprint.js';
+
+export type {
   CrawlerFingerprint,
   FingerprintComponents,
   VerificationResult,
-  FINGERPRINT_CONFIG,
 } from './crawler-fingerprint.js';
 
 // Light Language - Universal Communication
 export {
   LightLanguageEngine,
+  LIGHT_LANGUAGE_CONFIG,
+} from './light-language.js';
+
+export type {
   CrawlerDialect,
   DialectWord,
   GrammarRule,
   LightMessage,
   DialectMessage,
-  LIGHT_LANGUAGE_CONFIG,
 } from './light-language.js';
 
 // TradingView Integration - Technical Analysis
 export {
   TradingViewEngine,
+  TRADINGVIEW_CONFIG,
+} from './tradingview-integration.js';
+
+export type {
   TechnicalAnalysis,
   TradingSignal,
   TechnicalIndicator,
@@ -54,12 +67,15 @@ export {
   MovingAverages,
   CrawlerOptimization,
   PivotLevels,
-  TRADINGVIEW_CONFIG,
 } from './tradingview-integration.js';
 
 // Cain Reasoning - Dimensional Parallel Adaptive Reasoning
 export {
   CainReasoningEngine,
+  REASONING_CONFIG,
+} from './cain-reasoning.js';
+
+export type {
   ReasoningDimension,
   DimensionState,
   ReasoningConclusion,
@@ -72,7 +88,6 @@ export {
   SecurityProofType,
   CainReasoningState,
   ReasoningContext,
-  REASONING_CONFIG,
 } from './cain-reasoning.js';
 
 // Import for initialization functions

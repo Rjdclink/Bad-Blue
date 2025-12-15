@@ -1800,4 +1800,13 @@ class DevLiteStorage {
   [key: string]: any;
 }
 
-export const storage: any = isDatabaseConfigured ? new DatabaseStorage() : new DevLiteStorage();
+// Fail hard: production-grade runtime requires a configured database.
+// No demo/dev-lite storage fallbacks and no silent defaults.
+export const storage: any = (() => {
+  if (!isDatabaseConfigured) {
+    throw new Error(
+      'Database is not configured. Refusing to start without persistent storage (set SUPABASE_DATABASE_URL / SUPABASE_DB_URL / DATABASE_URL).'
+    );
+  }
+  return new DatabaseStorage();
+})();

@@ -5,17 +5,29 @@
  * Configure credentials via environment variables:
  * - CRYPTOCRAWL_EMAIL: Admin email address
  * - CRYPTOCRAWL_PASSWORD: Admin password
+ * 
+ * NOTE: Auth credentials are OPTIONAL. If not set:
+ * - Server will boot normally
+ * - Auth-protected crypto routes will return 503 (service unavailable)
+ * - Core system, dashboard, and other APIs will continue to function
  */
 
 import crypto from 'crypto';
 
-// Authentication credentials from environment variables (required in production)
-// CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD must be set via Railway environment variables
+// Authentication credentials from environment variables (OPTIONAL)
+// When not configured, auth-protected features will be disabled but server will run
 const MASTER_EMAIL = process.env.CRYPTOCRAWL_EMAIL;
 const MASTER_PASSWORD = process.env.CRYPTOCRAWL_PASSWORD;
 
-if (!MASTER_EMAIL || !MASTER_PASSWORD) {
-  console.warn('[CryptoCrawl Auth] CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD must be set in environment variables');
+// Export auth configuration status for route handlers to check
+export const isAuthConfigured = Boolean(MASTER_EMAIL && MASTER_PASSWORD);
+
+// Log auth status on module load (one-time informational message)
+if (!isAuthConfigured) {
+  console.log('[CryptoCrawl Auth] Auth credentials not configured - auth-protected routes will be disabled');
+  console.log('[CryptoCrawl Auth] Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD to enable authentication');
+} else {
+  console.log('[CryptoCrawl Auth] ✓ Authentication configured');
 }
 
 const MASTER_PASSWORD_HASH = MASTER_PASSWORD
@@ -27,6 +39,14 @@ export interface AuthResult {
   token?: string;
   expiresAt?: number;
   error?: string;
+}
+
+/**
+ * Whether CryptoCrawl password auth is configured.
+ * If false, auth-protected features should be considered disabled (server should still boot).
+ */
+export function isCryptoCrawlAuthConfigured(): boolean {
+  return Boolean(MASTER_EMAIL && MASTER_PASSWORD_HASH);
 }
 
 // Active sessions stored in memory (in production, use Redis or similar)
@@ -163,6 +183,18 @@ function cleanupExpiredSessions(): void {
  * Middleware for Express routes that require authentication
  */
 export function requireCryptoCrawlAuth(req: any, res: any, next: any): void {
+  // If auth is not configured, do not crash or block server boot.
+  // Keep the feature locked and return a clear "disabled" response.
+  if (!isCryptoCrawlAuthConfigured()) {
+    res.status(503).json({
+      success: false,
+      error: 'CryptoCrawl auth is not configured',
+      message:
+        'Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD to enable auth-protected CryptoCrawl routes.',
+    });
+    return;
+  }
+
   const authHeader = req.headers.authorization;
   
   // Check for Bearer token
@@ -203,5 +235,6 @@ export default {
   revokeSession,
   getSessionInfo,
   requireCryptoCrawlAuth,
-  checkPassword
+  checkPassword,
+  isAuthConfigured
 };
