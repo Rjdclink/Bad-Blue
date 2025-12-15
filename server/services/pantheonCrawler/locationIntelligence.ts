@@ -349,8 +349,6 @@ export class LocationIntelligenceService {
    * @returns Array of location pings from Instagram posts
    */
   async scrapeInstagramLocations(username: string): Promise<LocationPing[]> {
-    const locations: LocationPing[] = [];
-    
     try {
       // Validate username
       if (!username || typeof username !== 'string' || username.trim().length === 0) {
@@ -368,28 +366,16 @@ export class LocationIntelligenceService {
       await this.rateLimit('instagram');
       
       logger.info(`[LocationIntel] Instagram scrape initiated for ${sanitizedUsername}`);
-      
-      // Note: This is a foundation for Instagram scraping
-      // Full implementation would require:
-      // 1. Fetch Instagram profile page (public web view)
-      // 2. Parse JSON embedded in HTML (window._sharedData or __additionalDataLoaded)
-      // 3. Extract posts with location tags
-      // 4. For each location:
-      //    - Get coordinates from Instagram location database or
-      //    - Use reverse geocoding for location names
-      //    - Extract timestamp from post
-      //    - Calculate confidence based on data quality
-      // 5. Return sorted by timestamp (newest first)
-      
-      // Placeholder warning
-      logger.warn('[LocationIntel] Instagram scraping requires full implementation with Puppeteer/Playwright');
-      
+
+      // Fail closed: do not pretend to have scraped locations when no real scraper exists.
+      // A real implementation must use a sanctioned API or a jurisdictionally-appropriate scraper.
+      throw new Error('Instagram location scraping not implemented');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`[LocationIntel] Instagram scrape failed for ${username}:`, errorMessage);
     }
-    
-    return locations;
+
+    return [];
   }
   
   /**
