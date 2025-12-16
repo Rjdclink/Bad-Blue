@@ -6,7 +6,7 @@
  * This prevents restart loops on Railway deployment.
  */
 
-import { chromium, type Browser, type Page } from 'playwright';
+import type { Browser, Page } from 'playwright';
 
 interface BrowserValidationResult {
   success: boolean;
@@ -56,6 +56,9 @@ export async function validateBrowserInstallation(): Promise<BrowserValidationRe
   for (let attempt = 1; attempt <= BROWSER_VALIDATION_CONFIG.maxRetries; attempt++) {
     try {
       console.log(`[PlaywrightValidator] Browser validation attempt ${attempt}/${BROWSER_VALIDATION_CONFIG.maxRetries}...`);
+
+      // DEFERRED IMPORT: Only loads playwright when this function is invoked
+      const { chromium } = await import('playwright');
 
       const browser = await chromium.launch({
         headless: true,
