@@ -8,7 +8,7 @@
 //
 // This ensures no globals, no assumptions, and fail-hard if misconfigured.
 //
-import type { Express, Request, Response, RequestHandler, Router } from "express";
+import express, { type Express, type Request, type Response, type RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
 import crypto from 'crypto';
@@ -175,6 +175,9 @@ const {
   contactMessages,
   documentCreatorSessions,
 } = schema;
+
+// Feature flags
+const PEOPLE_SEARCH_ENABLED = String(process.env.PEOPLE_SEARCH_ENABLED || '').toLowerCase() === 'true';
 
 // Multer setup for file uploads (single consolidated instance)
 const upload = multer({
@@ -875,20 +878,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupFMIRoutes(app); // F.M.I. - Forensic Media Intelligence
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
   setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
-
-  // Lazy-load People Search routes to avoid importing Playwright/Chromium on startup
-  let peopleSearchRouter: Router | null = null;
-  app.use('/api/people-search', async (req, res, next) => {
-    try {
-      if (!peopleSearchRouter) {
-        peopleSearchRouter = (await import('./routes/peopleSearch.routes')).default;
-      }
-      return peopleSearchRouter(req, res, next);
-    } catch (error) {
-      return next(error);
-    }
-  });
-  console.log('[MOUNT] People Search mounted at: /api/people-search');
+  if (PEOPLE_SEARCH_ENABLED) {
+    const peopleSearchRoutes = (await import('./routes/peopleSearch.routes')).default;
+    app.use('/api/people-search', peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
+    console.log('[MOUNT] People Search mounted at: /api/people-search');
+  } else {
+    app.use('/api/people-search', (_req, res) => {
+      res.status(503).json({
+        success: false,
+        message: 'People search is disabled. Set PEOPLE_SEARCH_ENABLED=true to enable this feature.',
+      });
+    });
+    console.log('[MOUNT] People Search disabled via PEOPLE_SEARCH_ENABLED flag');
+  }
   
   // ============================================
   // AUTH & SUBSCRIPTION ROUTES (Phase 3)
