@@ -362,13 +362,49 @@ export class PeopleSearchAggregator {
   
   /**
    * Execute HTTP-only search without browser
-   * Uses native fetch to scrape public data sources
+   * Uses ExtractorRouter with Tier 0 (HTTP) → Tier 1 (ZenRows) escalation
    */
   private async executeHttpOnlySearch(query: SearchQuery, _retriesLeft: number): Promise<PersonRecord> {
-    console.log('[PeopleSearch] HTTP-only mode: searching without browser');
+    console.log('[PeopleSearch] HTTP-only mode: using ExtractorRouter (Tier 0 → Tier 1)');
     
-    // For now, return a basic record structure
-    // In production, this would use HTTP fetch with HTML parsing
+    // Dynamic import - lazy-load extractor on first HTTP search
+    const { ExtractorRouter } = await import('./extractor');
+    const router = new ExtractorRouter();
+    
+    // Build search URLs for each source
+    const searchUrls = [
+      `https://www.fastpeoplesearch.com/name/${query.firstName.toLowerCase()}-${query.lastName.toLowerCase()}`,
+      `https://www.truepeoplesearch.com/results?name=${encodeURIComponent(query.firstName)}%20${encodeURIComponent(query.lastName)}`,
+      `https://www.whitepages.com/name/${encodeURIComponent(query.firstName)}-${encodeURIComponent(query.lastName)}`,
+    ];
+    
+    // Extract from all sources in parallel using ExtractorRouter
+    const results = await Promise.allSettled(
+      searchUrls.map(url => router.extract(url, {
+        extractTitle: true,
+        extractMainText: true,
+        extractLinks: true,
+        extractMetadata: true,
+      }))
+    );
+    
+    // Collect successful extractions
+    const extractions = results
+      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+      .map(r => r.value);
+    
+    if (extractions.length === 0) {
+      console.warn('[PeopleSearch] All HTTP extractions failed');
+    } else {
+      console.log(`[PeopleSearch] HTTP extraction successful: ${extractions.length}/${searchUrls.length} sources`);
+      extractions.forEach(e => {
+        console.log(`  - Tier: ${e.tier}, Provider: ${e.provider}, NeedsRender: ${e.needsRender}`);
+      });
+    }
+    
+    // Build basic PersonRecord from extracted data
+    // NOTE: This is a simplified extraction. Full implementation would parse
+    // HTML structures specific to each source (addresses, phones, etc.)
     const basicRecord: PersonRecord = {
       fullName: `${query.firstName} ${query.lastName}`,
       firstName: query.firstName,
@@ -380,15 +416,16 @@ export class PeopleSearchAggregator {
       emails: [],
       relatives: [],
       associates: [],
-      sources: ['HTTP-only mode'],
+      sources: extractions.map(e => `${e.provider}:${e.tier}`),
       lastUpdated: new Date(),
-      confidence: 0.3, // Low confidence for HTTP-only
+      confidence: extractions.length > 0 ? 0.6 : 0.3,
     };
     
-    // TODO: Implement actual HTTP-based scraping using fetch + cheerio
-    // This would parse HTML responses without browser execution
-    // Retry logic would be added here when HTTP scraping is fully implemented
-    console.warn('[PeopleSearch] HTTP-only mode returns basic structure - full HTTP scraping not yet implemented');
+    // TODO: Parse extracted HTML to populate addresses, phones, etc.
+    // For now, just attach metadata as a reference
+    if (extractions.length > 0 && extractions[0].metadata) {
+      console.log('[PeopleSearch] Sample metadata:', extractions[0].metadata);
+    }
     
     return basicRecord;
   }
