@@ -12,8 +12,6 @@ import { createLogger } from '../logger';
 import {
   stageGovernor,
   riskGovernor,
-  getGovernanceStatus,
-  GLOBAL_RULES,
   type UnpauseRequest,
   type StageNumber,
 } from '../services/cryptocrawl/governance';
@@ -24,28 +22,6 @@ const router = express.Router();
 // ============================================================================
 // STATUS ENDPOINTS
 // ============================================================================
-
-/**
- * GET /api/governance/status
- * Get comprehensive governance system status
- */
-router.get('/status', async (_req, res) => {
-  try {
-    const status = getGovernanceStatus();
-    
-    res.json({
-      success: true,
-      data: status,
-      timestamp: Date.now(),
-    });
-  } catch (error: any) {
-    log.error('Failed to get governance status', { error: error?.message });
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to get governance status',
-    });
-  }
-});
 
 /**
  * GET /api/governance/stage
