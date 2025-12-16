@@ -1,5 +1,16 @@
-// Criminal Records Aggregator - Main Orchestrator
-import { chromium, type Page, type Browser } from 'playwright';
+/**
+ * Criminal Records Aggregator - Main Orchestrator
+ * 
+ * ARCHITECTURE: Browser-Free at Module Load
+ * - Playwright/chromium is imported DYNAMICALLY inside search(), not at module load
+ * - App boots successfully even if Playwright/Chromium is unavailable
+ * - Browser mode failures only affect individual requests, not server stability
+ * 
+ * NO TOP-LEVEL SIDE EFFECTS:
+ * - No browser imports at module scope
+ * - No validation or initialization at load time
+ * - All heavy operations deferred to first invocation
+ */
 import type { CriminalSearchQuery, CriminalRecord } from './types';
 import { StateCourtScraper } from './sources/StateCourtScraper';
 import { CountyCourtScraper } from './sources/CountyCourtScraper';
@@ -8,6 +19,35 @@ import { SexOffenderRegistryScraper } from './sources/SexOffenderRegistryScraper
 import { WarrantDatabaseScraper } from './sources/WarrantDatabaseScraper';
 import { CriminalRecordsFusion } from './fusion/CriminalRecordsFusion';
 import { LegacyCriminalRecordsCache } from './cache/LegacyCriminalRecordsCache';
+
+// Type-only imports (these don't trigger module execution)
+import type { Page, Browser } from 'playwright';
+
+// Dynamic import cache - populated on first use, NOT at module load
+let chromiumModule: typeof import('playwright') | null = null;
+let browserAvailable: boolean | null = null;
+
+/**
+ * Check if browser mode is available (dynamic, lazy check)
+ * Returns false if Playwright/Chromium cannot be loaded
+ */
+async function isBrowserAvailable(): Promise<boolean> {
+  if (browserAvailable !== null) {
+    return browserAvailable;
+  }
+  
+  try {
+    chromiumModule = await import('playwright');
+    browserAvailable = true;
+    console.log('[CriminalRecords] Browser mode available (Playwright loaded dynamically)');
+    return true;
+  } catch (error: any) {
+    browserAvailable = false;
+    console.warn('[CriminalRecords] Browser mode unavailable:', error.message);
+    console.warn('[CriminalRecords] Criminal records search will return "browser mode unavailable" error');
+    return false;
+  }
+}
 
 export class CriminalRecordsAggregator {
   private cache: LegacyCriminalRecordsCache;
@@ -33,12 +73,21 @@ export class CriminalRecordsAggregator {
       return cached;
     }
 
+    // Check if browser mode is available (dynamic import happens here)
+    const canUseBrowser = await isBrowserAvailable();
+    if (!canUseBrowser || !chromiumModule) {
+      throw new Error(
+        'Criminal records search browser mode unavailable. ' +
+        'Playwright/Chromium is not installed or cannot be loaded. ' +
+        'This does not affect other server functionality.'
+      );
+    }
+
     let browser: Browser | null = null;
-    let page: Page | null = null;
 
     try {
-      // Launch stealth browser
-      browser = await chromium.launch({
+      // Launch stealth browser (using dynamically imported chromium)
+      browser = await chromiumModule.chromium.launch({
         headless: true,
         args: [
           '--no-sandbox',
