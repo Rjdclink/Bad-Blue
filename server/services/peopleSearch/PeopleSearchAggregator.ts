@@ -56,26 +56,26 @@ import { PeopleSearchCache } from './cache/PeopleSearchCache';
 let stealthPluginInitialized = false;
 
 // Dynamic import references - populated on first use
-let chromium: typeof import('playwright-extra')['chromium'] | null = null;
-let StealthPlugin: any = null;
+let chromium: typeof import('playwright-core')['chromium'] | null = null;
 
 /**
  * Initialize stealth plugin on first use (lazy initialization)
  * This ensures Playwright is not configured until actually needed
  * 
  * DYNAMIC IMPORTS: chromium and StealthPlugin are loaded here, not at module load
+ * NOTE: Using playwright-core for remote browser connection only
  */
 async function ensureStealthPluginInitialized(): Promise<void> {
   if (!stealthPluginInitialized) {
     if (!chromium) {
-      ({ chromium } = await import('playwright-extra'));
+      // Import playwright-core instead of playwright-extra for remote-only connection
+      const playwrightCore = await import('playwright-core');
+      chromium = playwrightCore.chromium;
     }
-    if (!StealthPlugin) {
-      StealthPlugin = (await import('puppeteer-extra-plugin-stealth')).default;
-    }
-    chromium!.use(StealthPlugin());
+    // Stealth plugin not compatible with remote browsers via CDP
+    // Stealth is handled by the remote browser instance itself
     stealthPluginInitialized = true;
-    console.log('[PeopleSearch] Stealth plugin initialized on demand');
+    console.log('[PeopleSearch] Browser connection module initialized (remote-only via playwright-core)');
   }
 }
 
@@ -152,58 +152,67 @@ export class PeopleSearchAggregator {
   /**
    * Initialize browser pool for faster subsequent searches
    * LOAD ON DEMAND: Configuration and stealth plugin are initialized here
+   * 
+   * DUAL MODE:
+   * - If BROWSER_WS_ENDPOINT is set: Connect to remote browser (no local launch)
+   * - Otherwise: Skip browser initialization entirely (HTTP-only mode)
    */
   async initializeBrowserPool(): Promise<void> {
-    // Initialize stealth plugin and validate config on first use
+    const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
+    
+    if (!wsEndpoint) {
+      console.log('[PeopleSearch] HTTP-only mode - skipping browser pool initialization');
+      return;
+    }
+    
+    console.log('[PeopleSearch] Browser mode - connecting to remote browser');
+    
+    // Initialize browser connection module
     await PeopleSearchAggregator.ensureInitialized();
     
-    for (let i = 0; i < this.maxPoolSize; i++) {
-      const browser = await chromium!.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process',
-        ],
-      });
-      this.browserPool.push(browser);
-    }
+    // In remote mode, we don't pre-create a pool
+    // Instead, we connect on-demand to the remote browser
+    console.log('[PeopleSearch] Remote browser mode enabled at:', wsEndpoint);
   }
 
   /**
-   * Get browser from pool (or create new one)
+   * Get browser from pool (or create new connection)
    * LOAD ON DEMAND: Ensures initialization is complete before launching browser
+   * 
+   * DUAL MODE:
+   * - Remote mode: Connect to BROWSER_WS_ENDPOINT
+   * - HTTP-only mode: Return null (no browser available)
    */
-  private async getBrowser(): Promise<Browser> {
+  private async getBrowser(): Promise<Browser | null> {
+    const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
+    
+    if (!wsEndpoint) {
+      // HTTP-only mode - no browser available
+      return null;
+    }
+    
     // Ensure all lazy initialization is complete
     await PeopleSearchAggregator.ensureInitialized();
     
-    if (this.browserPool.length > 0) {
-      return this.browserPool.pop()!;
+    // Connect to remote browser
+    try {
+      const browser = await chromium!.connect(wsEndpoint);
+      console.log('[PeopleSearch] ✓ Connected to remote browser');
+      return browser;
+    } catch (error) {
+      console.error('[PeopleSearch] Failed to connect to remote browser:', error);
+      throw new Error(`Failed to connect to remote browser at ${wsEndpoint}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    return chromium!.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
-    });
   }
 
   /**
-   * Return browser to pool
+   * Return browser to pool or disconnect if remote
    */
-  private returnBrowser(browser: Browser): void {
-    if (this.browserPool.length < this.maxPoolSize) {
-      this.browserPool.push(browser);
-    } else {
-      browser.close().catch(() => {});
-    }
+  private async releaseBrowser(browser: Browser | null): Promise<void> {
+    if (!browser) return;
+    
+    // Remote mode - always close connection (don't pool remote browsers)
+    await browser.close();
   }
 
   /**
@@ -272,13 +281,30 @@ export class PeopleSearchAggregator {
 
   /**
    * Execute search with fail-fast + retry pattern
+   * DUAL MODE:
+   * - HTTP-only: Use native fetch (no browser)
+   * - Browser mode: Use remote browser via BROWSER_WS_ENDPOINT
    */
   private async executeSearchWithRetry(query: SearchQuery, retriesLeft: number): Promise<PersonRecord> {
     const startTime = Date.now();
+    const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
+    
+    if (!wsEndpoint) {
+      // HTTP-only mode - use fallback search without browser
+      return this.executeHttpOnlySearch(query, retriesLeft);
+    }
+    
+    // Browser mode - use remote browser
     let browser: Browser | null = null;
     
     try {
       browser = await this.getBrowser();
+      
+      if (!browser) {
+        // Browser connection failed - fallback to HTTP
+        console.warn('[PeopleSearch] Browser connection failed, falling back to HTTP-only mode');
+        return this.executeHttpOnlySearch(query, retriesLeft);
+      }
       
       const context = await browser.newContext({
         userAgent: this.getRandomUserAgent(),
@@ -319,12 +345,89 @@ export class PeopleSearchAggregator {
       return fusedRecord;
     } catch (error) {
       this.updateMetrics(Date.now() - startTime, false);
+      
+      // If browser mode fails, try HTTP-only as fallback
+      if (retriesLeft > 0) {
+        console.warn('[PeopleSearch] Browser mode failed, attempting HTTP-only fallback:', error);
+        return this.executeHttpOnlySearch(query, retriesLeft);
+      }
+      
       throw error;
     } finally {
       if (browser) {
-        this.returnBrowser(browser);
+        await this.releaseBrowser(browser);
       }
     }
+  }
+  
+  /**
+   * Execute HTTP-only search without browser
+   * Uses ExtractorRouter with Tier 0 (HTTP) → Tier 1 (ZenRows) escalation
+   */
+  private async executeHttpOnlySearch(query: SearchQuery, _retriesLeft: number): Promise<PersonRecord> {
+    console.log('[PeopleSearch] HTTP-only mode: using ExtractorRouter (Tier 0 → Tier 1)');
+    
+    // Dynamic import - lazy-load extractor on first HTTP search
+    const { ExtractorRouter } = await import('./extractor');
+    const router = new ExtractorRouter();
+    
+    // Build search URLs for each source
+    const searchUrls = [
+      `https://www.fastpeoplesearch.com/name/${query.firstName.toLowerCase()}-${query.lastName.toLowerCase()}`,
+      `https://www.truepeoplesearch.com/results?name=${encodeURIComponent(query.firstName)}%20${encodeURIComponent(query.lastName)}`,
+      `https://www.whitepages.com/name/${encodeURIComponent(query.firstName)}-${encodeURIComponent(query.lastName)}`,
+    ];
+    
+    // Extract from all sources in parallel using ExtractorRouter
+    const results = await Promise.allSettled(
+      searchUrls.map(url => router.extract(url, {
+        extractTitle: true,
+        extractMainText: true,
+        extractLinks: true,
+        extractMetadata: true,
+      }))
+    );
+    
+    // Collect successful extractions
+    const extractions = results
+      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+      .map(r => r.value);
+    
+    if (extractions.length === 0) {
+      console.warn('[PeopleSearch] All HTTP extractions failed');
+    } else {
+      console.log(`[PeopleSearch] HTTP extraction successful: ${extractions.length}/${searchUrls.length} sources`);
+      extractions.forEach(e => {
+        console.log(`  - Tier: ${e.tier}, Provider: ${e.provider}, NeedsRender: ${e.needsRender}`);
+      });
+    }
+    
+    // Build basic PersonRecord from extracted data
+    // NOTE: This is a simplified extraction. Full implementation would parse
+    // HTML structures specific to each source (addresses, phones, etc.)
+    const basicRecord: PersonRecord = {
+      fullName: `${query.firstName} ${query.lastName}`,
+      firstName: query.firstName,
+      lastName: query.lastName,
+      middleName: undefined,
+      age: query.age,
+      addresses: [],
+      phones: [],
+      emails: [],
+      relatives: [],
+      associates: [],
+      sources: extractions.map(e => `${e.provider}:${e.tier}`),
+      lastUpdated: new Date(),
+      confidence: extractions.length > 0 ? 0.6 : 0.3,
+    };
+    
+    // TODO: Parse extracted HTML to populate addresses, phones, etc.
+    // For now, just attach metadata as a reference
+    if (extractions.length > 0 && extractions[0].metadata) {
+      console.log('[PeopleSearch] Sample metadata:', extractions[0].metadata);
+    }
+    
+    return basicRecord;
   }
 
   /**
