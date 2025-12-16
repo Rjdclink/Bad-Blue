@@ -130,7 +130,7 @@ async function testGovernanceSystem(): Promise<void> {
   // Test 1.5: Comprehensive Governance Status
   start = Date.now();
   try {
-    const status = getGovernanceStatus();
+    const status = getGovernanceState();
     const passed = status.stage.current === 1 && 
                    status.safety.killSwitchArmed === true && 
                    status.safety.evolutionLock === true;
