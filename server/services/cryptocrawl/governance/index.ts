@@ -16,7 +16,11 @@ export * from './risk-governor';
 export * from './kill-switch';
 export * from './composer-interface';
 export * from './profit-ladder';
-
+export * from './getCrytocrawlGovernance;
+export * from './getGovernancestatus;
+export * from './stageGovenor;
+export * from './GLOBAL_RULES;
+  
 import { stageManager } from './stage-management';
 import { riskGovernor } from './risk-governor';
 import { killSwitch } from './kill-switch';
