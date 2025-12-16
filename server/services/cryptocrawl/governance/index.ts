@@ -16,8 +16,8 @@ export * from './risk-governor';
 export * from './kill-switch';
 export * from './composer-interface';
 export * from './profit-ladder';
-export * from './getGovernance;
-export * from './stageGovenor;
+export * from './governance';
+export * from './stage-governor';
 
   
 import { stageManager } from './stage-management';
