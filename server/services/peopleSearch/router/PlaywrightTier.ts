@@ -501,7 +501,9 @@ export class PlaywrightProvider {
     // No remote browser - fail with clear message
     throw new Error(
       'BROWSER_WS_ENDPOINT not set. People Search browser mode requires a remote browser connection. ' +
-      'Set BROWSER_WS_ENDPOINT to the CDP endpoint of a remote browser instance.'
+      'Set BROWSER_WS_ENDPOINT to the CDP endpoint of a remote browser instance.\n' +
+      'Example: wss://chrome.browserless.io?token=YOUR_TOKEN\n' +
+      'See PEOPLE_SEARCH_ARCHITECTURE.md for configuration guide.'
     );
   }
   

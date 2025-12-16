@@ -57,7 +57,6 @@ let stealthPluginInitialized = false;
 
 // Dynamic import references - populated on first use
 let chromium: typeof import('playwright-core')['chromium'] | null = null;
-let StealthPlugin: any = null;
 
 /**
  * Initialize stealth plugin on first use (lazy initialization)
@@ -212,15 +211,8 @@ export class PeopleSearchAggregator {
   private async releaseBrowser(browser: Browser | null): Promise<void> {
     if (!browser) return;
     
-    const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
-    
-    if (wsEndpoint) {
-      // Remote mode - close connection (don't keep in pool)
-      await browser.close();
-    } else {
-      // Local mode would return to pool, but we don't support local mode anymore
-      await browser.close();
-    }
+    // Remote mode - always close connection (don't pool remote browsers)
+    await browser.close();
   }
 
   /**
@@ -372,7 +364,7 @@ export class PeopleSearchAggregator {
    * Execute HTTP-only search without browser
    * Uses native fetch to scrape public data sources
    */
-  private async executeHttpOnlySearch(query: SearchQuery, retriesLeft: number): Promise<PersonRecord> {
+  private async executeHttpOnlySearch(query: SearchQuery, _retriesLeft: number): Promise<PersonRecord> {
     console.log('[PeopleSearch] HTTP-only mode: searching without browser');
     
     // For now, return a basic record structure
@@ -395,6 +387,7 @@ export class PeopleSearchAggregator {
     
     // TODO: Implement actual HTTP-based scraping using fetch + cheerio
     // This would parse HTML responses without browser execution
+    // Retry logic would be added here when HTTP scraping is fully implemented
     console.warn('[PeopleSearch] HTTP-only mode returns basic structure - full HTTP scraping not yet implemented');
     
     return basicRecord;
