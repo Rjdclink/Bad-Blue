@@ -1,24 +1,16 @@
 /**
  * Extractor Router
  * 
- * Phase 3 (Updated): Deterministic, observable extraction with PhantomDecision records
+ * Phase 2 (Updated): Decision point that selects extraction tier per URL
  * Tier 0 (HTTP) → Tier 1 (API Discovery) → Tier 2 (Remote Render) escalation
  * 
- * Enforces "Tier 0/1 first" gate: Tier 2 only if explicit escalation eligibility
+ * Includes deterministic scoring system for tier selection
  * NO SIDE EFFECTS AT MODULE LOAD - import-safe
  */
 
 import { HttpProvider } from './HttpProvider';
 import { ApiDiscoveryProvider } from './ApiDiscoveryProvider';
 import { ZenRowsProvider } from './ZenRowsProvider';
-import { getPhantomConfig, type PhantomConfig } from './PhantomConfig';
-import {
-  createPhantomDecision,
-  logPhantomDecision,
-  isEscalationEligible,
-  PhantomReasonCode,
-  type PhantomDecision,
-} from './PhantomDecision';
 import type {
   ExtractorProvider,
   ExtractionRules,
@@ -100,7 +92,7 @@ export interface ExtractorConfig {
 }
 
 /**
- * Extraction result with router metadata and PhantomDecision
+ * Extraction result with router metadata
  */
 export interface ExtractionResult extends ExtractedData {
   /** Which tier was used */
@@ -114,38 +106,26 @@ export interface ExtractionResult extends ExtractedData {
   
   /** Total time (ms) */
   totalTimeMs: number;
-  
-  /** PhantomDecision record (Phase 3) */
-  phantomDecision: PhantomDecision;
 }
 
 /**
- * Extractor Router - selects appropriate extraction tier with PhantomDecision tracking
+ * Extractor Router - selects appropriate extraction tier with scoring
  */
 export class ExtractorRouter {
   private tier0Provider: HttpProvider;
   private tier1Provider: ApiDiscoveryProvider;
   private tier2Provider: ZenRowsProvider | null = null;
   private config: ExtractorConfig;
-  private phantomConfig: PhantomConfig;
   
   constructor(config: ExtractorConfig = {}) {
-    // Load Phantom configuration
-    this.phantomConfig = getPhantomConfig();
-    
     this.config = {
       enableApiDiscovery: true, // Always enable Tier 1 (no dependencies)
       enableRemoteRender: Boolean(process.env.ZENROWS_API_KEY),
-      tier0Timeout: this.phantomConfig.timeouts.tier0,
-      tier1Timeout: this.phantomConfig.timeouts.tier1,
-      tier2Timeout: this.phantomConfig.timeouts.tier2,
+      tier0Timeout: 15000,
+      tier1Timeout: 10000,
+      tier2Timeout: 30000,
       ...config,
     };
-    
-    // Enforce no local browsers constraint
-    if (this.phantomConfig.noLocalBrowsers) {
-      this.enforceNoLocalBrowsers();
-    }
     
     // Always initialize Tier 0 and Tier 1 (no dependencies)
     this.tier0Provider = new HttpProvider();
@@ -158,46 +138,11 @@ export class ExtractorRouter {
   }
   
   /**
-   * Enforce no local browsers constraint
-   * Phase 3: Hard constraint that fails if violated
-   */
-  private enforceNoLocalBrowsers(): void {
-    // Check for local browser environment variables
-    const localBrowserPaths = [
-      process.env.PLAYWRIGHT_BROWSERS_PATH,
-      process.env.PUPPETEER_EXECUTABLE_PATH,
-    ];
-    
-    for (const path of localBrowserPaths) {
-      if (path && !path.includes('remote') && !path.includes('ws://') && !path.includes('wss://')) {
-        throw new Error(
-          `[PhantomConfig] VIOLATION: Local browser path detected: ${path}. ` +
-          `Phantom requires noLocalBrowsers=true. Use remote browser via BROWSER_WS_ENDPOINT or ZENROWS_API_KEY.`
-        );
-      }
-    }
-  }
-  
-  /**
-   * Phase 3: On-demand execution path
-   * Called at request-time only, never at startup
-   */
-  async resolve(url: string, rules?: ExtractionRules): Promise<ExtractionResult> {
-    return this.extract(url, rules);
-  }
-  
-  /**
-   * Extract data from URL using tiered approach with PhantomDecision tracking
-   * Phase 3: Enforces "Tier 0/1 first" gate - Tier 2 only if escalation eligible
-   * Tier 0 → Tier 1 (if API endpoints found) → Tier 2 (if escalation eligible)
+   * Extract data from URL using tiered approach with scoring
+   * Tier 0 → Tier 1 (if API endpoints found) → Tier 2 (if needs render)
    */
   async extract(url: string, rules?: ExtractionRules): Promise<ExtractionResult> {
     const startTime = Date.now();
-    const tierPath: number[] = [];
-    let bytesDownloaded = 0;
-    let tier0ReasonCode: PhantomReasonCode | null = null;
-    let tier1ReasonCode: PhantomReasonCode | null = null;
-    
     const extractionRules: ExtractionRules = {
       extractTitle: true,
       extractMainText: true,
@@ -209,69 +154,17 @@ export class ExtractorRouter {
     };
     
     // Step 1: Always try Tier 0 (HTTP + parsing)
-    tierPath.push(0);
     const tier0Result = await this.tryTier0(url, extractionRules);
-    bytesDownloaded += tier0Result.bytesDownloaded || 0;
-    
-    // Determine Tier 0 reason code
-    if (!tier0Result.needsRender) {
-      tier0ReasonCode = PhantomReasonCode.T0_OK;
-      
-      // Success with Tier 0
-      const decision = createPhantomDecision({
-        url,
-        chosenTier: 0,
-        reasonCode: tier0ReasonCode,
-        elapsedMs: Date.now() - startTime,
-        bytesDownloaded,
-        success: true,
-        tierPath,
-      });
-      
-      logPhantomDecision(decision);
-      
-      return {
-        ...tier0Result,
-        tier: ExtractionTier.HTTP_ONLY,
-        provider: this.tier0Provider.name,
-        decision: {
-          tier: ExtractionTier.HTTP_ONLY,
-          reason: 'Plain HTML, no rendering needed',
-          provider: this.tier0Provider.name,
-          score: this.calculateScore(url, { needsJsRendering: false }),
-        },
-        totalTimeMs: Date.now() - startTime,
-        phantomDecision: decision,
-      };
-    }
-    
-    tier0ReasonCode = PhantomReasonCode.T0_JS_REQUIRED_HEURISTIC;
     
     // Step 2: If Tier 0 says needs render, try Tier 1 (API Discovery)
     if (tier0Result.needsRender && this.config.enableApiDiscovery) {
-      tierPath.push(1);
       console.log(`[ExtractorRouter] Tier 0 flagged needsRender for ${url}, trying Tier 1 (API Discovery)`);
       
       try {
         const tier1Result = await this.tryTier1(url, extractionRules);
-        bytesDownloaded += tier1Result.bytesDownloaded || 0;
         
         if (!tier1Result.needsRender) {
           // Tier 1 succeeded
-          tier1ReasonCode = PhantomReasonCode.T1_API_ENDPOINT_FOUND;
-          
-          const decision = createPhantomDecision({
-            url,
-            chosenTier: 1,
-            reasonCode: tier1ReasonCode,
-            elapsedMs: Date.now() - startTime,
-            bytesDownloaded,
-            success: true,
-            tierPath,
-          });
-          
-          logPhantomDecision(decision);
-          
           return {
             ...tier1Result,
             tier: ExtractionTier.API_DISCOVERY,
@@ -283,43 +176,19 @@ export class ExtractorRouter {
               score: this.calculateScore(url, { needsJsRendering: true }),
             },
             totalTimeMs: Date.now() - startTime,
-            phantomDecision: decision,
           };
         }
-        
-        tier1ReasonCode = PhantomReasonCode.T1_API_MISSING;
       } catch (error: any) {
-        tier1ReasonCode = PhantomReasonCode.T1_API_CALL_FAILED;
         console.warn(`[ExtractorRouter] Tier 1 failed: ${error.message}`);
       }
     }
     
-    // Step 3: Tier 2 Gate - only escalate if Tier 0/1 codes are escalation-eligible
-    const canEscalateToTier2 = 
-      (tier0ReasonCode && isEscalationEligible(tier0ReasonCode)) ||
-      (tier1ReasonCode && isEscalationEligible(tier1ReasonCode));
-    
-    if (canEscalateToTier2 && this.tier2Provider) {
-      tierPath.push(2);
-      console.log(`[ExtractorRouter] Tier 0/1 failed with escalation-eligible codes, escalating to Tier 2`);
+    // Step 3: If still needs render AND Tier 2 available, escalate to remote render
+    if (tier0Result.needsRender && this.tier2Provider) {
+      console.log(`[ExtractorRouter] Tier 1 unavailable/failed, escalating to Tier 2 (Remote Render)`);
       
       try {
         const tier2Result = await this.tryTier2(url, extractionRules);
-        bytesDownloaded += tier2Result.bytesDownloaded || 0;
-        
-        const decision = createPhantomDecision({
-          url,
-          chosenTier: 2,
-          chosenProvider: this.tier2Provider.name,
-          reasonCode: PhantomReasonCode.T2_REMOTE_RENDER_SUCCESS,
-          elapsedMs: Date.now() - startTime,
-          bytesDownloaded,
-          success: true,
-          tierPath,
-        });
-        
-        logPhantomDecision(decision);
-        
         return {
           ...tier2Result,
           tier: ExtractionTier.REMOTE_RENDER,
@@ -331,42 +200,13 @@ export class ExtractorRouter {
             score: this.calculateScore(url, { needsJsRendering: true }),
           },
           totalTimeMs: Date.now() - startTime,
-          phantomDecision: decision,
         };
       } catch (error: any) {
         console.warn(`[ExtractorRouter] Tier 2 failed: ${error.message}, falling back to Tier 0 result`);
-        
-        const decision = createPhantomDecision({
-          url,
-          chosenTier: 2,
-          chosenProvider: this.tier2Provider.name,
-          reasonCode: PhantomReasonCode.T2_PROVIDER_FAIL,
-          elapsedMs: Date.now() - startTime,
-          bytesDownloaded,
-          success: false,
-          failureCode: PhantomReasonCode.T2_PROVIDER_FAIL,
-          tierPath,
-        });
-        
-        logPhantomDecision(decision);
       }
     }
     
     // Return Tier 0 result (best effort)
-    const finalReasonCode = tier1ReasonCode || tier0ReasonCode || PhantomReasonCode.UNKNOWN_ERROR;
-    const decision = createPhantomDecision({
-      url,
-      chosenTier: 0,
-      reasonCode: finalReasonCode,
-      elapsedMs: Date.now() - startTime,
-      bytesDownloaded,
-      success: false,
-      failureCode: finalReasonCode,
-      tierPath,
-    });
-    
-    logPhantomDecision(decision);
-    
     return {
       ...tier0Result,
       tier: ExtractionTier.HTTP_ONLY,
@@ -374,21 +214,19 @@ export class ExtractorRouter {
       decision: {
         tier: ExtractionTier.HTTP_ONLY,
         reason: tier0Result.needsRender
-          ? 'Needs render but higher tiers unavailable/not eligible - returning Tier 0 result'
+          ? 'Needs render but higher tiers unavailable - returning Tier 0 result'
           : 'Plain HTML, no rendering needed',
         provider: this.tier0Provider.name,
         score: this.calculateScore(url, { needsJsRendering: false }),
       },
       totalTimeMs: Date.now() - startTime,
-      phantomDecision: decision,
     };
   }
   
   /**
    * Try Tier 0 extraction (HTTP + parsing)
-   * Returns ExtractedData with bytesDownloaded tracking
    */
-  private async tryTier0(url: string, rules: ExtractionRules): Promise<ExtractedData & { bytesDownloaded?: number }> {
+  private async tryTier0(url: string, rules: ExtractionRules): Promise<ExtractedData> {
     // Fetch HTML
     const fetchResult = await this.tier0Provider.fetch(url, {
       timeout: this.config.tier0Timeout,
@@ -397,18 +235,13 @@ export class ExtractorRouter {
     // Parse and extract
     const extracted = await this.tier0Provider.extract(fetchResult.content, rules);
     
-    return {
-      ...extracted,
-      bytesDownloaded: typeof fetchResult.content === 'string' 
-        ? fetchResult.content.length 
-        : fetchResult.content.byteLength,
-    };
+    return extracted;
   }
   
   /**
    * Try Tier 1 extraction (API Discovery)
    */
-  private async tryTier1(url: string, rules: ExtractionRules): Promise<ExtractedData & { bytesDownloaded?: number }> {
+  private async tryTier1(url: string, rules: ExtractionRules): Promise<ExtractedData> {
     // Fetch HTML first
     const fetchResult = await this.tier1Provider.fetch(url, {
       timeout: this.config.tier1Timeout,
@@ -417,18 +250,13 @@ export class ExtractorRouter {
     // Discover and extract from APIs
     const extracted = await this.tier1Provider.extract(fetchResult.content, rules);
     
-    return {
-      ...extracted,
-      bytesDownloaded: typeof fetchResult.content === 'string'
-        ? fetchResult.content.length
-        : fetchResult.content.byteLength,
-    };
+    return extracted;
   }
   
   /**
    * Try Tier 2 extraction (remote render via ZenRows)
    */
-  private async tryTier2(url: string, rules: ExtractionRules): Promise<ExtractedData & { bytesDownloaded?: number }> {
+  private async tryTier2(url: string, rules: ExtractionRules): Promise<ExtractedData> {
     if (!this.tier2Provider) {
       throw new Error('Tier 2 provider not available');
     }
@@ -445,10 +273,7 @@ export class ExtractorRouter {
     extracted.needsRender = false;
     extracted.confidence = Math.min(extracted.confidence + 0.2, 1.0); // Boost confidence
     
-    return {
-      ...extracted,
-      bytesDownloaded: renderResult.html.length,
-    };
+    return extracted;
   }
   
   /**
