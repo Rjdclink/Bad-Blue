@@ -127,7 +127,6 @@ interface GovernanceStatus {
     canTrade: boolean;
     tradingRestrictions: string[];
   };
-  globalRules: string[];
 }
 
 // Stage configurations for display
