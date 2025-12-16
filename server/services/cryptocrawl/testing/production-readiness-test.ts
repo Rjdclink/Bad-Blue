@@ -11,7 +11,7 @@
  * Run: npx tsx server/services/cryptocrawl/testing/production-readiness-test.ts
  */
 
-import { stageGovernor, riskGovernor, getGovernanceStatus, GLOBAL_RULES } from '../governance/index.js';
+import { stageGovernor, riskGovernor, getGovernanceState } from '../governance/index.js';
 import { positionRecommender } from '../bridge/position-recommender.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import type { ChainId, TokenBalance, GasPrice } from '../bridge/types.js';

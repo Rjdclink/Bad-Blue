@@ -1,4 +1,3 @@
-import puppeteer from 'puppeteer';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -15,7 +14,9 @@ export class MapRenderer {
   async renderMapScreenshot(config: RenderConfig): Promise<string> {
     const { htmlPath, outputPath, caseId, width = 1920, height = 1080, renderDelay = 2000 } = config;
 
-    const browser = await puppeteer.launch({
+    // DEFERRED IMPORT: Only loads puppeteer when this method is invoked
+    const puppeteer = await import('puppeteer');
+    const browser = await puppeteer.default.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,

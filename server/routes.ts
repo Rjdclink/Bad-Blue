@@ -69,7 +69,6 @@ import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import { verifyCanonicalCryptoSetup } from "./services/cryptocrawl/verification/canonicalCryptoVerifier.js";
 import { SUPPORTED_CHAINS } from "./services/cryptocrawl/bridge/chain-config.js";
-import { isAuthConfigured } from "./services/cryptocrawl/auth/passwordAuth";
 import {
   generateLegalDocument,
   searchPublicRecords,

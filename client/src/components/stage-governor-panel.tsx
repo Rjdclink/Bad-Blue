@@ -127,7 +127,6 @@ interface GovernanceStatus {
     canTrade: boolean;
     tradingRestrictions: string[];
   };
-  globalRules: string[];
 }
 
 // Stage configurations for display
@@ -387,7 +386,7 @@ export default function StageGovernorPanel() {
     );
   }
   
-  const { stageStatus, riskStatus, globalRules } = governanceStatus;
+  const { stageStatus, riskStatus } = governanceStatus;
   const currentStage = stageStatus.state.currentStage as keyof typeof STAGE_INFO;
   const stageInfo = STAGE_INFO[currentStage];
   const StageIcon = stageInfo?.icon || Brain;

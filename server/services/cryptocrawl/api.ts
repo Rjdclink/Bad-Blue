@@ -3,13 +3,6 @@ import { Router } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import type { Request, Response, NextFunction } from 'express';
-import { 
-  authenticateWithPassword, 
-  requireCryptoCrawlAuth,
-  revokeSession,
-  getSessionInfo,
-  isAuthConfigured
-} from './auth/passwordAuth';
 
 const dashboardApi = Router();
 const adminApi = Router();
@@ -54,105 +47,6 @@ function getAvailableBalance(token: string): number {
   return total;
 }
 
-// ============================================
-// AUTHENTICATION ROUTES (Public - No auth required)
-// ============================================
-
-// GET /api/crypto/auth/status - Check if auth is configured (new route)
-dashboardApi.get('/auth/status', (req, res) => {
-  res.json({
-    configured: isAuthConfigured(),
-    message: isAuthConfigured() 
-      ? 'Authentication is configured and available' 
-      : 'Authentication not configured. Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD to enable.'
-  });
-});
-
-// POST /api/crypto/auth - Authenticate with master password
-// NO email required - just password (crptcrwlr)
-dashboardApi.post('/auth', (req, res) => {
-  if (!isAuthConfigured()) {
-    return res.status(503).json({
-      success: false,
-      configured: false,
-      error: 'Authentication not configured',
-      message: 'CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD environment variables must be set'
-    });
-  }
-  
-  const { password } = req.body;
-  
-  if (!password) {
-    return res.status(400).json({
-      success: false,
-      error: 'Password required. No email needed.'
-    });
-  }
-  
-  const result = authenticateWithPassword(password);
-  
-  if (result.success) {
-    res.json({
-      success: true,
-      configured: true,
-      token: result.token,
-      expiresAt: result.expiresAt,
-      message: 'Welcome to CryptoCrawl. Use token in Authorization header for protected routes.'
-    });
-  } else {
-    res.status(401).json({
-      success: false,
-      configured: true,
-      error: result.error || 'Invalid password'
-    });
-  }
-});
-
-// POST /api/crypto/logout - End session
-dashboardApi.post('/logout', (req, res) => {
-  const authHeader = req.headers.authorization;
-  
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.substring(7);
-    revokeSession(token);
-  }
-  
-  res.json({
-    success: true,
-    message: 'Logged out successfully'
-  });
-});
-
-// GET /api/crypto/session - Check if authenticated
-dashboardApi.get('/session', (req, res) => {
-  if (!isAuthConfigured()) {
-    return res.json({
-      authenticated: false,
-      configured: false,
-      message: 'Authentication not configured. Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD to enable.'
-    });
-  }
-  
-  const authHeader = req.headers.authorization;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.json({
-      authenticated: false,
-      configured: true,
-      message: 'Not authenticated. POST to /api/crypto/auth with password to login.'
-    });
-  }
-  
-  const token = authHeader.substring(7);
-  const info = getSessionInfo(token);
-  
-  res.json({
-    authenticated: info.valid,
-    configured: true,
-    expiresIn: info.expiresIn,
-    message: info.valid ? 'Session active' : 'Session expired or invalid'
-  });
-});
 
 // ============================================
 // SYSTEM STATE & MOCK DATA
