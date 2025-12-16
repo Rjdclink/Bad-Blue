@@ -13,15 +13,35 @@
  * This ensures fast application boot and prevents startup failures due to
  * browser/Playwright issues.
  * 
+ * NO TOP-LEVEL SIDE EFFECTS:
+ * - Playwright (chromium, StealthPlugin) is imported dynamically inside ensureStealthPluginInitialized()
+ * - validatePeopleSearchConfig() is only called inside runtime methods
+ * - No browser pool init or stealth setup occurs outside method calls
+ * 
  * Features:
  * - Parallel scraping across multiple sources
  * - Stealth mode with anti-detection
  * - Fail-fast with automatic retry
  * - Smart caching and data fusion
  */
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import type { Browser, BrowserContext, Page } from 'playwright';
+
+// Local type definitions to avoid importing from 'playwright' package at module load time
+// This ensures the server can boot without Playwright/Chromium installed
+interface Browser {
+  newContext(options?: any): Promise<BrowserContext>;
+  close(): Promise<void>;
+}
+
+interface BrowserContext {
+  newPage(): Promise<Page>;
+  close(): Promise<void>;
+}
+
+interface Page {
+  goto(url: string, options?: any): Promise<any>;
+  close(): Promise<void>;
+}
+
 import type { SearchQuery, PersonRecord } from './types';
 import { FastPeopleSearchScraper } from './sources/FastPeopleSearchScraper';
 import { TruePeopleSearchScraper } from './sources/TruePeopleSearchScraper';
@@ -29,20 +49,31 @@ import { WhitePagesScraper } from './sources/WhitePagesScraper';
 import { BaseScraper } from './sources/BaseScraper';
 import { DataFusion } from './fusion/DataFusion';
 import { PeopleSearchCache } from './cache/PeopleSearchCache';
-import { validatePeopleSearchConfig, getPeopleSearchConfig } from './config';
 
 // LOAD ON DEMAND: Stealth plugin and configuration validation are deferred
 // until first actual use to avoid initialization at module load time.
 // This ensures the application can boot without Playwright being ready.
 let stealthPluginInitialized = false;
 
+// Dynamic import references - populated on first use
+let chromium: typeof import('playwright-extra')['chromium'] | null = null;
+let StealthPlugin: any = null;
+
 /**
  * Initialize stealth plugin on first use (lazy initialization)
  * This ensures Playwright is not configured until actually needed
+ * 
+ * DYNAMIC IMPORTS: chromium and StealthPlugin are loaded here, not at module load
  */
-function ensureStealthPluginInitialized(): void {
+async function ensureStealthPluginInitialized(): Promise<void> {
   if (!stealthPluginInitialized) {
-    chromium.use(StealthPlugin());
+    if (!chromium) {
+      ({ chromium } = await import('playwright-extra'));
+    }
+    if (!StealthPlugin) {
+      StealthPlugin = (await import('puppeteer-extra-plugin-stealth')).default;
+    }
+    chromium!.use(StealthPlugin());
     stealthPluginInitialized = true;
     console.log('[PeopleSearch] Stealth plugin initialized on demand');
   }
@@ -95,9 +126,10 @@ export class PeopleSearchAggregator {
    * - Configuration issues (missing env vars, etc.) won't change during runtime
    * - The validation is informational, not blocking
    */
-  private static validateConfigOnDemand(): void {
+  private static async validateConfigOnDemand(): Promise<void> {
     if (!PeopleSearchAggregator.configValidated) {
       try {
+        const { validatePeopleSearchConfig } = await import('./config');
         validatePeopleSearchConfig();
         PeopleSearchAggregator.configValidated = true;
       } catch (error: any) {
@@ -112,9 +144,9 @@ export class PeopleSearchAggregator {
    * Ensure all lazy initialization is complete before browser operations
    * Consolidates initialization calls to reduce duplication
    */
-  private static ensureInitialized(): void {
-    ensureStealthPluginInitialized();
-    PeopleSearchAggregator.validateConfigOnDemand();
+  private static async ensureInitialized(): Promise<void> {
+    await ensureStealthPluginInitialized();
+    await PeopleSearchAggregator.validateConfigOnDemand();
   }
 
   /**
@@ -123,10 +155,10 @@ export class PeopleSearchAggregator {
    */
   async initializeBrowserPool(): Promise<void> {
     // Initialize stealth plugin and validate config on first use
-    PeopleSearchAggregator.ensureInitialized();
+    await PeopleSearchAggregator.ensureInitialized();
     
     for (let i = 0; i < this.maxPoolSize; i++) {
-      const browser = await chromium.launch({
+      const browser = await chromium!.launch({
         headless: true,
         args: [
           '--no-sandbox',
@@ -147,12 +179,12 @@ export class PeopleSearchAggregator {
    */
   private async getBrowser(): Promise<Browser> {
     // Ensure all lazy initialization is complete
-    PeopleSearchAggregator.ensureInitialized();
+    await PeopleSearchAggregator.ensureInitialized();
     
     if (this.browserPool.length > 0) {
       return this.browserPool.pop()!;
     }
-    return chromium.launch({
+    return chromium!.launch({
       headless: true,
       args: [
         '--no-sandbox',

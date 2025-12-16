@@ -69,7 +69,6 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     # Additional Playwright dependencies
     libglib2.0-0 \
-    libnssutil3 \
     libpango-1.0-0 \
     libcairo2 \
     --no-install-recommends \

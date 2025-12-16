@@ -8,7 +8,7 @@
 //
 // This ensures no globals, no assumptions, and fail-hard if misconfigured.
 //
-import type { Express, Request, Response, RequestHandler, Router } from "express";
+import express, { type Express, type Request, type Response, type RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
 import crypto from 'crypto';
@@ -175,6 +175,9 @@ const {
   contactMessages,
   documentCreatorSessions,
 } = schema;
+
+// Feature flags
+const PEOPLE_SEARCH_ENABLED = String(process.env.PEOPLE_SEARCH_ENABLED || '').toLowerCase() === 'true';
 
 // Multer setup for file uploads (single consolidated instance)
 const upload = multer({

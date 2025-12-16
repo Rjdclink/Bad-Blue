@@ -58,6 +58,11 @@ router.post('/', async (req, res) => {
   const { peopleSearchProxy, PeopleSearchProxyError } = await getProxyModule();
   
   try {
+    const { validatePeopleSearchConfig } = await import('../services/peopleSearch/config');
+    
+    // Validate configuration on first use (not at module load)
+    validatePeopleSearchConfig();
+    
     const { firstName, lastName, city, state, age } = req.body;
 
     // Validate required fields
@@ -129,7 +134,7 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('[People Search API] Error:', error);
     
-    // Use structured error detection via PeopleSearchProxyError
+    // Use the already imported PeopleSearchProxyError for error type checking
     const isProxyError = error instanceof PeopleSearchProxyError;
     const isWorkerError = isProxyError && error.isWorkerError;
     const errorCode = isProxyError ? error.code : 'UNKNOWN_ERROR';
@@ -181,6 +186,9 @@ router.get('/health', async (req, res) => {
  */
 router.post('/validate', async (req, res) => {
   try {
+    // Dynamic import - only loaded when validation is requested
+    const { validateWorkerBrowser } = await import('../services/peopleSearchProxy');
+    
     console.log('[People Search API] Running browser validation...');
     
     // Lazy load the proxy module
