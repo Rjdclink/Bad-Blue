@@ -13,6 +13,7 @@ import {
 // Main Configuration
 // ============================================
 export const CRYPTARA_CONFIG: CryptaraConfig = {
+  // Weights must sum to 1.0 (0.25 + 0.20 + 0.30 + 0.15 + 0.10 = 1.00)
   weights: {
     accuracy: 0.25,
     stability: 0.20,

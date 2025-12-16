@@ -5,6 +5,17 @@
  */
 
 // ============================================
+// Rank Types (defined first for forward reference)
+// ============================================
+export enum Rank {
+  RANK_1 = 1,
+  RANK_2 = 2,
+  RANK_3 = 3,
+  RANK_4 = 4,
+  RANK_5 = 5,
+}
+
+// ============================================
 // Performance Metrics
 // ============================================
 export interface PerformanceMetrics {
@@ -36,7 +47,7 @@ export interface RewardSignal {
   rankEligibility: {
     eligible: boolean;
     daysUntilEligible: number;
-    nextRank: string | null;
+    nextRank: Rank | null;
   };
 }
 
@@ -59,17 +70,6 @@ export interface RewardApplication {
   timestamp: number;
 }
 
-// ============================================
-// Rank Types
-// ============================================
-export enum Rank {
-  RANK_1 = 1,
-  RANK_2 = 2,
-  RANK_3 = 3,
-  RANK_4 = 4,
-  RANK_5 = 5,
-}
-
 export interface PromotionEvent {
   from: Rank;
   to: Rank;
@@ -81,7 +81,7 @@ export interface PromotionEvent {
 export interface PromotionEligibility {
   eligible: boolean;
   reason: string;
-  nextRank: string | null;
+  nextRank: Rank | null;
   requirements: Record<string, boolean> | null;
   daysRemaining?: number;
 }
@@ -89,7 +89,7 @@ export interface PromotionEligibility {
 export interface PromotionResult {
   success: boolean;
   message: string;
-  newRank: string | null;
+  newRank: Rank | null;
   multiplierUnlocked?: number;
   newBaseline?: number;
 }
