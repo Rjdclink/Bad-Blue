@@ -878,19 +878,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupFMIRoutes(app); // F.M.I. - Forensic Media Intelligence
   setupConsultationRoutes(app); // Stage 3: Law-specific AI expertise
   setupVoiceRoutes(app); // Stages 11-15: ALEXERA Voice Intelligence System
-  if (PEOPLE_SEARCH_ENABLED) {
-    const peopleSearchRoutes = (await import('./routes/peopleSearch.routes')).default;
-    app.use('/api/people-search', peopleSearchRoutes); // Stage 2.0: People Search Aggregator Engine
-    console.log('[MOUNT] People Search mounted at: /api/people-search');
-  } else {
-    app.use('/api/people-search', (_req, res) => {
-      res.status(503).json({
-        success: false,
-        message: 'People search is disabled. Set PEOPLE_SEARCH_ENABLED=true to enable this feature.',
-      });
-    });
-    console.log('[MOUNT] People Search disabled via PEOPLE_SEARCH_ENABLED flag');
-  }
+
+  // Lazy-load People Search routes to avoid importing Playwright/Chromium on startup
+  // The router module is only imported when the first request is made to /api/people-search
+  let peopleSearchRouter: Router | null = null;
+  app.use('/api/people-search', async (req, res, next) => {
+    try {
+      if (!peopleSearchRouter) {
+        console.log('[LAZY LOAD] Loading People Search module on first request');
+        peopleSearchRouter = (await import('./routes/peopleSearch.routes')).default;
+      }
+      return peopleSearchRouter(req, res, next);
+    } catch (error) {
+      return next(error);
+    }
+  });
+  console.log('[MOUNT] People Search registered at: /api/people-search (lazy-loaded)');
   
   // ============================================
   // AUTH & SUBSCRIPTION ROUTES (Phase 3)

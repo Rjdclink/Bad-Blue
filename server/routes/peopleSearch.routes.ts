@@ -7,9 +7,16 @@
  * - Main app does NOT import Playwright directly
  * - Worker handles all browser operations
  * - Server startup does NOT depend on worker availability
- * - All runtime imports are dynamic (inside handlers) to avoid module-load side effects
+ * 
+ * LAZY LOADING:
+ * - All People Search imports are deferred until first request
+ * - No module-level imports of peopleSearchProxy or related services
+ * - This ensures the app boots without loading Playwright/browser code
+ * - Type-only imports are safe (removed at compile time)
  */
-import express, { Router } from 'express';
+import express, { Router, Request, Response } from 'express';
+
+// Type-only imports are safe - removed at compile time, no runtime effect
 import type { SearchQuery } from '../services/peopleSearch/types';
 
 // EXPLICIT: Express Router initialization - no globals, no assumptions
@@ -18,6 +25,19 @@ if (!express || !express.Router) {
 }
 
 const router: Router = express.Router();
+
+/**
+ * Lazy-loaded People Search proxy module
+ * Only loaded on first request to any People Search endpoint
+ */
+let proxyModule: typeof import('../services/peopleSearchProxy') | null = null;
+
+async function getProxyModule() {
+  if (!proxyModule) {
+    proxyModule = await import('../services/peopleSearchProxy');
+  }
+  return proxyModule;
+}
 
 /**
  * POST /api/people-search
@@ -34,25 +54,8 @@ router.post('/', async (req, res) => {
     lastName: req.body?.lastName,
   });
   
-  // Dynamic imports - only loaded on first request, not at module load
-  // Import outside inner try-catch to avoid redundant imports in catch block
-  let peopleSearchProxy: any;
-  let PeopleSearchProxyError: any;
-  
-  try {
-    const proxyModule = await import('../services/peopleSearchProxy');
-    peopleSearchProxy = proxyModule.peopleSearchProxy;
-    PeopleSearchProxyError = proxyModule.PeopleSearchProxyError;
-  } catch (importError) {
-    console.error('[People Search API] Failed to import proxy module:', importError);
-    return res.status(500).json({
-      success: false,
-      error: 'People Search service unavailable',
-      errorCode: 'IMPORT_ERROR',
-      jobCompleted: true,
-      jobStatus: 'failed',
-    });
-  }
+  // Lazy load the People Search proxy module on first request
+  const { peopleSearchProxy, PeopleSearchProxyError } = await getProxyModule();
   
   try {
     const { validatePeopleSearchConfig } = await import('../services/peopleSearch/config');
@@ -155,8 +158,8 @@ router.post('/', async (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    // Dynamic import - only loaded when health check is requested
-    const { checkWorkerHealth, isWorkerReady } = await import('../services/peopleSearchProxy');
+    // Lazy load the proxy module on first health check
+    const { checkWorkerHealth, isWorkerReady } = await getProxyModule();
     
     const health = await checkWorkerHealth();
     const ready = await isWorkerReady();
@@ -187,6 +190,10 @@ router.post('/validate', async (req, res) => {
     const { validateWorkerBrowser } = await import('../services/peopleSearchProxy');
     
     console.log('[People Search API] Running browser validation...');
+    
+    // Lazy load the proxy module
+    const { validateWorkerBrowser } = await getProxyModule();
+    
     const validation = await validateWorkerBrowser();
     
     res.status(validation.success ? 200 : 500).json({
