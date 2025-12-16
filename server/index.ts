@@ -244,21 +244,15 @@ async function runMigrations(): Promise<void> {
 async function initializeServices(): Promise<void> {
   console.log('[STARTUP] Stage 3: Initializing services...');
   
-  // Initialize Playwright browser validation with test crawl
-  // This runs FIRST to ensure browser is ready before other services that depend on it
-  // It will NOT crash if Playwright loads slowly - uses retry logic with backoff
-  try {
-    const { initializePlaywrightWithValidation } = await import('./services/playwrightBrowserValidator');
-    const playwrightReady = await initializePlaywrightWithValidation();
-    if (playwrightReady) {
-      console.log('[STARTUP] ✓ Playwright browser validated with test crawl');
-    } else {
-      console.warn('[STARTUP] ⚠ Playwright browser validation failed - crawling features may be limited');
-    }
-  } catch (error: any) {
-    // DO NOT crash on Playwright initialization failure
-    console.warn('[STARTUP] ⚠ Playwright validation skipped:', error?.message ?? error);
-  }
+  // NOTE: Playwright browser validation has been REMOVED from server startup
+  // Browser validation now happens in the People Search Worker service
+  // This ensures APPLICATION BOOT ALWAYS SUCCEEDS regardless of Playwright/browser state
+  // 
+  // To validate browser at runtime, use:
+  // - GET /api/people-search/health - Check worker status
+  // - POST /api/people-search/validate - Run browser test crawl
+  console.log('[STARTUP] ℹ Playwright validation delegated to People Search Worker');
+  console.log('[STARTUP] ℹ Use /api/people-search/health to check worker status at runtime');
 
   try {
     const { persistenceManager } = await import('./persistenceManager');

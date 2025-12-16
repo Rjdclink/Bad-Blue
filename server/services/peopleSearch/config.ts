@@ -1,31 +1,29 @@
 /**
- * People Search Configuration Validation
+ * People Search Configuration
  * 
- * PRODUCTION REQUIREMENT: All configurations must be explicitly validated.
- * No demo fallbacks. No silent defaults. Fail hard if missing.
+ * ARCHITECTURE CHANGE:
+ * - Browser validation has been moved to the People Search Worker service
+ * - The main app no longer imports or validates Playwright at startup
+ * - Configuration validation at module load is now optional (warnings only)
+ * - Runtime validation happens via the /api/people-search/validate endpoint
+ * 
+ * This ensures APPLICATION BOOT ALWAYS SUCCEEDS regardless of Playwright/browser state.
  */
 
 /**
  * Validates Playwright/Browser automation configuration
- * @throws {Error} If browser automation cannot be initialized
+ * NOTE: This is now informational only - does not throw
+ * Browser validation happens in the worker service at runtime
  */
 export function validateBrowserConfig(): void {
-  // Check if Playwright is available
-  // In production, Playwright must be installed with system dependencies
-  try {
-    require('playwright-extra');
-  } catch (error) {
-    throw new Error(
-      'FATAL: Playwright is not installed. ' +
-      'People search requires browser automation. ' +
-      'Install with: npm install playwright-extra puppeteer-extra-plugin-stealth && npx playwright install chromium --with-deps'
-    );
-  }
+  // Browser validation now happens in the worker service
+  // Main app does not import Playwright directly
+  console.log('[People Search Config] Browser validation delegated to worker service');
 }
 
 /**
  * Validates scraper source configurations
- * @throws {Error} If no data sources are available
+ * NOTE: This is now a warning-only check
  */
 export function validateScraperSources(): void {
   // In production, we need at least one working data source
@@ -38,10 +36,9 @@ export function validateScraperSources(): void {
     process.env.PEOPLE_SEARCH_ENABLE_WP === 'false';
   
   if (allDisabled) {
-    throw new Error(
-      'FATAL: All people search data sources are disabled. ' +
-      'At least one source must be enabled: FastPeopleSearch (PEOPLE_SEARCH_ENABLE_FPS), ' +
-      'TruePeopleSearch (PEOPLE_SEARCH_ENABLE_TPS), or WhitePages (PEOPLE_SEARCH_ENABLE_WP)'
+    console.warn(
+      '[People Search Config] WARNING: All people search data sources are disabled. ' +
+      'At least one source must be enabled for searches to work.'
     );
   }
 }
@@ -98,23 +95,22 @@ export function validateEmailDiscoveryConfig(): void {
 /**
  * Validates all people search configurations
  * Called on service initialization
- * @throws {Error} If any critical configuration is missing
+ * 
+ * NOTE: This no longer throws errors - it only logs warnings
+ * This ensures APPLICATION BOOT ALWAYS SUCCEEDS
  */
 export function validatePeopleSearchConfig(): void {
-  console.log('[People Search Config] Validating production configuration...');
+  console.log('[People Search Config] Checking configuration...');
   
-  try {
-    validateBrowserConfig();
-    validateScraperSources();
-    validateCacheConfig();
-    validateSocialIntelligenceConfig();
-    validateEmailDiscoveryConfig();
-    
-    console.log('[People Search Config] ✓ Configuration validation passed');
-  } catch (error: any) {
-    console.error('[People Search Config] ✗ Configuration validation FAILED:', error.message);
-    throw error;
-  }
+  // These validations now only warn, they don't throw
+  validateBrowserConfig();
+  validateScraperSources();
+  validateCacheConfig();
+  validateSocialIntelligenceConfig();
+  validateEmailDiscoveryConfig();
+  
+  console.log('[People Search Config] ✓ Configuration check complete');
+  console.log('[People Search Config] NOTE: Browser validation happens at runtime via worker service');
 }
 
 /**

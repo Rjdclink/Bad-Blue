@@ -2,15 +2,46 @@
  * People Search Aggregator - PRODUCTION READY
  * Full functionality with fail-fast retry pattern
  * 
+ * ARCHITECTURE NOTE:
+ * This module is used by the People Search Worker service, NOT the main app.
+ * The main app uses the PeopleSearchProxy client instead, which proxies
+ * requests to the worker. This ensures the main app does not import Playwright.
+ * 
+ * LOAD ON DEMAND:
+ * People Search is NOT initialized at startup. All initialization (including
+ * Playwright browser setup and configuration validation) happens on first use.
+ * This ensures fast application boot and prevents startup failures due to
+ * browser/Playwright issues.
+ * 
+ * NO TOP-LEVEL SIDE EFFECTS:
+ * - Playwright (chromium, StealthPlugin) is imported dynamically inside ensureStealthPluginInitialized()
+ * - validatePeopleSearchConfig() is only called inside runtime methods
+ * - No browser pool init or stealth setup occurs outside method calls
+ * 
  * Features:
  * - Parallel scraping across multiple sources
  * - Stealth mode with anti-detection
  * - Fail-fast with automatic retry
  * - Smart caching and data fusion
  */
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import type { Browser, BrowserContext, Page } from 'playwright';
+
+// Local type definitions to avoid importing from 'playwright' package at module load time
+// This ensures the server can boot without Playwright/Chromium installed
+interface Browser {
+  newContext(options?: any): Promise<BrowserContext>;
+  close(): Promise<void>;
+}
+
+interface BrowserContext {
+  newPage(): Promise<Page>;
+  close(): Promise<void>;
+}
+
+interface Page {
+  goto(url: string, options?: any): Promise<any>;
+  close(): Promise<void>;
+}
+
 import type { SearchQuery, PersonRecord } from './types';
 import { FastPeopleSearchScraper } from './sources/FastPeopleSearchScraper';
 import { TruePeopleSearchScraper } from './sources/TruePeopleSearchScraper';
@@ -18,19 +49,35 @@ import { WhitePagesScraper } from './sources/WhitePagesScraper';
 import { BaseScraper } from './sources/BaseScraper';
 import { DataFusion } from './fusion/DataFusion';
 import { PeopleSearchCache } from './cache/PeopleSearchCache';
-import { validatePeopleSearchConfig, getPeopleSearchConfig } from './config';
 
-// PRODUCTION VALIDATION: Validate configuration on module load
-// This ensures the service fails immediately on startup if misconfigured
-try {
-  validatePeopleSearchConfig();
-} catch (error: any) {
-  console.error('[PeopleSearch] FATAL: Configuration validation failed', error);
-  throw new Error(`People Search service cannot start: ${error.message}`);
+// LOAD ON DEMAND: Stealth plugin and configuration validation are deferred
+// until first actual use to avoid initialization at module load time.
+// This ensures the application can boot without Playwright being ready.
+let stealthPluginInitialized = false;
+
+// Dynamic import references - populated on first use
+let chromium: typeof import('playwright-extra')['chromium'] | null = null;
+let StealthPlugin: any = null;
+
+/**
+ * Initialize stealth plugin on first use (lazy initialization)
+ * This ensures Playwright is not configured until actually needed
+ * 
+ * DYNAMIC IMPORTS: chromium and StealthPlugin are loaded here, not at module load
+ */
+async function ensureStealthPluginInitialized(): Promise<void> {
+  if (!stealthPluginInitialized) {
+    if (!chromium) {
+      ({ chromium } = await import('playwright-extra'));
+    }
+    if (!StealthPlugin) {
+      StealthPlugin = (await import('puppeteer-extra-plugin-stealth')).default;
+    }
+    chromium!.use(StealthPlugin());
+    stealthPluginInitialized = true;
+    console.log('[PeopleSearch] Stealth plugin initialized on demand');
+  }
 }
-
-// PRODUCTION: Add stealth plugin
-chromium.use(StealthPlugin());
 
 // High capacity configuration for retry logic and timeouts
 const HIGH_CAPACITY_CONFIG = {
@@ -63,17 +110,55 @@ export class PeopleSearchAggregator {
   private responseTimes: number[] = [];
   private browserPool: Browser[] = [];
   private maxPoolSize = 3;
+  private static configValidated = false;
 
   constructor() {
     this.cache = new PeopleSearchCache();
   }
 
   /**
+   * Validate configuration on demand (lazy initialization)
+   * Only runs once per application lifecycle.
+   * 
+   * NOTE: Configuration validation is marked complete even on failure because:
+   * - validatePeopleSearchConfig() only logs warnings, never throws
+   * - Repeated warning messages on every browser launch would be noisy
+   * - Configuration issues (missing env vars, etc.) won't change during runtime
+   * - The validation is informational, not blocking
+   */
+  private static async validateConfigOnDemand(): Promise<void> {
+    if (!PeopleSearchAggregator.configValidated) {
+      try {
+        const { validatePeopleSearchConfig } = await import('./config');
+        validatePeopleSearchConfig();
+        PeopleSearchAggregator.configValidated = true;
+      } catch (error: any) {
+        console.warn('[PeopleSearch] Configuration validation warning:', error.message);
+        console.warn('[PeopleSearch] Browser operations may fail at runtime');
+        PeopleSearchAggregator.configValidated = true; // Mark complete - warnings already logged
+      }
+    }
+  }
+
+  /**
+   * Ensure all lazy initialization is complete before browser operations
+   * Consolidates initialization calls to reduce duplication
+   */
+  private static async ensureInitialized(): Promise<void> {
+    await ensureStealthPluginInitialized();
+    await PeopleSearchAggregator.validateConfigOnDemand();
+  }
+
+  /**
    * Initialize browser pool for faster subsequent searches
+   * LOAD ON DEMAND: Configuration and stealth plugin are initialized here
    */
   async initializeBrowserPool(): Promise<void> {
+    // Initialize stealth plugin and validate config on first use
+    await PeopleSearchAggregator.ensureInitialized();
+    
     for (let i = 0; i < this.maxPoolSize; i++) {
-      const browser = await chromium.launch({
+      const browser = await chromium!.launch({
         headless: true,
         args: [
           '--no-sandbox',
@@ -90,12 +175,16 @@ export class PeopleSearchAggregator {
 
   /**
    * Get browser from pool (or create new one)
+   * LOAD ON DEMAND: Ensures initialization is complete before launching browser
    */
   private async getBrowser(): Promise<Browser> {
+    // Ensure all lazy initialization is complete
+    await PeopleSearchAggregator.ensureInitialized();
+    
     if (this.browserPool.length > 0) {
       return this.browserPool.pop()!;
     }
-    return chromium.launch({
+    return chromium!.launch({
       headless: true,
       args: [
         '--no-sandbox',
