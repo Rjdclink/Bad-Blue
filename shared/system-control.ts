@@ -28,7 +28,7 @@ const state: ControlState = {
   injectedChecks: [],
 };
 
-const baseChecks = (): ControlCheck[] => [
+const BASE_CHECKS: ControlCheck[] = [
   {
     name: 'operator_switch',
     passes: () => state.operatorEnabled,
@@ -44,12 +44,10 @@ const baseChecks = (): ControlCheck[] => [
 function evaluateChecks(): { isOn: boolean; reasons: string[] } {
   const reasons: string[] = [];
 
-  for (const check of [...baseChecks(), ...state.injectedChecks]) {
-    const passed = check.passes();
-    if (!passed) {
+  for (const check of [...BASE_CHECKS, ...state.injectedChecks]) {
+    if (!check.passes()) {
       const reason = typeof check.reason === 'function' ? check.reason() : check.reason;
       reasons.push(reason);
-      break;
     }
   }
 
@@ -92,6 +90,7 @@ export const SystemControl = {
    * Replace auxiliary checks (useful for tests).
    */
   setChecks(checks: ControlCheck[]): void {
+    // Shallow copy is sufficient since checks are functions defined in-line.
     state.injectedChecks = [...checks];
   },
 
