@@ -7,13 +7,6 @@ import { getCryptara } from '../../cryptara/index.js';
 import { verifyCanonicalCryptoSetup } from '../verification/canonicalCryptoVerifier.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { getProfitLadderGovernor } from '../governance/profitLadder.js';
-import { 
-  authenticateWithPassword, 
-  requireCryptoCrawlAuth,
-  revokeSession,
-  getSessionInfo,
-  isAuthConfigured
-} from '../auth/passwordAuth';
 
 const router = express.Router();
 
