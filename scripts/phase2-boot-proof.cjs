@@ -123,12 +123,13 @@ console.log('✓ Phase 2 Boot Proof: ALL TESTS PASSED');
 console.log('═══════════════════════════════════════');
 console.log('');
 console.log('Confirmations:');
-console.log('  ✓ Extractor modules exist (Tier 0 + Tier 1)');
+console.log('  ✓ Extractor modules exist (Tier 0 + Tier 1 + Tier 2)');
 console.log('  ✓ No top-level browser imports');
 console.log('  ✓ Worker uses lazy loading (getBrowserEngine)');
 console.log('  ✓ Dockerfile has no Chromium install');
 console.log('  ✓ ZENROWS_API_KEY documented');
 console.log('  ✓ App can boot without Chromium binaries');
+console.log('  ✓ Tier structure: HTTP → API Discovery → Remote Render');
 console.log('');
 
 process.exit(0);

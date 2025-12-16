@@ -180,17 +180,20 @@ export interface ExtractorProvider {
 }
 
 /**
- * Extraction tier levels
+ * Extraction tier levels (updated per new requirements)
  */
 export enum ExtractionTier {
   /** Tier 0: HTTP + HTML parsing (default, no browser) */
   HTTP_ONLY = 'HTTP_ONLY',
   
-  /** Tier 1: Remote render (ZenRows/Browserless) */
+  /** Tier 1: API-first discovery (JSON/GraphQL/XHR endpoints) */
+  API_DISCOVERY = 'API_DISCOVERY',
+  
+  /** Tier 2: Remote render (ZenRows/Browserless/ScrapingBee) */
   REMOTE_RENDER = 'REMOTE_RENDER',
   
-  /** Tier 2: Local browser (disabled by default) */
-  LOCAL_BROWSER = 'LOCAL_BROWSER',
+  /** Tier 3: Reserved for future use */
+  RESERVED = 'RESERVED',
 }
 
 /**
@@ -205,4 +208,14 @@ export interface RouterDecision {
   
   /** Selected provider */
   provider: string;
+  
+  /** Scoring factors that influenced decision */
+  score?: {
+    needsJsRendering: boolean;
+    requiresCookiesSession: boolean;
+    expectedLatencyCeiling: number;
+    costCeiling: number;
+    pastSuccessRate: number;
+    totalScore: number;
+  };
 }

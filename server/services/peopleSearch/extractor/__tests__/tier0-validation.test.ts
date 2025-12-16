@@ -114,7 +114,8 @@ describe('ExtractorRouter - Tier Selection', () => {
   
   beforeAll(() => {
     router = new ExtractorRouter({
-      enableRemoteRender: false, // Disable Tier 1 for this test
+      enableApiDiscovery: true,
+      enableRemoteRender: false, // Disable Tier 2 for this test
     });
   });
   
@@ -129,19 +130,21 @@ describe('ExtractorRouter - Tier Selection', () => {
     expect(result.decision.reason).toContain('Plain HTML');
   }, 15000);
   
-  it('should report Tier 1 unavailable when not configured', async () => {
+  it('should report all tiers status', async () => {
     const health = await router.health();
     expect(health.tier0).toBe(true);
-    expect(health.tier1).toBe(false);
-    expect(health.tier1Reason).toBeTruthy();
+    expect(health.tier1).toBe(true); // API Discovery always available
+    expect(health.tier2).toBe(false); // Disabled for test
+    expect(health.tier2Reason).toBeTruthy();
   });
 });
 
 describe('Startup Safety', () => {
   it('should not require ZENROWS_API_KEY at module load', () => {
     // This test passing means we can load the module without API key
-    const { HttpProvider, ZenRowsProvider, ExtractorRouter } = require('../index');
+    const { HttpProvider, ApiDiscoveryProvider, ZenRowsProvider, ExtractorRouter } = require('../index');
     expect(HttpProvider).toBeDefined();
+    expect(ApiDiscoveryProvider).toBeDefined();
     expect(ZenRowsProvider).toBeDefined();
     expect(ExtractorRouter).toBeDefined();
   });
@@ -150,10 +153,11 @@ describe('Startup Safety', () => {
     const router = new ExtractorRouter();
     const health = await router.health();
     
-    // Tier 0 should always be ready
+    // Tier 0 and Tier 1 should always be ready
     expect(health.tier0).toBe(true);
+    expect(health.tier1).toBe(true);
     
-    // Tier 1 status depends on env var (but should not crash)
-    expect(health.tier1).toBeDefined();
+    // Tier 2 status depends on env var (but should not crash)
+    expect(health.tier2).toBeDefined();
   });
 });
