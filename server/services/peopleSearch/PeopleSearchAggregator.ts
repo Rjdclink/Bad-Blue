@@ -30,19 +30,16 @@
 interface Browser {
   newContext(options?: any): Promise<BrowserContext>;
   close(): Promise<void>;
-  [key: string]: any;
 }
 
 interface BrowserContext {
   newPage(): Promise<Page>;
   close(): Promise<void>;
-  [key: string]: any;
 }
 
 interface Page {
   goto(url: string, options?: any): Promise<any>;
   close(): Promise<void>;
-  [key: string]: any;
 }
 
 import type { SearchQuery, PersonRecord } from './types';
