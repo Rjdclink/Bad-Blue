@@ -187,7 +187,6 @@ router.get('/health', async (req, res) => {
 router.post('/validate', async (req, res) => {
   try {
     // Dynamic import - only loaded when validation is requested
-    const { validateWorkerBrowser } = await import('../services/peopleSearchProxy');
     
     console.log('[People Search API] Running browser validation...');
     
