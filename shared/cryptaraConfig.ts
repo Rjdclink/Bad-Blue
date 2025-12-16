@@ -7,6 +7,7 @@ import {
   Rank,
   CryptaraConfig,
   RankDefinition,
+  MultiplierTier,
 } from './cryptaraTypes';
 
 // ============================================
@@ -219,3 +220,16 @@ export function clampMultiplier(value: number): number {
   const { floor, ceiling } = CRYPTARA_CONFIG.multiplier;
   return Math.max(floor, Math.min(ceiling, value));
 }
+
+// ============================================
+// Multiplier Tiers
+// ============================================
+export const MULTIPLIER_TIERS: MultiplierTier[] = [
+  { multiplier: 1.0, tradesRequired: 0, avgScore: 0, violations: Infinity },
+  { multiplier: 1.1, tradesRequired: 50, avgScore: 70, violations: 5 },
+  { multiplier: 1.2, tradesRequired: 100, avgScore: 75, violations: 3 },
+  { multiplier: 1.3, tradesRequired: 200, avgScore: 80, violations: 2 },
+  { multiplier: 1.4, tradesRequired: 350, avgScore: 85, violations: 1 },
+  { multiplier: 1.5, tradesRequired: 500, avgScore: 90, violations: 0 },
+  { multiplier: 1.6, tradesRequired: 750, avgScore: 95, violations: 0 },
+];

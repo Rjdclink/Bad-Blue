@@ -219,3 +219,62 @@ export interface CryptaraConfig {
   autonomy: CryptaraAutonomy;
   multiplier: CryptaraMultiplier;
 }
+
+// ============================================
+// Persistence Types
+// ============================================
+export interface RankState {
+  currentRank: Rank;
+  rankEarnedDate: number;
+  promotionHistory: PromotionEvent[];
+}
+
+export interface MultiplierState {
+  currentMultiplier: number;
+  multiplierHistory: MultiplierEvent[];
+}
+
+export interface PersistenceAdapter {
+  loadPerformanceHistory(): Promise<PerformanceMetrics[]>;
+  savePerformanceHistory(history: PerformanceMetrics[]): Promise<void>;
+  loadRankState(): Promise<RankState | null>;
+  saveRankState(state: RankState): Promise<void>;
+  loadMultiplierState(): Promise<MultiplierState | null>;
+  saveMultiplierState(state: MultiplierState): Promise<void>;
+}
+
+// ============================================
+// Multiplier Tier Types
+// ============================================
+export interface MultiplierTier {
+  multiplier: number;
+  tradesRequired: number;
+  avgScore: number;
+  violations: number;
+}
+
+export interface TradeStatistics {
+  totalTrades: number;
+  avgProcessScore: number;
+  violationCount: number;
+}
+
+// ============================================
+// Normalized Scores
+// ============================================
+export interface NormalizedScores {
+  accuracy: number;
+  stability: number;
+  profit: number;
+  riskReduction: number;
+  safetyCompliance: number;
+}
+
+// ============================================
+// Rank Eligibility for Reward Signal
+// ============================================
+export interface RankEligibilityInfo {
+  eligible: boolean;
+  daysUntilEligible: number;
+  nextRank: Rank | null;
+}
