@@ -1,0 +1,62 @@
+{
+  "correlationId": "manual-19b20d9ab74",
+  "jobId": null,
+  "status": "SUCCESS",
+  "timings": {
+    "durationMs": 1899
+  },
+  "limits": {
+    "MAX_SEEDS_PER_JOB": 25,
+    "MAX_CRAWLERS_PER_SEED": 4,
+    "GLOBAL_SEED_TIMEOUT_MS": 15000
+  },
+  "crawlerSet": {
+    "permitted": [
+      "SeedFetchStarTrek",
+      "SeedFetchBirdOfPrey",
+      "SeedFetchTrinity",
+      "SeedFetchSixDegrees"
+    ],
+    "disabledByDefault": [
+      "SeedFetchSixDegrees"
+    ]
+  },
+  "seedsAttempted": [
+    "https://cloudflare.com/"
+  ],
+  "perSeed": [
+    {
+      "seedUrl": "https://cloudflare.com/",
+      "winner": {
+        "crawlerName": "SeedFetchBirdOfPrey",
+        "durationMs": 1554
+      },
+      "crawlersAttempted": [
+        {
+          "crawlerName": "SeedFetchStarTrek",
+          "status": "fail",
+          "durationMs": 0
+        },
+        {
+          "crawlerName": "SeedFetchBirdOfPrey",
+          "status": "success",
+          "durationMs": 1554
+        },
+        {
+          "crawlerName": "SeedFetchTrinity",
+          "status": "aborted",
+          "durationMs": 0,
+          "abortReason": "winner_selected"
+        },
+        {
+          "crawlerName": "SeedFetchSixDegrees",
+          "status": "disabled",
+          "durationMs": 0,
+          "abortReason": "disabled_default"
+        }
+      ],
+      "final": "SUCCESS"
+    }
+  ],
+  "errors": []
+}

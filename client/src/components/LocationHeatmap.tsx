@@ -16,11 +16,41 @@ type MapStatus = 'initializing' | 'waiting_coordinates' | 'loading_tiles' | 'rea
 export const LocationHeatmap: React.FC<HeatmapProps> = ({
   data,
   markers = [],
-  center = [40.7128, -74.0060],
+  center, // No default - must be provided or derived from data
   zoom = 12,
   config = {},
   satelliteView = true,
 }) => {
+  // PRODUCTION: Dynamic center calculation from actual data
+  // No hardcoded coordinates - center is calculated from provided data
+  const effectiveCenter = React.useMemo((): [number, number] => {
+    // If center explicitly provided, use it
+    if (center && center.length === 2 && !isNaN(center[0]) && !isNaN(center[1])) {
+      return center;
+    }
+    // Calculate center from heatmap data
+    if (data.length > 0) {
+      const avgLat = data.reduce((sum, d) => sum + d[0], 0) / data.length;
+      const avgLng = data.reduce((sum, d) => sum + d[1], 0) / data.length;
+      return [avgLat, avgLng];
+    }
+    // Calculate center from markers
+    if (markers.length > 0) {
+      const avgLat = markers.reduce((sum, m) => sum + m.pos[0], 0) / markers.length;
+      const avgLng = markers.reduce((sum, m) => sum + m.pos[1], 0) / markers.length;
+      return [avgLat, avgLng];
+    }
+    // No data: world view (no hardcoded location)
+    return [0, 0];
+  }, [center, data, markers]);
+  
+  const effectiveZoom = React.useMemo(() => {
+    // If no data and no explicit center, show world view
+    if (!center && data.length === 0 && markers.length === 0) {
+      return 2; // World view zoom level
+    }
+    return zoom;
+  }, [center, data.length, markers.length, zoom]);
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const heatLayerRef = useRef<L.Layer | null>(null);
@@ -49,16 +79,16 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
 
   // Step 1: Validate coordinates are ready
   useEffect(() => {
-    if (center && center.length === 2 && 
-        typeof center[0] === 'number' && typeof center[1] === 'number' &&
-        !isNaN(center[0]) && !isNaN(center[1])) {
+    if (effectiveCenter && effectiveCenter.length === 2 && 
+        typeof effectiveCenter[0] === 'number' && typeof effectiveCenter[1] === 'number' &&
+        !isNaN(effectiveCenter[0]) && !isNaN(effectiveCenter[1])) {
       setCoordinatesReady(true);
       setMapStatus('loading_tiles');
     } else {
       setCoordinatesReady(false);
       setMapStatus('waiting_coordinates');
     }
-  }, [center]);
+  }, [effectiveCenter]);
 
   // Step 2: Initialize map engine only after coordinates are ready
   useEffect(() => {
@@ -69,8 +99,8 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
     
     try {
       const map = L.map(containerRef.current, {
-        center: center,
-        zoom: zoom,
+        center: effectiveCenter,
+        zoom: effectiveZoom,
         preferCanvas: true, // Better performance
       });
       
@@ -156,7 +186,7 @@ export const LocationHeatmap: React.FC<HeatmapProps> = ({
       setMapStatus('error');
       setErrorMessage(error instanceof Error ? error.message : 'Failed to initialize map. Please try again.');
     }
-  }, [coordinatesReady, center, zoom, satelliteView, retryCount]);
+  }, [coordinatesReady, effectiveCenter, effectiveZoom, satelliteView, retryCount]);
 
   // Step 4: Add data layers only after map is ready
   useEffect(() => {

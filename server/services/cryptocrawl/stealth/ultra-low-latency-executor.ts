@@ -5,6 +5,7 @@
 import { Wallet, providers, ethers } from 'ethers';
 import type { Opportunity, ChainId } from '../core/lux-swarm';
 import type { PreSignedTemplate, ExecutionResult, ExecutionPath } from './types';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 
 const { JsonRpcProvider } = providers;
 const { parseUnits, formatUnits } = ethers.utils;
@@ -36,6 +37,9 @@ export class UltraLowLatencyExecutor {
    * Initialize the executor with a wallet and providers
    */
   async initialize(wallet: Wallet, providers: Map<string, providers.JsonRpcProvider>): Promise<void> {
+    // Initializing this component starts background tracking and prepares tx templates.
+    // Treat it as execution-adjacent and require explicit authorization.
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     this.wallet = wallet;
     this.providers = providers;
     
@@ -83,6 +87,7 @@ export class UltraLowLatencyExecutor {
    */
   async executeInstant(opportunity: Opportunity): Promise<ExecutionResult> {
     const startTime = Date.now();
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair: opportunity.pair });
     
     try {
       // Get available template (first unused)
@@ -145,6 +150,7 @@ export class UltraLowLatencyExecutor {
    */
   async executeMultiPath(opportunity: Opportunity): Promise<ExecutionResult> {
     const startTime = Date.now();
+    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair: opportunity.pair });
 
     const paths: Promise<ExecutionResult>[] = [
       this.executeViaFlashbots(opportunity),
@@ -261,9 +267,19 @@ export class UltraLowLatencyExecutor {
    * Start tracking gas prices for prediction
    */
   private startGasTracking(): void {
+    const governance = getCryptocrawlGovernance();
+    // Stage 1: absolutely no background intervals.
+    if (governance.getState().stage === 1) return;
+
     // Track gas prices every 12 seconds (Ethereum block time)
     setInterval(async () => {
       try {
+        // If governance is paused/no envelope, skip work (deny-by-default).
+        try {
+          governance.requireAllowed('ADVISE');
+        } catch {
+          return;
+        }
         // Get gas from primary provider (mainnet)
         const mainnetProvider = Array.from(this.providers.values())[0];
         if (!mainnetProvider) return;

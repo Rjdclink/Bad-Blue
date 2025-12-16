@@ -11,7 +11,7 @@ class FlashbotsEngine {
   async initialize() {
     this.provider = new JsonRpcProvider(process.env.RPC_URL);
     this.wallet = new Wallet(
-      process.env.PRIVATE_KEY || Wallet.createRandom().privateKey,
+      process.env.WALLET_PRIVATE_KEY || Wallet.createRandom().privateKey,
       this.provider
     );
     

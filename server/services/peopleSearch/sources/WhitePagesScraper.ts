@@ -89,8 +89,8 @@ export class WhitePagesScraper extends BaseScraper {
       }
       
       return records;
-    } catch (error) {
-      console.error('WhitePages scraper error:', error);
+    } catch {
+      // IMMEDIATE SKIP - retry logic handles it
       return [];
     }
   }

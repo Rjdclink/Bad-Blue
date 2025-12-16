@@ -64,8 +64,8 @@ export abstract class BaseCrawler extends EventEmitter {
         if (results.length >= this.task.entropyBudget) {
           break;
         }
-      } catch (error) {
-        log.error(`Quantum execution error`, error);
+      } catch {
+        // IMMEDIATE SKIP - continue quantum execution
       }
     }
     

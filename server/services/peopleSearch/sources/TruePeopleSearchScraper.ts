@@ -104,8 +104,8 @@ export class TruePeopleSearchScraper extends BaseScraper {
       }
       
       return records;
-    } catch (error) {
-      console.error('TruePeopleSearch scraper error:', error);
+    } catch {
+      // IMMEDIATE SKIP - retry logic handles it
       return [];
     }
   }

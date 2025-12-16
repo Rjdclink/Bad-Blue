@@ -6,27 +6,38 @@ import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 import { sendWelcomeEmail } from "./emailService";
 import { setupLocalStrategy } from "./localAuth";
-import { pool } from "./db"; // Import the shared pool
+import { getConfig } from "./config";
+import { isDatabaseConfigured, pool } from "./db";
 
 
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+  const cfg = getConfig();
+
+  // Fail hard: sessions require persistent storage.
+  // No demo fallbacks (in-memory sessions) and no silent defaults.
+  if (!isDatabaseConfigured) {
+    throw new Error('Database is not configured. Refusing to start auth/session middleware without persistent session storage.');
+  }
+
+  // DB-backed sessions (normal mode)
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
-    pool: pool, // Use the shared pool instead of creating new connections
+    pool: pool,
     createTableIfMissing: false,
     ttl: sessionTtl,
     tableName: "sessions",
   });
+
   return session({
-    secret: process.env.SESSION_SECRET!,
+    secret: cfg.SESSION_SECRET,
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      secure: cfg.NODE_ENV === 'production',
+      sameSite: cfg.NODE_ENV === 'production' ? 'none' : 'lax',
       maxAge: sessionTtl,
     },
   });
@@ -45,7 +56,15 @@ export async function setupAuth(app: Express) {
   // Middleware that conditionally applies session only to API routes
   app.use((req, res, next) => {
     // Only apply session middleware to API routes or specific auth paths
-    if (req.path.startsWith('/api/') || req.path === '/login' || req.path === '/signup' || req.path === '/') {
+    // NOTE: /admin/crypto is protected by cryptoAuthMiddleware which relies on passport sessions.
+    // If we don't attach sessions here, crypto admin routes will always return 401 even with a valid cookie.
+    if (
+      req.path.startsWith('/api/') ||
+      req.path.startsWith('/admin/crypto') ||
+      req.path === '/login' ||
+      req.path === '/signup' ||
+      req.path === '/'
+    ) {
       sessionMiddleware(req, res, (err) => {
         if (err) return next(err);
         passportInit(req, res, (err) => {

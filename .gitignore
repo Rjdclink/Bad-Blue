@@ -58,3 +58,6 @@ evidence-maps/
 core
 core.*
 *.core
+
+# People Search cache
+.cache/people-search/

@@ -24,7 +24,6 @@ import {
 import type { GPSPoint, DataSource } from '@shared/geoconsoleTypes';
 
 export default function GeoconsolePage() {
-  // Real-world default: no demo data
   const [locationData, setLocationData] = useState<GPSPoint[]>([]);
   const [systemStatus, setSystemStatus] = useState<any>(null);
 
@@ -70,7 +69,7 @@ export default function GeoconsolePage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-900">
+    <div className="min-h-screen bg-slate-900 flex flex-col overflow-y-auto">
       {/* Header */}
       <div className="bg-slate-800 border-b border-slate-700 px-6 py-4">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
@@ -101,11 +100,11 @@ export default function GeoconsolePage() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="grid grid-cols-12 gap-6">
+      <div className="max-w-7xl mx-auto p-6 flex-1 min-h-0 w-full">
+        <div className="grid grid-cols-12 gap-6 items-stretch min-h-0 flex-1">
           {/* Left Sidebar - Data Input */}
-          <div className="col-span-3">
-            <Card className="bg-slate-800 border-slate-700">
+          <div className="col-span-3 min-h-0">
+            <Card className="bg-slate-800 border-slate-700 h-full">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
                   <Database className="w-5 h-5" />
@@ -206,8 +205,8 @@ export default function GeoconsolePage() {
           </div>
 
           {/* Main Area - Geoconsole Dashboard */}
-          <div className="col-span-9">
-            <Card className="bg-slate-800 border-slate-700 h-[800px]">
+          <div className="col-span-9 flex flex-col min-h-0">
+            <Card className="bg-slate-800 border-slate-700 flex flex-col flex-1 min-h-0">
               <GeoconsoleRadarDashboard initialData={locationData} />
             </Card>
           </div>

@@ -8,7 +8,7 @@
  * - Direct imperative map updates on every frame change
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.heat';
@@ -20,7 +20,7 @@ import { Progress } from '@/components/ui/progress';
 import {
   Play, Pause, SkipBack, SkipForward, Clock, Activity, Layers,
   RefreshCw, Download, Satellite, Radio, Crosshair, Zap, Target,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Maximize2, Minimize2,
 } from 'lucide-react';
 import { useGeoRuntime, type GeoFrame } from '@/hooks/useGeoRuntime';
 import type { GPSPoint } from '@shared/geoconsoleTypes';
@@ -32,6 +32,11 @@ import type { GPSPoint } from '@shared/geoconsoleTypes';
 interface GeoconsoleProps {
   initialData?: GPSPoint[];
   onProcess?: (data: GPSPoint[]) => Promise<void>;
+  /**
+   * Optional nav mode provided by the parent "People Finder" GeoConsole tabs.
+   * When set, the dashboard will respond by switching to the appropriate view defaults.
+   */
+  navMode?: 'timeline' | 'map' | 'satellite';
 }
 
 interface LayerState {
@@ -59,6 +64,9 @@ const TILE_LAYERS: Record<string, { url: string; attribution: string }> = {
 const SPEED_COLORS = { stationary: '#3b82f6', walking: '#22c55e', running: '#eab308', cycling: '#f97316', driving: '#ef4444' };
 const MPS_TO_MPH = 2.237;
 
+const SOURCE_KEYS = ['device_gps', 'wifi_handoff', 'public_record', 'interpolated'] as const;
+type SourceKey = typeof SOURCE_KEYS[number];
+
 // ============================================================================
 // HELPERS
 // ============================================================================
@@ -68,6 +76,16 @@ const formatDuration = (s: number): string => { const h = Math.floor(s / 3600), 
 const formatDistance = (m: number): string => m >= 1609.34 ? `${(m / 1609.34).toFixed(2)} mi` : m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
 const formatSpeed = (mps: number): string => `${(mps * MPS_TO_MPH).toFixed(1)} mph`;
 const getSpeedColor = (speed: number): string => speed < 0.5 ? SPEED_COLORS.stationary : speed < 2 ? SPEED_COLORS.walking : speed < 5 ? SPEED_COLORS.running : speed < 10 ? SPEED_COLORS.cycling : SPEED_COLORS.driving;
+
+const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371000;
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
 
 // ============================================================================
 // ICONS
@@ -121,7 +139,8 @@ function renderFrame(
   trail: GeoFrame[],
   futurecast: GeoFrame[],
   layerCfg: LayerState,
-  isLive: boolean
+  isLive: boolean,
+  lockOnTarget: boolean
 ): void {
   // Always clear first - no conditional
   clearLayers(map, refs);
@@ -176,19 +195,26 @@ function renderFrame(
       { icon: createReticleIcon(isLive ? '#00ff00' : '#00f0ff', 50), zIndexOffset: 1000 }
     ).addTo(map);
     
-    // Pan to current
-    map.panTo([currentFrame.position.latitude, currentFrame.position.longitude], { animate: true, duration: 0.2 });
+    // Pan to current (when "FIX" lock is enabled)
+    if (lockOnTarget) {
+      map.panTo([currentFrame.position.latitude, currentFrame.position.longitude], { animate: true, duration: 0.2 });
+    }
   }
 
-  // Force redraw
-  map.invalidateSize();
+  // Force redraw (guard zero-sized containers to avoid leaflet.heat canvas errors)
+  try {
+    const size = map.getSize();
+    if (size.x > 0 && size.y > 0) map.invalidateSize();
+  } catch {
+    // ignore
+  }
 }
 
 // ============================================================================
 // COMPONENT
 // ============================================================================
 
-export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = [], onProcess }) => {
+export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = [], onProcess, navMode }) => {
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
 
@@ -197,6 +223,89 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true });
   const [processing, setProcessing] = useState(false);
   const [progressMsg, setProgressMsg] = useState('');
+  const [lockOnTarget, setLockOnTarget] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Respond to external navigation ("nav links") from the embedding page.
+  useEffect(() => {
+    if (!navMode) return;
+    if (navMode === 'satellite') setMapMode('satellite');
+    if (navMode === 'map') setMapMode('street');
+    // timeline mode focuses playback; we keep the operator-selected base layer.
+  }, [navMode]);
+
+  // Fullscreen mode: lock body scroll and force Leaflet to re-measure.
+  useEffect(() => {
+    const map = mapRef.current;
+    const previousOverflow = document.body.style.overflow;
+    if (isFullscreen) document.body.style.overflow = 'hidden';
+    const t = window.setTimeout(() => {
+      try {
+        map?.invalidateSize();
+      } catch {
+        // ignore
+      }
+    }, 50);
+    return () => {
+      window.clearTimeout(t);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isFullscreen]);
+
+  // Source filter ("signal links")
+  const [sourceCfg, setSourceCfg] = useState<Record<SourceKey, boolean>>({
+    device_gps: true,
+    wifi_handoff: true,
+    public_record: true,
+    interpolated: true,
+  });
+
+  const sourceEnabled = useCallback((s: string) => {
+    if ((SOURCE_KEYS as readonly string[]).includes(s)) return sourceCfg[s as SourceKey];
+    // Default allow for unknown/extra sources so we don't silently hide data.
+    return true;
+  }, [sourceCfg]);
+
+  // Derive the frames actually rendered (filters affect map + stats + sources panel)
+  const renderData = useMemo(() => {
+    const trailWithIndex = state.trail.map((f, idx) => ({ f, idx }));
+    const filteredTrail = trailWithIndex.filter(({ f }) => sourceEnabled(f.source));
+    const filteredFuturecast = sourceEnabled('interpolated')
+      ? state.futurecast
+      : [];
+
+    const current = filteredTrail.length > 0 ? filteredTrail[filteredTrail.length - 1].f : null;
+
+    // Stats computed over the rendered trail
+    let totalDistance = 0;
+    let maxSpeed = 0;
+    const speeds: number[] = [];
+    for (let i = 1; i < filteredTrail.length; i++) {
+      const prev = filteredTrail[i - 1].f;
+      const curr = filteredTrail[i].f;
+      totalDistance += haversineDistance(
+        prev.position.latitude, prev.position.longitude,
+        curr.position.latitude, curr.position.longitude
+      );
+      if (curr.velocity?.speed) {
+        speeds.push(curr.velocity.speed);
+        maxSpeed = Math.max(maxSpeed, curr.velocity.speed);
+      }
+    }
+    const duration = filteredTrail.length >= 2
+      ? (filteredTrail[filteredTrail.length - 1].f.timestamp.getTime() - filteredTrail[0].f.timestamp.getTime()) / 1000
+      : 0;
+    const averageSpeed = speeds.length > 0 ? speeds.reduce((a, b) => a + b, 0) / speeds.length : 0;
+
+    return {
+      trail: filteredTrail.map(x => x.f),
+      currentFrame: current,
+      futurecast: filteredFuturecast,
+      stats: { totalDistance, averageSpeed, maxSpeed, duration },
+      // for timeline list interaction
+      trailIndices: filteredTrail.map(x => x.idx),
+    };
+  }, [state.trail, state.futurecast, sourceEnabled]);
 
   // Map refs - single instance
   const containerRef = useRef<HTMLDivElement>(null);
@@ -232,11 +341,27 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   }, []);
 
   // === MAP INITIALIZATION (ONCE) ===
+  // PRODUCTION: Map center is determined dynamically from actual data
+  // No hardcoded coordinates - center defaults to world view until real data arrives
   useEffect(() => {
     if (!containerRef.current || initRef.current) return;
     initRef.current = true;
 
-    const map = L.map(containerRef.current, { center: [40.7128, -74.0060], zoom: 14, zoomControl: false, attributionControl: false });
+    // Determine initial center from data or use world view (no hardcoded locations)
+    const getInitialCenter = (): [number, number] => {
+      // If we have initial data, center on first point
+      if (initialData && initialData.length > 0) {
+        const firstPoint = initialData[0];
+        return [firstPoint.latitude, firstPoint.longitude];
+      }
+      // No data: default to world view (0,0 with low zoom)
+      return [0, 0];
+    };
+    
+    const initialCenter = getInitialCenter();
+    const initialZoom = initialData && initialData.length > 0 ? 14 : 2;
+
+    const map = L.map(containerRef.current, { center: initialCenter, zoom: initialZoom, zoomControl: false, attributionControl: false });
     L.control.zoom({ position: 'topleft' }).addTo(map);
 
     tileRef.current = L.tileLayer(TILE_LAYERS.satellite.url, { maxZoom: 19 }).addTo(map);
@@ -275,18 +400,23 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   // === TILE LAYER CHANGE ===
   useEffect(() => {
     if (!mapRef.current || !tileRef.current) return;
-    const cfg = mapMode === 'hybrid' ? TILE_LAYERS.satellite : TILE_LAYERS[mapMode];
+    const effectiveMapMode: MapMode =
+      !layerCfg.satellite && (mapMode === 'satellite' || mapMode === 'hybrid')
+        ? 'street'
+        : mapMode;
+
+    const cfg = effectiveMapMode === 'hybrid' ? TILE_LAYERS.satellite : TILE_LAYERS[effectiveMapMode];
     tileRef.current.setUrl(cfg.url);
     
     if (labelsRef.current) {
-      if (mapMode === 'satellite' || mapMode === 'hybrid') {
+      if (layerCfg.satellite && (effectiveMapMode === 'satellite' || effectiveMapMode === 'hybrid')) {
         if (!mapRef.current.hasLayer(labelsRef.current)) labelsRef.current.addTo(mapRef.current);
       } else {
         if (mapRef.current.hasLayer(labelsRef.current)) mapRef.current.removeLayer(labelsRef.current);
       }
     }
     mapRef.current.invalidateSize();
-  }, [mapMode]);
+  }, [mapMode, layerCfg.satellite]);
 
   // === FRAME UPDATE - BOUND TO DATA, NOT FLAGS ===
   // Dependencies: currentIndex, _version (mutation counter), trail length, layerCfg
@@ -296,15 +426,45 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     if (!map) return;
 
     // Direct render - no memoization, no debounce
-    renderFrame(map, layerRefs.current, state.currentFrame, state.trail, state.futurecast, layerCfg, state.isLive);
+    renderFrame(
+      map,
+      layerRefs.current,
+      renderData.currentFrame,
+      renderData.trail,
+      renderData.futurecast,
+      layerCfg,
+      state.isLive,
+      lockOnTarget
+    );
 
-  }, [state.currentIndex, state._version, state.trail.length, state.futurecast.length, layerCfg, state.isLive, state.currentFrame]);
+  }, [
+    state.currentIndex,
+    state._version,
+    state.trail.length,
+    state.futurecast.length,
+    layerCfg,
+    state.isLive,
+    state.currentFrame,
+    renderData,
+    lockOnTarget,
+  ]);
 
   // === RESIZE/VISIBILITY ===
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const onResize = () => map.invalidateSize();
+    const safeInvalidate = () => {
+      const el = containerRef.current;
+      if (!el) return;
+      // If the container is temporarily hidden or not laid out, skip.
+      if (el.offsetWidth === 0 || el.offsetHeight === 0) return;
+      try {
+        map.invalidateSize();
+      } catch {
+        // ignore
+      }
+    };
+    const onResize = () => safeInvalidate();
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       if (visibleInvalidateTimeoutRef.current) {
@@ -313,7 +473,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       }
       visibleInvalidateTimeoutRef.current = window.setTimeout(() => {
         if (!mountedRef.current) return;
-        if (mapRef.current === map) map.invalidateSize();
+        if (mapRef.current === map) safeInvalidate();
       }, 50);
     };
     window.addEventListener('resize', onResize);
@@ -367,12 +527,62 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   }, [actions]);
 
   // Destructure
-  const { currentFrame, isPlaying, isLive, stats, timeline, totalFrames, currentIndex } = state;
+  const { isPlaying, isLive, timeline, totalFrames, currentIndex } = state;
+  const { currentFrame } = renderData;
+  const stats = renderData.stats;
+
+  // Link status states for satellite, geo, fix, signal, and nav connections
+  const [linkStatus, setLinkStatus] = useState({
+    sat: { active: false, signal: 0, label: 'Satellite Link' },
+    geo: { active: false, signal: 0, label: 'Geo Link' },
+    fix: { active: false, signal: 0, label: 'Fix Link' },
+    signal: { active: false, signal: 0, label: 'Signal Link' },
+    nav: { active: false, signal: 0, label: 'Nav Link' },
+  });
+
+  // Connect and activate links based on data availability
+  useEffect(() => {
+    const hasData = state.trail.length > 0;
+    const hasLiveData = state.isLive;
+    const hasGPS = state.trail.some(f => f.source === 'device_gps');
+    const hasWifi = state.trail.some(f => f.source === 'wifi_handoff');
+    const hasPublicRecord = state.trail.some(f => f.source === 'public_record');
+    
+    setLinkStatus({
+      sat: { 
+        active: hasData && (hasGPS || state.trail.some(f => f.source === 'satellite_imagery')), 
+        signal: hasData ? Math.min(100, 60 + state.trail.length * 2) : 0,
+        label: 'Satellite Link'
+      },
+      geo: { 
+        active: hasData, 
+        signal: hasData ? Math.min(100, 50 + state.stats.totalDistance / 100) : 0,
+        label: 'Geo Link'
+      },
+      fix: { 
+        active: hasData && state.currentFrame !== null, 
+        signal: state.currentFrame ? Math.min(100, state.currentFrame.confidence * 100) : 0,
+        label: 'Fix Link'
+      },
+      signal: { 
+        active: hasWifi || hasGPS, 
+        signal: hasLiveData ? 95 : hasData ? 70 : 0,
+        label: 'Signal Link'
+      },
+      nav: { 
+        active: hasData && state.futurecast.length > 0, 
+        signal: state.futurecast.length > 0 ? Math.min(100, 50 + state.futurecast.length * 5) : 0,
+        label: 'Nav Link'
+      },
+    });
+  }, [state.trail, state.isLive, state.currentFrame, state.futurecast, state.stats.totalDistance]);
 
   return (
-    <div className="flex flex-col h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-hidden">
+    <div
+      className={`${isFullscreen ? 'fixed inset-0 z-[5000]' : ''} flex flex-col h-full min-h-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-hidden`}
+    >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/50 bg-slate-900/80">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/50 bg-slate-900/80 flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="relative">
             <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center shadow-lg">
@@ -385,6 +595,26 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             <p className="text-xs text-slate-400">Satellite Intelligence</p>
           </div>
         </div>
+        
+        {/* Link Status Indicators - SAT, GEO, FIX, SIGNAL, NAV */}
+        <div className="flex items-center gap-1">
+          {Object.entries(linkStatus).map(([key, link]) => (
+            <div 
+              key={key} 
+              className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-mono ${
+                link.active 
+                  ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                  : 'bg-slate-700/50 text-slate-500 border border-slate-600/30'
+              }`}
+              title={`${link.label}: ${link.signal}%`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${link.active ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+              <span className="uppercase">{key}</span>
+              {link.active && <span className="text-[10px] opacity-70">{link.signal}%</span>}
+            </div>
+          ))}
+        </div>
+
         <div className="flex items-center gap-2">
           <Badge variant="outline" className={`text-xs ${isLive ? 'bg-green-500/20 text-green-400 animate-pulse' : isPlaying ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-700/50 text-slate-400'}`}>
             <Activity className="w-3 h-3 mr-1" />{isLive ? 'LIVE' : isPlaying ? 'Playing' : 'Paused'}
@@ -397,31 +627,92 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               </button>
             ))}
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsFullscreen(v => !v)}
+            className="bg-slate-800/50 border-slate-700 text-slate-200"
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </Button>
         </div>
       </div>
 
-      {/* Main */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Map */}
-        <div className="flex-1 relative">
-          <div ref={containerRef} className="absolute inset-0" style={{ background: '#1a1a2e' }} />
-          
-          {/* Layer Controls */}
-          <div className="absolute top-4 right-4 bg-slate-900/90 rounded-lg p-3 border border-slate-700/50 z-[1000]">
-            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-700/50"><Layers className="w-4 h-4 text-cyan-400" /><span className="text-sm font-medium">Layers</span></div>
-            {Object.entries(layerCfg).map(([k, v]) => (
-              <div key={k} className="flex items-center justify-between py-1">
-                <span className="text-xs text-slate-400 capitalize">{k}</span>
-                <Switch checked={v} onCheckedChange={c => setLayerCfg(p => ({ ...p, [k]: c }))} className="scale-75" />
+      {/* Main - Full Viewport Stretch */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Map Container - Stretches to Fill Available Space */}
+        <div className="flex-1 relative min-h-0 min-w-0">
+          <div ref={containerRef} className="absolute inset-0 z-0" style={{ background: '#1a1a2e' }} />
+          {/* Zoom Controls Overlay */}
+          <div className="absolute top-3 left-3 z-10 flex flex-col gap-1">
+            <button 
+              onClick={() => mapRef.current?.zoomIn()} 
+              className="w-8 h-8 bg-slate-800/90 border border-slate-600/50 rounded text-white hover:bg-slate-700 flex items-center justify-center"
+            >
+              +
+            </button>
+            <button 
+              onClick={() => mapRef.current?.zoomOut()} 
+              className="w-8 h-8 bg-slate-800/90 border border-slate-600/50 rounded text-white hover:bg-slate-700 flex items-center justify-center"
+            >
+              −
+            </button>
+          </div>
+          {/* Layer Quick Toggle */}
+          <div className="absolute bottom-3 left-3 z-10 bg-slate-800/90 border border-slate-600/50 rounded-lg px-2 py-1">
+            <span className="text-xs text-slate-400">Layers</span>
+          </div>
+        </div>
+
+        {/* Stats Panel - Collapsible Sidebar */}
+        <div className="w-64 xl:w-72 border-l border-slate-700/50 flex flex-col bg-slate-900/50 min-h-0 overflow-y-auto flex-shrink-0">
+          {/* Controls */}
+          <div className="p-2 border-b border-slate-700/50">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-medium flex items-center gap-1.5">
+                <Radio className="w-3 h-3 text-cyan-400" />
+                Controls
+              </h3>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLockOnTarget(v => !v)}
+                  className={`h-6 text-xs ${lockOnTarget ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
+                  title={lockOnTarget ? 'FIX lock: on (auto-recenter)' : 'FIX lock: off'}
+                >
+                  FIX
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={actions.toggleLive}
+                  className={`h-6 text-xs ${isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
+                >
+                  {isLive ? 'LIVE' : 'GO LIVE'}
+                </Button>
               </div>
-            ))}
+            </div>
+            <div className="bg-slate-800/30 rounded-lg p-2 border border-slate-700/40">
+              <div className="flex items-center gap-1.5 mb-1.5 pb-1.5 border-b border-slate-700/40">
+                <Layers className="w-3 h-3 text-cyan-400" />
+                <span className="text-xs font-medium">Layers</span>
+              </div>
+              {Object.entries(layerCfg).map(([k, v]) => (
+                <div key={k} className="flex items-center justify-between py-0.5">
+                  <span className="text-[11px] text-slate-400 capitalize">{k}</span>
+                  <Switch checked={v} onCheckedChange={c => setLayerCfg(p => ({ ...p, [k]: c }))} className="scale-[0.65]" />
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Position */}
           {currentFrame && (
-            <div className="absolute bottom-4 left-4 bg-slate-900/90 rounded-lg p-3 border border-slate-700/50 z-[1000] min-w-[180px]">
-              <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-700/50"><Crosshair className="w-4 h-4 text-cyan-400" /><span className="text-sm font-medium">Position</span></div>
-              <div className="space-y-1 text-xs font-mono">
+            <div className="p-2 border-b border-slate-700/50">
+              <h3 className="text-xs font-medium mb-1.5 flex items-center gap-1.5"><Crosshair className="w-3 h-3 text-cyan-400" />Position</h3>
+              <div className="space-y-0.5 text-[11px] font-mono bg-slate-800/30 rounded-lg p-1.5 border border-slate-700/40">
                 <p><span className="text-slate-500">LAT:</span> <span className="text-cyan-400">{currentFrame.position.latitude.toFixed(6)}</span></p>
                 <p><span className="text-slate-500">LNG:</span> <span className="text-cyan-400">{currentFrame.position.longitude.toFixed(6)}</span></p>
                 <p><span className="text-slate-500">SPD:</span> <span className="text-green-400">{formatSpeed(currentFrame.velocity?.speed || 0)}</span></p>
@@ -430,58 +721,78 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             </div>
           )}
 
-          {/* LIVE */}
-          <button onClick={actions.toggleLive} className={`absolute top-4 left-4 px-4 py-2 rounded-lg font-bold text-sm z-[1000] ${isLive ? 'bg-green-500 text-white shadow-lg shadow-green-500/30' : 'bg-slate-800/90 text-slate-400 border border-slate-700/50'}`}>
-            <Radio className="w-4 h-4 inline mr-2" />{isLive ? 'LIVE' : 'GO LIVE'}
-          </button>
-        </div>
-
-        {/* Stats Panel */}
-        <div className="w-64 border-l border-slate-700/50 flex flex-col bg-slate-900/50">
-          <div className="p-3 border-b border-slate-700/50">
-            <h3 className="text-sm font-medium mb-2 flex items-center gap-2"><Activity className="w-4 h-4 text-cyan-400" />Stats</h3>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-slate-800/50 rounded p-2"><p className="text-xs text-slate-500">Distance</p><p className="font-bold text-cyan-400">{formatDistance(stats.totalDistance)}</p></div>
-              <div className="bg-slate-800/50 rounded p-2"><p className="text-xs text-slate-500">Avg Spd</p><p className="font-bold text-green-400">{formatSpeed(stats.averageSpeed)}</p></div>
-              <div className="bg-slate-800/50 rounded p-2"><p className="text-xs text-slate-500">Max Spd</p><p className="font-bold text-orange-400">{formatSpeed(stats.maxSpeed)}</p></div>
-              <div className="bg-slate-800/50 rounded p-2"><p className="text-xs text-slate-500">Duration</p><p className="font-bold text-purple-400">{formatDuration(stats.duration)}</p></div>
+          <div className="p-2 border-b border-slate-700/50">
+            <h3 className="text-xs font-medium mb-1.5 flex items-center gap-1.5"><Activity className="w-3 h-3 text-cyan-400" />Stats</h3>
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="bg-slate-800/50 rounded p-1.5"><p className="text-[10px] text-slate-500">Distance</p><p className="font-bold text-sm text-cyan-400">{formatDistance(stats.totalDistance)}</p></div>
+              <div className="bg-slate-800/50 rounded p-1.5"><p className="text-[10px] text-slate-500">Avg Spd</p><p className="font-bold text-sm text-green-400">{formatSpeed(stats.averageSpeed)}</p></div>
+              <div className="bg-slate-800/50 rounded p-1.5"><p className="text-[10px] text-slate-500">Max Spd</p><p className="font-bold text-sm text-orange-400">{formatSpeed(stats.maxSpeed)}</p></div>
+              <div className="bg-slate-800/50 rounded p-1.5"><p className="text-[10px] text-slate-500">Duration</p><p className="font-bold text-sm text-purple-400">{formatDuration(stats.duration)}</p></div>
             </div>
           </div>
-          <div className="p-3 border-b border-slate-700/50">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium flex items-center gap-2"><Zap className="w-4 h-4 text-purple-400" />Futurecast</h3>
-              <Badge variant="outline" className={state.futurecast.length > 0 ? 'bg-purple-500/20 text-purple-400' : 'bg-slate-700/50 text-slate-500'}>{state.futurecast.length > 0 ? 'Active' : 'Idle'}</Badge>
+          <div className="p-2 border-b border-slate-700/50">
+            <div className="flex items-center justify-between mb-1.5">
+              <h3 className="text-xs font-medium flex items-center gap-1.5"><Zap className="w-3 h-3 text-purple-400" />Futurecast</h3>
+              <Badge variant="outline" className={`text-[10px] h-4 ${state.futurecast.length > 0 ? 'bg-purple-500/20 text-purple-400' : 'bg-slate-700/50 text-slate-500'}`}>{state.futurecast.length > 0 ? 'Active' : 'Idle'}</Badge>
             </div>
             {state.futurecast.length > 0 ? (
-              <div className="space-y-1">{state.futurecast.slice(0, 4).map((f, i) => (<div key={i} className="flex items-center text-xs bg-slate-800/30 rounded p-1"><Clock className="w-3 h-3 text-slate-500 mr-1" /><span className="text-slate-400 flex-1">{formatTime(f.timestamp)}</span><span className="text-purple-400">{(f.confidence * 100).toFixed(0)}%</span></div>))}</div>
-            ) : <p className="text-xs text-slate-500">Play to generate</p>}
+              <div className="space-y-0.5">{state.futurecast.slice(0, 4).map((f, i) => (<div key={i} className="flex items-center text-[11px] bg-slate-800/30 rounded p-1"><Clock className="w-2.5 h-2.5 text-slate-500 mr-1" /><span className="text-slate-400 flex-1">{formatTime(f.timestamp)}</span><span className="text-purple-400">{(f.confidence * 100).toFixed(0)}%</span></div>))}</div>
+            ) : <p className="text-[11px] text-slate-500">Play to generate</p>}
           </div>
-          <div className="p-3 flex-1 overflow-auto">
-            <h3 className="text-sm font-medium mb-2 flex items-center gap-2"><Target className="w-4 h-4 text-cyan-400" />Sources</h3>
-            {['device_gps', 'wifi_handoff', 'public_record', 'interpolated'].map(s => {
-              const active = state.trail.some(f => f.source === s);
-              return (<div key={s} className="flex items-center justify-between text-xs py-1"><span className="text-slate-400 capitalize">{s.replace('_', ' ')}</span><Badge variant="outline" className={active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}>{active ? 'Active' : 'Idle'}</Badge></div>);
+          <div className="p-2 flex-1 min-h-0 overflow-auto">
+            <h3 className="text-xs font-medium mb-1.5 flex items-center gap-1.5">
+              <Target className="w-3 h-3 text-cyan-400" />
+              Sources
+            </h3>
+            {SOURCE_KEYS.map((s) => {
+              const hasAny = state.trail.some(f => f.source === s);
+              const enabled = sourceCfg[s];
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSourceCfg(prev => ({ ...prev, [s]: !prev[s] }))}
+                  className="w-full flex items-center justify-between text-[11px] py-0.5 hover:bg-slate-800/30 rounded px-1"
+                  title={enabled ? 'Click to hide this source' : 'Click to show this source'}
+                >
+                  <span className={`capitalize ${enabled ? 'text-slate-200' : 'text-slate-500 line-through'}`}>{s.replace('_', ' ')}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={`text-[9px] h-4 ${hasAny ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}
+                    >
+                      {hasAny ? 'Active' : 'Idle'}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className={`text-[9px] h-4 ${enabled ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : 'bg-slate-700/30 text-slate-500 border-slate-600/30'}`}
+                    >
+                      {enabled ? 'On' : 'Off'}
+                    </Badge>
+                  </div>
+                </button>
+              );
             })}
           </div>
         </div>
       </div>
 
       {/* Timeline */}
-      <div className="p-3 border-t border-slate-700/50 bg-slate-900/80">
+      <div className="p-2 border-t border-slate-700/50 bg-slate-900/80 flex-shrink-0">
         {processing && <div className="mb-2"><span className="text-xs text-slate-400">{progressMsg}</span><Progress value={50} className="h-1 mt-1" /></div>}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
-            <Button variant="ghost" size="icon" onClick={actions.stop} className="h-8 w-8 text-slate-400 hover:text-white"><SkipBack className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon" onClick={stepBack} className="h-8 w-8 text-slate-400 hover:text-white"><ChevronLeft className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon" onClick={isPlaying ? actions.pause : actions.play} className={`h-10 w-10 ${isPlaying ? 'text-cyan-400 bg-cyan-500/20' : 'text-white'}`}>
-              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+            <Button variant="ghost" size="icon" onClick={actions.stop} className="h-7 w-7 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={stepBack} className="h-7 w-7 text-slate-400 hover:text-white"><ChevronLeft className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={isPlaying ? actions.pause : actions.play} className={`h-8 w-8 ${isPlaying ? 'text-cyan-400 bg-cyan-500/20' : 'text-white'}`}>
+              {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             </Button>
-            <Button variant="ghost" size="icon" onClick={stepForward} className="h-8 w-8 text-slate-400 hover:text-white"><ChevronRight className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon" onClick={() => actions.seekTo(totalFrames - 1)} className="h-8 w-8 text-slate-400 hover:text-white"><SkipForward className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" onClick={stepForward} className="h-7 w-7 text-slate-400 hover:text-white"><ChevronRight className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => actions.seekTo(totalFrames - 1)} className="h-7 w-7 text-slate-400 hover:text-white"><SkipForward className="w-3 h-3" /></Button>
           </div>
-          <div className="flex-1">
+          <div className="flex-1 min-w-[200px]">
             <Slider value={[currentIndex]} min={0} max={Math.max(0, totalFrames - 1)} step={1} onValueChange={([v]) => actions.seekTo(v)} className="cursor-pointer" />
-            <div className="flex justify-between mt-1 text-xs text-slate-500">
+            <div className="flex justify-between mt-0.5 text-[10px] text-slate-500">
               <span>{formatTime(timeline.start)}</span>
               <span className="text-cyan-400 font-medium">{formatTime(timeline.current)}</span>
               <span>{formatTime(timeline.end)}</span>
@@ -490,12 +801,73 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           <select onChange={e => actions.setPlaybackSpeed(Number(e.target.value))} defaultValue={1} className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs">
             <option value={0.5}>0.5x</option><option value={1}>1x</option><option value={2}>2x</option><option value={5}>5x</option><option value={10}>10x</option>
           </select>
-          <Button variant="outline" size="sm" onClick={handleProcess} disabled={processing || totalFrames === 0} className="bg-slate-800/50 border-slate-700">
-            <RefreshCw className={`w-4 h-4 mr-1 ${processing ? 'animate-spin' : ''}`} />Process
+          <Button variant="outline" size="sm" onClick={handleProcess} disabled={processing || totalFrames === 0} className="bg-slate-800/50 border-slate-700 h-7 text-xs">
+            <RefreshCw className={`w-3 h-3 mr-1 ${processing ? 'animate-spin' : ''}`} />Process
           </Button>
-          <Button variant="outline" size="sm" onClick={handleExport} disabled={totalFrames === 0} className="bg-slate-800/50 border-slate-700">
-            <Download className="w-4 h-4 mr-1" />Export
+          <Button variant="outline" size="sm" onClick={handleExport} disabled={totalFrames === 0} className="bg-slate-800/50 border-slate-700 h-7 text-xs">
+            <Download className="w-3 h-3 mr-1" />Export
           </Button>
+        </div>
+      </div>
+
+      {/* System Capabilities - Link Status Panel */}
+      <div className="px-3 py-2 border-t border-slate-700/50 bg-slate-800/50 flex-shrink-0">
+        <h3 className="text-xs font-semibold text-slate-400 mb-2">System Capabilities</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+          {/* Multimodal Fusion */}
+          <div className={`p-2 rounded border ${linkStatus.geo.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-300">Multimodal Fusion</span>
+              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.geo.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
+                {linkStatus.geo.active ? 'Active' : 'Idle'}
+              </Badge>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">Combine GPS, EXIF, Wi-Fi, Bluetooth</p>
+          </div>
+
+          {/* Monte Carlo Interpolation */}
+          <div className={`p-2 rounded border ${linkStatus.fix.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-300">Monte Carlo</span>
+              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.fix.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
+                {linkStatus.fix.active ? 'Active' : 'Idle'}
+              </Badge>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">Probabilistic path reconstruction</p>
+          </div>
+
+          {/* Futurecast Prediction */}
+          <div className={`p-2 rounded border ${linkStatus.nav.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-300">Futurecast</span>
+              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.nav.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
+                {linkStatus.nav.active ? 'Active' : 'Idle'}
+              </Badge>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">6-hour trajectory forecasting</p>
+          </div>
+
+          {/* Satellite Link */}
+          <div className={`p-2 rounded border ${linkStatus.sat.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-300">Satellite Imagery</span>
+              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.sat.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
+                {linkStatus.sat.active ? 'Active' : 'Idle'}
+              </Badge>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">Sentinel, NASA, USGS layers</p>
+          </div>
+
+          {/* Signal Processing */}
+          <div className={`p-2 rounded border ${linkStatus.signal.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-300">Signal Fusion</span>
+              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.signal.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
+                {linkStatus.signal.active ? 'Active' : 'Idle'}
+              </Badge>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">Kalman filter signal processing</p>
+          </div>
         </div>
       </div>
     </div>

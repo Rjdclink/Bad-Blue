@@ -37,11 +37,6 @@ export interface GeoRuntimeConfig {
   autoFetch: boolean;
   interpolationEnabled: boolean;
   predictiveEnabled: boolean;
-  /**
-   * When true, generates synthetic frames when no data is provided.
-   * Default false to avoid "motion without report" desync.
-   */
-  allowMockData: boolean;
 }
 
 export interface GeoRuntimeState {
@@ -84,7 +79,6 @@ const DEFAULT_CONFIG: GeoRuntimeConfig = {
   autoFetch: true,
   interpolationEnabled: true,
   predictiveEnabled: true,
-  allowMockData: false,
 };
 
 // ============================================================================
@@ -110,54 +104,6 @@ const calculateBearing = (lat1: number, lon1: number, lat2: number, lon2: number
   const y = Math.sin(Δλ) * Math.cos(φ2);
   const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-};
-
-// Generate mock frames for demo
-const generateMockFrames = (
-  center = { lat: 40.7128, lng: -74.0060 },
-  durationMinutes = 60,
-  intervalSeconds = 30
-): GeoFrame[] => {
-  const frames: GeoFrame[] = [];
-  const numFrames = Math.ceil((durationMinutes * 60) / intervalSeconds);
-  const startTime = Date.now() - durationMinutes * 60 * 1000;
-
-  let lat = center.lat;
-  let lng = center.lng;
-  let heading = Math.random() * 360;
-  let speed = 1.5;
-
-  for (let i = 0; i < numFrames; i++) {
-    const timestamp = new Date(startTime + i * intervalSeconds * 1000);
-    
-    // Random movement
-    if (Math.random() < 0.1) heading += (Math.random() - 0.5) * 90;
-    else heading += (Math.random() - 0.5) * 10;
-    heading = (heading + 360) % 360;
-
-    if (Math.random() < 0.05) speed = 0;
-    else if (Math.random() < 0.1) speed = 3 + Math.random() * 10;
-    else speed = 1 + Math.random() * 1.5;
-
-    const distanceM = speed * intervalSeconds;
-    const distanceDeg = distanceM / 111000;
-    
-    lat += Math.cos(heading * Math.PI / 180) * distanceDeg;
-    lng += Math.sin(heading * Math.PI / 180) * distanceDeg / Math.cos(lat * Math.PI / 180);
-
-    // IMMUTABLE: Create new object each time
-    frames.push({
-      id: generateId(),
-      timestamp,
-      position: { latitude: lat, longitude: lng, altitude: 10 + Math.random() * 5, accuracy: 5 + Math.random() * 15 },
-      velocity: { speed, heading },
-      source: speed === 0 ? 'device_gps' : (speed > 5 ? 'device_gps' : 'wifi_handoff'),
-      confidence: 0.85 + Math.random() * 0.15,
-      metadata: { generated: true, frameIndex: i },
-    });
-  }
-
-  return frames;
 };
 
 // Generate futurecast predictions
@@ -302,44 +248,36 @@ export function useGeoRuntime(
     });
   }, []);
 
-  // Load data - ALWAYS creates new array
+  // Load data - REAL DATA ONLY
   const loadData = useCallback((points: GPSPoint[]) => {
     setStatus('loading');
     setError(null);
 
     try {
-      let newFrames: GeoFrame[];
-      
+      // No data = empty state
       if (points.length === 0) {
-        if (!cfg.allowMockData) {
-          // No synthetic motion by default
-          setFrames([]);
-          setFuturecastFrames([]);
-          setCurrentIndex(0);
-          setIsPlaying(false);
-          setIsLive(false);
-          setVersion(v => v + 1);
-          setStatus('idle');
-          return;
-        }
-        console.log('[GeoRuntime] Generating mock frames (allowMockData=true)');
-        newFrames = generateMockFrames();
-      } else {
-        newFrames = convertToFrames(points);
+        setFrames([]);
+        setFuturecastFrames([]);
+        setCurrentIndex(0);
+        setIsPlaying(false);
+        setIsLive(false);
+        setVersion(v => v + 1);
+        setStatus('idle');
+        return;
       }
+      
+      // Convert real GPS points to frames
+      let newFrames = convertToFrames(points);
 
       if (newFrames.length === 0) {
-        if (!cfg.allowMockData) {
-          setFrames([]);
-          setFuturecastFrames([]);
-          setCurrentIndex(0);
-          setIsPlaying(false);
-          setIsLive(false);
-          setVersion(v => v + 1);
-          setStatus('idle');
-          return;
-        }
-        newFrames = generateMockFrames();
+        setFrames([]);
+        setFuturecastFrames([]);
+        setCurrentIndex(0);
+        setIsPlaying(false);
+        setIsLive(false);
+        setVersion(v => v + 1);
+        setStatus('idle');
+        return;
       }
 
       // Limit buffer
@@ -430,45 +368,85 @@ export function useGeoRuntime(
   // LIVE mode - add new frames
   useEffect(() => {
     if (!isLive || !cfg.autoFetch) return;
+    // REAL-WORLD ONLY: use the device geolocation provider (no synthetic motion).
+    // If permissions are denied or geolocation is unavailable, LIVE mode will not fabricate frames.
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      setError('Geolocation is unavailable in this environment');
+      setStatus('error');
+      return;
+    }
 
-    const liveInterval = setInterval(() => {
-      const currentFrames = framesRef.current;
-      if (currentFrames.length === 0) return;
+    const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
-      const lastFrame = currentFrames[currentFrames.length - 1];
-      
-      // Generate new frame - IMMUTABLE
-      const newFrame: GeoFrame = {
-        id: generateId(),
-        timestamp: new Date(),
-        position: {
-          latitude: lastFrame.position.latitude + (Math.random() - 0.5) * 0.0002,
-          longitude: lastFrame.position.longitude + (Math.random() - 0.5) * 0.0002,
-          accuracy: 5 + Math.random() * 10,
-        },
-        velocity: {
-          speed: 1 + Math.random() * 2,
-          heading: (lastFrame.velocity?.heading || 0) + (Math.random() - 0.5) * 20,
-        },
-        source: 'device_gps',
-        confidence: 0.9 + Math.random() * 0.1,
-        metadata: { live: true },
-      };
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const now = new Date(pos.timestamp || Date.now());
+        const coords = pos.coords;
 
-      // IMMUTABLE: Create new array
-      setFrames(prev => {
-        const updated = [...prev, newFrame];
-        if (updated.length > cfg.maxFrameBuffer) {
-          return updated.slice(-cfg.maxFrameBuffer);
+        const latitude = coords.latitude;
+        const longitude = coords.longitude;
+        const accuracy = Number.isFinite(coords.accuracy) ? coords.accuracy : undefined;
+        const altitude = Number.isFinite(coords.altitude) ? coords.altitude ?? undefined : undefined;
+
+        const prevFrames = framesRef.current;
+        const last = prevFrames.length > 0 ? prevFrames[prevFrames.length - 1] : null;
+
+        // Prefer provider-reported values when available.
+        let speed = Number.isFinite(coords.speed) ? (coords.speed ?? undefined) : undefined;
+        let heading = Number.isFinite(coords.heading) ? (coords.heading ?? undefined) : undefined;
+
+        // If the provider does not report speed/heading, compute from last fix.
+        if (last) {
+          const dt = Math.max(1, (now.getTime() - last.timestamp.getTime()) / 1000);
+          const dist = haversineDistance(last.position.latitude, last.position.longitude, latitude, longitude);
+          if (speed === undefined) speed = dist / dt;
+          if (heading === undefined) heading = calculateBearing(last.position.latitude, last.position.longitude, latitude, longitude);
         }
-        return updated;
-      });
-      
-      setCurrentIndex(prev => prev + 1);
-      setVersion(v => v + 1);
-    }, 2000);
 
-    return () => clearInterval(liveInterval);
+        const confidence = accuracy !== undefined ? clamp(1 - accuracy / 100, 0.1, 1) : 0.85;
+
+        const newFrame: GeoFrame = {
+          id: generateId(),
+          timestamp: now,
+          position: { latitude, longitude, altitude, accuracy },
+          velocity: speed !== undefined || heading !== undefined
+            ? { speed: speed ?? 0, heading: heading ?? 0 }
+            : undefined,
+          source: 'device_gps',
+          confidence,
+          metadata: { live: true, provider: 'navigator.geolocation' },
+        };
+
+        setFrames((prev) => {
+          const updated = [...prev, newFrame];
+          const trimmed = updated.length > cfg.maxFrameBuffer ? updated.slice(-cfg.maxFrameBuffer) : updated;
+          // Live mode should always track the latest available fix.
+          setCurrentIndex(trimmed.length - 1);
+          return trimmed;
+        });
+
+        setStatus('playing');
+        setError(null);
+        setVersion((v) => v + 1);
+      },
+      (err) => {
+        setError(err?.message || 'Geolocation watch failed');
+        setStatus('error');
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10_000,
+      }
+    );
+
+    return () => {
+      try {
+        navigator.geolocation.clearWatch(watchId);
+      } catch {
+        // ignore
+      }
+    };
   }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer]);
 
   // === DERIVED STATE (computed from index + frames) ===

@@ -1,5 +1,22 @@
 // SERVER ENTRY POINT LOADED - Sanity check for deployment verification
 console.log("SERVER ENTRY LOADED");
+console.log(
+  '[BOOT_ID]',
+  JSON.stringify(
+    {
+      ts: new Date().toISOString(),
+      serviceName: process.env.RAILWAY_SERVICE_NAME || process.env.SERVICE_NAME || 'unknown',
+      commit:
+        process.env.RAILWAY_GIT_COMMIT_SHA ||
+        process.env.GIT_COMMIT ||
+        process.env.SOURCE_VERSION ||
+        'unknown',
+      nodeEnv: process.env.NODE_ENV || 'unknown',
+    },
+    null,
+    0
+  )
+);
 
 import * as dotenv from 'dotenv';
 dotenv.config();
@@ -227,6 +244,16 @@ async function runMigrations(): Promise<void> {
 async function initializeServices(): Promise<void> {
   console.log('[STARTUP] Stage 3: Initializing services...');
   
+  // NOTE: Playwright browser validation has been REMOVED from server startup
+  // Browser validation now happens in the People Search Worker service
+  // This ensures APPLICATION BOOT ALWAYS SUCCEEDS regardless of Playwright/browser state
+  // 
+  // To validate browser at runtime, use:
+  // - GET /api/people-search/health - Check worker status
+  // - POST /api/people-search/validate - Run browser test crawl
+  console.log('[STARTUP] ℹ Playwright validation delegated to People Search Worker');
+  console.log('[STARTUP] ℹ Use /api/people-search/health to check worker status at runtime');
+
   try {
     const { persistenceManager } = await import('./persistenceManager');
     await persistenceManager.start();

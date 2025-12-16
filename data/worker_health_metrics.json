@@ -1,41 +1,5 @@
 [
   {
-    "timestamp": "2025-11-08T07:44:47.638Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:49:00.988Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:51:24.757Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:52:42.905Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:56:27.921Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T07:58:01.156Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
     "timestamp": "2025-11-08T07:58:41.618Z",
     "check": "database_heartbeat",
     "status": "success",
@@ -5786,6 +5750,46 @@
   },
   {
     "timestamp": "2025-12-07T05:20:38.354Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: ",
+    "consecutiveFailures": 1
+  },
+  {
+    "timestamp": "2025-12-14T05:49:30.905Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: ",
+    "consecutiveFailures": 1
+  },
+  {
+    "timestamp": "2025-12-14T05:50:59.460Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: ",
+    "consecutiveFailures": 1
+  },
+  {
+    "timestamp": "2025-12-14T05:52:23.614Z",
+    "check": "database_heartbeat",
+    "status": "failed",
+    "error": "Failed query: SELECT 1\nparams: ",
+    "consecutiveFailures": 1
+  },
+  {
+    "timestamp": "2025-12-14T05:53:13.625Z",
+    "check": "database_repair",
+    "status": "failed",
+    "error": "Database URL not available for pool reset"
+  },
+  {
+    "timestamp": "2025-12-14T05:53:13.635Z",
+    "check": "database_repair",
+    "status": "failed",
+    "error": "Database URL not available for pool reset"
+  },
+  {
+    "timestamp": "2025-12-14T05:54:05.687Z",
     "check": "database_heartbeat",
     "status": "failed",
     "error": "Failed query: SELECT 1\nparams: ",

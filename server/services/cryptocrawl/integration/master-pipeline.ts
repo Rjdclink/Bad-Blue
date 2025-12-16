@@ -13,6 +13,11 @@ import { ValidatorBribingAdvanced } from '../mev/validator-bribing-advanced.js';
 import { TripleDipExtractor } from '../mev/triple-dip-extractor.js';
 import { StealthSuperiority, type StealthMetrics } from '../stealth/index.js';
 import logger from '../../../logger.js';
+import { getCryptara } from '../../cryptara/index.js';
+import { networkHealth } from '../bridge/network-health.js';
+import { gasOracle } from '../bridge/gas-oracle.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
+import { PER_CHAIN_RISK } from '../config/perChainRisk.js';
 
 const { JsonRpcProvider } = providers;
 
@@ -49,8 +54,8 @@ class MasterPipeline {
 
     // In production, initialize wallet and providers from WalletManager
     // For now, create placeholder
-    if (process.env.PRIVATE_KEY) {
-      this.wallet = new Wallet(process.env.PRIVATE_KEY);
+    if (process.env.WALLET_PRIVATE_KEY) {
+      this.wallet = new Wallet(process.env.WALLET_PRIVATE_KEY);
     }
 
     // Known working public RPC endpoints by chain
@@ -192,6 +197,85 @@ class MasterPipeline {
 
   async executeOpportunity(opp: Opportunity): Promise<void> {
     try {
+      // ============================================================
+      // CRYPTARA MARKET GATE (advisory evaluators -> hard execution gate)
+      // ============================================================
+      const governance = getCryptocrawlGovernance();
+      const cryptara = getCryptara();
+      const utcHour = new Date().getUTCHours();
+      const risk = PER_CHAIN_RISK[opp.chain as keyof typeof PER_CHAIN_RISK] || PER_CHAIN_RISK.polygon;
+
+      // Latency gate: use chain health latency as a proxy until venue-specific latency is wired.
+      let chainLatencyMs: number | undefined;
+      try {
+        if (networkHealth.isRunning()) {
+          const health = await networkHealth.checkNetwork(opp.chain as any);
+          chainLatencyMs = health.latency;
+        }
+      } catch {
+        chainLatencyMs = undefined;
+      }
+
+      // Volatility regime: use minimal inputs; integrators can supply richer metrics later.
+      let gasGwei: number | undefined;
+      try {
+        const gp = await gasOracle.getGasPrice(opp.chain as any);
+        gasGwei = gp.gwei;
+      } catch {
+        gasGwei = undefined;
+      }
+
+      let gate;
+      try {
+        gate = cryptara.evaluateMarketGates(
+          {
+            chain: opp.chain,
+            pairOrSymbol: opp.pair || opp.asset,
+            venue: 'uniswap',
+            expectedProfitUsd: opp.profitEstimate,
+            volatilityRegime: { gasPriceGwei: gasGwei },
+            venueLatency: {
+              p50Ms: {
+                chain_rpc: chainLatencyMs ?? 9999,
+              },
+              maxP50Ms: risk.maxLatencyMs,
+            },
+            slippage: {
+              maxSlippageBps: risk.maxSlippageBps,
+            },
+            timeOfDay: { utcHour },
+          },
+          {
+            // Start with a minimal critical set; as integrations add real data feeds,
+            // we can promote more signals to "critical".
+            blockOnUnknownCritical: true,
+            criticalSignals: ['volatilityRegime', 'venueLatency', 'slippage'],
+          }
+        );
+      } catch (err) {
+        logger.warn('Cryptara gate evaluation unavailable; skipping execution (ask-and-wait)', {
+          component: 'MasterPipeline',
+          opportunityId: opp.asset,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+
+      if (gate.actions.requestAutoPause) {
+        governance.pause('system', gate.actions.autoPauseReason || 'cryptara_auto_pause');
+      }
+
+      if (gate.decision !== 'ALLOW') {
+        logger.warn('Cryptara gate blocked opportunity execution', {
+          component: 'MasterPipeline',
+          opportunityId: opp.asset,
+          chain: opp.chain,
+          pair: opp.pair,
+          reasons: gate.blockReasons,
+        });
+        return;
+      }
+
       // Check if opportunity should use triple-dip extraction
       const tripleDipResult = await this.tripleDip.extractTripleDip({
         id: opp.asset,

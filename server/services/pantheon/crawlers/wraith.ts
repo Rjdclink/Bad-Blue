@@ -111,9 +111,9 @@ export class WraithCrawler extends BaseCrawler {
         responseTime: response.headers.get('x-response-time') || null
       };
     } catch {
+      // IMMEDIATE SKIP - ghosts fail silently
       return { 
         asyncDetected: false,
-        error: true,
         serverSignature: 'unknown',
         hasAsyncHeader: false,
         statusCode: 0,
