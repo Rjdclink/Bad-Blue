@@ -1,357 +1,298 @@
 /**
- * CryptoCrawler Risk Governor - Monte Carlo Consensus & Capital Management
+ * RISK GOVERNOR
  * 
- * PURPOSE: Manage risk through Monte Carlo consensus validation,
- * position sizing, and capital allocation with strict safety controls.
+ * Manages all risk controls and Monte Carlo consensus requirements
+ * Gates every execution with multi-layer safety checks
  * 
- * INTEGRATION: Works with Stage Governor to enforce stage-specific limits
- * 
- * KEY FEATURES:
- * 1. Monte Carlo consensus for trade validation
- * 2. Kelly Criterion position sizing
- * 3. Circuit breaker integration
- * 4. Capital partitioning by stage
- * 5. Real-time risk monitoring
+ * Features:
+ * - Monte Carlo consensus validation (3+ simulations)
+ * - Real-time risk assessment
+ * - Drawdown monitoring and circuit breakers
+ * - Position sizing with Kelly Criterion
+ * - Anomaly detection integration
  */
 
 import { EventEmitter } from 'events';
-import logger from '../../../logger.js';
-import { stageGovernor, type StageNumber, type MonteCarloValidation } from './stage-governor.js';
+import { createLogger } from '../../../logger';
+import { stageManager, StageConfig } from './stage-management';
+import { MonteCarloEngine, StrategyProfile, MarketCondition, MARKET_CONDITIONS } from '../validation/monte-carlo-engine';
+
+const log = createLogger('RiskGovernor');
 
 // ============================================================================
-// TYPES & INTERFACES
+// TYPES
 // ============================================================================
-
-export interface RiskGovernorConfig {
-  // Capital limits by stage
-  capitalLimits: Record<StageNumber, {
-    maxCapitalAtRisk: number;      // USD
-    maxPositionSize: number;       // USD per trade
-    maxDailyDrawdown: number;      // Percentage
-    maxHourlyDrawdown: number;     // Percentage
-    maxConsecutiveLosses: number;
-  }>;
-  
-  // Monte Carlo consensus requirements
-  monteCarloRequirements: {
-    minSimulations: number;
-    minWinRate: number;
-    minSharpeRatio: number;
-    maxDrawdown: number;
-    consensusThreshold: number;    // Percentage of validators that must approve
-  };
-  
-  // Position sizing
-  kellyFraction: number;           // Fraction of Kelly to use (0.25 = quarter Kelly)
-  maxKellyMultiple: number;        // Cap on Kelly-derived position size
-  
-  // Circuit breaker
-  circuitBreakerConfig: {
-    maxDailyLoss: number;          // USD
-    maxHourlyLoss: number;         // USD
-    cooldownPeriod: number;        // milliseconds
-    halfOpenAttempts: number;
-  };
-}
 
 export interface TradeProposal {
   id: string;
+  strategy: string;
+  chain: string;
   pair: string;
-  exchange: string;
-  direction: 'buy' | 'sell';
-  entryPrice: number;
-  targetPrice: number;
-  stopLoss: number;
-  proposedSize: number;           // USD
-  expectedProfit: number;
-  expectedFees: number;
-  expectedSlippage: number;
-  latencyMs: number;
+  venue: string;
+  positionSizeUSD: number;
+  estimatedProfitUSD: number;
+  estimatedRiskPercent: number;
   timestamp: number;
 }
 
-export interface TradeValidation {
-  proposal: TradeProposal;
+export interface RiskAssessment {
+  proposalId: string;
   approved: boolean;
-  approvedSize: number;           // May be reduced
-  monteCarloResult: MonteCarloValidation;
-  riskScore: number;              // 0-100, lower is better
-  reasons: string[];
-  warnings: string[];
-  constraints: string[];
+  reason: string;
+  
+  // Risk metrics
+  riskScore: number; // 0-100 (higher = riskier)
+  confidenceScore: number; // 0-1
+  
+  // Monte Carlo validation
+  monteCarloApproved: boolean;
+  monteCarloSimulations: number;
+  monteCarloConsensus: number; // 0-1 (fraction agreeing)
+  
+  // Position sizing
+  recommendedPositionUSD: number;
+  kellyFraction: number;
+  
+  // Checks passed
+  checksPass: {
+    stageCheck: boolean;
+    pauseCheck: boolean;
+    drawdownCheck: boolean;
+    dailyLimitCheck: boolean;
+    positionSizeCheck: boolean;
+    monteCarloCheck: boolean;
+    anomalyCheck: boolean;
+  };
+  
+  timestamp: number;
 }
 
-export interface RiskMetrics {
-  currentCapitalAtRisk: number;
-  currentPositionCount: number;
-  dailyPnL: number;
-  hourlyPnL: number;
-  consecutiveLosses: number;
-  winRate: number;
-  sharpeRatio: number;
-  maxDrawdown: number;
-  currentDrawdown: number;
-  kellyRecommendedSize: number;
-  utilizationPercent: number;
-}
-
-export interface CapitalAllocation {
-  stage: StageNumber;
-  totalCapital: number;
-  allocatedCapital: number;
-  availableCapital: number;
-  reserveCapital: number;
-  partitions: CapitalPartition[];
-}
-
-export interface CapitalPartition {
+export interface CircuitBreaker {
+  id: string;
   name: string;
-  purpose: string;
-  amount: number;
-  locked: boolean;
-}
-
-export interface CircuitBreakerState {
-  status: 'closed' | 'half-open' | 'open';
-  lastTriggered: number | null;
-  triggerCount: number;
-  cooldownEnds: number | null;
-  halfOpenAttempts: number;
+  enabled: boolean;
+  threshold: number;
+  currentValue: number;
+  isTripped: boolean;
+  tripTime?: number;
+  resetTime?: number;
 }
 
 // ============================================================================
-// DEFAULT CONFIGURATION
-// ============================================================================
-
-const DEFAULT_CONFIG: RiskGovernorConfig = {
-  capitalLimits: {
-    1: { maxCapitalAtRisk: 1000, maxPositionSize: 100, maxDailyDrawdown: 0.05, maxHourlyDrawdown: 0.02, maxConsecutiveLosses: 3 },
-    2: { maxCapitalAtRisk: 5000, maxPositionSize: 500, maxDailyDrawdown: 0.08, maxHourlyDrawdown: 0.03, maxConsecutiveLosses: 4 },
-    3: { maxCapitalAtRisk: 20000, maxPositionSize: 2000, maxDailyDrawdown: 0.10, maxHourlyDrawdown: 0.04, maxConsecutiveLosses: 5 },
-    4: { maxCapitalAtRisk: 75000, maxPositionSize: 7500, maxDailyDrawdown: 0.12, maxHourlyDrawdown: 0.05, maxConsecutiveLosses: 5 },
-    5: { maxCapitalAtRisk: 150000, maxPositionSize: 15000, maxDailyDrawdown: 0.15, maxHourlyDrawdown: 0.06, maxConsecutiveLosses: 6 },
-    6: { maxCapitalAtRisk: 300000, maxPositionSize: 30000, maxDailyDrawdown: 0.15, maxHourlyDrawdown: 0.06, maxConsecutiveLosses: 7 },
-  },
-  
-  monteCarloRequirements: {
-    minSimulations: 10000,
-    minWinRate: 0.55,
-    minSharpeRatio: 1.0,
-    maxDrawdown: 0.20,
-    consensusThreshold: 0.75,
-  },
-  
-  kellyFraction: 0.25,  // Quarter Kelly for safety
-  maxKellyMultiple: 2.0,
-  
-  circuitBreakerConfig: {
-    maxDailyLoss: 5000,
-    maxHourlyLoss: 1000,
-    cooldownPeriod: 300000, // 5 minutes
-    halfOpenAttempts: 3,
-  },
-};
-
-// ============================================================================
-// RISK GOVERNOR CLASS
+// RISK GOVERNOR
 // ============================================================================
 
 export class RiskGovernor extends EventEmitter {
-  private static instance: RiskGovernor;
+  private static instance: RiskGovernor | null = null;
+  private monteCarloEngine: MonteCarloEngine;
+  private circuitBreakers: Map<string, CircuitBreaker> = new Map();
+  private assessmentHistory: RiskAssessment[] = [];
   
-  private config: RiskGovernorConfig;
-  private metrics: RiskMetrics;
-  private capitalAllocation: CapitalAllocation;
-  private circuitBreaker: CircuitBreakerState;
-  private tradeHistory: Array<{ proposal: TradeProposal; result: 'win' | 'loss' | 'pending'; pnl: number }> = [];
-  private validators: MonteCarloValidator[] = [];
-  
-  private constructor(config: Partial<RiskGovernorConfig> = {}) {
+  private constructor() {
     super();
-    this.config = { ...DEFAULT_CONFIG, ...config };
-    this.metrics = this.initializeMetrics();
-    this.capitalAllocation = this.initializeCapital();
-    this.circuitBreaker = this.initializeCircuitBreaker();
-    this.initializeValidators();
     
-    logger.info('[RiskGovernor] Initialized', {
-      stage: stageGovernor.getState().currentStage,
-      capitalAtRisk: this.capitalAllocation.allocatedCapital,
+    this.monteCarloEngine = new MonteCarloEngine({
+      simulations: 10000,
+      timeHorizonDays: 1,
+      enableRegimeDetection: true,
+      enableKellySizing: true,
+      enableFatTails: true,
+      enableEnsemble: true,
+      ensembleCount: 3,
+      learningEnabled: true,
     });
+    
+    this.initializeCircuitBreakers();
+    
+    log.info('Risk Governor initialized');
   }
   
-  static getInstance(config?: Partial<RiskGovernorConfig>): RiskGovernor {
+  static getInstance(): RiskGovernor {
     if (!RiskGovernor.instance) {
-      RiskGovernor.instance = new RiskGovernor(config);
+      RiskGovernor.instance = new RiskGovernor();
     }
     return RiskGovernor.instance;
   }
   
-  private initializeMetrics(): RiskMetrics {
-    return {
-      currentCapitalAtRisk: 0,
-      currentPositionCount: 0,
-      dailyPnL: 0,
-      hourlyPnL: 0,
-      consecutiveLosses: 0,
-      winRate: 0,
-      sharpeRatio: 0,
-      maxDrawdown: 0,
-      currentDrawdown: 0,
-      kellyRecommendedSize: 0,
-      utilizationPercent: 0,
-    };
-  }
-  
-  private initializeCapital(): CapitalAllocation {
-    const stage = stageGovernor.getState().currentStage;
-    const limits = this.config.capitalLimits[stage];
-    
-    return {
-      stage,
-      totalCapital: limits.maxCapitalAtRisk,
-      allocatedCapital: 0,
-      availableCapital: limits.maxCapitalAtRisk,
-      reserveCapital: limits.maxCapitalAtRisk * 0.20, // 20% reserve
-      partitions: [
-        { name: 'Trading', purpose: 'Active trading capital', amount: limits.maxCapitalAtRisk * 0.60, locked: false },
-        { name: 'Reserve', purpose: 'Emergency reserve', amount: limits.maxCapitalAtRisk * 0.20, locked: true },
-        { name: 'Gas', purpose: 'Gas and fees', amount: limits.maxCapitalAtRisk * 0.10, locked: false },
-        { name: 'Buffer', purpose: 'Slippage buffer', amount: limits.maxCapitalAtRisk * 0.10, locked: false },
-      ],
-    };
-  }
-  
-  private initializeCircuitBreaker(): CircuitBreakerState {
-    return {
-      status: 'closed',
-      lastTriggered: null,
-      triggerCount: 0,
-      cooldownEnds: null,
-      halfOpenAttempts: 0,
-    };
-  }
-  
-  private initializeValidators(): void {
-    // Create ensemble of Monte Carlo validators with different parameters
-    this.validators = [
-      new MonteCarloValidator('conservative', { minWinRate: 0.60, minSharpe: 1.2, maxDrawdown: 0.15 }),
-      new MonteCarloValidator('balanced', { minWinRate: 0.55, minSharpe: 1.0, maxDrawdown: 0.20 }),
-      new MonteCarloValidator('aggressive', { minWinRate: 0.50, minSharpe: 0.8, maxDrawdown: 0.25 }),
-    ];
-  }
-  
   // ============================================================================
-  // CORE VALIDATION METHODS
+  // TRADE APPROVAL GATING
   // ============================================================================
   
   /**
-   * Validate a trade proposal through Monte Carlo consensus
-   * This is the MAIN gate for any trade execution
+   * Gate every trade execution with comprehensive risk assessment
+   * Returns approval decision with detailed reasoning
    */
-  async validateTrade(proposal: TradeProposal): Promise<TradeValidation> {
-    const stage = stageGovernor.getState().currentStage;
-    const stageConfig = stageGovernor.getConfig();
+  async assessTradeProposal(proposal: TradeProposal): Promise<RiskAssessment> {
+    log.debug('Assessing trade proposal', { proposalId: proposal.id });
     
-    // Check if execution is allowed
-    const canExecute = stageGovernor.canExecute();
-    if (!canExecute.allowed) {
-      return this.rejectProposal(proposal, `Stage Governor: ${canExecute.reason}`);
-    }
-    
-    // Check circuit breaker
-    if (this.circuitBreaker.status === 'open') {
-      return this.rejectProposal(proposal, 'Circuit breaker is OPEN');
-    }
-    
-    // Check capital availability
-    const limits = this.config.capitalLimits[stage];
-    if (proposal.proposedSize > limits.maxPositionSize) {
-      return this.rejectProposal(proposal, 
-        `Position size $${proposal.proposedSize} exceeds stage limit $${limits.maxPositionSize}`);
-    }
-    
-    if (proposal.proposedSize > this.capitalAllocation.availableCapital) {
-      return this.rejectProposal(proposal, 
-        `Insufficient capital. Available: $${this.capitalAllocation.availableCapital}`);
-    }
-    
-    // Check consecutive losses
-    if (this.metrics.consecutiveLosses >= limits.maxConsecutiveLosses) {
-      return this.rejectProposal(proposal, 
-        `Consecutive losses (${this.metrics.consecutiveLosses}) at limit`);
-    }
-    
-    // Run Monte Carlo consensus
-    const monteCarloResult = await this.runMonteCarloConsensus(proposal);
-    
-    // Check Monte Carlo approval
-    if (monteCarloResult.approval === 'rejected') {
-      return this.rejectProposal(proposal, 'Monte Carlo consensus: REJECTED', monteCarloResult);
-    }
-    
-    // Calculate risk-adjusted position size
-    const kellySize = this.calculateKellySize(proposal, monteCarloResult);
-    const approvedSize = Math.min(
-      proposal.proposedSize,
-      kellySize,
-      limits.maxPositionSize,
-      this.capitalAllocation.availableCapital
-    );
-    
-    // Calculate risk score
-    const riskScore = this.calculateRiskScore(proposal, monteCarloResult);
-    
-    // Build validation result
-    const validation: TradeValidation = {
-      proposal,
-      approved: true,
-      approvedSize,
-      monteCarloResult,
-      riskScore,
-      reasons: [
-        `Monte Carlo consensus: ${monteCarloResult.approval}`,
-        `Expected profit: $${proposal.expectedProfit.toFixed(2)}`,
-        `Win rate: ${(monteCarloResult.winRate * 100).toFixed(1)}%`,
-        `Sharpe ratio: ${monteCarloResult.sharpeRatio.toFixed(2)}`,
-      ],
-      warnings: this.generateWarnings(proposal, monteCarloResult),
-      constraints: monteCarloResult.conditions || [],
-    };
-    
-    // Apply conditions if conditionally approved
-    if (monteCarloResult.approval === 'conditional') {
-      validation.approvedSize = Math.min(approvedSize, approvedSize * 0.5); // Reduce to 50%
-      validation.constraints.push('Conditional approval: reduced position size');
-    }
-    
-    this.emit('trade_validated', validation);
-    
-    logger.info('[RiskGovernor] Trade validated', {
+    const assessment: RiskAssessment = {
       proposalId: proposal.id,
-      approved: validation.approved,
-      approvedSize: validation.approvedSize,
-      riskScore: validation.riskScore,
-    });
-    
-    return validation;
-  }
-  
-  private rejectProposal(
-    proposal: TradeProposal, 
-    reason: string,
-    monteCarloResult?: MonteCarloValidation
-  ): TradeValidation {
-    return {
-      proposal,
       approved: false,
-      approvedSize: 0,
-      monteCarloResult: monteCarloResult || this.getDefaultMonteCarloResult('rejected'),
-      riskScore: 100,
-      reasons: [reason],
-      warnings: [],
-      constraints: [],
+      reason: '',
+      riskScore: 0,
+      confidenceScore: 0,
+      monteCarloApproved: false,
+      monteCarloSimulations: 0,
+      monteCarloConsensus: 0,
+      recommendedPositionUSD: 0,
+      kellyFraction: 0,
+      checksPass: {
+        stageCheck: false,
+        pauseCheck: false,
+        drawdownCheck: false,
+        dailyLimitCheck: false,
+        positionSizeCheck: false,
+        monteCarloCheck: false,
+        anomalyCheck: false,
+      },
+      timestamp: Date.now(),
     };
+    
+    // ========================================
+    // CHECK 1: Stage Configuration
+    // ========================================
+    const stageConfig = stageManager.getStageConfig();
+    
+    if (!stageConfig.canExecuteTrades) {
+      assessment.reason = `Stage ${stageConfig.stageName} does not allow trade execution`;
+      this.recordAssessment(assessment);
+      return assessment;
+    }
+    assessment.checksPass.stageCheck = true;
+    
+    // ========================================
+    // CHECK 2: System Pause State
+    // ========================================
+    const canProceed = stageManager.canProceed();
+    if (!canProceed.allowed) {
+      assessment.reason = canProceed.reason || 'System paused';
+      this.recordAssessment(assessment);
+      return assessment;
+    }
+    assessment.checksPass.pauseCheck = true;
+    
+    // ========================================
+    // CHECK 3: Circuit Breakers
+    // ========================================
+    const trippedBreakers = this.getTrippedCircuitBreakers();
+    if (trippedBreakers.length > 0) {
+      assessment.reason = `Circuit breaker tripped: ${trippedBreakers.map(b => b.name).join(', ')}`;
+      this.recordAssessment(assessment);
+      return assessment;
+    }
+    
+    // ========================================
+    // CHECK 4: Drawdown Limit
+    // ========================================
+    const state = stageManager.getState();
+    if (state.currentDrawdownPercent > stageConfig.maxDrawdownPercent) {
+      assessment.reason = `Drawdown limit exceeded: ${state.currentDrawdownPercent.toFixed(2)}% > ${stageConfig.maxDrawdownPercent}%`;
+      this.recordAssessment(assessment);
+      return assessment;
+    }
+    assessment.checksPass.drawdownCheck = true;
+    
+    // ========================================
+    // CHECK 5: Daily Profit Limit
+    // ========================================
+    const currentDailyProfit = stageManager.getCurrentDailyProfit();
+    const maxDailyProfit = stageManager.getMaxDailyProfit();
+    
+    if (currentDailyProfit >= maxDailyProfit) {
+      assessment.reason = `Daily profit limit reached: $${currentDailyProfit.toFixed(2)} >= $${maxDailyProfit}`;
+      this.recordAssessment(assessment);
+      return assessment;
+    }
+    
+    // Check if this trade would exceed limit
+    if (currentDailyProfit + proposal.estimatedProfitUSD > maxDailyProfit) {
+      assessment.reason = `Trade would exceed daily profit limit`;
+      this.recordAssessment(assessment);
+      return assessment;
+    }
+    assessment.checksPass.dailyLimitCheck = true;
+    
+    // ========================================
+    // CHECK 6: Position Size Limit
+    // ========================================
+    if (proposal.positionSizeUSD > stageConfig.maxPositionSizeUSD) {
+      assessment.reason = `Position size exceeds limit: $${proposal.positionSizeUSD} > $${stageConfig.maxPositionSizeUSD}`;
+      this.recordAssessment(assessment);
+      return assessment;
+    }
+    assessment.checksPass.positionSizeCheck = true;
+    
+    // ========================================
+    // CHECK 7: Monte Carlo Consensus
+    // ========================================
+    if (stageConfig.requiresMonteCarloConsensus) {
+      const monteCarloResult = await this.runMonteCarloConsensus(proposal);
+      
+      assessment.monteCarloApproved = monteCarloResult.approved;
+      assessment.monteCarloSimulations = monteCarloResult.simulations;
+      assessment.monteCarloConsensus = monteCarloResult.consensus;
+      assessment.recommendedPositionUSD = monteCarloResult.recommendedPositionUSD;
+      assessment.kellyFraction = monteCarloResult.kellyFraction;
+      assessment.confidenceScore = monteCarloResult.confidenceScore;
+      
+      if (!monteCarloResult.approved) {
+        assessment.reason = `Monte Carlo consensus failed: ${monteCarloResult.reason}`;
+        this.recordAssessment(assessment);
+        return assessment;
+      }
+      assessment.checksPass.monteCarloCheck = true;
+    } else {
+      assessment.checksPass.monteCarloCheck = true;
+      assessment.confidenceScore = 0.8; // Default confidence
+    }
+    
+    // ========================================
+    // CHECK 8: Anomaly Detection
+    // ========================================
+    if (stageConfig.anomalyDetectionRequired) {
+      const anomalyResult = this.detectAnomalies(proposal);
+      
+      if (!anomalyResult.passed) {
+        assessment.reason = `Anomaly detected: ${anomalyResult.reason}`;
+        stageManager.reportAnomaly(anomalyResult.reason, anomalyResult.severity);
+        this.recordAssessment(assessment);
+        return assessment;
+      }
+      assessment.checksPass.anomalyCheck = true;
+    } else {
+      assessment.checksPass.anomalyCheck = true;
+    }
+    
+    // ========================================
+    // Calculate Risk Score
+    // ========================================
+    assessment.riskScore = this.calculateRiskScore(proposal, assessment);
+    
+    // ========================================
+    // FINAL APPROVAL
+    // ========================================
+    const allChecksPass = Object.values(assessment.checksPass).every(check => check);
+    
+    if (allChecksPass && assessment.riskScore < 70) {
+      assessment.approved = true;
+      assessment.reason = 'Trade approved - all risk checks passed';
+      
+      log.info('Trade APPROVED', {
+        proposalId: proposal.id,
+        strategy: proposal.strategy,
+        positionUSD: proposal.positionSizeUSD,
+        riskScore: assessment.riskScore,
+        confidence: assessment.confidenceScore,
+      });
+    } else if (allChecksPass) {
+      assessment.reason = `Risk score too high: ${assessment.riskScore.toFixed(2)}`;
+    }
+    
+    this.recordAssessment(assessment);
+    
+    this.emit('assessment-completed', assessment);
+    
+    return assessment;
   }
   
   // ============================================================================
@@ -359,135 +300,122 @@ export class RiskGovernor extends EventEmitter {
   // ============================================================================
   
   /**
-   * Run Monte Carlo consensus across multiple validators
+   * Run Monte Carlo consensus validation
+   * Requires agreement from multiple simulations
    */
-  async runMonteCarloConsensus(proposal: TradeProposal): Promise<MonteCarloValidation> {
-    const validatorResults = await Promise.all(
-      this.validators.map(v => v.validate(proposal))
-    );
-    
-    // Count approvals
-    const approvals = validatorResults.filter(r => r.approval === 'approved').length;
-    const conditionals = validatorResults.filter(r => r.approval === 'conditional').length;
-    const rejections = validatorResults.filter(r => r.approval === 'rejected').length;
-    
-    const totalValidators = this.validators.length;
-    const approvalRate = (approvals + conditionals * 0.5) / totalValidators;
-    
-    // Aggregate results
-    const avgWinRate = validatorResults.reduce((sum, r) => sum + r.winRate, 0) / totalValidators;
-    const avgSharpe = validatorResults.reduce((sum, r) => sum + r.sharpeRatio, 0) / totalValidators;
-    const maxDrawdown = Math.max(...validatorResults.map(r => r.maxDrawdown));
-    const avgExpectedProfit = validatorResults.reduce((sum, r) => sum + r.expectedProfit, 0) / totalValidators;
-    
-    // Determine consensus approval
-    let approval: MonteCarloValidation['approval'];
-    const conditions: string[] = [];
-    
-    if (approvalRate >= this.config.monteCarloRequirements.consensusThreshold) {
-      if (rejections === 0) {
-        approval = 'approved';
-      } else {
-        approval = 'conditional';
-        conditions.push(`${rejections}/${totalValidators} validators rejected`);
-      }
-    } else {
-      approval = 'rejected';
-    }
-    
-    // Additional checks against requirements
-    if (avgWinRate < this.config.monteCarloRequirements.minWinRate) {
-      if (approval === 'approved') approval = 'conditional';
-      conditions.push(`Win rate ${(avgWinRate * 100).toFixed(1)}% below minimum`);
-    }
-    
-    if (avgSharpe < this.config.monteCarloRequirements.minSharpeRatio) {
-      if (approval === 'approved') approval = 'conditional';
-      conditions.push(`Sharpe ratio ${avgSharpe.toFixed(2)} below minimum`);
-    }
-    
-    if (maxDrawdown > this.config.monteCarloRequirements.maxDrawdown) {
-      if (approval === 'approved') approval = 'conditional';
-      conditions.push(`Max drawdown ${(maxDrawdown * 100).toFixed(1)}% exceeds limit`);
-    }
-    
-    const result: MonteCarloValidation = {
-      simulations: this.config.monteCarloRequirements.minSimulations,
-      expectedProfit: avgExpectedProfit,
-      confidenceInterval: this.calculateConfidenceInterval(validatorResults),
-      winRate: avgWinRate,
-      maxDrawdown,
-      sharpeRatio: avgSharpe,
-      approval,
-      conditions: conditions.length > 0 ? conditions : undefined,
+  private async runMonteCarloConsensus(proposal: TradeProposal): Promise<{
+    approved: boolean;
+    reason: string;
+    simulations: number;
+    consensus: number;
+    recommendedPositionUSD: number;
+    kellyFraction: number;
+    confidenceScore: number;
+  }> {
+    // Create strategy profile from proposal
+    const strategy: StrategyProfile = {
+      name: proposal.strategy,
+      baseSuccessRate: 0.7, // Default, should come from historical data
+      avgProfitPerTrade: proposal.estimatedProfitUSD / proposal.positionSizeUSD,
+      avgLossPerTrade: proposal.estimatedRiskPercent,
+      tradesPerDay: 100, // Estimated
+      gasPerTrade: 0.002,
+      slippageTolerance: 0.003,
+      executionLatency: 20,
+      strategyType: 'arbitrage',
+      mlFilterEnabled: true,
+      multiChainEnabled: true,
+      mempoolMonitoring: true,
     };
     
-    logger.info('[RiskGovernor] Monte Carlo consensus', {
-      proposalId: proposal.id,
-      approval,
-      approvalRate: (approvalRate * 100).toFixed(1) + '%',
-      avgWinRate: (avgWinRate * 100).toFixed(1) + '%',
-      avgSharpe: avgSharpe.toFixed(2),
-    });
+    // Determine market conditions
+    const marketCondition = MARKET_CONDITIONS.normal; // Should be dynamic
     
-    return result;
-  }
-  
-  private calculateConfidenceInterval(
-    results: MonteCarloValidation[]
-  ): [number, number] {
-    const profits = results.map(r => r.expectedProfit);
-    const mean = profits.reduce((a, b) => a + b, 0) / profits.length;
-    const variance = profits.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / profits.length;
-    const stdDev = Math.sqrt(variance);
-    const margin = 1.96 * stdDev; // 95% confidence
+    // Run simulation
+    const result = await this.monteCarloEngine.runSimulation(strategy, marketCondition);
     
-    return [mean - margin, mean + margin];
-  }
-  
-  private getDefaultMonteCarloResult(approval: MonteCarloValidation['approval']): MonteCarloValidation {
+    // Calculate consensus (using ensemble confidence)
+    const consensus = result.ensembleConfidence;
+    
+    // Check approval criteria
+    const approved = 
+      result.expectedProfit > 0 &&
+      result.sharpeRatio > 1.0 &&
+      result.winRate > 0.6 &&
+      result.performanceBreakdown.tradingApproval === 'approved' &&
+      consensus >= 0.7;
+    
+    // Calculate recommended position size using Kelly
+    const kellyFraction = result.kellyCriterion.halfKellyFraction; // Use half-Kelly for safety
+    const recommendedPositionUSD = proposal.positionSizeUSD * kellyFraction;
+    
+    const reason = approved 
+      ? 'Monte Carlo consensus achieved'
+      : `Monte Carlo rejection: Sharpe=${result.sharpeRatio.toFixed(2)}, WinRate=${(result.winRate * 100).toFixed(1)}%, Approval=${result.performanceBreakdown.tradingApproval}`;
+    
     return {
-      simulations: 0,
-      expectedProfit: 0,
-      confidenceInterval: [0, 0],
-      winRate: 0,
-      maxDrawdown: 1,
-      sharpeRatio: 0,
-      approval,
+      approved,
+      reason,
+      simulations: 10000,
+      consensus,
+      recommendedPositionUSD,
+      kellyFraction,
+      confidenceScore: result.ensembleConfidence,
     };
   }
   
   // ============================================================================
-  // KELLY CRITERION POSITION SIZING
+  // ANOMALY DETECTION
   // ============================================================================
   
   /**
-   * Calculate Kelly-optimal position size
+   * Detect anomalies in trade proposal
    */
-  calculateKellySize(proposal: TradeProposal, monteCarlo: MonteCarloValidation): number {
-    const winProb = monteCarlo.winRate;
-    const lossProb = 1 - winProb;
+  private detectAnomalies(proposal: TradeProposal): {
+    passed: boolean;
+    reason: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+  } {
+    // Check for suspicious position sizes
+    const stageConfig = stageManager.getStageConfig();
+    const positionRatio = proposal.positionSizeUSD / stageConfig.maxPositionSizeUSD;
     
-    const winAmount = proposal.expectedProfit;
-    const lossAmount = proposal.proposedSize * (proposal.stopLoss / proposal.entryPrice);
+    if (positionRatio > 0.95) {
+      return {
+        passed: false,
+        reason: 'Position size near maximum limit - suspicious',
+        severity: 'medium',
+      };
+    }
     
-    if (lossAmount === 0) return proposal.proposedSize;
+    // Check for unrealistic profit estimates
+    const profitRatio = proposal.estimatedProfitUSD / proposal.positionSizeUSD;
+    if (profitRatio > 0.5) {
+      return {
+        passed: false,
+        reason: `Unrealistic profit estimate: ${(profitRatio * 100).toFixed(1)}% ROI`,
+        severity: 'high',
+      };
+    }
     
-    const odds = winAmount / lossAmount;
-    const kellyFraction = (winProb * odds - lossProb) / odds;
+    // Check for rapid-fire proposals (potential bot malfunction)
+    const recentAssessments = this.assessmentHistory.slice(-10);
+    if (recentAssessments.length >= 10) {
+      const timeSinceFirst = Date.now() - recentAssessments[0].timestamp;
+      if (timeSinceFirst < 1000) {
+        return {
+          passed: false,
+          reason: 'Too many proposals in short time - potential malfunction',
+          severity: 'critical',
+        };
+      }
+    }
     
-    // Apply safety fraction
-    const safeKelly = kellyFraction * this.config.kellyFraction;
-    
-    // Calculate position size
-    let kellySize = this.capitalAllocation.availableCapital * Math.max(0, safeKelly);
-    
-    // Cap at max Kelly multiple
-    kellySize = Math.min(kellySize, proposal.proposedSize * this.config.maxKellyMultiple);
-    
-    this.metrics.kellyRecommendedSize = kellySize;
-    
-    return kellySize;
+    return {
+      passed: true,
+      reason: 'No anomalies detected',
+      severity: 'low',
+    };
   }
   
   // ============================================================================
@@ -495,359 +423,203 @@ export class RiskGovernor extends EventEmitter {
   // ============================================================================
   
   /**
-   * Calculate comprehensive risk score (0-100, lower is better)
+   * Calculate comprehensive risk score (0-100, higher = riskier)
    */
-  calculateRiskScore(proposal: TradeProposal, monteCarlo: MonteCarloValidation): number {
+  private calculateRiskScore(proposal: TradeProposal, assessment: RiskAssessment): number {
     let score = 0;
     
-    // Win rate component (0-25 points)
-    score += Math.max(0, (0.70 - monteCarlo.winRate) * 100);
+    // Position size component (0-25 points)
+    const stageConfig = stageManager.getStageConfig();
+    const positionRatio = proposal.positionSizeUSD / stageConfig.maxPositionSizeUSD;
+    score += positionRatio * 25;
     
-    // Sharpe ratio component (0-25 points)
-    score += Math.max(0, (1.5 - monteCarlo.sharpeRatio) * 16.67);
+    // Risk percentage component (0-25 points)
+    score += proposal.estimatedRiskPercent * 25;
     
-    // Drawdown component (0-25 points)
-    score += monteCarlo.maxDrawdown * 125;
+    // Confidence component (0-25 points)
+    score += (1 - assessment.confidenceScore) * 25;
     
-    // Slippage component (0-15 points)
-    score += (proposal.expectedSlippage / 0.02) * 15;
-    
-    // Latency component (0-10 points)
-    score += Math.min(10, proposal.latencyMs / 100);
+    // Monte Carlo component (0-25 points)
+    if (assessment.monteCarloConsensus > 0) {
+      score += (1 - assessment.monteCarloConsensus) * 25;
+    } else {
+      score += 25; // Maximum risk if no Monte Carlo
+    }
     
     return Math.min(100, Math.max(0, score));
   }
   
-  private generateWarnings(proposal: TradeProposal, monteCarlo: MonteCarloValidation): string[] {
-    const warnings: string[] = [];
-    
-    if (monteCarlo.winRate < 0.55) {
-      warnings.push('Win rate below 55% threshold');
-    }
-    
-    if (monteCarlo.sharpeRatio < 1.0) {
-      warnings.push('Sharpe ratio below 1.0');
-    }
-    
-    if (proposal.expectedSlippage > 0.01) {
-      warnings.push(`High slippage expected: ${(proposal.expectedSlippage * 100).toFixed(2)}%`);
-    }
-    
-    if (proposal.latencyMs > 200) {
-      warnings.push(`High latency: ${proposal.latencyMs}ms`);
-    }
-    
-    if (this.metrics.consecutiveLosses > 0) {
-      warnings.push(`${this.metrics.consecutiveLosses} consecutive losses`);
-    }
-    
-    return warnings;
-  }
-  
   // ============================================================================
-  // CIRCUIT BREAKER
+  // CIRCUIT BREAKERS
   // ============================================================================
   
   /**
-   * Check and update circuit breaker state
+   * Initialize circuit breakers
    */
-  checkCircuitBreaker(): void {
-    const dailyLoss = Math.abs(Math.min(0, this.metrics.dailyPnL));
-    const hourlyLoss = Math.abs(Math.min(0, this.metrics.hourlyPnL));
+  private initializeCircuitBreakers(): void {
+    this.circuitBreakers.set('max-drawdown', {
+      id: 'max-drawdown',
+      name: 'Maximum Drawdown',
+      enabled: true,
+      threshold: 20, // 20%
+      currentValue: 0,
+      isTripped: false,
+    });
     
-    // Check if we should trip the breaker
-    if (this.circuitBreaker.status === 'closed') {
-      if (dailyLoss >= this.config.circuitBreakerConfig.maxDailyLoss) {
-        this.tripCircuitBreaker('Daily loss limit exceeded');
-      } else if (hourlyLoss >= this.config.circuitBreakerConfig.maxHourlyLoss) {
-        this.tripCircuitBreaker('Hourly loss limit exceeded');
-      }
-    }
+    this.circuitBreakers.set('consecutive-losses', {
+      id: 'consecutive-losses',
+      name: 'Consecutive Losses',
+      enabled: true,
+      threshold: 5,
+      currentValue: 0,
+      isTripped: false,
+    });
     
-    // Check if we can transition from half-open to closed
-    if (this.circuitBreaker.status === 'half-open') {
-      // Will be handled by successful trades
-    }
+    this.circuitBreakers.set('daily-loss', {
+      id: 'daily-loss',
+      name: 'Daily Loss Limit',
+      enabled: true,
+      threshold: -1000, // -$1000
+      currentValue: 0,
+      isTripped: false,
+    });
     
-    // Check if cooldown has ended for open breaker
-    if (this.circuitBreaker.status === 'open' && this.circuitBreaker.cooldownEnds) {
-      if (Date.now() >= this.circuitBreaker.cooldownEnds) {
-        this.circuitBreaker.status = 'half-open';
-        this.circuitBreaker.halfOpenAttempts = 0;
-        
-        logger.info('[RiskGovernor] Circuit breaker entering half-open state');
-      }
-    }
-  }
-  
-  private tripCircuitBreaker(reason: string): void {
-    this.circuitBreaker.status = 'open';
-    this.circuitBreaker.lastTriggered = Date.now();
-    this.circuitBreaker.triggerCount++;
-    this.circuitBreaker.cooldownEnds = Date.now() + this.config.circuitBreakerConfig.cooldownPeriod;
+    this.circuitBreakers.set('rapid-loss-rate', {
+      id: 'rapid-loss-rate',
+      name: 'Rapid Loss Rate',
+      enabled: true,
+      threshold: 5, // 5 losses in 1 minute
+      currentValue: 0,
+      isTripped: false,
+    });
     
-    // Pause the stage governor
-    stageGovernor.pause(`Circuit breaker: ${reason}`, 'risk_governor');
-    
-    this.emit('circuit_breaker_tripped', { reason, triggerCount: this.circuitBreaker.triggerCount });
-    
-    logger.warn('[RiskGovernor] Circuit breaker TRIPPED', {
-      reason,
-      triggerCount: this.circuitBreaker.triggerCount,
-      cooldownEnds: new Date(this.circuitBreaker.cooldownEnds).toISOString(),
+    log.info('Circuit breakers initialized', {
+      count: this.circuitBreakers.size,
     });
   }
   
   /**
-   * Record a trade result
+   * Update circuit breaker value
    */
-  recordTradeResult(proposalId: string, result: 'win' | 'loss', pnl: number): void {
-    const trade = this.tradeHistory.find(t => t.proposal.id === proposalId);
-    if (trade) {
-      trade.result = result;
-      trade.pnl = pnl;
-    }
+  updateCircuitBreaker(id: string, value: number): void {
+    const breaker = this.circuitBreakers.get(id);
+    if (!breaker || !breaker.enabled) return;
     
-    // Update metrics
-    this.metrics.dailyPnL += pnl;
-    this.metrics.hourlyPnL += pnl;
+    breaker.currentValue = value;
     
-    if (result === 'loss') {
-      this.metrics.consecutiveLosses++;
+    // Check if threshold exceeded
+    if (id === 'daily-loss') {
+      // For daily loss, trip if value is LESS than threshold (more negative)
+      if (value < breaker.threshold) {
+        this.tripCircuitBreaker(id);
+      }
     } else {
-      this.metrics.consecutiveLosses = 0;
-    }
-    
-    // Update win rate
-    const completedTrades = this.tradeHistory.filter(t => t.result !== 'pending');
-    const wins = completedTrades.filter(t => t.result === 'win').length;
-    this.metrics.winRate = completedTrades.length > 0 ? wins / completedTrades.length : 0;
-    
-    // Record profit with stage governor
-    if (pnl > 0) {
-      stageGovernor.recordProfit(pnl);
-    }
-    
-    // Check circuit breaker
-    this.checkCircuitBreaker();
-    
-    // Handle half-open state
-    if (this.circuitBreaker.status === 'half-open') {
-      if (result === 'win') {
-        this.circuitBreaker.halfOpenAttempts++;
-        if (this.circuitBreaker.halfOpenAttempts >= this.config.circuitBreakerConfig.halfOpenAttempts) {
-          this.circuitBreaker.status = 'closed';
-          logger.info('[RiskGovernor] Circuit breaker CLOSED after successful trades');
-        }
-      } else {
-        this.tripCircuitBreaker('Failed trade in half-open state');
+      // For other breakers, trip if value EXCEEDS threshold
+      if (value >= breaker.threshold) {
+        this.tripCircuitBreaker(id);
       }
     }
+  }
+  
+  /**
+   * Trip circuit breaker
+   */
+  private tripCircuitBreaker(id: string): void {
+    const breaker = this.circuitBreakers.get(id);
+    if (!breaker || breaker.isTripped) return;
     
-    this.emit('trade_result', { proposalId, result, pnl });
+    breaker.isTripped = true;
+    breaker.tripTime = Date.now();
     
-    logger.info('[RiskGovernor] Trade result recorded', {
-      proposalId,
-      result,
-      pnl,
-      dailyPnL: this.metrics.dailyPnL,
-      consecutiveLosses: this.metrics.consecutiveLosses,
+    log.error('CIRCUIT BREAKER TRIPPED', {
+      id: breaker.id,
+      name: breaker.name,
+      threshold: breaker.threshold,
+      currentValue: breaker.currentValue,
+    });
+    
+    this.emit('circuit-breaker-tripped', {
+      id: breaker.id,
+      name: breaker.name,
+      threshold: breaker.threshold,
+      currentValue: breaker.currentValue,
+      timestamp: Date.now(),
+    });
+    
+    // Pause system on critical circuit breaker
+    stageManager.pause(`Circuit breaker tripped: ${breaker.name}`);
+  }
+  
+  /**
+   * Reset circuit breaker
+   */
+  resetCircuitBreaker(id: string): void {
+    const breaker = this.circuitBreakers.get(id);
+    if (!breaker) return;
+    
+    breaker.isTripped = false;
+    breaker.currentValue = 0;
+    breaker.resetTime = Date.now();
+    
+    log.info('Circuit breaker reset', { id, name: breaker.name });
+    
+    this.emit('circuit-breaker-reset', {
+      id,
+      name: breaker.name,
+      timestamp: Date.now(),
     });
   }
   
-  // ============================================================================
-  // CAPITAL MANAGEMENT
-  // ============================================================================
-  
   /**
-   * Allocate capital for a trade
+   * Get all tripped circuit breakers
    */
-  allocateCapital(amount: number): boolean {
-    if (amount > this.capitalAllocation.availableCapital) {
-      return false;
-    }
-    
-    this.capitalAllocation.allocatedCapital += amount;
-    this.capitalAllocation.availableCapital -= amount;
-    this.metrics.currentCapitalAtRisk += amount;
-    this.metrics.currentPositionCount++;
-    this.updateUtilization();
-    
-    return true;
+  getTrippedCircuitBreakers(): CircuitBreaker[] {
+    return Array.from(this.circuitBreakers.values()).filter(b => b.isTripped);
   }
   
   /**
-   * Release capital after trade closes
+   * Get all circuit breakers
    */
-  releaseCapital(amount: number): void {
-    this.capitalAllocation.allocatedCapital -= amount;
-    this.capitalAllocation.availableCapital += amount;
-    this.metrics.currentCapitalAtRisk -= amount;
-    this.metrics.currentPositionCount = Math.max(0, this.metrics.currentPositionCount - 1);
-    this.updateUtilization();
-  }
-  
-  private updateUtilization(): void {
-    this.metrics.utilizationPercent = 
-      (this.capitalAllocation.allocatedCapital / this.capitalAllocation.totalCapital) * 100;
-  }
-  
-  /**
-   * Update capital allocation for new stage
-   */
-  updateStageCapital(): void {
-    this.capitalAllocation = this.initializeCapital();
-    
-    logger.info('[RiskGovernor] Capital allocation updated for stage', {
-      stage: this.capitalAllocation.stage,
-      totalCapital: this.capitalAllocation.totalCapital,
-    });
+  getAllCircuitBreakers(): CircuitBreaker[] {
+    return Array.from(this.circuitBreakers.values());
   }
   
   // ============================================================================
-  // RESET & STATUS
+  // UTILITIES
   // ============================================================================
   
-  /**
-   * Reset hourly metrics (call every hour)
-   */
-  resetHourlyMetrics(): void {
-    this.metrics.hourlyPnL = 0;
+  private recordAssessment(assessment: RiskAssessment): void {
+    this.assessmentHistory.push(assessment);
     
-    logger.info('[RiskGovernor] Hourly metrics reset');
-  }
-  
-  /**
-   * Reset daily metrics (call at day boundary)
-   */
-  resetDailyMetrics(): void {
-    this.metrics.dailyPnL = 0;
-    this.metrics.currentDrawdown = 0;
-    this.tradeHistory = [];
-    
-    logger.info('[RiskGovernor] Daily metrics reset');
-  }
-  
-  /**
-   * Get current metrics
-   */
-  getMetrics(): Readonly<RiskMetrics> {
-    return { ...this.metrics };
-  }
-  
-  /**
-   * Get capital allocation
-   */
-  getCapitalAllocation(): Readonly<CapitalAllocation> {
-    return { 
-      ...this.capitalAllocation,
-      partitions: this.capitalAllocation.partitions.map(p => ({ ...p })),
-    };
-  }
-  
-  /**
-   * Get circuit breaker state
-   */
-  getCircuitBreakerState(): Readonly<CircuitBreakerState> {
-    return { ...this.circuitBreaker };
-  }
-  
-  /**
-   * Get comprehensive risk status
-   */
-  getStatus(): {
-    metrics: RiskMetrics;
-    capital: CapitalAllocation;
-    circuitBreaker: CircuitBreakerState;
-    validatorCount: number;
-    canTrade: boolean;
-    tradingRestrictions: string[];
-  } {
-    const restrictions: string[] = [];
-    
-    if (this.circuitBreaker.status !== 'closed') {
-      restrictions.push(`Circuit breaker: ${this.circuitBreaker.status}`);
+    // Keep last 1000 assessments
+    if (this.assessmentHistory.length > 1000) {
+      this.assessmentHistory.shift();
     }
+  }
+  
+  getAssessmentHistory(): RiskAssessment[] {
+    return [...this.assessmentHistory];
+  }
+  
+  getApprovalRate(): number {
+    if (this.assessmentHistory.length === 0) return 0;
     
-    if (this.metrics.consecutiveLosses >= 3) {
-      restrictions.push(`Consecutive losses: ${this.metrics.consecutiveLosses}`);
-    }
-    
-    if (this.metrics.utilizationPercent > 80) {
-      restrictions.push(`High capital utilization: ${this.metrics.utilizationPercent.toFixed(1)}%`);
-    }
-    
+    const approvedCount = this.assessmentHistory.filter(a => a.approved).length;
+    return approvedCount / this.assessmentHistory.length;
+  }
+  
+  /**
+   * Export state for monitoring
+   */
+  exportState(): any {
     return {
-      metrics: this.getMetrics(),
-      capital: this.getCapitalAllocation(),
-      circuitBreaker: this.getCircuitBreakerState(),
-      validatorCount: this.validators.length,
-      canTrade: restrictions.length === 0 && this.circuitBreaker.status !== 'open',
-      tradingRestrictions: restrictions,
+      circuitBreakers: Array.from(this.circuitBreakers.values()),
+      assessmentHistory: this.assessmentHistory.slice(-100),
+      approvalRate: this.getApprovalRate(),
+      timestamp: Date.now(),
     };
   }
 }
 
-// ============================================================================
-// MONTE CARLO VALIDATOR CLASS
-// ============================================================================
-
-class MonteCarloValidator {
-  private name: string;
-  private params: { minWinRate: number; minSharpe: number; maxDrawdown: number };
-  
-  constructor(
-    name: string, 
-    params: { minWinRate: number; minSharpe: number; maxDrawdown: number }
-  ) {
-    this.name = name;
-    this.params = params;
-  }
-  
-  async validate(proposal: TradeProposal): Promise<MonteCarloValidation> {
-    // Simulate Monte Carlo validation
-    // In production, this would run actual simulations
-    
-    const simulations = 10000;
-    
-    // Calculate win probability based on expected profit vs risk
-    const riskRewardRatio = proposal.expectedProfit / (proposal.proposedSize * 0.05); // 5% stop loss
-    const baseWinRate = 0.5 + Math.min(0.3, riskRewardRatio * 0.1);
-    
-    // Add some variance based on validator type
-    const variance = this.name === 'conservative' ? -0.05 : 
-                     this.name === 'aggressive' ? 0.05 : 0;
-    const winRate = Math.min(0.95, Math.max(0.3, baseWinRate + variance + (Math.random() - 0.5) * 0.1));
-    
-    // Calculate Sharpe ratio
-    const expectedReturn = winRate * proposal.expectedProfit - (1 - winRate) * proposal.proposedSize * 0.05;
-    const volatility = proposal.proposedSize * 0.1 * (1 + proposal.expectedSlippage);
-    const sharpeRatio = volatility > 0 ? expectedReturn / volatility : 0;
-    
-    // Calculate max drawdown
-    const maxDrawdown = (1 - winRate) * 0.3 + Math.random() * 0.1;
-    
-    // Determine approval
-    let approval: MonteCarloValidation['approval'];
-    if (winRate >= this.params.minWinRate && sharpeRatio >= this.params.minSharpe && maxDrawdown <= this.params.maxDrawdown) {
-      approval = 'approved';
-    } else if (winRate >= this.params.minWinRate * 0.9 && sharpeRatio >= this.params.minSharpe * 0.8) {
-      approval = 'conditional';
-    } else {
-      approval = 'rejected';
-    }
-    
-    return {
-      simulations,
-      expectedProfit: proposal.expectedProfit * winRate - proposal.proposedSize * 0.05 * (1 - winRate),
-      confidenceInterval: [proposal.expectedProfit * 0.8, proposal.expectedProfit * 1.2],
-      winRate,
-      maxDrawdown,
-      sharpeRatio,
-      approval,
-    };
-  }
-}
-
-// Export singleton instance
+// Singleton instance
 export const riskGovernor = RiskGovernor.getInstance();
