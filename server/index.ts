@@ -501,17 +501,14 @@ app.get("/api/schema-verify", async (_req, res) => {
     serveStatic(app);
   }
 
-  const port = Number.parseInt(process.env.PORT || '5000', 10);
+  const port = Number(process.env.PORT) || 8080;
   
   httpServer.on('error', (error: any) => {
     if (error?.code === 'EADDRINUSE') {
       console.error(`[STARTUP] ❌ Port ${port} is already in use`);
       const fallbackPort = port + 1;
-      httpServer!.listen({
-        port: fallbackPort,
-        host: "0.0.0.0",
-      }, () => {
-        log(`serving on fallback port ${fallbackPort}`);
+      httpServer = app.listen(fallbackPort, '0.0.0.0', () => {
+        console.log(`[LISTENING] ${fallbackPort}`);
         isReady = true; // HTTP server is up - health checks will pass
       });
     } else {
@@ -519,11 +516,8 @@ app.get("/api/schema-verify", async (_req, res) => {
     }
   });
   
-  httpServer.listen({
-    port,
-    host: "0.0.0.0",
-  }, async () => {
-    log(`serving on port ${port}`);
+  httpServer = app.listen(port, '0.0.0.0', async () => {
+    console.log(`[LISTENING] ${port}`);
     
     // Set isReady immediately so health checks pass
     // Railway/deployment health checks need 200 response ASAP
