@@ -186,8 +186,6 @@ router.get('/health', async (req, res) => {
  */
 router.post('/validate', async (req, res) => {
   try {
-    // Dynamic import - only loaded when validation is requested
-    
     console.log('[People Search API] Running browser validation...');
     
     // Lazy load the proxy module
