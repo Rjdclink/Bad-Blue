@@ -5,32 +5,36 @@
  * for people search functionality. It runs as a separate process and exposes
  * a simple HTTP interface that the main app can proxy requests to.
  * 
- * KEY DESIGN PRINCIPLES:
+ * KEY DESIGN PRINCIPLES (Phase 1 - BOOT-TIME SAFE):
+ * - Worker MUST boot successfully even without browser binaries present
+ * - Browser imports are LAZY-LOADED (invocation-only, not at module load)
+ * - Browser pool initialization is DEFERRED until first search request
  * - Main app startup MUST NOT depend on this worker's state
- * - Worker installs Playwright + Chromium at build time
- * - Worker validates browser at runtime, not blocking main app boot
- * - Main app never imports Playwright directly
+ * - Worker reports "not ready" but stays healthy if browsers unavailable
  */
 
 import express, { Request, Response, NextFunction } from 'express';
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import type { Browser, Page } from 'playwright';
 import type { SearchQuery, PersonRecord, Address, Phone } from '../../server/services/peopleSearch/types';
 import { DataFusion } from '../../server/services/peopleSearch/fusion/DataFusion';
 import { PeopleSearchCache } from '../../server/services/peopleSearch/cache/PeopleSearchCache';
 
-// Add stealth plugin for anti-detection
-chromium.use(StealthPlugin());
+// NO TOP-LEVEL BROWSER IMPORTS - Lazy-loaded on first use
+// BrowserBox pattern: all browser deps loaded inside getBrowserEngine()
 
 const app = express();
 app.use(express.json());
 
 // Worker state
 let isInitialized = false;
-let browserPool: Browser[] = [];
+let browserPool: any[] = []; // Type will be Browser after lazy load
 let lastValidationTime: Date | null = null;
 let validationError: string | null = null;
+let browserEngineLoaded = false;
+
+// Lazy-loaded browser engine references
+let chromium: any = null;
+let Browser: any = null;
+let Page: any = null;
 
 const CONFIG = {
   port: parseInt(process.env.PEOPLE_SEARCH_WORKER_PORT || '5001', 10),
@@ -39,6 +43,8 @@ const CONFIG = {
   maxRetries: parseInt(process.env.PEOPLE_SEARCH_MAX_RETRIES || '3', 10),
   // Bind to localhost by default for security; set to 0.0.0.0 if external access needed
   host: process.env.PEOPLE_SEARCH_WORKER_HOST || '127.0.0.1',
+  // Enable browser mode only if explicitly configured
+  browserEnabled: process.env.BROWSER_WS_ENDPOINT || process.env.PEOPLE_SEARCH_ENABLE_BROWSER === 'true',
 };
 
 // Initialize cache with error handling
@@ -51,10 +57,59 @@ try {
 }
 
 /**
- * Launch a browser instance with production settings
+ * BrowserBox: Lazy-load browser engine (invocation-only)
+ * This ensures the worker can boot even without browser binaries
  */
-async function launchBrowser(): Promise<Browser> {
-  return chromium.launch({
+async function getBrowserEngine(): Promise<any> {
+  if (browserEngineLoaded && chromium) {
+    return { chromium, Browser, Page };
+  }
+  
+  try {
+    console.log('[PeopleSearchWorker] Lazy-loading browser engine...');
+    
+    // Dynamic import - only loads when explicitly called
+    const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
+    
+    if (wsEndpoint) {
+      // Remote browser mode - use playwright-core
+      const playwrightCore = await import('playwright-core');
+      chromium = playwrightCore.chromium;
+      console.log('[PeopleSearchWorker] ✓ playwright-core loaded (remote mode)');
+    } else {
+      // Local browser mode - use playwright-extra with stealth
+      const playwrightExtra = await import('playwright-extra');
+      const StealthPlugin = (await import('puppeteer-extra-plugin-stealth')).default;
+      chromium = playwrightExtra.chromium;
+      chromium.use(StealthPlugin());
+      console.log('[PeopleSearchWorker] ✓ playwright-extra loaded (local mode with stealth)');
+    }
+    
+    browserEngineLoaded = true;
+    return { chromium, Browser, Page };
+  } catch (error: any) {
+    console.error('[PeopleSearchWorker] ✗ Failed to load browser engine:', error.message);
+    throw new Error(`Browser engine unavailable: ${error.message}`);
+  }
+}
+
+/**
+ * Launch a browser instance with production settings
+ * Uses lazy-loaded browser engine (invocation-only)
+ */
+async function launchBrowser(): Promise<any> {
+  const { chromium: browserChromium } = await getBrowserEngine();
+  
+  const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
+  
+  if (wsEndpoint) {
+    // Remote browser mode - connect via CDP
+    console.log('[PeopleSearchWorker] Connecting to remote browser:', wsEndpoint);
+    return browserChromium.connect(wsEndpoint);
+  }
+  
+  // Local browser mode - launch locally
+  return browserChromium.launch({
     headless: true,
     args: [
       '--no-sandbox',
@@ -70,7 +125,7 @@ async function launchBrowser(): Promise<Browser> {
 /**
  * Get browser from pool or create new one
  */
-async function getBrowser(): Promise<Browser> {
+async function getBrowser(): Promise<any> {
   if (browserPool.length > 0) {
     return browserPool.pop()!;
   }
@@ -80,8 +135,13 @@ async function getBrowser(): Promise<Browser> {
 /**
  * Return browser to pool
  */
-function returnBrowser(browser: Browser): void {
-  if (browserPool.length < CONFIG.maxPoolSize) {
+function returnBrowser(browser: any): void {
+  const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
+  
+  if (wsEndpoint) {
+    // Remote mode - close connection (don't pool remote browsers)
+    browser.close().catch(() => {});
+  } else if (browserPool.length < CONFIG.maxPoolSize) {
     browserPool.push(browser);
   } else {
     browser.close().catch(() => {});
@@ -89,34 +149,56 @@ function returnBrowser(browser: Browser): void {
 }
 
 /**
- * Initialize browser pool
+ * Initialize browser pool (invocation-only - called on first search)
+ * This ensures the worker can boot without browser binaries
  */
 async function initializeBrowserPool(): Promise<void> {
-  console.log('[PeopleSearchWorker] Initializing browser pool...');
+  if (isInitialized) {
+    return; // Already initialized
+  }
+  
+  console.log('[PeopleSearchWorker] Initializing browser pool (invocation-only)...');
   
   try {
-    for (let i = 0; i < CONFIG.maxPoolSize; i++) {
-      const browser = await launchBrowser();
-      browserPool.push(browser);
+    // Lazy-load browser engine first
+    await getBrowserEngine();
+    
+    // Pre-warm pool only in local mode
+    const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
+    if (!wsEndpoint) {
+      for (let i = 0; i < CONFIG.maxPoolSize; i++) {
+        const browser = await launchBrowser();
+        browserPool.push(browser);
+      }
     }
+    
     isInitialized = true;
     lastValidationTime = new Date();
     validationError = null;
-    console.log(`[PeopleSearchWorker] ✓ Browser pool initialized with ${CONFIG.maxPoolSize} browsers`);
+    console.log(`[PeopleSearchWorker] ✓ Browser pool initialized (${wsEndpoint ? 'remote' : 'local'} mode)`);
   } catch (error: any) {
     validationError = error.message;
+    isInitialized = false;
     console.error('[PeopleSearchWorker] ✗ Browser pool initialization failed:', error.message);
-    // Don't throw - worker should continue running but report unhealthy
+    // Don't throw - worker stays running but reports unhealthy
   }
 }
 
 /**
  * Validate browser is working with a test crawl
+ * Uses lazy-loaded browser engine
  */
 async function validateBrowser(): Promise<boolean> {
-  let browser: Browser | null = null;
+  let browser: any | null = null;
   
   try {
+    // Initialize browser pool if not already done
+    await initializeBrowserPool();
+    
+    if (!isInitialized) {
+      return false;
+    }
+    
     browser = await getBrowser();
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -219,7 +301,7 @@ function createEmptyRecord(query: SearchQuery, source: string): PersonRecord {
 /**
  * Scrape FastPeopleSearch
  */
-async function scrapeFastPeopleSearch(query: SearchQuery, page: Page): Promise<PersonRecord[]> {
+async function scrapeFastPeopleSearch(query: SearchQuery, page: any): Promise<PersonRecord[]> {
   try {
     const searchUrl = `https://www.fastpeoplesearch.com/name/${encodeURIComponent(query.firstName.toLowerCase())}-${encodeURIComponent(query.lastName.toLowerCase())}${query.city ? `_${encodeURIComponent(query.city.toLowerCase())}` : ''}${query.state ? `-${encodeURIComponent(query.state.toUpperCase())}` : ''}`;
     
@@ -288,7 +370,7 @@ async function scrapeFastPeopleSearch(query: SearchQuery, page: Page): Promise<P
 /**
  * Scrape TruePeopleSearch
  */
-async function scrapeTruePeopleSearch(query: SearchQuery, page: Page): Promise<PersonRecord[]> {
+async function scrapeTruePeopleSearch(query: SearchQuery, page: any): Promise<PersonRecord[]> {
   try {
     const searchUrl = `https://www.truepeoplesearch.com/results?name=${encodeURIComponent(query.firstName)}%20${encodeURIComponent(query.lastName)}${query.city ? `&citystatezip=${encodeURIComponent(query.city)}` : ''}${query.state ? `%20${encodeURIComponent(query.state)}` : ''}`;
     
@@ -350,7 +432,7 @@ async function scrapeTruePeopleSearch(query: SearchQuery, page: Page): Promise<P
 /**
  * Scrape WhitePages
  */
-async function scrapeWhitePages(query: SearchQuery, page: Page): Promise<PersonRecord[]> {
+async function scrapeWhitePages(query: SearchQuery, page: any): Promise<PersonRecord[]> {
   try {
     const searchUrl = `https://www.whitepages.com/name/${encodeURIComponent(query.firstName)}-${encodeURIComponent(query.lastName)}${query.city ? `/${encodeURIComponent(query.city)}` : ''}${query.state ? `-${encodeURIComponent(query.state)}` : ''}`;
     
@@ -404,9 +486,19 @@ async function scrapeWhitePages(query: SearchQuery, page: Page): Promise<PersonR
 
 /**
  * Execute search across all sources
+ * Initializes browser pool on first call (invocation-only)
  */
 async function executeSearch(query: SearchQuery): Promise<PersonRecord> {
-  let browser: Browser | null = null;
+  // Lazy initialization - only initialize browser pool on first search
+  if (!isInitialized) {
+    await initializeBrowserPool();
+  }
+  
+  if (!isInitialized) {
+    throw new Error('Browser pool initialization failed - see validationError for details');
+  }
+  
+  let browser: any | null = null;
   
   try {
     browser = await getBrowser();
@@ -470,10 +562,14 @@ async function executeSearch(query: SearchQuery): Promise<PersonRecord> {
 
 /**
  * Health check endpoint - reports worker status without blocking main app
+ * Worker can be "healthy" (running) but "not ready" (browser not initialized)
  */
 app.get('/health', async (_req: Request, res: Response) => {
   const health = {
-    status: isInitialized ? 'healthy' : 'unhealthy',
+    status: 'healthy', // Worker is always healthy if running
+    ready: isInitialized, // Browser pool ready for searches
+    browserEngineLoaded,
+    browserMode: process.env.BROWSER_WS_ENDPOINT ? 'remote' : 'local',
     browserPoolSize: browserPool.length,
     maxPoolSize: CONFIG.maxPoolSize,
     lastValidation: lastValidationTime?.toISOString() || null,
@@ -481,7 +577,8 @@ app.get('/health', async (_req: Request, res: Response) => {
     uptime: process.uptime(),
   };
   
-  res.status(isInitialized ? 200 : 503).json(health);
+  // Return 200 even if not ready - worker is healthy, just not initialized
+  res.status(200).json(health);
 });
 
 /**
@@ -499,6 +596,7 @@ app.post('/validate', async (_req: Request, res: Response) => {
 
 /**
  * Search endpoint - execute people search
+ * Initializes browser pool on first request (invocation-only)
  */
 app.post('/search', async (req: Request, res: Response) => {
   const startTime = Date.now();
@@ -511,15 +609,6 @@ app.post('/search', async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         error: 'firstName and lastName are required',
-      });
-    }
-    
-    // Check if worker is initialized
-    if (!isInitialized) {
-      return res.status(503).json({
-        success: false,
-        error: 'Worker not initialized - browser pool unavailable',
-        validationError,
       });
     }
     
@@ -547,7 +636,7 @@ app.post('/search', async (req: Request, res: Response) => {
       });
     }
     
-    // Execute search
+    // Execute search (will initialize browser pool on first call)
     const result = await executeSearch(query);
     
     // Cache result
@@ -564,6 +653,7 @@ app.post('/search', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: error.message,
+      validationError,
       durationMs: Date.now() - startTime,
     });
   }
@@ -586,14 +676,11 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 async function start(): Promise<void> {
   console.log('[PeopleSearchWorker] Starting People Search Worker...');
+  console.log('[PeopleSearchWorker] Phase 1: Boot-time safe - no browser imports at startup');
+  console.log('[PeopleSearchWorker] Browser engine will be lazy-loaded on first search request');
   
-  // Initialize browser pool (non-blocking for main app)
-  await initializeBrowserPool();
-  
-  // Run initial validation
-  if (isInitialized) {
-    await validateBrowser();
-  }
+  // DO NOT initialize browser pool at startup (Phase 1 requirement)
+  // Browser pool will be initialized on first search request (invocation-only)
   
   // Start HTTP server - bind to configured host (default: localhost for security)
   app.listen(CONFIG.port, CONFIG.host, () => {
@@ -601,6 +688,8 @@ async function start(): Promise<void> {
     console.log(`[PeopleSearchWorker]   - Health: http://${CONFIG.host}:${CONFIG.port}/health`);
     console.log(`[PeopleSearchWorker]   - Search: POST http://${CONFIG.host}:${CONFIG.port}/search`);
     console.log(`[PeopleSearchWorker]   - Validate: POST http://${CONFIG.host}:${CONFIG.port}/validate`);
+    console.log(`[PeopleSearchWorker]   - Browser mode: ${CONFIG.browserEnabled ? process.env.BROWSER_WS_ENDPOINT ? 'remote' : 'local' : 'disabled'}`);
+    console.log(`[PeopleSearchWorker] ✓ BOOT SUCCESSFUL (no browser binaries required)`);
   });
 }
 
