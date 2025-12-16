@@ -24,7 +24,27 @@
  * - Fail-fast with automatic retry
  * - Smart caching and data fusion
  */
-import type { Browser, BrowserContext, Page } from 'playwright';
+
+// Local type definitions to avoid importing from 'playwright' package at module load time
+// This ensures the server can boot without Playwright/Chromium installed
+interface Browser {
+  newContext(options?: any): Promise<BrowserContext>;
+  close(): Promise<void>;
+  [key: string]: any;
+}
+
+interface BrowserContext {
+  newPage(): Promise<Page>;
+  close(): Promise<void>;
+  [key: string]: any;
+}
+
+interface Page {
+  goto(url: string, options?: any): Promise<any>;
+  close(): Promise<void>;
+  [key: string]: any;
+}
+
 import type { SearchQuery, PersonRecord } from './types';
 import { FastPeopleSearchScraper } from './sources/FastPeopleSearchScraper';
 import { TruePeopleSearchScraper } from './sources/TruePeopleSearchScraper';
