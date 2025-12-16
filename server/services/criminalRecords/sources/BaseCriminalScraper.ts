@@ -1,5 +1,5 @@
-import type { Page } from 'playwright';
-import type { CriminalSearchQuery, CriminalRecord } from '../types';
+import { Page } from 'playwright';
+import { CriminalSearchQuery, CriminalRecord } from '../types';
 
 export abstract class BaseCriminalScraper {
   abstract name: string;

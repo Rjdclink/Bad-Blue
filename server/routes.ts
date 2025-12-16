@@ -133,8 +133,7 @@ import { setupAuth, isAuthenticated, adminAuthMiddleware } from "./auth";
 import { asyncHandler, notFoundHandler, errorHandler, ErrorTypes } from "./errorHandler";
 import { generateComplaintDocument, generateFOIALetter as generateFOIALetterDoc } from "./documentGenerators";
 import { getBaseURL } from "./platformConfig";
-// NOTE: criminalRecordsAggregator is dynamically imported inside the /api/criminal-records handler
-// to avoid loading Playwright/Chromium at server startup. See the handler for details.
+import { criminalRecordsAggregator } from "./services/criminalRecords";
 import {
   insertComplaintSchema,
   insertLawsuitFilingSchema,
@@ -5150,10 +5149,6 @@ Contact: ${foiaRequest.userEmail || userEmail}
     });
 
     try {
-      // DYNAMIC IMPORT: Load criminalRecordsAggregator only when a request arrives
-      // This prevents Playwright/Chromium from being loaded at server startup
-      const { criminalRecordsAggregator } = await import('./services/criminalRecords');
-      
       const record = await criminalRecordsAggregator.search({
         fullName,
         dateOfBirth,
@@ -5168,17 +5163,10 @@ Contact: ${foiaRequest.userEmail || userEmail}
       });
     } catch (error: any) {
       console.error('[CriminalRecords] Search error:', error);
-      
-      // Check if this is a browser unavailability error
-      const isBrowserError = error.message?.includes('browser mode unavailable') || 
-                             error.message?.includes('Playwright') ||
-                             error.message?.includes('Chromium');
-      
-      res.status(isBrowserError ? 503 : 500).json({
+      res.status(500).json({
         success: false,
-        error: isBrowserError ? 'Criminal records browser mode unavailable' : 'Criminal records search failed',
-        message: error.message,
-        browserRequired: isBrowserError
+        error: 'Criminal records search failed',
+        message: error.message
       });
     }
   }));
