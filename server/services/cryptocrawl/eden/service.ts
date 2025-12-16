@@ -18,17 +18,26 @@ class EdenService {
   private microCrawlers: Map<string, MicroCrawlerState> = new Map();
   
   constructor() {
-    // Initialize Supabase if credentials available
-    if (EDEN_CONFIG.SUPABASE_URL && EDEN_CONFIG.SUPABASE_KEY) {
-      try {
-        this.supabase = createClient(
-          EDEN_CONFIG.SUPABASE_URL,
-          EDEN_CONFIG.SUPABASE_KEY
-        );
-        console.log('[EDEN] 🌳 Connected to Supabase Eden repository');
-      } catch (error) {
-        console.error('[EDEN] ⚠️ Failed to connect to Supabase:', error);
-      }
+    // NO CONSTRUCTOR INITIALIZATION - deferred to ensureInitialized()
+  }
+
+  // Lazy initialization of Supabase client - ONLY WHEN CALLED
+  private async ensureInitialized(): Promise<void> {
+    if (this.supabase) return;
+
+    const url = EDEN_CONFIG.SUPABASE_URL;
+    const key = EDEN_CONFIG.SUPABASE_KEY;
+
+    if (!url || !key) {
+      throw new Error('[EDEN] Cannot initialize: missing credentials');
+    }
+
+    try {
+      this.supabase = createClient(url, key);
+      console.log('[EDEN] 🌳 Connected to Supabase Eden repository');
+    } catch (error) {
+      console.error('[EDEN] ⚠️ Failed to connect to Supabase:', error);
+      throw error;
     }
   }
 
@@ -115,6 +124,7 @@ class EdenService {
 
   private async loadStrategyTemplates(): Promise<void> {
     // Load from Supabase if available
+    await this.ensureInitialized();
     if (this.supabase) {
       const { data, error } = await this.supabase
         .from('eden_strategy_templates')
@@ -167,6 +177,7 @@ class EdenService {
     console.log(`[EDEN] 📝 Recording lesson from ${lesson.cainId}`);
 
     // Store in Supabase
+    await this.ensureInitialized();
     if (this.supabase) {
       try {
         const { error } = await this.supabase
@@ -228,6 +239,7 @@ class EdenService {
     };
 
     // Persist snapshot
+    await this.ensureInitialized();
     if (this.supabase) {
       const { error } = await this.supabase
         .from('eden_snapshots')
@@ -359,6 +371,7 @@ class EdenService {
   async recordCataclysm(event: CataclysmEvent): Promise<void> {
     console.log(`[EDEN] 🚨 Cataclysm detected: ${event.type} (${event.severity})`);
 
+    await this.ensureInitialized();
     if (this.supabase) {
       const { error } = await this.supabase
         .from('eden_cataclysms')
@@ -381,6 +394,7 @@ class EdenService {
 
   // Record opportunity event
   async recordOpportunity(event: OpportunityEvent): Promise<void> {
+    await this.ensureInitialized();
     if (this.supabase) {
       const { error } = await this.supabase
         .from('eden_opportunities')
@@ -404,6 +418,7 @@ class EdenService {
 
   // Persist Cain state to database
   private async persistCainState(state: CainState): Promise<void> {
+    await this.ensureInitialized();
     if (!this.supabase) return;
 
     const { error } = await this.supabase
@@ -428,6 +443,7 @@ class EdenService {
 
   // Persist strategy template
   private async persistStrategyTemplate(template: StrategyTemplate): Promise<void> {
+    await this.ensureInitialized();
     if (!this.supabase) return;
 
     const { error } = await this.supabase
@@ -496,6 +512,7 @@ class EdenService {
   }
 
   private async getRecentLessons(limit: number): Promise<LessonPacket[]> {
+    await this.ensureInitialized();
     if (!this.supabase) return [];
 
     const { data, error } = await this.supabase
@@ -564,6 +581,7 @@ class EdenService {
     }
 
     // 3. Create audit record
+    await this.ensureInitialized();
     if (this.supabase) {
       await this.supabase.from('eden_audit_log').insert({
         id: randomUUID(),
