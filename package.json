@@ -42,7 +42,7 @@
     "@mistralai/mistralai": "^1.10.0",
     "@openrouter/sdk": "^0.1.27",
     "@playwright/test": "^1.57.0",
-    "playwright": "^1.57.0",
+    "playwright-core": "^1.57.0",
     "@radix-ui/react-accordion": "^1.2.4",
     "@radix-ui/react-alert-dialog": "^1.1.7",
     "@radix-ui/react-aspect-ratio": "^1.1.3",

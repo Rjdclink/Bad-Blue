@@ -1,24 +1,52 @@
 /**
  * People Search Configuration
  * 
- * ARCHITECTURE CHANGE:
- * - Browser validation has been moved to the People Search Worker service
- * - The main app no longer imports or validates Playwright at startup
- * - Configuration validation at module load is now optional (warnings only)
- * - Runtime validation happens via the /api/people-search/validate endpoint
+ * ARCHITECTURE: Dual-Mode Execution
+ * - Mode A (default): HTTP-only fetch/extract pipeline with no Playwright import
+ * - Mode B (on demand): Remote-render pipeline using BROWSER_WS_ENDPOINT
  * 
- * This ensures APPLICATION BOOT ALWAYS SUCCEEDS regardless of Playwright/browser state.
+ * The main app no longer imports or validates Playwright at startup
+ * Configuration validation at module load is WARNING-ONLY (doesn't throw)
+ * Runtime validation happens via the /api/people-search/validate endpoint
+ * 
+ * This ensures APPLICATION BOOT ALWAYS SUCCEEDS regardless of browser state.
  */
 
 /**
- * Validates Playwright/Browser automation configuration
- * NOTE: This is now informational only - does not throw
- * Browser validation happens in the worker service at runtime
+ * Execution mode for People Search
+ */
+export type ExecutionMode = 'http-only' | 'browser-remote';
+
+/**
+ * Determine which execution mode to use
+ * - browser-remote: Only if BROWSER_WS_ENDPOINT is set
+ * - http-only: Default, no browser required
+ */
+export function getExecutionMode(): ExecutionMode {
+  const hasRemoteBrowser = Boolean(process.env.BROWSER_WS_ENDPOINT);
+  
+  if (hasRemoteBrowser) {
+    console.log('[People Search Config] Mode: browser-remote (using BROWSER_WS_ENDPOINT)');
+    return 'browser-remote';
+  }
+  
+  console.log('[People Search Config] Mode: http-only (no browser)');
+  return 'http-only';
+}
+
+/**
+ * Validates browser configuration (warning-only)
+ * NOTE: Does not throw - browser is optional
  */
 export function validateBrowserConfig(): void {
-  // Browser validation now happens in the worker service
-  // Main app does not import Playwright directly
-  console.log('[People Search Config] Browser validation delegated to worker service');
+  const mode = getExecutionMode();
+  
+  if (mode === 'browser-remote') {
+    const endpoint = process.env.BROWSER_WS_ENDPOINT;
+    console.log('[People Search Config] Browser mode enabled with remote endpoint:', endpoint);
+  } else {
+    console.log('[People Search Config] HTTP-only mode - no browser required');
+  }
 }
 
 /**

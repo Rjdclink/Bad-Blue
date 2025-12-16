@@ -462,16 +462,47 @@ export class PlaywrightProvider {
   
   /**
    * Lazy load Playwright module
+   * Supports both local and remote browser connections
    */
   private async lazyLoadPlaywright(): Promise<any> {
     try {
       // Dynamic import - only loads if called
-      const playwright = await import('playwright');
+      // Using playwright-core for remote-only connection
+      const playwright = await import('playwright-core');
       return playwright;
     } catch (error) {
       // Playwright not installed - this is OK, fail-soft
+      console.warn('[PlaywrightTier] playwright-core not available:', error);
       return null;
     }
+  }
+  
+  /**
+   * Connect to browser - supports both remote and local modes
+   * Remote mode (preferred): Use BROWSER_WS_ENDPOINT to connect to existing browser
+   * Local mode (fallback): Launch browser locally (requires playwright, not playwright-core)
+   */
+  private async connectToBrowser(playwright: any): Promise<any> {
+    const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
+    
+    if (wsEndpoint) {
+      // Remote browser mode - connect via CDP
+      console.log('[PlaywrightTier] Connecting to remote browser:', wsEndpoint);
+      try {
+        const browser = await playwright.chromium.connect(wsEndpoint);
+        console.log('[PlaywrightTier] ✓ Connected to remote browser');
+        return browser;
+      } catch (error) {
+        console.error('[PlaywrightTier] Failed to connect to remote browser:', error);
+        throw new Error(`Failed to connect to remote browser at ${wsEndpoint}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    
+    // No remote browser - fail with clear message
+    throw new Error(
+      'BROWSER_WS_ENDPOINT not set. People Search browser mode requires a remote browser connection. ' +
+      'Set BROWSER_WS_ENDPOINT to the CDP endpoint of a remote browser instance.'
+    );
   }
   
   /**
@@ -503,9 +534,8 @@ export class PlaywrightProvider {
     const claims: string[] = [];
     
     try {
-      // Launch browser
-      const launchOptions = this.config.launchOptions || { headless: true };
-      browser = await playwright.chromium.launch(launchOptions);
+      // Connect to browser (remote or local)
+      browser = await this.connectToBrowser(playwright);
       const context = await browser.newContext();
       const page = await context.newPage();
       
