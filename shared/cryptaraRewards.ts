@@ -37,6 +37,9 @@ class CryptaraRewardSystem {
       // Validate input
       this.validateMetrics(metrics);
 
+      // Add metrics to history for trend analysis
+      this.performanceHistory.push(metrics);
+
       // Calculate normalized scores
       const normalized = await this.normalizeScores(metrics);
 
@@ -150,7 +153,7 @@ class CryptaraRewardSystem {
 
   private async getTierTarget(): Promise<number> {
     // Returns from local config, not external service
-    return 1000; // Default tier target
+    return CRYPTARA_CONFIG.normalization.defaultTierTarget;
   }
 
   private calculateComposite(normalized: NormalizedScores, metrics: PerformanceMetrics): number {

@@ -43,6 +43,7 @@ export const CRYPTARA_CONFIG: CryptaraConfig = {
   normalization: {
     accuracyBaseline: 0.6,
     profitTargetRatio: 1.0,
+    defaultTierTarget: 1000, // Default profit tier target in USD
   },
 
   history: {

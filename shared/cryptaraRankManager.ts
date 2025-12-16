@@ -190,28 +190,40 @@ class RankManager {
     return this.currentRank;
   }
 
+  // ============================================
+  // Data Store Methods (Placeholder Implementations)
+  // These methods should be connected to actual data stores
+  // in a production implementation. Currently return default
+  // values for testing and development purposes.
+  // ============================================
+
   private async getAverageProcessScore(): Promise<number> {
-    // Read from local data store only
+    // TODO: Implement actual data store retrieval
+    // Read from local data store only - NO external calls
     return 85;
   }
 
   private async getSuccessRate(): Promise<number> {
-    // Read from local data store only
+    // TODO: Implement actual data store retrieval
+    // Read from local data store only - NO external calls
     return 0.82;
   }
 
   private async hasZeroViolations(): Promise<boolean> {
-    // Read from local data store only
+    // TODO: Implement actual data store retrieval
+    // Read from local data store only - NO external calls
     return true;
   }
 
   private async hasSustainedExcellence(): Promise<boolean> {
-    // Read from local data store only
+    // TODO: Implement actual data store retrieval
+    // Read from local data store only - NO external calls
     return true;
   }
 
   private async hasStrategicCapability(): Promise<boolean> {
-    // Read from local data store only
+    // TODO: Implement actual data store retrieval
+    // Read from local data store only - NO external calls
     return false;
   }
 }

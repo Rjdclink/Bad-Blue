@@ -29,29 +29,6 @@ export interface PerformanceMetrics {
 }
 
 // ============================================
-// Reward Signal
-// ============================================
-export interface RewardSignal {
-  compositeScore: number;
-  components: {
-    accuracy: number;
-    stability: number;
-    profit: number;
-    riskReduction: number;
-    safetyCompliance: number;
-  };
-  autonomyDelta: number;
-  multiplierDelta: number;
-  feedback: string;
-  trend: 'improving' | 'stable' | 'degrading';
-  rankEligibility: {
-    eligible: boolean;
-    daysUntilEligible: number;
-    nextRank: Rank | null;
-  };
-}
-
-// ============================================
 // Application Result
 // ============================================
 export interface RewardApplication {
@@ -193,6 +170,7 @@ export interface CryptaraThresholds {
 export interface CryptaraNormalization {
   accuracyBaseline: number;
   profitTargetRatio: number;
+  defaultTierTarget: number;
 }
 
 export interface CryptaraHistory {
@@ -277,4 +255,17 @@ export interface RankEligibilityInfo {
   eligible: boolean;
   daysUntilEligible: number;
   nextRank: Rank | null;
+}
+
+// ============================================
+// Reward Signal
+// ============================================
+export interface RewardSignal {
+  compositeScore: number;
+  components: NormalizedScores;
+  autonomyDelta: number;
+  multiplierDelta: number;
+  feedback: string;
+  trend: 'improving' | 'stable' | 'degrading';
+  rankEligibility: RankEligibilityInfo;
 }
