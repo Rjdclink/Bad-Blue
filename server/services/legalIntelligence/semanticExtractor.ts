@@ -41,7 +41,7 @@ export interface ExtractionOptions {
  * Semantic Legal Extractor
  */
 export class SemanticLegalExtractor {
-  private shadowRetrieval: any = null;
+  private shadowRetrieval: any | null = null;
 
   constructor() {
     // Shadow Retrieval Engine will be loaded on first use
