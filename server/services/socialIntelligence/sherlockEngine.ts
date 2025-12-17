@@ -11,7 +11,7 @@ import type {
 } from './types';
 import { usernameValidator } from './usernameValidator';
 import { profileExtractor } from './profileExtractor';
-import { shadowRetrieval } from '../../services/shadowRetrieval';
+// Shadow Retrieval loaded dynamically at runtime only
 import { logger } from '../../logger';
 import sherlockSites from './sherlockSites.json';
 
@@ -33,6 +33,15 @@ export class SherlockEngine {
     stealth: true,
     retries: 2,
   };
+
+  /**
+   * Get Shadow Retrieval instance (lazy-loaded)
+   * Ensures Puppeteer/browser tools are only loaded when explicitly invoked
+   */
+  private async getShadowRetrieval() {
+    const { shadowRetrieval } = await import('../../services/shadowRetrieval');
+    return shadowRetrieval;
+  }
 
   /**
    * Search for username across all or specified platforms
@@ -185,6 +194,7 @@ export class SherlockEngine {
       let html: string = '';
 
       if (options.stealth) {
+        const shadowRetrieval = await this.getShadowRetrieval();
         const retrievalResult = await shadowRetrieval.smartRetrieve(probeUrl, {
           timeout: options.timeout,
         });
