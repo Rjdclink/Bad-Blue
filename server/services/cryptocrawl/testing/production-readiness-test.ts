@@ -11,7 +11,7 @@
  * Run: npx tsx server/services/cryptocrawl/testing/production-readiness-test.ts
  */
 
-import { stageGovernor, riskGovernor, getGovernanceState } from '../governance/index.js';
+import { getStageGovernor, riskGovernor, getGovernanceState } from '../governance/index.js';
 import { positionRecommender } from '../bridge/position-recommender.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import type { ChainId, TokenBalance, GasPrice } from '../bridge/types.js';
@@ -62,7 +62,7 @@ async function testGovernanceSystem(): Promise<void> {
   
   // Test 1.1: Stage Governor Initialization
   try {
-    const state = stageGovernor.getState();
+    const state = getStageGovernor().getState();
     const passed = state.currentStage === 1 && state.status === 'paused' && state.killSwitchArmed === true;
     recordTest(
       'Stage Governor Initialization',
@@ -109,7 +109,7 @@ async function testGovernanceSystem(): Promise<void> {
   // Test 1.4: Execution Gate Check (Stage 1 should block execution)
   start = Date.now();
   try {
-    const canExecute = stageGovernor.canExecute();
+    const canExecute = getStageGovernor().canExecute();
     // Execution should be blocked - either due to Stage 1 advisory mode or system being paused
     const passed = !canExecute.allowed && (
       canExecute.reason.includes('Stage 1') || 
@@ -375,14 +375,14 @@ async function testIntentInference(): Promise<void> {
   start = Date.now();
   try {
     // Report an uncertainty
-    stageGovernor.reportUncertainty('Test uncertainty for inference validation');
+    getStageGovernor().reportUncertainty('Test uncertainty for inference validation');
     
     // System should pause and wait
-    const stateAfter = stageGovernor.getState();
+    const stateAfter = getStageGovernor().getState();
     const passed = stateAfter.status === 'paused';
     
     // Resolve it
-    stageGovernor.resolveUncertainty(
+    getStageGovernor().resolveUncertainty(
       'Test uncertainty for inference validation',
       'Resolved via test',
       'test-authority'
@@ -402,19 +402,19 @@ async function testIntentInference(): Promise<void> {
   // Test 3.4: Anomaly Response Intent
   start = Date.now();
   try {
-    const initialState = stageGovernor.getState();
+    const initialState = getStageGovernor().getState();
     const initialAnomalies = initialState.anomalyCount;
     
     // Report a low severity anomaly (should not pause)
-    stageGovernor.reportAnomaly('Test low anomaly', 'low');
+    getStageGovernor().reportAnomaly('Test low anomaly', 'low');
     
-    const stateAfterLow = stageGovernor.getState();
+    const stateAfterLow = getStageGovernor().getState();
     const lowHandledCorrectly = stateAfterLow.anomalyCount === initialAnomalies + 1;
     
     // Report a high severity anomaly (should pause)
-    stageGovernor.reportAnomaly('Test high anomaly', 'high');
+    getStageGovernor().reportAnomaly('Test high anomaly', 'high');
     
-    const stateAfterHigh = stageGovernor.getState();
+    const stateAfterHigh = getStageGovernor().getState();
     const highHandledCorrectly = stateAfterHigh.status === 'paused';
     
     const passed = lowHandledCorrectly && highHandledCorrectly;
@@ -433,10 +433,10 @@ async function testIntentInference(): Promise<void> {
   // Test 3.5: Profit Recording Intent
   start = Date.now();
   try {
-    const config = stageGovernor.getConfig();
+    const config = getStageGovernor().getConfig();
     
     // Record profit within limits
-    const result = stageGovernor.recordProfit(100);
+    const result = getStageGovernor().recordProfit(100);
     
     const withinLimits = result.dailyTotal <= config.maxDailyProfit;
     const passed = result.recorded && withinLimits;
@@ -485,7 +485,7 @@ async function testRiskControls(): Promise<void> {
   start = Date.now();
   try {
     const capital = riskGovernor.getCapitalAllocation();
-    const state = stageGovernor.getState();
+    const state = getStageGovernor().getState();
     
     // Stage 1 should have conservative capital limits
     const passed = capital.stage === state.currentStage && capital.totalCapital <= 1000;
@@ -504,7 +504,7 @@ async function testRiskControls(): Promise<void> {
   // Test 4.3: Kill Switch Reachability
   start = Date.now();
   try {
-    const state = stageGovernor.getState();
+    const state = getStageGovernor().getState();
     
     // Kill switch should always be armed
     const passed = state.killSwitchArmed === true;

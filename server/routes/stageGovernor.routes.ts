@@ -10,7 +10,7 @@
 import express from 'express';
 import { createLogger } from '../logger';
 import {
-  stageGovernor,
+  getStageGovernor,
   riskGovernor,
   type UnpauseRequest,
   type StageNumber,
@@ -29,10 +29,10 @@ const router = express.Router();
  */
 router.get('/stage', async (_req, res) => {
   try {
-    const state = stageGovernor.getState();
-    const config = stageGovernor.getConfig();
-    const canExecute = stageGovernor.canExecute();
-    const advancementStatus = stageGovernor.checkAdvancementReady();
+    const state = getStageGovernor().getState();
+    const config = getStageGovernor().getConfig();
+    const canExecute = getStageGovernor().canExecute();
+    const advancementStatus = getStageGovernor().checkAdvancementReady();
     
     res.json({
       success: true,
@@ -81,15 +81,15 @@ router.get('/risk', async (_req, res) => {
  */
 router.get('/profit-ladder', async (_req, res) => {
   try {
-    const ladder = stageGovernor.getProfitLadder();
+    const ladder = getStageGovernor().getProfitLadder();
     
     res.json({
       success: true,
       data: {
         tiers: ladder,
-        currentProfit: stageGovernor.getState().profitThisStage,
-        dailyTarget: stageGovernor.getConfig().dailyProfitTarget,
-        maxDailyProfit: stageGovernor.getConfig().maxDailyProfit,
+        currentProfit: getStageGovernor().getState().profitThisStage,
+        dailyTarget: getStageGovernor().getConfig().dailyProfitTarget,
+        maxDailyProfit: getStageGovernor().getConfig().maxDailyProfit,
       },
       timestamp: Date.now(),
     });
@@ -109,14 +109,14 @@ router.get('/profit-ladder', async (_req, res) => {
 router.get('/advisory-cycles', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 10;
-    const cycles = stageGovernor.getAdvisoryCycles(limit);
+    const cycles = getStageGovernor().getAdvisoryCycles(limit);
     
     res.json({
       success: true,
       data: {
         cycles,
         count: cycles.length,
-        stage: stageGovernor.getState().currentStage,
+        stage: getStageGovernor().getState().currentStage,
       },
       timestamp: Date.now(),
     });
@@ -140,7 +140,7 @@ router.get('/rules', async (_req, res) => {
       data: {
         rules: GLOBAL_RULES,
         evolutionLock: true, // Always on unless explicitly lifted
-        killSwitchArmed: stageGovernor.getState().killSwitchArmed,
+        killSwitchArmed: getStageGovernor().getState().killSwitchArmed,
       },
       timestamp: Date.now(),
     });
@@ -190,7 +190,7 @@ router.post('/unpause', async (req, res) => {
     
     log.info('UNPAUSE request received', { request });
     
-    const result = stageGovernor.processUnpause(request);
+    const result = getStageGovernor().processUnpause(request);
     
     if (result.success) {
       log.info('System UNPAUSED', { stage, authority });
@@ -201,7 +201,7 @@ router.post('/unpause', async (req, res) => {
     res.json({
       success: result.success,
       message: result.message,
-      currentState: stageGovernor.getState(),
+      currentState: getStageGovernor().getState(),
       timestamp: Date.now(),
     });
   } catch (error: any) {
@@ -235,12 +235,12 @@ router.post('/pause', async (req, res) => {
     
     log.info('PAUSE request received', { reason, authority });
     
-    stageGovernor.pause(reason, authority);
+    getStageGovernor().pause(reason, authority);
     
     res.json({
       success: true,
       message: 'System paused',
-      currentState: stageGovernor.getState(),
+      currentState: getStageGovernor().getState(),
       timestamp: Date.now(),
     });
   } catch (error: any) {
@@ -274,12 +274,12 @@ router.post('/kill-switch', async (req, res) => {
     
     log.warn('KILL SWITCH request received', { reason, authority });
     
-    stageGovernor.engageKillSwitch(reason, authority);
+    getStageGovernor().engageKillSwitch(reason, authority);
     
     res.json({
       success: true,
       message: 'KILL SWITCH ENGAGED - System halted',
-      currentState: stageGovernor.getState(),
+      currentState: getStageGovernor().getState(),
       timestamp: Date.now(),
     });
   } catch (error: any) {
@@ -313,12 +313,12 @@ router.post('/reset-kill-switch', async (req, res) => {
     
     log.info('Kill switch reset request received', { authority });
     
-    const result = stageGovernor.resetKillSwitch(authority, confirmation);
+    const result = getStageGovernor().resetKillSwitch(authority, confirmation);
     
     res.json({
       success: result.success,
       message: result.message,
-      currentState: stageGovernor.getState(),
+      currentState: getStageGovernor().getState(),
       timestamp: Date.now(),
     });
   } catch (error: any) {
@@ -351,12 +351,12 @@ router.post('/report-uncertainty', async (req, res) => {
     
     log.info('Uncertainty reported', { uncertainty });
     
-    stageGovernor.reportUncertainty(uncertainty);
+    getStageGovernor().reportUncertainty(uncertainty);
     
     res.json({
       success: true,
       message: 'Uncertainty reported - system paused, awaiting resolution',
-      currentState: stageGovernor.getState(),
+      currentState: getStageGovernor().getState(),
       timestamp: Date.now(),
     });
   } catch (error: any) {
@@ -391,12 +391,12 @@ router.post('/resolve-uncertainty', async (req, res) => {
     
     log.info('Resolving uncertainty', { uncertainty, resolution, authority });
     
-    const resolved = stageGovernor.resolveUncertainty(uncertainty, resolution, authority);
+    const resolved = getStageGovernor().resolveUncertainty(uncertainty, resolution, authority);
     
     res.json({
       success: resolved,
       message: resolved ? 'Uncertainty resolved' : 'Uncertainty not found',
-      currentState: stageGovernor.getState(),
+      currentState: getStageGovernor().getState(),
       timestamp: Date.now(),
     });
   } catch (error: any) {
@@ -437,12 +437,12 @@ router.post('/report-anomaly', async (req, res) => {
     
     log.warn('Anomaly reported', { anomaly, severity });
     
-    stageGovernor.reportAnomaly(anomaly, severity);
+    getStageGovernor().reportAnomaly(anomaly, severity);
     
     res.json({
       success: true,
       message: `Anomaly reported with severity: ${severity}`,
-      currentState: stageGovernor.getState(),
+      currentState: getStageGovernor().getState(),
       timestamp: Date.now(),
     });
   } catch (error: any) {
@@ -476,15 +476,15 @@ router.post('/mark-requirement', async (req, res) => {
     
     log.info('Marking requirement', { type, value });
     
-    stageGovernor.markRequirementMet(type, value);
+    getStageGovernor().markRequirementMet(type, value);
     
-    const advancementStatus = stageGovernor.checkAdvancementReady();
+    const advancementStatus = getStageGovernor().checkAdvancementReady();
     
     res.json({
       success: true,
       message: `Requirement ${type} updated`,
       advancementStatus,
-      currentConfig: stageGovernor.getConfig(),
+      currentConfig: getStageGovernor().getConfig(),
       timestamp: Date.now(),
     });
   } catch (error: any) {
@@ -517,7 +517,7 @@ router.post('/record-profit', async (req, res) => {
     
     log.info('Recording profit', { amount });
     
-    const result = stageGovernor.recordProfit(amount);
+    const result = getStageGovernor().recordProfit(amount);
     
     res.json({
       success: result.recorded,
@@ -794,13 +794,13 @@ router.post('/reset-hourly', async (_req, res) => {
 router.post('/reset-daily', async (_req, res) => {
   try {
     riskGovernor.resetDailyMetrics();
-    stageGovernor.resetDailyProfit();
+    getStageGovernor().resetDailyProfit();
     
     res.json({
       success: true,
       message: 'Daily metrics reset',
       metrics: riskGovernor.getMetrics(),
-      stageState: stageGovernor.getState(),
+      stageState: getStageGovernor().getState(),
       timestamp: Date.now(),
     });
   } catch (error: any) {
