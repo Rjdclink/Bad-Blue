@@ -501,7 +501,7 @@ app.get("/api/schema-verify", async (_req, res) => {
     serveStatic(app);
   }
 
-  const port = Number(process.env.PORT) || 8080;
+  const port = Number(process.env.PORT) || 3000;
   
   httpServer.on('error', (error: any) => {
     if (error?.code === 'EADDRINUSE') {
