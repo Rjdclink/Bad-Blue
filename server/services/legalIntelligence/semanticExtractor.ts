@@ -4,7 +4,7 @@
  * Integrates with Shadow Retrieval, Content Filter, and Markdown Converter
  */
 
-import { ShadowRetrievalEngine } from '../shadowRetrieval';
+// Shadow Retrieval Engine loaded dynamically at runtime only
 import { contentFilter } from './contentFilter';
 import { markdownConverter } from './markdownConverter';
 import { extractionCache } from './extractionCache';
@@ -41,15 +41,27 @@ export interface ExtractionOptions {
  * Semantic Legal Extractor
  */
 export class SemanticLegalExtractor {
-  private shadowRetrieval: ShadowRetrievalEngine;
+  private shadowRetrieval: any | null = null;
 
   constructor() {
-    this.shadowRetrieval = new ShadowRetrievalEngine({
-      enabled: true,
-      maxConcurrent: 5,
-    });
-
+    // Shadow Retrieval Engine will be loaded on first use
     log.info('Semantic Legal Extractor initialized');
+  }
+
+  /**
+   * Get Shadow Retrieval Engine instance (lazy-loaded)
+   * Ensures Puppeteer/browser tools are only loaded when explicitly invoked
+   */
+  private async getShadowRetrieval(): Promise<any> {
+    if (!this.shadowRetrieval) {
+      const { ShadowRetrievalEngine } = await import('../shadowRetrieval');
+      this.shadowRetrieval = new ShadowRetrievalEngine({
+        enabled: true,
+        maxConcurrent: 5,
+      });
+      log.info('Shadow Retrieval Engine loaded dynamically');
+    }
+    return this.shadowRetrieval;
   }
 
   /**
@@ -92,7 +104,8 @@ export class SemanticLegalExtractor {
 
       // Step 1: Retrieve HTML using Shadow Retrieval
       log.debug('Retrieving HTML', { url });
-      const retrievalResult = await this.shadowRetrieval.smartRetrieve(url, {
+      const shadowRetrieval = await this.getShadowRetrieval();
+      const retrievalResult = await shadowRetrieval.smartRetrieve(url, {
         extraction: {
           includeLinks: false,
         },
