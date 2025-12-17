@@ -962,5 +962,10 @@ export class StageGovernor extends EventEmitter {
   }
 }
 
-// Export singleton instance
-export const stageGovernor = StageGovernor.getInstance();
+// Export class for lazy initialization
+export { StageGovernor };
+
+// Lazy getter - only initializes on first call
+export function getStageGovernor(): StageGovernor {
+  return StageGovernor.getInstance();
+}

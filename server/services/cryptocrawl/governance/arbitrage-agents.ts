@@ -14,7 +14,7 @@
 
 import { EventEmitter } from 'events';
 import logger from '../../../logger.js';
-import { stageGovernor } from './stage-governor.js';
+import { getStageGovernor } from './stage-governor.js';
 import { riskGovernor } from './risk-governor.js';
 import * as crypto from 'crypto';
 
@@ -324,7 +324,7 @@ export class ArbitrageControlSystem extends EventEmitter {
     });
     
     // Check 9: Global kill-switch reachable
-    const killSwitchState = stageGovernor.getState();
+    const killSwitchState = getStageGovernor().getState();
     checks.push({
       name: 'Global Kill-Switch Reachable',
       passed: killSwitchState.killSwitchArmed,
@@ -534,8 +534,8 @@ export class ArbitrageControlSystem extends EventEmitter {
     signalLogs.push(`[${new Date().toISOString()}] Validation: fee=${feeValid}, slippage=${slippageValid}, latency=${latencyValid}`);
     
     // Check 4: Risk governor approval or rejection
-    const stageState = stageGovernor.getState();
-    const canExecute = stageGovernor.canExecute();
+    const stageState = getStageGovernor().getState();
+    const canExecute = getStageGovernor().canExecute();
     
     if (canExecute.allowed && feeValid && slippageValid && latencyValid && simulatedSignal.netProfit > 0) {
       simulatedSignal.riskGovernorApproval = true;
@@ -629,7 +629,7 @@ export class ArbitrageControlSystem extends EventEmitter {
     }
     
     // Check execution conditions
-    const canExecute = stageGovernor.canExecute();
+    const canExecute = getStageGovernor().canExecute();
     
     // Simulate execution result
     const executionResult: ExecutionResult = {
@@ -1094,8 +1094,8 @@ export class ArbitrageControlSystem extends EventEmitter {
     }
     
     // Require UNPAUSE command
-    const unpauseResult = stageGovernor.processUnpause({
-      stage: stageGovernor.getState().currentStage,
+    const unpauseResult = getStageGovernor().processUnpause({
+      stage: getStageGovernor().getState().currentStage,
       scope: [`tier-${nextTier.level}`],
       duration: 0,
       authority,
