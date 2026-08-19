@@ -26,10 +26,10 @@ jobs:
           push: false
           load: true
           platforms: linux/amd64
-          tags: ${{ toLower(github.repository) }}:test
+          tags: bad-blue:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Test Puppeteer in container
         run: |
-          docker run --rm ${{ toLower(github.repository) }}:test npm run docker:test
+          docker run --rm bad-blue:test npm run docker:test
