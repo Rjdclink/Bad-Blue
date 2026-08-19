@@ -38,7 +38,6 @@ try {
 
 import express, { type Request, type Response, type NextFunction } from "express";
 import cookieParser from "cookie-parser";
-import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./vite";
 import type { Server } from "http";
 
@@ -344,7 +343,9 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/api/health", async (_req, res) => {
+// Railway liveness endpoint. This must never depend on database, AI, governance,
+// wallet, crawler, or route-tree initialization. Deep readiness remains /api/ready.
+app.get("/api/health", (_req, res) => {
   if (isShuttingDown) {
     return res.status(503).json({
       status: 'shutting_down',
@@ -352,52 +353,14 @@ app.get("/api/health", async (_req, res) => {
     });
   }
 
-  // Railway/deployment health check: Return 200 as soon as HTTP server is listening
-  // This allows the deployment to pass health checks while initialization continues in background
-  // The isReady flag indicates HTTP server is responding (set immediately on listen)
-  // The isFullyInitialized flag indicates all services are ready (set after migrations/workers)
-  
-  let dbOk = false;
-  let dbLatency = null;
-  
-  // Only check database if we're past basic startup
-  if (isReady) {
-    try {
-      const { db } = await import('./db');
-      const start = Date.now();
-      await db.execute('SELECT 1');
-      dbLatency = Date.now() - start;
-      dbOk = true;
-    } catch {
-      dbOk = false;
-    }
-  }
+  const httpStatus = isReady ? 200 : 503;
 
-  // Health check returns 200 once HTTP server is listening (isReady = true)
-  // This ensures Railway deployment succeeds while migrations run in background
-  const status = isFullyInitialized && dbOk ? 'healthy' : isReady ? 'starting' : 'initializing';
-  const httpStatus = isReady ? 200 : 503; // Return 200 once HTTP is up
-
-  res.status(httpStatus).json({
-    status,
+  return res.status(httpStatus).json({
+    status: isFullyInitialized ? 'healthy' : isReady ? 'starting' : 'initializing',
     ready: isReady,
     fullyInitialized: isFullyInitialized,
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
-    database: { ok: dbOk, latencyMs: dbLatency },
-    env: {
-      stripeConfigured: !!process.env.STRIPE_SECRET_KEY,
-      geminiConfigured: !!process.env.GEMINI_API_KEY,
-      groqConfigured: !!process.env.GROQ_API_KEY,
-      mistralConfigured: !!process.env.MISTRAL_API_KEY,
-      anthropicConfigured: !!process.env.ANTHROPIC_API_KEY,
-    },
-    aiProviders: {
-      gemini: { model: 'gemini-2.5-pro', available: !!process.env.GEMINI_API_KEY },
-      groq: { model: 'llama-3.3-70b-versatile', available: !!process.env.GROQ_API_KEY },
-      mistral: { model: 'mistral-large-latest', available: !!process.env.MISTRAL_API_KEY },
-      claude: { model: 'claude-3-5-haiku-20241022', available: !!process.env.ANTHROPIC_API_KEY },
-    }
   });
 });
 
@@ -429,14 +392,25 @@ app.get("/api/schema-verify", async (_req, res) => {
   }
 });
 
-(async () => {
-  console.log('[STARTUP] LegalWhat Server starting...');
-  console.log('[STARTUP] Node.js version:', process.version);
-  console.log('[STARTUP] Environment:', process.env.NODE_ENV || 'development');
+async function initializeApplicationAfterListen(server: Server): Promise<void> {
+  console.log('[STARTUP] Stage 0.5: Loading application routes after HTTP listener is live...');
 
-  // IMPORTANT: Start HTTP server FIRST for Railway health checks
-  // Database initialization moved to background to avoid blocking health checks
-  httpServer = await registerRoutes(app);
+  // Keep the massive route import graph out of the pre-listen critical path.
+  const { registerRoutes } = await import('./routes');
+  await registerRoutes(app);
+  console.log('[STARTUP] ✓ Application routes registered');
+
+  // registerRoutes historically creates its own unlistening Server only to attach
+  // this WebSocket upgrade path. Attach the same WebSocket server to the real
+  // listening Server so /api/crypto/live remains functional.
+  const { wss } = await import('./services/cryptocrawl/api');
+  server.on('upgrade', (request, socket, head) => {
+    if (request.url === '/api/crypto/live') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    }
+  });
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err?.status ?? err?.statusCode ?? 500;
@@ -491,7 +465,7 @@ app.get("/api/schema-verify", async (_req, res) => {
     // Dynamically import Vite only in development to avoid bundling it in production
     try {
       const { setupVite } = await import("./vite");
-      await setupVite(app, httpServer);
+      await setupVite(app, server);
     } catch (error) {
       console.error('[STARTUP] ❌ Failed to initialize Vite development server:', error);
       console.error('[STARTUP] Falling back to static file serving');
@@ -500,50 +474,61 @@ app.get("/api/schema-verify", async (_req, res) => {
   } else {
     serveStatic(app);
   }
+}
+
+async function initializeBackgroundServices(): Promise<void> {
+  await initializeDatabase();
+  await runMigrations();
+
+  // Run startup schema verification to confirm correct database connection
+  const { runStartupSchemaVerification } = await import('./db');
+  await runStartupSchemaVerification();
+
+  await initializeServices();
+}
+
+(async () => {
+  console.log('[STARTUP] LegalWhat Server starting...');
+  console.log('[STARTUP] Node.js version:', process.version);
+  console.log('[STARTUP] Environment:', process.env.NODE_ENV || 'development');
 
   const port = Number(process.env.PORT) || 3000;
-  
+
+  // Start the actual HTTP listener before importing the large application route tree.
+  // Railway can now reach /api/health even while route/service initialization continues.
+  httpServer = app.listen(port, '0.0.0.0', () => {
+    console.log(`[LISTENING] ${port}`);
+    isReady = true;
+    console.log('[STARTUP] ✓ HTTP server listening - health checks can now pass');
+
+    void (async () => {
+      const [routeResult, serviceResult] = await Promise.allSettled([
+        initializeApplicationAfterListen(httpServer!),
+        initializeBackgroundServices(),
+      ]);
+
+      if (routeResult.status === 'rejected') {
+        console.error('[STARTUP] ❌ Application route initialization failed:', routeResult.reason);
+      }
+
+      if (serviceResult.status === 'rejected') {
+        console.error('[STARTUP] ❌ Background service initialization failed:', serviceResult.reason);
+      }
+
+      if (routeResult.status === 'fulfilled' && serviceResult.status === 'fulfilled') {
+        isFullyInitialized = true;
+        console.log('[STARTUP] ✓ Server fully initialized and ready');
+      } else {
+        console.warn('[STARTUP] Server remains live but not fully initialized');
+      }
+    })();
+  });
+
   httpServer.on('error', (error: any) => {
     if (error?.code === 'EADDRINUSE') {
       console.error(`[STARTUP] ❌ Port ${port} is already in use`);
-      const fallbackPort = port + 1;
-      httpServer = app.listen(fallbackPort, '0.0.0.0', () => {
-        console.log(`[LISTENING] ${fallbackPort}`);
-        isReady = true; // HTTP server is up - health checks will pass
-      });
     } else {
       console.error('[SERVER ERROR]', error);
-    }
-  });
-  
-  httpServer = app.listen(port, '0.0.0.0', async () => {
-    console.log(`[LISTENING] ${port}`);
-    
-    // Set isReady immediately so health checks pass
-    // Railway/deployment health checks need 200 response ASAP
-    isReady = true;
-    console.log('[STARTUP] ✓ HTTP server listening - health checks will now pass');
-    
-    // Continue initialization in background - health checks already passing
-    // All slow/blocking operations run here AFTER isReady is set
-    try {
-      // Initialize database connection (moved here to not block health checks)
-      await initializeDatabase();
-      
-      await runMigrations();
-      
-      // Run startup schema verification to confirm correct database connection
-      const { runStartupSchemaVerification } = await import('./db');
-      await runStartupSchemaVerification();
-      
-      await initializeServices();
-      
-      isFullyInitialized = true;
-      console.log('[STARTUP] ✓ Server fully initialized and ready');
-    } catch (error) {
-      console.error('[STARTUP] ❌ Background initialization failed:', error);
-      // Server remains running but not fully initialized
-      // This allows debugging while keeping the deployment alive
     }
   });
 })();
