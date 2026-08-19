@@ -289,10 +289,11 @@ export class ComposerInterface extends EventEmitter {
     
     try {
       const result = await killSwitch.activate(
-        KillSwitchType.SOFT_HALT,
-        authority,
-        reason
-      );
+  KillSwitchType.SOFT_HALT,
+  authority,
+  reason,
+  process.env.COMPOSER_AUTH_TOKEN
+);
       
       command.status = 'completed';
       command.result = result;
