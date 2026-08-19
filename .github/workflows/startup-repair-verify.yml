@@ -1,0 +1,93 @@
+name: Startup Repair Verification
+
+on:
+  push:
+    branches:
+      - repair/startup-health-lazy-20260819
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-startup-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Start production bundle and require health response
+        shell: bash
+        env:
+          NODE_ENV: production
+          PORT: '5099'
+          SESSION_SECRET: 'startup-smoke-only-session-secret-000000000000000000000000'
+          DATABASE_URL: 'postgresql://smoke:smoke@127.0.0.1:5432/smoke'
+          SQUARE_ACCESS_TOKEN: 'startup-smoke-token'
+          SQUARE_LOCATION_ID: 'startup-smoke-location'
+          SQUARE_APPLICATION_ID: 'startup-smoke-app'
+          SYSTEM_KILL_SWITCH: 'false'
+          BEAM_ENABLED: 'false'
+          NO_EXECUTION: 'true'
+          NO_INTERVALS: 'true'
+        run: |
+          set -euo pipefail
+
+          npm start > startup-smoke.log 2>&1 &
+          SERVER_PID=$!
+
+          cleanup() {
+            kill "$SERVER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 60); do
+            if curl --silent --show-error --fail --max-time 2 http://127.0.0.1:5099/api/health > health.json 2>/dev/null; then
+              echo "Health endpoint became reachable on attempt ${attempt}."
+              cat health.json
+              echo
+              echo "--- startup log tail ---"
+              tail -200 startup-smoke.log
+              exit 0
+            fi
+
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "Server exited before health endpoint became reachable."
+              echo "--- startup log ---"
+              cat startup-smoke.log
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          echo "Health endpoint did not become reachable within 60 seconds."
+          echo "--- startup log ---"
+          cat startup-smoke.log
+          exit 1
+
+      - name: Upload startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: startup-repair-diagnostics-${{ github.run_id }}
+          path: |
+            startup-smoke.log
+            health.json
+          if-no-files-found: ignore
+          retention-days: 14
