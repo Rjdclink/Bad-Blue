@@ -38,9 +38,8 @@ try {
 
 import express, { type Request, type Response, type NextFunction } from "express";
 import cookieParser from "cookie-parser";
-import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./vite";
-import type { Server } from "http";
+import { createServer, type Server } from "http";
 
 // Static imports for migrations - ensures esbuild bundles them (dynamic imports don't work with bundlers)
 import { runSquareMigration } from "./migrations/runSquareMigration";
@@ -433,10 +432,18 @@ app.get("/api/schema-verify", async (_req, res) => {
   console.log('[STARTUP] LegalWhat Server starting...');
   console.log('[STARTUP] Node.js version:', process.version);
   console.log('[STARTUP] Environment:', process.env.NODE_ENV || 'development');
+const port = Number(process.env.PORT) || 3000;
+httpServer = createServer(app); 
+httpServer.listen(port, '0.0.0.0', () => {
+  console.log(`[LISTENING] ${port}`);
+  isReady = true;
+}); 
 
+const { registerRoutes } = await import("./routes");
+await registerRoutes(app);
   // IMPORTANT: Start HTTP server FIRST for Railway health checks
   // Database initialization moved to background to avoid blocking health checks
-  httpServer = await registerRoutes(app);
+  
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err?.status ?? err?.statusCode ?? 500;
@@ -501,7 +508,6 @@ app.get("/api/schema-verify", async (_req, res) => {
     serveStatic(app);
   }
 
-  const port = Number(process.env.PORT) || 3000;
   
   httpServer.on('error', (error: any) => {
     if (error?.code === 'EADDRINUSE') {
@@ -516,13 +522,10 @@ app.get("/api/schema-verify", async (_req, res) => {
     }
   });
   
-  httpServer = app.listen(port, '0.0.0.0', async () => {
-    console.log(`[LISTENING] ${port}`);
+(async () => {
     
     // Set isReady immediately so health checks pass
     // Railway/deployment health checks need 200 response ASAP
-    isReady = true;
-    console.log('[STARTUP] ✓ HTTP server listening - health checks will now pass');
     
     // Continue initialization in background - health checks already passing
     // All slow/blocking operations run here AFTER isReady is set
