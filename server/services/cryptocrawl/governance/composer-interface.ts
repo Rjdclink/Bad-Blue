@@ -17,8 +17,7 @@ import { EventEmitter } from 'events';
 import { createLogger } from '../../../logger';
 import { stageManager, Stage, ProofMetrics } from './stage-management';
 import { riskGovernor, TradeProposal } from './risk-governor';
-
-
+import { killSwitch, KillSwitchType } from './kill-switch';
 const log = createLogger('ComposerInterface');
 
 // ============================================================================
