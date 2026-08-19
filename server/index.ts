@@ -502,23 +502,16 @@ async function initializeBackgroundServices(): Promise<void> {
     console.log('[STARTUP] ✓ HTTP server listening - health checks can now pass');
 
     void (async () => {
-      const [routeResult, serviceResult] = await Promise.allSettled([
-        initializeApplicationAfterListen(httpServer!),
-        initializeBackgroundServices(),
-      ]);
+      try {
+        // Preserve the original initialization order, but move it off the
+        // pre-listen critical path: routes first, then database/services.
+        await initializeApplicationAfterListen(httpServer!);
+        await initializeBackgroundServices();
 
-      if (routeResult.status === 'rejected') {
-        console.error('[STARTUP] ❌ Application route initialization failed:', routeResult.reason);
-      }
-
-      if (serviceResult.status === 'rejected') {
-        console.error('[STARTUP] ❌ Background service initialization failed:', serviceResult.reason);
-      }
-
-      if (routeResult.status === 'fulfilled' && serviceResult.status === 'fulfilled') {
         isFullyInitialized = true;
         console.log('[STARTUP] ✓ Server fully initialized and ready');
-      } else {
+      } catch (error) {
+        console.error('[STARTUP] ❌ Post-listen initialization failed:', error);
         console.warn('[STARTUP] Server remains live but not fully initialized');
       }
     })();
