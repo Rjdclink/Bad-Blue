@@ -1,15 +1,22 @@
 import type { ExecutionContext, KillSwitchResult } from './system-control.js';
+import { EventEmitter } from 'events';
+
+export enum KillSwitchType {
+  SOFT_HALT = 'SOFT_HALT',
+  HARD_HALT = 'HARD_HALT',
+}
 
 /**
  * Kill Switch System
  * Emergency shutdown mechanism for the governance system
  */
-class KillSwitch {
+class KillSwitch extends EventEmitter {
   private static instance: KillSwitch;
   private active: boolean = false;
   private reason: string | undefined;
 
   private constructor() {
+super();
     // Check environment variable on initialization
     this.active = process.env.SYSTEM_KILL_SWITCH === 'true';
     if (this.active) {
