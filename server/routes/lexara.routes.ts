@@ -22,6 +22,7 @@ import { logger } from '../logger';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
 import { lexaraSpeakTest } from '../lexara/LexaraTTSRouter';
 import { callAIWithFallback } from '../aiSubAgent';
+import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 
 const router = express.Router();
 
@@ -159,7 +160,7 @@ router.post('/respond', express.json(), async (req: Request, res: Response) => {
     const prompt = history ? `${history}\nUser: ${text}\nLexara:` : text;
 
     const aiResponse = await callAIWithFallback(prompt, {
-      systemPrompt: persona.systemPrompt,
+      systemPrompt: LEXARA_PERSONA.systemPrompt,
       temperature: 0.7,
       maxTokens: 1000,
     });

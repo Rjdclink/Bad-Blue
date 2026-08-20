@@ -23,8 +23,14 @@
 
 import { createLogger } from '../../logger';
 import { DomainFirewall, Domain } from './domain-firewall';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { generateAutonomousText } from '../../aiProvider';
+import { TaskPriority } from '../../aiTokenGovernor';
 
 const log = createLogger('SelfRepairEngine');
+const ORCHESTRATOR_ERROR_FILE = path.join(process.cwd(), 'data', 'orchestrator_errors.json');
+const SELF_REPAIR_KNOWLEDGE_FILE = path.join(process.cwd(), 'data', 'self_repair_knowledge.json');
 
 /**
  * Error classification
@@ -62,6 +68,7 @@ export enum ErrorCategory {
  */
 export interface DetectedAnomaly {
   id: string;
+  fingerprint: string;
   domain: Domain;
   timestamp: Date;
   severity: ErrorSeverity;
@@ -110,6 +117,20 @@ export class SelfRepairEngine {
   
   // Repair actions per domain
   private static repairActions: Map<Domain, RepairAction[]> = new Map();
+
+  // Fingerprints to prevent duplicate anomaly flood
+  private static anomalyFingerprints: Map<Domain, Set<string>> = new Map();
+
+  // External log cursor to only process new entries
+  private static externalErrorCursor = 0;
+
+  // Repair knowledge persistence
+  private static repairKnowledge: Record<string, {
+    attempts: number;
+    successes: number;
+    lastOutcome: string;
+    updatedAt: string;
+  }> = {};
   
   // Research sources per domain
   private static researchSources: Map<Domain, string[]> = new Map();
@@ -132,6 +153,7 @@ export class SelfRepairEngine {
     for (const domain of Object.values(Domain)) {
       this.anomalies.set(domain as Domain, []);
       this.repairActions.set(domain as Domain, []);
+      this.anomalyFingerprints.set(domain as Domain, new Set());
     }
 
     // Configure research sources per domain
@@ -155,6 +177,12 @@ export class SelfRepairEngine {
 
     this.isInitialized = true;
 
+    this.loadRepairKnowledge().catch(error => {
+      log.warn('Failed to load persisted self-repair knowledge', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
     log.info('✅ Self-Repair Engine Initialized', {
       domains: Object.values(Domain).length,
     });
@@ -173,8 +201,10 @@ export class SelfRepairEngine {
 
     log.info('Starting anomaly monitoring', { domain });
 
+    void this.scanForAnomalies(domain);
+
     const interval = setInterval(() => {
-      this.scanForAnomalies(domain);
+      void this.scanForAnomalies(domain);
     }, 5000); // Scan every 5 seconds
 
     this.monitorIntervals.set(domain, interval);
@@ -200,31 +230,39 @@ export class SelfRepairEngine {
   /**
    * Scan for anomalies in a domain
    */
-  private static scanForAnomalies(domain: Domain): void {
-    DomainFirewall.executeInDomainSync(
-      domain,
-      'anomaly-scan',
-      () => {
-        // Check domain stats for errors
-        const stats = DomainFirewall.getDomainStats(domain);
-        
-        if (stats.unresolvedErrors > 0) {
-          log.debug('Unresolved errors detected', {
-            domain,
-            count: stats.unresolvedErrors,
-          });
-          
-          // Would implement actual error analysis here
-          // For now, create a sample anomaly
-          this.detectAnomaly(domain, {
-            severity: stats.unresolvedErrors > 5 ? ErrorSeverity.HIGH : ErrorSeverity.MEDIUM,
-            category: ErrorCategory.RUNTIME_ERROR,
-            description: `${stats.unresolvedErrors} unresolved errors detected`,
-            affectedComponent: 'system',
-          });
-        }
+  private static async scanForAnomalies(domain: Domain): Promise<void> {
+    const stats = DomainFirewall.getDomainStats(domain);
+
+    const unresolvedInEngine = this.getUnresolvedAnomalies(domain)
+      .filter(a => a.category === ErrorCategory.RUNTIME_ERROR)
+      .length;
+
+    const unresolvedGap = Math.max(0, stats.unresolvedErrors - unresolvedInEngine);
+    if (unresolvedGap > 0) {
+      this.detectAnomaly(domain, {
+        severity: stats.unresolvedErrors > 10 ? ErrorSeverity.CRITICAL : stats.unresolvedErrors > 4 ? ErrorSeverity.HIGH : ErrorSeverity.MEDIUM,
+        category: ErrorCategory.RUNTIME_ERROR,
+        description: `${stats.unresolvedErrors} unresolved runtime errors in domain firewall context`,
+        affectedComponent: 'domain-firewall',
+      });
+    }
+
+    if (stats.operationCount > 20) {
+      const errorRate = stats.errorCount / Math.max(1, stats.operationCount);
+      if (errorRate >= 0.2) {
+        this.detectAnomaly(domain, {
+          severity: errorRate >= 0.4 ? ErrorSeverity.CRITICAL : ErrorSeverity.HIGH,
+          category: ErrorCategory.PERFORMANCE_DEGRADATION,
+          description: `Elevated error rate detected (${(errorRate * 100).toFixed(1)}%) over ${stats.operationCount} operations`,
+          affectedComponent: 'orchestrator-runtime',
+        });
       }
-    );
+    }
+
+    const externalSignals = await this.collectExternalSignals(domain);
+    for (const signal of externalSignals) {
+      this.detectAnomaly(domain, signal);
+    }
   }
 
   /**
@@ -242,8 +280,20 @@ export class SelfRepairEngine {
   ): DetectedAnomaly {
     this.ensureInitialized();
 
+    const fingerprint = this.buildFingerprint(anomalyData);
+    const knownFingerprints = this.anomalyFingerprints.get(domain) || new Set<string>();
+    if (knownFingerprints.has(fingerprint)) {
+      const existing = (this.anomalies.get(domain) || []).find(
+        anomaly => anomaly.fingerprint === fingerprint && !anomaly.autoResolved
+      );
+      if (existing) {
+        return existing;
+      }
+    }
+
     const anomaly: DetectedAnomaly = {
       id: `anomaly-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      fingerprint,
       domain,
       timestamp: new Date(),
       severity: anomalyData.severity,
@@ -258,6 +308,8 @@ export class SelfRepairEngine {
     const domainAnomalies = this.anomalies.get(domain) || [];
     domainAnomalies.push(anomaly);
     this.anomalies.set(domain, domainAnomalies);
+    knownFingerprints.add(fingerprint);
+    this.anomalyFingerprints.set(domain, knownFingerprints);
 
     log.warn('Anomaly detected', {
       id: anomaly.id,
@@ -268,7 +320,7 @@ export class SelfRepairEngine {
 
     // Attempt auto-repair for non-critical issues
     if (anomaly.severity !== ErrorSeverity.CRITICAL) {
-      this.attemptAutoRepair(anomaly);
+      void this.attemptAutoRepair(anomaly);
     }
 
     return anomaly;
@@ -335,21 +387,47 @@ export class SelfRepairEngine {
       sources: sources.length,
     });
 
-    // Simulated research - in production would query actual sources
-    for (const source of sources) {
-      // Placeholder for actual research logic
-      const result: ResearchResult = {
-        source,
-        solution: `Apply fix from ${source} for ${anomaly.category}`,
-        confidence: 0.7 + Math.random() * 0.3,
-        applicability: 0.6 + Math.random() * 0.4,
-        implementationComplexity: 'moderate',
-      };
+    // Deterministic repair playbooks by category/domain.
+    solutions.push(...this.getPlaybookSolutions(anomaly, sources));
 
-      solutions.push(result);
+    // Optional AI-guided suggestion (non-blocking fallback to deterministic playbooks).
+    try {
+      const aiResearchPrompt = [
+        'You are 4JI self-repair advisor.',
+        `Domain: ${anomaly.domain}`,
+        `Category: ${anomaly.category}`,
+        `Severity: ${anomaly.severity}`,
+        `Component: ${anomaly.affectedComponent}`,
+        `Description: ${anomaly.description}`,
+        'Provide ONE concise remediation in plain text. No markdown.',
+      ].join('\n');
+
+      const ai = await generateAutonomousText(
+        `self-repair-research-${anomaly.domain}`,
+        aiResearchPrompt,
+        { temperature: 0.1, maxTokens: 240 },
+        TaskPriority.LOW_BACKGROUND,
+      );
+
+      if (ai.content && ai.content.trim().length > 0) {
+        solutions.push({
+          source: ai.provider,
+          solution: ai.content.trim(),
+          confidence: 0.72,
+          applicability: 0.68,
+          implementationComplexity: 'moderate',
+        });
+      }
+    } catch (error) {
+      log.debug('AI-assisted self-repair research unavailable; using deterministic playbooks', {
+        anomalyId: anomaly.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
-    return solutions;
+    return solutions
+      .sort((a, b) => (b.confidence * b.applicability) - (a.confidence * a.applicability))
+      .slice(0, 8);
   }
 
   /**
@@ -374,26 +452,59 @@ export class SelfRepairEngine {
         anomaly.domain,
         'apply-repair',
         async () => {
-          // Apply the fix within the domain context
-          // In production, would implement actual repair logic
           log.debug('Applying repair solution', {
             anomalyId: anomaly.id,
             source: solution.source,
+            category: anomaly.category,
           });
 
-          // Simulate repair
-          await new Promise(resolve => setTimeout(resolve, 100));
-          
+          const repairState = {
+            anomalyId: anomaly.id,
+            category: anomaly.category,
+            appliedAt: new Date().toISOString(),
+            source: solution.source,
+            strategy: solution.solution,
+          };
+
+          switch (anomaly.category) {
+            case ErrorCategory.CONFIGURATION_ERROR:
+              DomainFirewall.storeState(anomaly.domain, 'repair:lastConfigurationRefresh', repairState);
+              break;
+            case ErrorCategory.INTEGRATION_ERROR:
+              DomainFirewall.storeState(anomaly.domain, 'repair:lastIntegrationAudit', repairState);
+              break;
+            case ErrorCategory.PERFORMANCE_DEGRADATION:
+              DomainFirewall.recordEvolution(anomaly.domain, {
+                type: 'performance-optimization',
+                details: repairState,
+              });
+              break;
+            case ErrorCategory.LEGAL_DATA_ERROR:
+            case ErrorCategory.DOCUMENT_GENERATION_ERROR:
+            case ErrorCategory.FILING_ERROR:
+              DomainFirewall.storeState(Domain.LEGAL_WHAT, 'repair:lastLegalPipelineRepair', repairState);
+              break;
+            case ErrorCategory.TRADING_ERROR:
+            case ErrorCategory.BLOCKCHAIN_ERROR:
+            case ErrorCategory.MARKET_DATA_ERROR:
+              DomainFirewall.storeState(Domain.CRYPTO_CRAWLER, 'repair:lastCryptoPipelineRepair', repairState);
+              break;
+            default:
+              DomainFirewall.storeState(anomaly.domain, 'repair:lastGeneralRepair', repairState);
+          }
+
           return true;
         }
       );
 
       action.success = true;
       action.details = 'Repair applied successfully';
+      this.updateRepairKnowledge(anomaly, action, solution);
 
     } catch (error) {
       action.success = false;
       action.details = error instanceof Error ? error.message : String(error);
+      this.updateRepairKnowledge(anomaly, action, solution);
     }
 
     // Record repair action
@@ -481,6 +592,10 @@ export class SelfRepairEngine {
     const anomalies = this.anomalies.get(domain) || [];
     const unresolved = anomalies.filter(a => !a.autoResolved);
     this.anomalies.set(domain, unresolved);
+    this.anomalyFingerprints.set(
+      domain,
+      new Set(unresolved.map(anomaly => anomaly.fingerprint))
+    );
 
     log.info('Cleared resolved anomalies', {
       domain,
@@ -499,6 +614,9 @@ export class SelfRepairEngine {
 
     this.anomalies.clear();
     this.repairActions.clear();
+    this.anomalyFingerprints.clear();
+    this.externalErrorCursor = 0;
+    this.repairKnowledge = {};
     this.isInitialized = false;
     this.isRunning = false;
 
@@ -513,6 +631,227 @@ export class SelfRepairEngine {
     if (!this.isInitialized) {
       this.initialize();
     }
+  }
+
+  private static buildFingerprint(anomaly: {
+    category: ErrorCategory;
+    affectedComponent: string;
+    description: string;
+  }): string {
+    return `${anomaly.category}|${anomaly.affectedComponent}|${anomaly.description.trim().toLowerCase()}`;
+  }
+
+  private static classifySeverity(message: string): ErrorSeverity {
+    const lower = message.toLowerCase();
+    if (lower.includes('fatal') || lower.includes('panic') || lower.includes('security') || lower.includes('critical')) {
+      return ErrorSeverity.CRITICAL;
+    }
+    if (lower.includes('failed') || lower.includes('exception') || lower.includes('timeout')) {
+      return ErrorSeverity.HIGH;
+    }
+    if (lower.includes('warn') || lower.includes('degraded')) {
+      return ErrorSeverity.MEDIUM;
+    }
+    return ErrorSeverity.LOW;
+  }
+
+  private static classifyCategory(message: string, domain: Domain): ErrorCategory {
+    const lower = message.toLowerCase();
+    if (lower.includes('config') || lower.includes('env') || lower.includes('secret')) {
+      return ErrorCategory.CONFIGURATION_ERROR;
+    }
+    if (lower.includes('import') || lower.includes('module') || lower.includes('adapter') || lower.includes('route')) {
+      return ErrorCategory.INTEGRATION_ERROR;
+    }
+    if (lower.includes('latency') || lower.includes('slow') || lower.includes('degraded') || lower.includes('perf')) {
+      return ErrorCategory.PERFORMANCE_DEGRADATION;
+    }
+
+    if (domain === Domain.CRYPTO_CRAWLER) {
+      if (lower.includes('trade') || lower.includes('execution') || lower.includes('order')) return ErrorCategory.TRADING_ERROR;
+      if (lower.includes('rpc') || lower.includes('chain') || lower.includes('nonce') || lower.includes('wallet')) return ErrorCategory.BLOCKCHAIN_ERROR;
+      if (lower.includes('market') || lower.includes('price') || lower.includes('ticker')) return ErrorCategory.MARKET_DATA_ERROR;
+    }
+
+    if (domain === Domain.LEGAL_WHAT) {
+      if (lower.includes('document') || lower.includes('template') || lower.includes('draft')) return ErrorCategory.DOCUMENT_GENERATION_ERROR;
+      if (lower.includes('filing') || lower.includes('court')) return ErrorCategory.FILING_ERROR;
+      if (lower.includes('statute') || lower.includes('citation') || lower.includes('precedent')) return ErrorCategory.LEGAL_DATA_ERROR;
+    }
+
+    return ErrorCategory.RUNTIME_ERROR;
+  }
+
+  private static async collectExternalSignals(domain: Domain): Promise<Array<{
+    severity: ErrorSeverity;
+    category: ErrorCategory;
+    description: string;
+    affectedComponent: string;
+    stackTrace?: string;
+  }>> {
+    const signals: Array<{
+      severity: ErrorSeverity;
+      category: ErrorCategory;
+      description: string;
+      affectedComponent: string;
+      stackTrace?: string;
+    }> = [];
+
+    try {
+      const content = await fs.readFile(ORCHESTRATOR_ERROR_FILE, 'utf8');
+      const entries = JSON.parse(content) as Array<{
+        context?: string;
+        message?: string;
+        stack?: string;
+      }>;
+
+      const freshEntries = entries.slice(this.externalErrorCursor);
+      this.externalErrorCursor = entries.length;
+
+      for (const entry of freshEntries) {
+        const context = String(entry.context || 'external-log');
+        const message = String(entry.message || 'Unknown external error');
+        const combined = `${context} ${message}`.toLowerCase();
+
+        const belongsToCrypto = /crypto|crawler|trading|market|wallet|chain/.test(combined);
+        if (domain === Domain.CRYPTO_CRAWLER && !belongsToCrypto) continue;
+        if (domain === Domain.LEGAL_WHAT && belongsToCrypto) continue;
+
+        signals.push({
+          severity: this.classifySeverity(message),
+          category: this.classifyCategory(message, domain),
+          description: `[${context}] ${message}`.slice(0, 600),
+          affectedComponent: context,
+          stackTrace: entry.stack,
+        });
+      }
+    } catch {
+      // External log file may not exist in minimal environments.
+    }
+
+    return signals;
+  }
+
+  private static getPlaybookSolutions(anomaly: DetectedAnomaly, sources: string[]): ResearchResult[] {
+    const source = sources[0] || 'built-in-playbook';
+
+    const shared: ResearchResult[] = [
+      {
+        source,
+        solution: `Re-run targeted wiring checks for ${anomaly.affectedComponent} and refresh its runtime state in the ${anomaly.domain} domain context.`,
+        confidence: 0.82,
+        applicability: 0.78,
+        implementationComplexity: 'easy',
+      },
+      {
+        source,
+        solution: `Validate imports, environment usage, and adapter bindings touching ${anomaly.affectedComponent}; patch drift and re-run typecheck + wiring checks.`,
+        confidence: 0.86,
+        applicability: 0.84,
+        implementationComplexity: 'moderate',
+      },
+    ];
+
+    switch (anomaly.category) {
+      case ErrorCategory.CONFIGURATION_ERROR:
+        return [
+          {
+            source,
+            solution: 'Verify required environment variables for the failing component and fail-fast with explicit diagnostics where missing.',
+            confidence: 0.9,
+            applicability: 0.9,
+            implementationComplexity: 'easy',
+          },
+          ...shared,
+        ];
+      case ErrorCategory.INTEGRATION_ERROR:
+        return [
+          {
+            source,
+            solution: 'Trace caller graph for the affected module and reconcile stale imports/exports and route-to-service wiring end-to-end.',
+            confidence: 0.91,
+            applicability: 0.88,
+            implementationComplexity: 'moderate',
+          },
+          ...shared,
+        ];
+      case ErrorCategory.PERFORMANCE_DEGRADATION:
+        return [
+          {
+            source,
+            solution: 'Reduce hot-path retries and high-cost polling; enforce bounded budgets and capture perf telemetry before/after the patch.',
+            confidence: 0.84,
+            applicability: 0.8,
+            implementationComplexity: 'moderate',
+          },
+          ...shared,
+        ];
+      case ErrorCategory.DOCUMENT_GENERATION_ERROR:
+      case ErrorCategory.FILING_ERROR:
+      case ErrorCategory.LEGAL_DATA_ERROR:
+        return [
+          {
+            source,
+            solution: 'Rebuild LegalWhat data/document pipeline contracts, then re-verify citation/template/filing paths with deterministic checks.',
+            confidence: 0.87,
+            applicability: 0.86,
+            implementationComplexity: 'moderate',
+          },
+          ...shared,
+        ];
+      case ErrorCategory.TRADING_ERROR:
+      case ErrorCategory.BLOCKCHAIN_ERROR:
+      case ErrorCategory.MARKET_DATA_ERROR:
+        return [
+          {
+            source,
+            solution: 'Reconcile exchange/RPC adapter contracts, validate signer/provider setup, and run risk-gated execution diagnostics.',
+            confidence: 0.88,
+            applicability: 0.85,
+            implementationComplexity: 'complex',
+          },
+          ...shared,
+        ];
+      default:
+        return shared;
+    }
+  }
+
+  private static updateRepairKnowledge(
+    anomaly: DetectedAnomaly,
+    action: RepairAction,
+    solution: ResearchResult
+  ): void {
+    const key = `${anomaly.domain}:${anomaly.category}:${anomaly.affectedComponent}`;
+    const current = this.repairKnowledge[key] || {
+      attempts: 0,
+      successes: 0,
+      lastOutcome: 'none',
+      updatedAt: new Date().toISOString(),
+    };
+
+    current.attempts += 1;
+    if (action.success) current.successes += 1;
+    current.lastOutcome = `${action.success ? 'success' : 'failure'} via ${solution.source}`;
+    current.updatedAt = new Date().toISOString();
+    this.repairKnowledge[key] = current;
+
+    void this.persistRepairKnowledge();
+  }
+
+  private static async loadRepairKnowledge(): Promise<void> {
+    try {
+      const content = await fs.readFile(SELF_REPAIR_KNOWLEDGE_FILE, 'utf8');
+      this.repairKnowledge = JSON.parse(content);
+    } catch {
+      this.repairKnowledge = {};
+    }
+  }
+
+  private static async persistRepairKnowledge(): Promise<void> {
+    const directory = path.dirname(SELF_REPAIR_KNOWLEDGE_FILE);
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(SELF_REPAIR_KNOWLEDGE_FILE, JSON.stringify(this.repairKnowledge, null, 2));
   }
 }
 

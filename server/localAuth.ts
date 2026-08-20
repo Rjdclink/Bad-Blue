@@ -138,7 +138,7 @@ export function setupLocalStrategy() {
             
             // Grant paid access (bypass payment gate)
             if (!user.hasPaidForAccess) {
-              await storage.updateUserAccess(userId, userId, 0).catch(err => {
+              await storage.updateUserAccess(userId, userId, 0).catch((err: unknown) => {
                 console.error(`[SECURITY] Failed to update admin access:`, err);
               });
             }

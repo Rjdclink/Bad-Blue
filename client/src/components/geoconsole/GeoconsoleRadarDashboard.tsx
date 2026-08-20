@@ -218,6 +218,10 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
 
+  useEffect(() => {
+    actions.loadData(initialData);
+  }, [actions.loadData, initialData]);
+
   // UI state (not affecting frame data)
   const [mapMode, setMapMode] = useState<MapMode>('satellite');
   const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true });

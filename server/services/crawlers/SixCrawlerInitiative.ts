@@ -810,7 +810,11 @@ export class ComputationalCrawler extends EventEmitter {
     this.analyses.set(analysis.id, analysis);
 
     // Generate insights from critical findings
-    const criticalFindings = [
+    const criticalFindings: Array<
+      { state: string; likelihood: number; impact: string } |
+      { behavior: string; probability: number } |
+      NearMissEvent
+    > = [
       ...analysis.failureStates.filter(f => f.likelihood > 0.7),
       ...analysis.emergentBehaviors.filter(b => b.probability > 0.8),
     ];

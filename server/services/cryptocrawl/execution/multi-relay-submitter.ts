@@ -59,16 +59,10 @@ class MultiRelaySubmitter {
   private providers: Map<string, FlashbotsBundleProvider> = new Map();
   private metrics: Map<string, RelayMetrics> = new Map();
   private initialized = false;
-  private provider: providers.JsonRpcProvider;
-  private wallet: Wallet;
+  private provider!: providers.JsonRpcProvider;
+  private wallet!: Wallet;
 
   constructor() {
-    this.provider = new JsonRpcProvider(process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo');
-    this.wallet = new Wallet(
-      process.env.WALLET_PRIVATE_KEY || Wallet.createRandom().privateKey,
-      this.provider
-    );
-    
     // Initialize metrics for all relays
     RELAYS.forEach(relay => {
       this.metrics.set(relay.name, {
@@ -91,6 +85,14 @@ class MultiRelaySubmitter {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+
+    const rpcUrl = process.env.RPC_URL?.trim();
+    const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
+    if (!rpcUrl) throw new Error('Missing RPC_URL (required for MultiRelaySubmitter)');
+    if (!privateKey) throw new Error('Missing WALLET_PRIVATE_KEY (required for MultiRelaySubmitter)');
+
+    this.provider = new JsonRpcProvider(rpcUrl);
+    this.wallet = new Wallet(privateKey, this.provider);
 
     logger.info('Initializing multi-relay connections...', { component: 'MultiRelaySubmitter' });
 

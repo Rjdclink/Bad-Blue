@@ -61,6 +61,16 @@ interface ProcessResult {
     stops: any[];
   };
   futurecast: any[];
+  inputQuality?: {
+    acceptedCount: number;
+    rejectedCount: number;
+    issues: Array<{
+      index: number;
+      code: string;
+      severity: 'info' | 'warning' | 'error';
+      message: string;
+    }>;
+  };
 }
 
 export default function GeoconsoleProcessScreen() {
@@ -377,6 +387,36 @@ export default function GeoconsoleProcessScreen() {
                   </p>
                 </div>
               </div>
+
+              {result.inputQuality && (
+                <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="flex items-center justify-between gap-4 mb-3">
+                    <h4 className="font-medium">Input Quality</h4>
+                    <div className="flex gap-2 text-xs">
+                      <Badge variant="outline" className="text-green-300 border-green-500/40">
+                        {result.inputQuality.acceptedCount} accepted
+                      </Badge>
+                      {result.inputQuality.rejectedCount > 0 && (
+                        <Badge variant="outline" className="text-red-300 border-red-500/40">
+                          {result.inputQuality.rejectedCount} excluded
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                  {result.inputQuality.issues.length === 0 ? (
+                    <p className="text-sm text-slate-400">No timestamp, duplicate, accuracy, or transition quality issues detected.</p>
+                  ) : (
+                    <ul className="space-y-2 text-sm">
+                      {result.inputQuality.issues.map((issue, index) => (
+                        <li key={`${issue.index}-${issue.code}-${index}`} className="flex items-start gap-2 text-slate-300">
+                          <Badge variant="outline" className="mt-0.5 text-xs">Point {issue.index + 1}</Badge>
+                          <span>{issue.message}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
 
               {/* Trail Info */}
               <div className="bg-slate-700/50 rounded-lg p-4">

@@ -84,12 +84,32 @@ if (!fs.existsSync('package.json')) {
   }
 }
 
-// Check railway.json
-console.log('\n🚂 Checking railway.json...');
-if (!fs.existsSync('railway.json')) {
-  console.error('❌ railway.json not found');
-  allPassed = false;
-} else {
+// Check Railway deployment config (railway.toml preferred, railway.json legacy)
+console.log('\n🚂 Checking Railway deployment config...');
+if (fs.existsSync('railway.toml')) {
+  const railwayToml = fs.readFileSync('railway.toml', 'utf8');
+  
+  if (!railwayToml.includes('[build]')) {
+    console.error('❌ railway.toml missing [build] section');
+    allPassed = false;
+  } else {
+    console.log('✅ railway.toml build section configured');
+  }
+
+  if (!railwayToml.includes('dockerfilePath')) {
+    console.error('❌ railway.toml missing dockerfilePath');
+    allPassed = false;
+  } else {
+    console.log('✅ railway.toml Dockerfile path configured');
+  }
+
+  if (!railwayToml.includes('[deploy]') || !railwayToml.includes('startCommand')) {
+    console.error('❌ railway.toml missing deploy start command');
+    allPassed = false;
+  } else {
+    console.log('✅ railway.toml deploy start command configured');
+  }
+} else if (fs.existsSync('railway.json')) {
   const railwayJson = JSON.parse(fs.readFileSync('railway.json', 'utf8'));
   
   if (!railwayJson.runtime || !railwayJson.runtime.nodeVersion) {
@@ -109,6 +129,9 @@ if (!fs.existsSync('railway.json')) {
   if (railwayJson.deploy && railwayJson.deploy.startCommand) {
     console.log('✅ railway.json start command configured');
   }
+} else {
+  console.error('❌ Missing Railway config: railway.toml or railway.json');
+  allPassed = false;
 }
 
 // Check deployment preparation script

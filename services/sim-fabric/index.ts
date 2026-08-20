@@ -17,6 +17,7 @@ import {
   type SimResult,
   type SimSummary,
   type SimDiagnostics,
+  type SimConstraints,
   type Domain,
   type SimType,
   createBaseEvent,
@@ -30,7 +31,7 @@ import { getTransport, ReactorTransport } from '../../packages/contracts/src/tra
 
 export interface SimulatorInput {
   features: Record<string, unknown>;
-  constraints: Record<string, unknown>;
+  constraints: SimConstraints;
   seed: number;
   nPaths: number;
   horizonMs: number;
@@ -396,7 +397,7 @@ class QualityScoreDistributionSimulator implements Simulator {
       return prngState / 4294967296;
     };
 
-    const minQuality = (constraints as any).min_quality || 0.6;
+    const minQuality = constraints.quality_bounds?.min ?? 0.6;
     
     // Beta distribution approximation for quality scores
     const qualityScores: number[] = [];

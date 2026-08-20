@@ -159,6 +159,12 @@ export const CONFIDENCE_WEIGHTS = {
   recency: 0.15,
 } as const;
 
+export interface ConfidenceWeights {
+  fieldCoverage: number;
+  sourceQuality: number;
+  recency: number;
+}
+
 /**
  * Source quality scores (deterministic)
  */
@@ -216,7 +222,8 @@ export interface ConfidenceBreakdown {
 export function calculateDeterministicConfidence(
   claims: ClaimsRecord,
   requiredFields: RequiredField[],
-  referenceTime: Date = new Date()
+  referenceTime: Date = new Date(),
+  weights: ConfidenceWeights = CONFIDENCE_WEIGHTS
 ): ConfidenceBreakdown {
   // 1. Field Coverage Score
   const satisfiedCount = Object.values(claims).filter(c => c !== null).length;
@@ -247,9 +254,9 @@ export function calculateDeterministicConfidence(
   
   // 4. Final weighted score
   const finalScore = 
-    (fieldCoverageScore * CONFIDENCE_WEIGHTS.fieldCoverage) +
-    (sourceQualityScore * CONFIDENCE_WEIGHTS.sourceQuality) +
-    (recencyScore * CONFIDENCE_WEIGHTS.recency);
+    (fieldCoverageScore * weights.fieldCoverage) +
+    (sourceQualityScore * weights.sourceQuality) +
+    (recencyScore * weights.recency);
   
   // 5. Generate explanation
   const explanation = generateConfidenceExplanation(

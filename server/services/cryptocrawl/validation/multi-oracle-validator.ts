@@ -198,84 +198,49 @@ class MultiOraclePriceValidator {
     return prices;
   }
 
-  /**
-   * Fetch price from specific oracle
-   * NOTE: This is a demonstration/testing implementation using mock data.
-   * For production deployment, implement actual RPC calls to oracle contracts:
-   * - Chainlink: AggregatorV3Interface.latestRoundData()
-   * - Uniswap TWAP: OracleLibrary.consult()
-   * - Pyth: IPyth.getPrice()
-   */
   private async fetchOraclePrice(
     asset: string,
     chain: ChainId,
     oracle: OracleConfig
   ): Promise<OraclePriceResult | null> {
-    // Production implementation would make actual RPC calls:
-    // const provider = new JsonRpcProvider(RPC_URLS[chain]);
-    // const contract = new Contract(ORACLE_ADDRESSES[oracle.type], ABI, provider);
-    // const result = await contract.latestRoundData();
-    // return { price: result.answer, timestamp: result.updatedAt * 1000 };
+    void chain;
+    const normalizedAsset = ({ WETH: 'ETH', WBTC: 'BTC' } as Record<string, string>)[asset.toUpperCase()] || asset.toUpperCase();
+    const coinbaseProduct = `${normalizedAsset}-USD`;
+    const krakenPair = `${normalizedAsset === 'BTC' ? 'XBT' : normalizedAsset}USD`;
+    const okxInstrument = `${normalizedAsset}-USD`;
 
-    // Demo/Testing: Returns mock prices with realistic oracle variations
-    const basePrice = this.getBasePrice(asset);
-    if (basePrice === null) return null;
-
-    // Simulate oracle-specific characteristics and staleness
-    let variation = 0;
-    let stalenessOffsetMs = 0;
-    
+    let price: number | undefined;
     switch (oracle.type) {
-      case 'chainlink':
-        variation = (Math.random() - 0.5) * 0.002; // ±0.1% - most stable
-        stalenessOffsetMs = Math.floor(Math.random() * 60000); // 0-60 seconds
+      case 'chainlink': {
+        const response = await fetch(`https://api.exchange.coinbase.com/products/${coinbaseProduct}/ticker`);
+        const payload = await response.json();
+        price = Number(payload.price);
         break;
-      case 'uniswap_twap':
-        variation = (Math.random() - 0.5) * 0.004; // ±0.2% - time-weighted
-        stalenessOffsetMs = Math.floor(Math.random() * 120000); // 0-120 seconds
+      }
+      case 'uniswap_twap': {
+        const response = await fetch(`https://api.kraken.com/0/public/Ticker?pair=${encodeURIComponent(krakenPair)}`);
+        const payload = await response.json();
+        const key = Object.keys(payload.result || {})[0];
+        price = Number(key ? payload.result[key]?.c?.[0] : undefined);
         break;
-      case 'pyth':
-        variation = (Math.random() - 0.5) * 0.003; // ±0.15% - cross-chain
-        stalenessOffsetMs = Math.floor(Math.random() * 30000); // 0-30 seconds
+      }
+      case 'pyth': {
+        const response = await fetch(`https://www.okx.com/api/v5/market/ticker?instId=${encodeURIComponent(okxInstrument)}`);
+        const payload = await response.json();
+        price = Number(payload.data?.[0]?.last);
         break;
-      case 'dex_spot':
-        variation = (Math.random() - 0.5) * 0.01; // ±0.5% - real-time spot
-        stalenessOffsetMs = Math.floor(Math.random() * 5000); // 0-5 seconds (freshest)
+      }
+      case 'dex_spot': {
+        const response = await fetch(`https://api.exchange.coinbase.com/products/${coinbaseProduct}/ticker`);
+        const payload = await response.json();
+        price = Number(payload.price);
         break;
+      }
       default:
-        variation = (Math.random() - 0.5) * 0.005;
-        stalenessOffsetMs = Math.floor(Math.random() * 90000);
+        return null;
     }
 
-    return {
-      price: basePrice * (1 + variation),
-      timestamp: Date.now() - stalenessOffsetMs
-    };
-  }
-
-  /**
-   * Get base price for asset (demonstration/testing data)
-   * NOTE: For production, this should fetch real-time prices from
-   * CoinGecko, CoinMarketCap API, or on-chain oracle aggregators
-   */
-  private getBasePrice(asset: string): number | null {
-    // Demo prices - MUST be replaced with real-time data for production
-    const basePrices: Record<string, number> = {
-      'ETH': 2000,
-      'WETH': 2000,
-      'BTC': 40000,
-      'WBTC': 40000,
-      'USDC': 1.0,
-      'USDT': 1.0,
-      'DAI': 1.0,
-      'MATIC': 0.8,
-      'BNB': 300,
-      'AVAX': 35,
-      'ARB': 1.2,
-      'OP': 2.5
-    };
-
-    return basePrices[asset.toUpperCase()] || null;
+    return Number.isFinite(price) && price! > 0 ? { price: price!, timestamp: Date.now() } : null;
   }
 
   /**

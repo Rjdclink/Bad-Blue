@@ -28,6 +28,7 @@
 
 import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
+import { selectCrawlerPlan, type CrawlerSelectionPlan } from '../crawlers/CrawlerSelectionUtility';
 import { FMI, getFMI, type EvidenceInput, type EvidenceAnalysisResult } from './fmi';
 import { CADE, getCADE, type DraftRequest, type DraftResult } from './cade';
 import { 
@@ -72,6 +73,7 @@ export interface LegalResearchResult {
   confidence: number;
   processingTimeMs: number;
   source: 'lexara';
+  crawlerSelection: CrawlerSelectionPlan;
 }
 
 export interface DocumentGenerationRequest {
@@ -369,18 +371,39 @@ export class Lexara extends EventEmitter {
     this.status.totalResearchQueries++;
 
     try {
-      // In production, this would call AI models and legal databases
-      // For now, return a placeholder result
-      const result: LegalResearchResult = {
-        success: true,
+      const crawlerSelection = selectCrawlerPlan({
+        purpose: 'lexara_legal_research',
+        depth: request.context?.thorough === true ? 4 : 2,
+        targetCount: 1,
+      });
+      const requestedLawType = request.lawType;
+      const lawType = requestedLawType === 'statute' || requestedLawType === 'case_law' ||
+        requestedLawType === 'regulation' || requestedLawType === 'constitution'
+        ? requestedLawType
+        : 'all';
+      const legalResult = await this.legalCrawler.retrieveLaw({
         query: request.query,
-        findings: `Legal analysis for: ${request.query}`,
-        citations: [],
-        statutes: [],
-        precedents: [],
-        confidence: 0.85,
+        jurisdiction: request.jurisdiction,
+        lawType,
+        priority: crawlerSelection.depth >= 3 ? 'thorough' : 'instant',
+      });
+      const citations = legalResult.data.map(item => item.citation).filter(Boolean);
+      const statutes = legalResult.data.filter(item => item.type === 'statute').map(item => item.citation);
+      const precedents = legalResult.data.filter(item => item.type === 'case').map(item => item.citation);
+      const findings = legalResult.data.length > 0
+        ? legalResult.data.map(item => item.excerpt || item.content).filter(Boolean).join('\n\n')
+        : 'No legal authority was retrieved from the configured sources.';
+      const result: LegalResearchResult = {
+        success: legalResult.success,
+        query: request.query,
+        findings,
+        citations,
+        statutes,
+        precedents,
+        confidence: legalResult.metadata.averageRelevance,
         processingTimeMs: Date.now() - startTime,
         source: 'lexara',
+        crawlerSelection,
       };
 
       this.emit('research:completed', { request, result });

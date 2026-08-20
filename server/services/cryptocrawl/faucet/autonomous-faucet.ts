@@ -16,6 +16,7 @@ import { gasOracle } from '../bridge/gas-oracle.js';
 import { MultiOraclePriceValidator } from '../validation/multi-oracle-validator.js';
 import { MasterOrchestrator } from '../core/master-orchestrator.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
 import logger from '../../../logger.js';
 
 // Babel Integration - IP Protection Systems + Cain Reasoning
@@ -76,7 +77,7 @@ export interface FaucetState {
   securityProofsValid: number;                // Count of valid security proofs
   globalThreatLevel: string;                  // Current threat level
   // Arbitrage verification (real quotes + all-in costs)
-  executionMode: 'paper' | 'live';            // paper = verify only, live = attempt execution
+  executionMode: 'disabled' | 'live';
   lastVerifiedArbitrage: VerifiedArbitragePlan | null;
   lastArbitrageDecision: 'EXECUTE' | 'SKIP' | 'ERROR' | 'NONE';
 }
@@ -686,7 +687,7 @@ class AutonomousCryptoFaucet {
       lastReasoningConclusion: null,
       securityProofsValid: 0,
       globalThreatLevel: 'none',
-      executionMode: process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true' ? 'live' : 'paper',
+      executionMode: process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true' ? 'live' : 'disabled',
       lastVerifiedArbitrage: null,
       lastArbitrageDecision: 'NONE',
     };
@@ -1783,10 +1784,9 @@ class AutonomousCryptoFaucet {
         return;
       }
 
-      // Paper mode: prove consistency using live quotes, but do not execute or claim profits.
-      if (this.state.executionMode === 'paper') {
+      if (this.state.executionMode === 'disabled') {
         this.state.lastArbitrageDecision = 'SKIP';
-        logger.debug('[FAUCET] Verified arbitrage (paper mode - not executed)', {
+        logger.debug('[FAUCET] Verified arbitrage skipped because live execution is disabled', {
           component: 'AutonomousFaucet',
           symbol: plan.symbol,
           buy: { venue: plan.buyVenue, ask: plan.buyAsk },
@@ -1800,12 +1800,29 @@ class AutonomousCryptoFaucet {
         return;
       }
 
-      // Live mode is intentionally gated; execution wiring is not provided here.
-      // This prevents the faucet from trading unless you explicitly add an execution adapter.
-      this.state.lastArbitrageDecision = 'ERROR';
-      logger.warn('[FAUCET] Live execution requested but not implemented', {
+      const result = await centralizedExchangeExecutor.execute(plan);
+      if (!result.success) {
+        this.state.lastArbitrageDecision = 'ERROR';
+        this.recordFailure('exchange_order_pair_rejected');
+        logger.error('[FAUCET] Exchange order pair was not fully accepted', {
+          component: 'AutonomousFaucet',
+          symbol: plan.symbol,
+          buyOrderId: result.buyOrder?.orderId,
+          sellOrderId: result.sellOrder?.orderId,
+          error: result.error,
+        });
+        return;
+      }
+
+      this.state.lastArbitrageDecision = 'EXECUTE';
+      this.state.tradesThisHour++;
+      this.state.tradesThisDay++;
+      this.recordSuccess();
+      logger.info('[FAUCET] Live exchange order pair accepted', {
         component: 'AutonomousFaucet',
         symbol: plan.symbol,
+        buyOrderId: result.buyOrder?.orderId,
+        sellOrderId: result.sellOrder?.orderId,
       });
     } catch (error) {
       this.state.lastArbitrageDecision = 'ERROR';

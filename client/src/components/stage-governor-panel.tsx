@@ -139,6 +139,15 @@ const STAGE_INFO = {
   6: { color: 'bg-emerald-500', icon: Zap, label: 'Autonomous' },
 };
 
+const GLOBAL_RULES = [
+  'No assumptions; no silent expansion',
+  'No autonomous evolution',
+  'Execution requires explicit authorization',
+  'Pause semantics are absolute',
+  'Ambiguity requires ask-and-wait',
+  'Advancement requires explicit UNPAUSE',
+];
+
 export default function StageGovernorPanel() {
   const { toast } = useToast();
   
@@ -791,7 +800,7 @@ export default function StageGovernorPanel() {
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            {globalRules.map((rule, index) => (
+            {GLOBAL_RULES.map((rule, index) => (
               <div key={index} className="flex items-center gap-3 p-3 rounded-lg bg-white/5">
                 <ChevronRight className="w-4 h-4 text-yellow-400" />
                 <span className="text-gray-300">{rule}</span>

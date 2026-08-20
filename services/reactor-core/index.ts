@@ -470,7 +470,7 @@ export class ReactorCore extends EventEmitter {
 
   // ==================== GATE IMPLEMENTATIONS ====================
 
-  private async gateFeasibility(domain: Domain, obs: Observation, features: Record<string, unknown>): Promise<GateResult & { metrics?: FeasibilityMetrics }> {
+  private async gateFeasibility(domain: Domain, obs: Observation, features: Record<string, unknown>): Promise<GateResult> {
     const startTime = Date.now();
 
     if (domain === 'crypto') {
@@ -485,7 +485,7 @@ export class ReactorCore extends EventEmitter {
       const expectedFees = 0.001; // 0.1% taker fee
       const netSpreadAfterFees = spread - expectedFees;
       
-      const metrics: FeasibilityMetrics = {
+      const metrics: Record<string, number> = {
         net_spread_after_fees: netSpreadAfterFees,
         expected_slippage: expectedSlippage,
         expected_fill_time_ms: 100, // Assume 100ms

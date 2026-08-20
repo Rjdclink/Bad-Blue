@@ -9,6 +9,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { hybridGeoconsole } from '../services/geoconsole';
 import { GPSPoint, DataSource } from '../services/geoconsole/types';
+import { assessLocationQuality } from '../services/geoconsole/location-quality';
+import { selectCrawlerPlan } from '../services/crawlers/CrawlerSelectionUtility';
 import { createLogger } from '../logger';
 
 const router = Router();
@@ -94,12 +96,19 @@ router.post('/process', async (req: Request, res: Response) => {
       source: input.source as DataSource,
     }));
 
+    const quality = assessLocationQuality(gpsPoints);
+    const crawlerSelection = selectCrawlerPlan({
+      purpose: 'map_evidence_render',
+      targetCount: quality.acceptedCount,
+    });
+
     log.info('Processing location data', {
       inputCount: gpsPoints.length,
+      acceptedCount: quality.acceptedCount,
       sessionId,
     });
 
-    const result = await hybridGeoconsole.processLocationData(gpsPoints, sessionId);
+    const result = await hybridGeoconsole.processLocationData(quality.points, sessionId);
 
     res.json({
       success: true,
@@ -116,6 +125,12 @@ router.post('/process', async (req: Request, res: Response) => {
           stops: result.trail.stops,
         },
         futurecast: result.futurecast,
+        inputQuality: {
+          acceptedCount: quality.acceptedCount,
+          rejectedCount: quality.rejectedCount,
+          issues: quality.issues,
+        },
+        crawlerSelection,
       },
       metadata: {
         timestamp: new Date(),

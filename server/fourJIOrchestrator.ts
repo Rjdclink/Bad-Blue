@@ -15,6 +15,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
+import { pathToFileURL } from 'url';
 
 // Import AI providers for multi-model orchestration
 import { callAIWithFallback, type AIFallbackResult } from './aiSubAgent';
@@ -113,13 +114,196 @@ export interface AIModelConfig {
 const AI_MODELS: AIModelConfig[] = [
   { modelId: 'gemini-2.5-pro', role: 'research', priority: 1, available: true },
   { modelId: 'gemini-2.5-pro', role: 'legal_analysis', priority: 1, available: true },
-  { modelId: 'gemini-2.5-flash', role: 'drafting', priority: 1, available: true },
-  { modelId: 'claude-3-sonnet', role: 'reasoning', priority: 2, available: true },
-  { modelId: 'claude-3-haiku', role: 'drafting', priority: 2, available: true },
-  { modelId: 'llama-3-70b', role: 'inference', priority: 3, available: true },
-  { modelId: 'mistral-7b', role: 'coding', priority: 3, available: true },
-  { modelId: 'groq-llama', role: 'empathy', priority: 4, available: true },
+  { modelId: 'claude-opus-4-1-20250805', role: 'reasoning', priority: 1, available: true },
+  { modelId: 'claude-sonnet-4-5-20250929', role: 'drafting', priority: 1, available: true },
+  { modelId: 'llama-3.3-70b-versatile', role: 'inference', priority: 2, available: true },
+  { modelId: 'mistral-small-latest', role: 'coding', priority: 2, available: true },
+  { modelId: 'grok-4.1', role: 'empathy', priority: 3, available: true },
+  { modelId: 'qwen-72b', role: 'legal_analysis', priority: 3, available: true },
 ];
+
+type DomainKnowledgeBase = {
+  domain: string;
+  name: string;
+  version: string;
+  lastUpdated: string;
+  cases: Array<{ id: string; name: string; citation: string; summary: string; relevance?: string }>;
+  statutes: Array<{ id: string; name: string; citation: string; summary: string }>;
+  templates: Array<{ id: string; name: string; description: string }>;
+  heuristics: Record<string, string>;
+};
+
+function formatDomainName(domainId: string): string {
+  return domainId
+    .split('-')
+    .map(part => part ? part[0].toUpperCase() + part.slice(1) : part)
+    .join(' ');
+}
+
+function calculateKeywordRelevance(query: string, corpus: string): number {
+  const queryTerms = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(term => term.length > 2);
+  if (queryTerms.length === 0) return 0;
+
+  const lowerCorpus = corpus.toLowerCase();
+  const matched = queryTerms.filter(term => lowerCorpus.includes(term)).length;
+  return matched / queryTerms.length;
+}
+
+function createDomainAdapter(domainId: string): DomainSubAgent {
+  const domainDir = path.join(DOMAINS_DIR, domainId);
+  const knowledgePath = path.join(domainDir, 'knowledge_base.json');
+  const domainName = formatDomainName(domainId);
+  let cache: DomainKnowledgeBase | null = null;
+
+  const loadKnowledgeBase = async (): Promise<DomainKnowledgeBase> => {
+    if (cache) return cache;
+    try {
+      const content = await fs.readFile(knowledgePath, 'utf8');
+      const parsed = JSON.parse(content) as DomainKnowledgeBase;
+      cache = parsed;
+      return parsed;
+    } catch {
+      const fallback: DomainKnowledgeBase = {
+        domain: domainId,
+        name: domainName,
+        version: '1.0.0',
+        lastUpdated: new Date().toISOString(),
+        cases: [],
+        statutes: [],
+        templates: [],
+        heuristics: {},
+      };
+      cache = fallback;
+      await fs.mkdir(domainDir, { recursive: true });
+      await fs.writeFile(knowledgePath, JSON.stringify(fallback, null, 2));
+      return fallback;
+    }
+  };
+
+  const updateKnowledgeBase = async (updates: any): Promise<void> => {
+    const kb = await loadKnowledgeBase();
+
+    if (Array.isArray(updates?.cases)) {
+      const ids = new Set(kb.cases.map(item => item.id));
+      for (const nextCase of updates.cases) {
+        if (!nextCase?.id || ids.has(nextCase.id)) continue;
+        kb.cases.push(nextCase);
+        ids.add(nextCase.id);
+      }
+    }
+
+    if (Array.isArray(updates?.statutes)) {
+      const ids = new Set(kb.statutes.map(item => item.id));
+      for (const nextStatute of updates.statutes) {
+        if (!nextStatute?.id || ids.has(nextStatute.id)) continue;
+        kb.statutes.push(nextStatute);
+        ids.add(nextStatute.id);
+      }
+    }
+
+    if (Array.isArray(updates?.templates)) {
+      const ids = new Set(kb.templates.map(item => item.id));
+      for (const nextTemplate of updates.templates) {
+        if (!nextTemplate?.id || ids.has(nextTemplate.id)) continue;
+        kb.templates.push(nextTemplate);
+        ids.add(nextTemplate.id);
+      }
+    }
+
+    if (updates?.heuristics && typeof updates.heuristics === 'object') {
+      kb.heuristics = { ...kb.heuristics, ...updates.heuristics };
+    }
+
+    kb.lastUpdated = new Date().toISOString();
+    cache = kb;
+    await fs.writeFile(knowledgePath, JSON.stringify(kb, null, 2));
+  };
+
+  const processConsultation = async (request: ConsultationRequest): Promise<ConsultationResponse> => {
+    const kb = await loadKnowledgeBase();
+
+    const rankedCases = kb.cases
+      .map(item => ({
+        item,
+        relevance: calculateKeywordRelevance(request.query, `${item.name} ${item.summary} ${item.relevance || ''}`),
+      }))
+      .filter(entry => entry.relevance > 0.1)
+      .sort((a, b) => b.relevance - a.relevance)
+      .slice(0, 5);
+
+    const rankedStatutes = kb.statutes
+      .map(item => ({
+        item,
+        relevance: calculateKeywordRelevance(request.query, `${item.name} ${item.summary}`),
+      }))
+      .filter(entry => entry.relevance > 0.1)
+      .sort((a, b) => b.relevance - a.relevance)
+      .slice(0, 5);
+
+    const citations = [
+      ...rankedCases.map(entry => entry.item.citation),
+      ...rankedStatutes.map(entry => entry.item.citation),
+    ];
+
+    const prompt = `You are ${domainName} counsel support. Provide a concise legal analysis for the query below.
+Return strict JSON with keys: response, suggestedActions, confidence.
+
+Query: ${request.query}
+Context: ${JSON.stringify(request.context || {})}
+Relevant cases: ${JSON.stringify(rankedCases.map(entry => entry.item))}
+Relevant statutes: ${JSON.stringify(rankedStatutes.map(entry => entry.item))}
+Heuristics: ${JSON.stringify(kb.heuristics)}`;
+
+    try {
+      const ai = await callAIWithFallback(prompt, {
+        taskName: `${domainId}_consultation`,
+        temperature: 0.2,
+        maxTokens: 2048,
+      });
+
+      const normalized = (ai.content || '').replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+      const parsed = JSON.parse(normalized);
+      return {
+        domainId,
+        response: typeof parsed.response === 'string' ? parsed.response : ai.content || 'No response generated.',
+        citations,
+        templates: kb.templates.map(template => template.id),
+        confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(parsed.confidence, 1)) : 0.65,
+        suggestedActions: Array.isArray(parsed.suggestedActions)
+          ? parsed.suggestedActions.filter((value: unknown): value is string => typeof value === 'string')
+          : Object.values(kb.heuristics),
+      };
+    } catch {
+      return {
+        domainId,
+        response: `Found ${rankedCases.length} relevant cases and ${rankedStatutes.length} relevant statutes for ${domainName}.`,
+        citations,
+        templates: kb.templates.map(template => template.id),
+        confidence: Math.min(0.95, 0.35 + rankedCases.length * 0.1 + rankedStatutes.length * 0.1),
+        suggestedActions: Object.values(kb.heuristics).length > 0
+          ? Object.values(kb.heuristics)
+          : [`Collect more jurisdiction-specific facts for ${domainName}.`],
+      };
+    }
+  };
+
+  return {
+    domainId,
+    name: domainName,
+    loadKnowledgeBase,
+    processConsultation,
+    updateKnowledgeBase,
+    getDomainInfo: () => ({
+      id: domainId,
+      name: domainName,
+      description: `${domainName} domain adapter`,
+      icon: 'Scale',
+    }),
+  };
+}
 
 // Cache for loaded sub-agents
 const subAgentCache: Map<string, DomainSubAgent> = new Map();
@@ -209,30 +393,56 @@ export async function loadSubAgent(domainId: string): Promise<DomainSubAgent> {
   if (subAgentCache.has(domainId)) {
     return subAgentCache.get(domainId)!;
   }
-  
-  const subAgentPath = path.join(DOMAINS_DIR, domainId, 'sub_agent.ts');
-  
+
+  const domainDir = path.join(DOMAINS_DIR, domainId);
+  const candidateFiles = ['sub_agent.js', 'sub_agent.mjs', 'sub_agent.cjs', 'sub_agent.ts'];
+
   try {
-    // Check if sub_agent exists
-    await fs.access(subAgentPath);
-    
-    // Dynamic import (using require for TypeScript compatibility)
-    const subAgent = require(subAgentPath);
-    
-    const agent: DomainSubAgent = {
-      domainId,
-      name: subAgent.getDomainInfo?.()?.name || domainId,
-      loadKnowledgeBase: subAgent.loadKnowledgeBase,
-      processConsultation: subAgent.processConsultation,
-      updateKnowledgeBase: subAgent.updateKnowledgeBase,
-      getDomainInfo: subAgent.getDomainInfo
-    };
-    
-    // Cache the loaded agent
-    subAgentCache.set(domainId, agent);
-    
-    console.log(`[4JI Orchestrator] Loaded sub-agent: ${domainId}`);
-    return agent;
+    for (const candidate of candidateFiles) {
+      const candidatePath = path.join(domainDir, candidate);
+      try {
+        await fs.access(candidatePath);
+      } catch {
+        continue;
+      }
+
+      // In production, .ts loaders are often unavailable under bundled ESM runtime.
+      if (candidate.endsWith('.ts')) {
+        console.warn(`[4JI Orchestrator] Skipping direct TypeScript domain module for ${domainId}; using runtime adapter`);
+        break;
+      }
+
+      const moduleUrl = pathToFileURL(candidatePath).href;
+      const loaded = await import(moduleUrl);
+      const exported = (loaded.default && typeof loaded.default === 'object') ? loaded.default : loaded;
+
+      const loadKnowledgeBase = typeof exported.loadKnowledgeBase === 'function' ? exported.loadKnowledgeBase.bind(exported) : null;
+      const processConsultation = typeof exported.processConsultation === 'function' ? exported.processConsultation.bind(exported) : null;
+      const updateKnowledgeBase = typeof exported.updateKnowledgeBase === 'function' ? exported.updateKnowledgeBase.bind(exported) : null;
+      const getDomainInfo = typeof exported.getDomainInfo === 'function' ? exported.getDomainInfo.bind(exported) : null;
+
+      if (!loadKnowledgeBase || !processConsultation || !updateKnowledgeBase || !getDomainInfo) {
+        throw new Error(`Sub-agent module ${candidatePath} missing required exports`);
+      }
+
+      const agent: DomainSubAgent = {
+        domainId,
+        name: getDomainInfo()?.name || domainId,
+        loadKnowledgeBase,
+        processConsultation,
+        updateKnowledgeBase,
+        getDomainInfo,
+      };
+
+      subAgentCache.set(domainId, agent);
+      console.log(`[4JI Orchestrator] Loaded sub-agent module: ${domainId} (${candidate})`);
+      return agent;
+    }
+
+    const adapter = createDomainAdapter(domainId);
+    subAgentCache.set(domainId, adapter);
+    console.log(`[4JI Orchestrator] Loaded adaptive sub-agent adapter: ${domainId}`);
+    return adapter;
   } catch (error: any) {
     console.error(`[4JI Orchestrator] Failed to load sub-agent ${domainId}:`, error.message);
     throw error;

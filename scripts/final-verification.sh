@@ -5,7 +5,7 @@
 # Runs all verification scripts and performs final checks
 # Exit 0 if deployment-ready, 1 if issues found
 
-set -e
+set -uo pipefail
 
 # Color codes
 RED='\033[0;31m'
@@ -146,7 +146,6 @@ echo -e "${BLUE}⚙️  Checking Configuration Files...${NC}"
 REQUIRED_CONFIG=(
   "package.json"
   ".nvmrc"
-  "railway.json"
   ".gitignore"
   "tsconfig.json"
 )
@@ -161,6 +160,16 @@ for config in "${REQUIRED_CONFIG[@]}"; do
     ALL_CHECKS_PASSED=false
   fi
 done
+
+# Railway config can be TOML (current) or JSON (legacy)
+if [ -f "railway.toml" ] || [ -f "railway.json" ]; then
+  echo -e "${GREEN}   ✅ Railway deployment config exists (railway.toml or railway.json)${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}   ❌ Missing Railway deployment config (railway.toml or railway.json)${NC}"
+  ((FAILED++))
+  ALL_CHECKS_PASSED=false
+fi
 
 # Check package.json has engines field
 if grep -q '"engines"' package.json; then

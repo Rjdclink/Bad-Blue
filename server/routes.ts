@@ -8,7 +8,7 @@
 //
 // This ensures no globals, no assumptions, and fail-hard if misconfigured.
 //
-import express, { type Express, type Request, type Response, type RequestHandler } from "express";
+import express, { type Express, type Request, type Response, type RequestHandler, type Router } from "express";
 import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
 import crypto from 'crypto';
@@ -37,7 +37,7 @@ declare global {
       accessZone?: AccessZone;
       accessRole?: AccessRole;
       redirectRoute?: string;
-      aiMode?: 'legal' | 'orchestrator' | 'crypto';
+      aiMode?: 'admin' | 'legal' | 'orchestrator' | 'crypto';
     }
     interface Request {
       rawBody?: Buffer;
@@ -58,7 +58,7 @@ import { setupFMIRoutes } from "./routes/fmi.routes";
 import { setupConsultationRoutes } from "./routes/consultation.routes";
 import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
-import { conductPeopleSearch } from "./peopleSearch";
+import { conductFullOSINT } from "./peopleSearch";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import { setupPulseRoutes } from "./routes/pulse.routes";
@@ -3652,6 +3652,24 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // OSINT FULL SEARCH ROUTE (Phase 4)
   // ============================================
 
+  app.post('/api/geoconsole/geocode-city-state', async (req, res) => {
+    if (!req.isAuthenticated?.() || !req.user) {
+      return res.status(401).json({ success: false, error: 'Authentication required.' });
+    }
+
+    try {
+      const { geocodeCityState } = await import('./services/geoconsole/city-state-geocoder');
+      const location = await geocodeCityState(String(req.body?.location || ''));
+      if (!location) return res.status(404).json({ success: false, error: 'City and state could not be located.' });
+      return res.json({ success: true, data: location });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unable to resolve the location.',
+      });
+    }
+  });
+
   // SEED-FIRST MODE: always return a controlled 200 response for the UI.
   // NOTE: We intentionally do NOT use apiRateLimit/isAuthenticated here so we can map "blocked" states
   // into an empty-state JSON response instead of surfacing 4xx/5xx to the UI.
@@ -3659,6 +3677,10 @@ Contact: ${foiaRequest.userEmail || userEmail}
     const startTime = Date.now();
     const correlationId = crypto.randomBytes(16).toString('hex');
     const { name, department, badge, location, domain, profileUrl } = (req.body || {}) as any;
+    const requestedDepth = Number((req.body || {}).searchDepth);
+    const searchDepth: 1 | 2 | 3 | 4 = requestedDepth >= 1 && requestedDepth <= 4
+      ? requestedDepth as 1 | 2 | 3 | 4
+      : 4;
 
     // Auth gate: never 401 to UI.
     if (!req.isAuthenticated?.() || !req.user) {
@@ -3705,10 +3727,12 @@ Contact: ${foiaRequest.userEmail || userEmail}
       if (!seedDecision.seedUrl || !seedDecision.seedType) {
         const searchQuery = String(name || '').trim();
         if (searchQuery) {
-          const report = await conductPeopleSearch(searchQuery, {
-            includeDeepSearch: true,
-            maxSources: 10,
-            timeoutMs: 30000,
+          const report = await conductFullOSINT(searchQuery, {
+            department,
+            badge,
+            location,
+            domain,
+            searchDepth,
           });
 
           if (reportId && userId) {
@@ -3722,6 +3746,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
               correlationId,
               seedUrl: null,
               seedType: 'name-search',
+              searchDepth: report.searchDepthUsed,
+              crawlersActivated: report.crawlersActivated,
               durationMs: Date.now() - startTime,
             },
           });
@@ -3780,6 +3806,22 @@ Contact: ${foiaRequest.userEmail || userEmail}
       const extract = best?.result.extract || null;
 
       const processingTimeMs = Date.now() - startTime;
+      const { pantheonRetrievalAdapter } = await import('./services/crawlers/PantheonRetrievalAdapter');
+      const fullCrawlerRetrieval = await pantheonRetrievalAdapter.retrieve({
+        purpose: 'background_report',
+        depth: searchDepth,
+        targets: [seedDecision.seedUrl],
+      });
+      const fullCrawlerResults = fullCrawlerRetrieval.evidence;
+      const fullCrawlerMeta: Record<string, unknown> = {
+        available: fullCrawlerRetrieval.available,
+        reason: fullCrawlerRetrieval.reason,
+        depth: searchDepth,
+        resultCount: fullCrawlerResults.length,
+        crawlersUsed: [...new Set(fullCrawlerResults.map(result => result.crawler))],
+        selectionPlan: fullCrawlerRetrieval.plan,
+        supervision: fullCrawlerRetrieval.supervision,
+      };
 
       if (!extract || !extract.itemsFound) {
         if (reportId && userId) {
@@ -3828,6 +3870,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
             seedUrl: seedDecision.seedUrl,
             seedType: seedDecision.seedType,
             itemsFound: 0,
+            fullCrawlers: fullCrawlerMeta,
             durationMs: processingTimeMs,
             jobStatus,
           },
@@ -3859,12 +3902,31 @@ Contact: ${foiaRequest.userEmail || userEmail}
               seedUrl: best?.seedUrl || seedDecision.seedUrl,
               seedType: seedDecision.seedType,
               links: extract.links,
-            },
+            } as Record<string, unknown>,
             confidence: Math.min(90, 30 + extract.itemsFound),
             timestamp: new Date().toISOString(),
           },
         ],
       };
+
+      const crawlerMentions = fullCrawlerResults
+        .map(result => result.content?.trim())
+        .filter((content): content is string => Boolean(content))
+        .slice(0, 25);
+      report.onlineMentions.push(...crawlerMentions);
+      report.sources.push({
+        name: 'PANTHEON Full Crawler Orchestrator',
+        data: {
+          target: seedDecision.seedUrl,
+          depth: searchDepth,
+          crawlersUsed: [...new Set(fullCrawlerResults.map(result => result.crawler))],
+          resultsCount: fullCrawlerResults.length,
+        },
+        confidence: fullCrawlerResults.length > 0
+          ? fullCrawlerResults.reduce((total, result) => total + result.confidence, 0) / fullCrawlerResults.length
+          : 0,
+        timestamp: new Date().toISOString(),
+      });
 
       if (reportId && userId) {
         await storage.updatePeopleSearchReportStatus(reportId, 'completed', report as any);
@@ -3908,6 +3970,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
           seedUrl: best?.seedUrl || seedDecision.seedUrl,
           seedType: seedDecision.seedType,
           itemsFound: extract.itemsFound,
+          fullCrawlers: fullCrawlerMeta,
           durationMs: processingTimeMs,
           jobStatus,
         },
@@ -3919,9 +3982,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
       if (reportId && userId) {
         await storage.updatePeopleSearchReportStatus(
           reportId,
-          'completed',
+          'failed',
           { status: 'failed' } as any,
-          undefined
+          error instanceof Error ? error.message : 'Search service unavailable'
         );
       }
 
@@ -3950,7 +4013,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     const evidence = await storage.getPublicEvidence(fileType, evidenceCategory);
     
     // Get user info for each evidence item
-    const evidenceWithUser = await Promise.all(evidence.map(async (ev) => {
+    const evidenceWithUser = await Promise.all(evidence.map(async (ev: (typeof evidence)[number]) => {
       const user = await storage.getUser(ev.userId);
       return {
         ...ev,
@@ -3996,7 +4059,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     // All evidence for admin
     const evidence = await storage.getPublicEvidence(null, null);
     
-    const evidenceWithUser = await Promise.all(evidence.map(async (ev) => {
+    const evidenceWithUser = await Promise.all(evidence.map(async (ev: (typeof evidence)[number]) => {
       const user = await storage.getUser(ev.userId);
       return {
         ...ev,
@@ -4071,7 +4134,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
     
     // Extract user IDs for batch queries
-    const userIds = allUsers.map(u => u.id);
+    const userIds = allUsers.map((user: (typeof allUsers)[number]) => user.id);
     
     // Batch fetch all counts in parallel with single queries per table
     const [complaintsAgg, lawsuitsAgg, petitionsAgg, foiaAgg, authAccountsAgg] = await Promise.all([
@@ -4121,7 +4184,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     // Removed subscriptionsMap
     
     // Merge data efficiently
-    const usersWithServices = allUsers.map(user => {
+    const usersWithServices = allUsers.map((user: (typeof allUsers)[number]) => {
       const complaints = complaintsMap.get(user.id) || 0;
       const lawsuits = lawsuitsMap.get(user.id) || 0;
       const petitions = petitionsMap.get(user.id) || 0;
@@ -5188,6 +5251,10 @@ Contact: ${foiaRequest.userEmail || userEmail}
       res.json({
         success: true,
         data: record,
+        recordsDetermined: false,
+        message: record.searchStatus === 'sources_discovered'
+          ? 'Official public source portals were located by the crawler. Person-level records require verified portal-specific query adapters.'
+          : 'No official public source portal was reachable during crawler discovery.',
         disclaimer: 'For permissible purposes only. Subject to Fair Credit Reporting Act (FCRA). All data should be independently verified.'
       });
     } catch (error: any) {
@@ -5262,6 +5329,10 @@ Contact: ${foiaRequest.userEmail || userEmail}
   });
   app.use('/admin/crypto', cryptoVerifyRouter);
 
+  const cryptoCrawlPasswordAuthConfigured = Boolean(
+    (process.env.CRYPTOCRAWL_EMAIL || '').trim() && (process.env.CRYPTOCRAWL_PASSWORD || '').trim()
+  );
+
   // Auth middleware for crypto routes - gracefully handles missing auth config
   const cryptoAuthMiddleware: RequestHandler = (req, res, next) => {
     // Set no-cache headers
@@ -5286,7 +5357,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
     // GRACEFUL DEGRADATION: If auth is not configured, allow health/status endpoints
     // but block sensitive operations. This ensures server can boot without credentials.
-    if (!isAuthConfigured) {
+    if (!cryptoCrawlPasswordAuthConfigured) {
       const path = String((req as any).path || '');
       const fullPath = String((req as any).originalUrl || '').split('?')[0];
       
@@ -5456,10 +5527,6 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // - log a warning
   // - mount routes WITHOUT the strict session-based cryptoAuthMiddleware
   // - rely on route-level guards (e.g. requireCryptoCrawlAuth) to keep protected features locked
-  const cryptoCrawlPasswordAuthConfigured = Boolean(
-    (process.env.CRYPTOCRAWL_EMAIL || '').trim() && (process.env.CRYPTOCRAWL_PASSWORD || '').trim()
-  );
-
   if (!cryptoCrawlPasswordAuthConfigured) {
     console.warn(
       '[CryptoCrawl] CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD not set. ' +

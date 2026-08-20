@@ -38,7 +38,7 @@ let lastAutoSearchAt = 0;
 
 interface PeopleFinderSearchProps {
   onBack?: () => void;
-  onResults?: (results: PeopleSearchReport | null) => void;
+  onResults?: (results: PeopleSearchReport | null, query?: { name: string; location: string }) => void;
 }
 
 interface OSINTSource {
@@ -193,7 +193,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
       
       // Notify parent component of results
       if (onResults) {
-        onResults(report);
+        onResults(report, { name: name.trim(), location: location.trim() });
       }
       
       if (report) {
@@ -220,7 +220,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
         code: 'unavailable',
         message: 'Search service is temporarily unavailable. Please try again.',
       });
-      if (onResults) onResults(null);
+      if (onResults) onResults(null, { name: name.trim(), location: location.trim() });
     },
   });
 
@@ -282,7 +282,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="location">Location (Optional)</Label>
+              <Label htmlFor="location">Last Known City, State (Optional)</Label>
               <Input
                 id="location"
                 placeholder="e.g., New York, NY"

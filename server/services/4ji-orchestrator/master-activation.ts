@@ -373,7 +373,7 @@ export class MasterActivation {
       log.info('═'.repeat(60));
       
       // Apply creative directive to all operations
-      this.applyCreativeDirective();
+      await this.applyCreativeDirective();
       
       return this.getStatus();
       
@@ -411,8 +411,8 @@ export class MasterActivation {
       continuousOptimization: true,
     };
 
-    DomainFirewall.storeState(Domain.LEGAL_WHAT, 'claudeOpusConductor', conductorConfig);
-    DomainFirewall.storeState(Domain.CRYPTO_CRAWLER, 'claudeOpusConductor', conductorConfig);
+    await this.storeDomainState(Domain.LEGAL_WHAT, 'claudeOpusConductor', conductorConfig);
+    await this.storeDomainState(Domain.CRYPTO_CRAWLER, 'claudeOpusConductor', conductorConfig);
     
     log.info('Claude Opus established as Master Conductor', conductorConfig);
   }
@@ -455,7 +455,7 @@ export class MasterActivation {
       },
     };
 
-    DomainFirewall.storeState(Domain.LEGAL_WHAT, 'alexaraVoiceIntelligence', alexaraConfig);
+    await this.storeDomainState(Domain.LEGAL_WHAT, 'alexaraVoiceIntelligence', alexaraConfig);
     log.info('ALEXARA Voice Intelligence initialized', { persona: alexaraConfig.voicePersona });
   }
 
@@ -490,7 +490,7 @@ export class MasterActivation {
       },
     };
 
-    DomainFirewall.storeState(Domain.LEGAL_WHAT, 'pantheonConfig', pantheonConfig);
+    await this.storeDomainState(Domain.LEGAL_WHAT, 'pantheonConfig', pantheonConfig);
     log.info('Pantheon initialized with 3 Doomsday Clocks', { clocks: pantheonConfig.doomsdayClocks.count });
   }
 
@@ -518,7 +518,7 @@ export class MasterActivation {
       },
     };
 
-    DomainFirewall.storeState(Domain.LEGAL_WHAT, 'fmiConfig', fmiConfig);
+    await this.storeDomainState(Domain.LEGAL_WHAT, 'fmiConfig', fmiConfig);
     log.info('FMI (Forensic Media Intelligence) initialized');
   }
 
@@ -549,8 +549,8 @@ export class MasterActivation {
       },
     };
 
-    DomainFirewall.storeState(Domain.LEGAL_WHAT, 'cadeConfig', cadeConfig);
-    DomainFirewall.storeState(Domain.CRYPTO_CRAWLER, 'cadeConfig', cadeConfig);
+    await this.storeDomainState(Domain.LEGAL_WHAT, 'cadeConfig', cadeConfig);
+    await this.storeDomainState(Domain.CRYPTO_CRAWLER, 'cadeConfig', cadeConfig);
     log.info('Cade Task Delegation System initialized');
   }
 
@@ -583,7 +583,7 @@ export class MasterActivation {
       },
     };
 
-    DomainFirewall.storeState(Domain.CRYPTO_CRAWLER, 'cryptoCrawlerConfig', cryptoCrawlerConfig);
+    await this.storeDomainState(Domain.CRYPTO_CRAWLER, 'cryptoCrawlerConfig', cryptoCrawlerConfig);
     log.info('CryptoCrawler Monte Carlo Operations initialized', {
       schedule: cryptoCrawlerConfig.scheduling,
     });
@@ -609,31 +609,41 @@ export class MasterActivation {
       },
     };
 
-    DomainFirewall.storeState(Domain.LEGAL_WHAT, 'seoConfig', seoConfig);
+    await this.storeDomainState(Domain.LEGAL_WHAT, 'seoConfig', seoConfig);
     log.info('SEO Optimization initialized');
   }
 
   /**
    * Apply the creative directive to all operations
    */
-  private static applyCreativeDirective(): void {
+  private static async applyCreativeDirective(): Promise<void> {
     log.info('Applying Ultimate Creative Protocol to all operations...');
     log.info(CREATIVE_IGNITION_PROMPT.trim().substring(0, CREATIVE_DIRECTIVE_LOG_PREVIEW_LENGTH) + '...');
     
     // Store creative directive for both domains
-    DomainFirewall.storeState(Domain.LEGAL_WHAT, 'creativeDirective', {
+    await this.storeDomainState(Domain.LEGAL_WHAT, 'creativeDirective', {
       active: true,
       prompt: CREATIVE_IGNITION_PROMPT,
       appliedAt: new Date(),
     });
     
-    DomainFirewall.storeState(Domain.CRYPTO_CRAWLER, 'creativeDirective', {
+    await this.storeDomainState(Domain.CRYPTO_CRAWLER, 'creativeDirective', {
       active: true,
       prompt: CREATIVE_IGNITION_PROMPT,
       appliedAt: new Date(),
     });
     
     log.info('Creative directive applied to all AI operations');
+  }
+
+  /**
+   * Store domain state through the firewall boundary.
+   * Ensures writes never happen outside an active domain context.
+   */
+  private static async storeDomainState(domain: Domain, key: string, value: unknown): Promise<void> {
+    await DomainFirewall.executeInDomain(domain, `master-activation:store:${key}`, async () => {
+      DomainFirewall.storeState(domain, key, value);
+    });
   }
 
   /**

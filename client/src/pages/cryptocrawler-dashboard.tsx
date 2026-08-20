@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
+import StageGovernorPanel from "@/components/stage-governor-panel";
 import { apiRequest, getInternalAuthHeaders } from "@/lib/queryClient";
 import { useWallet, formatAddress, getChainName, SUPPORTED_CHAINS } from "@/hooks/useWallet";
 

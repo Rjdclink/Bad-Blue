@@ -10,11 +10,31 @@ import { AppHeader } from "@/components/AppHeader";
 import { GeoconsoleRadarDashboard } from "@/components/geoconsole";
 import type { GPSPoint } from '@shared/geoconsoleTypes';
 
+interface CityStateLocation {
+  latitude: number;
+  longitude: number;
+  displayName: string;
+}
+
+function parseLatLng(input: string): [number, number] | null {
+  const match = input.match(/(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!match) return null;
+
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+
+  return [latitude, longitude];
+}
+
 export default function PeopleFinderPage() {
   const [, setLocation] = useLocation();
   
   // PASS 3: Add missing state to prevent crash
   const [searchResults, setSearchResults] = useState<any>(null);
+  const [searchQuery, setSearchQuery] = useState({ name: '', location: '' });
+  const [resolvedLocation, setResolvedLocation] = useState<CityStateLocation | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,45 +50,65 @@ export default function PeopleFinderPage() {
   }, []);
   
   // PASS 3: Handle search results
-  const handleSearchResults = useCallback((results: any, err?: string) => {
+  const handleSearchResults = useCallback((results: any, query?: { name: string; location: string }) => {
     console.log('[PEOPLE FINDER] Results received', {
       hasResults: !!results,
-      hasError: !!err,
       timestamp: new Date().toISOString(),
     });
-    
-    if (err) {
-      setError(err);
-      setSearchResults(null);
-      setIsLoading(false);
-    } else {
-      setSearchResults(results);
-      setError(null);
-      setIsLoading(false);
-    }
+
+    setSearchResults(results);
+    setSearchQuery(query || { name: '', location: '' });
+    setError(null);
+    setIsLoading(false);
   }, []);
   
-  function parseLatLng(input: string): [number, number] | null {
-    // Accept decimal degrees in the form: "lat, lng" anywhere in the string
-    const m = input.match(/(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
-    if (!m) return null;
-    const lat = Number(m[1]);
-    const lng = Number(m[2]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    if (lat < -90 || lat > 90) return null;
-    if (lng < -180 || lng > 180) return null;
-    return [lat, lng];
-  }
+  useEffect(() => {
+    if (!searchQuery.name || !searchQuery.location) {
+      setResolvedLocation(null);
+      return;
+    }
+
+    let cancelled = false;
+    setResolvedLocation(null);
+
+    void fetch('/api/geoconsole/geocode-city-state', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: searchQuery.location }),
+    })
+      .then(async response => ({ response, payload: await response.json().catch(() => null) }))
+      .then(({ response, payload }) => {
+        if (!cancelled && response.ok && payload?.success) {
+          setResolvedLocation(payload.data as CityStateLocation);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchQuery]);
 
   // Convert person location history to GPSPoints for GeoConsole
   const getGeoConsoleData = useCallback((): GPSPoint[] => {
-    if (!searchResults?.locationHistory?.length) {
-      return [];
-    }
-    
-    // REAL-WORLD ONLY: only render points that already contain explicit coordinates.
-    // (No NYC defaults, no deterministic hashing, no fabricated geocoding.)
-    return searchResults.locationHistory
+    const manualPoint: GPSPoint[] = resolvedLocation ? [{
+      latitude: resolvedLocation.latitude,
+      longitude: resolvedLocation.longitude,
+      timestamp: new Date(),
+      source: 'manual_input',
+      confidence: 0.7,
+      metadata: {
+        label: searchQuery.name || 'Subject',
+        raw: searchQuery.location,
+        displayName: resolvedLocation.displayName,
+        locationKind: 'last_known_location',
+      },
+    }] : [];
+
+    if (!searchResults?.locationHistory?.length) return manualPoint;
+
+    const reportedPoints = searchResults.locationHistory
       .map((raw: string, idx: number) => {
         const coord = parseLatLng(raw);
         if (!coord) return null;
@@ -82,7 +122,9 @@ export default function PeopleFinderPage() {
         } as GPSPoint;
       })
       .filter((p: GPSPoint | null): p is GPSPoint => !!p);
-  }, [searchResults]);
+
+    return [...manualPoint, ...reportedPoints];
+  }, [resolvedLocation, searchQuery, searchResults]);
 
   const geoConsolePoints = useMemo(() => getGeoConsoleData(), [getGeoConsoleData]);
   const geoConsoleStatus: 'idle' | 'loading' | 'ready' =
@@ -268,7 +310,7 @@ export default function PeopleFinderPage() {
 
               {/* GeoConsole Dashboard - render ONCE for stability - FULL VIEWPORT STRETCH */}
               <div className="w-full h-[calc(100vh-280px)] min-h-[600px]">
-                <GeoconsoleRadarDashboard initialData={getGeoConsoleData()} navMode={geoConsoleTab} />
+                <GeoconsoleRadarDashboard initialData={geoConsolePoints} navMode={geoConsoleTab} />
               </div>
             </CardContent>
           </Card>

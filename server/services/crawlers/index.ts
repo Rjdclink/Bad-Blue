@@ -29,6 +29,29 @@ export { BirdOfPreyCrawler } from './BirdOfPreyCrawler';
 export { SixDegreesCrawler } from './SixDegreesCrawler';
 export { PhylacterySystem } from '../storage/PhylacterySystem';
 
+export {
+  selectCrawlerPlan,
+  recordCrawlerOutcomes,
+  getCrawlerSelectionMetrics,
+  type CrawlerSelectionPlan,
+  type CrawlerSelectionPurpose,
+  type CrawlerSupervisor,
+  type ExecutableCrawler,
+} from './CrawlerSelectionUtility';
+
+export {
+  CainReaperSupervisor,
+  cainReaperSupervisor,
+  type CrawlerSupervisionResult,
+} from './CainReaperSupervisor';
+
+export {
+  PantheonRetrievalAdapter,
+  pantheonRetrievalAdapter,
+  type PantheonRetrievalResponse,
+  type RetrievalEvidence,
+} from './PantheonRetrievalAdapter';
+
 // Six-Crawler Initiative (Enhanced to Seven)
 export {
   SixCrawlerInitiative,

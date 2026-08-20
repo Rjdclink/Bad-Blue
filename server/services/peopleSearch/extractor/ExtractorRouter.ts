@@ -24,8 +24,8 @@ import type {
   ExtractionRules,
   ExtractedData,
   RouterDecision,
-  ExtractionTier,
 } from './types';
+import { ExtractionTier } from './types';
 
 /**
  * Scoring factors for tier selection

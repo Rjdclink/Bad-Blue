@@ -210,15 +210,17 @@ export async function unifiedSearch(
     if (!crawlerResults || crawlerResults.length === 0) return [];
 
     // Convert and lightly normalize/deduplicate by URL when present
-    const mapped = crawlerResults.map((r, idx) => {
+    const mapped: EnhancedSearchResult[] = crawlerResults.map((r, idx) => {
       const url = (r.metadata as any)?.url || (r.metadata as any)?.sourceUrl || '';
+      const reliability: EnhancedSearchResult['reliability'] =
+        r.confidence >= 0.85 ? 'high' : r.confidence >= 0.7 ? 'medium' : 'low';
       return {
         title: (r.metadata as any)?.title || `${r.crawler.toUpperCase()} Result ${idx + 1}`,
         url,
         snippet: (r.content || '').slice(0, 500),
         source: 'combined' as const,
         aiSummary: r.content,
-        reliability: r.confidence >= 0.85 ? 'high' : r.confidence >= 0.7 ? 'medium' : 'low',
+        reliability,
         relevanceScore: Math.round((r.confidence || 0) * 100),
         metadata: r.metadata,
       };

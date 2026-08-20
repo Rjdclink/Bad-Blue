@@ -5,8 +5,14 @@ require('dotenv').config();
 async function verifyTables() {
   console.log('🔍 Stage 4 Verification\n');
 
+  const connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL;
+  if (!connectionString) {
+    console.error('❌ Database verification failed: DATABASE_URL or SUPABASE_DATABASE_URL is not set');
+    process.exit(1);
+  }
+
   const client = new Client({
-    connectionString: process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL,
+    connectionString,
   });
 
   try {
@@ -48,7 +54,8 @@ async function verifyTables() {
     console.log('\n✅ Stage 4 complete - Ready for Stage 5');
 
   } catch (error) {
-    console.error('❌ Database verification failed:', error.message);
+    const details = error && error.message ? error.message : String(error);
+    console.error('❌ Database verification failed:', details);
     process.exit(1);
   } finally {
     await client.end();

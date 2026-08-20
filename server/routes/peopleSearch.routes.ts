@@ -47,6 +47,8 @@ async function getProxyModule() {
  * If worker is unavailable, returns a 503 with clear error message.
  */
 router.post('/', async (req, res) => {
+  let reportId: string | null = null;
+
   console.log('[PEOPLE SEARCH] Handler entered', {
     requestId: Date.now(),
     hasBody: !!req.body,
@@ -95,7 +97,6 @@ router.post('/', async (req, res) => {
 
     // Get user ID if authenticated
     const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
-    let reportId: string | null = null;
 
     // Create initial report record
     if (userId) {
@@ -139,6 +140,20 @@ router.post('/', async (req, res) => {
     const isWorkerError = isProxyError && error.isWorkerError;
     const errorCode = isProxyError ? error.code : 'UNKNOWN_ERROR';
     const errorMessage = error instanceof Error ? error.message : 'Internal server error';
+
+    if (reportId) {
+      try {
+        const { storage } = await import('../storage');
+        await storage.updatePeopleSearchReportStatus(
+          reportId,
+          'failed',
+          { status: 'failed', errorCode },
+          errorMessage
+        );
+      } catch (statusUpdateError) {
+        console.error('[People Search API] Failed to persist report failure:', statusUpdateError);
+      }
+    }
     
     return res.status(isWorkerError ? 503 : 500).json({
       success: false,

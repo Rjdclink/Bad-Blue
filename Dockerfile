@@ -44,6 +44,7 @@ ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
 # Install only minimal dependencies for Node.js runtime
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    chromium \
     wget \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
@@ -51,7 +52,8 @@ RUN apt-get update && apt-get install -y \
 # Configure Playwright to skip browser downloads (using playwright-core)
 # Browser connection will use BROWSER_WS_ENDPOINT env var at runtime
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 

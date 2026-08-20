@@ -275,7 +275,7 @@ export async function generateText(
           systemPrompt: options.systemPrompt,
           temperature: options.temperature,
           maxTokens: defaultMaxTokens,
-          context: task.context === UsageContext.AUTONOMOUS ? 'autonomous' : 'user',
+          context: 'user',
           skipOptimization: true,
         });
         console.log(`[AI Provider] Extended rotation SUCCESS with ${unifiedResult.provider}`);

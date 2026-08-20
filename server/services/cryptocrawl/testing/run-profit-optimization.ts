@@ -16,7 +16,7 @@
 // - Market conditions changes
 //
 // DO NOT make capital allocation decisions based solely on these projections.
-// Always conduct extensive backtesting, paper trading, and risk management
+// Always conduct extensive backtesting and risk management before enabling execution
 // review before deploying any trading strategy with real capital.
 
 import {

@@ -339,13 +339,18 @@ export async function crawlSeedOnceWithCrawlers(seedUrl: string, timeoutMs = 10_
     }
 
     const promises = remaining.map((c) => runOne(c));
-    const winner = await Promise.any(
-      promises.map(async (p) => {
-        const r = await p;
-        if (r.status === 'success' && r.result && r.result.itemsFound > 0) return r;
-        throw new Error('no-success');
-      })
-    ).catch(() => null);
+    const winner = await new Promise<typeof r2 | null>((resolve) => {
+      let pending = promises.length;
+      for (const promise of promises) {
+        void promise.then((result) => {
+          if (result.status === 'success' && result.result && result.result.itemsFound > 0) {
+            resolve(result);
+          } else if (--pending === 0) {
+            resolve(null);
+          }
+        });
+      }
+    });
     if (winner) abortSeed(seedUrl);
 
     const settled = await Promise.allSettled(promises);

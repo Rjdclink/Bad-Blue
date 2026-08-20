@@ -1446,7 +1446,7 @@ export class DatabaseStorage implements IStorage {
     const updateData: any = {
       status,
       errorMessage: errorMessage || null,
-      completedAt: status === 'completed' ? new Date() : null,
+      completedAt: status === 'processing' ? null : new Date(),
     };
     
     // Only update reportData if provided
@@ -1764,6 +1764,7 @@ class DevLiteStorage {
       status,
       reportData: reportData ?? (existing as any).reportData,
       errorMessage: errorMessage ?? null,
+      completedAt: status === 'processing' ? null : new Date(),
       updatedAt: new Date(),
     } as PeopleSearchReport;
     this.peopleReports.set(reportId, updated);

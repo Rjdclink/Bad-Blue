@@ -12,6 +12,7 @@ services:
       - PORT=5000
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/legalwhat
+      - PEOPLE_SEARCH_WORKER_URL=http://people-search-worker:5001
     env_file:
       - .env
     volumes:
@@ -23,6 +24,19 @@ services:
     command: npm run dev
     depends_on:
       - db
+      - people-search-worker
+
+  people-search-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=development
+      - PEOPLE_SEARCH_WORKER_HOST=0.0.0.0
+      - PEOPLE_SEARCH_WORKER_PORT=5001
+    env_file:
+      - .env
+    command: npm run start:worker
 
   db:
     image: postgres:16-alpine

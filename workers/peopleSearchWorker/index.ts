@@ -77,12 +77,10 @@ async function getBrowserEngine(): Promise<any> {
       chromium = playwrightCore.chromium;
       console.log('[PeopleSearchWorker] ✓ playwright-core loaded (remote mode)');
     } else {
-      // Local browser mode - use playwright-extra with stealth
-      const playwrightExtra = await import('playwright-extra');
-      const StealthPlugin = (await import('puppeteer-extra-plugin-stealth')).default;
-      chromium = playwrightExtra.chromium;
-      chromium.use(StealthPlugin());
-      console.log('[PeopleSearchWorker] ✓ playwright-extra loaded (local mode with stealth)');
+      // Local browser mode - use the same declared Playwright dependency as remote mode.
+      const playwrightCore = await import('playwright-core');
+      chromium = playwrightCore.chromium;
+      console.log('[PeopleSearchWorker] ✓ playwright-core loaded (local mode)');
     }
     
     browserEngineLoaded = true;
@@ -111,6 +109,7 @@ async function launchBrowser(): Promise<any> {
   // Local browser mode - launch locally
   return browserChromium.launch({
     headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',

@@ -16,6 +16,7 @@ import {
   type CasePrecedent
 } from './services/legalIntelligence';
 import type { SherlockResult } from './services/socialIntelligence/types';
+import { pantheonRetrievalAdapter } from './services/crawlers/PantheonRetrievalAdapter';
 
 // PANTHEON Crawler Orchestrator - Utilizes all crawler functions
 import {
@@ -1048,11 +1049,14 @@ export async function conductFullOSINT(
             `https://www.google.com/search?q=${encodeURIComponent(searchQuery + ' news')}`,
           ];
           
-          // Use PANTHEON orchestrator with all Level 3 crawlers
-          const crawlerResults = await pantheonOrchestrator.search(searchTargets, {
+          // Use the shared adapter so crawler selection, retrieval provenance,
+          // outcome learning, and Cain/Reaper supervision match seeded reports.
+          const crawlerRetrieval = await pantheonRetrievalAdapter.retrieve({
+            purpose: 'background_report',
+            targets: searchTargets,
             depth: searchDepth as 1 | 2 | 3 | 4,
-            stormIntensity: searchDepth >= 4 ? 'storm' : 'snow',
           });
+          const crawlerResults = crawlerRetrieval.evidence;
           
           // Process crawler results
           if (crawlerResults.length > 0) {
@@ -1070,6 +1074,9 @@ export async function conductFullOSINT(
                   crawlersUsed: [...new Set(crawlerResults.map(r => r.crawler))],
                   resultsCount: crawlerResults.length,
                   averageConfidence: crawlerResults.reduce((a, b) => a + b.confidence, 0) / crawlerResults.length,
+                  selectionPlan: crawlerRetrieval.plan,
+                  supervision: crawlerRetrieval.supervision,
+                  unavailableReason: crawlerRetrieval.reason,
                 },
                 confidence: 0.85,
                 timestamp: new Date(),

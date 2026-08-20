@@ -5,6 +5,8 @@ export interface CriminalSearchQuery {
   county?: string;
 }
 
+export type CriminalSearchStatus = 'sources_discovered' | 'sources_unavailable';
+
 export interface CriminalRecord {
   fullName: string;
   dateOfBirth?: string;
@@ -56,6 +58,8 @@ export interface CriminalRecord {
   confidence: number;  // 0-1
   riskScore?: number;  // 0-10
   scrapedAt: Date;
+  searchStatus?: CriminalSearchStatus;
+  sourceDiscovery?: import('./CriminalSourceDiscovery').CriminalSourceDiscovery[];
 }
 
 // Legacy compatibility interface - to be removed in future version

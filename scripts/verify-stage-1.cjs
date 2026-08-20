@@ -16,11 +16,18 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-const dirs = ['logs', 'server/db', 'server/routes', 'server/types', 'scripts'];
-const missingDirs = dirs.filter(dir => !fs.existsSync(dir));
+const requiredPaths = [
+  'logs',
+  'scripts',
+  'server/routes',
+  'server/services',
+  'server/db.ts',
+  'shared/schema.ts'
+];
+const missingDirs = requiredPaths.filter(targetPath => !fs.existsSync(targetPath));
 
 if (missingDirs.length > 0) {
-  console.error('❌ Missing directories:', missingDirs.join(', '));
+  console.error('❌ Missing required paths:', missingDirs.join(', '));
   process.exit(1);
 }
 

@@ -518,7 +518,7 @@ export const ELITE_STRATEGIES: Record<string, StrategyProfile> = {
   // - Regulatory compliance requirements
   // - Capital requirements and margin calls
   // DO NOT use these parameters for actual capital allocation without
-  // extensive backtesting, paper trading, and risk management review.
+  // extensive backtesting and risk management review.
   // Actual performance will be significantly lower than projections.
   // ============================================
 

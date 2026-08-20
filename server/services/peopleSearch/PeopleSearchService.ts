@@ -409,7 +409,7 @@ export class PeopleSearchService {
       const completedAt = new Date();
 
       // Determine error code based on error type
-      let errorCode = PEOPLE_SEARCH_ERROR_CODES.SEARCH_FAILED;
+      let errorCode: PeopleSearchErrorCode = PEOPLE_SEARCH_ERROR_CODES.SEARCH_FAILED;
       let recoverable = true;
 
       if (error.message?.includes('timeout') || error.name === 'AbortError') {

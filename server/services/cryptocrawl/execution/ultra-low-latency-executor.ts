@@ -46,11 +46,11 @@ class UltraLowLatencyExecutor {
   private gasHistory: number[] = []; // 2024: Gas history tracking
 
   constructor() {
-    this.privateRpcUrl = process.env.PRIVATE_RPC_URL || process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo';
+    this.privateRpcUrl = process.env.PRIVATE_RPC_URL || process.env.RPC_URL || '';
     this.flashbotsUrl = process.env.FLASHBOTS_RPC || 'https://rpc.flashbots.net';
     this.bloxrouteUrl = process.env.BLOXROUTE_RPC || 'https://mev.api.bloxroute.com';
     
-    this.provider = new JsonRpcProvider(this.privateRpcUrl);
+    this.provider = new JsonRpcProvider();
   }
 
   async initialize(): Promise<void> {
@@ -58,11 +58,16 @@ class UltraLowLatencyExecutor {
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     if (this.initialized) return;
 
+    if (!this.privateRpcUrl) {
+      throw new Error('Missing PRIVATE_RPC_URL or RPC_URL (required for UltraLowLatencyExecutor)');
+    }
+
     const pk = process.env.WALLET_PRIVATE_KEY;
     if (!pk || pk.trim().length === 0) {
       // Canonical rule: signer must be loaded only from env and system must hard-fail if missing.
       throw new Error('Missing WALLET_PRIVATE_KEY (required for UltraLowLatencyExecutor signer)');
     }
+    this.provider = new JsonRpcProvider(this.privateRpcUrl);
     this.wallet = new Wallet(pk.trim(), this.provider);
 
     logger.info('Initializing ultra-low-latency executor...', { 

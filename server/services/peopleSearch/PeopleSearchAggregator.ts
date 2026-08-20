@@ -25,8 +25,6 @@
  * - Smart caching and data fusion
  */
 
-// Local type definitions to avoid importing from 'playwright' package at module load time
-// This ensures the server can boot without Playwright/Chromium installed
 interface Browser {
   newContext(options?: any): Promise<BrowserContext>;
   close(): Promise<void>;
@@ -37,11 +35,7 @@ interface BrowserContext {
   close(): Promise<void>;
 }
 
-interface Page {
-  goto(url: string, options?: any): Promise<any>;
-  close(): Promise<void>;
-}
-
+import type { Page } from 'playwright';
 import type { SearchQuery, PersonRecord } from './types';
 import { FastPeopleSearchScraper } from './sources/FastPeopleSearchScraper';
 import { TruePeopleSearchScraper } from './sources/TruePeopleSearchScraper';
@@ -407,17 +401,14 @@ export class PeopleSearchAggregator {
     // HTML structures specific to each source (addresses, phones, etc.)
     const basicRecord: PersonRecord = {
       fullName: `${query.firstName} ${query.lastName}`,
-      firstName: query.firstName,
-      lastName: query.lastName,
-      middleName: undefined,
       age: query.age,
       addresses: [],
       phones: [],
       emails: [],
       relatives: [],
-      associates: [],
-      sources: extractions.map(e => `${e.provider}:${e.tier}`),
-      lastUpdated: new Date(),
+      aliases: [],
+      source: extractions.map(e => `${e.provider}:${e.tier}`).join(', ') || 'http-extraction',
+      scrapedAt: new Date(),
       confidence: extractions.length > 0 ? 0.6 : 0.3,
     };
     

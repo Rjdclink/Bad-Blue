@@ -19,22 +19,19 @@ export {
   createMonteCarloEngine,
   // Types
   type Particle,
-  type ParticleState,
+  ParticleState,
   type Constraint,
-  type ConstraintType,
+  ConstraintType,
   type MotionModel,
   type SimulationConfig,
   type ExecutionWindow,
-  type WindowStatus,
+  WindowStatus,
   type SimulationSnapshot,
   type HeatmapCell,
   type ProbablePath,
   type LikelihoodCone,
   type LiveRenderState,
 } from './MonteCarloEngine';
-
-// Re-export enums as values
-export { ParticleState, ConstraintType, WindowStatus } from './MonteCarloEngine';
 
 // Monte Carlo Crawler Optimizer
 export {

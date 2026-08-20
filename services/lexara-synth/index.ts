@@ -335,7 +335,7 @@ export class LexaraPlanner extends EventEmitter {
           clearTimeout(timeout);
           
           // Extract optimized settings from simulation result
-          if (result.confidence > 0.7 && result.summary.success_probability > 0.7) {
+          if (result.confidence > 0.7 && (result.summary.success_probability ?? 0) > 0.7) {
             // Use the best settings from simulation
             const optimized: VoiceSettings = {
               ...job.settings,
@@ -365,7 +365,7 @@ export class LexaraPlanner extends EventEmitter {
           },
         },
         constraints: {
-          min_quality: 0.7,
+          quality_bounds: { min: 0.7, max: 1.0 },
         },
         seed: Math.floor(Math.random() * 1000000),
         deadline_ts: Date.now() + this.config.simTimeoutMs,

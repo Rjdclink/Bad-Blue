@@ -600,9 +600,9 @@ export class CrawlerJobManager extends EventEmitter {
     this.recentAttempts.set(jobId, []);
     this.tierCompletionTimes.set(jobId, {});
 
-    const targetBudgetMs = getTierTimeBudget(finalConfig.targetTier);
+    const targetBudgetMs = getTierTimeThreshold(finalConfig.minimumTier);
     this.emit('job:created', { jobId, job });
-    console.log(`[CrawlerJobManager] Created job ${jobId} with ${targets.length} targets, target tier: ${finalConfig.targetTier} (${targetBudgetMs / 60000} min)`);
+    console.log(`[CrawlerJobManager] Created job ${jobId} with ${targets.length} targets, minimum tier: ${finalConfig.minimumTier} (${targetBudgetMs / 60000} min)`);
 
     return job;
   }
@@ -620,7 +620,7 @@ export class CrawlerJobManager extends EventEmitter {
     this.startCompileTimer(jobId);
 
     this.emit('job:started', { jobId, job });
-    console.log(`[CrawlerJobManager] Started job ${jobId}, target: ${REPORT_TIER_NAMES[job.config.targetTier]}`);
+    console.log(`[CrawlerJobManager] Started job ${jobId}, minimum tier: ${REPORT_TIER_NAMES[job.config.minimumTier]}`);
 
     return true;
   }
@@ -756,7 +756,7 @@ export class CrawlerJobManager extends EventEmitter {
     const tiers = [ReportTier.BASIC, ReportTier.ENHANCED, ReportTier.FULL, ReportTier.EYE_OF_GOD];
     
     for (const tier of tiers) {
-      if (!tierTimes[tier] && elapsedMs >= REPORT_TIER_BUDGETS[tier]) {
+      if (!tierTimes[tier] && elapsedMs >= REPORT_TIER_THRESHOLDS[tier]) {
         tierTimes[tier] = new Date();
         this.tierCompletionTimes.set(jobId, tierTimes);
         
@@ -788,8 +788,10 @@ export class CrawlerJobManager extends EventEmitter {
     // Check all stop conditions without triggering stop
     if (job.startedAt) {
       const elapsed = Date.now() - job.startedAt.getTime();
-      const targetBudget = getTierTimeBudget(job.config.targetTier);
-      if (elapsed >= targetBudget) return false;
+      if (!job.config.continuousMode) {
+        const minimumBudget = getTierTimeThreshold(job.config.minimumTier);
+        if (elapsed >= minimumBudget) return false;
+      }
     }
 
     if (job.totalAttempts >= job.config.maxAttempts) return false;
@@ -1001,8 +1003,16 @@ export class CrawlerJobManager extends EventEmitter {
 
     // Generate tier-specific summaries
     const tierSummaries: Partial<Record<ReportTier, string>> = {};
+    const tierSnapshots: JobReport['tierSnapshots'] = {};
     for (const tier of job.completedTiers) {
-      tierSummaries[tier] = this.generateTierSummary(tier, job, results);
+      const summary = this.generateTierSummary(tier, job, results);
+      tierSummaries[tier] = summary;
+      tierSnapshots[tier] = {
+        capturedAt: tierCompletionTimes[tier] || new Date(),
+        resultCount: successResults.length,
+        data: successResults.map(r => r.data).filter(Boolean),
+        summary,
+      };
     }
 
     const report: JobReport = {
@@ -1011,9 +1021,11 @@ export class CrawlerJobManager extends EventEmitter {
       version: newVersion,
       compiledAt: new Date(),
       isPartial,
+      snapshotTier: currentTier,
       currentTier,
       tierProgress,
       tierCompletedAt: tierCompletionTimes,
+      tierSnapshots,
       totalResults: results.length,
       successCount: successResults.length,
       failureCount: failureResults.length,
@@ -1048,7 +1060,7 @@ export class CrawlerJobManager extends EventEmitter {
   private generateTierSummary(tier: ReportTier, job: CrawlJob, results: CrawlResult[]): string {
     const successCount = results.filter(r => r.success).length;
     const tierName = REPORT_TIER_NAMES[tier];
-    const budget = REPORT_TIER_BUDGETS[tier] / 60000; // Convert to minutes
+    const budget = REPORT_TIER_THRESHOLDS[tier] / 60000; // Convert to minutes
     
     switch (tier) {
       case ReportTier.BASIC:
@@ -1127,9 +1139,9 @@ export class CrawlerJobManager extends EventEmitter {
     if (!job) return null;
 
     const elapsed = job.startedAt ? Date.now() - job.startedAt.getTime() : 0;
-    const targetBudget = getTierTimeBudget(job.config.targetTier);
-    const remaining = Math.max(0, targetBudget - elapsed);
-    const progress = targetBudget > 0 ? Math.min(100, (elapsed / targetBudget) * 100) : 0;
+    const minimumBudget = getTierTimeThreshold(job.config.minimumTier);
+    const remaining = Math.max(0, minimumBudget - elapsed);
+    const progress = minimumBudget > 0 ? Math.min(100, (elapsed / minimumBudget) * 100) : 0;
     const tierProgress = calculateTierProgress(elapsed);
     const currentTier = getCurrentTierFromElapsed(elapsed);
     const completedTiers = getCompletedTiers(elapsed);
@@ -1144,8 +1156,8 @@ export class CrawlerJobManager extends EventEmitter {
       elapsedMs: elapsed,
       remainingMs: remaining,
       // Tier information
-      targetTier: job.config.targetTier,
-      targetTierName: REPORT_TIER_NAMES[job.config.targetTier],
+      targetTier: job.config.minimumTier,
+      targetTierName: REPORT_TIER_NAMES[job.config.minimumTier],
       currentTier,
       currentTierName: REPORT_TIER_NAMES[currentTier],
       completedTiers,

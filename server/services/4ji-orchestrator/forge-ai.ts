@@ -67,6 +67,20 @@ export type AICapability =
   | 'verification'
   | 'orchestration';
 
+export type OrchestrationRole =
+  | 'architecture'
+  | 'coding'
+  | 'review'
+  | 'testing'
+  | 'security'
+  | 'research';
+
+export interface RoleAssignment {
+  role: OrchestrationRole;
+  primaryModelId: string;
+  fallbackModelIds: string[];
+}
+
 /**
  * Orchestrator status
  */
@@ -94,6 +108,21 @@ interface DomainStats {
   workerFunctions: number;
 }
 
+interface ModelExecutionResult {
+  model: AIModelConfig;
+  content: string;
+  tokensUsed: number;
+}
+
+const ROLE_CAPABILITY_MAP: Record<OrchestrationRole, AICapability[]> = {
+  architecture: ['reasoning', 'orchestration', 'long-context'],
+  coding: ['coding', 'reasoning', 'verification'],
+  review: ['reasoning', 'verification', 'pattern-recognition'],
+  testing: ['verification', 'reasoning', 'coding'],
+  security: ['verification', 'reasoning', 'pattern-recognition'],
+  research: ['research', 'reasoning', 'long-context'],
+};
+
 /**
  * Task definition for orchestrated execution
  */
@@ -103,6 +132,7 @@ export interface OrchestratedTask {
   type: string;
   priority: TaskPriority;
   requiredCapabilities: AICapability[];
+  roles?: OrchestrationRole[];
   prompt: string;
   systemPrompt?: string;
   maxTokens?: number;
@@ -141,6 +171,7 @@ export class ForgeAI {
   // Domain-specific sub-agents and workers (tracked separately)
   private static subAgents: Map<Domain, string[]> = new Map();
   private static workerFunctions: Map<Domain, string[]> = new Map();
+  private static roleAssignments: Map<OrchestrationRole, RoleAssignment> = new Map();
   
   // Evolution tracking
   private static evolutionCycles: Map<Domain, number> = new Map();
@@ -164,6 +195,10 @@ export class ForgeAI {
       // Phase 2: Register AI models
       log.info('Phase 2: Registering AI Models');
       this.registerModels();
+
+      // Phase 2.5: Build role assignments with redundancy
+      log.info('Phase 2.5: Building role assignments');
+      this.buildRoleAssignments();
 
       // Phase 3: Initialize domain-specific sub-agents
       log.info('Phase 3: Initializing Sub-Agents');
@@ -399,6 +434,43 @@ export class ForgeAI {
   }
 
   /**
+   * Build role-to-model assignments with deterministic fallbacks.
+   */
+  private static buildRoleAssignments(): void {
+    this.roleAssignments.clear();
+
+    const roles: OrchestrationRole[] = ['architecture', 'coding', 'review', 'testing', 'security', 'research'];
+    for (const role of roles) {
+      const capabilities = ROLE_CAPABILITY_MAP[role];
+      const candidates = Array.from(this.models.values())
+        .filter(model => capabilities.every(capability => model.capabilities.includes(capability)))
+        .sort((a, b) => {
+          const priorityA = this.providerPriority(a.provider);
+          const priorityB = this.providerPriority(b.provider);
+          if (priorityA !== priorityB) return priorityA - priorityB;
+          return this.speedRank(a.speedTier) - this.speedRank(b.speedTier);
+        });
+
+      if (candidates.length === 0) {
+        throw new Error(`No candidate models available for 4JI role '${role}'`);
+      }
+
+      const primary = candidates[0];
+      const fallbackModelIds = candidates.slice(1, 4).map(model => model.id);
+
+      this.roleAssignments.set(role, {
+        role,
+        primaryModelId: primary.id,
+        fallbackModelIds,
+      });
+    }
+
+    log.info('Role assignments ready', {
+      roles: Array.from(this.roleAssignments.values()),
+    });
+  }
+
+  /**
    * Initialize domain-specific sub-agents
    */
   private static async initializeSubAgents(): Promise<void> {
@@ -514,6 +586,11 @@ export class ForgeAI {
         task.domain,
         `task:${task.type}`,
         async (context) => {
+          if (task.roles && task.roles.length > 0) {
+            const roleExecution = await this.executeRoleBased(task);
+            return roleExecution;
+          }
+
           // Select optimal models for this task
           const selectedModels = this.selectModelsForTask(task);
           
@@ -634,6 +711,125 @@ export class ForgeAI {
       model: primaryModel.id,
     });
 
+    const execution = await this.executeSingleModel(primaryModel, task);
+    const content = execution.content;
+    const tokensUsed = execution.tokensUsed;
+
+    if (!content) {
+      throw new Error(`Model ${primaryModel.id} returned an empty response`);
+    }
+
+    return {
+      content,
+      modelsUsed: [primaryModel.id],
+      tokensUsed,
+      confidence: 0.8,
+    };
+  }
+
+  /**
+   * Execute task using explicit role assignments and resolve disagreement via reviewer model.
+   */
+  private static async executeRoleBased(
+    task: OrchestratedTask
+  ): Promise<{ content: unknown; modelsUsed: string[]; tokensUsed: number; confidence: number }> {
+    const requestedRoles = (task.roles || []).filter((role, index, roles) => roles.indexOf(role) === index);
+    const modelIds = new Set<string>();
+
+    for (const role of requestedRoles) {
+      const assignment = this.roleAssignments.get(role);
+      if (!assignment) {
+        throw new Error(`Role '${role}' is not configured in 4JI assignments`);
+      }
+
+      modelIds.add(assignment.primaryModelId);
+      for (const fallbackId of assignment.fallbackModelIds) {
+        modelIds.add(fallbackId);
+      }
+    }
+
+    const candidateModels = Array.from(modelIds)
+      .map(id => this.models.get(id))
+      .filter((model): model is AIModelConfig => Boolean(model))
+      .filter(model => model.domains.includes(task.domain));
+
+    if (candidateModels.length === 0) {
+      throw new Error(`No domain-compatible models found for roles: ${requestedRoles.join(', ')}`);
+    }
+
+    const executionResults: ModelExecutionResult[] = [];
+    for (const model of candidateModels.slice(0, 3)) {
+      try {
+        executionResults.push(await this.executeSingleModel(model, task));
+      } catch (error) {
+        log.warn('Role-based candidate model failed', {
+          taskId: task.id,
+          model: model.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (executionResults.length === 0) {
+      throw new Error(`All role-based models failed for task ${task.id}`);
+    }
+
+    if (executionResults.length === 1) {
+      return {
+        content: executionResults[0].content,
+        modelsUsed: [executionResults[0].model.id],
+        tokensUsed: executionResults[0].tokensUsed,
+        confidence: 0.78,
+      };
+    }
+
+    const reviewer = this.resolveReviewerModel(task.domain);
+    const consensusPrompt = `You are 4JI consensus resolver. Resolve disagreements between specialist model outputs and produce one final answer.
+Task type: ${task.type}
+Domain: ${task.domain}
+Original prompt: ${task.prompt}
+
+Candidate outputs:\n${executionResults
+      .map((result, index) => `Model ${index + 1} (${result.model.id}):\n${result.content}`)
+      .join('\n\n')}
+
+Return a single consolidated response.`;
+
+    const consensusExecution = await this.executeSingleModel(reviewer, {
+      ...task,
+      prompt: consensusPrompt,
+      requiredCapabilities: ['review', 'reasoning', 'verification'].filter((capability): capability is AICapability =>
+        ['review', 'reasoning', 'verification'].includes(capability)
+      ),
+    });
+
+    const modelsUsed = [
+      ...executionResults.map(result => result.model.id),
+      consensusExecution.model.id,
+    ];
+
+    return {
+      content: consensusExecution.content,
+      modelsUsed,
+      tokensUsed: executionResults.reduce((sum, entry) => sum + entry.tokensUsed, 0) + consensusExecution.tokensUsed,
+      confidence: 0.88,
+    };
+  }
+
+  private static resolveReviewerModel(domain: Domain): AIModelConfig {
+    const preferred = Array.from(this.models.values())
+      .filter(model => model.domains.includes(domain))
+      .filter(model => model.capabilities.includes('verification') && model.capabilities.includes('reasoning'))
+      .sort((a, b) => this.providerPriority(a.provider) - this.providerPriority(b.provider));
+
+    if (preferred.length === 0) {
+      throw new Error(`No reviewer model available for domain ${domain}`);
+    }
+
+    return preferred[0];
+  }
+
+  private static async executeSingleModel(model: AIModelConfig, task: OrchestratedTask): Promise<ModelExecutionResult> {
     const taskMetadata: AITaskMetadata = {
       taskName: `forge-${task.type}`,
       priority: task.priority,
@@ -645,9 +841,9 @@ export class ForgeAI {
       context: task.priority >= TaskPriority.HIGH_USER ? UsageContext.USER : UsageContext.AUTONOMOUS,
     };
 
-    const maxTokens = Math.min(task.maxTokens ?? primaryModel.maxTokens, primaryModel.maxTokens);
+    const maxTokens = Math.min(task.maxTokens ?? model.maxTokens, model.maxTokens);
     const options = {
-      model: primaryModel.id,
+      model: model.id,
       systemPrompt: task.systemPrompt,
       temperature: task.temperature,
     };
@@ -655,12 +851,12 @@ export class ForgeAI {
     let content = '';
     let tokensUsed = 0;
 
-    switch (primaryModel.provider) {
+    switch (model.provider) {
       case AIProvider.GEMINI:
       case AIProvider.GROQ:
       case AIProvider.MISTRAL:
       case AIProvider.CLAUDE: {
-        const response = await runProvider(primaryModel.provider, task.prompt, options, maxTokens, taskMetadata);
+        const response = await runProvider(model.provider, task.prompt, options, maxTokens, taskMetadata);
         content = response.content;
         tokensUsed = response.tokensUsed;
         break;
@@ -686,7 +882,7 @@ export class ForgeAI {
       default: {
         log.warn('Provider does not have a dedicated integration; using Groq fallback', {
           taskId: task.id,
-          provider: primaryModel.provider,
+          provider: model.provider,
         });
         const response = await runProvider(AIProvider.GROQ, task.prompt, {}, maxTokens, taskMetadata);
         content = response.content;
@@ -695,15 +891,50 @@ export class ForgeAI {
     }
 
     if (!content) {
-      throw new Error(`Model ${primaryModel.id} returned an empty response`);
+      throw new Error(`Model ${model.id} returned an empty response`);
     }
 
     return {
+      model,
       content,
-      modelsUsed: [primaryModel.id],
       tokensUsed,
-      confidence: 0.8,
     };
+  }
+
+  private static providerPriority(provider: AIProvider): number {
+    switch (provider) {
+      case AIProvider.CLAUDE_OPUS:
+      case AIProvider.CLAUDE:
+        return 1;
+      case AIProvider.GEMINI:
+        return 2;
+      case AIProvider.GROQ:
+        return 3;
+      case AIProvider.MISTRAL:
+        return 4;
+      case AIProvider.GROK:
+      case AIProvider.DEEPSEEK:
+      case AIProvider.QWEN:
+      case AIProvider.KIMI:
+        return 5;
+      default:
+        return 6;
+    }
+  }
+
+  private static speedRank(speed: AIModelConfig['speedTier']): number {
+    switch (speed) {
+      case 'instant':
+        return 1;
+      case 'fast':
+        return 2;
+      case 'medium':
+        return 3;
+      case 'slow':
+        return 4;
+      default:
+        return 5;
+    }
   }
 
   /**

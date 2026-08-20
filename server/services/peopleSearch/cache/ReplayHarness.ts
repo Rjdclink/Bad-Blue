@@ -18,9 +18,13 @@
  *    - Test pattern degradation
  */
 
-import type { RequiredField } from '../router/CapabilityRouter';
-import type { Claim } from '../router/ExtractionLedger';
-import { calculateDeterministicConfidence, type ConfidenceWeights } from '../router/ExtractionLedger';
+import { CapabilityTier, type RequiredField } from '../router/CapabilityRouter';
+import {
+  calculateDeterministicConfidence,
+  type ClaimsRecord,
+  type ConfidenceWeights,
+  type FieldClaim,
+} from '../router/ExtractionLedger';
 import type { StoredArtifact, ArtifactCollection, ArtifactHandle, ArtifactVault } from './ArtifactVault';
 import type { ExtractionPattern, PatternLearner } from './PatternLearner';
 
@@ -56,7 +60,7 @@ export interface ReplayResult {
   success: boolean;
   
   /** Extracted claims */
-  claims: Map<RequiredField, Claim>;
+  claims: Map<RequiredField, FieldClaim>;
   
   /** Computed confidence */
   confidence: number | null;
@@ -260,7 +264,7 @@ export class ReplayHarness {
     }
     
     // Extract from artifacts
-    const claims = new Map<RequiredField, Claim>();
+    const claims = new Map<RequiredField, FieldClaim>();
     const gaps: RequiredField[] = [];
     const artifactHandles: ArtifactHandle[] = [];
     
@@ -278,11 +282,12 @@ export class ReplayHarness {
         const value = this.extractFromArtifact(artifact, field, request.pattern);
         if (value !== null) {
           claims.set(field, {
-            field,
             value,
             source: `replay:${artifact.type}`,
-            confidence: 0.8, // Replay confidence
             extractedAt: new Date(),
+            method: 'replay',
+            tier: CapabilityTier.T2_API_REPLAY,
+            fieldConfidence: 0.8,
           });
         }
       }
@@ -297,7 +302,7 @@ export class ReplayHarness {
     
     // Compute confidence
     const weights = request.weights ?? this.config.defaultWeights;
-    const claimsRecord: Record<string, any> = {};
+    const claimsRecord: Record<string, FieldClaim> = {};
     for (const [field, claim] of claims.entries()) {
       claimsRecord[field] = claim;
     }
@@ -306,9 +311,10 @@ export class ReplayHarness {
     if (claims.size > 0) {
       try {
         const breakdown = calculateDeterministicConfidence(
-          claimsRecord as any,
+          claimsRecord as ClaimsRecord,
           request.fields,
-          new Date()
+          new Date(),
+          weights
         );
         confidence = breakdown.finalScore;
       } catch {
