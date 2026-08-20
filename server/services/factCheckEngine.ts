@@ -1,6 +1,6 @@
 /**
  * Multi-AI Fact-Checking Engine
- * Verifies legal claims using 3 AI models for consensus-based validation
+ * Verifies legal claims using 4 AI models for consensus-based validation
  * Phase 1A: Backend infrastructure for intelligent legal consultation
  */
 
@@ -8,6 +8,7 @@ import { FactCheckRequest, FactCheckResponse, Citation } from '../../shared/lega
 import { callGemini } from '../gemini';
 import { generateGroqLegalConsultation } from '../groq';
 import { callClaude } from '../claude';
+import { generateMistralLegalConsultation } from '../mistral';
 
 /**
  * Helper to wrap a promise with a timeout
@@ -30,20 +31,22 @@ export async function factCheckClaim(request: FactCheckRequest): Promise<FactChe
   
   const prompt = generateFactCheckPrompt(claim, context);
   
-  // Query all three models in parallel with timeout
+  // Query all four models in parallel with timeout
   const TIMEOUT_MS = 30000; // 30 second timeout per model
   
-  const [geminiResult, groqResult, claudeResult] = await Promise.allSettled([
+  const [geminiResult, groqResult, claudeResult, mistralResult] = await Promise.allSettled([
     withTimeout(queryModelForFactCheck('gemini', prompt, context), TIMEOUT_MS),
     withTimeout(queryModelForFactCheck('groq', prompt, context), TIMEOUT_MS),
-    withTimeout(queryModelForFactCheck('claude', prompt, context), TIMEOUT_MS)
+    withTimeout(queryModelForFactCheck('claude', prompt, context), TIMEOUT_MS),
+    withTimeout(queryModelForFactCheck('mistral', prompt, context), TIMEOUT_MS)
   ]);
 
   // Extract results, handling failures gracefully
   const modelResults = [
     { model: 'gemini', result: geminiResult },
     { model: 'groq', result: groqResult },
-    { model: 'claude', result: claudeResult }
+    { model: 'claude', result: claudeResult },
+    { model: 'mistral', result: mistralResult }
   ].map(({ model, result }) => {
     if (result.status === 'fulfilled') {
       return result.value;
@@ -58,11 +61,12 @@ export async function factCheckClaim(request: FactCheckRequest): Promise<FactChe
     }
   });
 
-  // Calculate consensus and confidence
+  // Calculate consensus and confidence (generalized for N models)
   const verifiedCount = modelResults.filter(r => r.verified).length;
-  const consensus = verifiedCount === 3 || verifiedCount === 0; // All agree
-  const verified = verifiedCount >= 2; // Majority rule
-  const confidence = verifiedCount / 3; // 0, 0.33, 0.67, or 1.0
+  const totalModels = modelResults.length;
+  const consensus = verifiedCount === totalModels || verifiedCount === 0; // All agree
+  const verified = verifiedCount > totalModels / 2; // Strict majority
+  const confidence = verifiedCount / totalModels;
 
   // Identify discrepancies
   const discrepancies: string[] = [];
@@ -151,6 +155,12 @@ async function queryModelForFactCheck(
       case 'claude':
         const claudeResult = await callClaude(prompt, { useJSON: true });
         responseText = claudeResult.content;
+        break;
+      case 'mistral':
+        responseText = await generateMistralLegalConsultation(
+          prompt,
+          `You are a legal fact-checker for ${context.lawType} cases in ${context.state}. Respond with JSON only.`
+        );
         break;
       default:
         throw new Error(`Unknown model: ${modelName}`);

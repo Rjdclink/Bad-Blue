@@ -37,14 +37,14 @@ export function createBeamRouter(): Router {
     const kind = String(req.query?.kind || req.body?.kind || 'cron');
     const k = kind === 'boot' || kind === 'manual' || kind === 'cron' ? kind : 'cron';
     const result = await emitBeamPulse(k);
-    if (!result.ok) return res.status(503).json({ ok: false, ...result });
+    if (!result.ok) return res.status(503).json({ ...result, ok: false });
     return res.json({ ok: true, id: result.id });
   });
 
   // POST /beam/start - UI-friendly alias (manual trigger)
   router.post('/start', async (_req, res) => {
     const result = await emitBeamPulse('manual');
-    if (!result.ok) return res.status(503).json({ ok: false, ...result });
+    if (!result.ok) return res.status(503).json({ ...result, ok: false });
     return res.json({ ok: true, id: result.id });
   });
 

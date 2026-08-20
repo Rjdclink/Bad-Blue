@@ -22,6 +22,8 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import { loadConfig } from './config';
+import { getAIModel } from './systemConfig';
+import { OPENROUTER_MODELS as BEST_MODELS_PER_PROVIDER } from './constants';
 
 // CRITICAL: Validate configuration before anything else
 // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
@@ -394,9 +396,16 @@ app.get("/api/health", async (_req, res) => {
     aiProviders: {
       gemini: { model: 'gemini-2.5-pro', available: !!process.env.GEMINI_API_KEY },
       groq: { model: 'llama-3.3-70b-versatile', available: !!process.env.GROQ_API_KEY },
-      mistral: { model: 'mistral-large-latest', available: !!process.env.MISTRAL_API_KEY },
-      claude: { model: 'claude-3-5-haiku-20241022', available: !!process.env.ANTHROPIC_API_KEY },
-    }
+      mistral: { model: 'mistral-small-latest', available: !!process.env.MISTRAL_API_KEY },
+      claude: { model: 'claude-haiku-4-5-20251001', available: !!process.env.ANTHROPIC_API_KEY },
+    },
+    recommendedModelsByUseCase: {
+      user: getAIModel('user'),
+      autonomous: getAIModel('autonomous'),
+      legal: getAIModel('legal'),
+      analysis: getAIModel('analysis'),
+    },
+    bestModelPerProvider: BEST_MODELS_PER_PROVIDER,
   });
 });
 

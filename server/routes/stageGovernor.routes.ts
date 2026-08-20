@@ -15,6 +15,7 @@ import {
   type UnpauseRequest,
   type StageNumber,
 } from '../services/cryptocrawl/governance';
+import type { TradeProposal } from '../services/cryptocrawl/governance/risk-governor';
 
 const log = createLogger('stage-governor-routes');
 const router = express.Router();
@@ -59,7 +60,7 @@ router.get('/stage', async (_req, res) => {
  */
 router.get('/risk', async (_req, res) => {
   try {
-    const status = riskGovernor.getStatus();
+    const status = riskGovernor.exportState();
     
     res.json({
       success: true,
@@ -138,9 +139,8 @@ router.get('/rules', async (_req, res) => {
     res.json({
       success: true,
       data: {
-        rules: GLOBAL_RULES,
-        evolutionLock: true, // Always on unless explicitly lifted
-        killSwitchArmed: getStageGovernor().getState().killSwitchArmed,
+        stageConfig: getStageGovernor().getConfig(),
+        stageState: getStageGovernor().getState(),
       },
       timestamp: Date.now(),
     });
@@ -545,10 +545,19 @@ router.post('/record-profit', async (req, res) => {
  */
 router.post('/validate-trade', async (req, res) => {
   try {
-    const proposal = req.body;
+    const proposal = req.body as Partial<TradeProposal>;
     
     // Validate required fields
-    const requiredFields = ['id', 'pair', 'exchange', 'direction', 'entryPrice', 'targetPrice', 'stopLoss', 'proposedSize'];
+    const requiredFields: Array<keyof TradeProposal> = [
+      'id',
+      'strategy',
+      'chain',
+      'pair',
+      'venue',
+      'positionSizeUSD',
+      'estimatedProfitUSD',
+      'estimatedRiskPercent',
+    ];
     for (const field of requiredFields) {
       if (proposal[field] === undefined) {
         return res.status(400).json({
@@ -558,16 +567,11 @@ router.post('/validate-trade', async (req, res) => {
       }
     }
     
-    // Add defaults
     proposal.timestamp = proposal.timestamp || Date.now();
-    proposal.expectedProfit = proposal.expectedProfit || 0;
-    proposal.expectedFees = proposal.expectedFees || 0;
-    proposal.expectedSlippage = proposal.expectedSlippage || 0.01;
-    proposal.latencyMs = proposal.latencyMs || 100;
     
     log.info('Validating trade proposal', { proposalId: proposal.id });
     
-    const validation = await riskGovernor.validateTrade(proposal);
+    const validation = await riskGovernor.assessTradeProposal(proposal as TradeProposal);
     
     res.json({
       success: true,
@@ -594,40 +598,10 @@ router.post('/validate-trade', async (req, res) => {
  * }
  */
 router.post('/record-trade-result', async (req, res) => {
-  try {
-    const { proposalId, result, pnl } = req.body;
-    
-    if (!proposalId || !result || pnl === undefined) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: proposalId, result, and pnl',
-      });
-    }
-    
-    if (!['win', 'loss'].includes(result)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid result: must be win or loss',
-      });
-    }
-    
-    log.info('Recording trade result', { proposalId, result, pnl });
-    
-    riskGovernor.recordTradeResult(proposalId, result, pnl);
-    
-    res.json({
-      success: true,
-      message: 'Trade result recorded',
-      metrics: riskGovernor.getMetrics(),
-      timestamp: Date.now(),
-    });
-  } catch (error: any) {
-    log.error('Failed to record trade result', { error: error?.message });
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to record trade result',
-    });
-  }
+  res.status(501).json({
+    success: false,
+    error: 'Trade-result persistence is not configured for this deployment.',
+  });
 });
 
 // ============================================================================
@@ -639,27 +613,10 @@ router.post('/record-trade-result', async (req, res) => {
  * Get capital allocation status
  */
 router.get('/capital', async (_req, res) => {
-  try {
-    const capital = riskGovernor.getCapitalAllocation();
-    const metrics = riskGovernor.getMetrics();
-    
-    res.json({
-      success: true,
-      data: {
-        capital,
-        utilization: metrics.utilizationPercent,
-        currentCapitalAtRisk: metrics.currentCapitalAtRisk,
-        currentPositionCount: metrics.currentPositionCount,
-      },
-      timestamp: Date.now(),
-    });
-  } catch (error: any) {
-    log.error('Failed to get capital allocation', { error: error?.message });
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to get capital allocation',
-    });
-  }
+  res.status(501).json({
+    success: false,
+    error: 'Capital allocation is not implemented by the active risk governor.',
+  });
 });
 
 /**
@@ -671,31 +628,10 @@ router.get('/capital', async (_req, res) => {
  * }
  */
 router.post('/allocate-capital', async (req, res) => {
-  try {
-    const { amount } = req.body;
-    
-    if (amount === undefined || typeof amount !== 'number' || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid amount: must be a positive number',
-      });
-    }
-    
-    const allocated = riskGovernor.allocateCapital(amount);
-    
-    res.json({
-      success: allocated,
-      message: allocated ? 'Capital allocated' : 'Insufficient capital',
-      capital: riskGovernor.getCapitalAllocation(),
-      timestamp: Date.now(),
-    });
-  } catch (error: any) {
-    log.error('Failed to allocate capital', { error: error?.message });
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to allocate capital',
-    });
-  }
+  res.status(501).json({
+    success: false,
+    error: 'Capital allocation is not implemented by the active risk governor.',
+  });
 });
 
 /**
@@ -707,31 +643,10 @@ router.post('/allocate-capital', async (req, res) => {
  * }
  */
 router.post('/release-capital', async (req, res) => {
-  try {
-    const { amount } = req.body;
-    
-    if (amount === undefined || typeof amount !== 'number' || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid amount: must be a positive number',
-      });
-    }
-    
-    riskGovernor.releaseCapital(amount);
-    
-    res.json({
-      success: true,
-      message: 'Capital released',
-      capital: riskGovernor.getCapitalAllocation(),
-      timestamp: Date.now(),
-    });
-  } catch (error: any) {
-    log.error('Failed to release capital', { error: error?.message });
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to release capital',
-    });
-  }
+  res.status(501).json({
+    success: false,
+    error: 'Capital allocation is not implemented by the active risk governor.',
+  });
 });
 
 // ============================================================================
@@ -744,7 +659,7 @@ router.post('/release-capital', async (req, res) => {
  */
 router.get('/circuit-breaker', async (_req, res) => {
   try {
-    const state = riskGovernor.getCircuitBreakerState();
+    const state = riskGovernor.getAllCircuitBreakers();
     
     res.json({
       success: true,
@@ -769,22 +684,10 @@ router.get('/circuit-breaker', async (_req, res) => {
  * Reset hourly metrics
  */
 router.post('/reset-hourly', async (_req, res) => {
-  try {
-    riskGovernor.resetHourlyMetrics();
-    
-    res.json({
-      success: true,
-      message: 'Hourly metrics reset',
-      metrics: riskGovernor.getMetrics(),
-      timestamp: Date.now(),
-    });
-  } catch (error: any) {
-    log.error('Failed to reset hourly metrics', { error: error?.message });
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to reset hourly metrics',
-    });
-  }
+  res.status(501).json({
+    success: false,
+    error: 'Hourly metric resets are not implemented by the active risk governor.',
+  });
 });
 
 /**
@@ -792,24 +695,10 @@ router.post('/reset-hourly', async (_req, res) => {
  * Reset daily metrics
  */
 router.post('/reset-daily', async (_req, res) => {
-  try {
-    riskGovernor.resetDailyMetrics();
-    getStageGovernor().resetDailyProfit();
-    
-    res.json({
-      success: true,
-      message: 'Daily metrics reset',
-      metrics: riskGovernor.getMetrics(),
-      stageState: getStageGovernor().getState(),
-      timestamp: Date.now(),
-    });
-  } catch (error: any) {
-    log.error('Failed to reset daily metrics', { error: error?.message });
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to reset daily metrics',
-    });
-  }
+  res.status(501).json({
+    success: false,
+    error: 'Daily metric resets are not implemented by the active risk governor.',
+  });
 });
 
 export default router;

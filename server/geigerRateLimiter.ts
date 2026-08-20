@@ -7,7 +7,7 @@
  * 3. Operates in 3D: Time decay × Usage intensity × Provider health
  * 
  * FREE AI PROVIDERS (December 2025) - ALL EQUAL PRIORITY:
- * - Groq (llama-3.3-70b, mixtral-8x7b, gemma2-9b) - 30 RPM, 14.4K RPD
+ * - Groq (llama-3.3-70b, llama-4-scout, gemma2-9b) - 30 RPM, 14.4K RPD
  * - Google Gemini (gemini-1.5-flash, gemini-2.0-flash) - 15 RPM, 1500 RPD  
  * - Mistral (mistral-small-latest via La Plateforme free tier)
  * - Anthropic Claude (limited free tier via API)
@@ -74,7 +74,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     models: [
       'llama-3.3-70b-versatile',
       'llama-3.1-8b-instant',
-      'mixtral-8x7b-32768',
+      'meta-llama/llama-4-scout-17b-16e-instruct',
       'gemma2-9b-it',
       'qwen/qwen3-32b',
       'playai-tts',

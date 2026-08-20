@@ -128,7 +128,7 @@ export async function generateMistralLegalDocument(
     systemPrompt,
     maxTokens,
     temperature: 0.7,
-    model: 'mistral-large-latest', // Use large for legal work
+    model: 'mistral-small-latest', // FREE tier model
   });
   
   return content;
@@ -145,7 +145,7 @@ export async function generateMistralLegalConsultation(
     systemPrompt,
     maxTokens: 3000,
     temperature: 0.7,
-    model: 'mistral-large-latest',
+    model: 'mistral-small-latest', // FREE tier model
   });
   
   return content;

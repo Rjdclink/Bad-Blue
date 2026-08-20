@@ -49,7 +49,7 @@ export async function callClaude(
       : '';
     
     const response = await client.messages.create({
-      model: options.model || 'claude-3-5-haiku-20241022',
+      model: options.model || 'claude-haiku-4-5-20251001',
       max_tokens: options.maxTokens || 2000,
       temperature: options.temperature || 0.7,
       system: systemPrompt + jsonInstruction,
@@ -110,7 +110,7 @@ export async function generateClaudeLegalDocument(
     systemPrompt,
     maxTokens,
     temperature: 0.7,
-    model: 'claude-3-5-sonnet-20241022', // Use Sonnet for complex legal work
+    model: 'claude-sonnet-4-5-20250929', // Use Sonnet for complex legal work
   });
   
   return content;
@@ -127,7 +127,7 @@ export async function generateClaudeLegalConsultation(
     systemPrompt,
     maxTokens: 3000,
     temperature: 0.7,
-    model: 'claude-3-5-sonnet-20241022',
+    model: 'claude-sonnet-4-5-20250929',
   });
   
   return content;

@@ -16,6 +16,8 @@
 import { createLogger } from '../../logger';
 import { Domain, DomainFirewall } from './domain-firewall';
 import { CreativePromptEngine, CREATIVE_IGNITION_PROMPT } from './creative-prompt-engine';
+import { generateAutonomousText } from '../../aiProvider';
+import { TaskPriority } from '../../aiTokenGovernor';
 
 const log = createLogger('4JI-SubAgentCoordinator');
 
@@ -441,13 +443,23 @@ export class SubAgentCoordinator {
             modules: agent.operationalModules,
           });
 
-          // Simulated execution - real implementation would call actual modules
-          await new Promise(resolve => setTimeout(resolve, 100));
+          const payload = typeof enhancedPayload === 'string'
+            ? enhancedPayload
+            : JSON.stringify(enhancedPayload);
+          const response = await generateAutonomousText(
+            `4ji-${agent.id}-${task.type}`,
+            `You are the ${agent.name}. Complete the assigned ${task.type} task using your capabilities: ${agent.capabilities.join(', ')}.\n\nTask payload:\n${payload}`,
+            { temperature: agent.creativePromptEnabled ? 0.7 : 0.3 },
+            task.priority >= 8 ? TaskPriority.MEDIUM_BACKGROUND : TaskPriority.LOW_BACKGROUND
+          );
 
           task.result = {
             status: 'completed',
             agentId,
             taskType: task.type,
+            content: response.content,
+            provider: response.provider,
+            tokensUsed: response.tokensUsed,
             processedAt: new Date(),
           };
         }

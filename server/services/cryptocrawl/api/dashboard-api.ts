@@ -908,8 +908,8 @@ router.get('/stats', async (req, res) => {
       gaslessTransactions: engineStats.gaslessTransactions
     },
     zeroCapital: {
-      enabled: true,
-      mechanism: 'Flash Loan + MEV Bundle',
+      enabled: engineStats.isRunning,
+      mechanism: 'Verified RPC monitoring',
       capitalRequired: 'ZERO',
       currentOpportunities: engineStats.currentOpportunities
     }
@@ -918,21 +918,13 @@ router.get('/stats', async (req, res) => {
   res.json(response);
 });
 
-// GET /api/crypto/opportunities - Current opportunities
-router.get('/opportunities', async (req, res) => {
-  const opportunities = await pipeline.getCurrentOpportunities();
-  
+// GET /api/crypto/opportunities - Only verified quote-backed opportunities belong here.
+router.get('/opportunities', async (_req, res) => {
   res.json({
-    count: opportunities.length,
-    opportunities: opportunities.slice(0, 50).map(opp => ({
-      id: `${opp.asset}-${opp.chain}-${opp.timestamp}`,
-      asset: opp.asset,
-      chain: opp.chain,
-      profit: opp.profitEstimate,
-      successProbability: 0.85, // TODO: Calculate from historical data
-      tier: opp.priority > 70 ? 'A' : opp.priority > 40 ? 'B' : 'C',
-      age: Date.now() - opp.timestamp
-    }))
+    count: 0,
+    opportunities: [],
+    status: 'unavailable',
+    reason: 'No verified multi-venue quote source is configured.',
   });
 });
 
@@ -1151,17 +1143,17 @@ async function executeWithdrawal(amount: number, token: string, to: string, chai
   }
 }
 
-// Helper: Get trade history (STUB - Replace with database queries)
-async function getTradeHistory(limit: number) {
-  // TODO: Query from crypto_transactions table
-  console.warn('⚠️ STUB: getTradeHistory not yet implemented');
-  return Array(limit).fill(null).map((_, i) => ({
-    timestamp: Date.now() - i * 60000,
-    asset: 'USDC/USDT',
-    profit: Math.random() * 100,
-    success: Math.random() > 0.2,
-    txHash: '0x' + Math.random().toString(16).slice(2, 66)
-  }));
+// Trade results are not persisted yet; never manufacture financial activity.
+interface TradeHistoryRecord {
+  timestamp: number;
+  asset: string;
+  profit: number;
+  success: boolean;
+  txHash: string;
+}
+
+async function getTradeHistory(_limit: number): Promise<TradeHistoryRecord[]> {
+  return [];
 }
 
 export {router as dashboardApi, wss};

@@ -96,8 +96,8 @@ export const OPENROUTER_MODELS = {
   NVIDIA_NEMOTRON: 'nvidia/llama-3.1-nemotron-70b-instruct:free', // NVIDIA - Best: Nemotron 70B
   OPENAI_GPT4O: 'openai/gpt-4o-mini',                   // OpenAI - Best: GPT-4o Mini (cost-effective)
   MISTRAL_LARGE: 'mistralai/mistral-large-2411',        // Mistral - Best: Mistral Large
-  DEEPSEEK_R1: 'deepseek/deepseek-r1-0528:free',        // DeepSeek - Best: DeepSeek R1
-  ANTHROPIC_CLAUDE: 'anthropic/claude-3.5-sonnet',      // Anthropic - Best: Claude 3.5 Sonnet
+  DEEPSEEK_R1: 'tng/deepseek-r1t2-chimera:free',        // DeepSeek - Best free: R1T2 Chimera
+  ANTHROPIC_CLAUDE: 'anthropic/claude-sonnet-4.5',      // Anthropic - Best: Claude Sonnet 4.5
   PERPLEXITY_SONAR: 'perplexity/sonar-pro',             // Perplexity - Best: Sonar Pro (web-grounded)
   QWEN_72B: 'qwen/qwen-2.5-72b-instruct:free',          // Qwen (via OpenRouter) - Best: Qwen 2.5 72B
   CLOUDFLARE_LLAMA: 'cloudflare/llama-3.1-70b-instruct', // Cloudflare - Best: Llama 3.1 70B

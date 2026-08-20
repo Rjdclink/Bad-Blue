@@ -21,6 +21,7 @@ import express, { Request, Response } from 'express';
 import { logger } from '../logger';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
 import { lexaraSpeakTest } from '../lexara/LexaraTTSRouter';
+import { callAIWithFallback } from '../aiSubAgent';
 
 const router = express.Router();
 
@@ -31,6 +32,7 @@ const activeSessions = new Map<string, {
   lastActivity: Date;
   status: 'initializing' | 'active' | 'paused' | 'ended';
   persona: typeof LEXARA_KERNEL;
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
 }>();
 
 // Audio buffer for ASR processing
@@ -149,13 +151,36 @@ router.post('/respond', express.json(), async (req: Request, res: Response) => {
       sessionId,
     });
     
-    // In production, this would call your LLM (OpenAI, Anthropic, etc.)
-    // For now, generate a contextual legal response
-    const response = generateLegalResponse(text, persona);
+    const session = sessionId ? activeSessions.get(sessionId) : undefined;
+    const history = session?.messages
+      .slice(-10)
+      .map(message => `${message.role === 'user' ? 'User' : 'Lexara'}: ${message.content}`)
+      .join('\n');
+    const prompt = history ? `${history}\nUser: ${text}\nLexara:` : text;
+
+    const aiResponse = await callAIWithFallback(prompt, {
+      systemPrompt: persona.systemPrompt,
+      temperature: 0.7,
+      maxTokens: 1000,
+    });
+
+    if (!aiResponse.success || !aiResponse.content) {
+      throw new Error(aiResponse.error || 'No AI provider returned a response');
+    }
+
+    if (session) {
+      session.messages.push(
+        { role: 'user', content: text },
+        { role: 'assistant', content: aiResponse.content }
+      );
+      session.messages = session.messages.slice(-20);
+      session.lastActivity = new Date();
+    }
     
     return res.json({
       success: true,
-      response,
+      response: aiResponse.content,
+      model: aiResponse.model,
       persona: {
         name: persona.identity.name,
         timbre: persona.speech.timbre,
@@ -169,34 +194,6 @@ router.post('/respond', express.json(), async (req: Request, res: Response) => {
     });
   }
 });
-
-/**
- * Generate contextual legal response
- * In production, replace with actual LLM call
- */
-function generateLegalResponse(userText: string, persona: typeof LEXARA_KERNEL): string {
-  const lowerText = userText.toLowerCase();
-  
-  // Legal-specific responses
-  if (lowerText.includes('help') || lowerText.includes('what can you do')) {
-    return `I'm ${persona.identity.name}, your legal co-counsel. I can help you understand your legal rights, analyze your situation, and guide you through potential legal actions. What specific legal matter would you like to discuss?`;
-  }
-  
-  if (lowerText.includes('lawsuit') || lowerText.includes('sue')) {
-    return `I understand you're considering legal action. To properly assess your case, I'll need to understand the specifics of your situation, including when the incident occurred, what damages you've suffered, and the parties involved. Can you tell me more about what happened?`;
-  }
-  
-  if (lowerText.includes('rights') || lowerText.includes('violation')) {
-    return `Protecting your rights is important. Based on what you've shared, I can help identify potential violations and the legal remedies available to you. What specific rights do you believe have been violated?`;
-  }
-  
-  if (lowerText.includes('police') || lowerText.includes('officer') || lowerText.includes('misconduct')) {
-    return `Police misconduct is a serious matter. I can help you understand your options, which may include filing a complaint, seeking civil remedies, or pursuing criminal charges against the officers involved. Can you describe the specific incident?`;
-  }
-  
-  // Default contextual response
-  return `I'm listening carefully. Based on what you've shared, I'd like to understand more about your situation to provide the most relevant legal guidance. Could you provide more details about the specific circumstances?`;
-}
 
 /**
  * POST /api/lexara/audio-chunk
@@ -343,6 +340,7 @@ router.get('/stream', (req: Request, res: Response) => {
     lastActivity: new Date(),
     status: 'active',
     persona,
+    messages: [],
   });
   
   // Initialize audio buffer for this session

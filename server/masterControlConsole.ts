@@ -700,14 +700,35 @@ Be precise and accurate. Consider the task complexity and what AI capabilities a
         await badblueWorker.runManualDiagnostic();
         return { action: 'security_check_completed' };
         
-      default:
-        // Default: use AI for analysis
+      default: {
+        // Default: score real candidate providers, then run the winner through the
+        // collaboration orchestrator, falling back to the governor if that fails.
+        const prompt = `Execute this task: ${task.description}\n\nContext: ${directive.intent}`;
+        const attrs: TaskAttributes = { complexity: TaskComplexity.MODERATE, priority: TaskPriority.MEDIUM, context: UsageContext.AUTONOMOUS };
+        const best = AIModelSelector.getBestProvider(attrs, [AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE]);
+        const provider = best?.provider ?? AIProvider.GROQ;
+
+        try {
+          const collabResult = await AICollaborationOrchestrator.executeQuick(
+            `mcc-worker-${task.id}`,
+            prompt,
+            provider,
+            attrs
+          );
+          if (collabResult.success && collabResult.content) {
+            return { success: true, content: collabResult.content };
+          }
+        } catch (error) {
+          logger.warn(`[MCC] Collaboration orchestrator failed for ${task.id}, falling back to governor`, error);
+        }
+
         const aiResult = await callAIWithGovernor(
           `mcc-worker-${task.id}`,
-          `Execute this task: ${task.description}\n\nContext: ${directive.intent}`,
+          prompt,
           { temperature: 0.3 }
         );
         return aiResult;
+      }
     }
     
     return { action: 'task_completed' };

@@ -220,7 +220,7 @@ class MasterPipeline {
       let gasGwei: number | undefined;
       try {
         const gp = await gasOracle.getGasPrice(opp.chain as any);
-        gasGwei = gp.gwei;
+        gasGwei = gp.gweiPrice;
       } catch {
         gasGwei = undefined;
       }

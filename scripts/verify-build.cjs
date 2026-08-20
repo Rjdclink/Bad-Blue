@@ -9,7 +9,23 @@
  * Catches build issues early before Railway tries to start the server.
  */
 
-console.log('[Verify Build] Script temporarily disabled');
+const fs = require('fs');
+const path = require('path');
+
+const projectRoot = path.resolve(__dirname, '..');
+const requiredFiles = [
+  'dist/index.js',
+  'dist/peopleSearchWorker.js',
+  'dist/public/index.html',
+];
+
+const missing = requiredFiles.filter((file) => !fs.existsSync(path.join(projectRoot, file)));
+if (missing.length > 0) {
+  console.error(`[Verify Build] Missing required build output: ${missing.join(', ')}`);
+  process.exit(1);
+}
+
+console.log('[Verify Build] Required server, worker, and frontend artifacts are present');
 process.exit(0);
 
 /*

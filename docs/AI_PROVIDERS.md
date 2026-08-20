@@ -282,13 +282,13 @@ model: 'llama-3.1-8b-instant'
 - **Best for**: Real-time chat, quick answers
 - **Rate Limit**: 30 requests/minute
 
-#### 3.3 Mixtral 8x7B
+#### 3.3 Llama 4 Scout (replaces decommissioned Mixtral 8x7B)
 ```typescript
-model: 'mixtral-8x7b-32768'
+model: 'meta-llama/llama-4-scout-17b-16e-instruct'
 ```
-- **Context**: 32K tokens
-- **Strengths**: Mixture of experts, efficient
-- **Best for**: General purpose, code generation
+- **Context**: 128K tokens
+- **Strengths**: Mixture-of-experts, long context, multimodal
+- **Best for**: General purpose, code generation, long-context tasks
 - **Rate Limit**: 30 requests/minute
 
 #### 3.4 Gemma2 9B

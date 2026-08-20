@@ -17,7 +17,27 @@ export * from './kill-switch';
 export * from './composer-interface';
 export * from './profit-ladder';
 export * from './governance';
-export * from './stage-governor';
+export {
+  getStageGovernor,
+  PROFIT_LADDER,
+  StageGovernor,
+  type AdvisoryCycleResult,
+  type ArbitragePath,
+  type MonteCarloValidation,
+  type ProfitLadderTier,
+  type Recommendation,
+  type RiskFactor,
+  type SignalAnalysis,
+  type StageNumber,
+  type StageRequirement,
+  type StageStatus,
+  type SystemMode,
+  type UnpauseRequest,
+  type StageConfig as AutonomyStageConfig,
+  type StageState as AutonomyStageState,
+  type RiskAssessment as AutonomyRiskAssessment,
+  STAGE_CONFIGS as AUTONOMY_STAGE_CONFIGS,
+} from './stage-governor';
 
   
 import { stageManager } from './stage-management';

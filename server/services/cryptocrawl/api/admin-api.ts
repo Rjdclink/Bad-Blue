@@ -367,7 +367,7 @@ router.post('/start', async (req, res) => {
     // Enable CryptoCrawl services
     await cryptoCrawlState.enable();
     
-    // Start Zero-Capital Engine (TRUE zero upfront capital)
+    // Start provider-backed, read-only on-chain monitoring.
     await zeroCapitalEngine.start();
     
     // Only mark as running after successful service enablement
@@ -381,13 +381,13 @@ router.post('/start', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Zero-Capital Arbitrage System started',
+      message: 'On-chain monitoring started',
       startedAt: new Date(systemState.startedAt).toISOString(),
       status: cryptoCrawlState.getStatus(),
-      zeroCapital: {
-        enabled: true,
-        capitalRequired: 'ZERO',
-        mechanism: 'Flash Loan + MEV Bundle'
+      monitoring: {
+        enabled: zeroCapitalEngine.getState().isRunning,
+        executionEnabled: false,
+        mechanism: 'Verified RPC monitoring',
       }
     });
   } catch (error: any) {

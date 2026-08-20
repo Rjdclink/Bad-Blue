@@ -16,7 +16,7 @@
  * GROQ SELECTION:
  * - llama-3.3-70b-versatile (fast inference)
  * - llama-3.1-8b-instant (ultra-fast)
- * - mixtral-8x7b-32768 (long context)
+ * - meta-llama/llama-4-scout-17b-16e-instruct (long context, replaces decommissioned mixtral-8x7b-32768)
  * 
  * MISTRAL SELECTION:
  * - mistral-large-latest (complex tasks)
@@ -291,22 +291,23 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     costEfficiency: 100,
     dailyCapacity: 100,
   },
-  'mixtral-8x7b-32768': {
-    multimodal: 25,
-    longContext: 70,
-    massiveContext: 45,
-    structuredOutput: 78,
-    codeGeneration: 75,
-    creativeWriting: 72,
-    reasoning: 80,
-    speed: 92,
-    verification: 72,
-    legalAnalysis: 65,
-    imageAnalysis: 25,
-    patternRecognition: 75,
-    dataExtraction: 72,
-    searchGrounding: 38,
-    costEfficiency: 95,
+  // Mixtral 8x7B was decommissioned by Groq; replaced with Llama 4 Scout for long-context tasks
+  'meta-llama/llama-4-scout-17b-16e-instruct': {
+    multimodal: 60,
+    longContext: 95,
+    massiveContext: 90,
+    structuredOutput: 82,
+    codeGeneration: 80,
+    creativeWriting: 75,
+    reasoning: 85,
+    speed: 90,
+    verification: 75,
+    legalAnalysis: 72,
+    imageAnalysis: 55,
+    patternRecognition: 80,
+    dataExtraction: 78,
+    searchGrounding: 40,
+    costEfficiency: 100,
     dailyCapacity: 100,
   },
   // Groq Qwen model

@@ -97,7 +97,7 @@ interface Opportunity {
   asset: string;
   chain: string;
   profit: number;
-  successProbability: number;
+  successProbability: number | null;
   tier: string;
   age: number;
 }
@@ -1470,7 +1470,11 @@ export default function CryptoCrawlerDashboard() {
                         </div>
                         <div className="text-right">
                           <p className="text-green-400 font-bold">${opp.profit.toFixed(2)}</p>
-                          <p className="text-sm text-gray-400">{(opp.successProbability * 100).toFixed(0)}% success</p>
+                          <p className="text-sm text-gray-400">
+                            {opp.successProbability === null
+                              ? 'Unverified'
+                              : `${(opp.successProbability * 100).toFixed(0)}% success`}
+                          </p>
                         </div>
                       </div>
                     ))}

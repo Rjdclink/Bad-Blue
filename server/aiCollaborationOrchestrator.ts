@@ -18,8 +18,10 @@
  * - GPT-5 Mini for fast inference and pattern recognition
  */
 
-import { AIProvider, UsageContext } from './aiTokenGovernor';
+import { AIProvider, UsageContext, TaskPriority as GovernorTaskPriority, TaskComplexity as GovernorTaskComplexity } from './aiTokenGovernor';
 import { AIModelSelector, TaskAttributes, TaskComplexity, TaskPriority } from './aiModelSelector';
+import { runProvider, type AITaskMetadata } from './aiProvider';
+import { deepSeekSearch, qwenSearch, grokSearch, kimiSearch } from './openRouterService';
 
 /**
  * Collaboration task definition
@@ -722,31 +724,95 @@ export class AICollaborationOrchestrator {
       }
     }
     
-    // TODO: Production Integration Required
-    // This method returns placeholder data. To enable actual AI provider responses:
-    // 1. Import provider functions from respective service files
-    // 2. Switch on task.provider to call appropriate service
-    // 3. Handle token counting and latency tracking
-    // 
-    // Example integration:
-    // switch (task.provider) {
-    //   case AIProvider.GEMINI:
-    //     const response = await callGemini(prompt, { model: task.model });
-    //     return { content: response, tokensUsed: estimatedTokens, ... };
-    //   case AIProvider.CLAUDE:
-    //     const { content, tokensUsed } = await callClaude(prompt, { model: task.model });
-    //     return { content, tokensUsed, ... };
-    //   // ... other providers
-    // }
+    // Dispatch to the real AI provider backing this task.
+    // AITaskMetadata uses a different TaskPriority enum than aiModelSelector's TaskAttributes,
+    // so priority is mapped rather than passed through directly.
+    const priorityMap: Record<TaskPriority, GovernorTaskPriority> = {
+      [TaskPriority.LOW]: GovernorTaskPriority.LOW_BACKGROUND,
+      [TaskPriority.MEDIUM]: GovernorTaskPriority.MEDIUM_BACKGROUND,
+      [TaskPriority.HIGH]: GovernorTaskPriority.HIGH_USER,
+      [TaskPriority.CRITICAL]: GovernorTaskPriority.CRITICAL_USER,
+    };
+    const taskMetadata: AITaskMetadata = {
+      taskName: task.id,
+      priority: priorityMap[task.attributes.priority] ?? GovernorTaskPriority.MEDIUM_BACKGROUND,
+      complexity: task.attributes.complexity as unknown as GovernorTaskComplexity,
+      isUserFacing: task.attributes.context !== UsageContext.AUTONOMOUS,
+      allowDeferral: false,
+      context: task.attributes.context ?? UsageContext.USER,
+    };
+
+    let content = '';
+    let tokensUsed = 0;
+    let success = true;
+
+    try {
+      switch (task.provider) {
+        case AIProvider.GEMINI:
+        case AIProvider.GROQ:
+        case AIProvider.MISTRAL:
+        case AIProvider.CLAUDE: {
+          const response = await runProvider(task.provider, prompt, { model: task.model }, task.timeout ? Math.min(task.timeout, 4000) : 2000, taskMetadata);
+          content = response.content;
+          tokensUsed = response.tokensUsed;
+          break;
+        }
+        case AIProvider.CLAUDE_OPUS: {
+          // Claude Opus shares the Claude API, just with a more capable model id
+          const response = await runProvider(AIProvider.CLAUDE, prompt, { model: task.model }, 2000, taskMetadata);
+          content = response.content;
+          tokensUsed = response.tokensUsed;
+          break;
+        }
+        case AIProvider.DEEPSEEK: {
+          const result = await deepSeekSearch(prompt);
+          content = result?.content || '';
+          break;
+        }
+        case AIProvider.QWEN: {
+          const result = await qwenSearch(prompt);
+          content = result?.content || '';
+          break;
+        }
+        case AIProvider.GROK: {
+          const result = await grokSearch(prompt);
+          content = result?.content || '';
+          break;
+        }
+        case AIProvider.KIMI: {
+          const result = await kimiSearch(prompt);
+          content = result?.content || '';
+          break;
+        }
+        default: {
+          // No real integration exists for this provider (e.g. Falcon, GPT-OSS, Code Llama).
+          // Degrade to Groq rather than fabricating a response.
+          console.warn(`[AI Collaboration] No integration for provider "${task.provider}", falling back to Groq`);
+          const response = await runProvider(AIProvider.GROQ, prompt, {}, 2000, taskMetadata);
+          content = response.content;
+          tokensUsed = response.tokensUsed;
+          break;
+        }
+      }
+
+      if (!content) {
+        success = false;
+        content = `[${task.provider}] returned an empty response`;
+      }
+    } catch (error: any) {
+      success = false;
+      content = `[${task.provider}] error: ${error?.message || 'Unknown error'}`;
+    }
+
     const result: CollaborationResult = {
       taskId: task.id,
       provider: task.provider,
       model: task.model,
       role: task.role,
-      content: `[Orchestrator: Task ${task.id} ready for execution with ${task.provider}]`,
-      tokensUsed: 0,
+      content,
+      tokensUsed,
       latencyMs: Date.now() - startTime,
-      success: true,
+      success,
     };
     
     return result;
@@ -793,9 +859,9 @@ export class AICollaborationOrchestrator {
       case AIProvider.GEMINI:
         return 'gemini-2.5-pro';
       case AIProvider.CLAUDE:
-        return 'claude-3-5-haiku-20241022';
+        return 'claude-haiku-4-5-20251001';
       case AIProvider.CLAUDE_OPUS:
-        return 'claude-4-5-opus';
+        return 'claude-opus-4-1-20250805';
       case AIProvider.GROQ:
         return 'llama-3.3-70b-versatile';
       case AIProvider.MISTRAL:

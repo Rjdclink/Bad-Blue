@@ -67,8 +67,8 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
  */
 export const WEB_SEARCH_MODELS = {
   QWEN_2_5_72B: 'qwen/qwen-2.5-72b-instruct:free',
-  DEEPSEEK_R1: 'deepseek/deepseek-r1-0528:free',
-  LLAMA_3_3_70B: 'meta-llama/llama-3.3-70b-instruct:free',
+  DEEPSEEK_R1: 'tng/deepseek-r1t2-chimera:free',
+  LLAMA_3_3_70B: 'meta-llama/llama-4-maverick:free',
   GEMMA_2_9B: 'google/gemma-2-9b-it:free',
   PHI_4: 'microsoft/phi-4:free',
   MISTRAL_7B: 'mistralai/mistral-7b-instruct:free',

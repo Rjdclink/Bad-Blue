@@ -1,15 +1,14 @@
 /**
  * Unified Web Search Service
- * OpenRouter 3-Model Orchestrated Web Search (Primary) with Zero-API Fallback
- * 
- * Primary: OpenRouter 3-model orchestration system (December 2025):
- *   - Qwen 2.5 72B (qwen/qwen-2.5-72b-instruct:free) - Multilingual reasoning
- *   - DeepSeek R1 (deepseek/deepseek-r1-0528:free) - Advanced reasoning
- *   - Meta Llama 3.3 70B (meta-llama/llama-3.3-70b-instruct:free) - General purpose
- *   - Parallel execution with orchestrated aggregation via openRouterWebSearch.ts
- * 
- * Fallback 1: Gemini AI grounding (when OpenRouter unavailable)
- * 
+ * PANTHEON Crawler Orchestrator (Primary) with OpenRouter and Zero-API Fallbacks
+ *
+ * Primary: PANTHEON crawler orchestrator (server/services/pantheonCrawlerOrchestrator.ts)
+ *   - Real-world crawling (StarTrek, BirdOfPrey, and other PANTHEON crawlers)
+ *   - Operates independently of any AI provider (Zero-API capable)
+ *
+ * Fallback 1: OpenRouter 8-model free-tier orchestration (server/openRouterWebSearch.ts)
+ *   - Used when the crawler is unavailable or fails
+ *
  * Fallback 2: ZERO-API Mode (when no external APIs configured)
  *   - Local knowledge base with legal expertise
  *   - Pattern matching and template-based responses
@@ -23,6 +22,7 @@
  */
 
 import { canActivatePantheon, pantheonOrchestrator, type CrawlerResult } from './services/pantheonCrawlerOrchestrator';
+import { orchestratedWebSearch, isOpenRouterWebSearchAvailable } from './openRouterWebSearch';
 
 const WEB_SEARCH_ENABLED = process.env.WEB_SEARCH_ENABLED !== 'false';
 
@@ -78,6 +78,10 @@ export function getSearchStatus(): Record<string, { available: boolean; error?: 
     crawler: {
       available: WEB_SEARCH_ENABLED && canActivatePantheon().available && !isCircuitOpen('pantheon'),
       error: circuitBreaker.pantheon?.errorMessage,
+    },
+    openRouterFallback: {
+      available: WEB_SEARCH_ENABLED && isOpenRouterWebSearchAvailable() && !isCircuitOpen('openrouter-websearch'),
+      error: circuitBreaker['openrouter-websearch']?.errorMessage,
     },
   };
 }
@@ -164,9 +168,9 @@ export async function geminiSearch(
 }
 
 /**
- * Unified search using OpenRouter 3-model orchestration (PRIMARY)
- * REAL-WORLD MODE:
- * - CRAWLER ONLY: uses PANTHEON crawler orchestrator to pull from predefined sources.
+ * Unified search using the PANTHEON crawler orchestrator (PRIMARY),
+ * falling back to OpenRouter's free-tier model orchestration when the crawler
+ * is unavailable or fails.
  */
 export async function unifiedSearch(
   query: string,
@@ -177,13 +181,15 @@ export async function unifiedSearch(
   }
 
   // Basic circuit breaker for crawler failures
-  if (isCircuitOpen('pantheon')) {
-    throw new Error('PANTHEON crawler circuit open (temporarily disabled due to failures)');
-  }
-
   const pantheonAvailability = canActivatePantheon();
-  if (!pantheonAvailability.available) {
-    throw new Error(pantheonAvailability.reason || 'PANTHEON crawler unavailable');
+  const pantheonUsable = !isCircuitOpen('pantheon') && pantheonAvailability.available;
+
+  if (!pantheonUsable) {
+    return fallbackToOpenRouterSearch(
+      query,
+      options,
+      pantheonAvailability.reason || 'PANTHEON crawler circuit open (temporarily disabled due to failures)'
+    );
   }
 
   try {
@@ -227,7 +233,40 @@ export async function unifiedSearch(
     });
   } catch (error: any) {
     recordFailure('pantheon', error?.message || 'Unknown error');
-    throw error;
+    return fallbackToOpenRouterSearch(query, options, error?.message || 'Unknown crawler error');
+  }
+}
+
+/**
+ * Fallback search using OpenRouter's 8-model free-tier orchestration.
+ * Used when the PANTHEON crawler is unavailable or fails.
+ */
+async function fallbackToOpenRouterSearch(
+  query: string,
+  options: SearchOptions,
+  crawlerFailureReason: string
+): Promise<EnhancedSearchResult[]> {
+  if (!isOpenRouterWebSearchAvailable()) {
+    throw new Error(`PANTHEON crawler unavailable (${crawlerFailureReason}) and OpenRouter fallback not configured (missing OPENROUTER_API_KEY)`);
+  }
+
+  try {
+    const searchResult = await orchestratedWebSearch(query, { timeout: options.timeout });
+    recordSuccess('openrouter-websearch');
+
+    return [{
+      title: `Web Search: ${query.substring(0, 60)}`,
+      url: searchResult.sources[0] || '',
+      snippet: searchResult.aggregatedAnswer.slice(0, 500),
+      source: 'combined',
+      aiSummary: searchResult.aggregatedAnswer,
+      reliability: searchResult.confidence >= 0.85 ? 'high' : searchResult.confidence >= 0.7 ? 'medium' : 'low',
+      relevanceScore: Math.round(searchResult.confidence * 100),
+      metadata: { sources: searchResult.sources, modelResults: searchResult.results.length },
+    }];
+  } catch (error: any) {
+    recordFailure('openrouter-websearch', error?.message || 'Unknown error');
+    throw new Error(`PANTHEON crawler unavailable (${crawlerFailureReason}) and OpenRouter fallback failed: ${error?.message || 'Unknown error'}`);
   }
 }
 

@@ -69,29 +69,29 @@ else
   ((FAILED++))
 fi
 
-# Check railway.json
-echo -e "\n🚂 Checking railway.json..."
-if [ -f "railway.json" ]; then
-  if grep -q '"nodeVersion": "20"' railway.json; then
-    echo -e "${GREEN}✅ railway.json configured for Node 20${NC}"
+# Check Railway configuration
+echo -e "\n🚂 Checking Railway configuration..."
+if [ -f "railway.toml" ]; then
+  if grep -q 'builder = "DOCKERFILE"' railway.toml; then
+    echo -e "${GREEN}✅ railway.toml uses the Dockerfile deployment path${NC}"
     ((PASSED++))
   else
-    echo -e "${YELLOW}⚠️  railway.json exists but Node version not set to 20${NC}"
-    ((WARNINGS++))
+    echo -e "${RED}❌ railway.toml does not select the Dockerfile builder${NC}"
+    ((FAILED++))
   fi
 else
-  echo -e "${YELLOW}⚠️  railway.json not found (optional)${NC}"
-  ((WARNINGS++))
+  echo -e "${RED}❌ railway.toml not found${NC}"
+  ((FAILED++))
 fi
 
-# Check TypeScript compilation
-echo -e "\n🔨 Checking TypeScript compilation..."
-if npm run check > /dev/null 2>&1; then
-  echo -e "${GREEN}✅ TypeScript compilation successful${NC}"
+# Check the deployable production artifact.
+echo -e "\n🔨 Building production artifact..."
+if npm run build > /dev/null 2>&1; then
+  echo -e "${GREEN}✅ Production build successful${NC}"
   ((PASSED++))
 else
-  echo -e "${RED}❌ TypeScript compilation failed${NC}"
-  echo -e "${YELLOW}   Run 'npm run check' to see errors${NC}"
+  echo -e "${RED}❌ Production build failed${NC}"
+  echo -e "${YELLOW}   Run 'npm run build' to see errors${NC}"
   ((FAILED++))
 fi
 

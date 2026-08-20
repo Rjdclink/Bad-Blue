@@ -30,8 +30,36 @@
 import { createLogger } from '../../logger';
 import { DomainFirewall, Domain } from './domain-firewall';
 import { AIProvider, TaskPriority } from '../../aiTokenGovernor';
+import { generateUserText } from '../../aiProvider';
 
 const log = createLogger('LegalWhat-Orchestrator');
+
+function parseConsultationResponse(content: string): Omit<LegalConsultationResult, 'requestId' | 'processingTime'> {
+  const normalized = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+
+  try {
+    const parsed = JSON.parse(normalized) as Partial<LegalConsultationResult>;
+    return {
+      analysis: typeof parsed.analysis === 'string' ? parsed.analysis : content,
+      causesOfAction: Array.isArray(parsed.causesOfAction) ? parsed.causesOfAction.filter((item): item is string => typeof item === 'string') : [],
+      missingElements: Array.isArray(parsed.missingElements) ? parsed.missingElements.filter((item): item is string => typeof item === 'string') : [],
+      nextSteps: Array.isArray(parsed.nextSteps) ? parsed.nextSteps.filter((item): item is string => typeof item === 'string') : [],
+      citations: Array.isArray(parsed.citations) ? parsed.citations.filter((item): item is string => typeof item === 'string') : [],
+      confidenceLevel: typeof parsed.confidenceLevel === 'number' ? Math.max(0, Math.min(parsed.confidenceLevel, 1)) : 0.5,
+      modelsUsed: Array.isArray(parsed.modelsUsed) ? parsed.modelsUsed.filter((item): item is string => typeof item === 'string') : [],
+    };
+  } catch {
+    return {
+      analysis: content,
+      causesOfAction: [],
+      missingElements: [],
+      nextSteps: [],
+      citations: [],
+      confidenceLevel: 0.5,
+      modelsUsed: [],
+    };
+  }
+}
 
 /**
  * LegalWhat system status
@@ -450,10 +478,10 @@ export class LegalWhatOrchestrator {
     });
 
     try {
-      const result = await DomainFirewall.executeInDomain(
+      await DomainFirewall.executeInDomain(
         Domain.LEGAL_WHAT,
         'processConsultation',
-        async (context) => {
+        async () => {
           // Update sub-agent activity
           const researchAgent = this.subAgents.get('legal-research');
           if (researchAgent) {
@@ -467,18 +495,24 @@ export class LegalWhatOrchestrator {
             timestamp: new Date(),
           });
 
-          // Simulated consultation processing
-          return {
-            analysis: `Legal analysis for ${request.lawType} in ${request.jurisdiction}`,
-            causesOfAction: ['Civil rights violation', 'Negligence'],
-            missingElements: [],
-            nextSteps: ['Gather evidence', 'File complaint'],
-            citations: [],
-            confidenceLevel: 0.92,
-            modelsUsed: ['claude-3.5-sonnet', 'gemini-2.5-flash'],
-          };
         }
       );
+
+      const prompt = `Analyze this legal consultation request. Return only JSON with the fields analysis, causesOfAction, missingElements, nextSteps, citations, and confidenceLevel (0 to 1).
+
+Situation: ${request.situation}
+Law type: ${request.lawType}
+Jurisdiction: ${request.jurisdiction}
+Urgency: ${request.urgency}
+Additional context: ${JSON.stringify(request.additionalContext ?? {})}`;
+      const aiResponse = await generateUserText(
+        `legal-consultation-${request.id}`,
+        prompt,
+        { useJSON: true, temperature: 0.2 },
+        request.urgency === 'emergency' ? TaskPriority.CRITICAL_USER : TaskPriority.HIGH_USER
+      );
+      const result = parseConsultationResponse(aiResponse.content);
+      result.modelsUsed = [aiResponse.provider];
 
       this.metrics.successfulConsultations++;
 
@@ -527,12 +561,20 @@ export class LegalWhatOrchestrator {
           draftingAgent.lastActivity = new Date();
         }
 
+        const response = await generateUserText(
+          `legal-document-${documentType}`,
+          `Create a complete ${documentType} using the following case data. Use professional legal formatting and do not invent facts.\n\n${JSON.stringify(templateData)}`,
+          { temperature: 0.2 },
+          TaskPriority.HIGH_USER
+        );
+
         return {
-          document: `[Generated ${documentType}]`,
+          document: response.content,
           metadata: {
             type: documentType,
             generatedAt: new Date(),
-            wordsCount: 0,
+            wordsCount: response.content.trim() ? response.content.trim().split(/\s+/).length : 0,
+            provider: response.provider,
           },
         };
       }
@@ -553,9 +595,19 @@ export class LegalWhatOrchestrator {
       async () => {
         this.metrics.evidenceAnalyzed++;
 
+        const response = await generateUserText(
+          'legal-evidence-analysis',
+          `Analyze this evidence for relevance, reliability, corroboration needs, and legal significance. Return only JSON with analysis and strength (a number from 0 to 1).\n\nEvidence:\n${JSON.stringify(evidenceData)}`,
+          { useJSON: true, temperature: 0.2 },
+          TaskPriority.HIGH_USER
+        );
+
+        const parsed = parseConsultationResponse(response.content);
+        const strengthMatch = response.content.match(/"strength"\s*:\s*(0(?:\.\d+)?|1(?:\.0+)?)/i);
+
         return {
-          analysis: '[Evidence analysis result]',
-          strength: 0.85,
+          analysis: parsed.analysis,
+          strength: strengthMatch ? Math.max(0, Math.min(Number(strengthMatch[1]), 1)) : 0.5,
         };
       }
     );

@@ -141,8 +141,8 @@ export const AI_MODELS: AIModel[] = [
     priority: 3
   },
   {
-    id: 'groq-mixtral',
-    name: 'Groq Mixtral',
+    id: 'groq-llama-4-scout',
+    name: 'Groq Llama 4 Scout',
     provider: 'groq',
     roles: ['coding', 'inference'],
     maxTokens: 4096,

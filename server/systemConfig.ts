@@ -264,7 +264,7 @@ export const AI_MODELS: Record<string, AIModelConfig> = {
   // Primary models for user interactions
   'gemini-pro': {
     provider: 'google',
-    model: 'gemini-1.5-pro',
+    model: 'gemini-2.5-pro',
     contextLength: 1000000,
     costPer1kTokens: 0.00125,
     capabilities: ['chat', 'analysis', 'coding', 'vision'],
@@ -288,9 +288,9 @@ export const AI_MODELS: Record<string, AIModelConfig> = {
   // OpenRouter fallbacks
   'deepseek-r1': {
     provider: 'openrouter',
-    model: 'deepseek/deepseek-r1',
-    contextLength: 64000,
-    costPer1kTokens: 0.0005,
+    model: 'tng/deepseek-r1t2-chimera:free',
+    contextLength: 164000,
+    costPer1kTokens: 0,
     capabilities: ['chat', 'reasoning'],
     rateLimit: 50, // RPD
   },

@@ -25,7 +25,9 @@
 
 import { createLogger } from '../../logger';
 import { DomainFirewall, Domain } from './domain-firewall';
-import { AIProvider, TaskPriority, UsageContext } from '../../aiTokenGovernor';
+import { AIProvider, TaskComplexity, TaskPriority, UsageContext, type AITaskMetadata } from '../../aiTokenGovernor';
+import { runProvider } from '../../aiProvider';
+import { deepSeekSearch, grokSearch, kimiSearch, qwenSearch } from '../../openRouterService';
 
 const log = createLogger('4JI-Orchestrator');
 
@@ -227,8 +229,8 @@ export class ForgeAI {
       
       // Claude models
       {
-        id: 'claude-4.5-opus',
-        name: 'Claude 4.5 Opus',
+        id: 'claude-opus-4-1-20250805',
+        name: 'Claude Opus 4.1',
         provider: AIProvider.CLAUDE_OPUS,
         capabilities: ['reasoning', 'legal-analysis', 'creative-writing', 'orchestration', 'long-context'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -238,8 +240,8 @@ export class ForgeAI {
         contextWindow: 200000,
       },
       {
-        id: 'claude-3.5-sonnet',
-        name: 'Claude 3.5 Sonnet',
+        id: 'claude-sonnet-4-5-20250929',
+        name: 'Claude Sonnet 4.5',
         provider: AIProvider.CLAUDE,
         capabilities: ['reasoning', 'legal-analysis', 'document-generation', 'verification'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -249,8 +251,8 @@ export class ForgeAI {
         contextWindow: 200000,
       },
       {
-        id: 'claude-3.5-haiku',
-        name: 'Claude 3.5 Haiku',
+        id: 'claude-haiku-4-5-20251001',
+        name: 'Claude Haiku 4.5',
         provider: AIProvider.CLAUDE,
         capabilities: ['fast-inference', 'verification', 'data-extraction'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -262,7 +264,7 @@ export class ForgeAI {
       
       // Groq models (autonomous priority)
       {
-        id: 'llama-3.3-70b',
+        id: 'llama-3.3-70b-versatile',
         name: 'LLaMA 3.3 70B Versatile',
         provider: AIProvider.GROQ,
         capabilities: ['reasoning', 'coding', 'fast-inference', 'research'],
@@ -273,7 +275,7 @@ export class ForgeAI {
         contextWindow: 131072,
       },
       {
-        id: 'llama-3.1-8b',
+        id: 'llama-3.1-8b-instant',
         name: 'LLaMA 3.1 8B Instant',
         provider: AIProvider.GROQ,
         capabilities: ['fast-inference', 'data-extraction'],
@@ -286,24 +288,13 @@ export class ForgeAI {
       
       // Mistral models
       {
-        id: 'mistral-large',
-        name: 'Mistral Large Latest',
-        provider: AIProvider.MISTRAL,
-        capabilities: ['reasoning', 'coding', 'legal-analysis'],
-        domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
-        maxTokens: 32768,
-        costTier: 'medium',
-        speedTier: 'medium',
-        contextWindow: 128000,
-      },
-      {
-        id: 'mistral-small',
+        id: 'mistral-small-latest',
         name: 'Mistral Small Latest',
         provider: AIProvider.MISTRAL,
-        capabilities: ['fast-inference', 'data-extraction', 'verification'],
+        capabilities: ['reasoning', 'coding', 'legal-analysis', 'fast-inference', 'data-extraction', 'verification'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
         maxTokens: 8192,
-        costTier: 'low',
+        costTier: 'free',
         speedTier: 'fast',
         contextWindow: 128000,
       },
@@ -375,7 +366,7 @@ export class ForgeAI {
       
       // Specialized: Crypto Crawler only
       {
-        id: 'trading-ai',
+        id: 'llama-3.3-70b-versatile',
         name: 'Trading AI Specialist',
         provider: AIProvider.GROQ,
         capabilities: ['trading-analysis', 'market-prediction', 'pattern-recognition'],
@@ -532,7 +523,6 @@ export class ForgeAI {
             timestamp: new Date(),
           });
 
-          // Simulated execution (would call actual AI providers)
           const executionResult = await this.executeWithModels(task, selectedModels);
           
           return executionResult;
@@ -638,20 +628,81 @@ export class ForgeAI {
       throw new Error(`No suitable models found for task ${task.id} with capabilities: ${task.requiredCapabilities.join(', ')}`);
     }
 
-    // Use primary model for now (could implement parallel execution)
     const primaryModel = models[0];
-
-    // Placeholder - actual implementation would call the AI provider
     log.debug('Executing with model', {
       taskId: task.id,
       model: primaryModel.id,
     });
 
+    const taskMetadata: AITaskMetadata = {
+      taskName: `forge-${task.type}`,
+      priority: task.priority,
+      complexity: task.requiredCapabilities.includes('reasoning') || task.requiredCapabilities.includes('legal-analysis')
+        ? TaskComplexity.COMPREHENSIVE
+        : TaskComplexity.MODERATE,
+      isUserFacing: task.priority >= TaskPriority.HIGH_USER,
+      allowDeferral: false,
+      context: task.priority >= TaskPriority.HIGH_USER ? UsageContext.USER : UsageContext.AUTONOMOUS,
+    };
+
+    const maxTokens = Math.min(task.maxTokens ?? primaryModel.maxTokens, primaryModel.maxTokens);
+    const options = {
+      model: primaryModel.id,
+      systemPrompt: task.systemPrompt,
+      temperature: task.temperature,
+    };
+
+    let content = '';
+    let tokensUsed = 0;
+
+    switch (primaryModel.provider) {
+      case AIProvider.GEMINI:
+      case AIProvider.GROQ:
+      case AIProvider.MISTRAL:
+      case AIProvider.CLAUDE: {
+        const response = await runProvider(primaryModel.provider, task.prompt, options, maxTokens, taskMetadata);
+        content = response.content;
+        tokensUsed = response.tokensUsed;
+        break;
+      }
+      case AIProvider.CLAUDE_OPUS: {
+        const response = await runProvider(AIProvider.CLAUDE, task.prompt, options, maxTokens, taskMetadata);
+        content = response.content;
+        tokensUsed = response.tokensUsed;
+        break;
+      }
+      case AIProvider.DEEPSEEK:
+        content = (await deepSeekSearch(task.prompt))?.content ?? '';
+        break;
+      case AIProvider.QWEN:
+        content = (await qwenSearch(task.prompt))?.content ?? '';
+        break;
+      case AIProvider.GROK:
+        content = (await grokSearch(task.prompt))?.content ?? '';
+        break;
+      case AIProvider.KIMI:
+        content = (await kimiSearch(task.prompt))?.content ?? '';
+        break;
+      default: {
+        log.warn('Provider does not have a dedicated integration; using Groq fallback', {
+          taskId: task.id,
+          provider: primaryModel.provider,
+        });
+        const response = await runProvider(AIProvider.GROQ, task.prompt, {}, maxTokens, taskMetadata);
+        content = response.content;
+        tokensUsed = response.tokensUsed;
+      }
+    }
+
+    if (!content) {
+      throw new Error(`Model ${primaryModel.id} returned an empty response`);
+    }
+
     return {
-      content: `[4JI Orchestrated Response: ${task.type} via ${primaryModel.name}]`,
+      content,
       modelsUsed: [primaryModel.id],
-      tokensUsed: 0,
-      confidence: 0.95,
+      tokensUsed,
+      confidence: 0.8,
     };
   }
 

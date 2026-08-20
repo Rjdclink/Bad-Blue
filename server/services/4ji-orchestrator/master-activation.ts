@@ -396,7 +396,7 @@ export class MasterActivation {
 
     // Store conductor configuration in domain firewall for both domains
     const conductorConfig = {
-      model: 'claude-4.5-opus',
+      model: 'claude-opus-4-1-20250805',
       role: 'master_conductor',
       capabilities: [
         'orchestration',

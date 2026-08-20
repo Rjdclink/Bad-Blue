@@ -8,7 +8,7 @@
  * AVAILABLE PROVIDERS (December 2025):
  * Core Providers:
  * - Gemini: gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash, gemini-3.0-flash-preview
- * - Claude: claude-3-5-haiku-latest (fast), claude-3-5-sonnet-latest (detailed), claude-3-opus-latest (powerful)
+ * - Claude: claude-haiku-4-5-20251001 (fast), claude-sonnet-4-5-20250929 (detailed), claude-opus-4-1-20250805 (powerful)
  * - Groq: llama-3.3-70b-versatile (newer, faster), llama-3.1-8b-instant (ultra-fast)
  * - Mistral: mistral-small-latest, mistral-large-latest
  * - DeepSeek: deepseek-chat, deepseek-coder
@@ -40,6 +40,7 @@ import { getGroqClient } from './groq';
 import { callMistral } from './mistral';
 import { callClaude } from './claude';
 import { callGemini as callGeminiService } from './gemini';
+import { callAI as callUnifiedAI } from './unifiedAICaller';
 import { 
   aiTokenGovernor, 
   AIProvider, 
@@ -265,6 +266,29 @@ export async function generateText(
         }
       }
       
+      // EXTENDED FALLBACK: Try additional free providers (Cohere, Together, HuggingFace,
+      // Cerebras, SambaNova) via the Geiger-rotated unified caller before going Zero-API.
+      try {
+        console.log('[AI Provider] Primary providers exhausted, trying extended free-provider rotation...');
+        const unifiedResult = await callUnifiedAI({
+          prompt: actualPrompt,
+          systemPrompt: options.systemPrompt,
+          temperature: options.temperature,
+          maxTokens: defaultMaxTokens,
+          context: task.context === UsageContext.AUTONOMOUS ? 'autonomous' : 'user',
+          skipOptimization: true,
+        });
+        console.log(`[AI Provider] Extended rotation SUCCESS with ${unifiedResult.provider}`);
+        return {
+          content: unifiedResult.content,
+          provider: AIProvider.GROQ, // Report as Groq for compatibility (extended providers aren't in the core enum)
+          tokensUsed: unifiedResult.tokensUsed ?? Math.floor(unifiedResult.content.length / 4),
+          latencyMs: unifiedResult.latencyMs,
+        };
+      } catch (unifiedError: any) {
+        console.log(`[AI Provider] Extended rotation also failed: ${unifiedError.message}`);
+      }
+
       // ZERO-API ULTIMATE FALLBACK: If all external providers fail, use local intelligence
       console.log('[AI Provider] All external providers failed, using Zero-API fallback');
       try {
@@ -519,7 +543,7 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
       pro: 'gemini-3.0-flash-preview'       // FREE: Preview features (experimental)
     },
     [AIProvider.GROQ]: {
-      prefixes: ['llama', 'mixtral', 'gemma'],
+      prefixes: ['llama', 'gemma', 'qwen'], // mixtral removed: decommissioned by Groq
       default: 'llama-3.3-70b-versatile', // FREE: Newer, faster
       comprehensive: 'llama-3.1-8b-instant' // FREE: Ultra-fast
     },
@@ -529,10 +553,10 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     },
     [AIProvider.CLAUDE]: {
       prefixes: ['claude'],
-      lite: 'claude-3-5-haiku-latest',          // Fast responses
-      default: 'claude-3-5-sonnet-latest',      // Advanced reasoning
-      comprehensive: 'claude-3-5-sonnet-latest', // Advanced reasoning
-      pro: 'claude-3-opus-latest'               // Most powerful Claude model
+      lite: 'claude-haiku-4-5-20251001',          // Fast responses
+      default: 'claude-sonnet-4-5-20250929',      // Advanced reasoning
+      comprehensive: 'claude-sonnet-4-5-20250929', // Advanced reasoning
+      pro: 'claude-opus-4-1-20250805'             // Most powerful Claude model
     },
     // OpenRouter free models (December 2025)
     [AIProvider.DEEPSEEK]: {
@@ -619,8 +643,9 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
 
 /**
  * Run a single provider with provider-specific model selection.
+ * Exported for reuse by other real dispatchers (e.g. aiCollaborationOrchestrator).
  */
-async function runProvider(
+export async function runProvider(
   provider: AIProvider,
   prompt: string,
   options: GenerateOptions,

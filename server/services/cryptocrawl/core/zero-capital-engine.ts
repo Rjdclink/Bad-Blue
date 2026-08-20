@@ -248,18 +248,25 @@ export class AutonomousZeroCapitalEngine {
       return;
     }
 
+    if (this.providers.size === 0) {
+      await this.initialize();
+    }
+
+    if (this.providers.size === 0) {
+      throw new Error('No blockchain RPC providers are reachable; on-chain monitoring cannot start');
+    }
+
     this.state.isRunning = true;
-    logger.info('[ZeroCapitalEngine] Starting autonomous zero-capital arbitrage engine...', {
+    logger.info('[ZeroCapitalEngine] Starting read-only on-chain monitoring...', {
       component: 'ZeroCapitalEngine',
-      mode: 'FULLY_AUTONOMOUS',
-      capitalRequired: 'ZERO',
+      mode: 'MONITORING_ONLY',
+      connectedChains: this.providers.size,
     });
 
-    // Start the recursive scanning loop
+    // Only start the implemented provider-backed monitoring loop. Execution requires
+    // deployed receiver contracts and verified quote sources, neither of which is
+    // assumed by this service.
     this.startScanningLoop();
-
-    // Start the execution loop
-    this.startExecutionLoop();
   }
 
   /**
@@ -758,7 +765,7 @@ export class AutonomousZeroCapitalEngine {
         : '0%',
       currentOpportunities: this.state.currentOpportunities,
       gaslessTransactions: this.state.gaslessTransactions,
-      capitalRequired: 'ZERO', // THE KEY FEATURE
+      capitalRequired: 'N/A',
     };
   }
 }

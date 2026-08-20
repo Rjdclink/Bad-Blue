@@ -270,7 +270,7 @@ export class MonitoringDashboard extends EventEmitter {
       this.addAlert({
         severity: 'info',
         category: 'stage',
-        message: `Advanced to Stage ${data.currentStage}: ${STAGE_CONFIGS[data.currentStage].stageName}`,
+        message: `Advanced to Stage ${data.currentStage}: ${STAGE_CONFIGS[data.currentStage as keyof typeof STAGE_CONFIGS].stageName}`,
       });
     });
     

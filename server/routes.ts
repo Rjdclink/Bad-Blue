@@ -58,6 +58,7 @@ import { setupFMIRoutes } from "./routes/fmi.routes";
 import { setupConsultationRoutes } from "./routes/consultation.routes";
 import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
+import { conductPeopleSearch } from "./peopleSearch";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
 import { setupPulseRoutes } from "./routes/pulse.routes";
@@ -3702,6 +3703,30 @@ Contact: ${foiaRequest.userEmail || userEmail}
       });
 
       if (!seedDecision.seedUrl || !seedDecision.seedType) {
+        const searchQuery = String(name || '').trim();
+        if (searchQuery) {
+          const report = await conductPeopleSearch(searchQuery, {
+            includeDeepSearch: true,
+            maxSources: 10,
+            timeoutMs: 30000,
+          });
+
+          if (reportId && userId) {
+            await storage.updatePeopleSearchReportStatus(reportId, 'completed', report as any);
+          }
+
+          return res.json({
+            success: true,
+            data: report,
+            meta: {
+              correlationId,
+              seedUrl: null,
+              seedType: 'name-search',
+              durationMs: Date.now() - startTime,
+            },
+          });
+        }
+
         const processingTimeMs = Date.now() - startTime;
         if (reportId && userId) {
           await storage.updatePeopleSearchReportStatus(reportId, 'completed', { status: 'no_seed' } as any);
