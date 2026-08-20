@@ -49,15 +49,21 @@ router.get('/health', async (req, res) => {
 // Conditionally apply auth middleware - if auth is not configured,
 // routes will still be accessible but will return helpful error messages
 // This allows the system to start without credentials
-const conditionalAuth = (req: any, res: any, next: any) => {
-  if (!isAuthConfigured()) {
-    // Allow request to proceed, but individual routes will check auth
-    // and return helpful error messages via requireCryptoCrawlAuth
-    return next();
-  }
-  return requireCryptoCrawlAuth(req, res, next);
-};
+const conditionalAuth = (_req: any, res: any, next: any) => {
+  const configured = Boolean(
+    (process.env.CRYPTOCRAWL_EMAIL || '').trim() &&
+    (process.env.CRYPTOCRAWL_PASSWORD || '').trim()
+  );
 
+  if (!configured) {
+    return res.status(503).json({
+      success: false,
+      error: 'CryptoCrawl authentication not configured'
+    });
+  }
+
+  return next();
+};
 router.use(conditionalAuth);
 
 // ============================================
