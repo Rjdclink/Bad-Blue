@@ -70,6 +70,7 @@ COPY --from=builder /app/public ./public
 
 # Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/server/services/cryptocrawl/config/chains.json ./config/chains.json
 
 # Expose application port (Railway will use PORT env var at runtime)
 EXPOSE 5000
