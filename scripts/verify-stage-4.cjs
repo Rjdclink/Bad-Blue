@@ -1,15 +1,60 @@
 #!/usr/bin/env node
 const { Client } = require('pg');
-require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+const dotenv = require('dotenv');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const ENV_FILES = ['.env.local', '.env', '.env.production.local', '.env.production'];
+
+const loadedEnvFiles = [];
+for (const envFile of ENV_FILES) {
+  const envPath = path.join(REPO_ROOT, envFile);
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+    loadedEnvFiles.push(envFile);
+  }
+}
+
+function resolveConnectionString() {
+  const candidates = [
+    ['SUPABASE_DATABASE_URL', process.env.SUPABASE_DATABASE_URL],
+    ['SUPABASE_DB_URL', process.env.SUPABASE_DB_URL],
+    ['DATABASE_URL', process.env.DATABASE_URL],
+  ];
+
+  for (const [source, value] of candidates) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return { connectionString: value.trim(), source };
+    }
+  }
+
+  return { connectionString: '', source: null };
+}
 
 async function verifyTables() {
   console.log('🔍 Stage 4 Verification\n');
 
-  const connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL;
+  const { connectionString, source } = resolveConnectionString();
   if (!connectionString) {
-    console.error('❌ Database verification failed: DATABASE_URL or SUPABASE_DATABASE_URL is not set');
+    const supabaseUrl = process.env.SUPABASE_URL || '';
+    console.error('❌ Database verification failed: SUPABASE_DATABASE_URL / SUPABASE_DB_URL / DATABASE_URL is not set');
+    console.error(`ℹ️  Loaded env files: ${loadedEnvFiles.length > 0 ? loadedEnvFiles.join(', ') : 'none'}`);
+    if (supabaseUrl) {
+      try {
+        const hostname = new URL(supabaseUrl).hostname;
+        const projectRef = hostname.split('.')[0] || '<project-ref>';
+        console.error('ℹ️  SUPABASE_URL is set, but this verifier needs a Postgres connection string.');
+        console.error('ℹ️  Set SUPABASE_DATABASE_URL (or SUPABASE_DB_URL) from Supabase Dashboard → Settings → Database → Connection string.');
+        console.error(`ℹ️  Example host for this project: db.${projectRef}.supabase.co`);
+      } catch {
+        console.error('ℹ️  SUPABASE_URL is set, but this verifier needs SUPABASE_DATABASE_URL/SUPABASE_DB_URL (Postgres URI).');
+      }
+    }
     process.exit(1);
   }
+
+  console.log(`ℹ️  Using ${source} for Stage 4 database verification`);
 
   const client = new Client({
     connectionString,

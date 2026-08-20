@@ -15,6 +15,7 @@ import { routeOptimizer } from '../bridge/route-optimizer.js';
 import type { ChainId as BridgeChainId } from '../bridge/types';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
 export type QuoteVenue = 'coinbase' | 'kraken' | 'okx';
 
@@ -81,13 +82,65 @@ export interface VerifyRequest {
   };
 }
 
+const QUOTE_REQUEST_CACHE_TTL_MS = Math.max(
+  500,
+  Number(process.env.CRYPTO_ARBITRAGE_QUOTE_CACHE_MS || 2000),
+);
+
+const quoteRequestCache = new Map<string, { payload: any; expiresAt: number }>();
+const quoteRequestInFlight = new Map<string, Promise<any>>();
+
+function getCachedQuoteRequest(url: string): any | null {
+  const cached = quoteRequestCache.get(url);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    quoteRequestCache.delete(url);
+    return null;
+  }
+  return cached.payload;
+}
+
+function cacheQuoteRequest(url: string, payload: any): void {
+  quoteRequestCache.set(url, {
+    payload,
+    expiresAt: Date.now() + QUOTE_REQUEST_CACHE_TTL_MS,
+  });
+
+  if (quoteRequestCache.size > 256) {
+    for (const [key, value] of quoteRequestCache.entries()) {
+      if (value.expiresAt <= Date.now()) {
+        quoteRequestCache.delete(key);
+      }
+    }
+  }
+}
+
 async function fetchJson(url: string, timeoutMs: number): Promise<any> {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), timeoutMs);
-  const res = await fetch(url, { headers: { accept: 'application/json' }, signal: ac.signal })
-    .finally(() => clearTimeout(t));
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.json();
+  const cached = getCachedQuoteRequest(url);
+  if (cached) return cached;
+
+  const inFlight = quoteRequestInFlight.get(url);
+  if (inFlight) return inFlight;
+
+  const requestPromise = fetchJsonWithRetry<any>(url, {
+    init: {
+      headers: { accept: 'application/json' },
+    },
+    maxRetries: 3,
+    baseDelayMs: 300,
+    maxDelayMs: 5000,
+    timeoutMs,
+  })
+    .then(payload => {
+      cacheQuoteRequest(url, payload);
+      return payload;
+    })
+    .finally(() => {
+      quoteRequestInFlight.delete(url);
+    });
+
+  quoteRequestInFlight.set(url, requestPromise);
+  return requestPromise;
 }
 
 function coinbaseProductId(symbol: string): string {

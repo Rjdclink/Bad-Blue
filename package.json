@@ -17,6 +17,7 @@
     "start:worker": "NODE_ENV=production node dist/peopleSearchWorker.js",
     "check": "tsc",
     "wire-check": "NO_EXECUTION=true NO_INTERVALS=true CRYPTARA_MODE=SILENT_WATCHER_ONLY tsx scripts/wire-check.ts",
+    "dryrun:cryptocrawl": "NO_EXECUTION=true NO_INTERVALS=true CRYPTARA_MODE=SILENT_WATCHER_ONLY tsx server/services/cryptocrawl/testing/live-market-dry-run.ts",
     "db:push": "drizzle-kit push",
     "migrate": "tsx server/migrations/runMigrations.ts",
     "verify": "node scripts/verify-stage-1.cjs && node scripts/verify-stage-2.cjs && node scripts/verify-stage-3.cjs && node scripts/verify-stage-4.cjs && node scripts/verify-stage-5.cjs && node scripts/verify-stage-6.cjs && node scripts/verify-stage-16.cjs && node scripts/verify-stage-19.cjs && node scripts/verify-stage-20.cjs",

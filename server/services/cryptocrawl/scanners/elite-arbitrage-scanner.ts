@@ -628,6 +628,10 @@ class MLOpportunityFilter {
  */
 class OptimisticBundler {
   private static readonly BLOCK_TIME_MS = 2000; // Configurable block time (Polygon: 2s, Ethereum: 12s)
+  private static readonly PRIVATE_MEMPOOL_TIMEOUT_MS = Math.max(
+    3000,
+    Number(process.env.PRIVATE_MEMPOOL_TIMEOUT_MS || 10000),
+  );
   
   private privateMempools = [
     { name: 'Flashbots BSC', endpoint: 'https://bsc-relay.flashbots.net' },
@@ -678,11 +682,14 @@ class OptimisticBundler {
     
     for (const mempool of this.privateMempools) {
       try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), OptimisticBundler.PRIVATE_MEMPOOL_TIMEOUT_MS);
         const response = await fetch(mempool.endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bundle, targetBlock: bundle.targetBlock })
-        });
+          body: JSON.stringify({ bundle, targetBlock: bundle.targetBlock }),
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timeout));
         
         if (response.ok) {
           const result = await response.text();

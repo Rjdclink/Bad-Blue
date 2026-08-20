@@ -122,7 +122,7 @@ export class SelfRepairEngine {
   private static anomalyFingerprints: Map<Domain, Set<string>> = new Map();
 
   // External log cursor to only process new entries
-  private static externalErrorCursor = 0;
+  private static externalErrorCursor: Map<Domain, number> = new Map();
 
   // Repair knowledge persistence
   private static repairKnowledge: Record<string, {
@@ -154,6 +154,7 @@ export class SelfRepairEngine {
       this.anomalies.set(domain as Domain, []);
       this.repairActions.set(domain as Domain, []);
       this.anomalyFingerprints.set(domain as Domain, new Set());
+      this.externalErrorCursor.set(domain as Domain, 0);
     }
 
     // Configure research sources per domain
@@ -615,7 +616,7 @@ export class SelfRepairEngine {
     this.anomalies.clear();
     this.repairActions.clear();
     this.anomalyFingerprints.clear();
-    this.externalErrorCursor = 0;
+    this.externalErrorCursor.clear();
     this.repairKnowledge = {};
     this.isInitialized = false;
     this.isRunning = false;
@@ -705,8 +706,9 @@ export class SelfRepairEngine {
         stack?: string;
       }>;
 
-      const freshEntries = entries.slice(this.externalErrorCursor);
-      this.externalErrorCursor = entries.length;
+      const cursor = this.externalErrorCursor.get(domain) || 0;
+      const freshEntries = entries.slice(cursor);
+      this.externalErrorCursor.set(domain, entries.length);
 
       for (const entry of freshEntries) {
         const context = String(entry.context || 'external-log');

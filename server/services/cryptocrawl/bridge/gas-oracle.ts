@@ -1,6 +1,7 @@
 import { ethers, providers } from 'ethers';
 import { ChainId, GasPrice } from './types';
 import { SUPPORTED_CHAINS, FALLBACK_PRICES, DEFAULT_GAS_LIMIT } from './chain-config';
+import { coinGeckoPriceClient } from './coingecko-client';
 
 const { JsonRpcProvider } = providers;
 const { formatUnits, formatEther } = ethers.utils;
@@ -30,21 +31,15 @@ class GasOracle {
 
   private async updateNativePrices(): Promise<void> {
     try {
-      const coinIds = 'matic-network,ethereum,avalanche-2,binancecoin';
-      const response = await fetch(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds}&vs_currencies=usd`
+      const prices = await coinGeckoPriceClient.getSymbolPrices(
+        ['POL', 'ETH', 'AVAX', 'BNB'],
+        FALLBACK_PRICES,
       );
-      
-      if (!response.ok) {
-        throw new Error(`CoinGecko API error: ${response.status}`);
-      }
 
-      const data = await response.json();
-      
-      this.nativePrices.set('POL', data['matic-network']?.usd || 0.5);
-      this.nativePrices.set('ETH', data['ethereum']?.usd || 2000);
-      this.nativePrices.set('AVAX', data['avalanche-2']?.usd || 20);
-      this.nativePrices.set('BNB', data['binancecoin']?.usd || 300);
+      this.nativePrices.set('POL', prices.get('POL') || FALLBACK_PRICES.POL);
+      this.nativePrices.set('ETH', prices.get('ETH') || FALLBACK_PRICES.ETH);
+      this.nativePrices.set('AVAX', prices.get('AVAX') || FALLBACK_PRICES.AVAX);
+      this.nativePrices.set('BNB', prices.get('BNB') || FALLBACK_PRICES.BNB);
     } catch (error) {
       console.error('Failed to update native prices:', error);
       // Use fallback prices

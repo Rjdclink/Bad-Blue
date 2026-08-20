@@ -5,6 +5,7 @@
  */
 
 import { ethers, providers, Contract } from 'ethers';
+import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 
 const { JsonRpcProvider } = providers;
 const { formatEther, formatUnits } = ethers.utils;
@@ -75,8 +76,7 @@ const ERC20_ABI = [
   'function decimals() view returns (uint8)'
 ];
 
-// CoinGecko prices
-const PRICES: Record<string, number> = {
+const FALLBACK_PRICES: Record<string, number> = {
   'ETH': 3900,
   'POL': 0.50,
   'AVAX': 40,
@@ -85,7 +85,36 @@ const PRICES: Record<string, number> = {
   'USDC': 1
 };
 
+async function loadPrices(): Promise<Record<string, number>> {
+  const prices = await coinGeckoPriceClient.getSymbolPrices(
+    ['ETH', 'POL', 'AVAX', 'BNB', 'USDT', 'USDC'],
+    FALLBACK_PRICES,
+  );
+
+  return {
+    ETH: prices.get('ETH') || FALLBACK_PRICES.ETH,
+    POL: prices.get('POL') || FALLBACK_PRICES.POL,
+    AVAX: prices.get('AVAX') || FALLBACK_PRICES.AVAX,
+    BNB: prices.get('BNB') || FALLBACK_PRICES.BNB,
+    USDT: prices.get('USDT') || FALLBACK_PRICES.USDT,
+    USDC: prices.get('USDC') || FALLBACK_PRICES.USDC,
+  };
+}
+
 async function checkChain(chain: typeof CHAINS[0]): Promise<{
+  chain: string;
+  native: number;
+  nativeUsd: number;
+  usdt: number;
+  usdc: number;
+  total: number;
+  explorer: string;
+}>
+{
+  return checkChainWithPrices(chain, await loadPrices());
+}
+
+async function checkChainWithPrices(chain: typeof CHAINS[0], prices: Record<string, number>): Promise<{
   chain: string;
   native: number;
   nativeUsd: number;
@@ -110,7 +139,7 @@ async function checkChain(chain: typeof CHAINS[0]): Promise<{
     // Native balance
     const nativeBal = await provider.getBalance(WALLET);
     result.native = parseFloat(formatEther(nativeBal));
-    result.nativeUsd = result.native * (PRICES[chain.currency] || 0);
+    result.nativeUsd = result.native * (prices[chain.currency] || 0);
     
     // USDT
     if (chain.usdt !== '0x0000000000000000000000000000000000000000') {
@@ -147,12 +176,14 @@ async function main() {
   console.log(`🔍 Wallet: ${WALLET}\n`);
   console.log('Scanning all EVM chains...\n');
 
+  const prices = await loadPrices();
+
   let grandTotal = 0;
   const results: Awaited<ReturnType<typeof checkChain>>[] = [];
 
   for (const chain of CHAINS) {
     process.stdout.write(`   ${chain.name.padEnd(20)}`);
-    const result = await checkChain(chain);
+    const result = await checkChainWithPrices(chain, prices);
     results.push(result);
     grandTotal += result.total;
     

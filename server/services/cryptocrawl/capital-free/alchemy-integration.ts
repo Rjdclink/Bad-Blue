@@ -29,13 +29,115 @@ const ALCHEMY_CONFIG = {
   },
   
   // Rate limiting
-  MAX_REQUESTS_PER_SECOND: 25,
-  BATCH_SIZE: 100,
+  MAX_REQUESTS_PER_SECOND: Number(process.env.ALCHEMY_MAX_REQUESTS_PER_SECOND || 8),
+  BATCH_SIZE: 40,
+  MAX_RETRY_ATTEMPTS: 5,
+  BASE_BACKOFF_MS: 500,
+  MAX_BACKOFF_MS: 15000,
+  REQUEST_TIMEOUT_MS: 10000,
+  TOKEN_BALANCE_CACHE_TTL_MS: 15000,
+  TOKEN_METADATA_CACHE_TTL_MS: 5 * 60 * 1000,
   
   // Pending transaction filters
-  PENDING_TX_POLL_INTERVAL_MS: 100,
+  PENDING_TX_POLL_INTERVAL_MS: Number(process.env.ALCHEMY_PENDING_TX_POLL_INTERVAL_MS || 1200),
   MAX_PENDING_TX_CACHE: 10000,
 };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(header: string | null): number | undefined {
+  if (!header) return undefined;
+
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.floor(seconds * 1000);
+  }
+
+  const absolute = Date.parse(header);
+  if (Number.isFinite(absolute)) {
+    return Math.max(0, absolute - Date.now());
+  }
+
+  return undefined;
+}
+
+function isRetryableRpcError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('429') ||
+    message.includes('rate limit') ||
+    message.includes('-32005') ||
+    message.includes('timeout') ||
+    message.includes('timed out') ||
+    message.includes('network') ||
+    message.includes('fetch failed') ||
+    message.includes('temporarily unavailable')
+  );
+}
+
+function calculateBackoffMs(attempt: number): number {
+  const exponential = Math.min(
+    ALCHEMY_CONFIG.MAX_BACKOFF_MS,
+    ALCHEMY_CONFIG.BASE_BACKOFF_MS * Math.pow(2, attempt),
+  );
+  const jitter = Math.floor(Math.random() * 200);
+  return exponential + jitter;
+}
+
+async function postRpcWithRetry<T>(baseURL: string, payload: Record<string, unknown>): Promise<T> {
+  for (let attempt = 0; attempt <= ALCHEMY_CONFIG.MAX_RETRY_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ALCHEMY_CONFIG.REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(baseURL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (response.status === 429 || response.status >= 500) {
+        if (attempt >= ALCHEMY_CONFIG.MAX_RETRY_ATTEMPTS) {
+          throw new Error(`Alchemy RPC HTTP ${response.status}`);
+        }
+
+        const retryAfter = parseRetryAfterMs(response.headers.get('retry-after'));
+        await sleep(retryAfter ?? calculateBackoffMs(attempt));
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Alchemy RPC HTTP ${response.status}`);
+      }
+
+      const data = await response.json() as any;
+      if (data?.error) {
+        const message = String(data.error.message || data.error.code || 'Alchemy RPC error');
+        if (attempt < ALCHEMY_CONFIG.MAX_RETRY_ATTEMPTS && isRetryableRpcError(new Error(message))) {
+          await sleep(calculateBackoffMs(attempt));
+          continue;
+        }
+        throw new Error(message);
+      }
+
+      return data as T;
+    } catch (error) {
+      clearTimeout(timeout);
+      if (attempt >= ALCHEMY_CONFIG.MAX_RETRY_ATTEMPTS || !isRetryableRpcError(error)) {
+        throw error;
+      }
+      await sleep(calculateBackoffMs(attempt));
+    }
+  }
+
+  throw new Error('Alchemy RPC retry attempts exhausted');
+}
 
 
 
@@ -89,6 +191,19 @@ export interface MempoolAnalysis {
   maxGasPrice: number;
 }
 
+export interface AlchemyReadinessStatus {
+  ready: boolean;
+  configured: boolean;
+  active: boolean;
+  degraded: boolean;
+  strictLive: boolean;
+  detail: string;
+  apiKeyMode: 'demo' | 'configured';
+  network?: keyof typeof ALCHEMY_CONFIG.ENDPOINTS;
+  lastHealthCheckAt: number | null;
+  lastHealthError?: string;
+}
+
 export interface AlchemySubscription {
   id: string;
   network: string;
@@ -112,6 +227,9 @@ class AlchemyTokenAPI {
   private apiKey: string;
   private requestCount: number = 0;
   private lastRequestTime: number = 0;
+  private balanceCache = new Map<string, { data: TokenBalance[]; expiresAt: number }>();
+  private metadataCache = new Map<string, { data: TokenMetadata | null; expiresAt: number }>();
+  private inFlight = new Map<string, Promise<unknown>>();
 
   constructor(apiKey: string = 'demo') {
     this.apiKey = apiKey;
@@ -128,38 +246,43 @@ class AlchemyTokenAPI {
     ownerAddress: string,
     tokenAddresses?: string[]
   ): Promise<TokenBalance[]> {
-    await this.rateLimit();
-    
-    const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
-    
-    try {
-      const params = tokenAddresses 
+    const tokenKey = tokenAddresses && tokenAddresses.length > 0
+      ? [...tokenAddresses].map(addr => addr.toLowerCase()).sort().join(',')
+      : 'erc20';
+    const cacheKey = `${network}:${ownerAddress.toLowerCase()}:${tokenKey}`;
+    const cached = this.balanceCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+
+    const inFlight = this.inFlight.get(cacheKey) as Promise<TokenBalance[]> | undefined;
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const requestPromise = (async () => {
+      await this.rateLimit();
+      const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
+      const params = tokenAddresses && tokenAddresses.length > 0
         ? [ownerAddress, tokenAddresses]
         : [ownerAddress, 'erc20'];
 
-      const response = await fetch(baseURL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'alchemy_getTokenBalances',
-          params,
-          id: this.requestCount++,
-        }),
+      const data = await postRpcWithRetry<any>(baseURL, {
+        jsonrpc: '2.0',
+        method: 'alchemy_getTokenBalances',
+        params,
+        id: this.requestCount++,
       });
 
-      const data = await response.json();
-      
-      if (data.error) {
-        logger.error('[AlchemyTokenAPI] Error getting balances', {
-          component: 'AlchemyTokenAPI',
-          error: data.error.message,
-        });
-        return [];
-      }
+      const balances: TokenBalance[] = Array.isArray(data.result?.tokenBalances)
+        ? data.result.tokenBalances
+        : [];
 
-      const balances: TokenBalance[] = data.result?.tokenBalances || [];
-      
+      this.balanceCache.set(cacheKey, {
+        data: balances,
+        expiresAt: Date.now() + ALCHEMY_CONFIG.TOKEN_BALANCE_CACHE_TTL_MS,
+      });
+
       logger.debug('[AlchemyTokenAPI] Got token balances', {
         component: 'AlchemyTokenAPI',
         network,
@@ -168,13 +291,19 @@ class AlchemyTokenAPI {
       });
 
       return balances;
-    } catch (error) {
-      logger.error('[AlchemyTokenAPI] Request failed', {
+    })().catch(error => {
+      logger.error('[AlchemyTokenAPI] Error getting balances', {
         component: 'AlchemyTokenAPI',
+        network,
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
-    }
+    }).finally(() => {
+      this.inFlight.delete(cacheKey);
+    });
+
+    this.inFlight.set(cacheKey, requestPromise);
+    return requestPromise;
   }
 
   /**
@@ -184,31 +313,27 @@ class AlchemyTokenAPI {
     network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
     tokenAddress: string
   ): Promise<TokenMetadata | null> {
-    await this.rateLimit();
-    
-    const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
-    
-    try {
-      const response = await fetch(baseURL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'alchemy_getTokenMetadata',
-          params: [tokenAddress],
-          id: this.requestCount++,
-        }),
-      });
+    const cacheKey = `${network}:${tokenAddress.toLowerCase()}`;
+    const cached = this.metadataCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
 
-      const data = await response.json();
-      
-      if (data.error) {
-        logger.error('[AlchemyTokenAPI] Error getting metadata', {
-          component: 'AlchemyTokenAPI',
-          error: data.error.message,
-        });
-        return null;
-      }
+    const inFlight = this.inFlight.get(cacheKey) as Promise<TokenMetadata | null> | undefined;
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const requestPromise = (async () => {
+      await this.rateLimit();
+      const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
+
+      const data = await postRpcWithRetry<any>(baseURL, {
+        jsonrpc: '2.0',
+        method: 'alchemy_getTokenMetadata',
+        params: [tokenAddress],
+        id: this.requestCount++,
+      });
 
       const metadata: TokenMetadata = {
         name: data.result?.name || 'Unknown',
@@ -216,6 +341,11 @@ class AlchemyTokenAPI {
         decimals: data.result?.decimals || 18,
         logo: data.result?.logo || null,
       };
+
+      this.metadataCache.set(cacheKey, {
+        data: metadata,
+        expiresAt: Date.now() + ALCHEMY_CONFIG.TOKEN_METADATA_CACHE_TTL_MS,
+      });
 
       logger.debug('[AlchemyTokenAPI] Got token metadata', {
         component: 'AlchemyTokenAPI',
@@ -225,13 +355,20 @@ class AlchemyTokenAPI {
       });
 
       return metadata;
-    } catch (error) {
-      logger.error('[AlchemyTokenAPI] Request failed', {
+    })().catch(error => {
+      logger.error('[AlchemyTokenAPI] Error getting metadata', {
         component: 'AlchemyTokenAPI',
+        network,
+        token: tokenAddress,
         error: error instanceof Error ? error.message : String(error),
       });
       return null;
-    }
+    }).finally(() => {
+      this.inFlight.delete(cacheKey);
+    });
+
+    this.inFlight.set(cacheKey, requestPromise);
+    return requestPromise;
   }
 
   /**
@@ -274,11 +411,13 @@ class AlchemyTokenAPI {
     // Get all balances in one call
     const balances = await this.getTokenBalances(network, ownerAddress, tokenAddresses);
     
-    // Get metadata in parallel batches
-    const metadataPromises = tokenAddresses.map(addr => 
-      this.getTokenMetadata(network, addr)
-    );
-    const metadataResults = await Promise.all(metadataPromises);
+    // Get metadata in bounded parallel batches to avoid burst rate-limit hits.
+    const metadataResults: Array<TokenMetadata | null> = [];
+    for (let i = 0; i < tokenAddresses.length; i += ALCHEMY_CONFIG.BATCH_SIZE) {
+      const batch = tokenAddresses.slice(i, i + ALCHEMY_CONFIG.BATCH_SIZE);
+      const batchResults = await Promise.all(batch.map(addr => this.getTokenMetadata(network, addr)));
+      metadataResults.push(...batchResults);
+    }
     
     // Combine results
     for (let i = 0; i < tokenAddresses.length; i++) {
@@ -306,7 +445,7 @@ class AlchemyTokenAPI {
   private async rateLimit(): Promise<void> {
     const now = Date.now();
     const elapsed = now - this.lastRequestTime;
-    const minInterval = 1000 / ALCHEMY_CONFIG.MAX_REQUESTS_PER_SECOND;
+    const minInterval = Math.ceil(1000 / Math.max(1, ALCHEMY_CONFIG.MAX_REQUESTS_PER_SECOND));
     
     if (elapsed < minInterval) {
       await new Promise(resolve => setTimeout(resolve, minInterval - elapsed));
@@ -333,6 +472,8 @@ class AlchemyPendingTransactions {
   private isMonitoring: boolean = false;
   private monitorLoop: NodeJS.Timeout | null = null;
   private analyzedTxCount: number = 0;
+  private pollInFlight: Set<keyof typeof ALCHEMY_CONFIG.ENDPOINTS> = new Set();
+  private requestCount = 0;
 
   // Known DEX router addresses to watch
   private readonly DEX_ROUTERS: Record<string, string[]> = {
@@ -408,12 +549,15 @@ class AlchemyPendingTransactions {
     if (!this.isMonitoring) {
       this.isMonitoring = true;
       this.monitorLoop = setInterval(() => {
-        this.pollPendingTransactions(network).catch(err => {
-          logger.error('[AlchemyPendingTx] Poll error', {
-            component: 'AlchemyPendingTx',
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
+        const activeNetworks = [...new Set(
+          Array.from(this.subscriptions.values())
+            .filter(sub => sub.isActive)
+            .map(sub => sub.network as keyof typeof ALCHEMY_CONFIG.ENDPOINTS)
+        )];
+
+        void Promise.allSettled(
+          activeNetworks.map(activeNetwork => this.pollPendingTransactions(activeNetwork))
+        );
       }, ALCHEMY_CONFIG.PENDING_TX_POLL_INTERVAL_MS);
     }
 
@@ -435,6 +579,14 @@ class AlchemyPendingTransactions {
       if (sub) {
         sub.isActive = false;
         this.subscriptions.delete(subscriptionId);
+      }
+
+      if (this.subscriptions.size === 0) {
+        this.isMonitoring = false;
+        if (this.monitorLoop) {
+          clearInterval(this.monitorLoop);
+          this.monitorLoop = null;
+        }
       }
     } else {
       // Stop all
@@ -458,22 +610,20 @@ class AlchemyPendingTransactions {
   private async pollPendingTransactions(
     network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS
   ): Promise<void> {
-    const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
-    
-    try {
-      // Get pending block
-      const response = await fetch(baseURL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'eth_getBlockByNumber',
-          params: ['pending', true],
-          id: 1,
-        }),
-      });
+    if (this.pollInFlight.has(network)) {
+      return;
+    }
 
-      const data = await response.json();
+    this.pollInFlight.add(network);
+    const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
+
+    try {
+      const data = await postRpcWithRetry<any>(baseURL, {
+        jsonrpc: '2.0',
+        method: 'eth_getBlockByNumber',
+        params: ['pending', true],
+        id: this.requestCount++,
+      });
       const transactions = data.result?.transactions || [];
 
       for (const tx of transactions) {
@@ -498,7 +648,13 @@ class AlchemyPendingTransactions {
         }
       }
     } catch (error) {
-      // Silently handle errors during polling
+      logger.debug('[AlchemyPendingTx] Poll skipped due to transient error', {
+        component: 'AlchemyPendingTx',
+        network,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.pollInFlight.delete(network);
     }
   }
 
@@ -713,6 +869,10 @@ export class AlchemyIntegration {
   public arbitrageDetector: AlchemyArbitrageDetector;
   private apiKey: string;
   private isActive: boolean = false;
+  private isDegraded: boolean = false;
+  private activeNetworks: Array<keyof typeof ALCHEMY_CONFIG.ENDPOINTS> = [];
+  private lastHealthCheckAt: number | null = null;
+  private lastHealthError: string | undefined;
 
   constructor(apiKey: string = 'demo') {
     this.apiKey = apiKey;
@@ -726,6 +886,91 @@ export class AlchemyIntegration {
     });
   }
 
+  private isConfiguredApiKey(): boolean {
+    const normalized = this.apiKey.trim().toLowerCase();
+    return normalized.length > 0 && normalized !== 'demo';
+  }
+
+  private emptyMempoolAnalysis(): MempoolAnalysis {
+    return {
+      totalPending: 0,
+      swapTransactions: 0,
+      liquidityAdditions: 0,
+      largeTransfers: 0,
+      arbitrageOpportunities: [],
+      avgGasPrice: 0,
+      maxGasPrice: 0,
+    };
+  }
+
+  private async probeNetwork(network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS): Promise<void> {
+    const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
+    await postRpcWithRetry<any>(baseURL, {
+      jsonrpc: '2.0',
+      method: 'eth_chainId',
+      params: [],
+      id: Date.now(),
+    });
+  }
+
+  async readinessCheck(options?: {
+    strictLive?: boolean;
+    network?: keyof typeof ALCHEMY_CONFIG.ENDPOINTS;
+  }): Promise<AlchemyReadinessStatus> {
+    const strictLive = options?.strictLive === true;
+    const network = options?.network || 'ethereum';
+    const configured = this.isConfiguredApiKey();
+    this.lastHealthCheckAt = Date.now();
+
+    if (!configured) {
+      this.lastHealthError = 'ALCHEMY_API_KEY is not configured (demo key active)';
+      return {
+        ready: !strictLive,
+        configured: false,
+        active: this.isActive,
+        degraded: true,
+        strictLive,
+        detail: strictLive
+          ? 'Alchemy live mode requires a configured ALCHEMY_API_KEY'
+          : 'Alchemy running in demo/degraded mode; live telemetry disabled',
+        apiKeyMode: 'demo',
+        network,
+        lastHealthCheckAt: this.lastHealthCheckAt,
+        lastHealthError: this.lastHealthError,
+      };
+    }
+
+    try {
+      await this.probeNetwork(network);
+      this.lastHealthError = undefined;
+      return {
+        ready: true,
+        configured: true,
+        active: this.isActive,
+        degraded: this.isDegraded,
+        strictLive,
+        detail: `Alchemy probe succeeded on ${network}`,
+        apiKeyMode: 'configured',
+        network,
+        lastHealthCheckAt: this.lastHealthCheckAt,
+      };
+    } catch (error) {
+      this.lastHealthError = error instanceof Error ? error.message : String(error);
+      return {
+        ready: !strictLive,
+        configured: true,
+        active: this.isActive,
+        degraded: true,
+        strictLive,
+        detail: `Alchemy probe failed on ${network}: ${this.lastHealthError}`,
+        apiKeyMode: 'configured',
+        network,
+        lastHealthCheckAt: this.lastHealthCheckAt,
+        lastHealthError: this.lastHealthError,
+      };
+    }
+  }
+
   /**
    * Start all Alchemy services
    */
@@ -733,12 +978,36 @@ export class AlchemyIntegration {
     if (this.isActive) return;
 
     const networksToMonitor = networks || ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base'];
+    const strictLive = process.env.ALCHEMY_REQUIRE_LIVE === 'true';
+    const readiness = await this.readinessCheck({
+      strictLive,
+      network: networksToMonitor[0],
+    });
+
+    if (!readiness.ready && strictLive) {
+      throw new Error(readiness.detail);
+    }
+
+    if (!readiness.configured) {
+      this.isDegraded = true;
+      this.isActive = false;
+      this.activeNetworks = [];
+      logger.warn('[AlchemyIntegration] Live telemetry not started (degraded mode)', {
+        component: 'AlchemyIntegration',
+        detail: readiness.detail,
+      });
+      return;
+    }
+
     await this.arbitrageDetector.start(networksToMonitor);
     this.isActive = true;
+    this.isDegraded = !readiness.ready;
+    this.activeNetworks = [...networksToMonitor];
 
     logger.info('[AlchemyIntegration] All services started', {
       component: 'AlchemyIntegration',
       networks: networksToMonitor,
+      degraded: this.isDegraded,
     });
   }
 
@@ -748,6 +1017,7 @@ export class AlchemyIntegration {
   stop(): void {
     this.arbitrageDetector.stop();
     this.isActive = false;
+    this.activeNetworks = [];
 
     logger.info('[AlchemyIntegration] All services stopped', {
       component: 'AlchemyIntegration',
@@ -779,7 +1049,14 @@ export class AlchemyIntegration {
    * Analyze mempool for arbitrage opportunities
    */
   getMempoolAnalysis(): MempoolAnalysis {
+    if (!this.isActive) {
+      return this.emptyMempoolAnalysis();
+    }
     return this.arbitrageDetector.getMempoolAnalysis();
+  }
+
+  isReady(): boolean {
+    return this.isActive && !this.isDegraded;
   }
 
   /**
@@ -789,14 +1066,30 @@ export class AlchemyIntegration {
     arbitrage: ReturnType<AlchemyArbitrageDetector['getStatistics']>;
     isActive: boolean;
     apiKey: string;
+    readiness: {
+      configured: boolean;
+      ready: boolean;
+      degraded: boolean;
+      activeNetworks: Array<keyof typeof ALCHEMY_CONFIG.ENDPOINTS>;
+      lastHealthCheckAt: number | null;
+      lastHealthError?: string;
+    };
   } {
     return {
       arbitrage: this.arbitrageDetector.getStatistics(),
       isActive: this.isActive,
       apiKey: this.apiKey === 'demo' ? 'demo' : '***configured***',
+      readiness: {
+        configured: this.isConfiguredApiKey(),
+        ready: this.isReady(),
+        degraded: this.isDegraded,
+        activeNetworks: [...this.activeNetworks],
+        lastHealthCheckAt: this.lastHealthCheckAt,
+        lastHealthError: this.lastHealthError,
+      },
     };
   }
 }
 
 // Export singleton instance
-export const alchemyIntegration = new AlchemyIntegration();
+export const alchemyIntegration = new AlchemyIntegration(process.env.ALCHEMY_API_KEY || 'demo');

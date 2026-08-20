@@ -22,6 +22,11 @@ interface OrderRequest {
   price: number;
 }
 
+const ORDER_SUBMIT_TIMEOUT_MS = Math.max(
+  3000,
+  Number(process.env.CRYPTO_ARBITRAGE_ORDER_TIMEOUT_MS || 12000),
+);
+
 function requireEnvironment(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required for live exchange execution`);
@@ -51,6 +56,19 @@ async function readJson(response: Response): Promise<any> {
   return json;
 }
 
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function submitKrakenOrder(request: OrderRequest): Promise<string> {
   const apiKey = requireEnvironment('KRAKEN_API_KEY');
   const apiSecret = requireEnvironment('KRAKEN_API_SECRET');
@@ -69,7 +87,7 @@ async function submitKrakenOrder(request: OrderRequest): Promise<string> {
   const signature = createHmac('sha512', Buffer.from(apiSecret, 'base64'))
     .update(Buffer.concat([Buffer.from(path), hash]))
     .digest('base64');
-  const response = await fetch(`https://api.kraken.com${path}`, {
+  const response = await fetchWithTimeout(`https://api.kraken.com${path}`, {
     method: 'POST',
     headers: {
       'API-Key': apiKey,
@@ -77,7 +95,7 @@ async function submitKrakenOrder(request: OrderRequest): Promise<string> {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body,
-  });
+  }, ORDER_SUBMIT_TIMEOUT_MS);
   const payload = await readJson(response);
   if (payload.error?.length) throw new Error(`Kraken rejected order: ${payload.error.join(', ')}`);
   const orderId = payload.result?.txid?.[0];
@@ -104,7 +122,7 @@ async function submitOkxOrder(request: OrderRequest): Promise<string> {
   const signature = createHmac('sha256', apiSecret)
     .update(`${timestamp}POST${path}${body}`)
     .digest('base64');
-  const response = await fetch(`https://www.okx.com${path}`, {
+  const response = await fetchWithTimeout(`https://www.okx.com${path}`, {
     method: 'POST',
     headers: {
       'OK-ACCESS-KEY': apiKey,
@@ -114,7 +132,7 @@ async function submitOkxOrder(request: OrderRequest): Promise<string> {
       'Content-Type': 'application/json',
     },
     body,
-  });
+  }, ORDER_SUBMIT_TIMEOUT_MS);
   const payload = await readJson(response);
   const order = payload.data?.[0];
   if (payload.code !== '0' || order?.sCode !== '0') {

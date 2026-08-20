@@ -18,6 +18,8 @@ import { networkHealth } from '../bridge/network-health.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { PER_CHAIN_RISK } from '../config/perChainRisk.js';
+import { TradingViewEngine } from '../babel/tradingview-integration.js';
+import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 
 const { JsonRpcProvider } = providers;
 
@@ -31,6 +33,17 @@ class MasterPipeline {
   private tripleDip: TripleDipExtractor;
   private opportunitiesProcessed = 0;
   private totalProfit = 0;
+  private connectorReadiness: {
+    networkHealth: { ready: boolean; detail: string };
+    gasOracle: { ready: boolean; detail: string };
+    tradingView: { ready: boolean; detail: string; mode: 'live' | 'degraded' | 'simulated' };
+    alchemy: { ready: boolean; detail: string; mode: 'live' | 'degraded' };
+  } = {
+    networkHealth: { ready: false, detail: 'Not initialized' },
+    gasOracle: { ready: false, detail: 'Not initialized' },
+    tradingView: { ready: false, detail: 'Not initialized', mode: 'simulated' },
+    alchemy: { ready: false, detail: 'Not initialized', mode: 'degraded' },
+  };
   private stealthSystem: StealthSuperiority | null = null;
   private wallet: Wallet | null = null;
   private providers: Map<string, providers.JsonRpcProvider> = new Map();
@@ -77,6 +90,72 @@ class MasterPipeline {
     // Initialize stealth system if wallet is available
     if (this.wallet && this.providers.size > 0) {
       await this.stealthSystem.initialize(this.wallet, this.providers);
+    }
+
+    const strictConnectors = process.env.CRYPTO_REQUIRE_LIVE_CONNECTORS === 'true';
+
+    try {
+      if (!networkHealth.isRunning()) {
+        await networkHealth.start();
+      }
+      this.connectorReadiness.networkHealth = { ready: true, detail: 'Network health monitor running' };
+    } catch (error) {
+      this.connectorReadiness.networkHealth = {
+        ready: false,
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    try {
+      if (!gasOracle.isRunning()) {
+        await gasOracle.start();
+      }
+      this.connectorReadiness.gasOracle = { ready: true, detail: 'Gas oracle running' };
+    } catch (error) {
+      this.connectorReadiness.gasOracle = {
+        ready: false,
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    TradingViewEngine.initialize();
+    const tvReadiness = await TradingViewEngine.checkReadiness({ strictLive: strictConnectors });
+    this.connectorReadiness.tradingView = {
+      ready: tvReadiness.ready,
+      detail: tvReadiness.detail,
+      mode: tvReadiness.mode,
+    };
+
+    try {
+      await alchemyIntegration.start(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base']);
+    } catch (error) {
+      logger.warn('Alchemy start failed during pipeline initialization', {
+        component: 'MasterPipeline',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const alchemyReadiness = await alchemyIntegration.readinessCheck({ strictLive: strictConnectors });
+    this.connectorReadiness.alchemy = {
+      ready: alchemyReadiness.ready,
+      detail: alchemyReadiness.detail,
+      mode: alchemyReadiness.ready ? 'live' : 'degraded',
+    };
+
+    const blockingFailures = Object.entries(this.connectorReadiness)
+      .filter(([_, status]) => !status.ready)
+      .map(([name, status]) => `${name}:${status.detail}`);
+
+    if (blockingFailures.length > 0) {
+      logger.warn('Master pipeline initialized with connector degradations', {
+        component: 'MasterPipeline',
+        strictConnectors,
+        blockingFailures,
+      });
+    }
+
+    if (strictConnectors && blockingFailures.length > 0) {
+      throw new Error(`Live connector readiness failed: ${blockingFailures.join(' | ')}`);
     }
 
     console.log('✅ Master Pipeline initialized with stealth systems');
@@ -202,8 +281,39 @@ class MasterPipeline {
       // ============================================================
       const governance = getCryptocrawlGovernance();
       const cryptara = getCryptara();
+      const directive = cryptara.getAutonomousDirective();
       const utcHour = new Date().getUTCHours();
       const risk = PER_CHAIN_RISK[opp.chain as keyof typeof PER_CHAIN_RISK] || PER_CHAIN_RISK.polygon;
+      const marketSymbol = ((opp.pair || opp.asset || 'BTCUSDT').replace(/[^a-zA-Z0-9]/g, '').toUpperCase()) || 'BTCUSDT';
+
+      if (
+        directive.riskBudget === 'defensive' &&
+        directive.preferredChains.length > 0 &&
+        !directive.preferredChains.includes(String(opp.chain).toLowerCase())
+      ) {
+        logger.info('Opportunity skipped: chain outside current defensive preferred set', {
+          component: 'MasterPipeline',
+          chain: opp.chain,
+          preferredChains: directive.preferredChains,
+        });
+        return;
+      }
+
+      const technicalSignal = await TradingViewEngine.getAnalysis(marketSymbol, '1h').catch(() => null);
+      const mempool = (() => {
+        try {
+          return alchemyIntegration.getMempoolAnalysis();
+        } catch {
+          return null;
+        }
+      })();
+
+      // Estimate realistic overheads before gate evaluation.
+      const estimatedNotionalUsd = Math.max(
+        250,
+        Math.min(12000, opp.priority * 150 * Math.max(0.5, directive.notionalMultiplier)),
+      );
+      const venueFeeBps = 30;
 
       // Latency gate: use chain health latency as a proxy until venue-specific latency is wired.
       let chainLatencyMs: number | undefined;
@@ -218,11 +328,51 @@ class MasterPipeline {
 
       // Volatility regime: use minimal inputs; integrators can supply richer metrics later.
       let gasGwei: number | undefined;
+      let estimatedGasUsd = 0;
       try {
         const gp = await gasOracle.getGasPrice(opp.chain as any);
         gasGwei = gp.gweiPrice;
+        estimatedGasUsd = gp.usdCost;
       } catch {
         gasGwei = undefined;
+        estimatedGasUsd = 0;
+      }
+
+      const expectedSlippageBps = Math.max(
+        5,
+        Math.min(
+          Math.min(risk.maxSlippageBps, directive.maxSlippageBps),
+          8 + (mempool ? mempool.totalPending / 1000 : 0) * 3 + (technicalSignal ? Math.max(0, 60 - technicalSignal.summary.strength) / 8 : 0),
+        ),
+      );
+
+      const feeUsd = estimatedNotionalUsd * (venueFeeBps / 10000);
+      const slippageUsd = estimatedNotionalUsd * (expectedSlippageBps / 10000);
+      const netExpectedProfitUsd = opp.profitEstimate - feeUsd - slippageUsd - estimatedGasUsd;
+
+      if (netExpectedProfitUsd <= 0) {
+        logger.warn('Opportunity rejected before execution: negative net expected profit', {
+          component: 'MasterPipeline',
+          opportunityId: opp.asset,
+          chain: opp.chain,
+          grossEstimate: opp.profitEstimate,
+          feeUsd,
+          slippageUsd,
+          gasUsd: estimatedGasUsd,
+          netExpectedProfitUsd,
+        });
+        return;
+      }
+
+      if (netExpectedProfitUsd < directive.minimumNetProfitUsd) {
+        logger.info('Opportunity rejected by autonomous directive minimum net-profit floor', {
+          component: 'MasterPipeline',
+          chain: opp.chain,
+          opportunityId: opp.asset,
+          netExpectedProfitUsd,
+          minimumNetProfitUsd: directive.minimumNetProfitUsd,
+        });
+        return;
       }
 
       let gate;
@@ -232,15 +382,58 @@ class MasterPipeline {
             chain: opp.chain,
             pairOrSymbol: opp.pair || opp.asset,
             venue: 'uniswap',
-            expectedProfitUsd: opp.profitEstimate,
-            volatilityRegime: { gasPriceGwei: gasGwei },
+            expectedProfitUsd: netExpectedProfitUsd,
+            orderFlow: mempool ? {
+              windowMs: 60_000,
+              trades: mempool.arbitrageOpportunities.slice(0, 50).map(tx => ({
+                ts: tx.timestamp,
+                side: 'buy' as const,
+                size: Math.max(1, parseInt(tx.gas, 16) || 1),
+                price: parseInt(tx.gasPrice || '0', 16),
+              })),
+            } : undefined,
+            liquidityHeatmap: {
+              referencePrice: estimatedNotionalUsd,
+              requiredDepth: Math.max(250, estimatedNotionalUsd * 0.4),
+              bandBps: 50,
+              bids: [{ price: estimatedNotionalUsd * 0.998, size: Math.max(0, (mempool?.swapTransactions || 0) * 0.8) }],
+              asks: [{ price: estimatedNotionalUsd * 1.002, size: Math.max(0, (mempool?.swapTransactions || 0) * 0.8) }],
+            },
+            volatilityRegime: {
+              gasPriceGwei: gasGwei,
+              liquidityScore: technicalSignal ? Math.max(0.1, technicalSignal.summary.strength / 100) : undefined,
+              mempoolActivity: mempool?.totalPending,
+            },
             venueLatency: {
               p50Ms: {
                 chain_rpc: chainLatencyMs ?? 9999,
               },
               maxP50Ms: risk.maxLatencyMs,
             },
+            feesRebates: {
+              takerFeeBps: venueFeeBps,
+              makerFeeBps: 10,
+              makerRebateBps: -1,
+              makerOnly: false,
+            },
+            crossVenueFees: {
+              buyVenue: 'uniswap',
+              sellVenue: 'sushiswap',
+              buyTakerFeeBps: venueFeeBps,
+              sellTakerFeeBps: venueFeeBps,
+              grossSpreadBps: Math.max(0, (opp.profitEstimate / estimatedNotionalUsd) * 10000),
+            },
+            drawdownCaps: {
+              drawdownPct: this.totalProfit < 0 ? Math.min(100, Math.abs(this.totalProfit) / Math.max(1, Math.abs(this.totalProfit) + 1000) * 100) : 0,
+              maxDrawdownPct: 15,
+            },
+            profitReinvestment: {
+              realizedProfitUsd: Math.max(0, this.totalProfit),
+              requestedNotionalUsd: estimatedNotionalUsd,
+              reinvestFraction: 0.8,
+            },
             slippage: {
+              expectedSlippageBps,
               maxSlippageBps: risk.maxSlippageBps,
             },
             timeOfDay: { utcHour },
@@ -300,7 +493,8 @@ class MasterPipeline {
         component: 'MasterPipeline',
         opportunityId: opp.asset,
         tripleDipProfit: tripleDipResult.totalProfit,
-        optimalGasBid: optimalBid
+        optimalGasBid: optimalBid,
+        netExpectedProfitUsd,
       });
 
       // Execute with operational integrity
@@ -311,7 +505,7 @@ class MasterPipeline {
             id: opp.asset,
             asset: opp.asset,
             chain: opp.chain,
-            profit: tripleDipResult.netProfit,
+            profit: Math.max(tripleDipResult.netProfit, netExpectedProfitUsd),
             type: 'simple'
           });
         }
@@ -320,6 +514,22 @@ class MasterPipeline {
       if (result.success) {
         this.opportunitiesProcessed++;
         this.totalProfit += result.profit || 0;
+
+        cryptara.recordExecutionResult({
+          source: 'master_pipeline',
+          opportunityId: opp.asset,
+          chain: String(opp.chain).toLowerCase(),
+          symbol: marketSymbol,
+          strategy: 'triple_dip_execute_with_max_profit',
+          success: true,
+          expectedProfitUsd: netExpectedProfitUsd,
+          realizedProfitUsd: result.profit || netExpectedProfitUsd,
+          feeUsd,
+          slippageBps: expectedSlippageBps,
+          latencyMs: chainLatencyMs || 0,
+          usedZeroCapital: false,
+          timestamp: Date.now(),
+        });
         
         // Record outcome for RL learning
         this.rlBidder.recordOutcome(gasContext, optimalBid, true);
@@ -333,6 +543,21 @@ class MasterPipeline {
           totalProcessed: this.opportunitiesProcessed
         });
       } else {
+        cryptara.recordExecutionResult({
+          source: 'master_pipeline',
+          opportunityId: opp.asset,
+          chain: String(opp.chain).toLowerCase(),
+          symbol: marketSymbol,
+          strategy: 'triple_dip_execute_with_max_profit',
+          success: false,
+          expectedProfitUsd: netExpectedProfitUsd,
+          realizedProfitUsd: 0,
+          feeUsd,
+          slippageBps: expectedSlippageBps,
+          latencyMs: chainLatencyMs || 0,
+          usedZeroCapital: false,
+          timestamp: Date.now(),
+        });
         this.rlBidder.recordOutcome(gasContext, optimalBid, false);
       }
     } catch (error) {
@@ -356,6 +581,17 @@ class MasterPipeline {
       this.realtimeStream = null;
     }
 
+    if (networkHealth.isRunning()) {
+      await networkHealth.stop().catch(() => undefined);
+    }
+
+    if (gasOracle.isRunning()) {
+      await gasOracle.stop().catch(() => undefined);
+    }
+
+    alchemyIntegration.stop();
+    TradingViewEngine.shutdown();
+
     logger.info('Master Pipeline stopped', {
       component: 'MasterPipeline',
       totalProcessed: this.opportunitiesProcessed,
@@ -368,6 +604,7 @@ class MasterPipeline {
       running: this.running,
       opportunitiesProcessed: this.opportunitiesProcessed,
       totalProfit: this.totalProfit,
+      connectorReadiness: this.connectorReadiness,
       scaleMetrics: this.scalePhysics.getMetrics(),
       streamConnected: this.realtimeStream?.isConnected() || false,
       activeListeners: this.integrity.getActiveListeners()

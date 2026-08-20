@@ -161,6 +161,19 @@ export const getDatabaseUrl = (): string => {
 
 export const getPort = (): number => getConfig().PORT;
 
+/**
+ * Safe environment accessor for modules that are initialized before loadConfig().
+ * Uses trimmed values and falls back when unset.
+ */
+export const getEnv = (name: string, fallback: string = ''): string => {
+  const value = process.env[name];
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : fallback;
+};
+
+export const hasEnv = (name: string): boolean => getEnv(name).length > 0;
+
 export const getBaseUrl = (): string => {
   const cfg = getConfig();
   if (cfg.BASE_URL) return cfg.BASE_URL;

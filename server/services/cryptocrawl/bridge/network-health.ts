@@ -7,8 +7,10 @@ const { JsonRpcProvider } = providers;
 class NetworkHealthMonitor {
   private providers: Map<ChainId, providers.JsonRpcProvider> = new Map();
   private healthStatus: Map<ChainId, NetworkHealth> = new Map();
+  private inFlightChecks: Map<ChainId, Promise<NetworkHealth>> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
   private running: boolean = false;
+  private readonly HEALTH_CACHE_TTL_MS = 5000;
 
   constructor() {
     // Do NOT auto-initialize - wait for manual start
@@ -27,54 +29,71 @@ class NetworkHealthMonitor {
   }
 
   async checkNetwork(chain: ChainId): Promise<NetworkHealth> {
-    try {
-      const provider = this.providers.get(chain);
-      if (!provider) {
-        throw new Error(`Provider not initialized for ${chain}`);
-      }
+    const cached = this.healthStatus.get(chain);
+    if (cached && Date.now() - cached.lastUpdate < this.HEALTH_CACHE_TTL_MS) {
+      return cached;
+    }
 
-      const startTime = Date.now();
-      
-      // Get block height to check connectivity
-      const blockHeight = await provider.getBlockNumber();
-      
-      const latency = Date.now() - startTime;
+    const inFlight = this.inFlightChecks.get(chain);
+    if (inFlight) {
+      return inFlight;
+    }
 
-      // Consider network healthy based on configurable threshold
-      const isHealthy = latency < NETWORK_HEALTH_THRESHOLD_MS && blockHeight > 0;
+    const checkPromise = (async () => {
+      try {
+        const provider = this.providers.get(chain);
+        if (!provider) {
+          throw new Error(`Provider not initialized for ${chain}`);
+        }
 
-      const health: NetworkHealth = {
-        chain,
-        latency,
-        blockHeight,
-        isHealthy,
-        lastUpdate: Date.now()
-      };
+        const startTime = Date.now();
 
-      this.healthStatus.set(chain, health);
-      return health;
-    } catch (error) {
-      console.error(`Error checking network health for ${chain}:`, error);
-      
-      // Return cached data if available
-      if (this.healthStatus.has(chain)) {
-        const cached = this.healthStatus.get(chain)!;
+        // Get block height to check connectivity
+        const blockHeight = await provider.getBlockNumber();
+
+        const latency = Date.now() - startTime;
+
+        // Consider network healthy based on configurable threshold
+        const isHealthy = latency < NETWORK_HEALTH_THRESHOLD_MS && blockHeight > 0;
+
+        const health: NetworkHealth = {
+          chain,
+          latency,
+          blockHeight,
+          isHealthy,
+          lastUpdate: Date.now()
+        };
+
+        this.healthStatus.set(chain, health);
+        return health;
+      } catch (error) {
+        console.error(`Error checking network health for ${chain}:`, error);
+
+        // Return cached data if available
+        if (this.healthStatus.has(chain)) {
+          const previous = this.healthStatus.get(chain)!;
+          return {
+            ...previous,
+            isHealthy: false,
+            lastUpdate: Date.now()
+          };
+        }
+
+        // Return unhealthy status on error
         return {
-          ...cached,
+          chain,
+          latency: -1,
+          blockHeight: 0,
           isHealthy: false,
           lastUpdate: Date.now()
         };
       }
+    })().finally(() => {
+      this.inFlightChecks.delete(chain);
+    });
 
-      // Return unhealthy status on error
-      return {
-        chain,
-        latency: -1,
-        blockHeight: 0,
-        isHealthy: false,
-        lastUpdate: Date.now()
-      };
-    }
+    this.inFlightChecks.set(chain, checkPromise);
+    return checkPromise;
   }
 
   async checkAllNetworks(): Promise<NetworkHealth[]> {

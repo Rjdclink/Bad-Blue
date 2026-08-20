@@ -8,6 +8,7 @@ import { EventEmitter } from "events";
 import type { OfficerProfile, InsertOfficerProfile } from "@shared/schema";
 import { rateLimitTracker } from "./rateLimitTracker";
 import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
+import { getEnv } from './config';
 
 let geminiClient: GoogleGenAI | null = null;
 
@@ -30,10 +31,11 @@ const MAX_CACHE_SIZE = 500;
 
 function getGeminiClient(): GoogleGenAI {
   if (!geminiClient) {
-    if (!process.env.GEMINI_API_KEY) {
+    const apiKey = getEnv('GEMINI_API_KEY');
+    if (!apiKey) {
       throw new Error('GEMINI_API_KEY environment variable is not set');
     }
-    geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    geminiClient = new GoogleGenAI({ apiKey });
   }
   return geminiClient;
 }

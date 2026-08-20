@@ -17,6 +17,8 @@ esac
 ARCHIVE="node-v${NODE_VERSION}-linux-${NODE_ARCH}-musl.tar.xz"
 BASE_URL="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}"
 
+ORIGINAL_PWD="$(pwd)"
+
 mkdir -p "$TOOLS_DIR"
 cd "$TOOLS_DIR"
 
@@ -30,3 +32,5 @@ fi
 export PATH="$TOOLS_DIR/node/bin:$PATH"
 node --version
 npm --version
+
+cd "$ORIGINAL_PWD"

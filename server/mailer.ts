@@ -2,6 +2,7 @@
 // Platform-agnostic - uses RESEND_API_KEY environment variable
 
 import { Resend } from 'resend';
+import { getEnv } from './config';
 
 interface EmailOptions {
   to: string;
@@ -20,11 +21,11 @@ interface EmailOptions {
  * Get Resend credentials from environment variable
  */
 async function getCredentials(): Promise<{ apiKey: string; fromEmail: string }> {
-  // Use RESEND_API_KEY environment variable
-  if (process.env.RESEND_API_KEY?.startsWith('re_')) {
+  const apiKey = getEnv('RESEND_API_KEY');
+  if (apiKey.startsWith('re_')) {
     return {
-      apiKey: process.env.RESEND_API_KEY,
-      fromEmail: process.env.DEFAULT_FROM_EMAIL || 'onboarding@resend.dev'
+      apiKey,
+      fromEmail: getEnv('DEFAULT_FROM_EMAIL', 'onboarding@resend.dev')
     };
   }
 

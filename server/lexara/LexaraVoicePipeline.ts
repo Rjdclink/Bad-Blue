@@ -23,6 +23,7 @@ import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createLogger } from '../logger';
+import { getEnv } from '../config';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 
 const log = createLogger('LexaraVoicePipeline');
@@ -173,8 +174,8 @@ class ElevenLabsTTSProvider {
   }
 
   private initializeClient(): void {
-    const apiKey = process.env.ELEVENLABS_API_KEY;
-    const voiceId = process.env.ELEVENLABS_VOICE_ID;
+    const apiKey = getEnv('ELEVENLABS_API_KEY');
+    const voiceId = getEnv('ELEVENLABS_VOICE_ID');
     
     if (apiKey && voiceId) {
       this.client = new ElevenLabsClient({ apiKey });
@@ -212,6 +213,10 @@ class ElevenLabsTTSProvider {
       lastError: this.lastError,
       lastCheck: this.lastCheck,
     };
+  }
+
+  getVoiceId(): string {
+    return this.voiceId;
   }
 
   async synthesize(
@@ -303,7 +308,7 @@ class AudioPersistence {
   private storageDir: string;
 
   constructor(storageDir?: string) {
-    this.storageDir = storageDir || process.env.LEXARA_AUDIO_DIR || '/tmp/lexara-audio';
+    this.storageDir = storageDir || getEnv('LEXARA_AUDIO_DIR', '/tmp/lexara-audio');
     this.ensureDirectory();
   }
 
@@ -380,7 +385,7 @@ export class LexaraVoicePipeline extends EventEmitter {
 
     log.info('[LexaraVoicePipeline] Provider status', {
       elevenlabs: status.available,
-      voiceId: process.env.ELEVENLABS_VOICE_ID || 'not set',
+      voiceId: this.elevenLabsProvider.getVoiceId() || 'not set',
     });
 
     if (!status.available) {

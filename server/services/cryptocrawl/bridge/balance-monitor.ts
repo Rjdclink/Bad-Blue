@@ -1,6 +1,7 @@
 import { ethers, providers, Contract } from 'ethers';
 import { ChainId, TokenBalance } from './types';
 import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, FALLBACK_PRICES } from './chain-config';
+import { coinGeckoPriceClient } from './coingecko-client';
 
 const { JsonRpcProvider } = providers;
 const { formatEther, formatUnits } = ethers.utils;
@@ -9,8 +10,6 @@ class BalanceMonitor {
   private providers: Map<ChainId, providers.JsonRpcProvider> = new Map();
   private prices: Map<string, number> = new Map();
   private cache: Map<ChainId, TokenBalance> = new Map();
-  private lastPriceUpdate: number = 0;
-  private readonly PRICE_CACHE_TTL = 60000; // 1 minute
   private running: boolean = false;
 
   constructor() {
@@ -30,31 +29,15 @@ class BalanceMonitor {
   }
 
   private async updatePrices(): Promise<void> {
-    const now = Date.now();
-    if (now - this.lastPriceUpdate < this.PRICE_CACHE_TTL) {
-      return; // Use cached prices
-    }
-
     try {
-      const coinIds = 'matic-network,ethereum,avalanche-2,binancecoin,tether,usd-coin';
-      const response = await fetch(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds}&vs_currencies=usd`
+      const prices = await coinGeckoPriceClient.getSymbolPrices(
+        ['POL', 'ETH', 'AVAX', 'BNB', 'USDT', 'USDC'],
+        FALLBACK_PRICES,
       );
-      
-      if (!response.ok) {
-        throw new Error(`CoinGecko API error: ${response.status}`);
-      }
 
-      const data = await response.json();
-      
-      this.prices.set('POL', data['matic-network']?.usd || 0);
-      this.prices.set('ETH', data['ethereum']?.usd || 0);
-      this.prices.set('AVAX', data['avalanche-2']?.usd || 0);
-      this.prices.set('BNB', data['binancecoin']?.usd || 0);
-      this.prices.set('USDT', data['tether']?.usd || 1);
-      this.prices.set('USDC', data['usd-coin']?.usd || 1);
-      
-      this.lastPriceUpdate = now;
+      prices.forEach((value, symbol) => {
+        this.prices.set(symbol, value);
+      });
     } catch (error) {
       console.error('Failed to update prices:', error);
       // Use fallback prices if API fails

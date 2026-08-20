@@ -12,6 +12,7 @@
 
 import logger from '../../../logger.js';
 import crypto from 'crypto';
+import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
 // TradingView signal types
 export type TradingSignal = 'strong_buy' | 'buy' | 'neutral' | 'sell' | 'strong_sell';
@@ -117,11 +118,28 @@ export interface CrawlerOptimization {
   preferredTimeframe: string;
 }
 
+export interface TradingViewHealthStatus {
+  liveEnabled: boolean;
+  degraded: boolean;
+  consecutiveLiveFailures: number;
+  circuitOpenUntil: number;
+  lastLiveSuccessAt: number | null;
+  lastLiveFailureAt: number | null;
+  lastLiveFailureReason?: string;
+  mode: 'live' | 'degraded' | 'simulated';
+}
+
 // TradingView configuration
 const TRADINGVIEW_CONFIG = {
   defaultSymbol: 'BTCUSDT',
   defaultExchange: 'BINANCE',
   updateInterval: 60000,     // 1 minute
+  cacheTtlMs: Number(process.env.TRADINGVIEW_CACHE_TTL_MS || 60000),
+  minRequestIntervalMs: Number(process.env.TRADINGVIEW_MIN_INTERVAL_MS || 1250),
+  liveEnabled: process.env.TRADINGVIEW_LIVE_ENABLED !== 'false',
+  scannerEndpoint: process.env.TRADINGVIEW_SCANNER_ENDPOINT || 'https://scanner.tradingview.com/crypto/scan',
+  liveCircuitFailureThreshold: Number(process.env.TRADINGVIEW_LIVE_CIRCUIT_FAILURE_THRESHOLD || 3),
+  liveCircuitCooldownMs: Number(process.env.TRADINGVIEW_LIVE_CIRCUIT_COOLDOWN_MS || 60000),
   signalWeights: {
     oscillators: 0.4,
     movingAverages: 0.6,
@@ -140,8 +158,45 @@ const TRADINGVIEW_CONFIG = {
 export class TradingViewEngine {
   private static analysisCache = new Map<string, TechnicalAnalysis>();
   private static optimizationProfiles = new Map<string, CrawlerOptimization>();
+  private static inFlightAnalysis = new Map<string, Promise<TechnicalAnalysis>>();
+  private static requestQueue: Promise<void> = Promise.resolve();
+  private static lastRequestAt = 0;
   private static updateInterval: NodeJS.Timeout | null = null;
   private static isActive = false;
+  private static consecutiveLiveFailures = 0;
+  private static liveCircuitOpenUntil = 0;
+  private static lastLiveSuccessAt: number | null = null;
+  private static lastLiveFailureAt: number | null = null;
+  private static lastLiveFailureReason: string | undefined;
+
+  private static isLiveCircuitOpen(): boolean {
+    return Date.now() < this.liveCircuitOpenUntil;
+  }
+
+  private static registerLiveSuccess(): void {
+    this.consecutiveLiveFailures = 0;
+    this.liveCircuitOpenUntil = 0;
+    this.lastLiveSuccessAt = Date.now();
+    this.lastLiveFailureReason = undefined;
+  }
+
+  private static registerLiveFailure(error: unknown, symbol: string, timeframe: string): void {
+    this.consecutiveLiveFailures += 1;
+    this.lastLiveFailureAt = Date.now();
+    this.lastLiveFailureReason = error instanceof Error ? error.message : String(error);
+
+    if (this.consecutiveLiveFailures >= TRADINGVIEW_CONFIG.liveCircuitFailureThreshold) {
+      this.liveCircuitOpenUntil = Date.now() + TRADINGVIEW_CONFIG.liveCircuitCooldownMs;
+      logger.warn('[TRADINGVIEW] Live circuit opened after consecutive failures', {
+        component: 'TradingView',
+        failures: this.consecutiveLiveFailures,
+        cooldownMs: TRADINGVIEW_CONFIG.liveCircuitCooldownMs,
+        symbol,
+        timeframe,
+        reason: this.lastLiveFailureReason,
+      });
+    }
+  }
 
   /**
    * Initialize the TradingView engine
@@ -179,15 +234,227 @@ export class TradingViewEngine {
     const cached = this.analysisCache.get(cacheKey);
 
     // Return cached if fresh (less than 1 minute old)
-    if (cached && Date.now() - cached.timestamp < 60000) {
+    if (cached && Date.now() - cached.timestamp < TRADINGVIEW_CONFIG.cacheTtlMs) {
       return cached;
     }
 
-    // Generate analysis (in production: fetch from TradingView)
-    const analysis = this.generateAnalysis(symbol);
-    this.analysisCache.set(cacheKey, analysis);
+    const inFlight = this.inFlightAnalysis.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
 
-    return analysis;
+    const request = (async () => {
+      if (TRADINGVIEW_CONFIG.liveEnabled && !this.isLiveCircuitOpen()) {
+        try {
+          const live = await this.fetchLiveAnalysis(symbol, _timeframe);
+          this.registerLiveSuccess();
+          this.analysisCache.set(cacheKey, live);
+          return live;
+        } catch (error) {
+          this.registerLiveFailure(error, symbol, _timeframe);
+          logger.warn('[TRADINGVIEW] Live fetch failed, using deterministic fallback', {
+            component: 'TradingView',
+            symbol,
+            timeframe: _timeframe,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } else if (TRADINGVIEW_CONFIG.liveEnabled && this.isLiveCircuitOpen()) {
+        logger.debug('[TRADINGVIEW] Live circuit open; using fallback mode', {
+          component: 'TradingView',
+          symbol,
+          timeframe: _timeframe,
+          circuitOpenUntil: this.liveCircuitOpenUntil,
+        });
+      }
+
+      const simulated = this.generateAnalysis(symbol);
+      this.analysisCache.set(cacheKey, simulated);
+      return simulated;
+    })().finally(() => {
+      this.inFlightAnalysis.delete(cacheKey);
+    });
+
+    this.inFlightAnalysis.set(cacheKey, request);
+    return request;
+  }
+
+  private static mapInterval(timeframe: string): string {
+    switch (timeframe) {
+      case '1m':
+        return '1';
+      case '5m':
+        return '5';
+      case '15m':
+        return '15';
+      case '1h':
+        return '60';
+      case '4h':
+        return '240';
+      case '1d':
+      default:
+        return '1D';
+    }
+  }
+
+  private static async queueRateLimitedRequest<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.requestQueue.then(async () => {
+      const elapsed = Date.now() - this.lastRequestAt;
+      if (elapsed < TRADINGVIEW_CONFIG.minRequestIntervalMs) {
+        await new Promise(resolve => setTimeout(resolve, TRADINGVIEW_CONFIG.minRequestIntervalMs - elapsed));
+      }
+
+      const result = await task();
+      this.lastRequestAt = Date.now();
+      return result;
+    });
+
+    this.requestQueue = run.then(() => undefined).catch(() => undefined);
+    return run;
+  }
+
+  private static mapRecommendationToSignal(recommendation: number): TradingSignal {
+    if (recommendation >= 0.5) return 'strong_buy';
+    if (recommendation >= 0.1) return 'buy';
+    if (recommendation <= -0.5) return 'strong_sell';
+    if (recommendation <= -0.1) return 'sell';
+    return 'neutral';
+  }
+
+  private static async fetchLiveAnalysis(
+    symbol: string,
+    timeframe: string,
+  ): Promise<TechnicalAnalysis> {
+    const interval = this.mapInterval(timeframe);
+    const ticker = `${TRADINGVIEW_CONFIG.defaultExchange}:${symbol.toUpperCase()}`;
+    const cols = [
+      'Recommend.All', 'RSI', 'Stoch.K', 'Stoch.D', 'CCI20', 'ADX', 'AO', 'Mom',
+      'MACD.macd', 'MACD.signal', 'W.R', 'UO',
+      'EMA5', 'EMA10', 'EMA20', 'EMA50', 'EMA100', 'EMA200',
+      'SMA5', 'SMA10', 'SMA20', 'SMA50', 'SMA100', 'SMA200',
+      'Ichimoku.BLine', 'VWMA', 'HullMA9', 'close',
+    ].map(column => `${column}|${interval}`);
+
+    const body = {
+      symbols: {
+        tickers: [ticker],
+        query: { types: [] as string[] },
+      },
+      columns: cols,
+    };
+
+    return this.queueRateLimitedRequest(async () => {
+      const payload = await fetchJsonWithRetry<any>(TRADINGVIEW_CONFIG.scannerEndpoint, {
+        init: {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify(body),
+        },
+        maxRetries: 4,
+        baseDelayMs: 600,
+        maxDelayMs: 12000,
+        timeoutMs: 10000,
+      });
+
+      const row = payload?.data?.[0]?.d;
+      if (!Array.isArray(row) || row.length < cols.length) {
+        throw new Error('Unexpected TradingView payload shape');
+      }
+
+      const toNumber = (value: unknown, fallback: number = 0): number => {
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        return fallback;
+      };
+
+      const recommendAll = toNumber(row[0], 0);
+      const closePrice = Math.max(1, toNumber(row[27], 1));
+
+      const oscillators: OscillatorIndicators = {
+        rsi: toNumber(row[1], 50),
+        stochK: toNumber(row[2], 50),
+        stochD: toNumber(row[3], 50),
+        cci: toNumber(row[4], 0),
+        adx: toNumber(row[5], 20),
+        awesome: toNumber(row[6], 0),
+        momentum: toNumber(row[7], 0),
+        macd: {
+          value: toNumber(row[8], 0),
+          signal: toNumber(row[9], 0),
+          histogram: toNumber(row[8], 0) - toNumber(row[9], 0),
+        },
+        williamsR: toNumber(row[10], -50),
+        ultimateOsc: toNumber(row[11], 50),
+      };
+
+      const movingAverages: MovingAverages = {
+        ema5: toNumber(row[12], closePrice),
+        ema10: toNumber(row[13], closePrice),
+        ema20: toNumber(row[14], closePrice),
+        ema50: toNumber(row[15], closePrice),
+        ema100: toNumber(row[16], closePrice),
+        ema200: toNumber(row[17], closePrice),
+        sma5: toNumber(row[18], closePrice),
+        sma10: toNumber(row[19], closePrice),
+        sma20: toNumber(row[20], closePrice),
+        sma50: toNumber(row[21], closePrice),
+        sma100: toNumber(row[22], closePrice),
+        sma200: toNumber(row[23], closePrice),
+        ichimoku: {
+          conversionLine: toNumber(row[24], closePrice),
+          baseLine: toNumber(row[24], closePrice),
+          leadingSpanA: toNumber(row[24], closePrice),
+          leadingSpanB: toNumber(row[24], closePrice),
+        },
+        vwma: toNumber(row[25], closePrice),
+        hull: toNumber(row[26], closePrice),
+      };
+
+      const oscillatorSignals = this.analyzeOscillators(oscillators);
+      const maSignals = this.analyzeMovingAverages(movingAverages);
+      const fallbackSummary = this.calculateSummary(oscillatorSignals, maSignals);
+
+      const mappedSignal = this.mapRecommendationToSignal(recommendAll);
+      const summary = {
+        signal: mappedSignal,
+        recommendation: fallbackSummary.recommendation,
+        strength: Math.min(100, Math.round(Math.abs(recommendAll) * 100)),
+      };
+
+      const pivotPoints = this.generatePivotPointsFromBasePrice(closePrice, Math.max(0.5, Math.abs(recommendAll) + 0.8));
+
+      const analysis: TechnicalAnalysis = {
+        symbol,
+        timestamp: Date.now(),
+        oscillators: {
+          summary: oscillatorSignals.signal,
+          indicators: oscillators,
+          buyCount: oscillatorSignals.buyCount,
+          sellCount: oscillatorSignals.sellCount,
+          neutralCount: oscillatorSignals.neutralCount,
+        },
+        movingAverages: {
+          summary: maSignals.signal,
+          indicators: movingAverages,
+          buyCount: maSignals.buyCount,
+          sellCount: maSignals.sellCount,
+          neutralCount: maSignals.neutralCount,
+        },
+        summary,
+        pivotPoints,
+      };
+
+      logger.debug('[TRADINGVIEW] Live analysis fetched', {
+        component: 'TradingView',
+        symbol,
+        signal: summary.signal,
+        strength: summary.strength,
+      });
+
+      return analysis;
+    });
   }
 
   /**
@@ -482,6 +749,28 @@ export class TradingViewEngine {
     };
   }
 
+  private static generatePivotPointsFromBasePrice(basePrice: number, volatilityFactor: number): {
+    classic: PivotLevels;
+    fibonacci: PivotLevels;
+    camarilla: PivotLevels;
+  } {
+    const generateLevels = (factor: number): PivotLevels => ({
+      pivot: basePrice,
+      support1: basePrice * (1 - 0.01 * factor),
+      support2: basePrice * (1 - 0.02 * factor),
+      support3: basePrice * (1 - 0.03 * factor),
+      resistance1: basePrice * (1 + 0.01 * factor),
+      resistance2: basePrice * (1 + 0.02 * factor),
+      resistance3: basePrice * (1 + 0.03 * factor),
+    });
+
+    return {
+      classic: generateLevels(volatilityFactor),
+      fibonacci: generateLevels(0.618 * volatilityFactor),
+      camarilla: generateLevels(0.382 * volatilityFactor),
+    };
+  }
+
   /**
    * Get optimization settings for a crawler based on current signals
    */
@@ -559,6 +848,83 @@ export class TradingViewEngine {
     return signal !== 'neutral';
   }
 
+  static getHealthStatus(): TradingViewHealthStatus {
+    const mode: TradingViewHealthStatus['mode'] = !TRADINGVIEW_CONFIG.liveEnabled
+      ? 'simulated'
+      : (this.isLiveCircuitOpen() || this.consecutiveLiveFailures > 0)
+        ? 'degraded'
+        : 'live';
+
+    return {
+      liveEnabled: TRADINGVIEW_CONFIG.liveEnabled,
+      degraded: mode !== 'live',
+      consecutiveLiveFailures: this.consecutiveLiveFailures,
+      circuitOpenUntil: this.liveCircuitOpenUntil,
+      lastLiveSuccessAt: this.lastLiveSuccessAt,
+      lastLiveFailureAt: this.lastLiveFailureAt,
+      lastLiveFailureReason: this.lastLiveFailureReason,
+      mode,
+    };
+  }
+
+  static async checkReadiness(options?: {
+    strictLive?: boolean;
+    symbol?: string;
+    timeframe?: string;
+  }): Promise<{
+    ready: boolean;
+    mode: TradingViewHealthStatus['mode'];
+    detail: string;
+    status: TradingViewHealthStatus;
+  }> {
+    const strictLive = options?.strictLive === true;
+    const symbol = (options?.symbol || TRADINGVIEW_CONFIG.defaultSymbol).toUpperCase();
+    const timeframe = options?.timeframe || '1h';
+
+    if (!TRADINGVIEW_CONFIG.liveEnabled) {
+      const status = this.getHealthStatus();
+      return {
+        ready: !strictLive,
+        mode: status.mode,
+        detail: strictLive
+          ? 'TradingView live mode is disabled by configuration'
+          : 'TradingView live mode disabled; running simulated fallback mode',
+        status,
+      };
+    }
+
+    if (this.isLiveCircuitOpen()) {
+      const status = this.getHealthStatus();
+      return {
+        ready: !strictLive,
+        mode: status.mode,
+        detail: `TradingView live circuit open until ${new Date(status.circuitOpenUntil).toISOString()}`,
+        status,
+      };
+    }
+
+    try {
+      await this.fetchLiveAnalysis(symbol, timeframe);
+      this.registerLiveSuccess();
+      const status = this.getHealthStatus();
+      return {
+        ready: true,
+        mode: status.mode,
+        detail: `TradingView live analysis succeeded for ${symbol} (${timeframe})`,
+        status,
+      };
+    } catch (error) {
+      this.registerLiveFailure(error, symbol, timeframe);
+      const status = this.getHealthStatus();
+      return {
+        ready: !strictLive,
+        mode: status.mode,
+        detail: `TradingView live analysis failed: ${status.lastLiveFailureReason || 'unknown error'}`,
+        status,
+      };
+    }
+  }
+
   /**
    * Convert signal to numeric score (-2 to +2)
    */
@@ -585,6 +951,11 @@ export class TradingViewEngine {
     this.analysisCache.clear();
     this.optimizationProfiles.clear();
     this.isActive = false;
+    this.consecutiveLiveFailures = 0;
+    this.liveCircuitOpenUntil = 0;
+    this.lastLiveSuccessAt = null;
+    this.lastLiveFailureAt = null;
+    this.lastLiveFailureReason = undefined;
 
     logger.info('[TRADINGVIEW] TradingView engine shutdown', { component: 'TradingView' });
   }

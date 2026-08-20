@@ -14,6 +14,8 @@ export interface BeamState {
 
 let state: BeamState = { enabled: false };
 
+const BEAM_POST_TIMEOUT_MS = Math.max(2000, Number(process.env.BEAM_POST_TIMEOUT_MS || 8000));
+
 function isEnabled(): boolean {
   if (String(process.env.BEAM_KILL || '').toLowerCase() === 'true') return false;
   return String(process.env.BEAM_ENABLED || '').toLowerCase() === 'true';
@@ -44,14 +46,19 @@ function getTargets(): string[] {
 }
 
 async function fireAndForgetPost(url: string, body: any): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BEAM_POST_TIMEOUT_MS);
   try {
     await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
   } catch {
     // no-op
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

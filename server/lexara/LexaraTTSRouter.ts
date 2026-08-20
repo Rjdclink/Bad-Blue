@@ -18,6 +18,7 @@
 import { EventEmitter } from 'events';
 import crypto from 'crypto';
 import { createLogger } from '../logger';
+import { getEnv } from '../config';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 
 const log = createLogger('LexaraTTSRouter');
@@ -42,8 +43,8 @@ const STYLE_MAX = 1.0;
  * Throws a clear error if missing
  */
 function validateElevenLabsEnv(): { apiKey: string; voiceId: string } {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  const voiceId = process.env.ELEVENLABS_VOICE_ID;
+  const apiKey = getEnv('ELEVENLABS_API_KEY');
+  const voiceId = getEnv('ELEVENLABS_VOICE_ID');
   
   if (!apiKey || apiKey.trim() === '') {
     throw new Error(
@@ -624,8 +625,8 @@ export function getTTSCacheStats(): { size: number; hitRate: number; totalAccess
  * @throws Error if ELEVENLABS_API_KEY or ELEVENLABS_VOICE_ID missing, or API fails
  */
 export async function lexaraSpeakTest(): Promise<Buffer> {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  const voiceId = process.env.ELEVENLABS_VOICE_ID;
+  const apiKey = getEnv('ELEVENLABS_API_KEY');
+  const voiceId = getEnv('ELEVENLABS_VOICE_ID');
 
   if (!apiKey) {
     throw new Error('ELEVENLABS_API_KEY missing - cannot test voice');

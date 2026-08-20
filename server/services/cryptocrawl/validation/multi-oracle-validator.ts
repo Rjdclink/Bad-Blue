@@ -4,6 +4,7 @@
 
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
+import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
 export interface OracleConfig {
   name: string;
@@ -86,6 +87,7 @@ class MultiOraclePriceValidator {
   private oracles: OracleConfig[];
   private priceCache: Map<string, PriceData[]> = new Map();
   private historicalPrices: Map<string, number[]> = new Map();
+  private sourceCache: Map<string, { data: OraclePriceResult; expiresAt: number }> = new Map();
 
   constructor(oracles: OracleConfig[] = DEFAULT_ORACLES) {
     this.oracles = oracles;
@@ -209,30 +211,52 @@ class MultiOraclePriceValidator {
     const krakenPair = `${normalizedAsset === 'BTC' ? 'XBT' : normalizedAsset}USD`;
     const okxInstrument = `${normalizedAsset}-USD`;
 
+    const cacheKey = `${oracle.name}:${normalizedAsset}`;
+    const cached = this.sourceCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+
     let price: number | undefined;
     switch (oracle.type) {
       case 'chainlink': {
-        const response = await fetch(`https://api.exchange.coinbase.com/products/${coinbaseProduct}/ticker`);
-        const payload = await response.json();
+        const payload = await fetchJsonWithRetry<any>(`https://api.exchange.coinbase.com/products/${coinbaseProduct}/ticker`, {
+          maxRetries: 3,
+          baseDelayMs: 500,
+          maxDelayMs: 8000,
+          timeoutMs: 8000,
+        });
         price = Number(payload.price);
         break;
       }
       case 'uniswap_twap': {
-        const response = await fetch(`https://api.kraken.com/0/public/Ticker?pair=${encodeURIComponent(krakenPair)}`);
-        const payload = await response.json();
+        const payload = await fetchJsonWithRetry<any>(`https://api.kraken.com/0/public/Ticker?pair=${encodeURIComponent(krakenPair)}`, {
+          maxRetries: 3,
+          baseDelayMs: 500,
+          maxDelayMs: 8000,
+          timeoutMs: 8000,
+        });
         const key = Object.keys(payload.result || {})[0];
         price = Number(key ? payload.result[key]?.c?.[0] : undefined);
         break;
       }
       case 'pyth': {
-        const response = await fetch(`https://www.okx.com/api/v5/market/ticker?instId=${encodeURIComponent(okxInstrument)}`);
-        const payload = await response.json();
+        const payload = await fetchJsonWithRetry<any>(`https://www.okx.com/api/v5/market/ticker?instId=${encodeURIComponent(okxInstrument)}`, {
+          maxRetries: 3,
+          baseDelayMs: 500,
+          maxDelayMs: 8000,
+          timeoutMs: 8000,
+        });
         price = Number(payload.data?.[0]?.last);
         break;
       }
       case 'dex_spot': {
-        const response = await fetch(`https://api.exchange.coinbase.com/products/${coinbaseProduct}/ticker`);
-        const payload = await response.json();
+        const payload = await fetchJsonWithRetry<any>(`https://api.exchange.coinbase.com/products/${coinbaseProduct}/ticker`, {
+          maxRetries: 3,
+          baseDelayMs: 500,
+          maxDelayMs: 8000,
+          timeoutMs: 8000,
+        });
         price = Number(payload.price);
         break;
       }
@@ -240,7 +264,16 @@ class MultiOraclePriceValidator {
         return null;
     }
 
-    return Number.isFinite(price) && price! > 0 ? { price: price!, timestamp: Date.now() } : null;
+    if (Number.isFinite(price) && price! > 0) {
+      const data: OraclePriceResult = { price: price!, timestamp: Date.now() };
+      this.sourceCache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + Math.max(5000, Math.floor(oracle.maxStaleness * 1000 * 0.25)),
+      });
+      return data;
+    }
+
+    return null;
   }
 
   /**

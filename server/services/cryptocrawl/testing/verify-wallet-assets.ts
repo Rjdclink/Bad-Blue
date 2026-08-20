@@ -12,6 +12,7 @@
 
 import { ethers, providers, Contract } from 'ethers';
 import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, FALLBACK_PRICES } from '../bridge/chain-config.js';
+import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import type { ChainId } from '../bridge/types.js';
 
 const { JsonRpcProvider } = providers;
@@ -52,33 +53,17 @@ interface WalletSummary {
 
 // Fetch real-time prices from CoinGecko
 async function fetchPrices(): Promise<Map<string, number>> {
-  const prices = new Map<string, number>();
-  
   try {
-    const coinIds = 'matic-network,ethereum,avalanche-2,binancecoin,tether,usd-coin';
-    const response = await fetch(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds}&vs_currencies=usd`,
-      { signal: AbortSignal.timeout(10000) }
+    const prices = await coinGeckoPriceClient.getSymbolPrices(
+      ['POL', 'ETH', 'AVAX', 'BNB', 'USDT', 'USDC'],
+      FALLBACK_PRICES,
     );
-    
-    if (response.ok) {
-      const data = await response.json();
-      prices.set('POL', data['matic-network']?.usd || FALLBACK_PRICES.POL);
-      prices.set('ETH', data['ethereum']?.usd || FALLBACK_PRICES.ETH);
-      prices.set('AVAX', data['avalanche-2']?.usd || FALLBACK_PRICES.AVAX);
-      prices.set('BNB', data['binancecoin']?.usd || FALLBACK_PRICES.BNB);
-      prices.set('USDT', data['tether']?.usd || 1);
-      prices.set('USDC', data['usd-coin']?.usd || 1);
-      console.log('✅ Real-time prices fetched from CoinGecko');
-    } else {
-      throw new Error(`API returned ${response.status}`);
-    }
+    console.log('✅ Real-time prices fetched from CoinGecko (cached + rate-limited)');
+    return prices;
   } catch (error) {
     console.log('⚠️ Using fallback prices (CoinGecko unavailable)');
-    Object.entries(FALLBACK_PRICES).forEach(([k, v]) => prices.set(k, v));
+    return new Map<string, number>(Object.entries(FALLBACK_PRICES));
   }
-  
-  return prices;
 }
 
 async function getChainBalance(

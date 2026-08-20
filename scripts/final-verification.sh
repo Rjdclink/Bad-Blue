@@ -7,6 +7,10 @@
 
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
 # Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -34,14 +38,18 @@ for stage in 1 2 3 4 5 6 16 19; do
   SCRIPT="scripts/verify-stage-${stage}.cjs"
   if [ -f "$SCRIPT" ]; then
     echo -e "${BLUE}   Stage $stage:${NC} Running verification..."
-    if node "$SCRIPT" > /dev/null 2>&1; then
+    STAGE_LOG=$(mktemp)
+    if node "$SCRIPT" > "$STAGE_LOG" 2>&1; then
       echo -e "${GREEN}   ✅ Stage $stage verification passed${NC}"
       ((PASSED++))
     else
       echo -e "${RED}   ❌ Stage $stage verification failed${NC}"
+      echo -e "${YELLOW}      Last stage output:${NC}"
+      tail -n 6 "$STAGE_LOG" | sed 's/^/      /'
       ((FAILED++))
       ALL_CHECKS_PASSED=false
     fi
+    rm -f "$STAGE_LOG"
   else
     echo -e "${YELLOW}   ⚠️  Stage $stage verification script not found${NC}"
     ((WARNINGS++))

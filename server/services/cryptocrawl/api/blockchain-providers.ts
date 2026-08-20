@@ -4,6 +4,7 @@
 import { ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -578,6 +579,8 @@ export class EtherscanProvider {
   private apiKey: string;
   private rateLimiter: AdvancedRateLimiter;
   private chain: SupportedChain;
+  private responseCache: Map<string, { value: unknown; expiresAt: number }> = new Map();
+  private inFlightRequests: Map<string, Promise<unknown>> = new Map();
 
   constructor(config: BlockchainProviderConfig) {
     this.chain = config.chain;
@@ -593,36 +596,108 @@ export class EtherscanProvider {
     });
   }
 
+  private getCacheKey(params: Record<string, string>): string {
+    const encoded = Object.entries(params)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join('&');
+    return `${this.chain}:${encoded}`;
+  }
+
+  private getCacheTtlMs(params: Record<string, string>): number {
+    const action = params.action || '';
+    switch (action) {
+      case 'gasoracle':
+        return 5000;
+      case 'balance':
+        return 6000;
+      case 'txlist':
+      case 'tokentx':
+        return 8000;
+      case 'getabi':
+      case 'getsourcecode':
+      case 'tokeninfo':
+        return 60000;
+      default:
+        return 5000;
+    }
+  }
+
+  private getCached<T>(cacheKey: string): T | null {
+    const cached = this.responseCache.get(cacheKey);
+    if (!cached) return null;
+    if (cached.expiresAt <= Date.now()) {
+      this.responseCache.delete(cacheKey);
+      return null;
+    }
+    return cached.value as T;
+  }
+
+  private setCached<T>(cacheKey: string, value: T, ttlMs: number): void {
+    this.responseCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + ttlMs,
+    });
+
+    if (this.responseCache.size > 512) {
+      for (const [key, entry] of this.responseCache.entries()) {
+        if (entry.expiresAt <= Date.now()) {
+          this.responseCache.delete(key);
+        }
+      }
+    }
+  }
+
   /**
    * Make API request to Etherscan
    */
   private async request<T>(params: Record<string, string>): Promise<T> {
-    await this.rateLimiter.waitForSlot();
+    const cacheKey = this.getCacheKey(params);
+    const cached = this.getCached<T>(cacheKey);
+    if (cached !== null) return cached;
 
-    const url = new URL(this.baseUrl);
-    url.searchParams.set('apikey', this.apiKey);
-    Object.entries(params).forEach(([key, value]) => {
-      url.searchParams.set(key, value);
-    });
+    const inFlight = this.inFlightRequests.get(cacheKey);
+    if (inFlight) return inFlight as Promise<T>;
 
-    try {
-      const response = await fetch(url.toString());
-      const data = await response.json();
-      
+    const requestPromise = (async (): Promise<T> => {
+      await this.rateLimiter.waitForSlot();
+
+      const url = new URL(this.baseUrl);
+      url.searchParams.set('apikey', this.apiKey);
+      Object.entries(params).forEach(([key, value]) => {
+        url.searchParams.set(key, value);
+      });
+
+      const data = await fetchJsonWithRetry<any>(url.toString(), {
+        maxRetries: 3,
+        baseDelayMs: 500,
+        maxDelayMs: 10000,
+        timeoutMs: 10000,
+      });
+
       this.rateLimiter.recordRequest();
 
       if (data.status === '0' && data.message !== 'No transactions found') {
-        if (data.result?.includes('rate limit')) {
+        if (typeof data.result === 'string' && data.result.toLowerCase().includes('rate limit')) {
           this.rateLimiter.recordError(true);
         }
-        throw new Error(data.result || data.message);
+        throw new Error(data.result || data.message || 'Etherscan request failed');
       }
 
-      return data.result as T;
-    } catch (error) {
-      this.rateLimiter.recordError(this.isRateLimitError(error));
-      throw error;
-    }
+      const result = data.result as T;
+      this.setCached(cacheKey, result, this.getCacheTtlMs(params));
+      return result;
+    })()
+      .catch(error => {
+        this.rateLimiter.recordError(this.isRateLimitError(error));
+        throw error;
+      })
+      .finally(() => {
+        this.inFlightRequests.delete(cacheKey);
+      });
+
+    this.inFlightRequests.set(cacheKey, requestPromise);
+    return requestPromise as Promise<T>;
   }
 
   /**

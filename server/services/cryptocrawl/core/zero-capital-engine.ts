@@ -29,6 +29,7 @@
 import { ethers, Contract, Wallet, providers, BigNumber } from 'ethers';
 import { FlashbotsBundleProvider, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
+import { getCryptara } from '../../cryptara/index.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -167,6 +168,10 @@ export class AutonomousZeroCapitalEngine {
   private isScanning: boolean = false;
   private opportunityQueue: ZeroCapitalOpportunity[] = [];
   private scanInterval: NodeJS.Timeout | null = null;
+  private scanDelayMs: number = Number(process.env.ZERO_CAPITAL_SCAN_MIN_MS || 2500);
+  private readonly minScanDelayMs: number = Number(process.env.ZERO_CAPITAL_SCAN_MIN_MS || 2500);
+  private readonly maxScanDelayMs: number = Number(process.env.ZERO_CAPITAL_SCAN_MAX_MS || 15000);
+  private executionEnabled: boolean = false;
 
   constructor() {
     this.state = {
@@ -257,26 +262,73 @@ export class AutonomousZeroCapitalEngine {
     }
 
     this.state.isRunning = true;
+    const executionOptIn = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
+    const receiverAddress = String(process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER || '').trim();
+    this.executionEnabled = executionOptIn && receiverAddress.length > 0;
+
     logger.info('[ZeroCapitalEngine] Starting read-only on-chain monitoring...', {
       component: 'ZeroCapitalEngine',
       mode: 'MONITORING_ONLY',
       connectedChains: this.providers.size,
+      executionEnabled: this.executionEnabled,
     });
 
     // Only start the implemented provider-backed monitoring loop. Execution requires
     // deployed receiver contracts and verified quote sources, neither of which is
     // assumed by this service.
     this.startScanningLoop();
+
+    if (this.executionEnabled) {
+      logger.info('[ZeroCapitalEngine] Execution mode enabled for zero-capital arbitrage', {
+        component: 'ZeroCapitalEngine',
+      });
+      this.startExecutionLoop();
+    } else {
+      logger.info('[ZeroCapitalEngine] Execution loop disabled; monitoring mode only', {
+        component: 'ZeroCapitalEngine',
+        reason: 'Set ZERO_CAPITAL_ENABLE_EXECUTION=true and ZERO_CAPITAL_FLASHLOAN_RECEIVER to enable execution',
+      });
+    }
   }
 
   /**
    * Scanning Loop: Continuously discover zero-capital opportunities
    */
   private startScanningLoop(): void {
+    if (this.scanInterval) {
+      clearTimeout(this.scanInterval);
+      this.scanInterval = null;
+    }
+
+    const scheduleNext = (delayMs: number): void => {
+      if (!this.state.isRunning) return;
+      this.scanInterval = setTimeout(() => {
+        void scanCycle();
+      }, delayMs);
+    };
+
+    const computeNextDelay = (hasErrors: boolean, opportunityCount: number): number => {
+      if (hasErrors) {
+        return Math.min(this.maxScanDelayMs, Math.floor(this.scanDelayMs * 1.5));
+      }
+
+      if (opportunityCount > 0) {
+        return this.minScanDelayMs;
+      }
+
+      return Math.min(this.maxScanDelayMs, Math.floor(this.scanDelayMs * 1.2));
+    };
+
     const scanCycle = async () => {
-      if (!this.state.isRunning || this.isScanning) return;
+      if (!this.state.isRunning) return;
+      if (this.isScanning) {
+        scheduleNext(this.scanDelayMs);
+        return;
+      }
 
       this.isScanning = true;
+      let hasErrors = false;
+      let viableCount = 0;
       
       try {
         // Scan all connected chains in parallel
@@ -291,6 +343,8 @@ export class AutonomousZeroCapitalEngine {
         for (const result of results) {
           if (result.status === 'fulfilled' && result.value) {
             newOpportunities.push(...result.value);
+          } else if (result.status === 'rejected') {
+            hasErrors = true;
           }
         }
 
@@ -302,6 +356,7 @@ export class AutonomousZeroCapitalEngine {
         // Update queue
         this.opportunityQueue = viableOpportunities;
         this.state.currentOpportunities = viableOpportunities.length;
+        viableCount = viableOpportunities.length;
 
         if (viableOpportunities.length > 0) {
           logger.info('[ZeroCapitalEngine] Opportunities discovered', {
@@ -312,18 +367,52 @@ export class AutonomousZeroCapitalEngine {
         }
 
       } catch (error) {
+        hasErrors = true;
         logger.error('[ZeroCapitalEngine] Scanning error', {
           component: 'ZeroCapitalEngine',
           error: (error as Error).message,
         });
       } finally {
         this.isScanning = false;
+        this.scanDelayMs = computeNextDelay(hasErrors, viableCount);
+        scheduleNext(this.scanDelayMs);
       }
     };
 
-    // Run scan every 2 seconds (aggressive but respectful of rate limits)
-    this.scanInterval = setInterval(scanCycle, 2000);
-    scanCycle(); // Initial scan
+    // Adaptive schedule prevents hammering when APIs/chains are degraded.
+    void scanCycle();
+  }
+
+  private toUsdEstimate(value: bigint | undefined): number {
+    if (!value) return 0;
+    const normalized = Number(ethers.utils.formatEther(value));
+    return Number.isFinite(normalized) ? Math.max(0, normalized) : 0;
+  }
+
+  private recordCryptaraExecutionFeedback(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): void {
+    try {
+      const cryptara = getCryptara();
+      if (!cryptara.getStatus().isRunning) return;
+
+      cryptara.recordExecutionResult({
+        source: 'zero_capital',
+        opportunityId: opportunity.id,
+        chain: opportunity.chain,
+        symbol: `${opportunity.inputToken}/${opportunity.outputToken}`,
+        strategy: opportunity.type,
+        success: result.success,
+        expectedProfitUsd: this.toUsdEstimate(opportunity.expectedProfit),
+        realizedProfitUsd: this.toUsdEstimate(result.profit),
+        feeUsd: this.toUsdEstimate(opportunity.gasEstimate),
+        slippageBps: typeof result.slippage === 'number' ? Math.max(0, Math.round(result.slippage * 10000)) : 0,
+        latencyMs: 0,
+        usedZeroCapital: true,
+        timestamp: Date.now(),
+        notes: result.error,
+      });
+    } catch {
+      // Cryptara feedback is best-effort only.
+    }
   }
 
   /**
@@ -717,7 +806,7 @@ export class AutonomousZeroCapitalEngine {
   stop(): void {
     this.state.isRunning = false;
     if (this.scanInterval) {
-      clearInterval(this.scanInterval);
+      clearTimeout(this.scanInterval);
       this.scanInterval = null;
     }
     logger.info('[ZeroCapitalEngine] Engine stopped', {

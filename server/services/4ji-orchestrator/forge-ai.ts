@@ -442,21 +442,30 @@ export class ForgeAI {
     const roles: OrchestrationRole[] = ['architecture', 'coding', 'review', 'testing', 'security', 'research'];
     for (const role of roles) {
       const capabilities = ROLE_CAPABILITY_MAP[role];
+      const minimumMatch = Math.min(2, capabilities.length);
       const candidates = Array.from(this.models.values())
-        .filter(model => capabilities.every(capability => model.capabilities.includes(capability)))
+        .map(model => ({
+          model,
+          matchedCapabilities: capabilities.filter(capability => model.capabilities.includes(capability)).length,
+        }))
+        .filter(candidate => candidate.matchedCapabilities >= minimumMatch)
         .sort((a, b) => {
-          const priorityA = this.providerPriority(a.provider);
-          const priorityB = this.providerPriority(b.provider);
+          if (a.matchedCapabilities !== b.matchedCapabilities) {
+            return b.matchedCapabilities - a.matchedCapabilities;
+          }
+
+          const priorityA = this.providerPriority(a.model.provider);
+          const priorityB = this.providerPriority(b.model.provider);
           if (priorityA !== priorityB) return priorityA - priorityB;
-          return this.speedRank(a.speedTier) - this.speedRank(b.speedTier);
+          return this.speedRank(a.model.speedTier) - this.speedRank(b.model.speedTier);
         });
 
       if (candidates.length === 0) {
         throw new Error(`No candidate models available for 4JI role '${role}'`);
       }
 
-      const primary = candidates[0];
-      const fallbackModelIds = candidates.slice(1, 4).map(model => model.id);
+      const primary = candidates[0].model;
+      const fallbackModelIds = candidates.slice(1, 4).map(candidate => candidate.model.id);
 
       this.roleAssignments.set(role, {
         role,
@@ -798,9 +807,7 @@ Return a single consolidated response.`;
     const consensusExecution = await this.executeSingleModel(reviewer, {
       ...task,
       prompt: consensusPrompt,
-      requiredCapabilities: ['review', 'reasoning', 'verification'].filter((capability): capability is AICapability =>
-        ['review', 'reasoning', 'verification'].includes(capability)
-      ),
+      requiredCapabilities: ['reasoning', 'verification'],
     });
 
     const modelsUsed = [
