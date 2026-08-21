@@ -8,7 +8,6 @@ import {
   getObjectAclPolicy,
   setObjectAclPolicy,
 } from "./objectAcl";
-import { isObjectStorageAvailable } from "./platformConfig";
 
 // Type imports that won't be bundled
 import type { Storage, File } from "@google-cloud/storage";
