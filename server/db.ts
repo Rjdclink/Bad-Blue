@@ -25,7 +25,15 @@ import pg from 'pg';
 const { Pool } = pg;
 import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from "@shared/schema";
-import { getDatabaseUrl, isRailway as isRailwayHelper, isProduction as isProductionHelper, loadConfig } from './config';
+import {
+  getDatabaseUrl,
+  getDatabaseUrlSource,
+  isRailway as isRailwayHelper,
+  isProduction as isProductionHelper,
+  isSupabasePostgresConnectionString,
+  isSupabaseProjectUrl,
+  loadConfig,
+} from './config';
 
 // Load and validate config after dotenv
 loadConfig();
@@ -36,49 +44,29 @@ const isProduction = isProductionHelper();
 
 // Get database URL from config (handles SUPABASE_DATABASE_URL, SUPABASE_DB_URL, DATABASE_URL fallback)
 const databaseUrl = getDatabaseUrl();
+const databaseUrlSource = getDatabaseUrlSource();
 export const isDatabaseConfigured = !!(databaseUrl && databaseUrl.trim().length > 0);
 
-// Helper to detect if a connection string is a valid PostgreSQL Supabase connection
-const isSupabaseConnectionString = (url: string | undefined): boolean => {
-  if (!url) return false;
-  
-  // CRITICAL: Must be a PostgreSQL connection string (not HTTP API URL)
-  // Supabase REST API URLs (https://xxx.supabase.co) are NOT valid for pg client
-  const isPostgresProtocol = url.startsWith('postgres://') || url.startsWith('postgresql://');
-  if (!isPostgresProtocol) return false;
-  
-  // Check for Supabase domains in the connection string:
-  // - supabase.co (main dashboard and direct connections)
-  // - supabase.com (alternative domain)
-  // - supabase.net (pooled/pgBouncer connections via pooler.supabase.net)
-  // - pooler.supabase.* (connection pooling endpoints)
-  return url.includes('supabase.co') || 
-         url.includes('supabase.com') || 
-         url.includes('supabase.net') ||
-         url.includes('.supabase.');  // Catches any subdomain pattern
-};
-
-// Helper to check if URL is an HTTP Supabase URL (wrong format for database)
-const isHttpSupabaseUrl = (url: string | undefined): boolean => {
-  if (!url) return false;
-  return (url.startsWith('http://') || url.startsWith('https://')) && 
-         (url.includes('supabase.co') || url.includes('supabase.com') || url.includes('.supabase.'));
-};
-
 // Determine if using Supabase for logging purposes
-const isUsingSupabase = isSupabaseConnectionString(databaseUrl);
+const isUsingSupabase = isSupabasePostgresConnectionString(databaseUrl);
+
+if (isDatabaseConfigured && isSupabaseProjectUrl(databaseUrl)) {
+  throw new Error(`[DATABASE] ${databaseUrlSource} is using a Supabase project URL. Use the Postgres connection string from Supabase Settings -> Database.`);
+}
+
+if (isProduction && isDatabaseConfigured && !isUsingSupabase) {
+  throw new Error(`[DATABASE] Refusing to start in production with non-Supabase database source: ${databaseUrlSource}`);
+}
 
 // NOTE: Production guard removed (Nov 30, 2025) - allow flexible database configuration
 // Validation of connection string format happens via isSupabaseConnectionString() helper
 
 // Log which database connection is being used with prominent warning for fallback
 if (!isUsingSupabase) {
-  console.warn('[DATABASE] ⚠️ WARNING: Using DATABASE_URL fallback (development only)');
-  console.warn('[DATABASE] ⚠️ This connects to Replit internal DB (~13 tables), NOT production Supabase (69 tables)');
-  console.warn('[DATABASE] ⚠️ Use /api/schema-verify endpoint for accurate table counts');
-  console.warn('[DATABASE] ⚠️ execute_sql_tool is DEPRECATED - it connects to wrong database');
+  console.warn(`[DATABASE] ⚠️ Non-Supabase database source detected: ${databaseUrlSource}`);
+  console.warn('[DATABASE] ⚠️ Development-only fallback mode is active');
 } else {
-  console.log(`[DATABASE] ✓ Using Supabase connection (production database)`);
+  console.log(`[DATABASE] ✓ Using Supabase connection from ${databaseUrlSource}`);
 }
 console.log(`[DATABASE] Environment: ${isProduction ? 'production' : 'development'}, Platform: ${isRailway ? 'Railway' : 'Replit/local'}`);
 
@@ -261,7 +249,7 @@ export async function verifyDatabaseSchema(): Promise<{
 }> {
   // Use config to determine database connection
   const connectionSource = 'config (getDatabaseUrl)';
-  const isProductionDatabase = isSupabaseConnectionString(databaseUrl);
+  const isProductionDatabase = isSupabasePostgresConnectionString(databaseUrl);
   
   // Critical tables that must exist for core BadBlue functionality
   // These match the actual table names from shared/schema.ts and migrations
@@ -304,7 +292,7 @@ export async function verifyDatabaseSchema(): Promise<{
       details = `Only ${tableCount} tables found (expected ${MINIMUM_PRODUCTION_TABLES}+). Connected to wrong database?`;
       console.error(`[DATABASE] ❌ WRONG DATABASE DETECTED: Only ${tableCount} tables found`);
       console.error(`[DATABASE] ❌ Expected ${MINIMUM_PRODUCTION_TABLES}+ tables (production has 69)`);
-      console.error(`[DATABASE] ❌ You may be connected to Replit internal database instead of Supabase`);
+      console.error(`[DATABASE] ❌ You may be connected to a stale non-Supabase database instead of Supabase`);
     } else {
       details = `Missing ${missingTables.length} critical tables: ${missingTables.join(', ')}`;
     }

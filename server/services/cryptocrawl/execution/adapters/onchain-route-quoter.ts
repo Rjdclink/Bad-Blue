@@ -1,0 +1,345 @@
+import { BigNumber, Contract, providers } from 'ethers';
+import type { RoutePlanningSwapStep } from './autonomous-route-planner.js';
+import type { SupportedExecutionChain, SupportedSwapProtocol } from './onchain-payload-builder.js';
+
+const UNISWAP_V3_QUOTER_ABI = [
+  'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
+];
+
+const SUSHISWAP_ROUTER_ABI = [
+  'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
+];
+
+const UNISWAP_V3_QUOTERS: Partial<Record<SupportedExecutionChain, string>> = {
+  ethereum: '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
+  polygon: '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
+  arbitrum: '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
+  optimism: '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
+};
+
+const SUSHISWAP_ROUTERS: Partial<Record<SupportedExecutionChain, string>> = {
+  ethereum: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
+  polygon: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+  arbitrum: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+  bsc: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+  avalanche: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+};
+
+export interface ConfiguredRouteLeg {
+  protocol: SupportedSwapProtocol;
+  tokenIn: string;
+  tokenOut: string;
+  feeTier?: 500 | 3000 | 10000;
+  fee?: number;
+}
+
+export interface ConfiguredZeroCapitalRoute {
+  id: string;
+  chain: SupportedExecutionChain;
+  inputAssetSymbol: 'USDC' | 'USDT';
+  inputToken: string;
+  inputTokenDecimals: number;
+  amountIn: string;
+  estimatedGasCostInInputToken: string;
+  relayFeeInInputToken: string;
+  flashLoanFeeBps?: number;
+  minNetProfitBps?: number;
+  legs: ConfiguredRouteLeg[];
+}
+
+export interface QuotedZeroCapitalRoute {
+  id: string;
+  chain: SupportedExecutionChain;
+  inputAssetSymbol: 'USDC' | 'USDT';
+  inputToken: string;
+  inputTokenDecimals: number;
+  amountIn: bigint;
+  grossProfit: bigint;
+  netProfit: bigint;
+  netProfitBps: number;
+  estimatedGasCostInInputToken: bigint;
+  flashLoanFeeInInputToken: bigint;
+  relayFeeInInputToken: bigint;
+  quoteLatencyMs: number;
+  route: RoutePlanningSwapStep[];
+}
+
+function isAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+function toBigInt(label: string, value: unknown): bigint {
+  const normalized = String(value ?? '').trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(`${label} must be an integer string denominated in token base units`);
+  }
+  return BigInt(normalized);
+}
+
+function normalizeAddress(value: string): string {
+  return value.toLowerCase();
+}
+
+function normalizeProtocol(value: unknown): SupportedSwapProtocol {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') {
+    return 'uniswapV3';
+  }
+  if (normalized === 'sushiswap' || normalized === 'sushi') {
+    return 'sushiswap';
+  }
+  throw new Error(`Unsupported route protocol: ${String(value)}`);
+}
+
+function asSupportedChain(value: unknown): SupportedExecutionChain {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism' || normalized === 'bsc' || normalized === 'avalanche') {
+    return normalized;
+  }
+  throw new Error(`Unsupported route chain: ${String(value)}`);
+}
+
+function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapitalRoute {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error(`Route ${index} must be an object`);
+  }
+
+  const candidate = raw as Record<string, unknown>;
+  const chain = asSupportedChain(candidate.chain);
+  const inputAssetSymbol = String(candidate.inputAssetSymbol || '').trim().toUpperCase();
+  if (inputAssetSymbol !== 'USDC' && inputAssetSymbol !== 'USDT') {
+    throw new Error(`Route ${index} must use USDC or USDT as its input asset`);
+  }
+
+  const inputToken = String(candidate.inputToken || '').trim();
+  if (!isAddress(inputToken)) {
+    throw new Error(`Route ${index} inputToken must be a valid EVM address`);
+  }
+
+  const inputTokenDecimals = Number(candidate.inputTokenDecimals);
+  if (!Number.isInteger(inputTokenDecimals) || inputTokenDecimals < 0 || inputTokenDecimals > 36) {
+    throw new Error(`Route ${index} inputTokenDecimals must be an integer from 0 to 36`);
+  }
+  if (inputTokenDecimals !== 6) {
+    throw new Error(`Route ${index} must use six-decimal USDC or USDT accounting`);
+  }
+
+  const rawLegs = candidate.legs;
+  if (!Array.isArray(rawLegs) || rawLegs.length < 2) {
+    throw new Error(`Route ${index} must contain at least two legs`);
+  }
+
+  const legs = rawLegs.map((rawLeg, legIndex) => {
+    if (!rawLeg || typeof rawLeg !== 'object') {
+      throw new Error(`Route ${index} leg ${legIndex} must be an object`);
+    }
+    const leg = rawLeg as Record<string, unknown>;
+    const tokenIn = String(leg.tokenIn || '').trim();
+    const tokenOut = String(leg.tokenOut || '').trim();
+    if (!isAddress(tokenIn) || !isAddress(tokenOut)) {
+      throw new Error(`Route ${index} leg ${legIndex} requires valid tokenIn and tokenOut addresses`);
+    }
+
+    const feeTier = leg.feeTier === undefined ? undefined : Number(leg.feeTier);
+    if (feeTier !== undefined && feeTier !== 500 && feeTier !== 3000 && feeTier !== 10000) {
+      throw new Error(`Route ${index} leg ${legIndex} feeTier must be 500, 3000, or 10000`);
+    }
+
+    const fee = leg.fee === undefined ? undefined : Number(leg.fee);
+    if (fee !== undefined && (!Number.isFinite(fee) || fee < 0 || fee > 0.1)) {
+      throw new Error(`Route ${index} leg ${legIndex} fee must be a decimal fraction between 0 and 0.1`);
+    }
+
+    return {
+      protocol: normalizeProtocol(leg.protocol),
+      tokenIn,
+      tokenOut,
+      ...(feeTier !== undefined ? { feeTier: feeTier as 500 | 3000 | 10000 } : {}),
+      ...(fee !== undefined ? { fee } : {}),
+    };
+  });
+
+  if (normalizeAddress(legs[0].tokenIn) !== normalizeAddress(inputToken)) {
+    throw new Error(`Route ${index} must start with inputToken`);
+  }
+
+  for (let legIndex = 1; legIndex < legs.length; legIndex++) {
+    if (normalizeAddress(legs[legIndex - 1].tokenOut) !== normalizeAddress(legs[legIndex].tokenIn)) {
+      throw new Error(`Route ${index} leg ${legIndex} is not contiguous with the preceding leg`);
+    }
+  }
+
+  if (normalizeAddress(legs[legs.length - 1].tokenOut) !== normalizeAddress(inputToken)) {
+    throw new Error(`Route ${index} must return to inputToken to repay the flash loan atomically`);
+  }
+
+  const amountIn = String(candidate.amountIn || '').trim();
+  const estimatedGasCostInInputToken = String(candidate.estimatedGasCostInInputToken || '').trim();
+  const relayFeeInInputToken = String(candidate.relayFeeInInputToken || '').trim();
+  toBigInt(`Route ${index} amountIn`, amountIn);
+  toBigInt(`Route ${index} estimatedGasCostInInputToken`, estimatedGasCostInInputToken);
+  toBigInt(`Route ${index} relayFeeInInputToken`, relayFeeInInputToken);
+
+  const flashLoanFeeBps = candidate.flashLoanFeeBps === undefined ? 0 : Number(candidate.flashLoanFeeBps);
+  const minNetProfitBps = candidate.minNetProfitBps === undefined ? 50 : Number(candidate.minNetProfitBps);
+  if (!Number.isFinite(flashLoanFeeBps) || flashLoanFeeBps < 0 || flashLoanFeeBps > 1000) {
+    throw new Error(`Route ${index} flashLoanFeeBps must be between 0 and 1000`);
+  }
+  if (!Number.isFinite(minNetProfitBps) || minNetProfitBps < 1 || minNetProfitBps > 5000) {
+    throw new Error(`Route ${index} minNetProfitBps must be between 1 and 5000`);
+  }
+
+  return {
+    id: String(candidate.id || `${chain}-route-${index}`).trim(),
+    chain,
+    inputAssetSymbol,
+    inputToken,
+    inputTokenDecimals,
+    amountIn,
+    estimatedGasCostInInputToken,
+    relayFeeInInputToken,
+    flashLoanFeeBps,
+    minNetProfitBps,
+    legs,
+  };
+}
+
+export function loadConfiguredZeroCapitalRoutes(raw: string = process.env.ZERO_CAPITAL_ROUTE_CONFIG || ''): ConfiguredZeroCapitalRoute[] {
+  if (!raw.trim()) {
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('ZERO_CAPITAL_ROUTE_CONFIG must be valid JSON');
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error('ZERO_CAPITAL_ROUTE_CONFIG must be a JSON array');
+  }
+
+  return parsed.map(parseConfiguredRoute);
+}
+
+async function quoteLeg(
+  provider: providers.Provider,
+  chain: SupportedExecutionChain,
+  leg: ConfiguredRouteLeg,
+  amountIn: BigNumber,
+): Promise<BigNumber> {
+  if (leg.protocol === 'uniswapV3') {
+    const quoterAddress = UNISWAP_V3_QUOTERS[chain];
+    if (!quoterAddress) {
+      throw new Error(`No Uniswap V3 quoter configured for ${chain}`);
+    }
+    const quoter = new Contract(quoterAddress, UNISWAP_V3_QUOTER_ABI, provider);
+    return BigNumber.from(await quoter.callStatic.quoteExactInputSingle(
+      leg.tokenIn,
+      leg.tokenOut,
+      leg.feeTier || 3000,
+      amountIn,
+      0,
+    ));
+  }
+
+  const routerAddress = SUSHISWAP_ROUTERS[chain];
+  if (!routerAddress) {
+    throw new Error(`No SushiSwap router configured for ${chain}`);
+  }
+  const router = new Contract(routerAddress, SUSHISWAP_ROUTER_ABI, provider);
+  const amounts = await router.getAmountsOut(amountIn, [leg.tokenIn, leg.tokenOut]);
+  if (!Array.isArray(amounts) || amounts.length < 2) {
+    throw new Error('SushiSwap quote returned no output amount');
+  }
+  return BigNumber.from(amounts[amounts.length - 1]);
+}
+
+function feeToDecimal(protocol: SupportedSwapProtocol, feeTier?: number, fee?: number): number {
+  if (fee !== undefined) return fee;
+  if (protocol === 'uniswapV3') return (feeTier || 3000) / 1_000_000;
+  return 0.003;
+}
+
+export async function quoteConfiguredZeroCapitalRoute(
+  route: ConfiguredZeroCapitalRoute,
+  provider: providers.Provider,
+): Promise<QuotedZeroCapitalRoute | null> {
+  const quoteStartedAt = Date.now();
+  let currentAmount = BigNumber.from(route.amountIn);
+  const initialAmount = currentAmount;
+  const steps: RoutePlanningSwapStep[] = [];
+
+  for (const leg of route.legs) {
+    const amountOut = await quoteLeg(provider, route.chain, leg, currentAmount);
+    if (amountOut.lte(0)) {
+      return null;
+    }
+
+    steps.push({
+      protocol: leg.protocol,
+      tokenIn: leg.tokenIn,
+      tokenOut: leg.tokenOut,
+      amountIn: currentAmount.toString(),
+      expectedAmountOut: amountOut.toString(),
+      fee: feeToDecimal(leg.protocol, leg.feeTier, leg.fee),
+    });
+    currentAmount = amountOut;
+  }
+
+  const finalAmount = BigInt(currentAmount.toString());
+  const initial = BigInt(initialAmount.toString());
+  if (finalAmount <= initial) {
+    return null;
+  }
+
+  const grossProfit = finalAmount - initial;
+  const flashLoanFee = (initial * BigInt(Math.round((route.flashLoanFeeBps || 0)))) / 10000n;
+  const gasCost = toBigInt('estimatedGasCostInInputToken', route.estimatedGasCostInInputToken);
+  const relayFee = toBigInt('relayFeeInInputToken', route.relayFeeInInputToken);
+  const netProfit = grossProfit - flashLoanFee - gasCost - relayFee;
+  if (netProfit <= 0n) {
+    return null;
+  }
+
+  const netProfitBps = Number((netProfit * 10000n) / initial);
+  if (netProfitBps < (route.minNetProfitBps || 50)) {
+    return null;
+  }
+
+  return {
+    id: route.id,
+    chain: route.chain,
+    inputAssetSymbol: route.inputAssetSymbol,
+    inputToken: route.inputToken,
+    inputTokenDecimals: route.inputTokenDecimals,
+    amountIn: initial,
+    grossProfit,
+    netProfit,
+    netProfitBps,
+    estimatedGasCostInInputToken: gasCost,
+    flashLoanFeeInInputToken: flashLoanFee,
+    relayFeeInInputToken: relayFee,
+    quoteLatencyMs: Date.now() - quoteStartedAt,
+    route: steps,
+  };
+}
+
+export async function quoteConfiguredZeroCapitalRoutesForChain(
+  chain: SupportedExecutionChain,
+  provider: providers.Provider,
+  routes: ConfiguredZeroCapitalRoute[] = loadConfiguredZeroCapitalRoutes(),
+): Promise<QuotedZeroCapitalRoute[]> {
+  const candidates = routes.filter(route => route.chain === chain);
+  const settled = await Promise.allSettled(candidates.map(route => quoteConfiguredZeroCapitalRoute(route, provider)));
+  const quoted: QuotedZeroCapitalRoute[] = [];
+
+  for (const result of settled) {
+    if (result.status === 'fulfilled' && result.value) {
+      quoted.push(result.value);
+    }
+  }
+
+  return quoted.sort((left, right) => (right.netProfit > left.netProfit ? 1 : right.netProfit < left.netProfit ? -1 : 0));
+}

@@ -65,6 +65,11 @@ export class CryptaraGovernance extends EventEmitter {
     
     // Initialize Cryptara (but don't start active surveillance)
     await this.cryptara.initialize();
+
+    const readiness = await this.cryptara.validateLiveSignalReadiness({ strictLive: true });
+    if (!readiness.liveSignalReady) {
+      throw new Error(`Cryptara governance requires live TradingView and Alchemy readiness before activation: ${readiness.tradingView.detail}; ${readiness.alchemy.detail}`);
+    }
     
     // Setup event listeners
     this.setupEventListeners();

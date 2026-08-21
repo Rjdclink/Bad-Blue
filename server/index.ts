@@ -43,19 +43,7 @@ import cookieParser from "cookie-parser";
 import { serveStatic, log } from "./vite";
 import { createServer, type Server } from "http";
 
-// Static imports for migrations - ensures esbuild bundles them (dynamic imports don't work with bundlers)
-import { runSquareMigration } from "./migrations/runSquareMigration";
-import { addUsersStatusColumn } from "./migrations/add_users_status_column";
-import { createCoreTables } from "./migrations/createCoreTables";
-import { createSubAgentTables } from "./migrations/createSubAgentTables";
-import { createTokenMetricsTables } from "./migrations/createTokenMetrics";
-import { createDeviceRateLimitTables } from "./migrations/createDeviceRateLimitTables";
-import { createPetitionTables } from "./migrations/createPetitionTables";
-import { createPublicEvidenceTables } from "./migrations/createPublicEvidenceTables";
-import { createComplaintRoutingTables } from "./migrations/createComplaintRoutingTables";
-import { createFOIARoutingTables } from "./migrations/createFOIARoutingTables";
-import { createSearchPrioritizationTables } from "./migrations/createSearchPrioritizationTables";
-import { createDocumentCreatorTables } from "./migrations/createDocumentCreatorTables";
+import { runAllSchemaMigrations } from "./migrations/reconcileAppSchema";
 
 const app = express();
 
@@ -214,31 +202,16 @@ async function initializeDatabase(): Promise<void> {
 
 async function runMigrations(): Promise<void> {
   console.log('[STARTUP] Stage 2: Running migrations...');
-  
-  // Using static imports (defined at top of file) - ensures esbuild includes migrations in bundle
-  // Dynamic imports don't work with bundlers because they can't analyze variable-based import paths
-  const migrations: Array<{ name: string; fn: () => Promise<unknown> }> = [
-    { name: 'Square Payment Migration', fn: runSquareMigration },
-    { name: 'Users Status Column', fn: addUsersStatusColumn },
-    { name: 'Core tables', fn: createCoreTables },
-    { name: 'Sub-Agent tables', fn: createSubAgentTables },
-    { name: 'Token Metrics tables', fn: createTokenMetricsTables },
-    { name: 'Device Rate Limit tables', fn: createDeviceRateLimitTables },
-    { name: 'Petition tables', fn: createPetitionTables },
-    { name: 'Public Evidence tables', fn: createPublicEvidenceTables },
-    { name: 'Complaint Routing tables', fn: createComplaintRoutingTables },
-    { name: 'FOIA Routing tables', fn: createFOIARoutingTables },
-    { name: 'Search Prioritization tables', fn: createSearchPrioritizationTables },
-    { name: 'Document Creator tables', fn: createDocumentCreatorTables },
-  ];
 
-  for (const migration of migrations) {
-    try {
-      await migration.fn();
-      console.log(`[STARTUP] ✓ ${migration.name} migration complete`);
-    } catch (error: any) {
-      console.warn(`[STARTUP] ⚠ ${migration.name} migration skipped:`, error?.message ?? error);
+  const results = await runAllSchemaMigrations({ continueOnError: true });
+
+  for (const result of results) {
+    if (result.success) {
+      console.log(`[STARTUP] ✓ ${result.name} migration complete`);
+      continue;
     }
+
+    console.warn(`[STARTUP] ⚠ ${result.name} migration skipped:`, result.error);
   }
 }
 

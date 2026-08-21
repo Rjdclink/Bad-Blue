@@ -13,19 +13,42 @@ export async function createTokenMetricsTables() {
       CREATE TABLE IF NOT EXISTS ai_usage_metrics (
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
         provider VARCHAR(50) NOT NULL,
-        source VARCHAR(100) NOT NULL,
-        task_name VARCHAR(255),
-        tokens_used INTEGER DEFAULT 0,
+        source VARCHAR(100) NOT NULL DEFAULT 'user',
+        task_name VARCHAR(100) NOT NULL DEFAULT 'unknown',
+        tokens_used INTEGER NOT NULL DEFAULT 0,
+        latency_ms INTEGER,
+        verbosity VARCHAR(20) NOT NULL DEFAULT 'standard',
+        priority INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
         requests_made INTEGER DEFAULT 1,
         error_count INTEGER DEFAULT 0,
-        success BOOLEAN DEFAULT true,
-        timestamp TIMESTAMP DEFAULT NOW(),
+        success BOOLEAN NOT NULL DEFAULT true,
+        timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
         date DATE DEFAULT CURRENT_DATE,
         metadata JSONB DEFAULT '{}'::jsonb,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
     console.log('[Migration] ✓ Created ai_usage_metrics table');
+
+    await db.execute(sql`
+      ALTER TABLE ai_usage_metrics
+      ADD COLUMN IF NOT EXISTS source VARCHAR(100) NOT NULL DEFAULT 'user',
+      ADD COLUMN IF NOT EXISTS task_name VARCHAR(100) NOT NULL DEFAULT 'unknown',
+      ADD COLUMN IF NOT EXISTS tokens_used INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS latency_ms INTEGER,
+      ADD COLUMN IF NOT EXISTS verbosity VARCHAR(20) NOT NULL DEFAULT 'standard',
+      ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS error_message TEXT,
+      ADD COLUMN IF NOT EXISTS requests_made INTEGER DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS error_count INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS success BOOLEAN NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS date DATE DEFAULT CURRENT_DATE,
+      ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()
+    `);
+    console.log('[Migration] ✓ Reconciled ai_usage_metrics columns');
 
     // Create ai_cache table for caching AI responses
     await db.execute(sql`
@@ -85,6 +108,26 @@ export async function createTokenMetricsTables() {
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS idx_ai_usage_timestamp 
       ON ai_usage_metrics(timestamp);
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_provider_timestamp 
+      ON ai_usage_metrics(provider, timestamp DESC);
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_task 
+      ON ai_usage_metrics(task_name);
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_source 
+      ON ai_usage_metrics(source);
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_source_timestamp 
+      ON ai_usage_metrics(source, timestamp DESC);
     `);
 
     console.log('[Migration] ✓ Created indexes for ai_usage_metrics');

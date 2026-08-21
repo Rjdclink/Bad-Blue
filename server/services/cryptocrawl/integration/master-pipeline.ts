@@ -4,7 +4,7 @@
 import { Wallet, providers } from 'ethers';
 import type { Opportunity } from '../core/lux-swarm';
 import { LuxSwarm } from '../core/lux-swarm.js';
-import { executeWithMaxProfit, multiRelay, flashLoans, ultraLowLatency } from '../execution/index.js';
+import { assessSharedExecutionEnvironment, executeWithMaxProfit, getSharedExecutionCapabilities, multiRelay, flashLoans, ultraLowLatency } from '../execution/index.js';
 import { RealtimeDataStream } from '../scanner/realtime-stream.js';
 import { ReinforcementLearningBidder } from '../learning/reinforcement-learning-bidder.js';
 import { DynamicScalePhysics } from '../scaling/dynamic-scale-physics.js';
@@ -25,6 +25,8 @@ const { JsonRpcProvider } = providers;
 
 class MasterPipeline {
   private running = false;
+  private initialized = false;
+  private strictConnectors = false;
   private realtimeStream: RealtimeDataStream | null = null;
   private rlBidder: ReinforcementLearningBidder;
   private scalePhysics: DynamicScalePhysics;
@@ -56,11 +58,46 @@ class MasterPipeline {
     this.tripleDip = new TripleDipExtractor();
   }
 
+  private isStrictConnectorMode(): boolean {
+    return process.env.CRYPTO_REQUIRE_LIVE_CONNECTORS === 'true' || process.env.NODE_ENV === 'production';
+  }
+
+  private resolvePrimaryRpcUrl(): string {
+    return (
+      process.env.PRIVATE_RPC_URL ||
+      process.env.RPC_URL ||
+      process.env.ETHEREUM_RPC_URL ||
+      (process.env.ALCHEMY_API_KEY ? `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}` : '')
+    );
+  }
+
+  private hasLiveWalletSigner(): boolean {
+    return !!process.env.WALLET_PRIVATE_KEY?.trim();
+  }
+
+  private hasCentralizedExchangeCredentials(): boolean {
+    const krakenReady = !!(
+      process.env.KRAKEN_API_KEY?.trim() &&
+      process.env.KRAKEN_API_SECRET?.trim()
+    );
+    const okxReady = !!(
+      process.env.OKX_API_KEY?.trim() &&
+      process.env.OKX_API_SECRET?.trim() &&
+      process.env.OKX_API_PASSPHRASE?.trim()
+    );
+    return krakenReady || okxReady;
+  }
+
   /**
    * Initialize the pipeline with stealth systems
    */
   async initialize(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
     console.log('🚀 Master Pipeline initializing with Stealth Superiority...');
+    this.strictConnectors = this.isStrictConnectorMode();
 
     // Initialize stealth system
     this.stealthSystem = new StealthSuperiority();
@@ -92,8 +129,6 @@ class MasterPipeline {
       await this.stealthSystem.initialize(this.wallet, this.providers);
     }
 
-    const strictConnectors = process.env.CRYPTO_REQUIRE_LIVE_CONNECTORS === 'true';
-
     try {
       if (!networkHealth.isRunning()) {
         await networkHealth.start();
@@ -119,7 +154,7 @@ class MasterPipeline {
     }
 
     TradingViewEngine.initialize();
-    const tvReadiness = await TradingViewEngine.checkReadiness({ strictLive: strictConnectors });
+    const tvReadiness = await TradingViewEngine.checkReadiness({ strictLive: this.strictConnectors });
     this.connectorReadiness.tradingView = {
       ready: tvReadiness.ready,
       detail: tvReadiness.detail,
@@ -135,7 +170,7 @@ class MasterPipeline {
       });
     }
 
-    const alchemyReadiness = await alchemyIntegration.readinessCheck({ strictLive: strictConnectors });
+    const alchemyReadiness = await alchemyIntegration.readinessCheck({ strictLive: this.strictConnectors });
     this.connectorReadiness.alchemy = {
       ready: alchemyReadiness.ready,
       detail: alchemyReadiness.detail,
@@ -149,24 +184,430 @@ class MasterPipeline {
     if (blockingFailures.length > 0) {
       logger.warn('Master pipeline initialized with connector degradations', {
         component: 'MasterPipeline',
-        strictConnectors,
+        strictConnectors: this.strictConnectors,
         blockingFailures,
       });
     }
 
-    if (strictConnectors && blockingFailures.length > 0) {
+    if (this.strictConnectors && blockingFailures.length > 0) {
       throw new Error(`Live connector readiness failed: ${blockingFailures.join(' | ')}`);
     }
 
+    this.initialized = blockingFailures.length === 0;
+
+    if (!this.initialized) {
+      logger.warn('Master pipeline remains non-ready after initialization due to connector degradations', {
+        component: 'MasterPipeline',
+        blockingFailures,
+      });
+      return;
+    }
+
     console.log('✅ Master Pipeline initialized with stealth systems');
+  }
+
+  async reviewDeploymentReadiness(options?: { passes?: number; strictConnectors?: boolean }): Promise<{
+    generatedAt: string;
+    requestedPasses: number;
+    strictConnectors: boolean;
+    passes: Array<{
+      passNumber: number;
+      status: 'pass' | 'warn' | 'fail';
+      issues: Array<{ id: string; severity: 'warn' | 'block'; detail: string; remediation: string }>;
+      connectorReadiness: typeof this.connectorReadiness;
+      cryptara: {
+        liveSignalReady: boolean;
+        tradingView: { ready: boolean; mode: string; detail: string };
+        alchemy: { ready: boolean; mode: string; detail: string };
+        directive: ReturnType<ReturnType<typeof getCryptara>['getAutonomousDirective']>;
+        sentiment?: { overallSentiment: number; fearGreedIndex: number; dominantNarrative: string };
+        monteCarlo?: { simulationId: string; optimalStrategy: string; maxDrawdown: number; valueAtRisk: number };
+      };
+      execution: {
+        rpcReady: boolean;
+        walletReady: boolean;
+        centralizedExchangeReady: boolean;
+        genericOnChainPayloadBuilder: boolean;
+        structuredOnChainPayloadBuilder: boolean;
+        autonomousRoutePlanner: boolean;
+        flashLoanReceiverSupport: boolean;
+        explicitPayloadRequired: boolean;
+        liveExecutionEnabled: boolean;
+        liveExecutionConfirmed: boolean;
+      };
+    }>;
+    stableClearPasses: number;
+    finalStatus: 'ready' | 'ready_with_warnings' | 'blocked';
+    recommendations: string[];
+  }> {
+    const requestedPasses = Math.max(1, Math.min(5, options?.passes ?? 2));
+    const strictConnectors = options?.strictConnectors ?? this.isStrictConnectorMode();
+
+    let pipelineInitializationError: string | undefined;
+    try {
+      await this.initialize();
+    } catch (error) {
+      pipelineInitializationError = error instanceof Error ? error.message : String(error);
+      logger.warn('Master pipeline readiness review proceeding after initialization failure', {
+        component: 'MasterPipeline',
+        strictConnectors,
+        error: pipelineInitializationError,
+      });
+    }
+
+    const cryptara = getCryptara({
+      enabled: true,
+      surveillanceMode: 'scheduled',
+      faucetTriggered: true,
+      monteCarloInterval: 6,
+    });
+
+    let cryptaraInitializationError: string | undefined;
+    try {
+      await cryptara.initialize();
+    } catch (error) {
+      cryptaraInitializationError = error instanceof Error ? error.message : String(error);
+      logger.warn('Cryptara readiness review proceeding after initialization failure', {
+        component: 'MasterPipeline',
+        error: cryptaraInitializationError,
+      });
+    }
+
+    const passResults: Array<{
+      passNumber: number;
+      status: 'pass' | 'warn' | 'fail';
+      issues: Array<{ id: string; severity: 'warn' | 'block'; detail: string; remediation: string }>;
+      connectorReadiness: typeof this.connectorReadiness;
+      cryptara: {
+        liveSignalReady: boolean;
+        tradingView: { ready: boolean; mode: string; detail: string };
+        alchemy: { ready: boolean; mode: string; detail: string };
+        directive: ReturnType<ReturnType<typeof getCryptara>['getAutonomousDirective']>;
+        sentiment?: { overallSentiment: number; fearGreedIndex: number; dominantNarrative: string };
+        monteCarlo?: { simulationId: string; optimalStrategy: string; maxDrawdown: number; valueAtRisk: number };
+      };
+      execution: {
+        rpcReady: boolean;
+        walletReady: boolean;
+        centralizedExchangeReady: boolean;
+        genericOnChainPayloadBuilder: boolean;
+        explicitPayloadRequired: boolean;
+        liveExecutionEnabled: boolean;
+        liveExecutionConfirmed: boolean;
+      };
+    }> = [];
+
+    let stableClearPasses = 0;
+    const recommendationSet = new Set<string>();
+
+    for (let passNumber = 1; passNumber <= requestedPasses; passNumber++) {
+      const [tvReadiness, alchemyReadiness, cryptaraReadiness] = await Promise.all([
+        TradingViewEngine.checkReadiness({ strictLive }),
+        alchemyIntegration.readinessCheck({ strictLive }),
+        cryptara.validateLiveSignalReadiness({ strictLive }),
+      ]);
+
+      let sentiment: { overallSentiment: number; fearGreedIndex: number; dominantNarrative: string } | undefined;
+      try {
+        const result = await cryptara.analyzeSentiment();
+        sentiment = {
+          overallSentiment: result.overallSentiment,
+          fearGreedIndex: result.fearGreedIndex,
+          dominantNarrative: result.dominantNarrative,
+        };
+      } catch {
+        sentiment = undefined;
+      }
+
+      let monteCarlo: { simulationId: string; optimalStrategy: string; maxDrawdown: number; valueAtRisk: number } | undefined;
+      try {
+        const result = await cryptara.runMonteCarloSimulation();
+        monteCarlo = {
+          simulationId: result.simulationId,
+          optimalStrategy: result.optimalStrategy,
+          maxDrawdown: result.riskMetrics.maxDrawdown,
+          valueAtRisk: result.riskMetrics.valueAtRisk,
+        };
+      } catch {
+        monteCarlo = undefined;
+      }
+
+      const directive = cryptara.getAutonomousDirective();
+      const rpcReady = this.resolvePrimaryRpcUrl().trim().length > 0;
+      const walletReady = this.hasLiveWalletSigner();
+      const centralizedExchangeReady = this.hasCentralizedExchangeCredentials();
+      const sharedExecution = getSharedExecutionCapabilities();
+      const sharedExecutionEnv = assessSharedExecutionEnvironment();
+      const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
+      const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
+
+      const issues: Array<{ id: string; severity: 'warn' | 'block'; detail: string; remediation: string }> = [];
+
+      if (pipelineInitializationError) {
+        issues.push({
+          id: 'pipeline-initialize',
+          severity: 'block',
+          detail: pipelineInitializationError,
+          remediation: 'Resolve connector and execution readiness blockers, then rerun deployment review until initialization succeeds cleanly.',
+        });
+      }
+
+      if (cryptaraInitializationError) {
+        issues.push({
+          id: 'cryptara-initialize',
+          severity: 'block',
+          detail: cryptaraInitializationError,
+          remediation: 'Resolve live-signal readiness and strict-mode initialization blockers before enabling Cryptara governance or production surveillance.',
+        });
+      }
+
+      if (!tvReadiness.ready) {
+        issues.push({
+          id: 'tradingview-live',
+          severity: strictConnectors ? 'block' : 'warn',
+          detail: tvReadiness.detail,
+          remediation: 'Enable TradingView live analysis or keep simulation mode limited to non-production dry runs.',
+        });
+      }
+
+      if (!alchemyReadiness.ready) {
+        issues.push({
+          id: 'alchemy-live',
+          severity: strictConnectors ? 'block' : 'warn',
+          detail: alchemyReadiness.detail,
+          remediation: 'Set a valid ALCHEMY_API_KEY and confirm network probe success on the target chain.',
+        });
+      }
+
+      if (!cryptaraReadiness.liveSignalReady) {
+        issues.push({
+          id: 'cryptara-live-stack',
+          severity: strictConnectors ? 'block' : 'warn',
+          detail: `Cryptara live signal stack degraded: ${cryptaraReadiness.tradingView.detail}; ${cryptaraReadiness.alchemy.detail}`,
+          remediation: 'Require live TradingView and Alchemy readiness before production deployment.',
+        });
+      }
+
+      if (!rpcReady) {
+        issues.push({
+          id: 'rpc-connector',
+          severity: 'block',
+          detail: 'No primary RPC URL is configured for realtime stream or execution.',
+          remediation: 'Set PRIVATE_RPC_URL, RPC_URL, or ETHEREUM_RPC_URL before enabling production execution.',
+        });
+      }
+
+      if (!walletReady) {
+        issues.push({
+          id: 'wallet-signer',
+          severity: 'block',
+          detail: 'WALLET_PRIVATE_KEY is not configured for transaction signing.',
+          remediation: 'Set WALLET_PRIVATE_KEY in the deployment environment before enabling live execution.',
+        });
+      }
+
+      if (!liveExecutionEnabled || !liveExecutionConfirmed) {
+        issues.push({
+          id: 'live-execution-switches',
+          severity: 'block',
+          detail: 'Live execution guard env vars are not fully enabled and confirmed.',
+          remediation: 'Set CRYPTO_ARBITRAGE_LIVE_EXECUTION=true and CRYPTO_ARBITRAGE_LIVE_CONFIRMATION=I_ACCEPT_LIVE_ORDER_RISK only after validation passes cleanly.',
+        });
+      }
+
+      if (sharedExecutionEnv.noExecutionGuardEnabled && sharedExecutionEnv.liveExecutionEnabled) {
+        issues.push({
+          id: 'execution-guard-conflict',
+          severity: 'block',
+          detail: 'NO_EXECUTION=true conflicts with CRYPTO_ARBITRAGE_LIVE_EXECUTION=true.',
+          remediation: 'Disable NO_EXECUTION only after deployment review passes and live execution is explicitly intended.',
+        });
+      }
+
+      if (sharedExecutionEnv.placeholderExecutionAllowed) {
+        issues.push({
+          id: 'placeholder-execution-enabled',
+          severity: 'block',
+          detail: 'CRYPTO_ALLOW_PLACEHOLDER_EXECUTION=true permits stub transaction payloads.',
+          remediation: 'Set CRYPTO_ALLOW_PLACEHOLDER_EXECUTION=false for any environment that claims deployment readiness.',
+        });
+      }
+
+      if (sharedExecutionEnv.liveExecutionEnabled && !strictConnectors) {
+        issues.push({
+          id: 'live-execution-without-strict-connectors',
+          severity: 'block',
+          detail: 'Live execution is enabled while strict live connector enforcement is disabled.',
+          remediation: 'Require CRYPTO_REQUIRE_LIVE_CONNECTORS=true and CRYPTARA_REQUIRE_LIVE_SIGNALS=true before enabling live execution.',
+        });
+      }
+
+      if (sharedExecutionEnv.liveExecutionEnabled && !sharedExecutionEnv.anyLiveRouteReady) {
+        issues.push({
+          id: 'no-live-execution-route',
+          severity: 'block',
+          detail: 'Live execution is enabled but no fully configured execution route is available.',
+          remediation: 'Configure Kraken/OKX credentials for centralized execution and/or implement the on-chain payload builder plus signer/RPC path before enabling live execution.',
+        });
+      }
+
+      if (!sharedExecution.structuredOnChainPayloadBuilder) {
+        issues.push({
+          id: 'onchain-payload-adapter',
+          severity: 'block',
+          detail: 'The shared on-chain executor cannot yet build structured swap payloads from execution plans.',
+          remediation: 'Provide a structured on-chain payload builder before enabling live on-chain execution.',
+        });
+      }
+
+      if (!sharedExecution.autonomousRoutePlanner) {
+        issues.push({
+          id: 'autonomous-route-planner',
+          severity: 'block',
+          detail: 'Cryptocrawl still lacks an autonomous route planner that converts market opportunities into structured on-chain execution plans.',
+          remediation: 'Implement an opportunity-to-onchainPlan adapter that produces token addresses, amounts, and venue paths from validated arbitrage opportunities.',
+        });
+      }
+
+      if (!sharedExecution.flashLoanReceiverSupport) {
+        issues.push({
+          id: 'flashloan-receiver-layer',
+          severity: 'block',
+          detail: 'Zero-capital execution still lacks a deployable flash-loan receiver contract integration.',
+          remediation: 'Deploy and wire the flash-loan receiver contract plus callback encoding before enabling zero-capital live execution.',
+        });
+      }
+
+      if (sharedExecutionEnv.zeroCapitalExecutionEnabled && !sharedExecutionEnv.zeroCapitalReceiverConfigured) {
+        issues.push({
+          id: 'flashloan-receiver-address',
+          severity: 'block',
+          detail: 'ZERO_CAPITAL_ENABLE_EXECUTION=true but ZERO_CAPITAL_FLASHLOAN_RECEIVER is not configured.',
+          remediation: 'Deploy the flash-loan receiver contract and set ZERO_CAPITAL_FLASHLOAN_RECEIVER before enabling zero-capital live execution.',
+        });
+      }
+
+      if (sharedExecutionEnv.zeroCapitalExecutionEnabled && !sharedExecutionEnv.flashbotsAuthConfigured) {
+        issues.push({
+          id: 'flashbots-auth',
+          severity: 'block',
+          detail: 'ZERO_CAPITAL_ENABLE_EXECUTION=true but no FLASHBOTS_AUTH_KEY or fallback execution signer is configured.',
+          remediation: 'Set FLASHBOTS_AUTH_KEY for Ethereum bundle submission or at minimum provide WALLET_PRIVATE_KEY for zero-capital execution signing.',
+        });
+      }
+
+      if (!centralizedExchangeReady) {
+        issues.push({
+          id: 'centralized-exchange-adapter',
+          severity: 'warn',
+          detail: 'No Kraken or OKX credential set is configured for centralized execution routes.',
+          remediation: 'Configure Kraken or OKX API credentials if centralized venue routing is required; otherwise keep execution on the on-chain path only.',
+        });
+      }
+
+      if (directive.maxSlippageBps > 35) {
+        issues.push({
+          id: 'slippage-guard',
+          severity: 'warn',
+          detail: `Autonomous directive currently allows max slippage ${directive.maxSlippageBps}bps.`,
+          remediation: 'Tighten slippage via better liquidity selection, lower congestion windows, or more defensive notional scaling before production use.',
+        });
+      }
+
+      if (!directive.preferredExecutionModes.includes('zero_capital')) {
+        issues.push({
+          id: 'zero-capital-path',
+          severity: 'warn',
+          detail: 'Zero-capital execution is not currently preferred by the autonomous directive.',
+          remediation: 'Feed validated zero-capital execution outcomes back into Cryptara until the strategy qualifies as a preferred execution mode.',
+        });
+      }
+
+      if (monteCarlo && monteCarlo.maxDrawdown > 0.2) {
+        issues.push({
+          id: 'monte-carlo-drawdown',
+          severity: 'warn',
+          detail: `Monte Carlo drawdown estimate is ${Math.round(monteCarlo.maxDrawdown * 100)}%.`,
+          remediation: 'Reduce notional size or route aggressiveness until simulated drawdown is within deployment tolerances.',
+        });
+      }
+
+      const status: 'pass' | 'warn' | 'fail' = issues.some(issue => issue.severity === 'block')
+        ? 'fail'
+        : issues.length > 0
+          ? 'warn'
+          : 'pass';
+
+      if (status === 'pass') {
+        stableClearPasses += 1;
+      } else {
+        stableClearPasses = 0;
+      }
+
+      for (const issue of issues) {
+        recommendationSet.add(issue.remediation);
+      }
+
+      passResults.push({
+        passNumber,
+        status,
+        issues,
+        connectorReadiness: {
+          networkHealth: { ...this.connectorReadiness.networkHealth },
+          gasOracle: { ...this.connectorReadiness.gasOracle },
+          tradingView: { ...this.connectorReadiness.tradingView },
+          alchemy: { ...this.connectorReadiness.alchemy },
+        },
+        cryptara: {
+          liveSignalReady: cryptaraReadiness.liveSignalReady,
+          tradingView: { ...cryptaraReadiness.tradingView },
+          alchemy: { ...cryptaraReadiness.alchemy },
+          directive,
+          ...(sentiment ? { sentiment } : {}),
+          ...(monteCarlo ? { monteCarlo } : {}),
+        },
+        execution: {
+          rpcReady,
+          walletReady,
+          centralizedExchangeReady,
+          genericOnChainPayloadBuilder: sharedExecution.genericOnChainPayloadBuilder,
+          structuredOnChainPayloadBuilder: sharedExecution.structuredOnChainPayloadBuilder,
+          autonomousRoutePlanner: sharedExecution.autonomousRoutePlanner,
+          flashLoanReceiverSupport: sharedExecution.flashLoanReceiverSupport,
+          explicitPayloadRequired: sharedExecution.explicitPayloadRequired,
+          liveExecutionEnabled,
+          liveExecutionConfirmed,
+        },
+      });
+    }
+
+    const finalStatus: 'ready' | 'ready_with_warnings' | 'blocked' = stableClearPasses >= 2
+      ? 'ready'
+      : passResults.some(pass => pass.status === 'fail')
+        ? 'blocked'
+        : 'ready_with_warnings';
+
+    return {
+      generatedAt: new Date().toISOString(),
+      requestedPasses,
+      strictConnectors,
+      passes: passResults,
+      stableClearPasses,
+      finalStatus,
+      recommendations: Array.from(recommendationSet),
+    };
   }
 
   /**
    * Start the main pipeline loop
    */
   async run(): Promise<void> {
-    if (!this.stealthSystem) {
+    if (!this.initialized) {
       await this.initialize();
+    }
+
+    if (!this.initialized) {
+      throw new Error('Master Pipeline is not connector-ready. Run reviewDeploymentReadiness() and resolve blockers before starting live operations.');
     }
 
     this.running = true;
@@ -176,8 +617,13 @@ class MasterPipeline {
 
     try {
       // Initialize realtime data stream
+      const realtimeRpcUrl = this.resolvePrimaryRpcUrl();
+      if (!realtimeRpcUrl) {
+        throw new Error('Realtime crypto stream requires PRIVATE_RPC_URL, RPC_URL, ETHEREUM_RPC_URL, or a configured ALCHEMY_API_KEY');
+      }
+
       this.realtimeStream = new RealtimeDataStream({
-        httpUrl: process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo'
+        httpUrl: realtimeRpcUrl,
       });
 
       await this.realtimeStream.initialize();
@@ -505,8 +951,13 @@ class MasterPipeline {
             id: opp.asset,
             asset: opp.asset,
             chain: opp.chain,
+            pair: opp.pair || opp.asset,
             profit: Math.max(tripleDipResult.netProfit, netExpectedProfitUsd),
-            type: 'simple'
+            type: 'simple',
+            expectedFeeUsd: feeUsd,
+            expectedSlippageBps,
+            usedZeroCapital: false,
+            skipCryptaraFeedback: true,
           });
         }
       });

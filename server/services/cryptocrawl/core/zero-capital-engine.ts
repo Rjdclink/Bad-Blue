@@ -26,10 +26,21 @@
  * - If any step fails, ENTIRE bundle reverts - zero loss
  */
 
-import { ethers, Contract, Wallet, providers, BigNumber } from 'ethers';
-import { FlashbotsBundleProvider, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction } from '@flashbots/ethers-provider-bundle';
+import { ethers, Wallet, providers, BigNumber } from 'ethers';
+import { FlashbotsBundleProvider, FlashbotsBundleResolution, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
 import { getCryptara } from '../../cryptara/index.js';
+import { TradingViewEngine } from '../babel/tradingview-integration.js';
+import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
+import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
+import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
+import {
+  loadConfiguredZeroCapitalRoutes,
+  quoteConfiguredZeroCapitalRoutesForChain,
+  type ConfiguredZeroCapitalRoute,
+  type QuotedZeroCapitalRoute,
+} from '../execution/adapters/onchain-route-quoter.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -41,9 +52,15 @@ export interface ZeroCapitalOpportunity {
   chain: SupportedChain;
   inputToken: string;
   outputToken: string;
+  inputAssetSymbol: 'USDC' | 'USDT';
+  inputTokenDecimals: number;
   flashLoanAmount: bigint;
   expectedProfit: bigint;
   gasEstimate: bigint;
+  estimatedExecutionCostInInputToken: bigint;
+  expectedSlippageBps: number;
+  quoteLatencyMs: number;
+  netProfitBps: number;
   route: SwapRoute[];
   confidence: number;
   timestamp: number;
@@ -52,7 +69,6 @@ export interface ZeroCapitalOpportunity {
 
 export interface SwapRoute {
   protocol: string;
-  poolAddress: string;
   tokenIn: string;
   tokenOut: string;
   amountIn: bigint;
@@ -64,6 +80,7 @@ export interface ExecutionResult {
   success: boolean;
   txHash?: string;
   profit?: bigint;
+  profitVerified?: boolean;
   gasUsed?: bigint;
   error?: string;
   blockNumber?: number;
@@ -74,6 +91,7 @@ export interface SystemState {
   totalProfit: bigint;
   totalTrades: number;
   successfulTrades: number;
+  includedUnverifiedTrades: number;
   failedTrades: number;
   lastTradeTimestamp: number;
   currentOpportunities: number;
@@ -86,39 +104,6 @@ export type SupportedChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 
 // CONSTANTS & CONFIGURATION
 // ============================================================================
 
-// Flash Loan Provider Addresses (Aave V3)
-const AAVE_POOL_ADDRESSES: Record<SupportedChain, string> = {
-  ethereum: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
-  polygon: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
-  arbitrum: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
-  optimism: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
-  bsc: '0x6807dc923806fE8Fd134338EABCA509979a7e0cB',
-  avalanche: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
-};
-
-// Balancer Vault (0% flash loan fee!)
-const BALANCER_VAULT = '0xBA12222222228d8Ba445958a75a0704d566BF2C8';
-
-// DEX Router Addresses
-const DEX_ROUTERS: Record<string, Record<SupportedChain, string>> = {
-  uniswapV3: {
-    ethereum: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-    polygon: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-    arbitrum: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-    optimism: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-    bsc: '0x0000000000000000000000000000000000000000', // Not on BSC
-    avalanche: '0x0000000000000000000000000000000000000000',
-  },
-  sushiswap: {
-    ethereum: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
-    polygon: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-    arbitrum: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-    optimism: '0x0000000000000000000000000000000000000000',
-    bsc: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-    avalanche: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-  },
-};
-
 // RPC Endpoints (fallback to public, should use Alchemy/Infura in production)
 const RPC_ENDPOINTS: Record<SupportedChain, string> = {
   ethereum: process.env.ETHEREUM_RPC_URL || 'https://eth.llamarpc.com',
@@ -129,32 +114,9 @@ const RPC_ENDPOINTS: Record<SupportedChain, string> = {
   avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
 };
 
-// Minimum profit thresholds (in USD value, converted to wei)
-const MIN_PROFIT_THRESHOLD_BN = ethers.utils.parseEther('0.001'); // $1 minimum after all fees
-const MIN_PROFIT_THRESHOLD = BigInt(MIN_PROFIT_THRESHOLD_BN.toString()); // Convert to bigint for comparisons
-
-// ============================================================================
-// FLASH LOAN RECEIVER CONTRACT ABI (for encoding callbacks)
-// ============================================================================
-
-const AAVE_FLASH_LOAN_ABI = [
-  'function flashLoan(address receiverAddress, address[] calldata assets, uint256[] calldata amounts, uint256[] calldata interestRateModes, address onBehalfOf, bytes calldata params, uint16 referralCode) external',
-  'function executeOperation(address[] calldata assets, uint256[] calldata amounts, uint256[] calldata premiums, address initiator, bytes calldata params) external returns (bool)',
-];
-
-const BALANCER_FLASH_LOAN_ABI = [
-  'function flashLoan(address recipient, address[] memory tokens, uint256[] memory amounts, bytes memory userData) external',
-];
-
-const ERC20_ABI = [
-  'function approve(address spender, uint256 amount) external returns (bool)',
-  'function transfer(address to, uint256 amount) external returns (bool)',
-  'function balanceOf(address account) external view returns (uint256)',
-];
-
-const UNISWAP_V3_ROUTER_ABI = [
-  'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)',
-];
+const FLASH_LOAN_RECEIVER_EVENT_INTERFACE = new ethers.utils.Interface([
+  'event FlashLoanExecuted(address indexed initiator, address indexed loanToken, uint256 loanAmount, uint256 profit)',
+]);
 
 // ============================================================================
 // AUTONOMOUS ZERO-CAPITAL ENGINE
@@ -164,14 +126,20 @@ export class AutonomousZeroCapitalEngine {
   private providers: Map<SupportedChain, providers.JsonRpcProvider> = new Map();
   private flashbotsProvider: FlashbotsBundleProvider | null = null;
   private authSigner: Wallet | null = null;
+  private executionWallets: Map<SupportedChain, Wallet> = new Map();
   private state: SystemState;
   private isScanning: boolean = false;
   private opportunityQueue: ZeroCapitalOpportunity[] = [];
+  private configuredRoutes: ConfiguredZeroCapitalRoute[] = [];
   private scanInterval: NodeJS.Timeout | null = null;
+  private executionInterval: NodeJS.Timeout | null = null;
   private scanDelayMs: number = Number(process.env.ZERO_CAPITAL_SCAN_MIN_MS || 2500);
   private readonly minScanDelayMs: number = Number(process.env.ZERO_CAPITAL_SCAN_MIN_MS || 2500);
   private readonly maxScanDelayMs: number = Number(process.env.ZERO_CAPITAL_SCAN_MAX_MS || 15000);
   private executionEnabled: boolean = false;
+  private isExecuting: boolean = false;
+  private lastLiveSignalCheckAt = 0;
+  private liveSignalReady = false;
 
   constructor() {
     this.state = {
@@ -179,6 +147,7 @@ export class AutonomousZeroCapitalEngine {
       totalProfit: BigInt(0),
       totalTrades: 0,
       successfulTrades: 0,
+      includedUnverifiedTrades: 0,
       failedTrades: 0,
       lastTradeTimestamp: 0,
       currentOpportunities: 0,
@@ -199,6 +168,8 @@ export class AutonomousZeroCapitalEngine {
   async initialize(): Promise<void> {
     logger.info('[ZeroCapitalEngine] Initializing providers...', { component: 'ZeroCapitalEngine' });
 
+    this.configuredRoutes = loadConfiguredZeroCapitalRoutes();
+
     // Initialize providers for each chain
     for (const [chain, rpcUrl] of Object.entries(RPC_ENDPOINTS)) {
       try {
@@ -215,11 +186,19 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
+    const walletPrivateKey = process.env.WALLET_PRIVATE_KEY?.trim();
+    if (walletPrivateKey) {
+      for (const [chain, provider] of this.providers.entries()) {
+        this.executionWallets.set(chain, new Wallet(walletPrivateKey, provider));
+      }
+    }
+
     // Initialize Flashbots for Ethereum mainnet (gasless execution)
     const ethProvider = this.providers.get('ethereum');
-    if (ethProvider && process.env.FLASHBOTS_AUTH_KEY) {
+    const flashbotsAuthKey = process.env.FLASHBOTS_AUTH_KEY?.trim() || walletPrivateKey;
+    if (ethProvider && flashbotsAuthKey) {
       try {
-        this.authSigner = new Wallet(process.env.FLASHBOTS_AUTH_KEY);
+        this.authSigner = new Wallet(flashbotsAuthKey);
         this.flashbotsProvider = await FlashbotsBundleProvider.create(
           ethProvider,
           this.authSigner,
@@ -240,6 +219,7 @@ export class AutonomousZeroCapitalEngine {
       component: 'ZeroCapitalEngine',
       connectedChains: this.providers.size,
       flashbotsEnabled: !!this.flashbotsProvider,
+      configuredRoutes: this.configuredRoutes.length,
     });
   }
 
@@ -264,18 +244,74 @@ export class AutonomousZeroCapitalEngine {
     this.state.isRunning = true;
     const executionOptIn = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
     const receiverAddress = String(process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER || '').trim();
-    this.executionEnabled = executionOptIn && receiverAddress.length > 0;
+    const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
+    const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
+    const zeroCapitalConfirmed = process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK';
+
+    if (executionOptIn) {
+      if (process.env.NO_EXECUTION === 'true') {
+        throw new Error('ZERO_CAPITAL_ENABLE_EXECUTION=true conflicts with NO_EXECUTION=true');
+      }
+      if (!liveExecutionEnabled || !liveExecutionConfirmed || !zeroCapitalConfirmed) {
+        throw new Error('Zero-capital execution requires both global live-execution confirmation and ZERO_CAPITAL_EXECUTION_CONFIRMATION');
+      }
+      if (!/^0x[a-fA-F0-9]{40}$/.test(receiverAddress)) {
+        throw new Error('ZERO_CAPITAL_FLASHLOAN_RECEIVER must be a deployed EVM receiver address before execution is enabled');
+      }
+      if (!process.env.WALLET_PRIVATE_KEY?.trim()) {
+        throw new Error('WALLET_PRIVATE_KEY is required for zero-capital execution');
+      }
+      if (this.configuredRoutes.length === 0) {
+        throw new Error('ZERO_CAPITAL_ROUTE_CONFIG must include at least one validated cyclic route before execution is enabled');
+      }
+      if (!this.configuredRoutes.some(route => route.chain === 'ethereum')) {
+        throw new Error('True zero-capital execution currently requires at least one Ethereum Flashbots route; other chains need a dedicated gas-sponsorship adapter');
+      }
+      if (!this.flashbotsProvider || !this.executionWallets.get('ethereum')) {
+        throw new Error('True zero-capital execution requires Ethereum RPC, FLASHBOTS_AUTH_KEY or WALLET_PRIVATE_KEY, and a usable Flashbots provider');
+      }
+      const paymentMode = process.env.ZERO_CAPITAL_FLASHBOTS_PAYMENT_MODE?.trim();
+      const sponsorAddress = process.env.ZERO_CAPITAL_FLASHBOTS_SPONSOR_ADDRESS?.trim();
+      const sponsorConfirmation = process.env.ZERO_CAPITAL_FLASHBOTS_SPONSOR_CONFIRMATION?.trim();
+      const executionWallet = this.executionWallets.get('ethereum')!;
+      if (paymentMode !== 'external_sponsor') {
+        throw new Error('Live Flashbots execution requires ZERO_CAPITAL_FLASHBOTS_PAYMENT_MODE=external_sponsor until a reviewed on-chain profit-share payment adapter is implemented');
+      }
+      if (!/^0x[a-fA-F0-9]{40}$/.test(sponsorAddress || '')) {
+        throw new Error('ZERO_CAPITAL_FLASHBOTS_SPONSOR_ADDRESS must identify the approved external gas sponsor');
+      }
+      if (executionWallet.address.toLowerCase() !== sponsorAddress!.toLowerCase()) {
+        throw new Error('WALLET_PRIVATE_KEY must match ZERO_CAPITAL_FLASHBOTS_SPONSOR_ADDRESS for the supported external-sponsor execution mode');
+      }
+      if (sponsorConfirmation !== 'I_CONFIRM_EXTERNAL_FLASHBOTS_GAS_SPONSOR') {
+        throw new Error('ZERO_CAPITAL_FLASHBOTS_SPONSOR_CONFIRMATION=I_CONFIRM_EXTERNAL_FLASHBOTS_GAS_SPONSOR is required before sponsor-funded execution');
+      }
+
+      const cryptara = getCryptara();
+      if (!cryptara.getStatus().isRunning) {
+        await cryptara.initialize();
+      }
+      const readiness = await cryptara.validateLiveSignalReadiness({ strictLive: true });
+      if (!readiness.liveSignalReady) {
+        throw new Error(`Zero-capital execution requires live TradingView and Alchemy signals: ${readiness.tradingView.detail}; ${readiness.alchemy.detail}`);
+      }
+      await alchemyIntegration.start(['ethereum']);
+      if (!alchemyIntegration.isReady()) {
+        throw new Error('Zero-capital execution requires active Alchemy mempool monitoring on Ethereum');
+      }
+      this.liveSignalReady = true;
+      this.lastLiveSignalCheckAt = Date.now();
+    }
+
+    this.executionEnabled = executionOptIn;
 
     logger.info('[ZeroCapitalEngine] Starting read-only on-chain monitoring...', {
       component: 'ZeroCapitalEngine',
-      mode: 'MONITORING_ONLY',
+      mode: this.executionEnabled ? 'LIVE_EXECUTION_GATED' : 'MONITORING_ONLY',
       connectedChains: this.providers.size,
       executionEnabled: this.executionEnabled,
     });
 
-    // Only start the implemented provider-backed monitoring loop. Execution requires
-    // deployed receiver contracts and verified quote sources, neither of which is
-    // assumed by this service.
     this.startScanningLoop();
 
     if (this.executionEnabled) {
@@ -350,7 +386,7 @@ export class AutonomousZeroCapitalEngine {
 
         // Filter and sort by profit potential
         const viableOpportunities = newOpportunities
-          .filter(opp => opp.expectedProfit > MIN_PROFIT_THRESHOLD)
+          .filter(opp => opp.expectedProfit > 0n)
           .sort((a, b) => Number(b.expectedProfit - a.expectedProfit));
 
         // Update queue
@@ -362,7 +398,10 @@ export class AutonomousZeroCapitalEngine {
           logger.info('[ZeroCapitalEngine] Opportunities discovered', {
             component: 'ZeroCapitalEngine',
             count: viableOpportunities.length,
-            topProfit: ethers.utils.formatEther(viableOpportunities[0]?.expectedProfit || 0),
+            topProfit: ethers.utils.formatUnits(
+              (viableOpportunities[0]?.expectedProfit || 0).toString(),
+              viableOpportunities[0]?.inputTokenDecimals || 6,
+            ),
           });
         }
 
@@ -383,9 +422,9 @@ export class AutonomousZeroCapitalEngine {
     void scanCycle();
   }
 
-  private toUsdEstimate(value: bigint | undefined): number {
+  private toUsdEstimate(value: bigint | undefined, decimals: number): number {
     if (!value) return 0;
-    const normalized = Number(ethers.utils.formatEther(value));
+    const normalized = Number(ethers.utils.formatUnits(value.toString(), decimals));
     return Number.isFinite(normalized) ? Math.max(0, normalized) : 0;
   }
 
@@ -400,10 +439,10 @@ export class AutonomousZeroCapitalEngine {
         chain: opportunity.chain,
         symbol: `${opportunity.inputToken}/${opportunity.outputToken}`,
         strategy: opportunity.type,
-        success: result.success,
-        expectedProfitUsd: this.toUsdEstimate(opportunity.expectedProfit),
-        realizedProfitUsd: this.toUsdEstimate(result.profit),
-        feeUsd: this.toUsdEstimate(opportunity.gasEstimate),
+        success: result.success && result.profitVerified === true,
+        expectedProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+        realizedProfitUsd: this.toUsdEstimate(result.profit, opportunity.inputTokenDecimals),
+        feeUsd: this.toUsdEstimate(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals),
         slippageBps: typeof result.slippage === 'number' ? Math.max(0, Math.round(result.slippage * 10000)) : 0,
         latencyMs: 0,
         usedZeroCapital: true,
@@ -419,8 +458,13 @@ export class AutonomousZeroCapitalEngine {
    * Execution Loop: Execute profitable opportunities with ZERO upfront capital
    */
   private startExecutionLoop(): void {
+    if (this.executionInterval) {
+      clearInterval(this.executionInterval);
+      this.executionInterval = null;
+    }
+
     const executionCycle = async () => {
-      if (!this.state.isRunning) return;
+      if (!this.state.isRunning || this.isExecuting) return;
 
       // Get best opportunity
       const opportunity = this.opportunityQueue.shift();
@@ -435,21 +479,45 @@ export class AutonomousZeroCapitalEngine {
         return;
       }
 
-      // Execute with zero capital
-      const result = await this.executeZeroCapitalArbitrage(opportunity);
+      this.isExecuting = true;
+      let result: ExecutionResult;
+      try {
+        result = await this.executeZeroCapitalArbitrage(opportunity);
+      } catch (error) {
+        result = {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      } finally {
+        this.isExecuting = false;
+      }
+
+      this.recordCryptaraExecutionFeedback(opportunity, result);
 
       // Update state
       this.state.totalTrades++;
-      if (result.success) {
+      if (result.success && result.profitVerified) {
         this.state.successfulTrades++;
-        this.state.totalProfit += result.profit || BigInt(0);
+        if (result.profit) {
+          this.state.totalProfit += result.profit;
+        }
         this.state.lastTradeTimestamp = Date.now();
         
         logger.info('[ZeroCapitalEngine] ✅ PROFIT CAPTURED', {
           component: 'ZeroCapitalEngine',
-          profit: ethers.utils.formatEther(result.profit || 0),
+          profit: result.profitVerified
+            ? ethers.utils.formatUnits((result.profit || 0).toString(), opportunity.inputTokenDecimals)
+            : 'unverified',
           txHash: result.txHash,
           gasUsed: result.gasUsed?.toString(),
+          capitalUsed: 'ZERO',
+        });
+      } else if (result.success) {
+        this.state.includedUnverifiedTrades++;
+        getCryptocrawlGovernance().pause('system', 'zero_capital_profit_unverified');
+        logger.warn('[ZeroCapitalEngine] Bundle inclusion observed but profit is not receiver-verified', {
+          component: 'ZeroCapitalEngine',
+          txHash: result.txHash,
           capitalUsed: 'ZERO',
         });
       } else {
@@ -462,8 +530,10 @@ export class AutonomousZeroCapitalEngine {
       }
     };
 
-    // Check for execution opportunities every 500ms
-    setInterval(executionCycle, 500);
+    // Check for execution opportunities every 500ms, without overlapping submissions.
+    this.executionInterval = setInterval(() => {
+      void executionCycle();
+    }, 500);
   }
 
   /**
@@ -475,20 +545,28 @@ export class AutonomousZeroCapitalEngine {
   ): Promise<ZeroCapitalOpportunity[]> {
     const opportunities: ZeroCapitalOpportunity[] = [];
 
+    if (this.executionEnabled && chain !== 'ethereum') {
+      return opportunities;
+    }
+
     try {
+      if (this.executionEnabled) {
+        await this.ensureLiveSignalReadiness();
+      }
+
       // Get current block for timestamp
       const block = await provider.getBlock('latest');
       
-      // Scan DEX pairs for price discrepancies
-      // This is a simplified version - production would use subgraphs and mempool monitoring
-      const priceDiscrepancies = await this.findPriceDiscrepancies(chain, provider);
-      
-      for (const discrepancy of priceDiscrepancies) {
-        if (discrepancy.profitPercent > 0.1) { // 0.1% minimum profit
-          const opportunity = this.createOpportunity(chain, discrepancy, block.timestamp);
-          if (opportunity) {
-            opportunities.push(opportunity);
-          }
+      const quotedRoutes = await quoteConfiguredZeroCapitalRoutesForChain(
+        chain,
+        provider,
+        this.configuredRoutes,
+      );
+
+      for (const quotedRoute of quotedRoutes) {
+        const opportunity = this.createOpportunityFromQuotedRoute(quotedRoute, block.timestamp);
+        if (!this.executionEnabled || await this.isCandidateAllowedByCryptara(opportunity, provider)) {
+          opportunities.push(opportunity);
         }
       }
 
@@ -503,123 +581,155 @@ export class AutonomousZeroCapitalEngine {
     return opportunities;
   }
 
-  /**
-   * Find price discrepancies between DEXes
-   */
-  private async findPriceDiscrepancies(
-    chain: SupportedChain,
-    provider: providers.JsonRpcProvider
-  ): Promise<Array<{
-    tokenA: string;
-    tokenB: string;
-    buyDex: string;
-    sellDex: string;
-    buyPrice: bigint;
-    sellPrice: bigint;
-    profitPercent: number;
-    optimalAmount: bigint;
-  }>> {
-    // In production, this would:
-    // 1. Query multiple DEX subgraphs for current prices
-    // 2. Monitor mempool for large pending swaps
-    // 3. Calculate optimal arbitrage amounts
-    // 4. Account for gas costs and flash loan fees
-    
-    // For now, return simulated opportunities based on real market conditions
-    // The actual implementation would use real DEX price feeds
-    
-    const discrepancies: Array<{
-      tokenA: string;
-      tokenB: string;
-      buyDex: string;
-      sellDex: string;
-      buyPrice: bigint;
-      sellPrice: bigint;
-      profitPercent: number;
-      optimalAmount: bigint;
-    }> = [];
+  private createOpportunityFromQuotedRoute(
+    quotedRoute: QuotedZeroCapitalRoute,
+    blockTimestamp: number,
+  ): ZeroCapitalOpportunity {
+    const routeTtlMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_ROUTE_TTL_MS || 3000));
+    const estimatedExecutionCost =
+      quotedRoute.estimatedGasCostInInputToken +
+      quotedRoute.flashLoanFeeInInputToken +
+      quotedRoute.relayFeeInInputToken;
 
-    // Real implementation would query on-chain prices here
-    // Example: Check USDC/WETH price on Uniswap vs Sushiswap
-    
-    return discrepancies;
+    return {
+      id: `${quotedRoute.id}-${blockTimestamp}-${Date.now()}`,
+      type: 'arbitrage',
+      chain: quotedRoute.chain,
+      inputToken: quotedRoute.inputToken,
+      outputToken: quotedRoute.inputToken,
+      inputAssetSymbol: quotedRoute.inputAssetSymbol,
+      inputTokenDecimals: quotedRoute.inputTokenDecimals,
+      flashLoanAmount: quotedRoute.amountIn,
+      expectedProfit: quotedRoute.netProfit,
+      gasEstimate: 0n,
+      estimatedExecutionCostInInputToken: estimatedExecutionCost,
+      expectedSlippageBps: this.getExpectedSlippageBps(quotedRoute.route.length),
+      quoteLatencyMs: quotedRoute.quoteLatencyMs,
+      netProfitBps: quotedRoute.netProfitBps,
+      route: quotedRoute.route.map(step => ({
+        protocol: step.protocol,
+        tokenIn: step.tokenIn,
+        tokenOut: step.tokenOut,
+        amountIn: BigInt(String(step.amountIn)),
+        expectedAmountOut: BigInt(String(step.expectedAmountOut)),
+        fee: step.fee,
+      })),
+      confidence: Math.min(0.99, 0.55 + Math.min(0.44, quotedRoute.netProfitBps / 1000)),
+      timestamp: Date.now(),
+      expiresAt: Date.now() + routeTtlMs,
+    };
   }
 
-  /**
-   * Create a structured opportunity from price discrepancy
-   */
-  private createOpportunity(
-    chain: SupportedChain,
-    discrepancy: {
-      tokenA: string;
-      tokenB: string;
-      buyDex: string;
-      sellDex: string;
-      buyPrice: bigint;
-      sellPrice: bigint;
-      profitPercent: number;
-      optimalAmount: bigint;
-    },
-    blockTimestamp: number
-  ): ZeroCapitalOpportunity | null {
-    try {
-      // Convert to bigint if needed
-      const flashLoanAmountBigInt: bigint = typeof discrepancy.optimalAmount === 'bigint' 
-        ? discrepancy.optimalAmount 
-        : BigInt(Math.floor(Number(discrepancy.optimalAmount)));
-      // Convert prices to bigint if they're numbers
-      const sellPriceBigInt: bigint = typeof discrepancy.sellPrice === 'bigint' ? discrepancy.sellPrice : BigInt(Math.floor(Number(discrepancy.sellPrice) * 1e18));
-      const buyPriceBigInt: bigint = typeof discrepancy.buyPrice === 'bigint' ? discrepancy.buyPrice : BigInt(Math.floor(Number(discrepancy.buyPrice) * 1e18));
-      const grossProfit: bigint = (sellPriceBigInt - buyPriceBigInt) * flashLoanAmountBigInt / buyPriceBigInt;
-      
-      // Estimate costs
-      const flashLoanFee: bigint = flashLoanAmountBigInt * BigInt(9) / BigInt(10000); // 0.09% Aave fee
-      const estimatedGas: bigint = BigInt(300000); // ~300k gas for flash loan + swaps
-      const gasPrice: bigint = BigInt(50) * BigInt(10 ** 9); // 50 gwei estimate
-      const gasCost: bigint = estimatedGas * gasPrice;
-      
-      const netProfit: bigint = grossProfit - flashLoanFee - gasCost;
-      
-      if (netProfit <= MIN_PROFIT_THRESHOLD) {
-        return null;
-      }
+  private getExpectedSlippageBps(routeLegCount: number): number {
+    const minOutputBps = Math.max(
+      9000,
+      Math.min(10000, Number(process.env.ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS || 9990)),
+    );
+    return Math.max(0, routeLegCount * (10000 - minOutputBps));
+  }
 
-      return {
-        id: `${chain}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        type: 'arbitrage',
-        chain,
-        inputToken: discrepancy.tokenA,
-        outputToken: discrepancy.tokenB,
-        flashLoanAmount: flashLoanAmountBigInt,
-        expectedProfit: netProfit,
-        gasEstimate: estimatedGas,
-        route: [
-          {
-            protocol: discrepancy.buyDex,
-            poolAddress: '0x...', // Would be actual pool address
-            tokenIn: discrepancy.tokenA,
-            tokenOut: discrepancy.tokenB,
-            amountIn: flashLoanAmountBigInt,
-            expectedAmountOut: flashLoanAmountBigInt * buyPriceBigInt / BigInt(10 ** 18),
-            fee: 0.003, // 0.3%
-          },
-          {
-            protocol: discrepancy.sellDex,
-            poolAddress: '0x...', // Would be actual pool address
-            tokenIn: discrepancy.tokenB,
-            tokenOut: discrepancy.tokenA,
-            amountIn: BigInt(0), // Set dynamically
-            expectedAmountOut: flashLoanAmountBigInt + netProfit,
-            fee: 0.003,
-          },
-        ],
-        confidence: Math.min(0.95, discrepancy.profitPercent / 2),
-        timestamp: Date.now(),
-        expiresAt: Date.now() + 12000, // Valid for 12 seconds (1 block)
-      };
-    } catch {
-      return null;
+  private async ensureLiveSignalReadiness(): Promise<void> {
+    const recheckMs = Math.max(5000, Number(process.env.ZERO_CAPITAL_SIGNAL_RECHECK_MS || 5000));
+    if (this.liveSignalReady && Date.now() - this.lastLiveSignalCheckAt < recheckMs) {
+      return;
     }
+
+    const cryptara = getCryptara();
+    const readiness = await cryptara.validateLiveSignalReadiness({ strictLive: true });
+    this.liveSignalReady = readiness.liveSignalReady && alchemyIntegration.isReady();
+    this.lastLiveSignalCheckAt = Date.now();
+    if (!this.liveSignalReady) {
+      throw new Error(`Live signal stack degraded: ${readiness.tradingView.detail}; ${readiness.alchemy.detail}`);
+    }
+  }
+
+  private async isCandidateAllowedByCryptara(
+    opportunity: ZeroCapitalOpportunity,
+    provider: providers.JsonRpcProvider,
+  ): Promise<boolean> {
+    const cryptara = getCryptara();
+    const directive = cryptara.getAutonomousDirective();
+    const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
+    const maxSlippageBps = Math.max(
+      1,
+      Math.min(directive.maxSlippageBps, Number(process.env.ZERO_CAPITAL_MAX_SLIPPAGE_BPS || 20)),
+    );
+    const maxGasGwei = Math.max(1, Number(process.env.ZERO_CAPITAL_MAX_GAS_GWEI || 60));
+
+    if (!directive.preferredExecutionModes.includes('zero_capital')) {
+      return false;
+    }
+    if (directive.riskBudget === 'defensive' && !directive.preferredChains.includes(opportunity.chain)) {
+      return false;
+    }
+    if (opportunity.expectedSlippageBps > maxSlippageBps) {
+      return false;
+    }
+    if (this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals) < directive.minimumNetProfitUsd) {
+      return false;
+    }
+
+    const [analysis, feeData] = await Promise.all([
+      TradingViewEngine.getAnalysis(process.env.ZERO_CAPITAL_SIGNAL_SYMBOL || 'ETHUSDT', '1h'),
+      provider.getFeeData(),
+    ]);
+    if (TradingViewEngine.getHealthStatus().mode !== 'live') {
+      return false;
+    }
+    const gasGwei = Number(ethers.utils.formatUnits(feeData.maxFeePerGas || feeData.gasPrice || 0, 'gwei'));
+    if (!Number.isFinite(gasGwei) || gasGwei <= 0 || gasGwei > maxGasGwei) {
+      return false;
+    }
+
+    const mempool = alchemyIntegration.getMempoolAnalysis();
+    const alchemyReadiness = await alchemyIntegration.readinessCheck({ strictLive: true, network: 'ethereum' });
+    if (!alchemyReadiness.ready || !alchemyIntegration.isReady()) {
+      return false;
+    }
+    const gate = cryptara.evaluateMarketGates({
+      chain: opportunity.chain,
+      pairOrSymbol: pair,
+      venue: 'flashbots',
+      expectedProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+      volatilityRegime: {
+        liquidityScore: Math.max(0.1, analysis.summary.strength / 100),
+        recentPriceMovement: Math.abs(TradingViewEngine.signalToScore(analysis.summary.signal)) / 100,
+        gasPriceGwei: gasGwei,
+        mempoolActivity: mempool.totalPending,
+        networkCongestion: Math.min(1, mempool.totalPending / 8000),
+      },
+      venueLatency: {
+        p50Ms: { route_quote: opportunity.quoteLatencyMs },
+        maxP50Ms: Math.max(100, Number(process.env.ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS || 1000)),
+      },
+      feesRebates: { takerFeeBps: 0 },
+      crossVenueFees: {
+        buyVenue: 'route_quote',
+        sellVenue: 'flashbots',
+        buyTakerFeeBps: 0,
+        sellTakerFeeBps: 0,
+        grossSpreadBps: opportunity.netProfitBps,
+      },
+      drawdownCaps: { drawdownPct: 0, maxDrawdownPct: 5 },
+      profitReinvestment: {
+        realizedProfitUsd: this.toUsdEstimate(this.state.totalProfit, 6),
+        requestedNotionalUsd: 0,
+        reinvestFraction: 1,
+      },
+      slippage: {
+        expectedSlippageBps: opportunity.expectedSlippageBps,
+        maxSlippageBps,
+      },
+    }, {
+      blockOnUnknownCritical: true,
+      criticalSignals: ['volatilityRegime', 'venueLatency', 'slippage', 'drawdownCaps', 'feesRebates', 'crossVenueFees'],
+    });
+
+    if (gate.actions.requestAutoPause) {
+      getCryptocrawlGovernance().pause('system', gate.actions.autoPauseReason || 'zero_capital_cryptara_gate');
+    }
+
+    return gate.decision === 'ALLOW';
   }
 
   /**
@@ -629,18 +739,27 @@ export class AutonomousZeroCapitalEngine {
   private async executeZeroCapitalArbitrage(
     opportunity: ZeroCapitalOpportunity
   ): Promise<ExecutionResult> {
-    const provider = this.providers.get(opportunity.chain);
-    if (!provider) {
-      return { success: false, error: 'No provider for chain' };
+    const governance = getCryptocrawlGovernance();
+    const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
+    governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opportunity.chain, pair, venue: 'flashbots' });
+    governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair, venue: 'flashbots' });
+    governance.recordExecutionAttempt();
+
+    if (opportunity.chain !== 'ethereum') {
+      return {
+        success: false,
+        error: `True zero-capital execution is unavailable on ${opportunity.chain} until a verified gas-sponsorship adapter is implemented`,
+      };
     }
 
-    // For Ethereum mainnet with Flashbots - completely gasless execution
-    if (opportunity.chain === 'ethereum' && this.flashbotsProvider && this.authSigner) {
-      return this.executeWithFlashbots(opportunity);
+    if (!this.flashbotsProvider || !this.authSigner) {
+      return {
+        success: false,
+        error: 'True zero-capital execution requires an initialized Flashbots provider and auth signer',
+      };
     }
 
-    // For other chains - use standard flash loan (still zero upfront capital)
-    return this.executeWithFlashLoan(opportunity, provider);
+    return this.executeWithFlashbots(opportunity);
   }
 
   /**
@@ -654,12 +773,20 @@ export class AutonomousZeroCapitalEngine {
       return { success: false, error: 'Flashbots not initialized' };
     }
 
+    const executionWallet = this.executionWallets.get('ethereum');
+    if (!executionWallet) {
+      return { success: false, error: 'WALLET_PRIVATE_KEY is required for zero-capital flashbots execution' };
+    }
+
     try {
       const provider = this.providers.get('ethereum')!;
       const blockNumber = await provider.getBlockNumber();
       
-      // Build the flash loan arbitrage transaction
-      const flashLoanCalldata = this.buildFlashLoanCalldata(opportunity);
+      // Build the flash-loan receiver execution payload
+      const executionPlan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
+        profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || executionWallet.address,
+      });
+      const flashLoanPayload = buildFlashLoanReceiverPayloadFromPlan(executionPlan);
       
       // Create Flashbots bundle
       // The bundle atomically executes:
@@ -671,13 +798,14 @@ export class AutonomousZeroCapitalEngine {
       
       const bundle: (FlashbotsBundleTransaction | FlashbotsBundleRawTransaction)[] = [
         {
-          signer: this.authSigner,
+          signer: executionWallet,
           transaction: {
-            to: BALANCER_VAULT, // Use Balancer for 0% fee flash loans
-            data: flashLoanCalldata,
-            gasLimit: BigNumber.from(opportunity.gasEstimate.toString()),
-            maxFeePerGas: ethers.utils.parseUnits('100', 'gwei'),
-            maxPriorityFeePerGas: ethers.utils.parseUnits('2', 'gwei'),
+            to: flashLoanPayload.to,
+            data: flashLoanPayload.data,
+            value: BigNumber.from(flashLoanPayload.value),
+            gasLimit: BigNumber.from(flashLoanPayload.gasLimit),
+            maxFeePerGas: await this.getBoundedFlashbotsMaxFee(provider),
+            maxPriorityFeePerGas: await this.getBoundedFlashbotsPriorityFee(provider),
             type: 2,
             chainId: 1,
           },
@@ -690,11 +818,13 @@ export class AutonomousZeroCapitalEngine {
       if ('error' in simulation) {
         return { success: false, error: `Simulation failed: ${simulation.error.message}` };
       }
-
-      // Check if simulation shows profit
-      const simulatedProfit = BigInt(simulation.totalGasUsed || 0);
-      if (simulatedProfit < MIN_PROFIT_THRESHOLD) {
-        return { success: false, error: 'Simulated profit below threshold' };
+      const simulatedGasUsed = BigNumber.from(simulation.totalGasUsed || 0);
+      const gasLimit = BigNumber.from(flashLoanPayload.gasLimit);
+      if (simulatedGasUsed.gt(gasLimit)) {
+        return {
+          success: false,
+          error: `Flashbots simulation used ${simulatedGasUsed.toString()} gas, exceeding configured receiver gas limit ${gasLimit.toString()}`,
+        };
       }
 
       // Submit bundle
@@ -705,20 +835,37 @@ export class AutonomousZeroCapitalEngine {
       }
 
       // Wait for inclusion
-      const resolution = await bundleSubmission.wait();
+      const resolution = await this.waitForBundleResolution(bundleSubmission);
       
-      if (resolution === 0) {
-        // Bundle included!
+      if (resolution === FlashbotsBundleResolution.BundleIncluded) {
+        const receipts = await bundleSubmission.receipts();
+        const receiverReceipt = receipts.find(receipt =>
+          receipt && receipt.to?.toLowerCase() === flashLoanPayload.to.toLowerCase(),
+        );
+        if (!receiverReceipt || receiverReceipt.status !== 1) {
+          return { success: false, error: 'Flashbots reported inclusion but the receiver transaction receipt is missing or reverted' };
+        }
+
+        const realizedProfit = this.extractReceiverProfit(receiverReceipt, flashLoanPayload.to);
+        if (realizedProfit === null) {
+          return {
+            success: false,
+            txHash: receiverReceipt.transactionHash,
+            error: 'Included receiver transaction did not emit FlashLoanExecuted',
+          };
+        }
+
         this.state.gaslessTransactions++;
         return {
           success: true,
-          txHash: bundleSubmission.bundleHash,
-          profit: opportunity.expectedProfit,
-          gasUsed: opportunity.gasEstimate,
-          blockNumber: blockNumber + 1,
+          txHash: receiverReceipt.transactionHash,
+          profit: realizedProfit,
+          profitVerified: true,
+          gasUsed: BigInt(receiverReceipt.gasUsed.toString()),
+          blockNumber: receiverReceipt.blockNumber,
         };
       } else {
-        return { success: false, error: 'Bundle not included' };
+        return { success: false, error: `Bundle not included (resolution=${resolution})` };
       }
 
     } catch (error) {
@@ -726,78 +873,72 @@ export class AutonomousZeroCapitalEngine {
     }
   }
 
-  /**
-   * Execute using standard flash loan (for non-Ethereum chains)
-   * Still ZERO upfront capital - flash loan provides all funds
-   */
-  private async executeWithFlashLoan(
-    opportunity: ZeroCapitalOpportunity,
-    provider: providers.JsonRpcProvider
-  ): Promise<ExecutionResult> {
-    // This would deploy or use a pre-deployed flash loan receiver contract
-    // The contract handles:
-    // 1. Receiving flash loan
-    // 2. Executing swaps
-    // 3. Repaying flash loan
-    // 4. Sending profit to owner
-    
-    // For production, you would deploy a FlashLoanReceiver contract that:
-    // - Implements IFlashLoanReceiver for Aave
-    // - Or IFlashLoanRecipient for Balancer
-    // - Contains the swap logic
-    // - Is owned by your address (for profit withdrawal)
+  private async getBoundedFlashbotsMaxFee(provider: providers.JsonRpcProvider): Promise<BigNumber> {
+    const feeData = await provider.getFeeData();
+    const baseFee = feeData.maxFeePerGas || feeData.gasPrice;
+    if (!baseFee || baseFee.lte(0)) {
+      throw new Error('Ethereum fee data is unavailable for Flashbots bundle construction');
+    }
 
-    logger.info('[ZeroCapitalEngine] Flash loan execution initiated', {
-      component: 'ZeroCapitalEngine',
-      chain: opportunity.chain,
-      amount: ethers.utils.formatEther(opportunity.flashLoanAmount),
-      expectedProfit: ethers.utils.formatEther(opportunity.expectedProfit),
-    });
-
-    // In production, this would call your deployed flash loan receiver contract
-    // For now, return a simulation result
-    return {
-      success: false,
-      error: 'Flash loan receiver contract not deployed - deploy contract to enable execution',
-    };
+    const feeBufferBps = Math.max(10000, Number(process.env.ZERO_CAPITAL_FLASHBOTS_FEE_BUFFER_BPS || 12000));
+    const maxFeeGwei = Math.max(1, Number(process.env.ZERO_CAPITAL_FLASHBOTS_MAX_FEE_GWEI || 60));
+    const buffered = baseFee.mul(feeBufferBps).div(10000);
+    const cap = ethers.utils.parseUnits(String(maxFeeGwei), 'gwei');
+    if (buffered.gt(cap)) {
+      throw new Error(`Dynamic Flashbots max fee ${ethers.utils.formatUnits(buffered, 'gwei')} gwei exceeds ZERO_CAPITAL_FLASHBOTS_MAX_FEE_GWEI=${maxFeeGwei}`);
+    }
+    return buffered;
   }
 
-  /**
-   * Build flash loan calldata for Balancer (0% fee!)
-   */
-  private buildFlashLoanCalldata(opportunity: ZeroCapitalOpportunity): string {
-    const iface = new ethers.utils.Interface(BALANCER_FLASH_LOAN_ABI);
-    
-    // Encode the callback data (what to do with borrowed funds)
-    const swapCalldata = this.encodeSwapSequence(opportunity);
-    
-    return iface.encodeFunctionData('flashLoan', [
-      '0x...', // Flash loan receiver contract address (would be your deployed contract)
-      [opportunity.inputToken],
-      [opportunity.flashLoanAmount],
-      swapCalldata,
-    ]);
-  }
-
-  /**
-   * Encode the swap sequence for the arbitrage
-   */
-  private encodeSwapSequence(opportunity: ZeroCapitalOpportunity): string {
-    // This would encode the exact swap sequence:
-    // 1. Approve DEX A
-    // 2. Swap on DEX A
-    // 3. Approve DEX B
-    // 4. Swap on DEX B
-    // 5. Approve flash loan repayment
-    
-    // The actual encoding depends on your flash loan receiver contract
-    return ethers.utils.defaultAbiCoder.encode(
-      ['address[]', 'bytes[]'],
-      [
-        opportunity.route.map(r => r.poolAddress),
-        opportunity.route.map(r => '0x'), // Swap calldata
-      ]
+  private async getBoundedFlashbotsPriorityFee(provider: providers.JsonRpcProvider): Promise<BigNumber> {
+    const feeData = await provider.getFeeData();
+    const configuredFallback = ethers.utils.parseUnits(
+      String(Math.max(0, Number(process.env.ZERO_CAPITAL_FLASHBOTS_PRIORITY_FEE_GWEI || 1))),
+      'gwei',
     );
+    const priorityFee = feeData.maxPriorityFeePerGas || configuredFallback;
+    const maxPriorityGwei = Math.max(0, Number(process.env.ZERO_CAPITAL_FLASHBOTS_MAX_PRIORITY_FEE_GWEI || 3));
+    const cap = ethers.utils.parseUnits(String(maxPriorityGwei), 'gwei');
+    return priorityFee.gt(cap) ? cap : priorityFee;
+  }
+
+  private async waitForBundleResolution(bundleSubmission: {
+    wait: () => Promise<FlashbotsBundleResolution>;
+  }): Promise<FlashbotsBundleResolution> {
+    const timeoutMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_FLASHBOTS_WAIT_TIMEOUT_MS || 45000));
+    let timeout: NodeJS.Timeout | null = null;
+    try {
+      return await Promise.race([
+        bundleSubmission.wait(),
+        new Promise<FlashbotsBundleResolution>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error(`Flashbots bundle wait timed out after ${timeoutMs}ms`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  private extractReceiverProfit(
+    receipt: providers.TransactionReceipt,
+    receiverAddress: string,
+  ): bigint | null {
+    for (const logEntry of receipt.logs) {
+      if (logEntry.address.toLowerCase() !== receiverAddress.toLowerCase()) {
+        continue;
+      }
+
+      try {
+        const parsed = FLASH_LOAN_RECEIVER_EVENT_INTERFACE.parseLog(logEntry);
+        if (parsed.name === 'FlashLoanExecuted') {
+          return BigInt(parsed.args.profit.toString());
+        }
+      } catch {
+        // Ignore unrelated receiver logs.
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -809,14 +950,19 @@ export class AutonomousZeroCapitalEngine {
       clearTimeout(this.scanInterval);
       this.scanInterval = null;
     }
+    if (this.executionInterval) {
+      clearInterval(this.executionInterval);
+      this.executionInterval = null;
+    }
     logger.info('[ZeroCapitalEngine] Engine stopped', {
       component: 'ZeroCapitalEngine',
       finalStats: {
-        totalProfit: ethers.utils.formatEther(this.state.totalProfit),
+        totalProfit: ethers.utils.formatUnits(this.state.totalProfit.toString(), 6),
         totalTrades: this.state.totalTrades,
         successRate: this.state.totalTrades > 0 
           ? (this.state.successfulTrades / this.state.totalTrades * 100).toFixed(2) + '%'
           : '0%',
+        includedUnverifiedTrades: this.state.includedUnverifiedTrades,
         gaslessTransactions: this.state.gaslessTransactions,
       },
     });
@@ -837,6 +983,7 @@ export class AutonomousZeroCapitalEngine {
     totalProfit: string;
     totalTrades: number;
     successfulTrades: number;
+    includedUnverifiedTrades: number;
     failedTrades: number;
     successRate: string;
     currentOpportunities: number;
@@ -845,16 +992,17 @@ export class AutonomousZeroCapitalEngine {
   } {
     return {
       isRunning: this.state.isRunning,
-      totalProfit: ethers.utils.formatEther(this.state.totalProfit),
+      totalProfit: ethers.utils.formatUnits(this.state.totalProfit.toString(), 6),
       totalTrades: this.state.totalTrades,
       successfulTrades: this.state.successfulTrades,
+      includedUnverifiedTrades: this.state.includedUnverifiedTrades,
       failedTrades: this.state.failedTrades,
       successRate: this.state.totalTrades > 0 
         ? (this.state.successfulTrades / this.state.totalTrades * 100).toFixed(2) + '%'
         : '0%',
       currentOpportunities: this.state.currentOpportunities,
       gaslessTransactions: this.state.gaslessTransactions,
-      capitalRequired: 'N/A',
+      capitalRequired: 'Explicit external Flashbots gas sponsor required for the currently supported live execution mode',
     };
   }
 }

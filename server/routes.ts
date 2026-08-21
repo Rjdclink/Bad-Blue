@@ -132,7 +132,7 @@ import {
 import { setupAuth, isAuthenticated, adminAuthMiddleware } from "./auth";
 import { asyncHandler, notFoundHandler, errorHandler, ErrorTypes } from "./errorHandler";
 import { generateComplaintDocument, generateFOIALetter as generateFOIALetterDoc } from "./documentGenerators";
-import { getBaseURL } from "./platformConfig";
+import { getBaseUrl as getBaseURL } from "./config";
 import { criminalRecordsAggregator } from "./services/criminalRecords";
 import {
   insertComplaintSchema,

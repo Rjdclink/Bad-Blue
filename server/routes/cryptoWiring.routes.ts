@@ -1,5 +1,6 @@
 import express from 'express';
 import { getCryptara } from '../services/cryptara';
+import { pipeline } from '../services/cryptocrawl/integration/master-pipeline.js';
 import { createLogger } from '../logger';
 
 const log = createLogger('crypto-wiring');
@@ -65,6 +66,19 @@ router.post('/wire-check', async (_req, res) => {
     return res.status(500).json({
       ok: false,
       stage: 5,
+      error: error?.message ?? String(error),
+    });
+  }
+});
+
+router.post('/deployment-review', async (_req, res) => {
+  try {
+    const review = await pipeline.reviewDeploymentReadiness({ passes: 2 });
+    return res.json({ ok: review.finalStatus === 'ready', review });
+  } catch (error: any) {
+    log.error('Deployment review failed', { error: error?.message ?? String(error) });
+    return res.status(500).json({
+      ok: false,
       error: error?.message ?? String(error),
     });
   }

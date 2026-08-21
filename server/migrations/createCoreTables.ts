@@ -12,7 +12,7 @@ export async function createCoreTables() {
       CREATE TABLE IF NOT EXISTS complaints (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        badge_lookup_id VARCHAR REFERENCES badge_lookups(id) ON DELETE SET NULL,
+        badge_lookup_id VARCHAR,
         officer_name TEXT NOT NULL,
         officer_badge VARCHAR,
         officer_department TEXT NOT NULL,
@@ -189,6 +189,25 @@ export async function createCoreTables() {
       CREATE INDEX IF NOT EXISTS idx_badge_lookups_user_id ON badge_lookups(user_id);
     `);
     console.log('[Migration] ✓ Created indexes for badge_lookups');
+
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'complaints_badge_lookup_id_badge_lookups_id_fk'
+        ) THEN
+          ALTER TABLE complaints
+          ADD CONSTRAINT complaints_badge_lookup_id_badge_lookups_id_fk
+          FOREIGN KEY (badge_lookup_id)
+          REFERENCES badge_lookups(id)
+          ON DELETE SET NULL;
+        END IF;
+      END
+      $$;
+    `);
+    console.log('[Migration] ✓ Ensured complaints.badge_lookup_id foreign key');
 
     // ============================================
     // 6. SAVED PROGRESS TABLE

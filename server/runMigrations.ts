@@ -1,7 +1,7 @@
 // Migration runner script
-// Run with: npm run migrations or tsx server/runMigrations.ts
+// Run with: npm run migrate or tsx server/runMigrations.ts
 
-import { runFreeAccessMigration } from './migrations/freeAccessForAll';
+import { runAllSchemaMigrations } from './migrations/reconcileAppSchema';
 
 async function runAllMigrations() {
   console.log('='.repeat(60));
@@ -9,18 +9,24 @@ async function runAllMigrations() {
   console.log('='.repeat(60));
   
   try {
-    // Run free access migration
-    console.log('\nMigration: Free Access for All Users');
-    console.log('-'.repeat(40));
-    const freeAccessResult = await runFreeAccessMigration();
-    
-    if (!freeAccessResult.success) {
-      throw new Error(`Free access migration failed: ${freeAccessResult.message}`);
+    const results = await runAllSchemaMigrations({ continueOnError: true });
+
+    let failed = 0;
+    for (const result of results) {
+      console.log(`\nMigration: ${result.name}`);
+      console.log('-'.repeat(40));
+
+      if (result.success) {
+        console.log(`✓ ${result.message ?? 'Completed successfully'}`);
+      } else {
+        failed += 1;
+        console.log(`✗ ${result.error ?? 'Unknown error'}`);
+      }
     }
-    
-    console.log(`✓ ${freeAccessResult.message}`);
-    
-    // Add future migrations here
+
+    if (failed > 0) {
+      throw new Error(`${failed} migration step(s) failed`);
+    }
     
     console.log('\n' + '='.repeat(60));
     console.log('✓ All migrations completed successfully');
