@@ -1,0 +1,39 @@
+name: Repair README Markdown
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/readme-repair.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Reconstruct exact README
+        shell: bash
+        run: |
+          cat .readme-repair/part1 .readme-repair/part2 .readme-repair/part3 .readme-repair/part4 .readme-repair/part5 | base64 --decode | gzip --decompress > README.md
+          echo "e1d62958d6a7e52486678e81e3cdf04c5928c0f8dae681d06b0b98f6fa039e99  README.md" | sha256sum --check --strict
+
+      - name: Commit repaired README
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "README already matches the intended Markdown."
+            exit 0
+          fi
+          git commit -m "Repair README Markdown formatting"
+          git push origin HEAD:develop
