@@ -1,11 +1,14 @@
 name: Repair README Markdown
 
-# One-time repair trigger
 on:
   push:
     branches: [develop]
     paths:
       - '.github/workflows/readme-repair.yml'
+  pull_request:
+    branches: [develop]
+    paths:
+      - '.readme-repair/trigger'
   workflow_dispatch:
 
 permissions:
