@@ -5,7 +5,6 @@ import { Resend } from "resend";
 import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { getBaseURL } from "./platformConfig";
 import { getResendClient } from "./mailer";
 
 // Cached Resend client and from email (refreshed on each use)
