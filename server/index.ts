@@ -50,6 +50,7 @@ const app = express();
 let isReady = false;
 let isFullyInitialized = false; // Tracks full service initialization
 let isShuttingDown = false;
+let startupError: string | null = null;
 let httpServer: Server | null = null;
 
 declare module 'http' {
@@ -173,7 +174,7 @@ async function retryAsync<T>(
   throw lastError;
 }
 
-async function initializeDatabase(): Promise<void> {
+async function initializeDatabase(): Promise<boolean> {
   console.log('[STARTUP] Stage 1: Database connection...');
   
   try {
@@ -182,6 +183,7 @@ async function initializeDatabase(): Promise<void> {
       await db.execute('SELECT 1');
     }, 3, 2000);
     console.log('[STARTUP] ✓ Database connection verified');
+    return true;
   } catch (error: any) {
     console.error('[STARTUP] ❌ Database connection failed after retries:', error?.message ?? error);
     console.log('[STARTUP] Attempting pool reset...');
@@ -193,9 +195,11 @@ async function initializeDatabase(): Promise<void> {
       const { db } = await import('./db');
       await db.execute('SELECT 1');
       console.log('[STARTUP] ✓ Database pool reset successful');
+      return true;
     } catch (resetError: any) {
       console.error('[STARTUP] ❌ Database pool reset failed:', resetError?.message ?? resetError);
       console.warn('[STARTUP] Starting with degraded database connectivity');
+      return false;
     }
   }
 }
@@ -326,10 +330,17 @@ app.get("/api/health", async (_req, res) => {
     });
   }
 
-  // Railway/deployment health check: Return 200 as soon as HTTP server is listening
-  // This allows the deployment to pass health checks while initialization continues in background
-  // The isReady flag indicates HTTP server is responding (set immediately on listen)
-  // The isFullyInitialized flag indicates all services are ready (set after migrations/workers)
+  if (startupError) {
+    return res.status(503).json({
+      status: 'failed',
+      ready: isReady,
+      fullyInitialized: isFullyInitialized,
+      error: startupError,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // A bound listener is not a healthy deployment. Full health requires services and persistence.
   
   let dbOk = false;
   let dbLatency = null;
@@ -347,10 +358,9 @@ app.get("/api/health", async (_req, res) => {
     }
   }
 
-  // Health check returns 200 once HTTP server is listening (isReady = true)
-  // This ensures Railway deployment succeeds while migrations run in background
-  const status = isFullyInitialized && dbOk ? 'healthy' : isReady ? 'starting' : 'initializing';
-  const httpStatus = isReady ? 200 : 503; // Return 200 once HTTP is up
+  const isHealthy = isFullyInitialized && dbOk;
+  const status = isHealthy ? 'healthy' : isFullyInitialized ? 'degraded' : isReady ? 'starting' : 'initializing';
+  const httpStatus = isHealthy ? 200 : 503;
 
   res.status(httpStatus).json({
     status,
@@ -384,8 +394,8 @@ app.get("/api/health", async (_req, res) => {
 
 app.get("/api/ready", (_req, res) => {
   // /api/ready returns 200 only when FULLY initialized (all migrations + services)
-  // Use /api/health for deployment health checks (returns 200 when HTTP server is up)
-  if (isFullyInitialized && !isShuttingDown) {
+  // /api/health is also 200 only when the application is fully healthy.
+  if (isFullyInitialized && !isShuttingDown && !startupError) {
     res.status(200).json({ ready: true, fullyInitialized: true });
   } else {
     res.status(503).json({ 
@@ -411,20 +421,16 @@ app.get("/api/schema-verify", async (_req, res) => {
 });
 
 (async () => {
+  try {
   console.log('[STARTUP] LegalWhat Server starting...');
   console.log('[STARTUP] Node.js version:', process.version);
   console.log('[STARTUP] Environment:', process.env.NODE_ENV || 'development');
 const port = Number(process.env.PORT) || 3000;
 httpServer = createServer(app); 
-httpServer.listen(port, '0.0.0.0', () => {
-  isReady = true;
-  console.log(`[LISTENING] ${port} - server ready`);
-});
 
 const { registerRoutes } = await import("./routes");
 await registerRoutes(app);
-  // IMPORTANT: Start HTTP server FIRST for Railway health checks
-  // Database initialization moved to background to avoid blocking health checks
+  // Register all routes before exposing the listener to deployment traffic.
   
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -492,28 +498,25 @@ await registerRoutes(app);
 
   
   httpServer.on('error', (error: any) => {
-    if (error?.code === 'EADDRINUSE') {
-      console.error(`[STARTUP] ❌ Port ${port} is already in use`);
-      const fallbackPort = port + 1;
-      httpServer = app.listen(fallbackPort, '0.0.0.0', () => {
-        console.log(`[LISTENING] ${fallbackPort}`);
-        isReady = true; // HTTP server is up - health checks will pass
-      });
-    } else {
-      console.error('[SERVER ERROR]', error);
-    }
+    startupError = error?.message ?? 'HTTP server failed to start';
+    console.error('[SERVER ERROR]', error);
+    process.exit(1);
+  });
+
+  httpServer.listen(port, '0.0.0.0', () => {
+    isReady = true;
+    console.log(`[LISTENING] ${port} - server ready`);
   });
   
 (async () => {
     
-    // Set isReady immediately so health checks pass
-    // Railway/deployment health checks need 200 response ASAP
-    
-    // Continue initialization in background - health checks already passing
-    // All slow/blocking operations run here AFTER isReady is set
+  // Continue initialization after binding; health remains unavailable until it completes.
     try {
       // Initialize database connection (moved here to not block health checks)
-      await initializeDatabase();
+      const databaseReady = await initializeDatabase();
+      if (!databaseReady) {
+        throw new Error('Database initialization did not establish a usable connection');
+      }
       
       await runMigrations();
       
@@ -526,9 +529,15 @@ await registerRoutes(app);
       isFullyInitialized = true;
       console.log('[STARTUP] ✓ Server fully initialized and ready');
     } catch (error) {
+      startupError = error instanceof Error ? error.message : String(error);
       console.error('[STARTUP] ❌ Background initialization failed:', error);
       // Server remains running but not fully initialized
       // This allows debugging while keeping the deployment alive
     }
-  });
+  })();
+  } catch (error) {
+    startupError = error instanceof Error ? error.message : String(error);
+    console.error('[STARTUP] ❌ Bootstrap failed before listening:', error);
+    process.exit(1);
+  }
 })();
