@@ -51,7 +51,7 @@ import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
-import { MASTER_PASSWORD, checkMasterPassword, getAccessZoneConfig, getMasterUserEmail } from "./masterPassword";
+import { checkMasterPassword, getAccessZoneConfig, getMasterUserEmail } from "./masterPassword";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import { setupFMIRoutes } from "./routes/fmi.routes";
@@ -1220,6 +1220,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.error(`[AUTH ERROR] ${accessZone} password req.login error:`, loginErr);
               return res.status(500).json({ message: "Login failed" });
             }
+            console.info('[AUTH] SESSION_WRITE');
+            console.info('[AUTH] ADMIN_REDIRECT', { route: zoneConfig.route });
             console.log(`[AUTH] ${accessZone} password login successful. Redirecting to ${zoneConfig.route}`);
             res.json({
               success: true,

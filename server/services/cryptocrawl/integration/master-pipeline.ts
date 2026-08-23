@@ -23,6 +23,42 @@ import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 
 const { JsonRpcProvider } = providers;
 
+type ConnectorReadiness = {
+  networkHealth: { ready: boolean; detail: string };
+  gasOracle: { ready: boolean; detail: string };
+  tradingView: { ready: boolean; detail: string; mode: 'live' | 'degraded' | 'simulated' };
+  alchemy: { ready: boolean; detail: string; mode: 'live' | 'degraded' };
+};
+
+type DeploymentExecutionReadiness = {
+  rpcReady: boolean;
+  walletReady: boolean;
+  centralizedExchangeReady: boolean;
+  genericOnChainPayloadBuilder: boolean;
+  structuredOnChainPayloadBuilder: boolean;
+  autonomousRoutePlanner: boolean;
+  flashLoanReceiverSupport: boolean;
+  explicitPayloadRequired: boolean;
+  liveExecutionEnabled: boolean;
+  liveExecutionConfirmed: boolean;
+};
+
+type DeploymentReadinessPass = {
+  passNumber: number;
+  status: 'pass' | 'warn' | 'fail';
+  issues: Array<{ id: string; severity: 'warn' | 'block'; detail: string; remediation: string }>;
+  connectorReadiness: ConnectorReadiness;
+  cryptara: {
+    liveSignalReady: boolean;
+    tradingView: { ready: boolean; mode: string; detail: string };
+    alchemy: { ready: boolean; mode: string; detail: string };
+    directive: ReturnType<ReturnType<typeof getCryptara>['getAutonomousDirective']>;
+    sentiment?: { overallSentiment: number; fearGreedIndex: number; dominantNarrative: string };
+    monteCarlo?: { simulationId: string; optimalStrategy: string; maxDrawdown: number; valueAtRisk: number };
+  };
+  execution: DeploymentExecutionReadiness;
+};
+
 class MasterPipeline {
   private running = false;
   private initialized = false;
@@ -35,12 +71,7 @@ class MasterPipeline {
   private tripleDip: TripleDipExtractor;
   private opportunitiesProcessed = 0;
   private totalProfit = 0;
-  private connectorReadiness: {
-    networkHealth: { ready: boolean; detail: string };
-    gasOracle: { ready: boolean; detail: string };
-    tradingView: { ready: boolean; detail: string; mode: 'live' | 'degraded' | 'simulated' };
-    alchemy: { ready: boolean; detail: string; mode: 'live' | 'degraded' };
-  } = {
+  private connectorReadiness: ConnectorReadiness = {
     networkHealth: { ready: false, detail: 'Not initialized' },
     gasOracle: { ready: false, detail: 'Not initialized' },
     tradingView: { ready: false, detail: 'Not initialized', mode: 'simulated' },
@@ -210,32 +241,7 @@ class MasterPipeline {
     generatedAt: string;
     requestedPasses: number;
     strictConnectors: boolean;
-    passes: Array<{
-      passNumber: number;
-      status: 'pass' | 'warn' | 'fail';
-      issues: Array<{ id: string; severity: 'warn' | 'block'; detail: string; remediation: string }>;
-      connectorReadiness: typeof this.connectorReadiness;
-      cryptara: {
-        liveSignalReady: boolean;
-        tradingView: { ready: boolean; mode: string; detail: string };
-        alchemy: { ready: boolean; mode: string; detail: string };
-        directive: ReturnType<ReturnType<typeof getCryptara>['getAutonomousDirective']>;
-        sentiment?: { overallSentiment: number; fearGreedIndex: number; dominantNarrative: string };
-        monteCarlo?: { simulationId: string; optimalStrategy: string; maxDrawdown: number; valueAtRisk: number };
-      };
-      execution: {
-        rpcReady: boolean;
-        walletReady: boolean;
-        centralizedExchangeReady: boolean;
-        genericOnChainPayloadBuilder: boolean;
-        structuredOnChainPayloadBuilder: boolean;
-        autonomousRoutePlanner: boolean;
-        flashLoanReceiverSupport: boolean;
-        explicitPayloadRequired: boolean;
-        liveExecutionEnabled: boolean;
-        liveExecutionConfirmed: boolean;
-      };
-    }>;
+    passes: DeploymentReadinessPass[];
     stableClearPasses: number;
     finalStatus: 'ready' | 'ready_with_warnings' | 'blocked';
     recommendations: string[];
@@ -273,32 +279,11 @@ class MasterPipeline {
       });
     }
 
-    const passResults: Array<{
-      passNumber: number;
-      status: 'pass' | 'warn' | 'fail';
-      issues: Array<{ id: string; severity: 'warn' | 'block'; detail: string; remediation: string }>;
-      connectorReadiness: typeof this.connectorReadiness;
-      cryptara: {
-        liveSignalReady: boolean;
-        tradingView: { ready: boolean; mode: string; detail: string };
-        alchemy: { ready: boolean; mode: string; detail: string };
-        directive: ReturnType<ReturnType<typeof getCryptara>['getAutonomousDirective']>;
-        sentiment?: { overallSentiment: number; fearGreedIndex: number; dominantNarrative: string };
-        monteCarlo?: { simulationId: string; optimalStrategy: string; maxDrawdown: number; valueAtRisk: number };
-      };
-      execution: {
-        rpcReady: boolean;
-        walletReady: boolean;
-        centralizedExchangeReady: boolean;
-        genericOnChainPayloadBuilder: boolean;
-        explicitPayloadRequired: boolean;
-        liveExecutionEnabled: boolean;
-        liveExecutionConfirmed: boolean;
-      };
-    }> = [];
+    const passResults: DeploymentReadinessPass[] = [];
 
     let stableClearPasses = 0;
     const recommendationSet = new Set<string>();
+    const strictLive = strictConnectors;
 
     for (let passNumber = 1; passNumber <= requestedPasses; passNumber++) {
       const [tvReadiness, alchemyReadiness, cryptaraReadiness] = await Promise.all([

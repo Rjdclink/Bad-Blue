@@ -70,6 +70,7 @@ export interface Task {
   type: TaskType;
   intensity: TaskIntensity;
   payload: any;
+  workload?: ComputeWorkload<any, any>;
   metadata: {
     created: Date;
     priority: number;
@@ -83,6 +84,25 @@ export interface Task {
     memoryIntensive: boolean;
     ioIntensive: boolean;
   };
+}
+
+/**
+ * Trusted in-process work routed by the Beam. Providers execute capacity; they
+ * never receive signing material or arbitrary serialized code.
+ */
+export interface ComputeWorkload<Input = unknown, Result = unknown> {
+  id: string;
+  type: string;
+  input: Input;
+  timeoutMs: number;
+  execute: (input: Input, context: ComputeWorkloadContext) => Promise<Result> | Result;
+  validate: (result: Result, input: Input) => Promise<boolean> | boolean;
+}
+
+export interface ComputeWorkloadContext {
+  signal: AbortSignal;
+  workerId: string;
+  startedAt: Date;
 }
 
 // ===== COMPUTE NODE TYPES =====
@@ -241,6 +261,7 @@ export interface CrawlerTask extends Task {
     maxDuration: number;
     timeout: number;
     fallbackStrategy?: CrawlerStrategy;
+    workload?: ComputeWorkload<any, any>;
   };
 }
 

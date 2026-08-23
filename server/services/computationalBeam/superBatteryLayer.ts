@@ -32,6 +32,8 @@ export class SuperBatteryLayer extends EventEmitter {
   private batchTimers: Map<string, NodeJS.Timeout> = new Map();
   private deduplicationWindow: Map<string, Set<string>> = new Map();
   private strategy: OptimizationStrategy;
+  private cleanupInterval: NodeJS.Timeout | null = null;
+  private persistenceInterval: NodeJS.Timeout | null = null;
 
   constructor(strategy?: Partial<OptimizationStrategy>) {
     super();
@@ -349,7 +351,7 @@ export class SuperBatteryLayer extends EventEmitter {
    */
   private startCleanupScheduler(): void {
     // Clean up old deduplication windows
-    setInterval(() => {
+    this.cleanupInterval = setInterval(() => {
       const currentWindow = Math.floor(Date.now() / this.strategy.deduplication.lookbackWindow);
       for (const [key] of this.deduplicationWindow) {
         const windowNum = parseInt(key.split('_')[1]);
@@ -358,11 +360,13 @@ export class SuperBatteryLayer extends EventEmitter {
         }
       }
     }, CLEANUP_INTERVAL_MS);
+    this.cleanupInterval.unref();
 
     // Persist state periodically
-    setInterval(() => {
+    this.persistenceInterval = setInterval(() => {
       this.persistState();
     }, STATE_PERSIST_INTERVAL_MS);
+    this.persistenceInterval.unref();
   }
 
   /**
@@ -378,6 +382,15 @@ export class SuperBatteryLayer extends EventEmitter {
       clearTimeout(timer);
     }
     this.batchTimers.clear();
+
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    if (this.persistenceInterval) {
+      clearInterval(this.persistenceInterval);
+      this.persistenceInterval = null;
+    }
 
     this.emit('caches-cleared');
   }

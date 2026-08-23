@@ -25,6 +25,8 @@ const BACKOFF_BASE_MS = 1000;
 
 export class WorkloadRouter extends EventEmitter {
   private taskHistory: Map<string, RoutingDecision> = new Map();
+  private routedTasks: Map<string, Task> = new Map();
+  private taskOutcomes: Map<string, { result?: unknown; error?: string }> = new Map();
   private retryAttempts: Map<string, number> = new Map();
   private readonly MAX_RETRIES = MAX_RETRIES;
 
@@ -39,20 +41,24 @@ export class WorkloadRouter extends EventEmitter {
   private setupEventListeners(): void {
     // Antenna layer events
     omniAntennaLayer.on('task-completed', (data) => {
+      this.taskOutcomes.set(data.taskId, { result: data.result });
+      this.clearCompletedTask(data.taskId);
       this.emit('task-completed', { ...data, layer: 'antenna' });
     });
 
     omniAntennaLayer.on('task-failed', (data) => {
-      this.handleTaskFailure(data.taskId, 'antenna');
+      void this.handleTaskFailure(data.taskId, 'antenna', data.error);
     });
 
     // Beam layer events
     directionalBeamLayer.on('task-completed', (data) => {
+      this.taskOutcomes.set(data.taskId, { result: data.result });
+      this.clearCompletedTask(data.taskId);
       this.emit('task-completed', { ...data, layer: 'beam' });
     });
 
     directionalBeamLayer.on('task-failed', (data) => {
-      this.handleTaskFailure(data.taskId, 'beam');
+      void this.handleTaskFailure(data.taskId, 'beam', data.error);
     });
 
     directionalBeamLayer.on('cpu-overuse', (data) => {
@@ -83,6 +89,7 @@ export class WorkloadRouter extends EventEmitter {
 
       // Store decision
       this.taskHistory.set(task.id, decision);
+      this.routedTasks.set(task.id, optimizedTask);
 
       this.emit('task-routed', {
         taskId: task.id,
@@ -93,6 +100,9 @@ export class WorkloadRouter extends EventEmitter {
 
       return decision;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.taskOutcomes.set(task.id, { error: message });
+      this.emit('task-failed', { taskId: task.id, error: message });
       throw new TaskRoutingError(
         `Failed to route task ${task.id}`,
         { taskId: task.id, error }
@@ -197,29 +207,55 @@ export class WorkloadRouter extends EventEmitter {
   /**
    * Handle task failure with retry logic
    */
-  private async handleTaskFailure(taskId: string, layer: string): Promise<void> {
+  private async handleTaskFailure(taskId: string, layer: string, error?: string): Promise<void> {
     const attempts = this.retryAttempts.get(taskId) || 0;
+    const task = this.routedTasks.get(taskId);
+    const maxRetries = Math.min(task?.metadata.maxRetries ?? 0, this.MAX_RETRIES);
 
-    if (attempts < this.MAX_RETRIES) {
+    if (task && attempts < maxRetries) {
       this.retryAttempts.set(taskId, attempts + 1);
+      task.metadata.retries = attempts + 1;
       
       this.emit('task-retrying', {
         taskId,
         layer,
         attempt: attempts + 1,
-        maxRetries: this.MAX_RETRIES,
+        maxRetries,
       });
 
-      // Retry with exponential backoff
       const backoffMs = Math.pow(2, attempts) * BACKOFF_BASE_MS;
-      setTimeout(() => {
-        // Retry logic would go here
-        this.emit('task-retry-scheduled', { taskId, backoffMs });
+      const timer = setTimeout(() => {
+        this.retryTask(task, layer).catch(retryError => {
+          void this.handleTaskFailure(taskId, layer, retryError instanceof Error ? retryError.message : String(retryError));
+        });
       }, backoffMs);
+      timer.unref();
     } else {
       this.retryAttempts.delete(taskId);
-      this.emit('task-failed-permanently', { taskId, layer, attempts });
+      this.routedTasks.delete(taskId);
+      this.taskOutcomes.set(taskId, { error });
+      this.emit('task-failed', { taskId, layer, attempts, error });
     }
+  }
+
+  private async retryTask(task: Task, layer: string): Promise<void> {
+    const selectedLayer = this.selectLayer(task);
+    if (selectedLayer !== layer) {
+      throw new TaskRoutingError(`Retry changed task ${task.id} routing layer`, { taskId: task.id, layer, selectedLayer });
+    }
+    await this.executeRouting(task, selectedLayer);
+    this.emit('task-retry-started', { taskId: task.id, layer, attempt: task.metadata.retries });
+  }
+
+  private clearCompletedTask(taskId: string): void {
+    this.retryAttempts.delete(taskId);
+    this.routedTasks.delete(taskId);
+  }
+
+  public consumeTaskOutcome(taskId: string): { result?: unknown; error?: string } | undefined {
+    const outcome = this.taskOutcomes.get(taskId);
+    this.taskOutcomes.delete(taskId);
+    return outcome;
   }
 
   /**
@@ -314,6 +350,8 @@ export class WorkloadRouter extends EventEmitter {
   public clearHistory(): void {
     this.taskHistory.clear();
     this.retryAttempts.clear();
+    this.routedTasks.clear();
+    this.taskOutcomes.clear();
     this.emit('history-cleared');
   }
 }

@@ -63,10 +63,11 @@ class WalletManager {
   private encryptionKey: Buffer;
 
   constructor() {
-    // Derive encryption key from password "CRYPTOCRAWL" (as specified in requirements)
-    // NOTE: In production, use environment variable and secure salt from key management system
-    const password = process.env.WALLET_ENCRYPTION_PASSWORD || 'CRYPTOCRAWL';
-    const salt = process.env.WALLET_ENCRYPTION_SALT || randomBytes(16).toString('hex');
+    const password = process.env.WALLET_ENCRYPTION_PASSWORD?.trim();
+    const salt = process.env.WALLET_ENCRYPTION_SALT?.trim();
+    if (!password || !salt) {
+      throw new Error('WALLET_ENCRYPTION_PASSWORD and WALLET_ENCRYPTION_SALT are required for WalletManager');
+    }
     this.encryptionKey = pbkdf2Sync(password, salt, 100000, 32, 'sha256');
   }
 
@@ -75,12 +76,21 @@ class WalletManager {
     // Try to load from DB (simplified - in production would query database)
     const stored = this.loadFromDB();
     
+    const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
+    if (!privateKey) {
+      throw new Error('WALLET_PRIVATE_KEY is required for WalletManager');
+    }
+
     if (stored) {
-      const privateKey = this.decrypt(stored.encryptedKey);
-      this.wallet = new Wallet(privateKey);
+      const configuredWallet = new Wallet(privateKey);
+      const storedPrivateKey = this.decrypt(stored.encryptedKey);
+      const storedWallet = new Wallet(storedPrivateKey);
+      if (configuredWallet.address.toLowerCase() !== storedWallet.address.toLowerCase()) {
+        throw new Error('WALLET_PRIVATE_KEY does not match the stored CryptoCrawler wallet');
+      }
+      this.wallet = configuredWallet;
     } else {
-      // Create new wallet with random mnemonic
-      this.wallet = Wallet.createRandom();
+      this.wallet = new Wallet(privateKey);
       const encryptedKey = this.encrypt(this.wallet.privateKey);
       const data: WalletData = {
         address: this.wallet.address,

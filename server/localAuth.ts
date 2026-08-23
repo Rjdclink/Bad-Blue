@@ -38,13 +38,17 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
  * STRICT: Requires all fields, no optional paths
  */
 export async function registerLocalUser(email: string, password: string, firstName: string, lastName: string) {
-  // Validate email is provided
-  if (!email || !email.trim()) {
-    throw new Error("Email is required");
+  const normalizedEmail = email?.trim().toLowerCase();
+  const normalizedFirstName = firstName?.trim();
+  const normalizedLastName = lastName?.trim();
+  if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw new Error("A valid email is required");
   }
-  
-  // Check if email already exists
-  const existingUser = await storage.getUserByEmail(email);
+  if (!normalizedFirstName || !normalizedLastName) {
+    throw new Error("First and last name are required");
+  }
+
+  const existingUser = await storage.getUserByEmail(normalizedEmail);
   if (existingUser) {
     throw new Error("Email already registered");
   }
@@ -57,42 +61,35 @@ export async function registerLocalUser(email: string, password: string, firstNa
   // Hash password
   const { hash, salt } = await hashPassword(password);
 
-  // Create user with firstName and lastName
-  const user = await storage.upsertUser({
-    id: crypto.randomUUID(),
-    email,
-    firstName,
-    lastName,
-    profileImageUrl: null,
-  });
-
-  // Generate a default username from firstName+lastName for backward compatibility
-  const baseUsername = `${firstName.toLowerCase()}${lastName.toLowerCase()}`.replace(/[^a-z0-9]/g, '');
-  let username = baseUsername;
-  let counter = 1;
-  
-  // Ensure username is unique
-  while (await storage.getAuthAccountByUsername(username)) {
-    username = `${baseUsername}${counter}`;
-    counter++;
+  const userId = crypto.randomUUID();
+  try {
+    return await storage.createLocalUser(
+      {
+        id: userId,
+        email: normalizedEmail,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        profileImageUrl: null,
+      },
+      {
+        authType: "local",
+        username: `local-${userId}`,
+        passwordHash: hash,
+        passwordSalt: salt,
+      },
+    );
+  } catch (error: any) {
+    if (error?.code === '23505') {
+      throw new Error('Email already registered');
+    }
+    throw error;
   }
-
-  // Create auth account with generated username (for backward compatibility)
-  const authAccount = await storage.createAuthAccount({
-    userId: user.id,
-    authType: "local",
-    username, // Keep for backward compatibility, but not used for login
-    passwordHash: hash,
-    passwordSalt: salt,
-  });
-
-  return { user, authAccount };
 }
 
 /**
  * Setup passport-local strategy for email-based authentication
  * STRICT: No fallback users, passwords validated only against registered users
- * MASTER CREDENTIALS: rjdclink@outlook.com + SARBEAR
+ * MASTER CREDENTIALS: configured through MASTER_ADMIN_EMAIL and MASTER_ADMIN_PASSWORD
  */
 export function setupLocalStrategy() {
   passport.use(
@@ -103,8 +100,7 @@ export function setupLocalStrategy() {
         try {
           // ============================================
           // SINGLE MASTER PASSWORD CHECK
-          // Email: rjdclink@outlook.com
-          // Password: SARBEAR
+          // Credentials are loaded only from the deployment environment.
           // All other master passwords permanently discarded
           // ============================================
           
@@ -112,17 +108,19 @@ export function setupLocalStrategy() {
           const accessZone = checkMasterPassword(password, email);
           
           if (accessZone) {
+            console.info('[AUTH] MASTER_CREDENTIAL_MATCH');
             const zoneConfig = getAccessZoneConfig(password, email)!;
-            const timestamp = new Date().toISOString();
-            console.log(`[SECURITY ALERT] ${timestamp} - MASTER ADMIN LOGIN. Role: ${zoneConfig.role}. Email: ${email}`);
+            console.info('[AUTH] MASTER_ACCESS_ZONE_RESOLVED', { role: zoneConfig.role });
             
             // Create a unique user ID based on canonical master email
             const userId = generateMasterUserId(email, accessZone);
             const userEmail = getMasterUserEmail(email, accessZone);
             
             // Create or get admin user
+            console.info('[AUTH] MASTER_USER_LOOKUP');
             let user = await storage.getUser(userId);
             if (!user) {
+              console.info('[AUTH] MASTER_USER_CREATE');
               user = await storage.upsertUser({
                 id: userId,
                 email: userEmail,
@@ -133,16 +131,17 @@ export function setupLocalStrategy() {
               });
             } else {
               // Update last login for existing user
+              console.info('[AUTH] MASTER_LAST_LOGIN_UPDATE');
               await storage.updateUserLastLogin(userId);
             }
             
             // Grant paid access (bypass payment gate)
             if (!user.hasPaidForAccess) {
-              await storage.updateUserAccess(userId, userId, 0).catch((err: unknown) => {
-                console.error(`[SECURITY] Failed to update admin access:`, err);
-              });
+              console.info('[AUTH] MASTER_ACCESS_UPDATE');
+              await storage.updateUserAccess(userId, userId, 0);
             }
             
+            console.info('[AUTH] PASSPORT_SUCCESS');
             return done(null, {
               claims: { sub: user.id, email: user.email || userEmail, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
               isAdminBypass: false,

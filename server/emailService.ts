@@ -6,6 +6,7 @@ import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getResendClient } from "./mailer";
+import { getBaseUrl as getBaseURL } from "./config";
 
 // Cached Resend client and from email (refreshed on each use)
 let cachedFromEmail: string = "onboarding@resend.dev";

@@ -96,14 +96,14 @@ router.get('/governance', (req, res) => {
 });
 
 // POST /admin/crypto/governance/stage - Set stage (always pauses)
-router.post('/governance/stage', (req, res) => {
+router.post('/governance/stage', async (req, res) => {
   try {
     const stage = Number(req.body?.stage);
     if (![1, 2, 3, 4, 5, 6].includes(stage)) {
       return res.status(400).json({ success: false, error: 'stage must be 1..6' });
     }
     const reason = String(req.body?.reason || 'manual_stage_set');
-    governance.setStage(stage as any, 'human', reason);
+    await governance.setStage(stage as any, 'human', reason);
     res.json({ success: true, state: governance.getState() });
   } catch (err) {
     return handleGovernanceError(res, err);
@@ -122,10 +122,10 @@ router.post('/governance/pause', (req, res) => {
 });
 
 // POST /admin/crypto/governance/unpause - UNPAUSE with explicit envelope
-router.post('/governance/unpause', (req, res) => {
+router.post('/governance/unpause', async (req, res) => {
   try {
     const body = req.body || {};
-    const envelope = governance.unpauseWithEnvelope({
+    const envelope = await governance.unpauseWithEnvelope({
       stage: Number(body.stage) as any,
       scope: String(body.scope || 'unspecified_scope'),
       authority: 'human',

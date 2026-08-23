@@ -4,12 +4,21 @@ import crypto from "crypto";
 
 /**
  * SINGLE MASTER PASSWORD
- * Password: SARBEAR
- * Required Email: rjdclink@outlook.com
  * Grants access to PANTHEON Admin Console
  */
-export const MASTER_PASSWORD = "SARBEAR";
-export const MASTER_EMAIL = "rjdclink@outlook.com";
+function getMasterEmail(): string {
+  return process.env.MASTER_ADMIN_EMAIL?.trim().toLowerCase() || '';
+}
+
+function getMasterPassword(): string {
+  return process.env.MASTER_ADMIN_PASSWORD || '';
+}
+
+function safeEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && leftBuffer.length > 0 && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
 
 /**
  * Access zone types - Single admin zone
@@ -25,7 +34,6 @@ export type AccessRole = 'ADMIN_ROOT';
  * Access zone configuration
  */
 export interface AccessZoneConfig {
-  password: string;
   role: AccessRole;
   route: string;
   mode: 'admin';
@@ -36,7 +44,6 @@ export interface AccessZoneConfig {
  */
 export const ACCESS_ZONES: Record<AccessZone, AccessZoneConfig> = {
   admin: {
-    password: MASTER_PASSWORD,
     role: 'ADMIN_ROOT',
     route: '/administrator',
     mode: 'admin',
@@ -56,8 +63,9 @@ export const ZONE_FIRST_NAMES: Record<AccessZone, string> = {
  * STRICT: Both password AND email must match
  */
 export function checkMasterPassword(password: string, email?: string): AccessZone | null {
-  // STRICT: Password must be SARBEAR AND email must be rjdclink@outlook.com
-  if (password === MASTER_PASSWORD && email?.toLowerCase() === MASTER_EMAIL.toLowerCase()) {
+  const masterEmail = getMasterEmail();
+  const masterPassword = getMasterPassword();
+  if (safeEquals(password, masterPassword) && safeEquals(email?.trim().toLowerCase() || '', masterEmail)) {
     return 'admin';
   }
   return null;
@@ -68,7 +76,7 @@ export function checkMasterPassword(password: string, email?: string): AccessZon
  * NOTE: This alone is NOT sufficient for auth - email must also match
  */
 export function isMasterPassword(password: string): boolean {
-  return password === MASTER_PASSWORD;
+  return safeEquals(password, getMasterPassword());
 }
 
 /**
@@ -98,8 +106,9 @@ export function getAccessZoneConfig(password: string, email?: string): AccessZon
  * Uses the master email hash
  */
 export function generateMasterUserId(_email: string | null | undefined, _zone: AccessZone = 'admin'): string {
-  // Always use the canonical master email for ID generation
-  return `admin-${crypto.createHash('sha256').update(MASTER_EMAIL.toLowerCase()).digest('hex').slice(0, 16)}`;
+  const masterEmail = getMasterEmail();
+  if (!masterEmail) throw new Error('MASTER_ADMIN_EMAIL is not configured');
+  return `admin-${crypto.createHash('sha256').update(masterEmail).digest('hex').slice(0, 16)}`;
 }
 
 /**
@@ -107,5 +116,7 @@ export function generateMasterUserId(_email: string | null | undefined, _zone: A
  * Always returns the canonical master email
  */
 export function getMasterUserEmail(_email: string | null | undefined, _zone: AccessZone = 'admin'): string {
-  return MASTER_EMAIL;
+  const masterEmail = getMasterEmail();
+  if (!masterEmail) throw new Error('MASTER_ADMIN_EMAIL is not configured');
+  return masterEmail;
 }

@@ -52,6 +52,7 @@ export interface StrategyExecutionParams {
  */
 export interface StrategyExecutionResult {
   success: boolean;
+  error?: string;
   strategyType: CryptoStrategyType;
   opportunities: OpportunityDetail[];
   profitEstimate: number; // USD
@@ -172,60 +173,9 @@ export class CryptoBeamConnector {
       const taskType = this.mapToTaskType(params.strategyType);
       const crawlerStrategy = this.mapToCrawlerStrategy(params.strategyType);
       
-      // Create task for computational beam
-      const task: Task = {
-        id: `crypto-${params.strategyType}-${Date.now()}`,
-        type: taskType,
-        intensity: TaskIntensity.HEAVY,
-        payload: {
-          strategyType: params.strategyType,
-          symbols: params.symbols || ['BTC/USD', 'ETH/USD'],
-          exchanges: params.exchanges || ['binance', 'coinbase', 'kraken'],
-          minProfitThreshold: params.minProfitThreshold || 10,
-          maxSlippage: params.maxSlippage || 0.5,
-          timeframe: params.timeframe || '1m',
-          chains: params.chains || ['ethereum', 'bsc', 'polygon'],
-        },
-        metadata: {
-          created: new Date(),
-          priority: TaskPriority.HIGH,
-          retries: 0,
-          maxRetries: 3,
-        },
-      };
-      
-      // Execute with computational beam
-      const result = await this.beamInstance.executeCrawlerTask(
-        crawlerStrategy,
-        task.payload,
-        {
-          timeout: 30000, // 30 second timeout
-          fallbackStrategy: CrawlerStrategy.MOMENTUM, // Fallback to momentum
-        }
-      );
-      
-      // Parse opportunities from result
-      const opportunities = this.parseOpportunities(result, params.strategyType);
-      
-      const executionTime = Date.now() - startTime;
-      
-      const strategyResult: StrategyExecutionResult = {
-        success: true,
-        strategyType: params.strategyType,
-        opportunities,
-        profitEstimate: this.calculateTotalProfit(opportunities),
-        executionTime,
-        computePowerUsed: this.estimateComputePower(executionTime),
-      };
-      
-      log.info('✅ Crypto strategy executed successfully', {
-        strategy: params.strategyType,
-        opportunities: opportunities.length,
-        profitEstimate: strategyResult.profitEstimate.toFixed(2),
-        executionTime: executionTime + 'ms',
-      });
-      
-      return strategyResult;
+      void taskType;
+      void crawlerStrategy;
+      throw new Error('No verified CryptoCrawler workload is registered with the Computational Beam; refusing to fabricate an opportunity or execution result');
       
     } catch (error) {
       log.error('❌ Crypto strategy execution failed', {
@@ -235,6 +185,7 @@ export class CryptoBeamConnector {
       
       return {
         success: false,
+        error: error instanceof Error ? error.message : String(error),
         strategyType: params.strategyType,
         opportunities: [],
         profitEstimate: 0,
@@ -310,59 +261,6 @@ export class CryptoBeamConnector {
       default:
         return CrawlerStrategy.MOMENTUM;
     }
-  }
-  
-  /**
-   * Parse opportunities from computational beam result
-   */
-  private static parseOpportunities(
-    result: any,
-    strategyType: CryptoStrategyType
-  ): OpportunityDetail[] {
-    // Parse result based on strategy type
-    const opportunities: OpportunityDetail[] = [];
-    
-    // Example parsing (would be customized per strategy)
-    if (strategyType === CryptoStrategyType.ARBITRAGE) {
-      // Simulated arbitrage opportunities
-      opportunities.push({
-        type: 'exchange-arbitrage',
-        pair: 'BTC/USD',
-        buyExchange: 'binance',
-        sellExchange: 'coinbase',
-        buyPrice: 50000,
-        sellPrice: 50150,
-        profitPotential: 145.50, // After fees
-        confidence: 0.85,
-        actionRequired: 'Execute within 30 seconds',
-      });
-    } else if (strategyType === CryptoStrategyType.ZERO_CAPITAL) {
-      // Simulated zero-capital opportunities
-      opportunities.push({
-        type: 'flash-loan-arbitrage',
-        pair: 'ETH/USDT',
-        profitPotential: 25.30,
-        confidence: 0.72,
-        actionRequired: 'Flash loan required - no upfront capital',
-      });
-    }
-    
-    return opportunities;
-  }
-  
-  /**
-   * Calculate total profit from opportunities
-   */
-  private static calculateTotalProfit(opportunities: OpportunityDetail[]): number {
-    return opportunities.reduce((sum, opp) => sum + opp.profitPotential, 0);
-  }
-  
-  /**
-   * Estimate compute power used
-   */
-  private static estimateComputePower(executionTime: number): number {
-    // Simple estimation: 1 unit per 100ms
-    return Math.ceil(executionTime / 100);
   }
   
   /**

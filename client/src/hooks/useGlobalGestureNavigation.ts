@@ -6,6 +6,7 @@ type GestureRoutes = {
   down: string;
   left: string;
   right: string;
+  enabled: boolean;
 };
 
 function isTextInputTarget(target: EventTarget | null): boolean {
@@ -36,6 +37,11 @@ export function useGlobalGestureNavigation(routes: GestureRoutes) {
   );
 
   useEffect(() => {
+    if (!routes.enabled) {
+      touchStartRef.current = null;
+      return;
+    }
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (isTextInputTarget(e.target)) return;
       if (e.defaultPrevented) return;
@@ -104,6 +110,6 @@ export function useGlobalGestureNavigation(routes: GestureRoutes) {
       window.removeEventListener("touchstart", onTouchStart as any);
       window.removeEventListener("touchend", onTouchEnd as any);
     };
-  }, [routes.down, routes.left, routes.right, routes.up, setLocation]);
+  }, [routes.down, routes.enabled, routes.left, routes.right, routes.up, setLocation]);
 }
 

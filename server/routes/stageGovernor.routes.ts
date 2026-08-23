@@ -190,7 +190,7 @@ router.post('/unpause', async (req, res) => {
     
     log.info('UNPAUSE request received', { request });
     
-    const result = getStageGovernor().processUnpause(request);
+    const result = await getStageGovernor().processUnpause(request);
     
     if (result.success) {
       log.info('System UNPAUSED', { stage, authority });

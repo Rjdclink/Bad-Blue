@@ -41,6 +41,13 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import { EuropaZeroGasAdapter } from '../execution/adapters/europa-zero-gas-adapter.js';
+import { PostgresStage4ExecutionLedger } from '../execution/adapters/stage4-execution-ledger.js';
+import { PostgresStage4CapitalProvenanceStore } from '../execution/adapters/stage4-capital-provenance.js';
+import { resolveEuropaExternalGasDifficulty } from '../execution/adapters/skale-pow-adapter.js';
+import { buildEuropaSushiV3FlashPayload } from '../execution/adapters/europa-sushi-v3-flash-builder.js';
+import { EUROPA_SUSHI } from '../execution/adapters/europa-sushi-registry.js';
+import { discoverProfitableEuropaRoute } from '../execution/adapters/europa-dynamic-route-discovery.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -82,6 +89,7 @@ export interface ExecutionResult {
   profit?: bigint;
   profitVerified?: boolean;
   gasUsed?: bigint;
+  slippage?: number;
   error?: string;
   blockNumber?: number;
 }
@@ -98,7 +106,7 @@ export interface SystemState {
   gaslessTransactions: number;
 }
 
-export type SupportedChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche';
+export type SupportedChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
 
 // ============================================================================
 // CONSTANTS & CONFIGURATION
@@ -112,6 +120,7 @@ const RPC_ENDPOINTS: Record<SupportedChain, string> = {
   optimism: process.env.OPTIMISM_RPC_URL || 'https://optimism.llamarpc.com',
   bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org',
   avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
+  europa: process.env.EUROPA_RPC_URL || 'https://mainnet.skalenodes.com/v1/europa',
 };
 
 const FLASH_LOAN_RECEIVER_EVENT_INTERFACE = new ethers.utils.Interface([
@@ -127,6 +136,9 @@ export class AutonomousZeroCapitalEngine {
   private flashbotsProvider: FlashbotsBundleProvider | null = null;
   private authSigner: Wallet | null = null;
   private executionWallets: Map<SupportedChain, Wallet> = new Map();
+  private europaAdapter: EuropaZeroGasAdapter | null = null;
+  private readonly capitalProvenance = new PostgresStage4CapitalProvenanceStore();
+  private readonly capitalScope = process.env.ZERO_CAPITAL_CAPITAL_SCOPE?.trim() || 'cryptocrawler';
   private state: SystemState;
   private isScanning: boolean = false;
   private opportunityQueue: ZeroCapitalOpportunity[] = [];
@@ -168,7 +180,32 @@ export class AutonomousZeroCapitalEngine {
   async initialize(): Promise<void> {
     logger.info('[ZeroCapitalEngine] Initializing providers...', { component: 'ZeroCapitalEngine' });
 
-    this.configuredRoutes = loadConfiguredZeroCapitalRoutes();
+    const configuredRoutes = loadConfiguredZeroCapitalRoutes();
+    const nonEuropaRoutes = configuredRoutes.filter(route => route.chain !== 'europa');
+    try {
+      const dynamicEuropaRoute = await discoverProfitableEuropaRoute();
+      this.configuredRoutes = dynamicEuropaRoute
+        ? [...nonEuropaRoutes, dynamicEuropaRoute.route]
+        : nonEuropaRoutes;
+      if (dynamicEuropaRoute) {
+        logger.info('[ZeroCapitalEngine] Dynamic profitable Europa route discovered', {
+          component: 'ZeroCapitalEngine',
+          route: dynamicEuropaRoute.route.id,
+          netProfit: dynamicEuropaRoute.netProfit,
+          quoteLatencyMs: dynamicEuropaRoute.quoteLatencyMs,
+        });
+      } else {
+        logger.info('[ZeroCapitalEngine] No profitable Europa route discovered; configured Europa routes were discarded', {
+          component: 'ZeroCapitalEngine',
+        });
+      }
+    } catch (error) {
+      this.configuredRoutes = nonEuropaRoutes;
+      logger.warn('[ZeroCapitalEngine] Dynamic Europa route discovery failed; configured Europa routes were discarded', {
+        component: 'ZeroCapitalEngine',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     // Initialize providers for each chain
     for (const [chain, rpcUrl] of Object.entries(RPC_ENDPOINTS)) {
@@ -190,6 +227,13 @@ export class AutonomousZeroCapitalEngine {
     if (walletPrivateKey) {
       for (const [chain, provider] of this.providers.entries()) {
         this.executionWallets.set(chain, new Wallet(walletPrivateKey, provider));
+      }
+      const europaWallet = this.executionWallets.get('europa');
+      if (europaWallet) {
+        this.europaAdapter = new EuropaZeroGasAdapter(
+          europaWallet,
+          new PostgresStage4ExecutionLedger(),
+        );
       }
     }
 
@@ -243,10 +287,12 @@ export class AutonomousZeroCapitalEngine {
 
     this.state.isRunning = true;
     const executionOptIn = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
-    const receiverAddress = String(process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER || '').trim();
     const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
     const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
     const zeroCapitalConfirmed = process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK';
+    const europaRoutes = this.configuredRoutes.filter(route => route.chain === 'europa');
+    const nonEuropaRoutes = this.configuredRoutes.filter(route => route.chain !== 'europa');
+    let bootstrapExecutionEnabled = executionOptIn;
 
     if (executionOptIn) {
       if (process.env.NO_EXECUTION === 'true') {
@@ -255,55 +301,90 @@ export class AutonomousZeroCapitalEngine {
       if (!liveExecutionEnabled || !liveExecutionConfirmed || !zeroCapitalConfirmed) {
         throw new Error('Zero-capital execution requires both global live-execution confirmation and ZERO_CAPITAL_EXECUTION_CONFIRMATION');
       }
-      if (!/^0x[a-fA-F0-9]{40}$/.test(receiverAddress)) {
-        throw new Error('ZERO_CAPITAL_FLASHLOAN_RECEIVER must be a deployed EVM receiver address before execution is enabled');
-      }
       if (!process.env.WALLET_PRIVATE_KEY?.trim()) {
         throw new Error('WALLET_PRIVATE_KEY is required for zero-capital execution');
       }
       if (this.configuredRoutes.length === 0) {
-        throw new Error('ZERO_CAPITAL_ROUTE_CONFIG must include at least one validated cyclic route before execution is enabled');
+        throw new Error('No profitable Europa route was discovered from the live Sushi market; execution remains fail-closed');
       }
-      if (!this.configuredRoutes.some(route => route.chain === 'ethereum')) {
-        throw new Error('True zero-capital execution currently requires at least one Ethereum Flashbots route; other chains need a dedicated gas-sponsorship adapter');
+      if (europaRoutes.length > 0) {
+        if (nonEuropaRoutes.length > 0) {
+          throw new Error('Europa zero-monetary-gas bootstrap cannot be mixed with legacy externally sponsored routes in one execution configuration');
+        }
+        if (process.env.ZERO_CAPITAL_EUROPA_EXECUTION_CONFIRMATION !== 'I_ACCEPT_EUROPA_ZERO_GAS_EXECUTION_RISK') {
+          throw new Error('Europa execution requires ZERO_CAPITAL_EUROPA_EXECUTION_CONFIRMATION=I_ACCEPT_EUROPA_ZERO_GAS_EXECUTION_RISK');
+        }
+        if (!this.europaAdapter) {
+          throw new Error('Europa execution requires WALLET_PRIVATE_KEY and a reachable Europa RPC provider');
+        }
+        const europaReceiverKind = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND?.trim() || 'sushi-v3';
+        const receiverInfrastructureReady = europaReceiverKind === 'sushi-v3'
+          ? !process.env.ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY?.trim() || process.env.ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY.trim() === EUROPA_SUSHI.v3Factory
+          : !!process.env.ZERO_CAPITAL_EUROPA_BALANCER_VAULT?.trim();
+        if (!process.env.ZERO_CAPITAL_EUROPA_RECEIVER?.trim() || !process.env.ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH?.trim() || !receiverInfrastructureReady) {
+          throw new Error(europaReceiverKind === 'sushi-v3'
+            ? 'Europa Sushi V3 execution requires ZERO_CAPITAL_EUROPA_RECEIVER and ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH; the verified Sushi factory is built in'
+            : 'Europa Balancer execution requires ZERO_CAPITAL_EUROPA_RECEIVER, ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH, and ZERO_CAPITAL_EUROPA_BALANCER_VAULT');
+        }
+        await resolveEuropaExternalGasDifficulty(this.providers.get('europa')!);
+        const capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
+        if (capitalState.lifecycle === 'ATOMIC_EXECUTION_PENDING' || capitalState.lifecycle === 'FIRST_PROFIT_VERIFIED') {
+          throw new Error(`Europa bootstrap recovery is blocked while capital provenance is ${capitalState.lifecycle}; reconcile the recorded transaction before starting another execution`);
+        }
+        if (capitalState.lifecycle === 'SELF_FUNDED' && BigInt(capitalState.internallyGeneratedBalance) > 0n) {
+          bootstrapExecutionEnabled = false;
+          logger.info('[ZeroCapitalEngine] Europa bootstrap is dormant because verified internally generated capital is available', {
+            component: 'ZeroCapitalEngine',
+            generation: capitalState.generation,
+            asset: capitalState.asset,
+          });
+        } else {
+          if (capitalState.lifecycle === 'SELF_FUNDED') {
+            if (process.env.ZERO_CAPITAL_RECOVERY_CONFIRMATION !== 'I_CONFIRM_GLOBAL_INTERNAL_CAPITAL_EXHAUSTED') {
+              throw new Error('Capital provenance shows SELF_FUNDED with no recorded balance; global capital exhaustion must be explicitly reconciled before bootstrap recovery');
+            }
+            await this.capitalProvenance.markRecoveryRequired(this.capitalScope);
+          }
+          await this.capitalProvenance.markZeroGasExecutionReady(this.capitalScope);
+        }
+        await this.europaAdapter.checkReadiness();
+        this.liveSignalReady = true;
+        this.lastLiveSignalCheckAt = Date.now();
+      } else {
+        const receiverAddress = String(process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER || '').trim();
+        if (!/^0x[a-fA-F0-9]{40}$/.test(receiverAddress)) {
+          throw new Error('ZERO_CAPITAL_FLASHLOAN_RECEIVER must be a deployed EVM receiver address before execution is enabled');
+        }
+        if (process.env.ZERO_CAPITAL_ALLOW_LEGACY_EXTERNAL_SPONSOR !== 'true') {
+          throw new Error('Non-Europa zero-capital execution is disabled by default because it depends on an external gas sponsor; configure a verified Europa route instead');
+        }
+        if (!this.configuredRoutes.some(route => route.chain === 'ethereum')) {
+          throw new Error('Legacy external-sponsor execution requires an Ethereum Flashbots route');
+        }
+        if (!this.flashbotsProvider || !this.executionWallets.get('ethereum')) {
+          throw new Error('Legacy external-sponsor execution requires Ethereum RPC, FLASHBOTS_AUTH_KEY or WALLET_PRIVATE_KEY, and a usable Flashbots provider');
+        }
+        const paymentMode = process.env.ZERO_CAPITAL_FLASHBOTS_PAYMENT_MODE?.trim();
+        const sponsorAddress = process.env.ZERO_CAPITAL_FLASHBOTS_SPONSOR_ADDRESS?.trim();
+        const sponsorConfirmation = process.env.ZERO_CAPITAL_FLASHBOTS_SPONSOR_CONFIRMATION?.trim();
+        const executionWallet = this.executionWallets.get('ethereum')!;
+        if (paymentMode !== 'external_sponsor' || !/^0x[a-fA-F0-9]{40}$/.test(sponsorAddress || '') || executionWallet.address.toLowerCase() !== sponsorAddress!.toLowerCase() || sponsorConfirmation !== 'I_CONFIRM_EXTERNAL_FLASHBOTS_GAS_SPONSOR') {
+          throw new Error('Legacy external-sponsor execution requires the explicitly configured and confirmed Flashbots sponsor');
+        }
+        const cryptara = getCryptara();
+        if (!cryptara.getStatus().isRunning) await cryptara.initialize();
+        const readiness = await cryptara.validateLiveSignalReadiness({ strictLive: true });
+        if (!readiness.liveSignalReady) {
+          throw new Error(`Legacy execution requires live TradingView and Alchemy signals: ${readiness.tradingView.detail}; ${readiness.alchemy.detail}`);
+        }
+        await alchemyIntegration.start(['ethereum']);
+        if (!alchemyIntegration.isReady()) throw new Error('Legacy execution requires active Alchemy mempool monitoring on Ethereum');
+        this.liveSignalReady = true;
+        this.lastLiveSignalCheckAt = Date.now();
       }
-      if (!this.flashbotsProvider || !this.executionWallets.get('ethereum')) {
-        throw new Error('True zero-capital execution requires Ethereum RPC, FLASHBOTS_AUTH_KEY or WALLET_PRIVATE_KEY, and a usable Flashbots provider');
-      }
-      const paymentMode = process.env.ZERO_CAPITAL_FLASHBOTS_PAYMENT_MODE?.trim();
-      const sponsorAddress = process.env.ZERO_CAPITAL_FLASHBOTS_SPONSOR_ADDRESS?.trim();
-      const sponsorConfirmation = process.env.ZERO_CAPITAL_FLASHBOTS_SPONSOR_CONFIRMATION?.trim();
-      const executionWallet = this.executionWallets.get('ethereum')!;
-      if (paymentMode !== 'external_sponsor') {
-        throw new Error('Live Flashbots execution requires ZERO_CAPITAL_FLASHBOTS_PAYMENT_MODE=external_sponsor until a reviewed on-chain profit-share payment adapter is implemented');
-      }
-      if (!/^0x[a-fA-F0-9]{40}$/.test(sponsorAddress || '')) {
-        throw new Error('ZERO_CAPITAL_FLASHBOTS_SPONSOR_ADDRESS must identify the approved external gas sponsor');
-      }
-      if (executionWallet.address.toLowerCase() !== sponsorAddress!.toLowerCase()) {
-        throw new Error('WALLET_PRIVATE_KEY must match ZERO_CAPITAL_FLASHBOTS_SPONSOR_ADDRESS for the supported external-sponsor execution mode');
-      }
-      if (sponsorConfirmation !== 'I_CONFIRM_EXTERNAL_FLASHBOTS_GAS_SPONSOR') {
-        throw new Error('ZERO_CAPITAL_FLASHBOTS_SPONSOR_CONFIRMATION=I_CONFIRM_EXTERNAL_FLASHBOTS_GAS_SPONSOR is required before sponsor-funded execution');
-      }
-
-      const cryptara = getCryptara();
-      if (!cryptara.getStatus().isRunning) {
-        await cryptara.initialize();
-      }
-      const readiness = await cryptara.validateLiveSignalReadiness({ strictLive: true });
-      if (!readiness.liveSignalReady) {
-        throw new Error(`Zero-capital execution requires live TradingView and Alchemy signals: ${readiness.tradingView.detail}; ${readiness.alchemy.detail}`);
-      }
-      await alchemyIntegration.start(['ethereum']);
-      if (!alchemyIntegration.isReady()) {
-        throw new Error('Zero-capital execution requires active Alchemy mempool monitoring on Ethereum');
-      }
-      this.liveSignalReady = true;
-      this.lastLiveSignalCheckAt = Date.now();
     }
 
-    this.executionEnabled = executionOptIn;
+    this.executionEnabled = bootstrapExecutionEnabled;
 
     logger.info('[ZeroCapitalEngine] Starting read-only on-chain monitoring...', {
       component: 'ZeroCapitalEngine',
@@ -322,7 +403,7 @@ export class AutonomousZeroCapitalEngine {
     } else {
       logger.info('[ZeroCapitalEngine] Execution loop disabled; monitoring mode only', {
         component: 'ZeroCapitalEngine',
-        reason: 'Set ZERO_CAPITAL_ENABLE_EXECUTION=true and ZERO_CAPITAL_FLASHLOAN_RECEIVER to enable execution',
+        reason: executionOptIn ? 'Verified internally generated capital is available; zero-capital bootstrap is dormant' : 'Set ZERO_CAPITAL_ENABLE_EXECUTION=true only after Europa bootstrap prerequisites are verified',
       });
     }
   }
@@ -545,12 +626,12 @@ export class AutonomousZeroCapitalEngine {
   ): Promise<ZeroCapitalOpportunity[]> {
     const opportunities: ZeroCapitalOpportunity[] = [];
 
-    if (this.executionEnabled && chain !== 'ethereum') {
+    if (this.executionEnabled && chain !== 'ethereum' && chain !== 'europa') {
       return opportunities;
     }
 
     try {
-      if (this.executionEnabled) {
+      if (this.executionEnabled && chain !== 'europa') {
         await this.ensureLiveSignalReadiness();
       }
 
@@ -649,6 +730,7 @@ export class AutonomousZeroCapitalEngine {
   ): Promise<boolean> {
     const cryptara = getCryptara();
     const directive = cryptara.getAutonomousDirective();
+    const isEuropa = opportunity.chain === 'europa';
     const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
     const maxSlippageBps = Math.max(
       1,
@@ -681,22 +763,32 @@ export class AutonomousZeroCapitalEngine {
       return false;
     }
 
-    const mempool = alchemyIntegration.getMempoolAnalysis();
-    const alchemyReadiness = await alchemyIntegration.readinessCheck({ strictLive: true, network: 'ethereum' });
-    if (!alchemyReadiness.ready || !alchemyIntegration.isReady()) {
-      return false;
+    let mempoolActivity = 0;
+    let networkCongestion = 0;
+    if (isEuropa) {
+      if (!this.europaAdapter) return false;
+      const europaHealth = await this.europaAdapter.checkReadiness();
+      if (!europaHealth.some(check => check.healthy)) return false;
+    } else {
+      const mempool = alchemyIntegration.getMempoolAnalysis();
+      const alchemyReadiness = await alchemyIntegration.readinessCheck({ strictLive: true, network: 'ethereum' });
+      if (!alchemyReadiness.ready || !alchemyIntegration.isReady()) {
+        return false;
+      }
+      mempoolActivity = mempool.totalPending;
+      networkCongestion = Math.min(1, mempool.totalPending / 8000);
     }
     const gate = cryptara.evaluateMarketGates({
       chain: opportunity.chain,
       pairOrSymbol: pair,
-      venue: 'flashbots',
+      venue: isEuropa ? 'europa' : 'flashbots',
       expectedProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
       volatilityRegime: {
         liquidityScore: Math.max(0.1, analysis.summary.strength / 100),
         recentPriceMovement: Math.abs(TradingViewEngine.signalToScore(analysis.summary.signal)) / 100,
         gasPriceGwei: gasGwei,
-        mempoolActivity: mempool.totalPending,
-        networkCongestion: Math.min(1, mempool.totalPending / 8000),
+        mempoolActivity,
+        networkCongestion,
       },
       venueLatency: {
         p50Ms: { route_quote: opportunity.quoteLatencyMs },
@@ -705,7 +797,7 @@ export class AutonomousZeroCapitalEngine {
       feesRebates: { takerFeeBps: 0 },
       crossVenueFees: {
         buyVenue: 'route_quote',
-        sellVenue: 'flashbots',
+        sellVenue: isEuropa ? 'europa' : 'flashbots',
         buyTakerFeeBps: 0,
         sellTakerFeeBps: 0,
         grossSpreadBps: opportunity.netProfitBps,
@@ -741,9 +833,14 @@ export class AutonomousZeroCapitalEngine {
   ): Promise<ExecutionResult> {
     const governance = getCryptocrawlGovernance();
     const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
-    governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opportunity.chain, pair, venue: 'flashbots' });
-    governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair, venue: 'flashbots' });
+    const venue = opportunity.chain === 'europa' ? 'europa' : 'flashbots';
+    governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opportunity.chain, pair, venue });
+    governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair, venue });
     governance.recordExecutionAttempt();
+
+    if (opportunity.chain === 'europa') {
+      return this.executeWithEuropa(opportunity);
+    }
 
     if (opportunity.chain !== 'ethereum') {
       return {
@@ -760,6 +857,98 @@ export class AutonomousZeroCapitalEngine {
     }
 
     return this.executeWithFlashbots(opportunity);
+  }
+
+  private async executeWithEuropa(opportunity: ZeroCapitalOpportunity): Promise<ExecutionResult> {
+    const adapter = this.europaAdapter;
+    const executionWallet = this.executionWallets.get('europa');
+    if (!adapter || !executionWallet) {
+      return { success: false, error: 'Europa adapter is not initialized with a trusted signer' };
+    }
+
+    const receiver = process.env.ZERO_CAPITAL_EUROPA_RECEIVER?.trim() || '';
+    const receiverCodeHash = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH?.trim() || '';
+    const balancerVault = process.env.ZERO_CAPITAL_EUROPA_BALANCER_VAULT?.trim() || '';
+    const configuredReceiverKind = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND?.trim();
+    const receiverKind: 'sushi-v3' | 'balancer' = configuredReceiverKind === 'balancer' ? 'balancer' : 'sushi-v3';
+    const profitRecipient = process.env.ZERO_CAPITAL_EUROPA_PROFIT_RECIPIENT?.trim() || executionWallet.address;
+    if (profitRecipient.toLowerCase() !== executionWallet.address.toLowerCase()) {
+      return { success: false, error: 'Europa bootstrap profit recipient must be the trusted executor wallet to preserve capital provenance' };
+    }
+
+    try {
+      const capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
+      if (capitalState.lifecycle !== 'ZERO_GAS_EXECUTION_READY') {
+        return { success: false, error: `Europa bootstrap is not ready in capital lifecycle state ${capitalState.lifecycle}` };
+      }
+      await this.capitalProvenance.markAtomicExecutionPending(this.capitalScope, `opportunity:${opportunity.id}`);
+      const payload = receiverKind === 'sushi-v3'
+        ? await buildEuropaSushiV3FlashPayload({
+          receiver,
+          flashPool: EUROPA_SUSHI.pools.usdcSkl,
+          flashToken: EUROPA_SUSHI.tokens.usdc,
+          flashAmount: opportunity.flashLoanAmount.toString(),
+          legs: opportunity.route.map(step => ({
+            tokenIn: step.tokenIn,
+            tokenOut: step.tokenOut,
+            amountIn: step.amountIn.toString(),
+            pool: undefined,
+          })),
+          minProfit: opportunity.expectedProfit.toString(),
+          profitRecipient,
+        })
+        : buildFlashLoanReceiverPayloadFromPlan(buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
+          receiver,
+          profitRecipient,
+        }));
+      const configuredPowWorkers = Number(process.env.ZERO_CAPITAL_EUROPA_POW_WORKERS || '');
+      const proof = await adapter.execute({
+        opportunityId: opportunity.id,
+        receiver,
+        receiverCodeHash,
+        balancerVault,
+        receiverKind,
+        sushiV3Factory: receiverKind === 'sushi-v3' ? EUROPA_SUSHI.v3Factory : undefined,
+        inputToken: opportunity.inputToken,
+        payload,
+        maxExternalNativeBalanceWei: process.env.ZERO_CAPITAL_EUROPA_MAX_EXTERNAL_NATIVE_BALANCE_WEI || '0',
+        maxExternalInputBalance: process.env.ZERO_CAPITAL_EUROPA_MAX_EXTERNAL_INPUT_BALANCE || '0',
+        externalGasPow: {
+          difficulty: (await resolveEuropaExternalGasDifficulty(this.providers.get('europa')!)).difficulty,
+          maxAttempts: Math.max(1, Number(process.env.ZERO_CAPITAL_EUROPA_POW_MAX_ATTEMPTS || 250_000)),
+          workerCount: Number.isInteger(configuredPowWorkers) && configuredPowWorkers > 0 ? configuredPowWorkers : undefined,
+        },
+      });
+      if (proof.success && proof.transactionHash && proof.executionKey && proof.realizedProfit && proof.realizedProfit > 0n && proof.startingNativeBalanceWei === 0n && proof.startingInputBalance === 0n) {
+        await this.capitalProvenance.markAtomicExecutionPending(this.capitalScope, proof.executionKey);
+        await this.capitalProvenance.recordVerifiedBootstrapProfit({
+          scope: this.capitalScope,
+          executionKey: proof.executionKey,
+          transactionHash: proof.transactionHash,
+          chain: 'europa',
+          asset: opportunity.inputToken,
+          residualProfit: proof.realizedProfit.toString(),
+          zeroMonetaryGasVerified: proof.zeroMonetaryGasVerified,
+          zeroExternalNativeCapitalVerified: true,
+          zeroExternalInputCapitalVerified: true,
+        });
+      } else if (!proof.transactionHash) {
+        await this.capitalProvenance.markZeroGasExecutionReady(this.capitalScope);
+      } else if (!proof.success) {
+        await this.capitalProvenance.markRecoveryRequired(this.capitalScope);
+      }
+      return {
+        success: proof.success,
+        txHash: proof.transactionHash,
+        profit: proof.realizedProfit,
+        profitVerified: proof.success && proof.zeroMonetaryGasVerified,
+        gasUsed: proof.gasUsed,
+        error: proof.error,
+        blockNumber: proof.blockNumber,
+      };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   /**

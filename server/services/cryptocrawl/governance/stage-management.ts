@@ -277,6 +277,7 @@ export interface StageState {
   currentStage: Stage;
   isPaused: boolean;
   pauseReason?: string;
+  lastPauseTimestamp?: number;
   unpauseRequiresAuthorization: boolean;
   
   // Authorization tracking
@@ -302,6 +303,9 @@ export interface StageState {
   anomalyCount: number;
   lastAnomalyTime?: number;
   lastAnomalyReason?: string;
+  blockingAnomaly: boolean;
+  killSwitchActive: boolean;
+  uncertainties: string[];
 }
 
 export interface ProofMetrics {
@@ -317,6 +321,11 @@ export interface ProofMetrics {
   // Monte Carlo validation
   monteCarloPassRate: number;
   monteCarloSimulations: number;
+  liveValidationSamples: number;
+  liveValidationPasses: number;
+  liveValidationPassRate: number;
+  chainHealthy: boolean;
+  lastLiveValidationAt?: number;
   
   // Stage-specific requirements
   meetsAdvancementCriteria: boolean;
@@ -340,6 +349,7 @@ export class StageManager extends EventEmitter {
       currentStage: Stage.STAGE_1_CONSTRAINED_PILOT,
       isPaused: true, // Start paused
       pauseReason: 'Initial state - awaiting human authorization',
+      lastPauseTimestamp: Date.now(),
       unpauseRequiresAuthorization: true,
       
       cycleCount: 0,
@@ -350,6 +360,9 @@ export class StageManager extends EventEmitter {
       proofMetrics: this.getEmptyProofMetrics(),
       
       anomalyCount: 0,
+      blockingAnomaly: false,
+      killSwitchActive: false,
+      uncertainties: [],
     };
     
     this.config = STAGE_CONFIGS[Stage.STAGE_1_CONSTRAINED_PILOT];
@@ -459,6 +472,9 @@ export class StageManager extends EventEmitter {
   pause(reason: string): void {
     if (this.state.isPaused) {
       log.warn('System already paused', { reason });
+      this.state.pauseReason = reason;
+      this.state.lastPauseTimestamp = Date.now();
+      this.recordStateChange({ pauseReason: reason, lastPauseTimestamp: this.state.lastPauseTimestamp });
       return;
     }
     
@@ -466,6 +482,7 @@ export class StageManager extends EventEmitter {
     
     this.state.isPaused = true;
     this.state.pauseReason = reason;
+    this.state.lastPauseTimestamp = Date.now();
     this.state.unpauseRequiresAuthorization = this.config.requiresExplicitUnpause;
     
     this.emit('paused', {
@@ -474,18 +491,24 @@ export class StageManager extends EventEmitter {
       timestamp: Date.now(),
     });
     
-    this.recordStateChange({ isPaused: true, pauseReason: reason });
+    this.recordStateChange({ isPaused: true, pauseReason: reason, lastPauseTimestamp: this.state.lastPauseTimestamp });
   }
   
   /**
    * Check if system can proceed with action
    */
   canProceed(): { allowed: boolean; reason?: string } {
+    if (this.state.killSwitchActive) {
+      return { allowed: false, reason: 'Kill switch is active' };
+    }
     if (this.state.isPaused) {
       return {
         allowed: false,
         reason: `System paused: ${this.state.pauseReason}`,
       };
+    }
+    if (this.state.uncertainties.length > 0) {
+      return { allowed: false, reason: `Pending uncertainty: ${this.state.uncertainties[0]}` };
     }
     
     return { allowed: true };
@@ -586,6 +609,15 @@ export class StageManager extends EventEmitter {
    */
   private checkAdvancementCriteria(): boolean {
     const m = this.state.proofMetrics;
+
+    if (this.state.currentStage === Stage.STAGE_1_CONSTRAINED_PILOT) {
+      return m.chainHealthy &&
+        m.liveValidationSamples >= 3 &&
+        m.liveValidationPassRate >= 0.8 &&
+        m.monteCarloSimulations > 0 &&
+        m.monteCarloPassRate >= 0.8 &&
+        !this.state.blockingAnomaly;
+    }
     
     // Minimum trade count
     if (m.totalTrades < 100) return false;
@@ -656,6 +688,9 @@ export class StageManager extends EventEmitter {
     this.state.anomalyCount++;
     this.state.lastAnomalyTime = Date.now();
     this.state.lastAnomalyReason = reason;
+    if (severity === 'high' || severity === 'critical') {
+      this.state.blockingAnomaly = true;
+    }
     
     log.warn('ANOMALY DETECTED', {
       stage: this.config.stageName,
@@ -717,6 +752,62 @@ export class StageManager extends EventEmitter {
   getTotalProfit(): number {
     return this.state.totalProfitUSD;
   }
+
+  recordLiveValidation(evidence: { passed: boolean; chainHealthy: boolean; timestamp?: number }): void {
+    const metrics = this.state.proofMetrics;
+    metrics.liveValidationSamples += 1;
+    if (evidence.passed) metrics.liveValidationPasses += 1;
+    metrics.liveValidationPassRate = metrics.liveValidationPasses / metrics.liveValidationSamples;
+    metrics.chainHealthy = evidence.chainHealthy;
+    metrics.lastLiveValidationAt = evidence.timestamp ?? Date.now();
+    metrics.meetsAdvancementCriteria = this.checkAdvancementCriteria();
+    this.emit('live-validation-recorded', {
+      stage: this.state.currentStage,
+      metrics: { ...metrics },
+      timestamp: metrics.lastLiveValidationAt,
+    });
+  }
+
+  engageKillSwitch(reason: string): void {
+    this.state.killSwitchActive = true;
+    this.state.isPaused = true;
+    this.state.pauseReason = `Kill-switch: ${reason}`;
+    this.state.lastPauseTimestamp = Date.now();
+    this.state.unpauseRequiresAuthorization = true;
+    this.emit('kill-switch-engaged', { stage: this.state.currentStage, reason, timestamp: Date.now() });
+    this.recordStateChange({
+      killSwitchActive: true,
+      isPaused: true,
+      pauseReason: this.state.pauseReason,
+      lastPauseTimestamp: this.state.lastPauseTimestamp,
+    });
+  }
+
+  resetKillSwitch(confirmation: string): { success: boolean; message: string } {
+    if (confirmation !== 'CONFIRM_KILL_SWITCH_RESET') {
+      return { success: false, message: 'Invalid confirmation code' };
+    }
+    this.state.killSwitchActive = false;
+    this.state.isPaused = true;
+    this.state.pauseReason = 'Kill switch reset - awaiting human authorization';
+    this.state.lastPauseTimestamp = Date.now();
+    this.recordStateChange({ killSwitchActive: false, isPaused: true, pauseReason: this.state.pauseReason, lastPauseTimestamp: this.state.lastPauseTimestamp });
+    return { success: true, message: 'Kill switch reset. System remains paused.' };
+  }
+
+  reportUncertainty(uncertainty: string): void {
+    this.state.uncertainties.push(uncertainty);
+    this.pause(`Uncertainty detected: ${uncertainty}`);
+    this.emit('uncertainty-reported', { uncertainty, timestamp: Date.now() });
+  }
+
+  resolveUncertainty(uncertainty: string): boolean {
+    const index = this.state.uncertainties.indexOf(uncertainty);
+    if (index === -1) return false;
+    this.state.uncertainties.splice(index, 1);
+    this.emit('uncertainty-resolved', { uncertainty, timestamp: Date.now() });
+    return true;
+  }
   
   // ============================================================================
   // PROFIT TRACKING
@@ -777,6 +868,10 @@ export class StageManager extends EventEmitter {
       uptime: 0,
       monteCarloPassRate: 0,
       monteCarloSimulations: 0,
+      liveValidationSamples: 0,
+      liveValidationPasses: 0,
+      liveValidationPassRate: 0,
+      chainHealthy: false,
       meetsAdvancementCriteria: false,
     };
   }

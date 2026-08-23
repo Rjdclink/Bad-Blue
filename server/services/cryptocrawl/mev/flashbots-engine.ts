@@ -10,10 +10,11 @@ class FlashbotsEngine {
   
   async initialize() {
     this.provider = new JsonRpcProvider(process.env.RPC_URL);
-    this.wallet = new Wallet(
-      process.env.WALLET_PRIVATE_KEY || Wallet.createRandom().privateKey,
-      this.provider
-    );
+    const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
+    if (!privateKey) {
+      throw new Error('WALLET_PRIVATE_KEY is required for Flashbots execution');
+    }
+    this.wallet = new Wallet(privateKey, this.provider);
     
     this.flashbots = await FlashbotsBundleProvider.create(
       this.provider,

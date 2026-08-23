@@ -63,17 +63,18 @@ function resolveCompiler(): { command: string; args: string[]; label: string } {
   };
 }
 
-export async function compileFlashLoanReceiver(): Promise<ReceiverArtifact> {
-  const sourcePath = resolve(process.cwd(), SOURCE_NAME);
+export async function compileReceiverContract(sourceName: string, contractName: string, options?: { viaIR?: boolean }): Promise<ReceiverArtifact> {
+  const sourcePath = resolve(process.cwd(), sourceName);
   const source = await readFile(sourcePath, 'utf8');
   const compiler = resolveCompiler();
   const input = {
     language: 'Solidity',
     sources: {
-      [SOURCE_NAME]: { content: source },
+      [sourceName]: { content: source },
     },
     settings: {
       optimizer: { enabled: true, runs: 200 },
+      ...(options?.viaIR ? { viaIR: true } : {}),
       outputSelection: {
         '*': {
           '*': ['abi', 'evm.bytecode.object'],
@@ -83,7 +84,11 @@ export async function compileFlashLoanReceiver(): Promise<ReceiverArtifact> {
   };
 
   const stdout = await runProcess(compiler.command, compiler.args, JSON.stringify(input));
-  const output = JSON.parse(stdout) as {
+  const jsonStart = stdout.indexOf('{');
+  if (jsonStart === -1) {
+    throw new Error(`Solidity compiler returned no standard JSON output: ${stdout.trim()}`);
+  }
+  const output = JSON.parse(stdout.slice(jsonStart)) as {
     errors?: Array<{ severity?: string; formattedMessage?: string; message?: string }>;
     contracts?: Record<string, Record<string, { abi: unknown[]; evm?: { bytecode?: { object?: string } } }>>;
   };
@@ -92,19 +97,31 @@ export async function compileFlashLoanReceiver(): Promise<ReceiverArtifact> {
     throw new Error(errors.map(error => error.formattedMessage || error.message || 'Unknown Solidity compile error').join('\n'));
   }
 
-  const compiled = output.contracts?.[SOURCE_NAME]?.[CONTRACT_NAME];
+  const compiled = output.contracts?.[sourceName]?.[contractName];
   const bytecode = compiled?.evm?.bytecode?.object;
   if (!compiled || !bytecode) {
-    throw new Error(`Compiler did not produce ${CONTRACT_NAME} bytecode`);
+    throw new Error(`Compiler did not produce ${contractName} bytecode`);
   }
 
   return {
-    contractName: CONTRACT_NAME,
-    sourceName: SOURCE_NAME,
+    contractName,
+    sourceName,
     abi: compiled.abi,
     bytecode: `0x${bytecode}`,
     compiler: compiler.label,
   };
+}
+
+export async function compileFlashLoanReceiver(): Promise<ReceiverArtifact> {
+  return compileReceiverContract(SOURCE_NAME, CONTRACT_NAME);
+}
+
+export async function compileSushiV3FlashReceiver(): Promise<ReceiverArtifact> {
+  return compileReceiverContract(
+    'contracts/cryptocrawl/CryptocrawlSushiV3FlashReceiver.sol',
+    'CryptocrawlSushiV3FlashReceiver',
+    { viaIR: true },
+  );
 }
 
 export async function writeFlashLoanReceiverArtifact(outputPath?: string): Promise<string> {
@@ -112,6 +129,17 @@ export async function writeFlashLoanReceiverArtifact(outputPath?: string): Promi
   const destination = resolve(
     process.cwd(),
     outputPath || 'artifacts/cryptocrawl/CryptocrawlBalancerFlashLoanReceiver.json',
+  );
+  await mkdir(dirname(destination), { recursive: true });
+  await writeFile(destination, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+  return destination;
+}
+
+export async function writeSushiV3FlashReceiverArtifact(outputPath?: string): Promise<string> {
+  const artifact = await compileSushiV3FlashReceiver();
+  const destination = resolve(
+    process.cwd(),
+    outputPath || 'artifacts/cryptocrawl/CryptocrawlSushiV3FlashReceiver.json',
   );
   await mkdir(dirname(destination), { recursive: true });
   await writeFile(destination, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');

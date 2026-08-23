@@ -14,6 +14,7 @@ import {
   SystemStatus,
   CrawlerStrategy,
   CrawlerTask,
+  ComputeWorkload,
   ComputationalBeamError 
 } from './types';
 import { EventEmitter } from 'events';
@@ -47,19 +48,14 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
     this.emit('initialization-started');
 
     try {
-      // Run initial integrity tests
-      this.emit('initial-integrity-test-started');
-      const integrity = await integrityTestingSystem.runIntegrityTests();
-      
-      if (!integrity.meetsRequirement) {
+      const beamStatus = directionalBeamLayer.getStatus();
+      if (beamStatus.activeNodes === 0) {
         throw new ComputationalBeamError(
-          `System stability (${integrity.overallStability.toFixed(1)}%) below required threshold (${integrity.requiredStability}%)`,
-          'INTEGRITY_CHECK_FAILED',
-          { integrity }
+          'No measured local Beam capacity is available',
+          'NO_COMPUTE_CAPACITY',
+          { beamStatus }
         );
       }
-
-      this.emit('integrity-test-passed', { stability: integrity.overallStability });
 
       // Start monitoring
       this.startMonitoring();
@@ -69,7 +65,7 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
 
       this.emit('initialization-complete', {
         timestamp: this.startTime,
-        stability: integrity.overallStability,
+        activeNodes: beamStatus.activeNodes,
       });
     } catch (error) {
       this.emit('initialization-failed', { error });
@@ -87,6 +83,7 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
       maxDuration?: number;
       timeout?: number;
       fallbackStrategy?: CrawlerStrategy;
+      workload?: ComputeWorkload<any, any>;
     }
   ): Promise<any> {
     this.ensureInitialized();
@@ -110,12 +107,15 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
         maxDuration: config?.maxDuration || 60000,
         timeout: config?.timeout || 30000,
         fallbackStrategy: config?.fallbackStrategy,
+        workload: config?.workload,
       },
+      workload: config?.workload,
     };
 
     this.taskCounter++;
     this.emit('crawler-task-started', { taskId, strategy });
 
+    const completion = this.waitForTaskCompletion(taskId, crawlerTask.config.timeout);
     try {
       // Route and execute task
       const routingDecision = await workloadRouter.routeTask(crawlerTask);
@@ -126,13 +126,14 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
         provider: routingDecision.selectedNode.provider,
       });
 
-      // Wait for completion (in real implementation, use promise/callback)
-      await this.waitForTaskCompletion(taskId, crawlerTask.config.timeout);
+      const result = await completion;
 
       this.emit('crawler-task-completed', { taskId, strategy });
 
-      return { success: true, taskId };
+      return { success: true, taskId, result };
     } catch (error) {
+      // The waiter may already be settled by a routing failure; consume its rejection.
+      void completion.catch(() => undefined);
       this.emit('crawler-task-failed', { taskId, strategy, error });
       
       // Attempt fallback if configured
@@ -186,11 +187,42 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
   }
 
   /**
-   * Wait for task completion (placeholder)
+   * Wait for the router's actual completion or failure event.
    */
-  private async waitForTaskCompletion(taskId: string, timeout: number): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(resolve, Math.min(timeout, 5000));
+  private async waitForTaskCompletion(taskId: string, timeout: number): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        directionalBeamLayer.cancelTask(taskId);
+        reject(new ComputationalBeamError(`Task ${taskId} timed out`, 'TASK_TIMEOUT', { taskId, timeout }));
+      }, timeout);
+      const onComplete = (data: { taskId: string; result: unknown }) => {
+        if (data.taskId !== taskId) return;
+        cleanup();
+        workloadRouter.consumeTaskOutcome(taskId);
+        resolve(data.result);
+      };
+      const onFailure = (data: { taskId: string; error?: string }) => {
+        if (data.taskId !== taskId) return;
+        cleanup();
+        workloadRouter.consumeTaskOutcome(taskId);
+        reject(new ComputationalBeamError(data.error || `Task ${taskId} failed`, 'TASK_FAILED', { taskId }));
+      };
+      const cleanup = () => {
+        clearTimeout(timer);
+        workloadRouter.off('task-completed', onComplete);
+        workloadRouter.off('task-failed', onFailure);
+      };
+      workloadRouter.on('task-completed', onComplete);
+      workloadRouter.on('task-failed', onFailure);
+      const existingOutcome = workloadRouter.consumeTaskOutcome(taskId);
+      if (existingOutcome) {
+        if (existingOutcome.error) {
+          onFailure({ taskId, error: existingOutcome.error });
+        } else {
+          onComplete({ taskId, result: existingOutcome.result });
+        }
+      }
     });
   }
 
@@ -250,6 +282,7 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
         this.emit('monitoring-error', { error });
       }
     }, 30000);
+    this.monitoringInterval.unref();
   }
 
   /**
@@ -269,6 +302,14 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
     // Workload Router events
     workloadRouter.on('task-routed', (data) => {
       this.emit('subsystem-event', { subsystem: 'router', event: 'task-routed', data });
+    });
+
+    workloadRouter.on('task-completed', (data) => {
+      this.emit('subsystem-event', { subsystem: 'router', event: 'task-completed', data });
+    });
+
+    workloadRouter.on('task-failed', (data) => {
+      this.emit('subsystem-event', { subsystem: 'router', event: 'task-failed', data });
     });
 
     // Antenna Layer events
@@ -366,8 +407,7 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
    * Check if system is operational
    */
   public isOperational(): boolean {
-    return this.initialized && 
-           integrityTestingSystem.getIntegrityStatus().meetsRequirement;
+    return this.initialized && directionalBeamLayer.getStatus().activeNodes > 0;
   }
 }
 

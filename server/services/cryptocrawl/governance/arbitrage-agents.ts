@@ -1094,7 +1094,7 @@ export class ArbitrageControlSystem extends EventEmitter {
     }
     
     // Require UNPAUSE command
-    const unpauseResult = getStageGovernor().processUnpause({
+    const unpauseResult = await getStageGovernor().processUnpause({
       stage: getStageGovernor().getState().currentStage,
       scope: [`tier-${nextTier.level}`],
       duration: 0,

@@ -1,6 +1,7 @@
 import { BigNumber, Contract, providers } from 'ethers';
 import type { RoutePlanningSwapStep } from './autonomous-route-planner.js';
 import type { SupportedExecutionChain, SupportedSwapProtocol } from './onchain-payload-builder.js';
+import { EUROPA_SUSHI } from './europa-sushi-registry.js';
 
 const UNISWAP_V3_QUOTER_ABI = [
   'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
@@ -29,6 +30,7 @@ export interface ConfiguredRouteLeg {
   protocol: SupportedSwapProtocol;
   tokenIn: string;
   tokenOut: string;
+  pool?: string;
   feeTier?: 500 | 3000 | 10000;
   fee?: number;
 }
@@ -88,12 +90,15 @@ function normalizeProtocol(value: unknown): SupportedSwapProtocol {
   if (normalized === 'sushiswap' || normalized === 'sushi') {
     return 'sushiswap';
   }
+  if (normalized === 'sushiswapv3' || normalized === 'sushi_v3' || normalized === 'sushi-v3') {
+    return 'sushiswapV3';
+  }
   throw new Error(`Unsupported route protocol: ${String(value)}`);
 }
 
 function asSupportedChain(value: unknown): SupportedExecutionChain {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism' || normalized === 'bsc' || normalized === 'avalanche') {
+  if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism' || normalized === 'bsc' || normalized === 'avalanche' || normalized === 'europa') {
     return normalized;
   }
   throw new Error(`Unsupported route chain: ${String(value)}`);
@@ -154,6 +159,7 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
       protocol: normalizeProtocol(leg.protocol),
       tokenIn,
       tokenOut,
+      ...(leg.pool !== undefined ? { pool: String(leg.pool).trim() } : {}),
       ...(feeTier !== undefined ? { feeTier: feeTier as 500 | 3000 | 10000 } : {}),
       ...(fee !== undefined ? { fee } : {}),
     };
@@ -187,6 +193,9 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
   }
   if (!Number.isFinite(minNetProfitBps) || minNetProfitBps < 1 || minNetProfitBps > 5000) {
     throw new Error(`Route ${index} minNetProfitBps must be between 1 and 5000`);
+  }
+  if (chain === 'europa' && (toBigInt(`Route ${index} estimatedGasCostInInputToken`, estimatedGasCostInInputToken) !== 0n || toBigInt(`Route ${index} relayFeeInInputToken`, relayFeeInInputToken) !== 0n)) {
+    throw new Error(`Route ${index} for Europa must not include estimated gas or relay fees; native-balance proof is enforced after receipt`);
   }
 
   return {
@@ -229,8 +238,43 @@ async function quoteLeg(
   leg: ConfiguredRouteLeg,
   amountIn: BigNumber,
 ): Promise<BigNumber> {
+  if (chain === 'europa' && leg.protocol === 'sushiswapV3') {
+    const sender = process.env.ZERO_CAPITAL_EUROPA_QUOTE_SENDER?.trim() || '0x0e9878153c1500ec48b51cdd5325c7e374c9cdae';
+    const recipient = process.env.ZERO_CAPITAL_EUROPA_QUOTE_RECIPIENT?.trim() || sender;
+    const pool = leg.pool?.trim() || process.env.ZERO_CAPITAL_EUROPA_QUOTE_POOL?.trim() ||
+      ((leg.tokenIn.toLowerCase() === EUROPA_SUSHI.tokens.usdc && leg.tokenOut.toLowerCase() === EUROPA_SUSHI.tokens.skl) ||
+       (leg.tokenIn.toLowerCase() === EUROPA_SUSHI.tokens.skl && leg.tokenOut.toLowerCase() === EUROPA_SUSHI.tokens.usdc)
+        ? EUROPA_SUSHI.pools.usdcSkl
+        : (leg.tokenIn.toLowerCase() === EUROPA_SUSHI.tokens.skl && leg.tokenOut.toLowerCase() === EUROPA_SUSHI.tokens.eth) ||
+          (leg.tokenIn.toLowerCase() === EUROPA_SUSHI.tokens.eth && leg.tokenOut.toLowerCase() === EUROPA_SUSHI.tokens.skl)
+          ? EUROPA_SUSHI.pools.sklEth
+          : (leg.tokenIn.toLowerCase() === EUROPA_SUSHI.tokens.eth && leg.tokenOut.toLowerCase() === EUROPA_SUSHI.tokens.usdc) ||
+            (leg.tokenIn.toLowerCase() === EUROPA_SUSHI.tokens.usdc && leg.tokenOut.toLowerCase() === EUROPA_SUSHI.tokens.eth)
+            ? EUROPA_SUSHI.pools.ethUsdc
+            : undefined);
+    if (!pool || !isAddress(pool)) throw new Error('ZERO_CAPITAL_EUROPA_QUOTE_POOL must be a verified Sushi Europa V3 pool address');
+    const url = new URL('/swap/v7/2046399126', 'https://api.sushi.com');
+    url.searchParams.set('referrer', 'sushi');
+    url.searchParams.set('tokenIn', leg.tokenIn);
+    url.searchParams.set('tokenOut', leg.tokenOut);
+    url.searchParams.set('amount', amountIn.toString());
+    url.searchParams.set('maxSlippage', '0.005');
+    url.searchParams.set('sender', sender);
+    url.searchParams.set('recipient', recipient);
+    url.searchParams.set('simulate', 'false');
+    url.searchParams.append('onlyPools', pool);
+    const response = await fetch(url, { headers: { Origin: 'https://sushi.com' } });
+    if (!response.ok) throw new Error(`Sushi Europa V3 quote failed with HTTP ${response.status}`);
+    const quote = await response.json() as { status?: string; assumedAmountOut?: string; tx?: { to?: string } };
+    if (quote.status !== 'Success' || !quote.assumedAmountOut) throw new Error('Sushi Europa V3 quote returned no usable amount');
+    if (quote.tx?.to?.toLowerCase() !== '0xac4c6e212a361c968f1725b4d055b47e63f80b75') throw new Error('Sushi Europa V3 quote returned an unexpected Route Processor');
+    return BigNumber.from(quote.assumedAmountOut);
+  }
+
   if (leg.protocol === 'uniswapV3') {
-    const quoterAddress = UNISWAP_V3_QUOTERS[chain];
+    const quoterAddress = chain === 'europa'
+      ? process.env.EUROPA_UNISWAP_V3_QUOTER?.trim()
+      : UNISWAP_V3_QUOTERS[chain];
     if (!quoterAddress) {
       throw new Error(`No Uniswap V3 quoter configured for ${chain}`);
     }
@@ -244,7 +288,9 @@ async function quoteLeg(
     ));
   }
 
-  const routerAddress = SUSHISWAP_ROUTERS[chain];
+  const routerAddress = chain === 'europa'
+    ? process.env.EUROPA_SUSHISWAP_ROUTER?.trim()
+    : SUSHISWAP_ROUTERS[chain];
   if (!routerAddress) {
     throw new Error(`No SushiSwap router configured for ${chain}`);
   }

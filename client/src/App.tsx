@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Redirect, Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -292,6 +292,7 @@ function Router() {
     left: "/orchestrator-console",
     right: "/cryptocrawler-v2",
     down: "/control-room",
+    enabled: isAuthenticated,
   });
   
   // Performance monitoring for auth check
@@ -431,7 +432,11 @@ function Router() {
             <Route path="/history" component={History} />
             <Route path="/evidence-hub" component={EvidenceHub} />
           </>
-        ) : null}
+        ) : (
+          <Route path="/welcome">
+            <Redirect to="/login" />
+          </Route>
+        )}
 
         <Route component={NotFound} />
       </Switch>

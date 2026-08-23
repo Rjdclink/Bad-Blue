@@ -112,15 +112,12 @@ export default function Login() {
         
         toast({
           title: "Account created",
-          description: "Welcome to LegalWhat! Redirecting to your dashboard...",
+          description: "Account created. Sign in to continue.",
         });
-        
-        // Refresh auth state
-        await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-        
-        // Redirect to welcome page - user can access free features
-        // Payment/subscription will be handled separately if needed
-        setLocation('/welcome');
+
+        setActiveTab('login');
+        setLoginEmail(signupEmail);
+        setLocation('/login');
       } else {
         const data = await response.json();
         throw new Error(data.error || "Signup failed");

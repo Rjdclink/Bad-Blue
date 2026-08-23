@@ -3,11 +3,11 @@
 
 export const ADMIN_BYPASS_USER_ID = 'admin-bypass';
 
-// Get admin credentials from environment or use defaults
+// Admin bypass is disabled until both credentials are explicitly configured.
 export function getAdminCredentials() {
   return {
-    email: process.env.ADMIN_BYPASS_EMAIL || 'Rjdclink@outlook.com',
-    password: process.env.ADMIN_BYPASS_PASSWORD || 'SARBEAR',
+    email: process.env.ADMIN_BYPASS_EMAIL?.trim().toLowerCase() || '',
+    password: process.env.ADMIN_BYPASS_PASSWORD || '',
     firstName: process.env.ADMIN_BYPASS_FIRST_NAME || 'Robert',
     lastName: process.env.ADMIN_BYPASS_LAST_NAME || 'Clink',
   };
@@ -17,7 +17,9 @@ export function getAdminCredentials() {
 export function isAdminBypass(email: string, password: string): boolean {
   const adminCreds = getAdminCredentials();
   return (
-    email.toLowerCase() === adminCreds.email.toLowerCase() &&
+    adminCreds.email.length > 0 &&
+    adminCreds.password.length > 0 &&
+    email.trim().toLowerCase() === adminCreds.email &&
     password === adminCreds.password
   );
 }

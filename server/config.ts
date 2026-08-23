@@ -238,8 +238,20 @@ export const hasEnv = (name: string): boolean => getEnv(name).length > 0;
 export const getBaseUrl = (): string => {
   const cfg = getConfig();
   if (cfg.BASE_URL) return cfg.BASE_URL;
-  if (cfg.RAILWAY_ENVIRONMENT) return `https://${cfg.RAILWAY_PROJECT_ID}.railway.app`;
+  if (cfg.NODE_ENV === 'production') return 'https://legalwhat.com';
   return `http://localhost:${cfg.PORT}`;
+};
+
+/**
+ * Object storage is optional. Directory defaults do not establish that a GCS
+ * client can authenticate or that a configured bucket path exists.
+ */
+export const isObjectStorageAvailable = (): boolean => {
+  const hasCredentials = hasEnv('GOOGLE_APPLICATION_CREDENTIALS') ||
+    hasEnv('GCS_PROJECT_ID') ||
+    hasEnv('GOOGLE_CLOUD_PROJECT');
+  const hasStoragePath = hasEnv('PUBLIC_OBJECT_SEARCH_PATHS') || hasEnv('PRIVATE_OBJECT_DIR');
+  return hasCredentials && hasStoragePath;
 };
 
 export const CACHE_CONFIG = {

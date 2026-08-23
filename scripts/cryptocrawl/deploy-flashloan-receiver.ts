@@ -2,11 +2,13 @@ import 'dotenv/config';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { Wallet, providers, ContractFactory, utils } from 'ethers';
-import { compileFlashLoanReceiver } from './compile-flashloan-receiver.js';
+import { compileFlashLoanReceiver, compileSushiV3FlashReceiver } from './compile-flashloan-receiver.js';
+import { EUROPA_NETWORK } from '../../server/services/cryptocrawl/execution/adapters/europa-network.js';
+import { EUROPA_SUSHI } from '../../server/services/cryptocrawl/execution/adapters/europa-sushi-registry.js';
 
-type SupportedDeploymentChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism';
+type SupportedDeploymentChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'europa';
 
-const DEPLOYMENT_CHAINS: Record<SupportedDeploymentChain, { chainId: number; rpcEnv: string; balancerVault: string }> = {
+const DEPLOYMENT_CHAINS: Record<SupportedDeploymentChain, { chainId: number; rpcEnv: string; balancerVault?: string }> = {
   ethereum: {
     chainId: 1,
     rpcEnv: 'ETHEREUM_RPC_URL',
@@ -27,6 +29,10 @@ const DEPLOYMENT_CHAINS: Record<SupportedDeploymentChain, { chainId: number; rpc
     rpcEnv: 'OPTIMISM_RPC_URL',
     balancerVault: '0xBA12222222228d8Ba445958a75a0704d566BF2C8',
   },
+  europa: {
+    chainId: 2046399126,
+    rpcEnv: 'EUROPA_RPC_URL',
+  },
 };
 
 function requireEnv(name: string): string {
@@ -37,10 +43,10 @@ function requireEnv(name: string): string {
 
 function parseChain(value: string | undefined): SupportedDeploymentChain {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism') {
+  if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism' || normalized === 'europa') {
     return normalized;
   }
-  throw new Error('ZERO_CAPITAL_DEPLOY_CHAIN must be ethereum, polygon, arbitrum, or optimism');
+  throw new Error('ZERO_CAPITAL_DEPLOY_CHAIN must be ethereum, polygon, arbitrum, optimism, or europa');
 }
 
 function requireAddress(name: string, value: string): string {
@@ -53,7 +59,8 @@ function requireAddress(name: string, value: string): string {
 async function main(): Promise<void> {
   const chain = parseChain(process.env.ZERO_CAPITAL_DEPLOY_CHAIN);
   const chainConfig = DEPLOYMENT_CHAINS[chain];
-  const rpcUrl = process.env.ZERO_CAPITAL_DEPLOY_RPC_URL?.trim() || requireEnv(chainConfig.rpcEnv);
+  const rpcUrl = process.env.ZERO_CAPITAL_DEPLOY_RPC_URL?.trim() ||
+    (chain === 'europa' ? EUROPA_NETWORK.rpcUrl : requireEnv(chainConfig.rpcEnv));
   const privateKey = requireEnv('WALLET_PRIVATE_KEY');
   const provider = new providers.JsonRpcProvider(rpcUrl);
   const wallet = new Wallet(privateKey, provider);
@@ -64,10 +71,21 @@ async function main(): Promise<void> {
   }
 
   const owner = requireAddress('ZERO_CAPITAL_DEPLOY_OWNER', process.env.ZERO_CAPITAL_DEPLOY_OWNER?.trim() || wallet.address);
-  const vault = requireAddress('ZERO_CAPITAL_BALANCER_VAULT', process.env.ZERO_CAPITAL_BALANCER_VAULT?.trim() || chainConfig.balancerVault);
-  const artifact = await compileFlashLoanReceiver();
+  const receiverKind = process.env.ZERO_CAPITAL_DEPLOY_RECEIVER?.trim() || 'balancer';
+  const isSushiV3 = receiverKind === 'sushi-v3';
+  if (receiverKind !== 'balancer' && !isSushiV3) {
+    throw new Error('ZERO_CAPITAL_DEPLOY_RECEIVER must be balancer or sushi-v3');
+  }
+  const infrastructure = isSushiV3
+    ? requireAddress('ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY', process.env.ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY?.trim() || EUROPA_SUSHI.v3Factory)
+    : requireAddress(
+      'ZERO_CAPITAL_BALANCER_VAULT',
+      process.env.ZERO_CAPITAL_BALANCER_VAULT?.trim() ||
+        (chain === 'europa' ? process.env.ZERO_CAPITAL_EUROPA_BALANCER_VAULT?.trim() || '' : chainConfig.balancerVault || ''),
+    );
+  const artifact = isSushiV3 ? await compileSushiV3FlashReceiver() : await compileFlashLoanReceiver();
   const factory = new ContractFactory(artifact.abi, artifact.bytecode, wallet);
-  const deployTransaction = factory.getDeployTransaction(vault, owner);
+  const deployTransaction = factory.getDeployTransaction(infrastructure, owner);
   const estimatedGas = await provider.estimateGas(deployTransaction);
   const broadcastAllowed =
     process.env.ZERO_CAPITAL_DEPLOY === 'true' &&
@@ -80,7 +98,8 @@ async function main(): Promise<void> {
       chainId: network.chainId,
       deployer: wallet.address,
       owner,
-      vault,
+      infrastructure,
+      receiverKind,
       estimatedGas: estimatedGas.toString(),
       compiler: artifact.compiler,
       nextStep: 'Set ZERO_CAPITAL_DEPLOY=true and ZERO_CAPITAL_DEPLOY_CONFIRMATION=DEPLOY_FLASHLOAN_RECEIVER to broadcast.',
@@ -88,7 +107,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const contract = await factory.deploy(vault, owner, {
+  const contract = await factory.deploy(infrastructure, owner, {
     gasLimit: estimatedGas.mul(120).div(100),
   });
   const receipt = await contract.deployTransaction.wait();
@@ -103,11 +122,13 @@ async function main(): Promise<void> {
     chainId: network.chainId,
     address: contract.address,
     owner,
-    vault,
+    infrastructure,
+    receiverKind,
     deployer: wallet.address,
     transactionHash: contract.deployTransaction.hash,
     blockNumber: receipt.blockNumber,
     compiler: artifact.compiler,
+    codeHash: utils.keccak256(code),
     deployedAt: new Date().toISOString(),
   };
   const outputPath = resolve(process.cwd(), `contracts/cryptocrawl/deployments/${chain}.json`);
@@ -117,7 +138,9 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({
     ...deploymentRecord,
     deploymentRecord: outputPath,
-    nextStep: `Set ZERO_CAPITAL_FLASHLOAN_RECEIVER=${contract.address} only after independent contract review and testnet validation.`,
+    nextStep: chain === 'europa'
+      ? `Set ZERO_CAPITAL_EUROPA_RECEIVER=${contract.address} and ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=${utils.keccak256(code)} only after independent contract review and zero-balance receipt validation.`
+      : `Set ZERO_CAPITAL_FLASHLOAN_RECEIVER=${contract.address} only after independent contract review and testnet validation.`,
   }, null, 2));
 }
 

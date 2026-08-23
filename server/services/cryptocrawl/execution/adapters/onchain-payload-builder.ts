@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 
-export type SupportedExecutionChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche';
-export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap';
+export type SupportedExecutionChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
+export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3';
 
 export interface OnchainSwapLeg {
   protocol: SupportedSwapProtocol;
@@ -61,6 +61,7 @@ const DEX_ROUTERS: Record<SupportedSwapProtocol, Partial<Record<SupportedExecuti
     bsc: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
     avalanche: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
   },
+  sushiswapV3: {},
 };
 
 function isAddress(value: string): boolean {
@@ -76,6 +77,14 @@ function parseAmount(label: string, raw: string): ethers.BigNumber {
 }
 
 function resolveRouter(protocol: SupportedSwapProtocol, chain: SupportedExecutionChain): string {
+  if (chain === 'europa') {
+    const envKey = protocol === 'uniswapV3' ? 'EUROPA_UNISWAP_V3_ROUTER' : 'EUROPA_SUSHISWAP_ROUTER';
+    const configured = process.env[envKey]?.trim();
+    if (!configured || !isAddress(configured)) {
+      throw new Error(`${envKey} must be configured with a verified Europa router address`);
+    }
+    return configured;
+  }
   const router = DEX_ROUTERS[protocol][chain];
   if (!router || !isAddress(router)) {
     throw new Error(`No ${protocol} router configured for ${chain}`);
@@ -129,6 +138,10 @@ export function buildSwapCallFromLeg(
       approvalToken: leg.tokenIn,
       approvalAmount: amountIn.toString(),
     };
+  }
+
+  if (leg.protocol === 'sushiswapV3') {
+    throw new Error('Sushi V3 Europa routes must use the verified Route Processor payload builder');
   }
 
   const iface = new ethers.utils.Interface(SUSHISWAP_ROUTER_ABI);

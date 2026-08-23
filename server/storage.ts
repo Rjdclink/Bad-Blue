@@ -359,6 +359,23 @@ export class DatabaseStorage implements IStorage {
     return authAccount;
   }
 
+  async createLocalUser(
+    userData: UpsertUser,
+    authAccountData: Omit<InsertAuthAccount, 'userId'>,
+  ): Promise<{ user: User; authAccount: AuthAccount }> {
+    return db.transaction(async (tx) => {
+      const [user] = await tx
+        .insert(users)
+        .values(userData)
+        .returning(this.getUserReturningColumns());
+      const [authAccount] = await tx
+        .insert(authAccounts)
+        .values({ ...authAccountData, userId: user.id })
+        .returning();
+      return { user: user as User, authAccount };
+    });
+  }
+
   async getAuthAccountByUsername(username: string): Promise<AuthAccount | undefined> {
     const [authAccount] = await db
       .select()

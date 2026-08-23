@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     if (governance.getState().stage !== 1) {
       console.log(`[arb] WARNING: governance stage=${governance.getState().stage}. This script expects Stage 1 advisory mode.`);
     }
-    governance.unpauseWithEnvelope({
+    await governance.unpauseWithEnvelope({
       stage: 1,
       scope: 'constrained_live_cycle_quote_verification',
       authority: 'human',

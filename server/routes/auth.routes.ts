@@ -3,9 +3,9 @@
  * Part of Subscription Phase 3
  */
 import express from 'express';
-import bcrypt from 'bcrypt';
 import db from '../lib/db';
 import { ensureAuthenticated } from '../middleware/auth';
+import { registerLocalUser } from '../localAuth';
 
 const router = express.Router();
 
@@ -15,53 +15,15 @@ const router = express.Router();
  */
 router.post('/signup', async (req, res) => {
   try {
-    const { email, password, first_name, last_name } = req.body;
+    const { email, password } = req.body;
+    const firstName = req.body.firstName || req.body.first_name;
+    const lastName = req.body.lastName || req.body.last_name;
 
     // Validate input
-    if (!email || !password || !first_name || !last_name) {
+    if (!email || !password || !firstName || !lastName) {
       return res.status(400).json({ error: 'All fields are required' });
     }
-
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ error: 'Invalid email format' });
-    }
-
-    // Validate password strength
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    }
-
-    // Check if user exists
-    const existing = await db.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email.toLowerCase()]
-    );
-
-    if (existing.rows.length > 0) {
-      return res.status(409).json({ error: 'Email already registered' });
-    }
-
-    // Hash password
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    // Create user with pending_payment status
-    const result = await db.query(
-      `INSERT INTO users (email, first_name, last_name, status)
-       VALUES ($1, $2, $3, 'pending_payment')
-       RETURNING id, email, first_name, last_name, status`,
-      [email.toLowerCase(), first_name, last_name]
-    );
-
-    const user = result.rows[0];
-
-    // TODO: Create auth_accounts entry for password storage
-    // For now, we're using the simplified approach with password_hash in users table
-    // This will be refactored when integrating with existing auth system
-
-    // Set session
-    req.session.userId = user.id;
+    const { user } = await registerLocalUser(email, password, firstName, lastName);
 
     res.json({
       success: true,
@@ -69,13 +31,16 @@ router.post('/signup', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        first_name: user.first_name,
-        last_name: user.last_name,
+        first_name: user.firstName,
+        last_name: user.lastName,
         status: user.status,
       },
     });
   } catch (error) {
     console.error('Signup error:', error);
+    if (error instanceof Error && (error.message === 'Email already registered' || error.message.includes('required') || error.message.includes('Password'))) {
+      return res.status(error.message === 'Email already registered' ? 409 : 400).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Signup failed. Please try again.' });
   }
 });
