@@ -143,7 +143,9 @@ export function setupLocalStrategy() {
             
             console.info('[AUTH] PASSPORT_SUCCESS');
             return done(null, {
+              id: user.id,
               claims: { sub: user.id, email: user.email || userEmail, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
+              isAdmin: true,
               isAdminBypass: false,
               isMasterBypass: true,
               accessZone: accessZone,
@@ -190,7 +192,9 @@ export function setupLocalStrategy() {
           await storage.updateUserLastLogin(authAccount.userId);
 
           return done(null, {
+            id: user.id,
             claims: { sub: user.id, email: user.email ?? undefined, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
+            isAdmin: false,
             isAdminBypass: false,
             isMasterBypass: false,
           } as Express.User);

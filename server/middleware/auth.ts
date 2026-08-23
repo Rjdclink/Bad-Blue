@@ -4,12 +4,18 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import db from '../lib/db';
+import { getPlatformUserId } from '../authIdentity';
 
 // Extend Express session types
 declare module 'express-session' {
   interface SessionData {
-    userId: number;
+    userId: string;
   }
+}
+
+function getAuthenticatedUserId(req: Request): string | undefined {
+  if (!req.isAuthenticated?.()) return undefined;
+  return getPlatformUserId(req.user);
 }
 
 /**
@@ -21,7 +27,7 @@ export async function ensureAuthenticated(
   res: Response,
   next: NextFunction
 ) {
-  if (!req.session?.userId) {
+  if (!getAuthenticatedUserId(req)) {
     return res.status(401).json({ error: 'Authentication required' });
   }
   next();
@@ -38,7 +44,8 @@ export async function ensureActiveSubscription(
   next: NextFunction
 ) {
   // First check authentication
-  if (!req.session?.userId) {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
@@ -46,7 +53,7 @@ export async function ensureActiveSubscription(
     // Check user subscription status
     const result = await db.query(
       'SELECT status FROM users WHERE id = $1',
-      [req.session.userId]
+      [userId]
     );
 
     if (!result.rows[0]) {
@@ -87,14 +94,15 @@ export async function hasSubscription(
   res: Response,
   next: NextFunction
 ) {
-  if (!req.session?.userId) {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
   try {
     const result = await db.query(
       'SELECT id FROM subscriptions WHERE user_id = $1 LIMIT 1',
-      [req.session.userId]
+      [userId]
     );
 
     // Attach hasSubscription flag to request object for use in routes

@@ -47,12 +47,30 @@ import { runAllSchemaMigrations } from "./migrations/reconcileAppSchema";
 
 const app = express();
 
+const startupStartedAt = Date.now();
+
+function startupTrace(event: string, details: Record<string, unknown> = {}): void {
+  console.log(
+    '[STARTUP_TRACE]',
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      elapsedMs: Date.now() - startupStartedAt,
+      event,
+      pid: process.pid,
+      ...details,
+    })
+  );
+}
+
 let isReady = false;
 let isFullyInitialized = false; // Tracks full service initialization
 let isShuttingDown = false;
 let startupError: string | null = null;
 let backgroundInitializationError: string | null = null;
+let databaseInitialized = false;
 let httpServer: Server | null = null;
+
+startupTrace('express_created');
 
 declare module 'http' {
   interface IncomingMessage {
@@ -176,6 +194,7 @@ async function retryAsync<T>(
 }
 
 async function initializeDatabase(): Promise<boolean> {
+  startupTrace('database_initialization_started');
   console.log('[STARTUP] Stage 1: Database connection...');
   
   try {
@@ -184,6 +203,7 @@ async function initializeDatabase(): Promise<boolean> {
       await db.execute('SELECT 1');
     }, 3, 2000);
     console.log('[STARTUP] ✓ Database connection verified');
+    startupTrace('database_initialization_completed', { connected: true, recovered: false });
     return true;
   } catch (error: any) {
     console.error('[STARTUP] ❌ Database connection failed after retries:', error?.message ?? error);
@@ -196,16 +216,22 @@ async function initializeDatabase(): Promise<boolean> {
       const { db } = await import('./db');
       await db.execute('SELECT 1');
       console.log('[STARTUP] ✓ Database pool reset successful');
+      startupTrace('database_initialization_completed', { connected: true, recovered: true });
       return true;
     } catch (resetError: any) {
       console.error('[STARTUP] ❌ Database pool reset failed:', resetError?.message ?? resetError);
       console.warn('[STARTUP] Starting with degraded database connectivity');
+      startupTrace('database_initialization_completed', {
+        connected: false,
+        error: resetError?.message ?? String(resetError),
+      });
       return false;
     }
   }
 }
 
 async function runMigrations(): Promise<void> {
+  startupTrace('migrations_started');
   console.log('[STARTUP] Stage 2: Running migrations...');
 
   const results = await runAllSchemaMigrations({ continueOnError: true });
@@ -218,9 +244,15 @@ async function runMigrations(): Promise<void> {
 
     console.warn(`[STARTUP] ⚠ ${result.name} migration skipped:`, result.error);
   }
+
+  startupTrace('migrations_completed', {
+    succeeded: results.filter((result) => result.success).length,
+    failed: results.filter((result) => !result.success).length,
+  });
 }
 
 async function initializeServices(): Promise<void> {
+  startupTrace('background_services_started');
   console.log('[STARTUP] Stage 3: Initializing services...');
   
   // NOTE: Playwright browser validation has been REMOVED from server startup
@@ -281,6 +313,8 @@ async function initializeServices(): Promise<void> {
   } catch (error: any) {
     console.warn('[STARTUP] ⚠ Maintenance Worker failed:', error?.message ?? error);
   }
+
+  startupTrace('background_services_completed');
 }
 
 app.use(express.json({
@@ -323,7 +357,27 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/api/health", async (_req, res) => {
+app.get("/api/health", (req, res) => {
+  const requestStartedAt = Date.now();
+  startupTrace('health_request_received', {
+    host: req.get('host') ?? null,
+    userAgent: req.get('user-agent') ?? null,
+    ready: isReady,
+    fullyInitialized: isFullyInitialized,
+    hasStartupError: Boolean(startupError),
+  });
+
+  res.once('finish', () => {
+    startupTrace('health_response_sent', {
+      statusCode: res.statusCode,
+      durationMs: Date.now() - requestStartedAt,
+      ready: isReady,
+      fullyInitialized: isFullyInitialized,
+      hasStartupError: Boolean(startupError),
+      hasBackgroundInitializationError: Boolean(backgroundInitializationError),
+    });
+  });
+
   if (isShuttingDown) {
     return res.status(503).json({
       status: 'shutting_down',
@@ -331,35 +385,18 @@ app.get("/api/health", async (_req, res) => {
     });
   }
 
-  let dbOk = false;
-  let dbLatency = null;
-  
-  // Only check database if we're past basic startup
-  if (isReady) {
-    try {
-      const { db } = await import('./db');
-      const start = Date.now();
-      await db.execute('SELECT 1');
-      dbLatency = Date.now() - start;
-      dbOk = true;
-    } catch {
-      dbOk = false;
-    }
-  }
-
   const status = startupError
     ? 'failed'
-    : isFullyInitialized && dbOk
+    : isFullyInitialized && databaseInitialized
       ? 'healthy'
-      : backgroundInitializationError || (isFullyInitialized && !dbOk)
+      : backgroundInitializationError || (isFullyInitialized && !databaseInitialized)
         ? 'degraded'
         : isReady
           ? 'starting'
           : 'initializing';
 
-  // Railway uses this endpoint to determine whether the route-registered HTTP
-  // service is reachable. Strict database and background-service readiness is
-  // exposed separately by /api/ready.
+  // Railway liveness must not wait on a database probe. Core database readiness
+  // is recorded by startup initialization and strict readiness remains /api/ready.
   const httpStatus = isReady && !startupError ? 200 : 503;
 
   res.status(httpStatus).json({
@@ -370,7 +407,7 @@ app.get("/api/health", async (_req, res) => {
     backgroundInitializationError,
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
-    database: { ok: dbOk, latencyMs: dbLatency },
+    database: { initialized: databaseInitialized },
     env: {
       stripeConfigured: !!process.env.STRIPE_SECRET_KEY,
       geminiConfigured: !!process.env.GEMINI_API_KEY,
@@ -393,6 +430,8 @@ app.get("/api/health", async (_req, res) => {
     bestModelPerProvider: BEST_MODELS_PER_PROVIDER,
   });
 });
+
+startupTrace('health_route_registered');
 
 app.get("/api/ready", (_req, res) => {
   // /api/ready returns 200 only when FULLY initialized (all migrations + services)
@@ -424,28 +463,47 @@ app.get("/api/schema-verify", async (_req, res) => {
 
 (async () => {
   try {
+  startupTrace('bootstrap_started');
   console.log('[STARTUP] LegalWhat Server starting...');
   console.log('[STARTUP] Node.js version:', process.version);
   console.log('[STARTUP] Environment:', process.env.NODE_ENV || 'development');
-const port = Number(process.env.PORT) || 3000;
+const rawPort = process.env.PORT ?? null;
+const port = Number(rawPort) || 3000;
+const listenHost = '0.0.0.0';
+startupTrace('listen_prepared', { rawPort, resolvedPort: port, host: listenHost });
 httpServer = createServer(app); 
+  startupTrace('http_server_created');
 
   httpServer.on('error', (error: any) => {
     startupError = error?.message ?? 'HTTP server failed to start';
+    startupTrace('http_server_error', { error: startupError });
     console.error('[SERVER ERROR]', error);
     process.exit(1);
   });
 
   await new Promise<void>((resolve) => {
-    httpServer!.listen(port, '0.0.0.0', () => {
+    startupTrace('listen_invoked', { rawPort, resolvedPort: port, host: listenHost });
+    httpServer!.listen(port, listenHost, () => {
       isReady = true;
       console.log(`[LISTENING] ${port} - server ready`);
+      const address = httpServer?.address();
+      startupTrace('listening_callback', {
+        rawPort,
+        resolvedPort: port,
+        host: listenHost,
+        address: typeof address === 'string' ? address : address?.address ?? null,
+        boundPort: typeof address === 'string' ? null : address?.port ?? null,
+      });
       resolve();
     });
   });
 
+startupTrace('routes_import_started');
 const { registerRoutes } = await import("./routes");
+startupTrace('routes_import_completed');
+startupTrace('routes_registration_started');
 await registerRoutes(app);
+startupTrace('routes_registration_completed');
   // Routes may initialize optional subsystems; keep Railway liveness independent.
   
 
@@ -509,7 +567,9 @@ await registerRoutes(app);
       serveStatic(app);
     }
   } else {
+    startupTrace('static_serving_started');
     serveStatic(app);
+    startupTrace('static_serving_completed');
   }
 
 (async () => {
@@ -521,6 +581,7 @@ await registerRoutes(app);
       if (!databaseReady) {
         throw new Error('Database initialization did not establish a usable connection');
       }
+      databaseInitialized = true;
       
       await runMigrations();
       
@@ -529,6 +590,7 @@ await registerRoutes(app);
       await runStartupSchemaVerification();
     } catch (error) {
       startupError = error instanceof Error ? error.message : String(error);
+      startupTrace('core_initialization_failed', { error: startupError });
       console.error('[STARTUP] ❌ Core initialization failed:', error);
       return;
     }
@@ -537,14 +599,17 @@ await registerRoutes(app);
       await initializeServices();
       
       isFullyInitialized = true;
+      startupTrace('application_ready');
       console.log('[STARTUP] ✓ Server fully initialized and ready');
     } catch (error) {
       backgroundInitializationError = error instanceof Error ? error.message : String(error);
+      startupTrace('background_initialization_failed', { error: backgroundInitializationError });
       console.error('[STARTUP] ⚠ Background initialization failed:', error);
     }
   })();
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error);
+    startupTrace('bootstrap_failed_before_listening', { error: startupError });
     console.error('[STARTUP] ❌ Bootstrap failed before listening:', error);
     process.exit(1);
   }

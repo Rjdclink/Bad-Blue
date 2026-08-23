@@ -1330,7 +1330,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const userWithAdminFlag = {
         ...user,
-        isAdmin: user.id === "admin-bypass"
+        isAdmin: Boolean(req.user.isAdmin || req.user.isMasterBypass || req.user.isAdminBypass),
+        isMasterBypass: Boolean(req.user.isMasterBypass),
+        isAdminBypass: Boolean(req.user.isAdminBypass),
+        accessZone: req.user.accessZone ?? null,
+        accessRole: req.user.accessRole ?? null,
+        redirectRoute: req.user.redirectRoute ?? null,
+        aiMode: req.user.aiMode ?? null,
       };
 
       res.json(userWithAdminFlag);
@@ -1363,7 +1369,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const userWithAdminFlag = {
         ...user,
-        isAdmin: user.id === "admin-bypass"
+        isAdmin: Boolean(req.user.isAdmin || req.user.isMasterBypass || req.user.isAdminBypass),
+        isMasterBypass: Boolean(req.user.isMasterBypass),
+        isAdminBypass: Boolean(req.user.isAdminBypass),
+        accessZone: req.user.accessZone ?? null,
+        accessRole: req.user.accessRole ?? null,
+        redirectRoute: req.user.redirectRoute ?? null,
+        aiMode: req.user.aiMode ?? null,
       };
 
       res.json(userWithAdminFlag);

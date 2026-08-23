@@ -8,6 +8,7 @@ import { sendWelcomeEmail } from "./emailService";
 import { setupLocalStrategy } from "./localAuth";
 import { getConfig } from "./config";
 import { isDatabaseConfigured, pool } from "./db";
+import { getPlatformUserId, normalizePlatformUser } from "./authIdentity";
 
 
 export function getSession() {
@@ -81,8 +82,8 @@ export async function setupAuth(app: Express) {
   // Setup local strategy for username/password auth
   setupLocalStrategy();
 
-  passport.serializeUser((user: Express.User, cb) => cb(null, user));
-  passport.deserializeUser((user: Express.User, cb) => cb(null, user));
+  passport.serializeUser((user: Express.User, cb) => cb(null, normalizePlatformUser(user)));
+  passport.deserializeUser((user: Express.User, cb) => cb(null, normalizePlatformUser(user)));
 
   console.log("✓ Local authentication enabled with optimized session handling");
   
@@ -106,7 +107,7 @@ export async function setupAuth(app: Express) {
 }
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
-  if (!req.isAuthenticated()) {
+  if (!req.isAuthenticated() || !getPlatformUserId(req.user)) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
@@ -120,8 +121,8 @@ export const adminAuthMiddleware: RequestHandler = async (req, res, next) => {
   }
 
   // Check if user is admin
-  const user = req.user as any;
-  if (!user || !user.isAdmin) {
+  const user = normalizePlatformUser(req.user as Express.User);
+  if (!user || (!user.isAdmin && !user.isMasterBypass && !user.isAdminBypass)) {
     return res.status(403).json({ message: "Forbidden - Admin access required" });
   }
 

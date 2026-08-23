@@ -150,7 +150,7 @@ const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawl
 const ControlRoomPage = lazyWithRetry(() => import("@/pages/control-room"), 'ControlRoom');
 const OrchestratorConsole = lazyWithRetry(() => import("@/pages/orchestrator-console"), 'OrchestratorConsole');
 
-// PANTHEON Administrator - Single Master Password (rjdclink@outlook.com + SARBEAR)
+// PANTHEON Administrator - protected by the platform master session
 const AdminConsole = lazyWithRetry(() => import("@/pages/admin-console"), 'AdminConsole');
 
 // Admin pages - lowest priority

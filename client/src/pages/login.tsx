@@ -67,9 +67,7 @@ export default function Login() {
           // Three-tier master password system - redirect to appropriate zone
           redirectPath = data.redirectRoute || '/welcome';
           const zoneNames: Record<string, string> = {
-            legalwhat: 'LegalWhat Operations',
-            orchestrator: '4JI Orchestrator Console',
-            cryptocrawler: 'CryptoCrawler Dashboard',
+            admin: 'PANTHEON Administrator',
           };
           welcomeMessage = `Welcome to ${zoneNames[data.accessZone] || data.accessZone}!`;
         }
@@ -188,13 +186,14 @@ export default function Login() {
               <TabsContent value="login">
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="login-email">Email (optional)</Label>
+                    <Label htmlFor="login-email">Email</Label>
                     <Input
                       id="login-email"
-                      type="text"
-                      placeholder="Email address (optional)"
+                      type="email"
+                      placeholder="Email address"
                       value={loginEmail}
                       onChange={(e) => setLoginEmail(e.target.value)}
+                      required
                       disabled={isLoading}
                     />
                   </div>

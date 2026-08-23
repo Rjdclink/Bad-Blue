@@ -6,6 +6,7 @@ import express from 'express';
 import db from '../lib/db';
 import { ensureAuthenticated } from '../middleware/auth';
 import { registerLocalUser } from '../localAuth';
+import { getPlatformUserId } from '../authIdentity';
 
 const router = express.Router();
 
@@ -51,11 +52,16 @@ router.post('/signup', async (req, res) => {
  */
 router.get('/user/status', ensureAuthenticated, async (req, res) => {
   try {
+    const userId = getPlatformUserId(req.user);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
     const result = await db.query(
       `SELECT id, email, first_name, last_name, status, square_customer_id
        FROM users 
        WHERE id = $1`,
-      [req.session.userId]
+      [userId]
     );
 
     if (result.rows.length === 0) {
@@ -73,7 +79,7 @@ router.get('/user/status', ensureAuthenticated, async (req, res) => {
        WHERE s.user_id = $1
        ORDER BY s.created_at DESC
        LIMIT 1`,
-      [req.session.userId]
+      [userId]
     );
 
     const subscription = subResult.rows[0] || null;
@@ -95,11 +101,7 @@ router.get('/user/status', ensureAuthenticated, async (req, res) => {
   }
 });
 
-/**
- * GET /api/auth/logout
- * Logout current user
- */
-router.get('/logout', (req, res) => {
+const logout = (req: express.Request, res: express.Response) => {
   req.session.destroy((err) => {
     if (err) {
       console.error('Logout error:', err);
@@ -107,7 +109,10 @@ router.get('/logout', (req, res) => {
     }
     res.json({ success: true });
   });
-});
+};
+
+router.get('/logout', logout);
+router.post('/logout', logout);
 
 export function setupAuthRoutes(app: express.Application) {
   app.use('/api/auth', router);

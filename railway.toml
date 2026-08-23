@@ -29,9 +29,10 @@ port = 5000
 #
 # Authentication:
 # - SUPABASE_ANON_KEY
-# - SESSION_SECRET (for legacy support)
-# - ADMIN_BYPASS_ID (default: $ADMIN85)
-# - ADMIN_BYPASS_PASSWORD (default: SARBEAR)
+# - SESSION_SECRET
+# - MASTER_ADMIN_EMAIL
+# - MASTER_ADMIN_PASSWORD
+# - ADMIN_BYPASS_EMAIL and ADMIN_BYPASS_PASSWORD (optional legacy bypass)
 #
 # AI Services:
 # - MISTRAL_API_KEY

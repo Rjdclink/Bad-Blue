@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { checkMasterPassword, getAccessZoneConfig, isMasterPassword } from '../server/masterPassword.js';
 import { isAdminBypass } from '../server/adminAuth.js';
+import { getPlatformUserId, normalizePlatformUser } from '../server/authIdentity.js';
 
 const previous = {
   masterEmail: process.env.MASTER_ADMIN_EMAIL,
@@ -27,6 +28,18 @@ try {
   assert.equal(getAccessZoneConfig('test-only-master-password', 'master@example.com')?.route, '/administrator');
   assert.equal(isAdminBypass('bypass@example.com', 'test-only-bypass-password'), true);
   assert.equal(isAdminBypass('bypass@example.com', 'wrong'), false);
+
+  const masterIdentity = normalizePlatformUser({
+    claims: { sub: 'master-user-id' },
+    isMasterBypass: true,
+  });
+  assert.equal(getPlatformUserId(masterIdentity), 'master-user-id');
+  assert.equal(masterIdentity.id, 'master-user-id');
+  assert.equal(masterIdentity.isAdmin, true);
+
+  const localIdentity = normalizePlatformUser({ id: 'local-user-id' });
+  assert.equal(getPlatformUserId(localIdentity), 'local-user-id');
+  assert.equal(localIdentity.isAdmin, false);
 } finally {
   if (previous.masterEmail === undefined) delete process.env.MASTER_ADMIN_EMAIL; else process.env.MASTER_ADMIN_EMAIL = previous.masterEmail;
   if (previous.masterPassword === undefined) delete process.env.MASTER_ADMIN_PASSWORD; else process.env.MASTER_ADMIN_PASSWORD = previous.masterPassword;
