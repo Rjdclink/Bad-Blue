@@ -430,9 +430,23 @@ app.get("/api/schema-verify", async (_req, res) => {
 const port = Number(process.env.PORT) || 3000;
 httpServer = createServer(app); 
 
+  httpServer.on('error', (error: any) => {
+    startupError = error?.message ?? 'HTTP server failed to start';
+    console.error('[SERVER ERROR]', error);
+    process.exit(1);
+  });
+
+  await new Promise<void>((resolve) => {
+    httpServer!.listen(port, '0.0.0.0', () => {
+      isReady = true;
+      console.log(`[LISTENING] ${port} - server ready`);
+      resolve();
+    });
+  });
+
 const { registerRoutes } = await import("./routes");
 await registerRoutes(app);
-  // Register all routes before exposing the listener to deployment traffic.
+  // Routes may initialize optional subsystems; keep Railway liveness independent.
   
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -498,18 +512,6 @@ await registerRoutes(app);
     serveStatic(app);
   }
 
-  
-  httpServer.on('error', (error: any) => {
-    startupError = error?.message ?? 'HTTP server failed to start';
-    console.error('[SERVER ERROR]', error);
-    process.exit(1);
-  });
-
-  httpServer.listen(port, '0.0.0.0', () => {
-    isReady = true;
-    console.log(`[LISTENING] ${port} - server ready`);
-  });
-  
 (async () => {
     
   // Continue initialization after binding; /api/ready remains unavailable until it completes.
