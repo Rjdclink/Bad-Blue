@@ -34012,5 +34012,25 @@
     "action": "GET",
     "tokens": 0,
     "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2026-08-23T21:10:12.326Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 33
+  },
+  {
+    "timestamp": "2026-08-23T21:11:12.143Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 8
   }
 ]
