@@ -8,6 +8,11 @@ import { getCryptara } from '../../cryptara/index.js';
 import { verifyCanonicalCryptoSetup } from '../verification/canonicalCryptoVerifier.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { getProfitLadderGovernor } from '../governance/profitLadder.js';
+import {
+  getSystemStatus as getPantheonSystemStatus,
+  notifyCryptocrawlerComplete,
+  notifyCryptocrawlerStarting,
+} from '../../pantheonCrawlerOrchestrator.js';
 
 const router = express.Router();
 
@@ -21,18 +26,26 @@ router.get('/status', (req, res) => {
   res.json({
     success: true,
     running: systemState.running,
+    lifecycle: systemState.lifecycle,
+    lastError: systemState.lastError,
     cryptoCrawl: cryptoCrawlState.getStatus(),
     startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
-    uptime: systemState.running ? Date.now() - systemState.startedAt : 0
+    uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
+    pipeline: pipeline.getMetrics(),
+    zeroCapital: zeroCapitalEngine.getState(),
+    governance: governance.getState(),
+    pantheon: getPantheonSystemStatus(),
   });
 });
 
 // GET /admin/crypto/health - System health check (public for dashboard)
 router.get('/health', async (req, res) => {
   const health = {
-    status: systemState.running ? 'running' : 'stopped',
+    status: systemState.lifecycle.toLowerCase(),
     uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
     cryptoCrawl: cryptoCrawlState.getStatus(),
+    lifecycle: systemState.lifecycle,
+    lastError: systemState.lastError,
     checks: {
       database: await checkDatabase(),
       rpcEndpoints: await checkRPCEndpoints(),
@@ -45,27 +58,26 @@ router.get('/health', async (req, res) => {
 });
 
 // ============================================
-// PROTECTED ROUTES (Require authentication)
+// PROTECTED ROUTES (Platform master or internal service identity required)
 // ============================================
-// Conditionally apply auth middleware - if auth is not configured,
-// routes will still be accessible but will return helpful error messages
-// This allows the system to start without credentials
-const conditionalAuth = (_req: any, res: any, next: any) => {
-  const configured = Boolean(
-    (process.env.CRYPTOCRAWL_EMAIL || '').trim() &&
-    (process.env.CRYPTOCRAWL_PASSWORD || '').trim()
-  );
+const requireCryptoControlAuthority = (req: any, res: any, next: any) => {
+  const internalKey = String(process.env.INTERNAL_KEY || process.env.INTERNAL_API_KEY || '');
+  const providedKey = String(req.header('X-Internal-Key') || req.header('X-Internal-Api-Key') || '');
+  if (internalKey && providedKey && providedKey === internalKey) {
+    return next();
+  }
 
-  if (!configured) {
-    return res.status(503).json({
-      success: false,
-      error: 'CryptoCrawl authentication not configured'
-    });
+  if (!req.isAuthenticated?.() || !req.user) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
+  }
+
+  if (!req.user.isMasterBypass && !req.user.isAdminBypass) {
+    return res.status(403).json({ success: false, error: 'Platform administrator access required' });
   }
 
   return next();
 };
-router.use(conditionalAuth);
+router.use(requireCryptoControlAuthority);
 
 // ============================================
 // GOVERNANCE ROUTES (Stage 1–6 control plane)
@@ -255,14 +267,22 @@ const cryptoCrawlState = {
     }
     
     console.log('[CryptoCrawl] Enabling system...');
-    this.enabled = true;
-    
-    // Start all crypto services
-    await gasOracle.start();
-    await balanceMonitor.start();
-    await networkHealth.start();
-    
-    console.log('[CryptoCrawl] ✓ System enabled');
+
+    try {
+      await gasOracle.start();
+      await balanceMonitor.start();
+      await networkHealth.start();
+      this.enabled = true;
+      console.log('[CryptoCrawl] ✓ System enabled');
+    } catch (error) {
+      await Promise.allSettled([
+        Promise.resolve(gasOracle.stop()),
+        Promise.resolve(balanceMonitor.stop()),
+        Promise.resolve(networkHealth.stop()),
+      ]);
+      this.enabled = false;
+      throw error;
+    }
   },
   
   async disable(): Promise<void> {
@@ -272,13 +292,18 @@ const cryptoCrawlState = {
     }
     
     console.log('[CryptoCrawl] Disabling system...');
+    const results = await Promise.allSettled([
+      Promise.resolve(gasOracle.stop()),
+      Promise.resolve(balanceMonitor.stop()),
+      Promise.resolve(networkHealth.stop()),
+    ]);
     this.enabled = false;
-    
-    // Stop all crypto services
-    await gasOracle.stop();
-    await balanceMonitor.stop();
-    await networkHealth.stop();
-    
+
+    const failures = results.filter((result) => result.status === 'rejected');
+    if (failures.length > 0) {
+      throw new Error(`${failures.length} CryptoCrawler service(s) failed to stop`);
+    }
+
     console.log('[CryptoCrawl] ✓ System disabled');
   },
   
@@ -293,16 +318,32 @@ const cryptoCrawlState = {
 };
 
 // System state
-let systemState = {
+type RuntimeLifecycle = 'STOPPED' | 'INITIALIZING' | 'RUNNING' | 'STOPPING' | 'DEGRADED' | 'FAILED';
+
+let systemState: {
+  lifecycle: RuntimeLifecycle;
+  running: boolean;
+  startedAt: number;
+  mode: 'MANUAL' | 'AUTOMATIC';
+  config: {
+    minProfitThreshold: number;
+    maxGasPrice: number;
+    enabledChains: string[];
+    riskLevel: string;
+  };
+  lastError: string | null;
+} = {
+  lifecycle: 'STOPPED',
   running: false,
   startedAt: 0,
-  mode: 'MANUAL' as 'MANUAL' | 'AUTOMATIC',
+  mode: 'MANUAL',
   config: {
     minProfitThreshold: 10,
     maxGasPrice: 100,
     enabledChains: ['polygon', 'bsc'],
-    riskLevel: 'balanced'
-  }
+    riskLevel: 'balanced',
+  },
+  lastError: null,
 };
 
 // GET /admin/crypto/mode - Get current arbitrage mode
@@ -348,82 +389,130 @@ router.post('/mode', (req, res) => {
   });
 });
 
-// POST /admin/crypto/start - Start the system
-router.post('/start', async (req, res) => {
-  if (systemState.running) {
-    return res.status(400).json({error: 'System already running'});
+async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures: string[] }> {
+  systemState.lifecycle = 'STOPPING';
+  systemState.running = false;
+
+  const results = await Promise.allSettled([
+    pipeline.stop(),
+    Promise.resolve(zeroCapitalEngine.stop()),
+    cryptoCrawlState.disable(),
+  ]);
+  const failures = results
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+
+  const stopped =
+    !zeroCapitalEngine.getState().isRunning &&
+    !pipeline.isRunning() &&
+    !cryptoCrawlState.getStatus().enabled;
+
+  if (stopped) {
+    notifyCryptocrawlerComplete();
+    systemState.lifecycle = 'STOPPED';
+    systemState.startedAt = 0;
+    systemState.lastError = failures.length > 0 ? failures.join('; ') : null;
+  } else {
+    systemState.lifecycle = 'DEGRADED';
+    systemState.lastError = failures.length > 0
+      ? failures.join('; ')
+      : 'One or more CryptoCrawler components remained active after stop';
   }
-  
+
+  return { stopped, failures };
+}
+
+// POST /admin/crypto/start - Start governed on-chain monitoring.
+router.post('/start', async (_req, res) => {
+  if (systemState.lifecycle !== 'STOPPED' && systemState.lifecycle !== 'FAILED') {
+    return res.status(409).json({
+      success: false,
+      error: `CryptoCrawler is ${systemState.lifecycle.toLowerCase()}`,
+      lifecycle: systemState.lifecycle,
+    });
+  }
+
+  if (governance.getState().stage === 1) {
+    return res.status(409).json({
+      success: false,
+      error: 'Governance Stage 1 is advisory-only. Set stage >= 2 and UNPAUSE with an envelope before starting.',
+      governance: governance.getState(),
+    });
+  }
+
+  if (!notifyCryptocrawlerStarting()) {
+    return res.status(409).json({
+      success: false,
+      error: 'PANTHEON currently owns the crawler runtime. Stop PANTHEON before starting CryptoCrawler.',
+      pantheon: getPantheonSystemStatus(),
+    });
+  }
+
+  systemState.lifecycle = 'INITIALIZING';
+  systemState.running = false;
+  systemState.lastError = null;
+
   try {
-    // Stage 1 is advisory-only; keep system from starting background loops.
-    if (governance.getState().stage === 1) {
-      return res.status(400).json({
-        success: false,
-        error: 'Governance Stage 1 is advisory-only. Set stage >= 2 and UNPAUSE with an envelope before starting.',
-        governance: governance.getState(),
-      });
+    await cryptoCrawlState.enable();
+    await zeroCapitalEngine.start();
+    await pipeline.run();
+
+    if (!zeroCapitalEngine.getState().isRunning || !pipeline.isRunning()) {
+      throw new Error('CryptoCrawler monitoring dependencies did not remain running after startup');
     }
 
-    // Enable CryptoCrawl services
-    await cryptoCrawlState.enable();
-    
-    // Start provider-backed, read-only on-chain monitoring.
-    await zeroCapitalEngine.start();
-    
-    // Only mark as running after successful service enablement
+    systemState.lifecycle = 'RUNNING';
     systemState.running = true;
     systemState.startedAt = Date.now();
-    
-    // Start pipeline in background
-    pipeline.run().catch(err => {
-      console.error('Pipeline error:', err);
-    });
-    
-    res.json({
+
+    return res.json({
       success: true,
-      message: 'On-chain monitoring started',
+      message: 'Governed on-chain monitoring started',
+      lifecycle: systemState.lifecycle,
       startedAt: new Date(systemState.startedAt).toISOString(),
-      status: cryptoCrawlState.getStatus(),
+      cryptoCrawl: cryptoCrawlState.getStatus(),
       monitoring: {
         enabled: zeroCapitalEngine.getState().isRunning,
+        pipelineRunning: pipeline.isRunning(),
         executionEnabled: false,
         mechanism: 'Verified RPC monitoring',
-      }
+      },
+      governance: governance.getState(),
+      pantheon: getPantheonSystemStatus(),
     });
-  } catch (error: any) {
-    // Ensure state is not marked as running on error
-    systemState.running = false;
-    res.status(500).json({error: error.message});
+  } catch (error) {
+    const cleanup = await stopCryptoCrawlerRuntime();
+    systemState.lifecycle = cleanup.stopped ? 'FAILED' : 'DEGRADED';
+    systemState.lastError = error instanceof Error ? error.message : String(error);
+
+    return res.status(503).json({
+      success: false,
+      error: systemState.lastError,
+      lifecycle: systemState.lifecycle,
+      cleanup,
+      governance: governance.getState(),
+    });
   }
 });
 
-// POST /admin/crypto/stop - Emergency stop
-router.post('/stop', async (req, res) => {
-  if (!systemState.running) {
-    return res.status(400).json({error: 'System not running'});
+// POST /admin/crypto/stop - Stop the exact components started by this controller.
+router.post('/stop', async (_req, res) => {
+  if (systemState.lifecycle === 'STOPPED') {
+    return res.status(409).json({ success: false, error: 'CryptoCrawler is already stopped' });
   }
-  
-  try {
-    // Disable CryptoCrawl services
-    await cryptoCrawlState.disable();
-    
-    systemState.running = false;
-    pipeline.stop();
-    
-    res.json({
-      success: true,
-      message: 'System stopped',
-      uptime: Date.now() - systemState.startedAt,
-      status: cryptoCrawlState.getStatus()
-    });
-  } catch (error: any) {
-    // Mark as stopped even if there was an error
-    systemState.running = false;
-    res.status(500).json({
-      error: error.message,
-      status: cryptoCrawlState.getStatus()
-    });
-  }
+
+  const uptime = systemState.startedAt ? Date.now() - systemState.startedAt : 0;
+  const result = await stopCryptoCrawlerRuntime();
+
+  return res.status(result.stopped ? 200 : 503).json({
+    success: result.stopped,
+    message: result.stopped ? 'CryptoCrawler stopped' : 'CryptoCrawler stop completed with unresolved components',
+    lifecycle: systemState.lifecycle,
+    uptime,
+    failures: result.failures,
+    cryptoCrawl: cryptoCrawlState.getStatus(),
+    pantheon: getPantheonSystemStatus(),
+  });
 });
 
 // GET /admin/crypto/config - Get current config
@@ -489,16 +578,21 @@ router.post('/emergency', async (req, res) => {
   const {action} = req.body;
   
   switch (action) {
-    case 'pause_all':
-      systemState.running = false;
-      res.json({success: true, message: 'All operations paused'});
-      break;
+    case 'pause_all': {
+      governance.pause('human', 'emergency_pause_all');
+      const result = await stopCryptoCrawlerRuntime();
+      return res.status(result.stopped ? 200 : 503).json({
+        success: result.stopped,
+        message: result.stopped ? 'All CryptoCrawler operations paused and stopped' : 'Emergency pause left unresolved components',
+        lifecycle: systemState.lifecycle,
+        failures: result.failures,
+      });
+    }
     case 'withdraw_all':
       // Implement emergency withdrawal
-      res.json({success: true, message: 'Emergency withdrawal initiated'});
-      break;
+      return res.json({success: true, message: 'Emergency withdrawal initiated'});
     default:
-      res.status(400).json({error: 'Unknown emergency action'});
+      return res.status(400).json({error: 'Unknown emergency action'});
   }
 });
 

@@ -2,7 +2,7 @@
  * PANTHEON Administrator Console
  * 
  * THE SINGLE MASTER ADMIN DASHBOARD
- * Credentials: rjdclink@outlook.com + SARBEAR
+ * Protected by the platform master session.
  * Route: /administrator
  * 
  * DIVINE METICULOUSNESS TO THE 3RD POWER:
@@ -487,14 +487,18 @@ export default function AdminConsole() {
         credentials: 'include',
       });
       
-      if (res.ok) {
+      const data = await res.json();
+      if (res.ok && data.success) {
         toast({ title: "System Started", description: "CryptoCrawler is now running" });
         addConsoleLog('info', '[CryptoCrawler] ✓ System started');
         fetchSystemStatus();
+      } else {
+        throw new Error(data.error || 'Could not start system');
       }
     } catch (error) {
-      toast({ title: "Failed to Start", description: "Could not start system", variant: "destructive" });
-      addConsoleLog('error', '[CryptoCrawler] Failed to start');
+      const message = error instanceof Error ? error.message : 'Could not start system';
+      toast({ title: "Failed to Start", description: message, variant: "destructive" });
+      addConsoleLog('error', `[CryptoCrawler] Failed to start: ${message}`);
     } finally {
       setStartingSystem(false);
     }
@@ -511,14 +515,18 @@ export default function AdminConsole() {
         credentials: 'include',
       });
       
-      if (res.ok) {
+      const data = await res.json();
+      if (res.ok && data.success) {
         toast({ title: "System Stopped", description: "CryptoCrawler has been stopped" });
         addConsoleLog('info', '[CryptoCrawler] ✓ System stopped');
         fetchSystemStatus();
+      } else {
+        throw new Error(data.error || 'Could not stop system');
       }
     } catch (error) {
-      toast({ title: "Failed to Stop", description: "Could not stop system", variant: "destructive" });
-      addConsoleLog('error', '[CryptoCrawler] Failed to stop');
+      const message = error instanceof Error ? error.message : 'Could not stop system';
+      toast({ title: "Failed to Stop", description: message, variant: "destructive" });
+      addConsoleLog('error', `[CryptoCrawler] Failed to stop: ${message}`);
     } finally {
       setStoppingSystem(false);
     }

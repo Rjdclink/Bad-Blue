@@ -112,8 +112,8 @@ interface ConsoleLog {
 // ============================================================================
 
 const DEFAULT_FAUCET_STATUS: FaucetStatus = {
-  enabled: true,
-  mode: 'open',
+  enabled: false,
+  mode: 'unavailable',
   profitThisSession: 0,
   profitThisHour: 0,
   profitThisDay: 0,
@@ -122,7 +122,7 @@ const DEFAULT_FAUCET_STATUS: FaucetStatus = {
   tradesThisHour: 0,
   tradesThisDay: 0,
   stealthLevel: 0,
-  healthScore: 100,
+  healthScore: 0,
   currentWindow: 0,
   totalWindows: 18,
   autoOptimize: true,
@@ -224,11 +224,15 @@ export default function CryptoCrawlerV2Dashboard() {
       });
       if (response.ok) {
         const data = await response.json();
-        setFaucetStatus(prev => ({ ...prev, ...data, enabled: data.enabled ?? true }));
-        addConsoleLog('info', `[Faucet] Status: ${data.mode || 'active'}`);
+        setFaucetStatus(prev => ({ ...prev, ...data, enabled: data.enabled === true }));
+        addConsoleLog('info', `[Faucet] Status: ${data.mode || 'unknown'}`);
+      } else {
+        setFaucetStatus(prev => ({ ...prev, enabled: false, mode: 'unavailable', healthScore: 0 }));
+        addConsoleLog('warn', `[Faucet] Status unavailable (${response.status})`);
       }
     } catch (error) {
-      // Silent - use defaults
+      setFaucetStatus(prev => ({ ...prev, enabled: false, mode: 'unavailable', healthScore: 0 }));
+      addConsoleLog('warn', '[Faucet] Status unavailable');
     }
   }, [addConsoleLog]);
 
@@ -284,22 +288,27 @@ export default function CryptoCrawlerV2Dashboard() {
     setTogglingFaucet(true);
     addConsoleLog('info', `[Faucet] ${enabled ? '🟢 Turning ON' : '🔴 Turning OFF'}...`);
     try {
-      await fetch('/api/crypto/faucet/toggle', {
+      const response = await fetch('/api/crypto/faucet/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ enabled }),
       });
-      setFaucetStatus(prev => ({ ...prev, enabled, mode: enabled ? 'open' : 'closed' }));
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Faucet control request failed');
+      }
+      setFaucetStatus(prev => ({ ...prev, enabled: data.enabled === true, mode: data.enabled ? 'open' : 'closed' }));
       toast({
-        title: enabled ? "Faucet Activated" : "Faucet Deactivated",
-        description: enabled ? "Autonomous profit optimization is ACTIVE" : "Faucet has been turned off",
+        title: enabled ? "Faucet activation requested" : "Faucet deactivation requested",
+        description: "Refreshing backend status to confirm the loop state.",
       });
-      addConsoleLog('info', `[Faucet] ✅ ${enabled ? 'Activated' : 'Deactivated'}`);
+      addConsoleLog('info', `[Faucet] ${enabled ? 'Activation' : 'Deactivation'} requested`);
+      await fetchFaucetStatus();
     } catch (error) {
-      // Optimistic update
-      setFaucetStatus(prev => ({ ...prev, enabled, mode: enabled ? 'open' : 'closed' }));
-      addConsoleLog('warn', '[Faucet] Toggle applied locally');
+      const message = error instanceof Error ? error.message : String(error);
+      toast({ title: 'Faucet control failed', description: message, variant: 'destructive' });
+      addConsoleLog('error', `[Faucet] Control failed: ${message}`);
     } finally {
       setTogglingFaucet(false);
     }
@@ -314,7 +323,6 @@ export default function CryptoCrawlerV2Dashboard() {
       addConsoleLog('info', '[CryptoCrawler V2] Initializing...');
       await Promise.allSettled([fetchStatus(), fetchStats(), fetchFaucetStatus()]);
       addConsoleLog('info', '[CryptoCrawler V2] Dashboard ready');
-      addConsoleLog('info', '[Faucet] 🟢 Autonomous profit faucet is ACTIVE');
     };
     init();
     

@@ -5343,11 +5343,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
   });
   app.use('/admin/crypto', cryptoVerifyRouter);
 
-  const cryptoCrawlPasswordAuthConfigured = Boolean(
-    (process.env.CRYPTOCRAWL_EMAIL || '').trim() && (process.env.CRYPTOCRAWL_PASSWORD || '').trim()
-  );
-
-  // Auth middleware for crypto routes - gracefully handles missing auth config
+  // Auth middleware for CryptoCrawler routes. Platform master sessions and
+  // existing internal service keys are the only control identities.
   const cryptoAuthMiddleware: RequestHandler = (req, res, next) => {
     // Set no-cache headers
     res.set({
@@ -5367,47 +5364,6 @@ Contact: ${foiaRequest.userEmail || userEmail}
       if (providedKey && providedKey === earlyInternalKey) {
         return next();
       }
-    }
-
-    // GRACEFUL DEGRADATION: If auth is not configured, allow health/status endpoints
-    // but block sensitive operations. This ensures server can boot without credentials.
-    if (!cryptoCrawlPasswordAuthConfigured) {
-      const path = String((req as any).path || '');
-      const fullPath = String((req as any).originalUrl || '').split('?')[0];
-      
-      // Allow read-only status endpoints even without auth config
-      const allowedPaths = [
-        '/faucet/status',
-        '/faucet/health',
-        '/stats',
-        '/opportunities',
-        '/balances',
-        '/training/status',
-        '/verify',
-      ];
-      
-      const isAllowedPath = allowedPaths.some(allowed => 
-        path.startsWith(allowed) || fullPath.includes(allowed)
-      );
-      
-      if (isAllowedPath) {
-        // Allow these read-only endpoints without auth
-        return next();
-      }
-      
-      // Block sensitive operations when auth is not configured
-      console.log('[CryptoCrawl Auth] Request blocked - auth not configured:', {
-        path,
-        fullPath,
-        method: req.method,
-      });
-      
-      return res.status(503).json({
-        success: false,
-        error: 'Service Unavailable',
-        message: 'CryptoCrawl authentication not configured. Set CRYPTOCRAWL_EMAIL and CRYPTOCRAWL_PASSWORD environment variables to enable auth-protected features.',
-        authConfigured: false,
-      });
     }
 
     // VERIFIER BYPASS (as requested):
@@ -5533,26 +5489,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
     next();
   };
   
-  // Mount CryptoCrawl API routes.
-  //
-  // IMPORTANT:
-  // CryptoCrawl can be deployed without CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD.
-  // Auth checks must not block server boot. When those credentials are missing, we:
-  // - log a warning
-  // - mount routes WITHOUT the strict session-based cryptoAuthMiddleware
-  // - rely on route-level guards (e.g. requireCryptoCrawlAuth) to keep protected features locked
-  if (!cryptoCrawlPasswordAuthConfigured) {
-    console.warn(
-      '[CryptoCrawl] CRYPTOCRAWL_EMAIL/CRYPTOCRAWL_PASSWORD not set. ' +
-        'Server will boot normally; auth-protected CryptoCrawl features remain disabled.'
-    );
-    app.use('/api/crypto', dashboardApi);
-    app.use('/admin/crypto', adminApi);
-  } else {
-    // Credentials are present: enforce strict session/internal-key auth at the router boundary.
-    app.use('/api/crypto', cryptoAuthMiddleware, dashboardApi);
-    app.use('/admin/crypto', cryptoAuthMiddleware, adminApi);
-  }
+  app.use('/api/crypto', cryptoAuthMiddleware, dashboardApi);
+  app.use('/admin/crypto', cryptoAuthMiddleware, adminApi);
   
   // ============================================
   // BRIDGE MANAGER API

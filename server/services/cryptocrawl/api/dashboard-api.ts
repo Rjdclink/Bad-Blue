@@ -476,7 +476,7 @@ let stats = {
  * The autonomous-faucet.ts maintains the actual trading state independently.
  */
 let faucetState = {
-  enabled: true,  // FAUCET IS ON BY DEFAULT - Divine determination
+  enabled: false,
   autoOptimize: true,
   profitableTimesOnly: true,
   antiDetectionEnabled: true,
@@ -507,8 +507,9 @@ router.get('/faucet/status', async (req, res) => {
     res.json({
       active,
       faucetId,
-      enabled: faucetState.enabled,
-      mode: faucetData?.mode || 'open',
+      enabled: active,
+      requestedEnabled: faucetState.enabled,
+      mode: faucetData?.mode || 'unavailable',
       executionMode: faucetData?.executionMode || 'disabled',
       lastArbitrageDecision: faucetData?.lastArbitrageDecision || 'NONE',
       lastVerifiedArbitrage: faucetData?.lastVerifiedArbitrage || null,
@@ -520,7 +521,7 @@ router.get('/faucet/status', async (req, res) => {
       tradesThisHour: faucetData?.tradesThisHour || 0,
       tradesThisDay: faucetData?.tradesThisDay || 0,
       stealthLevel: faucetData?.stealthLevel || 0,
-      healthScore: faucetData?.healthScore || 100,
+      healthScore: faucetData?.healthScore || 0,
       consecutiveFailures: faucetData?.consecutiveFailures || 0,
       lastSuccessfulTrade: faucetData?.lastSuccessfulTrade || 0,
       lastLoopIterationAt: faucetData?.lastLoopIterationAt || 0,
@@ -552,12 +553,11 @@ router.get('/faucet/status', async (req, res) => {
     const active = autonomousFaucet.isActive();
     const faucetId = autonomousFaucet.getFaucetId();
 
-    // Return optimistic defaults if faucet not initialized
-    res.json({
+    res.status(503).json({
       active,
       faucetId,
-      enabled: faucetState.enabled,
-      mode: 'open',
+      enabled: false,
+      mode: 'unavailable',
       executionMode: 'disabled',
       lastArbitrageDecision: 'NONE',
       lastVerifiedArbitrage: null,
@@ -569,7 +569,7 @@ router.get('/faucet/status', async (req, res) => {
       tradesThisHour: 0,
       tradesThisDay: 0,
       stealthLevel: 0,
-      healthScore: 100,
+      healthScore: 0,
       consecutiveFailures: 0,
       lastSuccessfulTrade: 0,
       lastLoopIterationAt: 0,
@@ -579,12 +579,7 @@ router.get('/faucet/status', async (req, res) => {
       autoOptimize: faucetState.autoOptimize,
       profitableTimesOnly: faucetState.profitableTimesOnly,
       antiDetectionEnabled: faucetState.antiDetectionEnabled,
-      divineInspiration: {
-        creativity: 'active',
-        resourcefulness: 'optimized',
-        determination: 'unwavering',
-        recursiveOptimization: true,
-      },
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 });
@@ -618,7 +613,8 @@ router.post('/faucet/toggle', async (req, res) => {
   
   res.json({
     success: true,
-    enabled: faucetState.enabled,
+    enabled: autonomousFaucet.isActive(),
+    requestedEnabled: faucetState.enabled,
     manuallyDisabled: divineOptimizerState.manuallyDisabled,
     message: enabled 
       ? '🟢 Autonomous profit faucet ACTIVATED - Divine creativity engaged (ALWAYS ON mode)' 
