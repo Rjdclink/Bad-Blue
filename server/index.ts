@@ -417,9 +417,9 @@ app.get("/api/schema-verify", async (_req, res) => {
 const port = Number(process.env.PORT) || 3000;
 httpServer = createServer(app); 
 httpServer.listen(port, '0.0.0.0', () => {
-  console.log(`[LISTENING] ${port}`);
   isReady = true;
-}); 
+  console.log(`[LISTENING] ${port} - server ready`);
+});
 
 const { registerRoutes } = await import("./routes");
 await registerRoutes(app);
