@@ -407,7 +407,7 @@ export class CryptaraGovernance extends EventEmitter {
       maxDrawdown,
     };
     
-    stageManager.updateProofMetrics(updatedMetrics);
+    await stageManager.updateProofMetrics(updatedMetrics);
   }
   
   // ============================================================================

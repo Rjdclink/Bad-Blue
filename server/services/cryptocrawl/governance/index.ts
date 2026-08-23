@@ -41,6 +41,7 @@ export {
 
   
 import { stageManager } from './stage-management';
+import { PostgresStageManagerStateStore } from './stage-state-store.js';
 import { riskGovernor } from './risk-governor';
 import { killSwitch } from './kill-switch';
 import { composer } from './composer-interface';
@@ -49,11 +50,18 @@ import { profitLadder } from './profit-ladder';
 /**
  * Initialize governance system
  */
-export async function initializeGovernance(): Promise<void> {
+let governanceInitialization: Promise<void> | null = null;
+
+export function initializeGovernance(): Promise<void> {
+  if (governanceInitialization) return governanceInitialization;
+  governanceInitialization = initializeGovernanceState();
+  return governanceInitialization;
+}
+
+async function initializeGovernanceState(): Promise<void> {
   console.log('[GOVERNANCE] Initializing 6-Stage Deployment System...');
-  
-  // All singletons are already initialized
-  // Just log the current state
+
+  const restored = await stageManager.restorePersistence(new PostgresStageManagerStateStore());
   
   const currentStage = stageManager.getCurrentStage();
   const stageConfig = stageManager.getStageConfig();
@@ -64,6 +72,7 @@ export async function initializeGovernance(): Promise<void> {
   console.log(`  Paused: ${systemStatus.isPaused}`);
   console.log(`  Kill-Switch Armed: ${systemStatus.killSwitchArmed}`);
   console.log(`  Profit Tier: ${profitLadder.getCurrentTier().name}`);
+  console.log(`  Persisted State: ${restored ? 'restored' : 'initialized'}`);
   console.log('[GOVERNANCE] ✅ Governance system initialized');
 }
 

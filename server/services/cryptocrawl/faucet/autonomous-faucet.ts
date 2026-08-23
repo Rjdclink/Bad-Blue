@@ -1813,7 +1813,7 @@ class AutonomousCryptoFaucet {
       this.marketConditions.lastMarketDataError = undefined;
 
       if (this.tradingViewAnalysis?.dataProvenance === 'live' && cheapestChain) {
-        stageManager.recordLiveValidation({
+        await stageManager.recordLiveValidation({
           passed: true,
           chainHealthy: true,
           timestamp: quoteValidation!.validatedAt,

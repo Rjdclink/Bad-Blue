@@ -584,6 +584,9 @@ startupTrace('routes_registration_completed');
       databaseInitialized = true;
       
       await runMigrations();
+
+      const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
+      await initializeGovernance();
       
       // Run startup schema verification to confirm correct database connection
       const { runStartupSchemaVerification } = await import('./db');

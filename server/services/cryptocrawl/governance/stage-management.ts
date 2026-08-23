@@ -23,6 +23,7 @@
 import { EventEmitter } from 'events';
 import { createLogger } from '../../../logger';
 import { randomUUID } from 'crypto';
+import type { StageManagerPersistedSnapshot, StageManagerStateStore } from './stage-state-store.js';
 
 const log = createLogger('StageManagement');
 
@@ -340,30 +341,12 @@ export class StageManager extends EventEmitter {
   private state: StageState;
   private config: StageConfig;
   private stateHistory: Array<{ timestamp: number; state: Partial<StageState> }> = [];
+  private stateStore: StageManagerStateStore | null = null;
+  private persistenceTail: Promise<void> = Promise.resolve();
   
   private constructor() {
     super();
-    
-    // Initialize at Stage 1
-    this.state = {
-      currentStage: Stage.STAGE_1_CONSTRAINED_PILOT,
-      isPaused: true, // Start paused
-      pauseReason: 'Initial state - awaiting human authorization',
-      lastPauseTimestamp: Date.now(),
-      unpauseRequiresAuthorization: true,
-      
-      cycleCount: 0,
-      dailyProfitUSD: 0,
-      totalProfitUSD: 0,
-      currentDrawdownPercent: 0,
-      
-      proofMetrics: this.getEmptyProofMetrics(),
-      
-      anomalyCount: 0,
-      blockingAnomaly: false,
-      killSwitchActive: false,
-      uncertainties: [],
-    };
+    this.state = this.createInitialState();
     
     this.config = STAGE_CONFIGS[Stage.STAGE_1_CONSTRAINED_PILOT];
     
@@ -378,6 +361,23 @@ export class StageManager extends EventEmitter {
       StageManager.instance = new StageManager();
     }
     return StageManager.instance;
+  }
+
+  async restorePersistence(store: StageManagerStateStore): Promise<boolean> {
+    this.stateStore = store;
+    const snapshot = await store.load();
+    if (!snapshot) {
+      await this.persistState();
+      return false;
+    }
+
+    this.importState(snapshot);
+    await this.persistState();
+    return true;
+  }
+
+  async flushPersistence(): Promise<void> {
+    await this.persistenceTail;
   }
   
   // ============================================================================
@@ -453,6 +453,7 @@ export class StageManager extends EventEmitter {
       });
       
       this.recordStateChange({ isPaused: false });
+      await this.persistState();
       
       return {
         success: true,
@@ -578,6 +579,7 @@ export class StageManager extends EventEmitter {
       isPaused: true,
       pauseReason: 'Stage advancement - awaiting UNPAUSE',
     });
+    await this.persistState();
     
     return {
       success: true,
@@ -588,7 +590,7 @@ export class StageManager extends EventEmitter {
   /**
    * Update proof metrics (called by trading engine)
    */
-  updateProofMetrics(metrics: Partial<ProofMetrics>): void {
+  async updateProofMetrics(metrics: Partial<ProofMetrics>): Promise<void> {
     this.state.proofMetrics = {
       ...this.state.proofMetrics,
       ...metrics,
@@ -602,6 +604,7 @@ export class StageManager extends EventEmitter {
       metrics: this.state.proofMetrics,
       timestamp: Date.now(),
     });
+    await this.persistState();
   }
   
   /**
@@ -753,7 +756,7 @@ export class StageManager extends EventEmitter {
     return this.state.totalProfitUSD;
   }
 
-  recordLiveValidation(evidence: { passed: boolean; chainHealthy: boolean; timestamp?: number }): void {
+  async recordLiveValidation(evidence: { passed: boolean; chainHealthy: boolean; timestamp?: number }): Promise<void> {
     const metrics = this.state.proofMetrics;
     metrics.liveValidationSamples += 1;
     if (evidence.passed) metrics.liveValidationPasses += 1;
@@ -766,6 +769,7 @@ export class StageManager extends EventEmitter {
       metrics: { ...metrics },
       timestamp: metrics.lastLiveValidationAt,
     });
+    await this.persistState();
   }
 
   engageKillSwitch(reason: string): void {
@@ -855,6 +859,43 @@ export class StageManager extends EventEmitter {
   // ============================================================================
   // UTILITIES
   // ============================================================================
+
+  private createInitialState(): StageState {
+    return {
+      currentStage: Stage.STAGE_1_CONSTRAINED_PILOT,
+      isPaused: true,
+      pauseReason: 'Initial state - awaiting human authorization',
+      lastPauseTimestamp: Date.now(),
+      unpauseRequiresAuthorization: true,
+      cycleCount: 0,
+      dailyProfitUSD: 0,
+      totalProfitUSD: 0,
+      currentDrawdownPercent: 0,
+      proofMetrics: this.getEmptyProofMetrics(),
+      anomalyCount: 0,
+      blockingAnomaly: false,
+      killSwitchActive: false,
+      uncertainties: [],
+    };
+  }
+
+  private async persistState(): Promise<void> {
+    if (!this.stateStore) return;
+    const snapshot = this.exportState();
+    const write = this.persistenceTail
+      .catch(() => undefined)
+      .then(() => this.stateStore!.save(snapshot));
+    this.persistenceTail = write;
+    await write;
+  }
+
+  private persistSoon(): void {
+    void this.persistState().catch(error => {
+      log.error('Failed to persist governance state', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
   
   private getEmptyProofMetrics(): ProofMetrics {
     return {
@@ -886,6 +927,7 @@ export class StageManager extends EventEmitter {
     if (this.stateHistory.length > 1000) {
       this.stateHistory.shift();
     }
+    this.persistSoon();
   }
   
   getStateHistory(): Array<{ timestamp: number; state: Partial<StageState> }> {
@@ -895,32 +937,165 @@ export class StageManager extends EventEmitter {
   /**
    * Export full state for persistence
    */
-  exportState(): any {
+  exportState(): StageManagerPersistedSnapshot {
     return {
       state: this.state,
-      config: this.config,
       stateHistory: this.stateHistory,
-      timestamp: Date.now(),
     };
   }
   
   /**
    * Import state from persistence
    */
-  importState(data: any): void {
-    if (data.state) {
-      this.state = data.state;
-      this.config = STAGE_CONFIGS[this.state.currentStage];
+  importState(data: StageManagerPersistedSnapshot): void {
+    if (!isRecord(data.state)) {
+      throw new Error('Persisted governance state is missing a state object');
     }
-    if (data.stateHistory) {
-      this.stateHistory = data.stateHistory;
+
+    const restored = this.normalizeRestoredState(data.state);
+    if (!restored.isPaused) {
+      restored.isPaused = true;
+      restored.pauseReason = 'restart_requires_human_unpause';
+      restored.lastPauseTimestamp = Date.now();
+      restored.unpauseRequiresAuthorization = true;
     }
+
+    this.state = restored;
+    this.config = STAGE_CONFIGS[restored.currentStage];
+    this.state.proofMetrics.meetsAdvancementCriteria = this.checkAdvancementCriteria();
+    this.stateHistory = Array.isArray(data.stateHistory)
+      ? data.stateHistory.slice(-1000).filter(isStateHistoryEntry)
+      : [];
     
     log.info('State imported', {
       stage: this.config.stageName,
       isPaused: this.state.isPaused,
     });
   }
+
+  private normalizeRestoredState(value: Record<string, unknown>): StageState {
+    const stage = Number(value.currentStage);
+    if (!Number.isInteger(stage) || !STAGE_CONFIGS[stage as Stage]) {
+      throw new Error('Persisted governance state has an invalid stage');
+    }
+    if (!isRecord(value.proofMetrics)) {
+      throw new Error('Persisted governance state is missing proof metrics');
+    }
+
+    const proofMetrics = this.normalizeProofMetrics(value.proofMetrics);
+    const initial = this.createInitialState();
+    return {
+      ...initial,
+      currentStage: stage as Stage,
+      isPaused: requireBoolean('isPaused', value.isPaused),
+      pauseReason: optionalString(value.pauseReason),
+      lastPauseTimestamp: optionalTimestamp(value.lastPauseTimestamp),
+      unpauseRequiresAuthorization: requireBoolean('unpauseRequiresAuthorization', value.unpauseRequiresAuthorization),
+      lastUnpauseTimestamp: optionalTimestamp(value.lastUnpauseTimestamp),
+      lastUnpauseAuthority: optionalString(value.lastUnpauseAuthority),
+      lastUnpauseScope: optionalString(value.lastUnpauseScope),
+      lastUnpauseDuration: optionalNonNegativeNumber(value.lastUnpauseDuration),
+      cycleCount: requireNonNegativeInteger('cycleCount', value.cycleCount),
+      dailyProfitUSD: requireFiniteNumber('dailyProfitUSD', value.dailyProfitUSD),
+      totalProfitUSD: requireFiniteNumber('totalProfitUSD', value.totalProfitUSD),
+      currentDrawdownPercent: requireFiniteNumber('currentDrawdownPercent', value.currentDrawdownPercent),
+      proofMetrics,
+      anomalyCount: requireNonNegativeInteger('anomalyCount', value.anomalyCount),
+      lastAnomalyTime: optionalTimestamp(value.lastAnomalyTime),
+      lastAnomalyReason: optionalString(value.lastAnomalyReason),
+      blockingAnomaly: requireBoolean('blockingAnomaly', value.blockingAnomaly),
+      killSwitchActive: requireBoolean('killSwitchActive', value.killSwitchActive),
+      uncertainties: requireStringArray('uncertainties', value.uncertainties),
+    };
+  }
+
+  private normalizeProofMetrics(value: Record<string, unknown>): ProofMetrics {
+    const liveValidationSamples = requireNonNegativeInteger('liveValidationSamples', value.liveValidationSamples);
+    const liveValidationPasses = requireNonNegativeInteger('liveValidationPasses', value.liveValidationPasses);
+    if (liveValidationPasses > liveValidationSamples) {
+      throw new Error('Persisted governance evidence has more passes than samples');
+    }
+    return {
+      successRate: requireFiniteNumber('successRate', value.successRate),
+      totalTrades: requireNonNegativeInteger('totalTrades', value.totalTrades),
+      winningTrades: requireNonNegativeInteger('winningTrades', value.winningTrades),
+      losingTrades: requireNonNegativeInteger('losingTrades', value.losingTrades),
+      avgProfitPerTrade: requireFiniteNumber('avgProfitPerTrade', value.avgProfitPerTrade),
+      sharpeRatio: requireFiniteNumber('sharpeRatio', value.sharpeRatio),
+      maxDrawdown: requireFiniteNumber('maxDrawdown', value.maxDrawdown),
+      uptime: requireNonNegativeNumber('uptime', value.uptime),
+      monteCarloPassRate: requireUnitInterval('monteCarloPassRate', value.monteCarloPassRate),
+      monteCarloSimulations: requireNonNegativeInteger('monteCarloSimulations', value.monteCarloSimulations),
+      liveValidationSamples,
+      liveValidationPasses,
+      liveValidationPassRate: requireUnitInterval('liveValidationPassRate', value.liveValidationPassRate),
+      chainHealthy: requireBoolean('chainHealthy', value.chainHealthy),
+      lastLiveValidationAt: optionalTimestamp(value.lastLiveValidationAt),
+      meetsAdvancementCriteria: false,
+    };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireFiniteNumber(name: string, value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Persisted governance state has invalid ${name}`);
+  return value;
+}
+
+function requireNonNegativeNumber(name: string, value: unknown): number {
+  const number = requireFiniteNumber(name, value);
+  if (number < 0) throw new Error(`Persisted governance state has negative ${name}`);
+  return number;
+}
+
+function requireNonNegativeInteger(name: string, value: unknown): number {
+  const number = requireNonNegativeNumber(name, value);
+  if (!Number.isInteger(number)) throw new Error(`Persisted governance state has non-integer ${name}`);
+  return number;
+}
+
+function requireUnitInterval(name: string, value: unknown): number {
+  const number = requireFiniteNumber(name, value);
+  if (number < 0 || number > 1) throw new Error(`Persisted governance state has out-of-range ${name}`);
+  return number;
+}
+
+function requireBoolean(name: string, value: unknown): boolean {
+  if (typeof value !== 'boolean') throw new Error(`Persisted governance state has invalid ${name}`);
+  return value;
+}
+
+function optionalString(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') throw new Error('Persisted governance state has an invalid string field');
+  return value;
+}
+
+function optionalTimestamp(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requireNonNegativeNumber('timestamp', value);
+}
+
+function optionalNonNegativeNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requireNonNegativeNumber('number', value);
+}
+
+function requireStringArray(name: string, value: unknown): string[] {
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
+    throw new Error(`Persisted governance state has invalid ${name}`);
+  }
+  return [...value];
+}
+
+function isStateHistoryEntry(value: unknown): value is { timestamp: number; state: Partial<StageState> } {
+  return isRecord(value) &&
+    typeof value.timestamp === 'number' &&
+    Number.isFinite(value.timestamp) &&
+    isRecord(value.state);
 }
 
 // Singleton instance

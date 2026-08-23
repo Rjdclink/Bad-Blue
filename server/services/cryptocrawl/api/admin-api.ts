@@ -23,6 +23,7 @@ const router = express.Router();
 
 // GET /admin/crypto/status - Get system status (public for dashboard loading)
 router.get('/status', (req, res) => {
+  const zeroCapital = zeroCapitalEngine.getState();
   res.json({
     success: true,
     running: systemState.running,
@@ -32,7 +33,10 @@ router.get('/status', (req, res) => {
     startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
     uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
     pipeline: pipeline.getMetrics(),
-    zeroCapital: zeroCapitalEngine.getState(),
+    zeroCapital: {
+      ...zeroCapital,
+      totalProfit: zeroCapital.totalProfit.toString(),
+    },
     governance: governance.getState(),
     pantheon: getPantheonSystemStatus(),
   });
