@@ -33698,5 +33698,319 @@
     "action": "POST",
     "tokens": 0,
     "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2026-08-23T19:28:05.934Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 9
+  },
+  {
+    "timestamp": "2026-08-23T19:31:19.584Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:20.212Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:22.881Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/vite/dist/client/env.mjs"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:23.570Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/.vite/deps/chunk-MOO2IH4A.js"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:24.237Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/.vite/deps/chunk-U7P2NEEE.js"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:24.439Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-32x32.png"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:24.611Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-32x32.png"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:24.842Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SEOHead.tsx"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:24.918Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-48x48.png"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:24.963Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/.vite/deps/@radix-ui_react-checkbox.js"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:25.032Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/textarea.tsx"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:25.087Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/.vite/deps/chunk-ST7PQ2HY.js"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:25.125Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/.vite/deps/@radix-ui_react-dropdown-menu.js"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:25.176Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/.vite/deps/crypto-js.js"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:25.250Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/.vite/deps/chunk-6WBQ3PW6.js"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:25.322Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/.vite/deps/chunk-6ZMM2PAV.js"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:25.558Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/images/OIP.comp4.webp"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:25.762Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/images/Constitution.webp"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:29.153Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-32x32.png"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:29.193Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/pages/login.tsx"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:29.287Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-32x32.png"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:29.381Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/input.tsx"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:29.402Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/tabs.tsx"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:29.520Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/@fs/workspaces/Bad-Blue/node_modules/.vite/deps/@radix-ui_react-tabs.js"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:35.027Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:35.097Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:35.153Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:35.205Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2026-08-23T19:31:54.554Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2026-08-23T19:32:14.149Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/register/local"
+  },
+  {
+    "timestamp": "2026-08-23T19:32:24.816Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2026-08-23T19:32:59.819Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:00.783Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/login"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:01.356Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/main.tsx"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:03.911Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/lexaraSpeechClient.ts"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.209Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/performance.ts"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.244Z",
+    "action": "training_queue_consumption",
+    "provider": "self_improvement",
+    "processed": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 346
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.321Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/auth/user"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.376Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.440Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-32x32.png"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.595Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-16x16.png"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.620Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/ui/button.tsx"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.700Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/components/SEOHead.tsx"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.748Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/favicon-48x48.png"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:04.835Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/images/Constitution.webp"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:05.371Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/src/lib/bundleAnalyzer.ts"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:27.369Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:34.522Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
+  },
+  {
+    "timestamp": "2026-08-23T19:33:39.695Z",
+    "action": "POST",
+    "tokens": 0,
+    "path": "/api/login/local"
+  },
+  {
+    "timestamp": "2026-08-23T19:34:05.312Z",
+    "action": "GET",
+    "tokens": 0,
+    "path": "/api/maintenance-status"
   }
 ]
