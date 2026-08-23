@@ -51,6 +51,7 @@ let isReady = false;
 let isFullyInitialized = false; // Tracks full service initialization
 let isShuttingDown = false;
 let startupError: string | null = null;
+let backgroundInitializationError: string | null = null;
 let httpServer: Server | null = null;
 
 declare module 'http' {
@@ -330,18 +331,6 @@ app.get("/api/health", async (_req, res) => {
     });
   }
 
-  if (startupError) {
-    return res.status(503).json({
-      status: 'failed',
-      ready: isReady,
-      fullyInitialized: isFullyInitialized,
-      error: startupError,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  // A bound listener is not a healthy deployment. Full health requires services and persistence.
-  
   let dbOk = false;
   let dbLatency = null;
   
@@ -358,14 +347,27 @@ app.get("/api/health", async (_req, res) => {
     }
   }
 
-  const isHealthy = isFullyInitialized && dbOk;
-  const status = isHealthy ? 'healthy' : isFullyInitialized ? 'degraded' : isReady ? 'starting' : 'initializing';
-  const httpStatus = isHealthy ? 200 : 503;
+  const status = startupError
+    ? 'failed'
+    : isFullyInitialized && dbOk
+      ? 'healthy'
+      : backgroundInitializationError || (isFullyInitialized && !dbOk)
+        ? 'degraded'
+        : isReady
+          ? 'starting'
+          : 'initializing';
+
+  // Railway uses this endpoint to determine whether the route-registered HTTP
+  // service is reachable. Strict database and background-service readiness is
+  // exposed separately by /api/ready.
+  const httpStatus = isReady && !startupError ? 200 : 503;
 
   res.status(httpStatus).json({
     status,
     ready: isReady,
     fullyInitialized: isFullyInitialized,
+    startupError,
+    backgroundInitializationError,
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
     database: { ok: dbOk, latencyMs: dbLatency },
@@ -394,7 +396,7 @@ app.get("/api/health", async (_req, res) => {
 
 app.get("/api/ready", (_req, res) => {
   // /api/ready returns 200 only when FULLY initialized (all migrations + services)
-  // /api/health is also 200 only when the application is fully healthy.
+  // /api/health is the Railway liveness endpoint; this endpoint is strict readiness.
   if (isFullyInitialized && !isShuttingDown && !startupError) {
     res.status(200).json({ ready: true, fullyInitialized: true });
   } else {
@@ -510,9 +512,9 @@ await registerRoutes(app);
   
 (async () => {
     
-  // Continue initialization after binding; health remains unavailable until it completes.
+  // Continue initialization after binding; /api/ready remains unavailable until it completes.
     try {
-      // Initialize database connection (moved here to not block health checks)
+      // Database and migrations are required before the application is fully ready.
       const databaseReady = await initializeDatabase();
       if (!databaseReady) {
         throw new Error('Database initialization did not establish a usable connection');
@@ -523,16 +525,20 @@ await registerRoutes(app);
       // Run startup schema verification to confirm correct database connection
       const { runStartupSchemaVerification } = await import('./db');
       await runStartupSchemaVerification();
-      
+    } catch (error) {
+      startupError = error instanceof Error ? error.message : String(error);
+      console.error('[STARTUP] ❌ Core initialization failed:', error);
+      return;
+    }
+
+    try {
       await initializeServices();
       
       isFullyInitialized = true;
       console.log('[STARTUP] ✓ Server fully initialized and ready');
     } catch (error) {
-      startupError = error instanceof Error ? error.message : String(error);
-      console.error('[STARTUP] ❌ Background initialization failed:', error);
-      // Server remains running but not fully initialized
-      // This allows debugging while keeping the deployment alive
+      backgroundInitializationError = error instanceof Error ? error.message : String(error);
+      console.error('[STARTUP] ⚠ Background initialization failed:', error);
     }
   })();
   } catch (error) {
