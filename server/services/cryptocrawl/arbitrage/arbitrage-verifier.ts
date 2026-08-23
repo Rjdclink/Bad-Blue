@@ -27,6 +27,14 @@ export interface TopOfBookQuote {
   timestamp: number;
 }
 
+export interface LiveQuoteValidation {
+  symbol: string;
+  validatedAt: number;
+  quoteCount: number;
+  freshQuoteCount: number;
+  valid: boolean;
+}
+
 export interface FeeModel {
   takerFeeBps: number; // basis points, e.g. 10 = 0.10%
 }
@@ -225,6 +233,12 @@ function feeUsd(amountUsd: number, feeBps: number): number {
 }
 
 export class ArbitrageVerifier {
+  private lastLiveQuoteValidation: LiveQuoteValidation | null = null;
+
+  getLastLiveQuoteValidation(): Readonly<LiveQuoteValidation> | null {
+    return this.lastLiveQuoteValidation ? { ...this.lastLiveQuoteValidation } : null;
+  }
+
   /**
    * Evaluate best buy/sell across venues and compute all-in P&L.
    * Returns null if no cross-venue spread exists (or quotes are too stale).
@@ -242,15 +256,21 @@ export class ArbitrageVerifier {
 
     try {
       const quotes = await fetchQuotes(symbol);
-      if (quotes.length < 2) return null;
-
       const now = Date.now();
-      const freshestTs = Math.max(...quotes.map(q => q.timestamp));
-      const quoteAgeMs = now - freshestTs;
-      if (quoteAgeMs > req.maxQuoteAgeMs) return null;
+      const freshQuotes = quotes.filter(quote => now - quote.timestamp <= req.maxQuoteAgeMs);
+      const freshestTs = freshQuotes.length > 0 ? Math.max(...freshQuotes.map(quote => quote.timestamp)) : 0;
+      const quoteAgeMs = freshQuotes.length > 0 ? now - freshestTs : Number.POSITIVE_INFINITY;
+      this.lastLiveQuoteValidation = {
+        symbol,
+        validatedAt: now,
+        quoteCount: quotes.length,
+        freshQuoteCount: freshQuotes.length,
+        valid: freshQuotes.length >= 2,
+      };
+      if (freshQuotes.length < 2) return null;
 
-      const buy = [...quotes].sort((a, b) => a.ask - b.ask)[0];
-      const sell = [...quotes].sort((a, b) => b.bid - a.bid)[0];
+      const buy = [...freshQuotes].sort((a, b) => a.ask - b.ask)[0];
+      const sell = [...freshQuotes].sort((a, b) => b.bid - a.bid)[0];
       if (!buy || !sell) return null;
       if (buy.venue === sell.venue) return null;
       if (sell.bid <= buy.ask) return null;

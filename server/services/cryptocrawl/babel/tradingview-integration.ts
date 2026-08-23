@@ -71,6 +71,8 @@ export interface MovingAverages {
 export interface TechnicalAnalysis {
   symbol: string;
   timestamp: number;
+  dataProvenance: 'live' | 'cached' | 'deterministic-fallback';
+  sourceTimestamp: number;
   oscillators: {
     summary: TradingSignal;
     indicators: OscillatorIndicators;
@@ -235,7 +237,7 @@ export class TradingViewEngine {
 
     // Return cached if fresh (less than 1 minute old)
     if (cached && Date.now() - cached.timestamp < TRADINGVIEW_CONFIG.cacheTtlMs) {
-      return cached;
+      return { ...cached, dataProvenance: 'cached' };
     }
 
     const inFlight = this.inFlightAnalysis.get(cacheKey);
@@ -428,6 +430,8 @@ export class TradingViewEngine {
       const analysis: TechnicalAnalysis = {
         symbol,
         timestamp: Date.now(),
+        dataProvenance: 'live',
+        sourceTimestamp: Date.now(),
         oscillators: {
           summary: oscillatorSignals.signal,
           indicators: oscillators,
@@ -486,6 +490,8 @@ export class TradingViewEngine {
     const analysis: TechnicalAnalysis = {
       symbol,
       timestamp: Date.now(),
+      dataProvenance: 'deterministic-fallback',
+      sourceTimestamp: Date.now(),
       oscillators: {
         summary: oscillatorSignals.signal,
         indicators: oscillators,

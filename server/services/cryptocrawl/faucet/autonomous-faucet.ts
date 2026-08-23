@@ -17,6 +17,7 @@ import { MultiOraclePriceValidator } from '../validation/multi-oracle-validator.
 import { MasterOrchestrator } from '../core/master-orchestrator.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
+import { stageManager } from '../governance/stage-management.js';
 import logger from '../../../logger.js';
 
 // Babel Integration - IP Protection Systems + Cain Reasoning
@@ -52,6 +53,11 @@ export interface MarketConditions {
   technicalSignal: 'bullish' | 'bearish' | 'neutral';
   timestamp: number;            // When conditions were last updated
   confidence: number;           // 0-1, confidence in the data quality
+  technicalDataProvenance: 'live' | 'cached' | 'deterministic-fallback' | 'no-data';
+  technicalDataTimestamp: number | null;
+  quoteDataProvenance: 'live' | 'no-data';
+  quoteDataTimestamp: number | null;
+  lastMarketDataError?: string;
 }
 
 export interface FaucetState {
@@ -705,6 +711,10 @@ class AutonomousCryptoFaucet {
       technicalSignal: 'neutral',
       timestamp: Date.now(),
       confidence: 0.5,
+      technicalDataProvenance: 'no-data',
+      technicalDataTimestamp: null,
+      quoteDataProvenance: 'no-data',
+      quoteDataTimestamp: null,
     };
     
     // Initialize circuit breaker - CLOSED state
@@ -955,9 +965,45 @@ class AutonomousCryptoFaucet {
    * Now enhanced with Cain dimensional reasoning
    * @returns Decision object with reasons and validator results
    */
+  private hasCurrentMarketData(): boolean {
+    const maxAgeMs = Math.max(1_000, Number(process.env.FAUCET_MARKET_DATA_MAX_AGE_MS || 60_000));
+    const technicalDataIsUsable =
+      this.marketConditions.technicalDataProvenance === 'live' ||
+      this.marketConditions.technicalDataProvenance === 'cached';
+    const technicalDataIsFresh =
+      this.marketConditions.technicalDataTimestamp !== null &&
+      Date.now() - this.marketConditions.technicalDataTimestamp <= maxAgeMs;
+    const quoteDataIsCurrent =
+      this.marketConditions.quoteDataProvenance === 'live' &&
+      this.marketConditions.quoteDataTimestamp !== null &&
+      Date.now() - this.marketConditions.quoteDataTimestamp <= maxAgeMs;
+    const marketDataIsFresh = Date.now() - this.marketConditions.timestamp <= maxAgeMs;
+
+    return technicalDataIsUsable &&
+      technicalDataIsFresh &&
+      quoteDataIsCurrent &&
+      marketDataIsFresh &&
+      !this.marketConditions.lastMarketDataError;
+  }
+
   private async makeOpenDecision(): Promise<OpenCloseDecision> {
     const validators: ValidatorResult[] = [];
     const reasons: string[] = [];
+
+    if (!this.hasCurrentMarketData()) {
+      return {
+        shouldOpen: false,
+        shouldClose: false,
+        confidence: 0,
+        reasons: ['Current live or cached market data is required before opening'],
+        validators: [{
+          name: 'market_data_freshness',
+          passed: false,
+          weight: 1,
+          details: `Technical data=${this.marketConditions.technicalDataProvenance}, updatedAt=${this.marketConditions.timestamp}`,
+        }],
+      };
+    }
 
     // FIRST: Perform dimensional reasoning for adaptive decision making
     const reasoning = await this.performDimensionalReasoning();
@@ -1071,6 +1117,21 @@ class AutonomousCryptoFaucet {
   private async makeCloseDecision(): Promise<OpenCloseDecision> {
     const validators: ValidatorResult[] = [];
     const reasons: string[] = [];
+
+    if (!this.hasCurrentMarketData()) {
+      return {
+        shouldOpen: false,
+        shouldClose: true,
+        confidence: 0,
+        reasons: ['Current live or cached market data is unavailable'],
+        validators: [{
+          name: 'market_data_freshness',
+          passed: false,
+          weight: 1,
+          details: `Technical data=${this.marketConditions.technicalDataProvenance}, updatedAt=${this.marketConditions.timestamp}`,
+        }],
+      };
+    }
     
     // Validator 1: Profit Cap Check - MUST close if cap reached
     const profitCapReached = this.state.profitThisHour >= STEALTH_CONFIG.maxHourlyProfit;
@@ -1467,6 +1528,9 @@ class AutonomousCryptoFaucet {
     try {
       // Get technical analysis for BTC as market proxy
       this.tradingViewAnalysis = await TradingViewEngine.getAnalysis('BTCUSDT', '1h');
+      this.marketConditions.technicalDataProvenance = this.tradingViewAnalysis.dataProvenance;
+      this.marketConditions.technicalDataTimestamp = this.tradingViewAnalysis.sourceTimestamp;
+      this.marketConditions.lastMarketDataError = undefined;
       
       // Get optimized settings based on signals
       this.crawlerOptimization = TradingViewEngine.getOptimization(
@@ -1495,6 +1559,8 @@ class AutonomousCryptoFaucet {
         optimization: this.crawlerOptimization?.aggressiveness,
       });
     } catch (error) {
+      this.marketConditions.technicalDataProvenance = 'no-data';
+      this.marketConditions.lastMarketDataError = error instanceof Error ? error.message : String(error);
       logger.warn('[FAUCET] Failed to update TradingView analysis', {
         component: 'AutonomousFaucet',
         error: error instanceof Error ? error.message : String(error),
@@ -1718,6 +1784,18 @@ class AutonomousCryptoFaucet {
             }
           : { enabled: false, fromChain: 'polygon', toChain: 'polygon', token: 'USDC' },
       });
+      const quoteValidation = arbitrageVerifier.getLastLiveQuoteValidation();
+      const hasCurrentQuoteValidation = quoteValidation?.valid === true &&
+        quoteValidation.symbol === symbol &&
+        quoteValidation.validatedAt >= Date.now() - maxQuoteAgeMs;
+
+      this.marketConditions.quoteDataProvenance = hasCurrentQuoteValidation ? 'live' : 'no-data';
+      this.marketConditions.quoteDataTimestamp = hasCurrentQuoteValidation
+        ? quoteValidation!.validatedAt
+        : null;
+      if (!hasCurrentQuoteValidation) {
+        throw new Error('At least two fresh live market quotes are required to update faucet conditions');
+      }
 
       this.lastArbitragePlan = plan;
       this.state.lastVerifiedArbitrage = plan;
@@ -1732,12 +1810,22 @@ class AutonomousCryptoFaucet {
       
       // Update timestamp
       this.marketConditions.timestamp = Date.now();
+      this.marketConditions.lastMarketDataError = undefined;
+
+      if (this.tradingViewAnalysis?.dataProvenance === 'live' && cheapestChain) {
+        stageManager.recordLiveValidation({
+          passed: true,
+          chainHealthy: true,
+          timestamp: quoteValidation!.validatedAt,
+        });
+      }
 
       logger.debug('[FAUCET] Market conditions updated', {
         component: 'AutonomousFaucet',
         conditions: this.marketConditions,
       });
     } catch (error) {
+      this.marketConditions.lastMarketDataError = error instanceof Error ? error.message : String(error);
       logger.warn('[FAUCET] Failed to update market conditions, using cached values', {
         component: 'AutonomousFaucet',
         error: error instanceof Error ? error.message : String(error),

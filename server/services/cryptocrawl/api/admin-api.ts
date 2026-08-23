@@ -440,6 +440,12 @@ router.post('/start', async (_req, res) => {
     });
   }
 
+  try {
+    governance.requireAllowed('ADVISE');
+  } catch (error) {
+    return handleGovernanceError(res, error);
+  }
+
   if (!notifyCryptocrawlerStarting()) {
     return res.status(409).json({
       success: false,

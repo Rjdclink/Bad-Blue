@@ -20,6 +20,8 @@ interface TradingViewSnapshot {
   symbol: string;
   timeframe: string;
   signal: TechnicalAnalysis['summary']['signal'];
+  dataProvenance: TechnicalAnalysis['dataProvenance'];
+  sourceTimestamp: number;
   strength: number;
   latencyMs: number;
   timestamp: number;
@@ -98,6 +100,8 @@ async function getTradingViewSnapshots(symbols: string[], timeframe: string): Pr
       symbol,
       timeframe,
       signal: analysis.summary.signal,
+      dataProvenance: analysis.dataProvenance,
+      sourceTimestamp: analysis.sourceTimestamp,
       strength: analysis.summary.strength,
       latencyMs: Date.now() - startedAt,
       timestamp: analysis.timestamp,
@@ -260,9 +264,11 @@ async function runDryRun(): Promise<DryRunReport> {
     const checklist: ChecklistItem[] = [
       {
         id: 'tradingview-signals',
-        status: tradingViewSnapshots.length > 0 ? 'pass' : 'block',
+        status: tradingViewSnapshots.length > 0 && tradingViewSnapshots.every(snapshot => snapshot.dataProvenance === 'live')
+          ? 'pass'
+          : 'block',
         detail: tradingViewSnapshots.length > 0
-          ? `Captured ${tradingViewSnapshots.length} symbol analyses`
+          ? `Captured ${tradingViewSnapshots.length} symbol analyses (${tradingViewSnapshots.map(snapshot => `${snapshot.symbol}:${snapshot.dataProvenance}`).join(', ')})`
           : 'No TradingView analyses were captured',
       },
       {
