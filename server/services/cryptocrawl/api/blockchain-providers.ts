@@ -19,6 +19,79 @@ export interface BlockchainProviderConfig {
   region?: EdenRegion;
 }
 
+export type RpcTransport = 'http' | 'websocket';
+export type RpcProviderState = 'unconfigured' | 'connecting' | 'healthy' | 'degraded' | 'cooldown' | 'unavailable' | 'shutting_down';
+
+export interface RpcHealthObservation {
+  provider: string;
+  chain: SupportedChain;
+  transport: RpcTransport;
+  state: RpcProviderState;
+  success: boolean;
+  latencyMs: number | null;
+  observedAt: number;
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
+  lastError?: string;
+}
+
+export interface WebSocketTransportLike {
+  on(event: string, listener: (...args: any[]) => void): void;
+  removeListener?(event: string, listener: (...args: any[]) => void): void;
+  removeAllListeners?(): void;
+  close?(): void;
+  terminate?(): void;
+}
+
+export function attachWebSocketTransportGuards(
+  socket: WebSocketTransportLike,
+  handlers: { onOpen?: () => void; onFailure: (error?: unknown) => void; onClose?: () => void },
+): () => void {
+  let failed = false;
+  const onOpen = () => handlers.onOpen?.();
+  const onError = (error: unknown) => {
+    if (failed) return;
+    failed = true;
+    handlers.onFailure(error);
+  };
+  const onClose = () => {
+    if (!failed) failed = true;
+    handlers.onClose?.();
+  };
+  socket.on('open', onOpen);
+  socket.on('error', onError);
+  socket.on('close', onClose);
+  return () => {
+    socket.removeListener?.('open', onOpen);
+    socket.removeListener?.('error', onError);
+    socket.removeListener?.('close', onClose);
+  };
+}
+
+export async function probeRpcEndpoint(
+  provider: string,
+  chain: SupportedChain,
+  url: string,
+): Promise<RpcHealthObservation> {
+  const observedAt = Date.now();
+  const rpc = new ethers.providers.JsonRpcProvider(url);
+  try {
+    const startedAt = Date.now();
+    const [network, blockNumber] = await Promise.all([rpc.getNetwork(), rpc.getBlockNumber()]);
+    if (network.chainId <= 0 || blockNumber < 0) throw new Error('RPC returned invalid network evidence');
+    return {
+      provider, chain, transport: 'http', state: 'healthy', success: true,
+      latencyMs: Date.now() - startedAt, observedAt, consecutiveFailures: 0, consecutiveSuccesses: 1,
+    };
+  } catch (error) {
+    return {
+      provider, chain, transport: 'http', state: 'unavailable', success: false,
+      latencyMs: null, observedAt, consecutiveFailures: 1, consecutiveSuccesses: 0,
+      lastError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export type EdenRegion = 
   | 'us-east-1'      // New York - Primary Eden
   | 'us-west-2'      // AWS us-west (backup)
@@ -289,6 +362,14 @@ export class AlchemyProvider {
   private apiKey: string;
   private latencyHistory: number[] = [];
   private readonly MAX_LATENCY_SAMPLES = 100;
+  private wsState: RpcProviderState = 'unconfigured';
+  private wsFailureCount = 0;
+  private wsReconnectTimer: NodeJS.Timeout | null = null;
+  private wsReconnecting = false;
+  private blockSubscriptions: Array<(blockNumber: number) => void> = [];
+  private pendingSubscriptions: Array<(txHash: string) => void> = [];
+  private blockPollingTimer: NodeJS.Timeout | null = null;
+  private wsSocket: { on?: (event: string, listener: (...args: any[]) => void) => void; removeAllListeners?: () => void; close?: () => void; terminate?: () => void } | null = null;
 
   constructor(config: BlockchainProviderConfig) {
     this.chain = config.chain;
@@ -308,6 +389,10 @@ export class AlchemyProvider {
    * Initialize HTTP and WebSocket providers
    */
   async initialize(): Promise<void> {
+    if (!this.apiKey) {
+      this.wsState = 'unconfigured';
+      throw new Error(`ALCHEMY_API_KEY is required for ${this.chain} Alchemy access`);
+    }
     const httpUrl = `${ALCHEMY_ENDPOINTS[this.chain][this.region]}/${this.apiKey}`;
     const wsUrl = `${ALCHEMY_WS_ENDPOINTS[this.chain]}/${this.apiKey}`;
 
@@ -329,12 +414,13 @@ export class AlchemyProvider {
 
       // Initialize WebSocket for real-time data
       try {
-        this.wsProvider = new ethers.providers.WebSocketProvider(wsUrl);
+        await this.connectWebSocket(wsUrl);
         logger.info('Alchemy WebSocket provider initialized', {
           component: 'AlchemyProvider',
           chain: this.chain
         });
       } catch (wsError) {
+        this.wsState = 'degraded';
         logger.warn('WebSocket initialization failed, using HTTP only', {
           component: 'AlchemyProvider',
           error: wsError instanceof Error ? wsError.message : String(wsError)
@@ -348,6 +434,92 @@ export class AlchemyProvider {
       });
       throw error;
     }
+  }
+
+  private async connectWebSocket(wsUrl: string): Promise<void> {
+    this.wsState = 'connecting';
+    const provider = new ethers.providers.WebSocketProvider(wsUrl);
+    this.wsProvider = provider;
+    this.attachWebSocketGuards();
+    await provider.ready;
+    this.wsState = 'healthy';
+    if (this.blockPollingTimer) {
+      clearInterval(this.blockPollingTimer);
+      this.blockPollingTimer = null;
+    }
+    this.blockSubscriptions.forEach(callback => provider.on('block', callback));
+    this.pendingSubscriptions.forEach(callback => provider.on('pending', callback));
+  }
+
+  private attachWebSocketGuards(): void {
+    const socket = (this.wsProvider as any)?._websocket;
+    if (!socket || typeof socket.on !== 'function') {
+      this.wsState = 'degraded';
+      return;
+    }
+    this.wsSocket = socket;
+    attachWebSocketTransportGuards(socket, {
+      onOpen: () => {
+      this.wsState = 'healthy';
+      this.wsFailureCount = 0;
+      },
+      onFailure: (error: unknown) => {
+      this.wsFailureCount++;
+      this.wsState = 'degraded';
+      logger.warn('Alchemy WebSocket transport degraded; HTTP remains available', {
+        component: 'AlchemyProvider', chain: this.chain,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.destroyFailedWebSocket();
+      this.startBlockPolling();
+      this.scheduleWebSocketReconnect();
+      },
+      onClose: () => {
+      if (this.wsState !== 'shutting_down') {
+        this.wsState = 'degraded';
+        this.scheduleWebSocketReconnect();
+      }
+      },
+    });
+  }
+
+  private scheduleWebSocketReconnect(): void {
+    if (this.wsReconnectTimer || this.wsReconnecting || this.wsState === 'shutting_down') return;
+    this.wsReconnectTimer = setTimeout(async () => {
+      this.wsReconnectTimer = null;
+      this.wsReconnecting = true;
+      try {
+        await this.connectWebSocket(`${ALCHEMY_WS_ENDPOINTS[this.chain]}/${this.apiKey}`);
+      } catch (error) {
+        this.wsState = 'degraded';
+        logger.warn('Alchemy WebSocket reconnect failed; HTTP remains available', {
+          component: 'AlchemyProvider', chain: this.chain,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        this.scheduleWebSocketReconnect();
+      } finally {
+        this.wsReconnecting = false;
+      }
+    }, Math.max(1000, Number(process.env.ALCHEMY_WS_RECONNECT_DELAY_MS || 5000)));
+  }
+
+  private destroyFailedWebSocket(): void {
+    const socket = this.wsSocket;
+    if (!socket) return;
+    try { socket.removeAllListeners?.(); } catch { /* transport cleanup is best effort */ }
+    try { socket.terminate?.(); } catch { try { socket.close?.(); } catch { /* already closed */ } }
+    this.wsSocket = null;
+    this.wsProvider?.removeAllListeners();
+    this.wsProvider = null;
+  }
+
+  getHealth(): RpcHealthObservation {
+    return {
+      provider: 'Alchemy', chain: this.chain, transport: 'websocket', state: this.wsState,
+      success: this.wsState === 'healthy', latencyMs: this.getAverageLatency() || null,
+      observedAt: Date.now(), consecutiveFailures: this.wsFailureCount,
+      consecutiveSuccesses: this.wsState === 'healthy' ? 1 : 0,
+    };
   }
 
   /**
@@ -477,25 +649,29 @@ export class AlchemyProvider {
    * Subscribe to new blocks (WebSocket)
    */
   onBlock(callback: (blockNumber: number) => void): void {
+    this.blockSubscriptions.push(callback);
     if (this.wsProvider) {
       this.wsProvider.on('block', callback);
-    } else {
-      // Fallback to polling
-      setInterval(async () => {
-        try {
-          const blockNumber = await this.getBlockNumber();
-          callback(blockNumber);
-        } catch (error) {
-          logger.error('Block polling error', { component: 'AlchemyProvider', error });
-        }
-      }, 2000); // Poll every 2 seconds
-    }
+    } else this.startBlockPolling();
+  }
+
+  private startBlockPolling(): void {
+    if (this.blockPollingTimer) return;
+    this.blockPollingTimer = setInterval(async () => {
+      try {
+        const blockNumber = await this.getBlockNumber();
+        this.blockSubscriptions.forEach(callback => callback(blockNumber));
+      } catch (error) {
+        logger.warn('Alchemy HTTP block polling degraded', { component: 'AlchemyProvider', error });
+      }
+    }, 2000);
   }
 
   /**
    * Subscribe to pending transactions (WebSocket)
    */
   onPendingTransaction(callback: (txHash: string) => void): void {
+    this.pendingSubscriptions.push(callback);
     if (this.wsProvider) {
       this.wsProvider.on('pending', callback);
     }
@@ -563,10 +739,23 @@ export class AlchemyProvider {
    * Cleanup resources
    */
   async destroy(): Promise<void> {
+    this.wsState = 'shutting_down';
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
+    if (this.blockPollingTimer) {
+      clearInterval(this.blockPollingTimer);
+      this.blockPollingTimer = null;
+    }
+    this.wsReconnecting = false;
+    this.destroyFailedWebSocket();
     if (this.wsProvider) {
       // ethers v5 doesn't have destroy method, use removeAllListeners
       this.wsProvider.removeAllListeners();
     }
+    this.blockSubscriptions = [];
+    this.pendingSubscriptions = [];
   }
 }
 
@@ -914,13 +1103,28 @@ export class BlockchainAPIService {
 
     for (const chain of chains) {
       // Initialize Alchemy (access layer)
-      const alchemyProvider = new AlchemyProvider({
-        chain,
-        alchemyApiKey: process.env.ALCHEMY_API_KEY,
-        region: (process.env.EDEN_REGION as EdenRegion) || 'us-east-1'
-      });
-      await alchemyProvider.initialize();
-      this.alchemyProviders.set(chain, alchemyProvider);
+      if (process.env.ALCHEMY_API_KEY?.trim()) {
+        const alchemyProvider = new AlchemyProvider({
+          chain,
+          alchemyApiKey: process.env.ALCHEMY_API_KEY,
+          region: (process.env.EDEN_REGION as EdenRegion) || 'us-east-1'
+        });
+        try {
+          await alchemyProvider.initialize();
+          this.alchemyProviders.set(chain, alchemyProvider);
+        } catch (error) {
+          logger.warn('Alchemy unavailable; continuing with independent provider paths', {
+            component: 'BlockchainAPIService',
+            chain,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          await alchemyProvider.destroy();
+        }
+      } else {
+        logger.info('Alchemy is unconfigured; continuing without Alchemy access layer', {
+          component: 'BlockchainAPIService', chain,
+        });
+      }
 
       // Initialize Etherscan (data layer)
       const etherscanProvider = new EtherscanProvider({
@@ -969,7 +1173,8 @@ export class BlockchainAPIService {
     Array.from(this.alchemyProviders.entries()).forEach(([chain, provider]) => {
       stats[`alchemy_${chain}`] = {
         rateLimitStats: provider.getRateLimitStats(),
-        avgLatency: provider.getAverageLatency()
+        avgLatency: provider.getAverageLatency(),
+        health: provider.getHealth(),
       };
     });
 

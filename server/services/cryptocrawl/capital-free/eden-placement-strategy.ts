@@ -5,9 +5,9 @@
 import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
+import { probeRpcEndpoint, type RpcProviderState } from '../api/blockchain-providers.js';
 
 // Configuration constants
-const HEALTH_CHECK_FAILURE_RATE = 0.05; // 5% simulated failure rate
 const HEALTH_CHECK_INTERVAL_MS = 30000; // 30 seconds
 export interface NodePlacement {
   id: string;
@@ -19,6 +19,11 @@ export interface NodePlacement {
   priority: number; // 1-10
   isActive: boolean;
   lastHealthCheck: number;
+  state?: RpcProviderState;
+  consecutiveFailures?: number;
+  consecutiveSuccesses?: number;
+  lastError?: string;
+  transport?: 'http' | 'websocket';
 }
 
 export interface PlacementCluster {
@@ -105,6 +110,28 @@ export class EdenPlacementStrategy {
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
 
+  private getRpcEndpoint(placement: NodePlacement): string | undefined {
+    if (placement.type !== 'rpc_endpoint') return undefined;
+    const chain = placement.chain;
+    const provider = placement.provider.toLowerCase();
+    if (provider === 'alchemy') {
+      const key = process.env.ALCHEMY_API_KEY?.trim();
+      return key ? `https://${chain === 'ethereum' ? 'eth' : chain === 'polygon' ? 'polygon' : chain === 'arbitrum' ? 'arb' : chain === 'optimism' ? 'opt' : chain === 'avalanche' ? 'avax' : 'bsc'}-mainnet.g.alchemy.com/v2/${key}` : undefined;
+    }
+    if (provider === 'infura') {
+      const key = process.env.INFURA_API_KEY?.trim();
+      return key ? `https://${chain === 'ethereum' ? 'mainnet' : chain}.infura.io/v3/${key}` : undefined;
+    }
+    if (provider === 'quicknode') return process.env[`${chain.toUpperCase()}_QUICKNODE_RPC_URL`]?.trim() || process.env.QUICKNODE_RPC_URL?.trim();
+    if (provider === 'ankr') {
+      const key = process.env.ANKR_API_KEY?.trim();
+      return key ? `https://rpc.ankr.com/${chain}/${key}` : undefined;
+    }
+    const configured = process.env[`${chain.toUpperCase()}_RPC_URL`]?.trim();
+    if (configured && ['binance', 'public'].includes(provider)) return configured;
+    return undefined;
+  }
+
   constructor() {
     this.initializePlacements();
     
@@ -146,6 +173,9 @@ export class EdenPlacementStrategy {
       });
     }, HEALTH_CHECK_INTERVAL_MS); // Every 30 seconds
 
+    // Establish measured provider state before exposing any placement.
+    await this.performHealthChecks();
+
     // Create initial clusters
     await this.createOptimalClusters();
 
@@ -168,7 +198,7 @@ export class EdenPlacementStrategy {
    * Create optimal clusters for each chain
    */
   private async createOptimalClusters(): Promise<void> {
-    const chains: ChainId[] = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
+    const chains: ChainId[] = ['ethereum', 'polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
 
     for (const chain of chains) {
       const chainNodes = Array.from(this.placements.values())
@@ -272,8 +302,23 @@ export class EdenPlacementStrategy {
     const now = Date.now();
 
     for (const [id, placement] of this.placements) {
-      // Simulate health check (in production, would ping actual endpoints)
-      const isHealthy = Math.random() > HEALTH_CHECK_FAILURE_RATE; // 95% uptime
+      if (placement.type !== 'rpc_endpoint') continue;
+      const endpoint = this.getRpcEndpoint(placement);
+      if (!endpoint) {
+        placement.isActive = false;
+        placement.state = 'unconfigured';
+        placement.lastHealthCheck = now;
+        continue;
+      }
+      const observation = await probeRpcEndpoint(placement.provider, placement.chain as any, endpoint);
+      placement.lastHealthCheck = observation.observedAt;
+      placement.latency = observation.latencyMs ?? placement.latency;
+      placement.state = observation.success ? 'healthy' : 'degraded';
+      placement.transport = observation.transport;
+      placement.consecutiveFailures = observation.success ? 0 : (placement.consecutiveFailures || 0) + 1;
+      placement.consecutiveSuccesses = observation.success ? (placement.consecutiveSuccesses || 0) + 1 : 0;
+      placement.lastError = observation.lastError;
+      const isHealthy = observation.success;
       
       if (!isHealthy && placement.isActive) {
         placement.isActive = false;
@@ -291,9 +336,6 @@ export class EdenPlacementStrategy {
         });
       }
 
-      // Update latency with some variance
-      placement.latency = Math.max(10, placement.latency * (0.95 + Math.random() * 0.1));
-      placement.lastHealthCheck = now;
     }
 
     // Rebuild clusters after health check
