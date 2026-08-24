@@ -15,6 +15,7 @@
  */
 
 import { ethers, BigNumber } from 'ethers';
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
 // ============================================
 // TYPES & INTERFACES
@@ -82,15 +83,14 @@ export interface GasEstimate {
 // CHAIN CONFIGURATIONS
 // ============================================
 
-const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || '';
 const GAS_POLICY_ID = process.env.ALCHEMY_GAS_POLICY_ID || '';
 
 export const SUPPORTED_CHAINS: ChainConfig[] = [
   {
     chainId: 137,
     name: 'polygon',
-    rpcUrl: `https://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
-    wsUrl: `wss://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
+    rpcUrl: process.env.POLYGON_RPC_URL || '',
+    wsUrl: process.env.POLYGON_WS_URL || '',
     nativeToken: 'MATIC',
     gasToken: 'MATIC',
     sponsorshipEnabled: true
@@ -98,8 +98,8 @@ export const SUPPORTED_CHAINS: ChainConfig[] = [
   {
     chainId: 42161,
     name: 'arbitrum',
-    rpcUrl: `https://arb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
-    wsUrl: `wss://arb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
+    rpcUrl: process.env.ARBITRUM_RPC_URL || '',
+    wsUrl: process.env.ARBITRUM_WS_URL || '',
     nativeToken: 'ETH',
     gasToken: 'ETH',
     sponsorshipEnabled: true
@@ -107,8 +107,8 @@ export const SUPPORTED_CHAINS: ChainConfig[] = [
   {
     chainId: 43114,
     name: 'avalanche',
-    rpcUrl: `https://avax-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
-    wsUrl: `wss://avax-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
+    rpcUrl: process.env.AVALANCHE_RPC_URL || '',
+    wsUrl: process.env.AVALANCHE_WS_URL || '',
     nativeToken: 'AVAX',
     gasToken: 'AVAX',
     sponsorshipEnabled: true
@@ -116,8 +116,8 @@ export const SUPPORTED_CHAINS: ChainConfig[] = [
   {
     chainId: 56,
     name: 'bsc',
-    rpcUrl: `https://bnb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
-    wsUrl: `wss://bnb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
+    rpcUrl: process.env.BSC_RPC_URL || '',
+    wsUrl: process.env.BSC_WS_URL || '',
     nativeToken: 'BNB',
     gasToken: 'BNB',
     sponsorshipEnabled: true
@@ -152,17 +152,18 @@ export async function getGasPrice(chainId: number): Promise<GasPriceData | null>
   if (!chain) return null;
 
   try {
-    const provider = new ethers.providers.JsonRpcProvider(chain.rpcUrl);
-    const feeData = await provider.getFeeData();
-    const block = await provider.getBlock('latest');
+    const { result } = await multiProviderRpcManager.execute(chain.name as any, 'gas', async provider => {
+      const [feeData, block] = await Promise.all([provider.getFeeData(), provider.getBlock('latest')]);
+      return { feeData, block };
+    });
 
     const data: GasPriceData = {
       chainId,
-      baseFee: feeData.gasPrice || BigNumber.from(0),
-      priorityFee: feeData.maxPriorityFeePerGas || BigNumber.from(0),
-      maxFee: feeData.maxFeePerGas || BigNumber.from(0),
+      baseFee: result.feeData.gasPrice || BigNumber.from(0),
+      priorityFee: result.feeData.maxPriorityFeePerGas || BigNumber.from(0),
+      maxFee: result.feeData.maxFeePerGas || BigNumber.from(0),
       timestamp: Date.now(),
-      blockNumber: block?.number || 0
+      blockNumber: result.block?.number || 0
     };
 
     gasPriceCache.set(chainId, data);
@@ -242,14 +243,8 @@ export class GasSponsorshipManager {
       throw new Error(`Chain ${chainId} not supported`);
     }
 
-    const provider = new ethers.providers.JsonRpcProvider(chain.rpcUrl);
-    
     // Estimate gas limit
-    const gasLimit = await provider.estimateGas({
-      to,
-      data,
-      value
-    });
+    const { result: gasLimit } = await multiProviderRpcManager.execute(chain.name as any, 'contract_calls', provider => provider.estimateGas({ to, data, value }));
 
     // Get current gas prices
     const gasPrice = await getGasPrice(chainId);

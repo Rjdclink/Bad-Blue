@@ -1,13 +1,12 @@
-import { ethers, providers } from 'ethers';
+import { ethers } from 'ethers';
 import { ChainId, GasPrice } from './types';
 import { SUPPORTED_CHAINS, FALLBACK_PRICES, DEFAULT_GAS_LIMIT } from './chain-config';
 import { coinGeckoPriceClient } from './coingecko-client';
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
-const { JsonRpcProvider } = providers;
 const { formatUnits, formatEther } = ethers.utils;
 
 class GasOracle {
-  private providers: Map<ChainId, providers.JsonRpcProvider> = new Map();
   private gasPrices: Map<ChainId, GasPrice> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
   private nativePrices: Map<string, number> = new Map();
@@ -18,15 +17,8 @@ class GasOracle {
     console.log('[GasOracle] Created (inactive - waiting for manual start)');
   }
 
-  private initializeProviders(): void {
-    Object.entries(SUPPORTED_CHAINS).forEach(([chainId, config]) => {
-      try {
-        const provider = new JsonRpcProvider(config.rpcUrl);
-        this.providers.set(chainId as ChainId, provider);
-      } catch (error) {
-        console.error(`Failed to initialize provider for ${chainId}:`, error);
-      }
-    });
+  private async initializeProviders(): Promise<void> {
+    await multiProviderRpcManager.initialize(Object.keys(SUPPORTED_CHAINS) as ChainId[]);
   }
 
   private async updateNativePrices(): Promise<void> {
@@ -70,17 +62,12 @@ class GasOracle {
     try {
       // Lazy provider initialization so callers don't have to remember to call start().
       // This keeps the faucet/arbitrage verifier deterministic and avoids a "null cheapest chain" trap.
-      if (this.providers.size === 0) {
-        this.initializeProviders();
-      }
-
-      const provider = this.providers.get(chain);
-      if (!provider) throw new Error(`Provider not initialized for ${chain}`);
+      await this.initializeProviders();
 
       await this.updateNativePrices();
 
       const config = SUPPORTED_CHAINS[chain];
-      const feeData = await provider.getFeeData();
+      const { result: feeData, provenance } = await multiProviderRpcManager.execute(chain, 'gas', provider => provider.getFeeData());
       
       // Use maxFeePerGas if available (EIP-1559), otherwise use gasPrice
       const gasPriceWei = feeData.maxFeePerGas || feeData.gasPrice || ethers.BigNumber.from(0);
@@ -99,7 +86,8 @@ class GasOracle {
         gweiPrice,
         usdCost,
         congestionLevel,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        provenance,
       };
 
       this.gasPrices.set(chain, gasPrice);
@@ -107,23 +95,18 @@ class GasOracle {
     } catch (error) {
       console.error(`Error fetching gas price for ${chain}:`, error);
       
-      // Return cached data if available
-      if (this.gasPrices.has(chain)) {
-        return this.gasPrices.get(chain)!;
-      }
-
-      // An unavailable estimate must not be interpreted as free gas.
+      // An unavailable estimate must not be represented by stale or free gas.
       throw error;
     }
   }
 
   async checkChainConnectivity(chain: ChainId): Promise<boolean> {
     try {
-      if (this.providers.size === 0) this.initializeProviders();
-      const provider = this.providers.get(chain);
-      if (!provider) return false;
-      await provider.getNetwork();
-      await provider.getBlockNumber();
+      await this.initializeProviders();
+      await multiProviderRpcManager.execute(chain, 'network', async provider => {
+        await provider.getNetwork();
+        await provider.getBlockNumber();
+      });
       return true;
     } catch {
       return false;
@@ -162,7 +145,7 @@ class GasOracle {
     const startNonce = Date.now();
     
     // Initialize providers
-    this.initializeProviders();
+    await this.initializeProviders();
     
     // Do initial update
     await this.updateAllGasPrices();

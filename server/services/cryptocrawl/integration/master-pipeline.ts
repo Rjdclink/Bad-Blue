@@ -21,8 +21,7 @@ import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-p
 import { PER_CHAIN_RISK } from '../config/perChainRisk.js';
 import { TradingViewEngine } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
-
-const { JsonRpcProvider } = providers;
+import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 
 type ConnectorReadiness = {
   networkHealth: { ready: boolean; detail: string };
@@ -94,15 +93,6 @@ class MasterPipeline {
     return process.env.CRYPTO_REQUIRE_LIVE_CONNECTORS === 'true' || process.env.NODE_ENV === 'production';
   }
 
-  private resolvePrimaryRpcUrl(): string {
-    return (
-      process.env.PRIVATE_RPC_URL ||
-      process.env.RPC_URL ||
-      process.env.ETHEREUM_RPC_URL ||
-      (process.env.ALCHEMY_API_KEY ? `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}` : '')
-    );
-  }
-
   private hasLiveWalletSigner(): boolean {
     return !!process.env.WALLET_PRIVATE_KEY?.trim();
   }
@@ -140,20 +130,12 @@ class MasterPipeline {
       this.wallet = new Wallet(process.env.WALLET_PRIVATE_KEY);
     }
 
-    // Known working public RPC endpoints by chain
-    const defaultRpcUrls: Record<string, string> = {
-      polygon: 'https://polygon-rpc.com',
-      bsc: 'https://bsc-dataseed.binance.org',
-      avalanche: 'https://api.avax.network/ext/bc/C/rpc',
-      arbitrum: 'https://arb1.arbitrum.io/rpc',
-      optimism: 'https://mainnet.optimism.io'
-    };
-
     // Initialize providers for supported chains
-    const chains = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
+    const chains: SupportedChain[] = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
+    await multiProviderRpcManager.initialize(['ethereum', ...chains]);
     for (const chain of chains) {
-      const rpcUrl = process.env[`${chain.toUpperCase()}_RPC_URL`] || defaultRpcUrls[chain];
-      this.providers.set(chain, new JsonRpcProvider(rpcUrl));
+      const operationalProvider = await multiProviderRpcManager.getProvider(chain, 'json_rpc');
+      this.providers.set(chain, operationalProvider.http);
     }
 
     // Initialize stealth system if wallet is available
@@ -319,7 +301,7 @@ class MasterPipeline {
       }
 
       const directive = cryptara.getAutonomousDirective();
-      const rpcReady = this.resolvePrimaryRpcUrl().trim().length > 0;
+      const rpcReady = multiProviderRpcManager.getHealth('ethereum').some(observation => observation.http.success);
       const walletReady = this.hasLiveWalletSigner();
       const centralizedExchangeReady = this.hasCentralizedExchangeCredentials();
       const sharedExecution = getSharedExecutionCapabilities();
@@ -358,10 +340,10 @@ class MasterPipeline {
 
       if (!alchemyReadiness.ready) {
         issues.push({
-          id: 'alchemy-live',
-          severity: strictConnectors ? 'block' : 'warn',
+          id: 'alchemy-enhanced-telemetry',
+          severity: 'warn',
           detail: alchemyReadiness.detail,
-          remediation: 'Set a valid ALCHEMY_API_KEY and confirm network probe success on the target chain.',
+          remediation: 'Configure ALCHEMY_API_KEY if Alchemy-specific enhanced telemetry is required; shared RPC providers remain eligible.',
         });
       }
 
@@ -369,8 +351,8 @@ class MasterPipeline {
         issues.push({
           id: 'cryptara-live-stack',
           severity: strictConnectors ? 'block' : 'warn',
-          detail: `Cryptara live signal stack degraded: ${cryptaraReadiness.tradingView.detail}; ${cryptaraReadiness.alchemy.detail}`,
-          remediation: 'Require live TradingView and Alchemy readiness before production deployment.',
+          detail: `Cryptara live signal stack degraded: ${cryptaraReadiness.tradingView.detail}; ${cryptaraReadiness.rpc.detail}`,
+          remediation: 'Require live TradingView and at least one chain-verified shared RPC provider before production deployment.',
         });
       }
 
@@ -379,7 +361,7 @@ class MasterPipeline {
           id: 'rpc-connector',
           severity: 'block',
           detail: 'No primary RPC URL is configured for realtime stream or execution.',
-          remediation: 'Set PRIVATE_RPC_URL, RPC_URL, or ETHEREUM_RPC_URL before enabling production execution.',
+          remediation: 'Configure at least one chain-verified RPC provider before enabling production execution.',
         });
       }
 
@@ -603,13 +585,8 @@ class MasterPipeline {
 
     try {
       // Initialize realtime data stream
-      const realtimeRpcUrl = this.resolvePrimaryRpcUrl();
-      if (!realtimeRpcUrl) {
-        throw new Error('Realtime crypto stream requires PRIVATE_RPC_URL, RPC_URL, ETHEREUM_RPC_URL, or a configured ALCHEMY_API_KEY');
-      }
-
       this.realtimeStream = new RealtimeDataStream({
-        httpUrl: realtimeRpcUrl,
+        chain: 'ethereum',
       });
 
       await this.realtimeStream.initialize();

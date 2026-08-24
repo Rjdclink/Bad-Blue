@@ -1,11 +1,9 @@
-import { ethers, providers } from 'ethers';
+import { providers } from 'ethers';
 import { ChainId, NetworkHealth } from './types';
 import { SUPPORTED_CHAINS, NETWORK_HEALTH_THRESHOLD_MS } from './chain-config';
-
-const { JsonRpcProvider } = providers;
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
 class NetworkHealthMonitor {
-  private providers: Map<ChainId, providers.JsonRpcProvider> = new Map();
   private healthStatus: Map<ChainId, NetworkHealth> = new Map();
   private inFlightChecks: Map<ChainId, Promise<NetworkHealth>> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
@@ -17,15 +15,8 @@ class NetworkHealthMonitor {
     console.log('[NetworkHealth] Created (inactive - waiting for manual start)');
   }
 
-  private initializeProviders(): void {
-    Object.entries(SUPPORTED_CHAINS).forEach(([chainId, config]) => {
-      try {
-        const provider = new JsonRpcProvider(config.rpcUrl);
-        this.providers.set(chainId as ChainId, provider);
-      } catch (error) {
-        console.error(`Failed to initialize provider for ${chainId}:`, error);
-      }
-    });
+  private async initializeProviders(): Promise<void> {
+    await multiProviderRpcManager.initialize(Object.keys(SUPPORTED_CHAINS) as ChainId[]);
   }
 
   async checkNetwork(chain: ChainId): Promise<NetworkHealth> {
@@ -41,15 +32,10 @@ class NetworkHealthMonitor {
 
     const checkPromise = (async () => {
       try {
-        const provider = this.providers.get(chain);
-        if (!provider) {
-          throw new Error(`Provider not initialized for ${chain}`);
-        }
-
         const startTime = Date.now();
 
         // Get block height to check connectivity
-        const blockHeight = await provider.getBlockNumber();
+        const { result: blockHeight, provenance } = await multiProviderRpcManager.execute(chain, 'blocks', provider => provider.getBlockNumber());
 
         const latency = Date.now() - startTime;
 
@@ -61,7 +47,8 @@ class NetworkHealthMonitor {
           latency,
           blockHeight,
           isHealthy,
-          lastUpdate: Date.now()
+          lastUpdate: Date.now(),
+          provenance,
         };
 
         this.healthStatus.set(chain, health);
@@ -143,7 +130,7 @@ class NetworkHealthMonitor {
     this.running = true;
     
     // Initialize providers
-    this.initializeProviders();
+    await this.initializeProviders();
     
     // Do initial health check
     await this.checkAllNetworks();

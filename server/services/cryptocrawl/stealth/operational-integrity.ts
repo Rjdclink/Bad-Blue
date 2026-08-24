@@ -6,8 +6,7 @@ import { providers } from 'ethers';
 import { AsyncMutex } from './async-mutex';
 import type { Opportunity } from '../core/lux-swarm';
 import type { ExecutionResult, ProviderConfig } from './types';
-
-const { JsonRpcProvider } = providers;
+import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 
 interface NonceState {
   current: number;
@@ -63,16 +62,19 @@ export class OperationalIntegrity {
       });
     });
 
-    // Add public fallback
-    providers.push({
-      name: 'fallback',
-      url: this.getPublicRpcUrl(chain),
-      priority: 99,
-      lastSuccess: Date.now(),
-      failureCount: 0
-    });
-
     this.providers.set(chain, providers);
+    if (!['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'avalanche', 'bsc'].includes(chain)) {
+      throw new Error(`Unsupported shared RPC chain: ${chain}`);
+    }
+    await multiProviderRpcManager.initialize([chain as SupportedChain]);
+    for (const provider of providers) {
+      await multiProviderRpcManager.registerProvider({
+        provider: `Stealth-${provider.name}`,
+        chain: chain as SupportedChain,
+        httpUrl: provider.url,
+        priority: provider.priority,
+      });
+    }
     console.log(`[STEALTH] Initialized ${providers.length} providers for ${chain}`);
   }
 
@@ -116,61 +118,15 @@ export class OperationalIntegrity {
     chain: string,
     executeFn: (provider: providers.JsonRpcProvider) => Promise<ExecutionResult>
   ): Promise<ExecutionResult> {
-    const providers = this.providers.get(chain);
-    if (!providers || providers.length === 0) {
-      return {
-        success: false,
-        latency: 0,
-        error: 'No providers configured'
-      };
+    if (!this.providers.has(chain) || this.providers.get(chain)!.length === 0) {
+      return { success: false, latency: 0, error: 'No providers configured' };
     }
-
-    // Sort by priority and recent success
-    const sortedProviders = [...providers].sort((a, b) => {
-      // Prioritize by success (no recent failures) then by priority
-      const aScore = a.failureCount > 2 ? 1000 : a.priority;
-      const bScore = b.failureCount > 2 ? 1000 : b.priority;
-      return aScore - bScore;
-    });
-
-    let lastError = '';
-
-    // Try each provider in order
-    for (const providerConfig of sortedProviders) {
-      try {
-        console.log(`[STEALTH] Attempting execution via ${providerConfig.name}`);
-        
-        const provider = new JsonRpcProvider(providerConfig.url);
-        const result = await executeFn(provider);
-
-        if (result.success) {
-          // Mark success
-          providerConfig.lastSuccess = Date.now();
-          providerConfig.failureCount = 0;
-          
-          console.log(`[STEALTH] Execution succeeded via ${providerConfig.name}`);
-          return result;
-        }
-
-        lastError = result.error || 'Unknown error';
-        providerConfig.failureCount++;
-        
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : 'Provider failed';
-        providerConfig.failureCount++;
-        console.log(`[STEALTH] Provider ${providerConfig.name} failed, trying next...`);
-      }
-
-      // Small delay before trying next provider
-      await new Promise(resolve => setTimeout(resolve, 100));
+    try {
+      const { result } = await multiProviderRpcManager.execute(chain as SupportedChain, 'json_rpc', executeFn);
+      return result;
+    } catch (error) {
+      return { success: false, latency: 0, error: error instanceof Error ? error.message : 'Provider failed' };
     }
-
-    // All providers failed
-    return {
-      success: false,
-      latency: 0,
-      error: `All providers failed. Last error: ${lastError}`
-    };
   }
 
   /**
@@ -244,32 +200,16 @@ export class OperationalIntegrity {
     chain: string,
     onBlock: (blockNumber: number) => void
   ): Promise<void> {
-    const providers = this.providers.get(chain);
-    if (!providers || providers.length === 0) {
+    if (!this.providers.has(chain) || this.providers.get(chain)!.length === 0) {
       console.log(`[STEALTH] No providers for ${chain}, cannot maintain ingestion`);
       return;
     }
-
-    // Create redundant block listeners on multiple providers
-    const subscriptions: any[] = [];
-
-    for (const providerConfig of providers.slice(0, 3)) { // Use top 3 providers
-      try {
-        const provider = new JsonRpcProvider(providerConfig.url);
-        
-        // Subscribe to new blocks
-        provider.on('block', (blockNumber: number) => {
-          onBlock(blockNumber);
-        });
-
-        subscriptions.push({ provider, config: providerConfig });
-        console.log(`[STEALTH] Block listener established on ${providerConfig.name}`);
-      } catch (error) {
-        console.log(`[STEALTH] Failed to establish listener on ${providerConfig.name}`);
-      }
-    }
-
-    this.blockSubscriptions.set(chain, subscriptions);
+    if (!['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'avalanche', 'bsc'].includes(chain)) return;
+    await multiProviderRpcManager.initialize([chain as SupportedChain]);
+    const subscription = await multiProviderRpcManager.subscribe(chain as SupportedChain, 'blocks', value => {
+      if (typeof value === 'number') onBlock(value);
+    });
+    this.blockSubscriptions.set(chain, [{ provider: null, config: this.providers.get(chain)![0], subscription }]);
     
     // Monitor subscriptions health
     this.monitorSubscriptions(chain);
@@ -331,20 +271,6 @@ export class OperationalIntegrity {
     // Simplified strategy evaluation
     // In production, would call strategy.shouldExecute(opportunity)
     return opportunity.profitEstimate > 10;
-  }
-
-  /**
-   * Get public RPC URL for chain
-   */
-  private getPublicRpcUrl(chain: string): string {
-    const publicRpcs: Record<string, string> = {
-      polygon: 'https://polygon-rpc.com',
-      bsc: 'https://bsc-dataseed.binance.org',
-      avalanche: 'https://api.avax.network/ext/bc/C/rpc',
-      arbitrum: 'https://arb1.arbitrum.io/rpc',
-      optimism: 'https://mainnet.optimism.io'
-    };
-    return publicRpcs[chain] || 'https://eth.llamarpc.com';
   }
 
   /**

@@ -5,7 +5,7 @@
 import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
-import { probeRpcEndpoint, type RpcProviderState } from '../api/blockchain-providers.js';
+import { multiProviderRpcManager, type RpcProviderState, type SupportedChain } from '../api/blockchain-providers.js';
 
 // Configuration constants
 const HEALTH_CHECK_INTERVAL_MS = 30000; // 30 seconds
@@ -110,28 +110,6 @@ export class EdenPlacementStrategy {
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
 
-  private getRpcEndpoint(placement: NodePlacement): string | undefined {
-    if (placement.type !== 'rpc_endpoint') return undefined;
-    const chain = placement.chain;
-    const provider = placement.provider.toLowerCase();
-    if (provider === 'alchemy') {
-      const key = process.env.ALCHEMY_API_KEY?.trim();
-      return key ? `https://${chain === 'ethereum' ? 'eth' : chain === 'polygon' ? 'polygon' : chain === 'arbitrum' ? 'arb' : chain === 'optimism' ? 'opt' : chain === 'avalanche' ? 'avax' : 'bsc'}-mainnet.g.alchemy.com/v2/${key}` : undefined;
-    }
-    if (provider === 'infura') {
-      const key = process.env.INFURA_API_KEY?.trim();
-      return key ? `https://${chain === 'ethereum' ? 'mainnet' : chain}.infura.io/v3/${key}` : undefined;
-    }
-    if (provider === 'quicknode') return process.env[`${chain.toUpperCase()}_QUICKNODE_RPC_URL`]?.trim() || process.env.QUICKNODE_RPC_URL?.trim();
-    if (provider === 'ankr') {
-      const key = process.env.ANKR_API_KEY?.trim();
-      return key ? `https://rpc.ankr.com/${chain}/${key}` : undefined;
-    }
-    const configured = process.env[`${chain.toUpperCase()}_RPC_URL`]?.trim();
-    if (configured && ['binance', 'public'].includes(provider)) return configured;
-    return undefined;
-  }
-
   constructor() {
     this.initializePlacements();
     
@@ -162,6 +140,8 @@ export class EdenPlacementStrategy {
     }
 
     this.isRunning = true;
+
+    await multiProviderRpcManager.initialize(['ethereum', 'polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism']);
 
     // Start health checks
     this.healthCheckInterval = setInterval(() => {
@@ -234,7 +214,7 @@ export class EdenPlacementStrategy {
    */
   getOptimalPlacement(chain: ChainId, type: NodePlacement['type']): NodePlacement | null {
     const candidates = Array.from(this.placements.values())
-      .filter(p => p.chain === chain && p.type === type && p.isActive)
+      .filter(p => p.chain === chain && p.type === type && p.isActive && (type !== 'rpc_endpoint' || p.state === 'healthy'))
       .sort((a, b) => {
         // Sort by priority (desc), then latency (asc)
         if (a.priority !== b.priority) return b.priority - a.priority;
@@ -249,6 +229,10 @@ export class EdenPlacementStrategy {
    */
   getFastestRPC(chain: ChainId): NodePlacement | null {
     return this.getOptimalPlacement(chain, 'rpc_endpoint');
+  }
+
+  async getOperationalRPC(chain: ChainId): Promise<ReturnType<typeof multiProviderRpcManager.getProvider>> {
+    return multiProviderRpcManager.getProvider(chain as SupportedChain, 'json_rpc');
   }
 
   /**
@@ -301,24 +285,54 @@ export class EdenPlacementStrategy {
   private async performHealthChecks(): Promise<void> {
     const now = Date.now();
 
+    await multiProviderRpcManager.initialize(['ethereum', 'polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism']);
+    const health = new Map(
+      multiProviderRpcManager.getHealth().map(observation => [`${observation.chain}:${observation.provider.toLowerCase()}`, observation]),
+    );
+
+    for (const observation of multiProviderRpcManager.getHealth()) {
+      const hasPlacement = Array.from(this.placements.values()).some(placement =>
+        placement.type === 'rpc_endpoint' && placement.chain === observation.chain &&
+        placement.provider.toLowerCase() === observation.provider.toLowerCase(),
+      );
+      if (!hasPlacement) {
+        const id = `operational-${observation.chain}-${observation.provider}`;
+        this.placements.set(id, {
+          id,
+          name: `${observation.provider} ${observation.chain}`,
+          chain: observation.chain,
+          type: 'rpc_endpoint',
+          provider: observation.provider,
+          latency: observation.http.latencyMs ?? 0,
+          priority: observation.provider === 'PublicRPC' || observation.provider === 'Binance' ? 1 : 6,
+          isActive: observation.http.state === 'healthy',
+          lastHealthCheck: observation.http.observedAt,
+          state: observation.http.state,
+          consecutiveFailures: observation.http.consecutiveFailures,
+          consecutiveSuccesses: observation.http.consecutiveSuccesses,
+          lastError: observation.http.lastError,
+          transport: 'http',
+        });
+      }
+    }
+
     for (const [id, placement] of this.placements) {
       if (placement.type !== 'rpc_endpoint') continue;
-      const endpoint = this.getRpcEndpoint(placement);
-      if (!endpoint) {
+      const observation = health.get(`${placement.chain}:${placement.provider.toLowerCase()}`)?.http;
+      if (!observation) {
         placement.isActive = false;
         placement.state = 'unconfigured';
         placement.lastHealthCheck = now;
         continue;
       }
-      const observation = await probeRpcEndpoint(placement.provider, placement.chain as any, endpoint);
       placement.lastHealthCheck = observation.observedAt;
       placement.latency = observation.latencyMs ?? placement.latency;
-      placement.state = observation.success ? 'healthy' : 'degraded';
+      placement.state = observation.state;
       placement.transport = observation.transport;
-      placement.consecutiveFailures = observation.success ? 0 : (placement.consecutiveFailures || 0) + 1;
-      placement.consecutiveSuccesses = observation.success ? (placement.consecutiveSuccesses || 0) + 1 : 0;
+      placement.consecutiveFailures = observation.consecutiveFailures;
+      placement.consecutiveSuccesses = observation.consecutiveSuccesses;
       placement.lastError = observation.lastError;
-      const isHealthy = observation.success;
+      const isHealthy = observation.state === 'healthy';
       
       if (!isHealthy && placement.isActive) {
         placement.isActive = false;

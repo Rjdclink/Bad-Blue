@@ -36,7 +36,7 @@ interface GasPrediction {
 
 class UltraLowLatencyExecutor {
   private wallet: Wallet | null = null;
-  private provider: providers.JsonRpcProvider;
+  private provider!: providers.JsonRpcProvider;
   private preSignedTxPool: PreSignedTx[] = [];
   private currentNonce: number = 0;
   private initialized = false;
@@ -50,7 +50,6 @@ class UltraLowLatencyExecutor {
     this.flashbotsUrl = process.env.FLASHBOTS_RPC || 'https://rpc.flashbots.net';
     this.bloxrouteUrl = process.env.BLOXROUTE_RPC || 'https://mev.api.bloxroute.com';
     
-    this.provider = new JsonRpcProvider();
   }
 
   async initialize(): Promise<void> {

@@ -1,9 +1,9 @@
-import { ethers, providers, Wallet, Contract } from 'ethers';
+import { ethers, Wallet, Contract } from 'ethers';
 import { ChainId } from './types';
 import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, DEFAULT_GAS_LIMIT, TOKEN_TRANSFER_GAS_LIMIT, NATIVE_TOKEN_PRICES } from './chain-config';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
-const { JsonRpcProvider } = providers;
 const { parseEther, parseUnits, formatEther, isAddress } = ethers.utils;
 
 export interface WithdrawRequest {
@@ -46,7 +46,8 @@ export class WithdrawDepositManager {
 
     for (const [chainId, config] of Object.entries(SUPPORTED_CHAINS)) {
       try {
-        const provider = new JsonRpcProvider(config.rpcUrl);
+        await multiProviderRpcManager.initialize([chainId as ChainId]);
+        const { http: provider } = await multiProviderRpcManager.getProvider(chainId as ChainId, 'json_rpc');
         const wallet = new Wallet(privateKey, provider);
         this.wallets.set(chainId as ChainId, wallet);
         console.log(`[WithdrawDepositManager] ✓ Wallet ready for ${config.name}`);

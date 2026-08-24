@@ -1,9 +1,9 @@
-import { ethers, providers, Contract } from 'ethers';
+import { ethers, Contract } from 'ethers';
 import { ChainId, TokenBalance } from './types';
 import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, FALLBACK_PRICES } from './chain-config';
 import { coinGeckoPriceClient } from './coingecko-client';
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
-const { JsonRpcProvider } = providers;
 const { formatEther, formatUnits } = ethers.utils;
 
 export interface VerifiedPortfolioValue {
@@ -14,7 +14,6 @@ export interface VerifiedPortfolioValue {
 }
 
 class BalanceMonitor {
-  private providers: Map<ChainId, providers.JsonRpcProvider> = new Map();
   private prices: Map<string, number> = new Map();
   private cache: Map<ChainId, TokenBalance> = new Map();
   private running: boolean = false;
@@ -24,15 +23,8 @@ class BalanceMonitor {
     console.log('[BalanceMonitor] Created (inactive - waiting for manual start)');
   }
 
-  private initializeProviders(): void {
-    Object.entries(SUPPORTED_CHAINS).forEach(([chainId, config]) => {
-      try {
-        const provider = new JsonRpcProvider(config.rpcUrl);
-        this.providers.set(chainId as ChainId, provider);
-      } catch (error) {
-        console.error(`Failed to initialize provider for ${chainId}:`, error);
-      }
-    });
+  private async initializeProviders(): Promise<void> {
+    await multiProviderRpcManager.initialize(Object.keys(SUPPORTED_CHAINS) as ChainId[]);
   }
 
   private async updatePrices(): Promise<void> {
@@ -58,42 +50,31 @@ class BalanceMonitor {
 
   async getBalance(chain: ChainId): Promise<TokenBalance> {
     try {
-      const provider = this.providers.get(chain);
-      if (!provider) {
-        throw new Error(`Provider not initialized for ${chain}`);
-      }
+      await this.initializeProviders();
 
       await this.updatePrices();
 
       const config = SUPPORTED_CHAINS[chain];
-      
-      // Get native balance
-      const nativeBalanceWei = await provider.getBalance(USER_WALLET);
-      const native = parseFloat(formatEther(nativeBalanceWei));
-      const nativePrice = this.prices.get(config.currency) || 0;
-      const nativeUsd = native * nativePrice;
-
-      // Get USDT balance
-      const usdtContract = new Contract(config.usdt, ERC20_ABI, provider);
-      const usdtBalanceRaw = await usdtContract.balanceOf(USER_WALLET);
-      const usdtDecimals = await usdtContract.decimals();
-      const usdt = parseFloat(formatUnits(usdtBalanceRaw, usdtDecimals));
-
-      // Get USDC balance
-      const usdcContract = new Contract(config.usdc, ERC20_ABI, provider);
-      const usdcBalanceRaw = await usdcContract.balanceOf(USER_WALLET);
-      const usdcDecimals = await usdcContract.decimals();
-      const usdc = parseFloat(formatUnits(usdcBalanceRaw, usdcDecimals));
-
-      const totalUsd = nativeUsd + usdt + usdc;
+      const { result: observedBalance, provenance } = await multiProviderRpcManager.execute(chain, 'contract_calls', async provider => {
+        const nativeBalanceWei = await provider.getBalance(USER_WALLET);
+        const native = parseFloat(formatEther(nativeBalanceWei));
+        const nativePrice = this.prices.get(config.currency) || 0;
+        const nativeUsd = native * nativePrice;
+        const usdtContract = new Contract(config.usdt, ERC20_ABI, provider);
+        const usdtBalanceRaw = await usdtContract.balanceOf(USER_WALLET);
+        const usdtDecimals = await usdtContract.decimals();
+        const usdt = parseFloat(formatUnits(usdtBalanceRaw, usdtDecimals));
+        const usdcContract = new Contract(config.usdc, ERC20_ABI, provider);
+        const usdcBalanceRaw = await usdcContract.balanceOf(USER_WALLET);
+        const usdcDecimals = await usdcContract.decimals();
+        const usdc = parseFloat(formatUnits(usdcBalanceRaw, usdcDecimals));
+        return { native, nativeUsd, usdt, usdc, totalUsd: nativeUsd + usdt + usdc };
+      });
 
       const balance: TokenBalance = {
         chain,
-        native,
-        nativeUsd,
-        usdt,
-        usdc,
-        totalUsd
+        ...observedBalance,
+        provenance,
       };
 
       this.cache.set(chain, balance);
@@ -101,20 +82,7 @@ class BalanceMonitor {
     } catch (error) {
       console.error(`Error fetching balance for ${chain}:`, error);
       
-      // Return cached data if available
-      if (this.cache.has(chain)) {
-        return this.cache.get(chain)!;
-      }
-
-      // Return zero balance on error
-      return {
-        chain,
-        native: 0,
-        nativeUsd: 0,
-        usdt: 0,
-        usdc: 0,
-        totalUsd: 0
-      };
+      throw error;
     }
   }
 
@@ -128,7 +96,7 @@ class BalanceMonitor {
 
   async getVerifiedPortfolioValue(): Promise<VerifiedPortfolioValue> {
     try {
-      if (this.providers.size === 0) this.initializeProviders();
+      await this.initializeProviders();
       const balances = await Promise.all(
         (['polygon', 'arbitrum', 'avalanche', 'bsc'] as ChainId[]).map(chain => this.getBalanceStrict(chain)),
       );
@@ -148,18 +116,19 @@ class BalanceMonitor {
   }
 
   private async getBalanceStrict(chain: ChainId): Promise<TokenBalance> {
-    const provider = this.providers.get(chain);
-    if (!provider) throw new Error(`Provider not initialized for ${chain}`);
+    await this.initializeProviders();
     await this.updatePrices();
     const config = SUPPORTED_CHAINS[chain];
-    const nativeBalanceWei = await provider.getBalance(USER_WALLET);
-    const native = parseFloat(formatEther(nativeBalanceWei));
-    const nativeUsd = native * (this.prices.get(config.currency) || 0);
-    const usdtContract = new Contract(config.usdt, ERC20_ABI, provider);
-    const usdt = parseFloat(formatUnits(await usdtContract.balanceOf(USER_WALLET), await usdtContract.decimals()));
-    const usdcContract = new Contract(config.usdc, ERC20_ABI, provider);
-    const usdc = parseFloat(formatUnits(await usdcContract.balanceOf(USER_WALLET), await usdcContract.decimals()));
-    return { chain, native, nativeUsd, usdt, usdc, totalUsd: nativeUsd + usdt + usdc };
+    const { result, provenance } = await multiProviderRpcManager.execute(chain, 'contract_calls', async provider => {
+      const native = parseFloat(formatEther(await provider.getBalance(USER_WALLET)));
+      const nativeUsd = native * (this.prices.get(config.currency) || 0);
+      const usdtContract = new Contract(config.usdt, ERC20_ABI, provider);
+      const usdt = parseFloat(formatUnits(await usdtContract.balanceOf(USER_WALLET), await usdtContract.decimals()));
+      const usdcContract = new Contract(config.usdc, ERC20_ABI, provider);
+      const usdc = parseFloat(formatUnits(await usdcContract.balanceOf(USER_WALLET), await usdcContract.decimals()));
+      return { native, nativeUsd, usdt, usdc, totalUsd: nativeUsd + usdt + usdc };
+    });
+    return { chain, ...result, provenance };
   }
 
   async getTotalPortfolioValue(): Promise<number> {
@@ -177,7 +146,7 @@ class BalanceMonitor {
     this.running = true;
     
     // Initialize providers
-    this.initializeProviders();
+    await this.initializeProviders();
     
     console.log('[BalanceMonitor] ✓ Started');
   }

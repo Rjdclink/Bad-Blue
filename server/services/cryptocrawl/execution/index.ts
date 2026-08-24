@@ -1,7 +1,7 @@
 import { MultiRelaySubmitter } from './multi-relay-submitter.js';
 import { FlashLoanAggregator } from './flash-loan-aggregator.js';
 import { UltraLowLatencyExecutor } from './ultra-low-latency-executor.js';
-import { Wallet, providers } from 'ethers';
+import { Wallet } from 'ethers';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { getCryptara, type CryptaraExecutionFeedback } from '../../cryptara/index.js';
@@ -11,6 +11,7 @@ import type { QuoteVenue, VerifiedArbitragePlan } from '../arbitrage/arbitrage-v
 import { buildOnchainPayloadFromPlan, type OnchainExecutionPlan } from './adapters/onchain-payload-builder.js';
 import { DexSettlementObserver, type DexSettlementPriceContext } from './dex-settlement-observer.js';
 import type { NormalizedRealizedExecution } from './settlement-types.js';
+import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 
 interface OpportunityData {
   to: string;
@@ -147,11 +148,6 @@ function resolveSettlementWalletAddress(explicitAddress?: string): string {
   return new Wallet(privateKey).address;
 }
 
-function resolveSettlementRpcUrl(chain: string): string {
-  const chainRpc = process.env[`${chain.toUpperCase()}_RPC_URL`]?.trim();
-  return chainRpc || process.env.PRIVATE_RPC_URL?.trim() || process.env.RPC_URL?.trim() || process.env.ETHEREUM_RPC_URL?.trim() || '';
-}
-
 async function observeDexSettlement(opp: Opportunity, txHash: string): Promise<{
   success: boolean;
   status: NonNullable<ExecutionResult['status']>;
@@ -163,11 +159,14 @@ async function observeDexSettlement(opp: Opportunity, txHash: string): Promise<{
     throw new Error('DEX settlement metadata is required to observe an on-chain execution');
   }
   const chain = normalizeChain(opp.chain);
-  const rpcUrl = resolveSettlementRpcUrl(chain);
-  if (!rpcUrl) throw new Error(`No RPC URL is configured for DEX settlement observation on ${chain}`);
+  if (!['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'avalanche', 'bsc'].includes(chain)) {
+    throw new Error(`Unsupported chain for DEX settlement observation: ${chain}`);
+  }
+  await multiProviderRpcManager.initialize([chain as SupportedChain]);
+  const { http: provider } = await multiProviderRpcManager.getProvider(chain as SupportedChain, 'receipts');
   const firstLeg = opp.onchainPlan?.legs[0];
   const settlement = opp.settlement || {};
-  const observer = new DexSettlementObserver(new providers.JsonRpcProvider(rpcUrl));
+  const observer = new DexSettlementObserver(provider);
   return observer.observe({
     txHash,
     chain,

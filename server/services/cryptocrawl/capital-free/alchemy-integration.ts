@@ -4,7 +4,7 @@
 
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
-import * as WebSocket from 'ws';
+import { multiProviderRpcManager, type LogicalSubscription, type SupportedChain } from '../api/blockchain-providers.js';
 
 // ============================================================================
 // CONFIGURATION
@@ -20,15 +20,6 @@ const ALCHEMY_CONFIG = {
     base: 'https://base-mainnet.g.alchemy.com/v2',
   },
   
-  // WebSocket endpoints
-  WS_ENDPOINTS: {
-    ethereum: 'wss://eth-mainnet.g.alchemy.com/v2',
-    polygon: 'wss://polygon-mainnet.g.alchemy.com/v2',
-    arbitrum: 'wss://arb-mainnet.g.alchemy.com/v2',
-    optimism: 'wss://opt-mainnet.g.alchemy.com/v2',
-    base: 'wss://base-mainnet.g.alchemy.com/v2',
-  },
-  
   // Rate limiting
   MAX_REQUESTS_PER_SECOND: Number(process.env.ALCHEMY_MAX_REQUESTS_PER_SECOND || 8),
   BATCH_SIZE: 40,
@@ -38,9 +29,8 @@ const ALCHEMY_CONFIG = {
   REQUEST_TIMEOUT_MS: 10000,
   TOKEN_BALANCE_CACHE_TTL_MS: 15000,
   TOKEN_METADATA_CACHE_TTL_MS: 5 * 60 * 1000,
+  PENDING_TX_CACHE_TTL_MS: 5 * 60 * 1000,
   
-  // Pending transaction filters
-  PENDING_TX_POLL_INTERVAL_MS: Number(process.env.ALCHEMY_PENDING_TX_POLL_INTERVAL_MS || 1200),
   MAX_PENDING_TX_CACHE: 10000,
 };
 
@@ -183,6 +173,9 @@ export interface PendingTransaction {
 }
 
 export interface MempoolAnalysis {
+  available: boolean;
+  observedAt: number | null;
+  provenance: string[];
   totalPending: number;
   swapTransactions: number;
   liquidityAdditions: number;
@@ -299,7 +292,6 @@ class AlchemyTokenAPI {
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
-    }).finally(() => {
       this.inFlight.delete(cacheKey);
     });
 
@@ -469,14 +461,11 @@ class AlchemyTokenAPI {
 class AlchemyPendingTransactions {
   private apiKey: string;
   private subscriptions: Map<string, AlchemySubscription> = new Map();
+  private logicalSubscriptions = new Map<keyof typeof ALCHEMY_CONFIG.ENDPOINTS, LogicalSubscription>();
   private pendingTxCache: Map<string, PendingTransaction> = new Map();
   private isMonitoring: boolean = false;
-  private monitorLoop: NodeJS.Timeout | null = null;
-  private wsConnections = new Map<keyof typeof ALCHEMY_CONFIG.ENDPOINTS, WebSocket.WebSocket>();
-  private reconnectTimers = new Map<keyof typeof ALCHEMY_CONFIG.ENDPOINTS, NodeJS.Timeout>();
   private analyzedTxCount: number = 0;
-  private pollInFlight: Set<keyof typeof ALCHEMY_CONFIG.ENDPOINTS> = new Set();
-  private requestCount = 0;
+  private lastObservationAt: number | null = null;
 
   // Known DEX router addresses to watch
   private readonly DEX_ROUTERS: Record<string, string[]> = {
@@ -548,23 +537,16 @@ class AlchemyPendingTransactions {
 
     this.subscriptions.set(subscriptionId, subscription);
 
-    void this.openWebSocket(network, subscription);
-
-    // Start polling for pending transactions
-    if (!this.isMonitoring) {
-      this.isMonitoring = true;
-      this.monitorLoop = setInterval(() => {
-        const activeNetworks = [...new Set(
-          Array.from(this.subscriptions.values())
-            .filter(sub => sub.isActive)
-            .map(sub => sub.network as keyof typeof ALCHEMY_CONFIG.ENDPOINTS)
-        )];
-
-        void Promise.allSettled(
-          activeNetworks.map(activeNetwork => this.pollPendingTransactions(activeNetwork))
-        );
-      }, ALCHEMY_CONFIG.PENDING_TX_POLL_INTERVAL_MS);
+    await multiProviderRpcManager.initialize([network as SupportedChain]);
+    if (!this.logicalSubscriptions.has(network)) {
+      const logicalSubscription = await multiProviderRpcManager.subscribe(
+        network as SupportedChain,
+        'pending_transactions',
+        hash => { void this.consumePendingHash(network, hash); },
+      );
+      this.logicalSubscriptions.set(network, logicalSubscription);
     }
+    this.isMonitoring = true;
 
     logger.info('[AlchemyPendingTx] Started monitoring', {
       component: 'AlchemyPendingTx',
@@ -588,20 +570,20 @@ class AlchemyPendingTransactions {
 
       if (this.subscriptions.size === 0) {
         this.isMonitoring = false;
-        this.closeWebSockets();
-        if (this.monitorLoop) {
-          clearInterval(this.monitorLoop);
-          this.monitorLoop = null;
+        this.pendingTxCache.clear();
+        this.lastObservationAt = null;
+        for (const logicalSubscription of this.logicalSubscriptions.values()) {
+          void logicalSubscription.unsubscribe();
         }
+        this.logicalSubscriptions.clear();
       }
     } else {
       // Stop all
       this.isMonitoring = false;
-      this.closeWebSockets();
-      if (this.monitorLoop) {
-        clearInterval(this.monitorLoop);
-        this.monitorLoop = null;
+      for (const logicalSubscription of this.logicalSubscriptions.values()) {
+        void logicalSubscription.unsubscribe();
       }
+      this.logicalSubscriptions.clear();
       this.subscriptions.clear();
     }
 
@@ -611,71 +593,50 @@ class AlchemyPendingTransactions {
     });
   }
 
-  private async openWebSocket(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
-    subscription: AlchemySubscription,
-  ): Promise<void> {
-    if (this.wsConnections.has(network)) return;
-
-    const endpoint = `${ALCHEMY_CONFIG.WS_ENDPOINTS[network]}/${this.apiKey}`;
+  private async consumePendingHash(network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS, hash: string): Promise<void> {
     try {
-      const socket = new WebSocket.WebSocket(endpoint);
-      this.wsConnections.set(network, socket);
-      socket.on('open', () => {
-        socket.send(JSON.stringify({
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'eth_subscribe',
-          params: ['alchemy_pendingTransactions', {
-            toAddress: subscription.filters.toAddress,
-            fromAddress: subscription.filters.fromAddress,
-            hashesOnly: false,
-          }],
-        }));
-        logger.info('[AlchemyPendingTx] WebSocket subscription active', {
-          component: 'AlchemyPendingTx',
-          network,
-        });
-      });
-      socket.on('message', data => {
-        try {
-          const payload = JSON.parse(data.toString()) as { params?: { result?: Record<string, string> } };
-          const transaction = payload.params?.result;
-          if (transaction?.hash) this.cacheTransaction(network, transaction);
-        } catch (error) {
-          logger.debug('[AlchemyPendingTx] Invalid WebSocket payload', {
-            component: 'AlchemyPendingTx',
-            network,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      });
-      socket.on('error', error => logger.debug('[AlchemyPendingTx] WebSocket unavailable', {
-        component: 'AlchemyPendingTx',
-        network,
-        error: error.message,
-      }));
-      socket.on('close', () => {
-        this.wsConnections.delete(network);
-        logger.debug('[AlchemyPendingTx] WebSocket closed; polling fallback remains active', {
-          component: 'AlchemyPendingTx',
-          network,
-        });
-        if (subscription.isActive && this.isMonitoring && !this.reconnectTimers.has(network)) {
-          const timer = setTimeout(() => {
-            this.reconnectTimers.delete(network);
-            void this.openWebSocket(network, subscription);
-          }, 5000);
-          this.reconnectTimers.set(network, timer);
-        }
-      });
+      const { result: transaction } = await multiProviderRpcManager.execute(
+        network as SupportedChain,
+        'transactions',
+        provider => provider.getTransaction(hash),
+      );
+      if (!transaction?.hash) return;
+      const rawTransaction: Record<string, string> = {
+        hash: transaction.hash,
+        from: transaction.from,
+        to: transaction.to || '',
+        value: transaction.value.toHexString(),
+        gas: transaction.gasLimit.toHexString(),
+        gasPrice: transaction.gasPrice?.toHexString() || '',
+        input: transaction.data,
+        nonce: `0x${transaction.nonce.toString(16)}`,
+      };
+      const activeSubscriptions = Array.from(this.subscriptions.values())
+        .filter(subscription => subscription.isActive && subscription.network === network)
+        .filter(subscription => this.matchesFilters(rawTransaction, subscription.filters));
+      if (activeSubscriptions.length > 0) {
+        this.lastObservationAt = Date.now();
+        this.cacheTransaction(network, rawTransaction);
+      }
     } catch (error) {
-      logger.debug('[AlchemyPendingTx] WebSocket setup failed; polling fallback remains active', {
+      logger.debug('[AlchemyPendingTx] Pending transaction detail unavailable', {
         component: 'AlchemyPendingTx',
         network,
+        hash,
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private matchesFilters(
+    transaction: Record<string, string>,
+    filters: AlchemySubscription['filters'],
+  ): boolean {
+    const fromAddresses = filters.fromAddress.map(address => address.toLowerCase());
+    const toAddresses = filters.toAddress.map(address => address.toLowerCase());
+    const fromMatches = fromAddresses.length === 0 || fromAddresses.includes(transaction.from.toLowerCase());
+    const toMatches = toAddresses.length === 0 || toAddresses.includes((transaction.to || '').toLowerCase());
+    return fromMatches && toMatches;
   }
 
   private cacheTransaction(network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS, tx: Record<string, string>): void {
@@ -690,49 +651,10 @@ class AlchemyPendingTransactions {
     }
   }
 
-  private closeWebSockets(): void {
-    for (const timer of this.reconnectTimers.values()) clearTimeout(timer);
-    this.reconnectTimers.clear();
-    for (const socket of this.wsConnections.values()) {
-      try { socket.close(); } catch { }
-    }
-    this.wsConnections.clear();
-  }
-
-  /**
-   * Poll for pending transactions
-   */
-  private async pollPendingTransactions(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS
-  ): Promise<void> {
-    if (this.pollInFlight.has(network)) {
-      return;
-    }
-
-    this.pollInFlight.add(network);
-    const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
-
-    try {
-      const data = await postRpcWithRetry<any>(baseURL, {
-        jsonrpc: '2.0',
-        method: 'eth_getBlockByNumber',
-        params: ['pending', true],
-        id: this.requestCount++,
-      });
-      const transactions = data.result?.transactions || [];
-
-      for (const tx of transactions) {
-        this.cacheTransaction(network, tx);
-      }
-    } catch (error) {
-      logger.debug('[AlchemyPendingTx] Poll skipped due to transient error', {
-        component: 'AlchemyPendingTx',
-        network,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      this.pollInFlight.delete(network);
-    }
+  hasAvailableEvidence(): boolean {
+    return Array.from(this.logicalSubscriptions.values()).some(subscription => subscription.state === 'healthy')
+      && this.lastObservationAt !== null
+      && Date.now() - this.lastObservationAt <= 15_000;
   }
 
   /**
@@ -797,7 +719,14 @@ class AlchemyPendingTransactions {
    * Analyze current mempool for opportunities
    */
   analyzeMempoolOpportunities(): MempoolAnalysis {
+    const now = Date.now();
+    for (const [hash, transaction] of this.pendingTxCache.entries()) {
+      if (now - transaction.timestamp > ALCHEMY_CONFIG.PENDING_TX_CACHE_TTL_MS) this.pendingTxCache.delete(hash);
+    }
     const pending = Array.from(this.pendingTxCache.values());
+    const healthySubscriptions = Array.from(this.logicalSubscriptions.values())
+      .filter(subscription => subscription.state === 'healthy' && subscription.provider);
+    const observationIsFresh = this.lastObservationAt !== null && Date.now() - this.lastObservationAt <= 15_000;
     
     const swapTxs = pending.filter(tx => this.isSwapTransaction(tx));
     const arbitrageOpps = pending.filter(tx => tx.potentialArbitrage);
@@ -811,6 +740,9 @@ class AlchemyPendingTransactions {
       .filter(p => p > 0);
     
     return {
+      available: healthySubscriptions.length > 0 && observationIsFresh,
+      observedAt: observationIsFresh ? this.lastObservationAt : null,
+      provenance: healthySubscriptions.map(subscription => `provider:${subscription.provider}`),
       totalPending: pending.length,
       swapTransactions: swapTxs.length,
       liquidityAdditions: 0, // Would need to decode LP adds
@@ -924,10 +856,11 @@ class AlchemyArbitrageDetector {
     detectedOpportunities: number;
     mempoolAnalysis: MempoolAnalysis;
   } {
+    const analysis = this.pendingTx.analyzeMempoolOpportunities();
     return {
       pendingTx: this.pendingTx.getStatistics(),
       detectedOpportunities: this.detectedOpportunities.length,
-      mempoolAnalysis: this.getMempoolAnalysis(),
+      mempoolAnalysis: analysis,
     };
   }
 }
@@ -970,6 +903,9 @@ export class AlchemyIntegration {
 
   private emptyMempoolAnalysis(): MempoolAnalysis {
     return {
+      available: false,
+      observedAt: null,
+      provenance: [],
       totalPending: 0,
       swapTransactions: 0,
       liquidityAdditions: 0,
@@ -1067,8 +1003,9 @@ export class AlchemyIntegration {
 
     if (!readiness.configured) {
       this.isDegraded = true;
-      this.isActive = false;
-      this.activeNetworks = [];
+      await this.arbitrageDetector.start(networksToMonitor);
+      this.isActive = true;
+      this.activeNetworks = [...networksToMonitor];
       logger.warn('[AlchemyIntegration] Live telemetry not started (degraded mode)', {
         component: 'AlchemyIntegration',
         detail: readiness.detail,

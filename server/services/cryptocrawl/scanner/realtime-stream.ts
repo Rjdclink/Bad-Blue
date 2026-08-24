@@ -1,12 +1,10 @@
-import { providers } from 'ethers';
 import logger from '../../../logger.js';
-import { attachWebSocketTransportGuards } from '../api/blockchain-providers.js';
-
-const { WebSocketProvider, JsonRpcProvider } = providers;
+import { multiProviderRpcManager, type LogicalSubscription, type SupportedChain } from '../api/blockchain-providers.js';
 
 interface StreamConfig {
   wsUrl?: string;
-  httpUrl: string;
+  httpUrl?: string;
+  chain?: SupportedChain;
   reconnectDelay?: number;
 }
 
@@ -14,14 +12,13 @@ type BlockCallback = (blockNumber: number) => void;
 type PendingCallback = (tx: any) => void;
 
 class RealtimeDataStream {
-  private wsProvider: providers.WebSocketProvider | null = null;
-  private httpProvider: providers.JsonRpcProvider;
+  private httpProvider: import('ethers').providers.JsonRpcProvider | null = null;
+  private blockSubscription: LogicalSubscription | null = null;
+  private pendingSubscription: LogicalSubscription | null = null;
   private config: StreamConfig;
   private reconnecting = false;
   private shuttingDown = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private pollingTimer: NodeJS.Timeout | null = null;
-  private socketGuardCleanup: (() => void) | null = null;
   private blockCallbacks: BlockCallback[] = [];
   private pendingCallbacks: PendingCallback[] = [];
   private connected = false;
@@ -32,27 +29,33 @@ class RealtimeDataStream {
       ...config
     };
     
-    this.httpProvider = new JsonRpcProvider(this.config.httpUrl);
   }
 
   async initialize(): Promise<void> {
     if (this.shuttingDown || this.connected || this.reconnecting) return;
-    const wsUrl = this.config.wsUrl || this.constructWsUrl(this.config.httpUrl);
+    const chain = this.config.chain || 'ethereum';
     
     try {
-      // WebSocketProvider in ethers v6 takes (url, network) only
-      this.wsProvider = new WebSocketProvider(wsUrl);
-      this.attachSocketGuards();
-
-      await this.wsProvider.ready;
-      this.connected = true;
-      this.stopHttpPolling();
-      
-      this.setupEventListeners();
-      
-      logger.info('WebSocket connection established', { 
+      await multiProviderRpcManager.initialize([chain]);
+      const managed = await multiProviderRpcManager.getProvider(chain, 'blocks');
+      this.httpProvider = managed.http;
+      this.blockSubscription = await multiProviderRpcManager.subscribe(chain, 'blocks', value => {
+        if (typeof value !== 'number') return;
+        this.dispatchBlock(value);
+      });
+      this.connected = this.blockSubscription.state === 'healthy';
+      try {
+        this.pendingSubscription = await multiProviderRpcManager.subscribe(chain, 'pending_transactions', value => {
+          if (typeof value === 'string') this.analyzePendingTransaction(value).catch(() => undefined);
+        });
+      } catch {
+        this.pendingSubscription = null;
+      }
+      logger.info(this.connected ? 'WebSocket connection established' : 'Realtime stream degraded to HTTP polling', {
         component: 'RealtimeDataStream',
-        wsUrl: wsUrl.replace(/\/\/[^@]*@/, '//***@') // Hide credentials in logs
+        chain,
+        provider: this.blockSubscription.provider,
+        pendingTransactions: this.pendingSubscription?.state === 'healthy' ? 'available' : 'unavailable',
       });
     } catch (error) {
       logger.error('Failed to establish WebSocket connection', {
@@ -60,40 +63,12 @@ class RealtimeDataStream {
         error: error instanceof Error ? error.message : String(error)
       });
       
-      // Fallback to HTTP provider
-      logger.info('Falling back to HTTP provider', { component: 'RealtimeDataStream' });
-      this.startHttpPolling();
+      logger.info('Falling back to shared HTTP block polling', { component: 'RealtimeDataStream', chain });
       this.handleDisconnect();
     }
   }
 
-  private attachSocketGuards(): void {
-    const socket = (this.wsProvider as any)?._websocket;
-    if (!socket || typeof socket.on !== 'function') return;
-    this.socketGuardCleanup = attachWebSocketTransportGuards(socket, {
-      onFailure: (error: unknown) => {
-      logger.warn('Underlying WebSocket transport failed; isolating stream', {
-        component: 'RealtimeDataStream',
-        error: error instanceof Error ? error.message : String(error),
-      });
-      this.handleDisconnect();
-      },
-      onClose: () => this.handleDisconnect(),
-    });
-  }
-
-  private constructWsUrl(httpUrl: string): string {
-    // Convert https:// to wss:// and http:// to ws://
-    return httpUrl.replace(/^https?:\/\//, (match) => 
-      match === 'https://' ? 'wss://' : 'ws://'
-    );
-  }
-
-  private setupEventListeners(): void {
-    if (!this.wsProvider) return;
-
-    // Listen for new blocks - trigger immediate opportunity scan
-    this.wsProvider.on('block', (blockNumber: number) => {
+  private dispatchBlock(blockNumber: number): void {
       logger.debug('New block detected', { 
         component: 'RealtimeDataStream',
         blockNumber 
@@ -110,32 +85,13 @@ class RealtimeDataStream {
           });
         }
       });
-    });
-
-    // Listen for pending transactions - analyze for backrun opportunities
-    this.wsProvider.on('pending', (txHash: string) => {
-      // Fire and forget - analyze in background
-      this.analyzePendingTransaction(txHash).catch(error => {
-        logger.debug('Error analyzing pending transaction', {
-          component: 'RealtimeDataStream',
-          error: error instanceof Error ? error.message : String(error)
-        });
-      });
-    });
-
-    // Handle disconnection
-    this.wsProvider.on('error', (error: Error) => {
-      logger.warn('WebSocket error', {
-        component: 'RealtimeDataStream',
-        error: error.message
-      });
-      this.handleDisconnect();
-    });
   }
 
   private async analyzePendingTransaction(txHash: string): Promise<void> {
     try {
-      const tx = await this.wsProvider!.getTransaction(txHash);
+      const { result: tx } = await multiProviderRpcManager.execute(
+        this.config.chain || 'ethereum', 'transactions', provider => provider.getTransaction(txHash),
+      );
       
       if (!tx || !tx.value) return;
       
@@ -164,14 +120,7 @@ class RealtimeDataStream {
     
     this.connected = false;
     this.reconnecting = true;
-    this.startHttpPolling();
 
-    try { this.wsProvider?.removeAllListeners(); } catch { /* provider may already be closed */ }
-    this.socketGuardCleanup?.();
-    this.socketGuardCleanup = null;
-    try { (this.wsProvider as any)?.destroy?.(); } catch { /* socket cleanup is best effort */ }
-    this.wsProvider = null;
-    
     logger.info('Attempting to reconnect...', { component: 'RealtimeDataStream' });
     
     this.reconnectTimer = setTimeout(async () => {
@@ -191,26 +140,6 @@ class RealtimeDataStream {
     }, this.config.reconnectDelay);
   }
 
-  private startHttpPolling(): void {
-    if (this.pollingTimer || this.shuttingDown) return;
-    this.pollingTimer = setInterval(async () => {
-      try {
-        const blockNumber = await this.httpProvider.getBlockNumber();
-        this.blockCallbacks.forEach(callback => {
-          try { callback(blockNumber); } catch (error) { logger.warn('HTTP block callback error', { component: 'RealtimeDataStream', error }); }
-        });
-      } catch (error) {
-        logger.warn('HTTP polling degraded', { component: 'RealtimeDataStream', error: error instanceof Error ? error.message : String(error) });
-      }
-    }, 2000);
-  }
-
-  private stopHttpPolling(): void {
-    if (!this.pollingTimer) return;
-    clearInterval(this.pollingTimer);
-    this.pollingTimer = null;
-  }
-
   onBlock(callback: BlockCallback): void {
     this.blockCallbacks.push(callback);
   }
@@ -219,8 +148,12 @@ class RealtimeDataStream {
     this.pendingCallbacks.push(callback);
   }
 
-  getHttpProvider(): providers.JsonRpcProvider {
-    return this.httpProvider;
+  async getHttpProvider(): Promise<import('ethers').providers.JsonRpcProvider> {
+    if (this.httpProvider) return this.httpProvider;
+    await multiProviderRpcManager.initialize([this.config.chain || 'ethereum']);
+    const provider = await multiProviderRpcManager.getProvider(this.config.chain || 'ethereum', 'blocks');
+    this.httpProvider = provider.http;
+    return provider.http;
   }
 
   isConnected(): boolean {
@@ -233,12 +166,10 @@ class RealtimeDataStream {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.stopHttpPolling();
-    if (this.wsProvider) {
-      this.wsProvider.removeAllListeners();
-      await (this.wsProvider as any).destroy?.();
-      this.wsProvider = null;
-    }
+    await this.blockSubscription?.unsubscribe();
+    await this.pendingSubscription?.unsubscribe();
+    this.blockSubscription = null;
+    this.pendingSubscription = null;
     this.connected = false;
     this.blockCallbacks = [];
     this.pendingCallbacks = [];

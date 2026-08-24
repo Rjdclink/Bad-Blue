@@ -1,8 +1,7 @@
 import { providers, Wallet } from 'ethers';
 import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
-
-const { JsonRpcProvider } = providers;
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
 interface RelayConfig {
   name: string;
@@ -86,12 +85,11 @@ class MultiRelaySubmitter {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    const rpcUrl = process.env.RPC_URL?.trim();
     const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
-    if (!rpcUrl) throw new Error('Missing RPC_URL (required for MultiRelaySubmitter)');
     if (!privateKey) throw new Error('Missing WALLET_PRIVATE_KEY (required for MultiRelaySubmitter)');
 
-    this.provider = new JsonRpcProvider(rpcUrl);
+    await multiProviderRpcManager.initialize(['ethereum']);
+    this.provider = (await multiProviderRpcManager.getProvider('ethereum', 'json_rpc')).http;
     this.wallet = new Wallet(privateKey, this.provider);
 
     logger.info('Initializing multi-relay connections...', { component: 'MultiRelaySubmitter' });

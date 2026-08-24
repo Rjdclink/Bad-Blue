@@ -1,7 +1,6 @@
 import {Wallet, providers} from 'ethers';
 import {FlashbotsBundleProvider} from '@flashbots/ethers-provider-bundle';
-
-const { JsonRpcProvider } = providers;
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
 class FlashbotsEngine {
   private provider!: providers.JsonRpcProvider;
@@ -9,7 +8,8 @@ class FlashbotsEngine {
   private wallet!: Wallet;
   
   async initialize() {
-    this.provider = new JsonRpcProvider(process.env.RPC_URL);
+    await multiProviderRpcManager.initialize(['ethereum']);
+    this.provider = (await multiProviderRpcManager.getProvider('ethereum', 'json_rpc')).http;
     const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
     if (!privateKey) {
       throw new Error('WALLET_PRIVATE_KEY is required for Flashbots execution');

@@ -69,7 +69,7 @@ export class CryptaraGovernance extends EventEmitter {
 
     const readiness = await this.cryptara.validateLiveSignalReadiness({ strictLive: true });
     if (!readiness.liveSignalReady) {
-      throw new Error(`Cryptara governance requires live TradingView and Alchemy readiness before activation: ${readiness.tradingView.detail}; ${readiness.alchemy.detail}`);
+      throw new Error(`Cryptara governance requires live TradingView and shared RPC readiness before activation: ${readiness.tradingView.detail}; ${readiness.rpc.detail}`);
     }
     
     // Setup event listeners

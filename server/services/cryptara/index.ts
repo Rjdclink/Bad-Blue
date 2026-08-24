@@ -34,6 +34,7 @@ import { marketDataProviders, type DexQuoteObservation, type MarketUniverseAsset
 import { createMonteCarloEngine, type MarketCondition, type StrategyProfile } from '../cryptocrawl/validation/monte-carlo-engine.js';
 import type { ExecutionOutcomeObservation } from '../cryptocrawl/learning/execution-outcome.js';
 import type { NormalizedRealizedExecution } from '../cryptocrawl/execution/settlement-types.js';
+import { multiProviderRpcManager } from '../cryptocrawl/api/blockchain-providers.js';
 
 const log = createLogger('CRYPTARA');
 
@@ -230,6 +231,11 @@ export interface CryptaraConnectorReadiness {
     detail: string;
   };
   alchemy: {
+    ready: boolean;
+    mode: 'live' | 'degraded';
+    detail: string;
+  };
+  rpc: {
     ready: boolean;
     mode: 'live' | 'degraded';
     detail: string;
@@ -440,6 +446,11 @@ export class Cryptara extends EventEmitter {
         mode: 'degraded',
         detail: 'Not checked yet',
       },
+      rpc: {
+        ready: false,
+        mode: 'degraded',
+        detail: 'Not checked yet',
+      },
     };
   }
 
@@ -449,9 +460,21 @@ export class Cryptara extends EventEmitter {
       TradingViewEngine.checkReadiness({ strictLive }),
       alchemyIntegration.readinessCheck({ strictLive }),
     ]);
+    let rpcReady = false;
+    let rpcDetail = 'No healthy shared RPC provider is configured for ethereum';
+    try {
+      await multiProviderRpcManager.initialize(['ethereum']);
+      const healthyProviders = multiProviderRpcManager.getHealth('ethereum')
+        .filter(observation => observation.http.success)
+        .map(observation => observation.provider);
+      rpcReady = healthyProviders.length > 0;
+      if (rpcReady) rpcDetail = `Shared RPC probe succeeded via ${healthyProviders.join(', ')}`;
+    } catch (error) {
+      rpcDetail = `Shared RPC readiness check failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
 
     const alchemyMode: CryptaraConnectorReadiness['alchemy']['mode'] = alchemy.ready ? 'live' : 'degraded';
-    const liveSignalReady = tradingView.ready && alchemy.ready;
+    const liveSignalReady = tradingView.ready && rpcReady;
 
     const readiness: CryptaraConnectorReadiness = {
       checkedAt: Date.now(),
@@ -466,6 +489,11 @@ export class Cryptara extends EventEmitter {
         ready: alchemy.ready,
         mode: alchemyMode,
         detail: alchemy.detail,
+      },
+      rpc: {
+        ready: rpcReady,
+        mode: rpcReady ? 'live' : 'degraded',
+        detail: rpcDetail,
       },
     };
 
@@ -558,6 +586,7 @@ export class Cryptara extends EventEmitter {
     };
     const missingInformation = [...new Set(context.missingInformation)];
     const provenance = [...new Set(context.provenance)];
+    if (!context.mempool?.available || context.mempool.observedAt === null) missingInformation.push('mempool_evidence');
     const marketAsset = context.marketUniverse.find(asset => asset.symbol === context.symbol);
     const now = Date.now();
     const marketMaxAgeMs = Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000));
@@ -736,11 +765,13 @@ export class Cryptara extends EventEmitter {
   }
 
   private deriveOpportunityRisk(context: CryptaraOpportunityContext, missingInformation: string[]): CryptaraOpportunityAssessment['riskLevel'] {
-    const pending = context.mempool?.totalPending;
-    if (!context.tradingView && pending === undefined) {
+    const hasMempoolEvidence = context.mempool?.available === true && context.mempool.observedAt !== null;
+    const pending = hasMempoolEvidence ? context.mempool?.totalPending : undefined;
+    if (!context.tradingView && !hasMempoolEvidence) {
       if (!missingInformation.includes('market_risk_signals')) missingInformation.push('market_risk_signals');
       return 'unknown';
     }
+    if (!hasMempoolEvidence && !missingInformation.includes('mempool_evidence')) missingInformation.push('mempool_evidence');
     const signal = context.tradingView?.summary.signal;
     const congestionRisk = pending !== undefined && pending > 8000;
     if (congestionRisk || signal === 'strong_sell') return 'critical';
@@ -832,6 +863,7 @@ export class Cryptara extends EventEmitter {
       ...this.connectorReadiness,
       tradingView: { ...this.connectorReadiness.tradingView },
       alchemy: { ...this.connectorReadiness.alchemy },
+      rpc: { ...this.connectorReadiness.rpc },
     };
   }
 
@@ -892,9 +924,10 @@ export class Cryptara extends EventEmitter {
       log.warn('CRYPTARA live signal stack is degraded', {
         tradingView: readiness.tradingView,
         alchemy: readiness.alchemy,
+        rpc: readiness.rpc,
       });
       if (strictLive) {
-        throw new Error(`Cryptara strict-live initialization failed: ${readiness.tradingView.detail}; ${readiness.alchemy.detail}`);
+        throw new Error(`Cryptara strict-live initialization failed: ${readiness.tradingView.detail}; ${readiness.rpc.detail}`);
       }
     }
 
@@ -980,8 +1013,9 @@ export class Cryptara extends EventEmitter {
     let mempool: MempoolAnalysis | null = null;
 
     try {
-      if (alchemyIntegration.isReady()) {
-        mempool = alchemyIntegration.getMempoolAnalysis();
+      const observedMempool = alchemyIntegration.getMempoolAnalysis();
+      if (observedMempool.available && observedMempool.observedAt !== null) {
+        mempool = observedMempool;
         this.lastMempoolAnalysis = mempool;
       } else {
         this.lastMempoolAnalysis = null;
@@ -1398,7 +1432,8 @@ export class Cryptara extends EventEmitter {
     }
 
     const analysis = this.lastTradingViewAnalysis || await TradingViewEngine.getAnalysis('BTCUSDT', '1h');
-    const mempool = this.lastMempoolAnalysis || (alchemyIntegration.isReady() ? alchemyIntegration.getMempoolAnalysis() : null);
+    const currentMempool = alchemyIntegration.getMempoolAnalysis();
+    const mempool = this.lastMempoolAnalysis || (currentMempool.available && currentMempool.observedAt !== null ? currentMempool : null);
     const signalScore = TradingViewEngine.signalToScore(analysis.summary.signal) / 2;
     const pressure = mempool ? Math.min(1, mempool.totalPending / 8000) : null;
     const overallSentiment = pressure === null ? signalScore : Math.max(-1, Math.min(1, signalScore - pressure * 0.2));

@@ -1,7 +1,6 @@
 import { providers } from 'ethers';
 import logger from '../../../logger.js';
-
-const { JsonRpcProvider } = providers;
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
 interface OpportunityData {
   id: string;
@@ -11,12 +10,6 @@ interface OpportunityData {
 interface MutexQueue {
   resolve: () => void;
   reject: (error: Error) => void;
-}
-
-interface ProviderConfig {
-  primary: string;
-  backup: string;
-  fallback: string;
 }
 
 class AsyncMutex {
@@ -52,23 +45,12 @@ class AsyncMutex {
 
 class OperationalIntegrity {
   private nonceMutex = new AsyncMutex();
-  private providers: ProviderConfig;
-  private primaryProvider: providers.JsonRpcProvider;
-  private backupProvider: providers.JsonRpcProvider;
-  private fallbackProvider: providers.JsonRpcProvider;
+  private primaryProvider: providers.JsonRpcProvider | null = null;
+  private backupProvider: providers.JsonRpcProvider | null = null;
+  private fallbackProvider: providers.JsonRpcProvider | null = null;
   private wsListeners: any[] = [];
 
-  constructor() {
-    this.providers = {
-      primary: process.env.PRIMARY_RPC_URL || process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo',
-      backup: process.env.BACKUP_RPC_URL || process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo',
-      fallback: process.env.FALLBACK_RPC_URL || process.env.RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo'
-    };
-
-    this.primaryProvider = new JsonRpcProvider(this.providers.primary);
-    this.backupProvider = new JsonRpcProvider(this.providers.backup);
-    this.fallbackProvider = new JsonRpcProvider(this.providers.fallback);
-  }
+  constructor() {}
 
   async executeSafely(opp: OpportunityData): Promise<any> {
     // Acquire mutex lock for nonce management
@@ -111,7 +93,9 @@ class OperationalIntegrity {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         // Get the transaction count (nonce) for the wallet
-        const nonce = await this.primaryProvider.getTransactionCount(walletAddress);
+        const { result: nonce } = await multiProviderRpcManager.execute(
+          'ethereum', 'transactions', provider => provider.getTransactionCount(walletAddress),
+        );
         return nonce;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -248,16 +232,13 @@ class OperationalIntegrity {
       component: 'OperationalIntegrity'
     });
 
-    // Create 3 redundant WebSocket listeners
-    const wsUrls = [
-      this.constructWsUrl(this.providers.primary),
-      this.constructWsUrl(this.providers.backup),
-      this.constructWsUrl(this.providers.fallback)
-    ];
-
-    for (let i = 0; i < wsUrls.length; i++) {
-      this.createRedundantListener(wsUrls[i], i);
-    }
+    await multiProviderRpcManager.initialize(['ethereum']);
+    const operationalProvider = await multiProviderRpcManager.getProvider('ethereum', 'json_rpc');
+    this.primaryProvider = operationalProvider.http;
+    this.backupProvider = operationalProvider.http;
+    this.fallbackProvider = operationalProvider.http;
+    const subscription = await multiProviderRpcManager.subscribe('ethereum', 'blocks', () => undefined);
+    this.wsListeners = [{ id: subscription.id, connected: subscription.state === 'healthy', subscription }];
 
     logger.info('Redundant listeners established', {
       component: 'OperationalIntegrity',
@@ -265,57 +246,22 @@ class OperationalIntegrity {
     });
   }
 
-  private constructWsUrl(httpUrl: string): string {
-    return httpUrl.replace(/^https?:\/\//, (match) => 
-      match === 'https://' ? 'wss://' : 'ws://'
-    );
-  }
-
-  private createRedundantListener(wsUrl: string, index: number): void {
-    try {
-      // In production, this would create actual WebSocket connections
-      const listener = {
-        id: `listener-${index}`,
-        url: wsUrl,
-        connected: true,
-        reconnect: () => {
-          logger.info('Reconnecting failed listener', {
-            component: 'OperationalIntegrity',
-            listenerId: `listener-${index}`
-          });
-          // Auto-reconnect logic
-        }
-      };
-
-      this.wsListeners.push(listener);
-
-      logger.debug('Redundant listener created', {
-        component: 'OperationalIntegrity',
-        listenerId: listener.id,
-        index
-      });
-    } catch (error) {
-      logger.error('Failed to create redundant listener', {
-        component: 'OperationalIntegrity',
-        index,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
   getActiveListeners(): number {
     return this.wsListeners.filter(l => l.connected).length;
   }
 
   getPrimaryProvider(): providers.JsonRpcProvider {
+    if (!this.primaryProvider) throw new Error('Operational RPC provider is not initialized');
     return this.primaryProvider;
   }
 
   getBackupProvider(): providers.JsonRpcProvider {
+    if (!this.backupProvider) throw new Error('Backup RPC provider is not initialized');
     return this.backupProvider;
   }
 
   getFallbackProvider(): providers.JsonRpcProvider {
+    if (!this.fallbackProvider) throw new Error('Fallback RPC provider is not initialized');
     return this.fallbackProvider;
   }
 }

@@ -1,3 +1,5 @@
+import type { RpcProvenance } from '../api/blockchain-providers.js';
+
 export type ChainId = 'polygon' | 'arbitrum' | 'avalanche' | 'bsc';
 
 export interface ChainConfig {
@@ -18,6 +20,7 @@ export interface TokenBalance {
   usdt: number;
   usdc: number;
   totalUsd: number;
+  provenance?: RpcProvenance;
 }
 
 export interface GasPrice {
@@ -26,6 +29,7 @@ export interface GasPrice {
   usdCost: number;
   congestionLevel: 'low' | 'medium' | 'high';
   timestamp: number;
+  provenance?: RpcProvenance;
 }
 
 export interface NetworkHealth {
@@ -34,6 +38,7 @@ export interface NetworkHealth {
   blockHeight: number;
   isHealthy: boolean;
   lastUpdate: number;
+  provenance?: RpcProvenance;
 }
 
 export interface BridgeRoute {
