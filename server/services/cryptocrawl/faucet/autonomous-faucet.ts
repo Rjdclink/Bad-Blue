@@ -1587,6 +1587,11 @@ class AutonomousCryptoFaucet {
       return;
     }
 
+    logger.info('[FAUCET] Activation started', {
+      component: 'AutonomousFaucet',
+      faucetId: this.faucetId,
+      stage: stageManager.getCurrentStage(),
+    });
     this.isRunning = true;
     this.sessionStartTime = Date.now();
     this.hourlyResetTime = Date.now();
@@ -1637,6 +1642,11 @@ class AutonomousCryptoFaucet {
       mode: this.state.mode,
       dailyTarget: `$${DAILY_TARGET_CONFIG.dailyTarget.toLocaleString()}`,
       tradingWindows: DAILY_TARGET_CONFIG.tradingWindows,
+    });
+    logger.info('[FAUCET] Scheduler started; beginning first market cycle', {
+      component: 'AutonomousFaucet',
+      faucetId: this.faucetId,
+      intervalMs: TIMING_CONFIG.marketUpdateInterval,
     });
 
     // Main control loop
@@ -1869,6 +1879,11 @@ class AutonomousCryptoFaucet {
           throw new Error(`Cryptara market gate blocked live validation: ${marketGate.blockReasons.join('; ')}`);
         }
         await evaluateAutomaticStageProgression(marketGate);
+        logger.info('[FAUCET] Automatic progression evaluation completed', {
+          component: 'AutonomousFaucet',
+          stage: stageManager.getCurrentStage(),
+          marketDecision: marketGate.decision,
+        });
       }
 
       logger.debug('[FAUCET] Market conditions updated', {

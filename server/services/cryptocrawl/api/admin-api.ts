@@ -2,9 +2,10 @@ import express from 'express';
 import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
-import { getCryptocrawlGovernance } from '../governance/index.js';
+import { getCryptocrawlGovernance, initializeGovernance } from '../governance/index.js';
 import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
+import { autonomousFaucet } from '../faucet/autonomous-faucet.js';
 import { getCryptara } from '../../cryptara/index.js';
 import { verifyCanonicalCryptoSetup } from '../verification/canonicalCryptoVerifier.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
@@ -401,6 +402,7 @@ async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures:
   const results = await Promise.allSettled([
     pipeline.stop(),
     Promise.resolve(zeroCapitalEngine.stop()),
+    Promise.resolve(autonomousFaucet.stop()),
     cryptoCrawlState.disable(),
   ]);
   const failures = results
@@ -447,6 +449,25 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   }
 
   try {
+    await initializeGovernance();
+    console.log('[CryptoCrawl] Start request accepted; governance initialized');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    systemState.lastError = message;
+    console.error('[CryptoCrawl] Governance initialization failed before startup', error);
+    return {
+      success: false,
+      status: 503,
+      payload: {
+        success: false,
+        error: message,
+        lifecycle: systemState.lifecycle,
+        governance: governance.getState(),
+      },
+    };
+  }
+
+  try {
     governance.requireAllowed('ADVISE');
   } catch (error) {
     return {
@@ -477,17 +498,28 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   systemState.lastError = null;
 
   try {
+    console.log('[CryptoCrawl] Starting crawler dependencies');
     await cryptoCrawlState.enable();
     await zeroCapitalEngine.start();
     await pipeline.run();
 
-    if (!zeroCapitalEngine.getState().isRunning || !pipeline.isRunning()) {
+    console.log('[CryptoCrawl] Starting authoritative AutonomousFaucet');
+    void autonomousFaucet.runAutonomousLoop().catch(error => {
+      console.error('[CryptoCrawl] AutonomousFaucet stopped during startup/operation', error);
+      autonomousFaucet.stop();
+    });
+
+    if (!zeroCapitalEngine.getState().isRunning || !pipeline.isRunning() || !autonomousFaucet.isActive()) {
       throw new Error('CryptoCrawler monitoring dependencies did not remain running after startup');
     }
 
     systemState.lifecycle = 'RUNNING';
     systemState.running = true;
     systemState.startedAt = Date.now();
+    console.log('[CryptoCrawl] Runtime active; Stage 1 observation loop scheduled', {
+      faucetId: autonomousFaucet.getFaucetId(),
+      stage: governance.getState().stage,
+    });
 
     return {
       success: true,

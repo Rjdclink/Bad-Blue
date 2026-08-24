@@ -441,10 +441,12 @@ setTimeout(() => {
       await initializeGovernance();
       console.log('[CryptoCrawl] 🚀 Divine Auto-Start: Initiating autonomous faucet...');
       if (stageManager.isAutomaticallyActivated() && !autonomousFaucet.isActive()) {
-        autonomousFaucet.runAutonomousLoop().catch(err => {
-          console.error('[CryptoCrawl] Failed to auto-start autonomous faucet:', err);
-        });
-        console.log('[CryptoCrawl] ✅ Autonomous faucet started - Zero-capital arbitrage ACTIVE');
+        const { startCryptoCrawlerRuntime } = await import('./admin-api');
+        const result = await startCryptoCrawlerRuntime();
+        if (!result.success) {
+          throw new Error(String(result.payload.error || 'CryptoCrawler runtime failed to start'));
+        }
+        console.log('[CryptoCrawl] ✅ Autonomous runtime started - Stage 1 observation ACTIVE');
       } else if (!stageManager.isAutomaticallyActivated()) {
         console.log('[CryptoCrawl] Faucet auto-start skipped - canonical governance is paused or requires authorization');
       }
