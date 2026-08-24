@@ -446,18 +446,6 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
     };
   }
 
-  if (governance.getState().stage === 1) {
-    return {
-      success: false,
-      status: 409,
-      payload: {
-      success: false,
-      error: 'Governance Stage 1 is advisory-only. Monitoring starts automatically after verified Stage 2 progression.',
-      governance: governance.getState(),
-      },
-    };
-  }
-
   try {
     governance.requireAllowed('ADVISE');
   } catch (error) {

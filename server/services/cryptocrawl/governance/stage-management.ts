@@ -89,8 +89,8 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
     description: 'Advisory/strategy optimization sandbox - NO EXECUTION',
     
     canExecuteTrades: false,
-    requiresHumanApproval: true,
-    requiresExplicitUnpause: true,
+    requiresHumanApproval: false,
+    requiresExplicitUnpause: false,
     
     maxPairsAllowed: 5,
     maxVenuesAllowed: 2,
@@ -1196,6 +1196,18 @@ export class StageManager extends EventEmitter {
     }
 
     const restored = this.normalizeRestoredState(data.state);
+    const legacyAuthorizationPause =
+      restored.currentStage === Stage.STAGE_1_CONSTRAINED_PILOT &&
+      (restored.pauseReason === 'Initial state - awaiting human authorization' ||
+        restored.pauseReason === 'restart_requires_human_unpause');
+    if (legacyAuthorizationPause) {
+      restored.isPaused = false;
+      restored.pauseReason = undefined;
+      restored.lastPauseTimestamp = undefined;
+      restored.unpauseRequiresAuthorization = false;
+      restored.activationMode = 'automatic';
+      restored.manualHold = false;
+    }
     const mayResumeAutomatic =
       restored.activationMode === 'automatic' &&
       !restored.isPaused &&
@@ -1203,8 +1215,8 @@ export class StageManager extends EventEmitter {
       !restored.killSwitchActive &&
       !restored.blockingAnomaly &&
       restored.uncertainties.length === 0 &&
-      (restored.currentStage === Stage.STAGE_1_CONSTRAINED_PILOT || restored.automaticAdvancementEvidence !== null);
-    if (!mayResumeAutomatic && !restored.isPaused) {
+      (restored.currentStage === Stage.STAGE_1_CONSTRAINED_PILOT || restored.activationMode === 'automatic');
+    if (!legacyAuthorizationPause && !mayResumeAutomatic && !restored.isPaused) {
       restored.isPaused = true;
       restored.pauseReason = 'restart_requires_human_unpause';
       restored.lastPauseTimestamp = Date.now();
