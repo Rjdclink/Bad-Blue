@@ -251,6 +251,13 @@ export class TradingViewEngine {
           const live = await this.fetchLiveAnalysis(symbol, _timeframe);
           this.registerLiveSuccess();
           this.analysisCache.set(cacheKey, live);
+          logger.info('[TRADINGVIEW] Live fetch succeeded', {
+            component: 'TradingView',
+            symbol: live.symbol,
+            providerSymbol: `${TRADINGVIEW_CONFIG.defaultExchange}:${this.mapSymbol(symbol)}`,
+            timeframe: _timeframe,
+            sourceTimestamp: live.sourceTimestamp,
+          });
           return live;
         } catch (error) {
           this.registerLiveFailure(error, symbol, _timeframe);

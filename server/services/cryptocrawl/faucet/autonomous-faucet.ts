@@ -19,6 +19,7 @@ import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbi
 import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
 import { stageManager } from '../governance/stage-management.js';
 import { evaluateAutomaticStageProgression } from '../governance/automatic-stage-progression.js';
+import { GovernanceError } from '../governance/types.js';
 import { getCryptara } from '../../cryptara/index.js';
 import logger from '../../../logger.js';
 
@@ -1876,6 +1877,15 @@ class AutonomousCryptoFaucet {
         conditions: this.marketConditions,
       });
     } catch (error) {
+      if (error instanceof GovernanceError && error.code === 'PAUSED') {
+        delete this.marketConditions.lastMarketDataError;
+        logger.info('[FAUCET] Market update skipped while governance is paused', {
+          component: 'AutonomousFaucet',
+          stage: stageManager.getCurrentStage(),
+          pauseReason: stageManager.getState().pauseReason,
+        });
+        return;
+      }
       this.marketConditions.lastMarketDataError = error instanceof Error ? error.message : String(error);
       logger.warn('[FAUCET] Failed to update market conditions, using cached values', {
         component: 'AutonomousFaucet',
