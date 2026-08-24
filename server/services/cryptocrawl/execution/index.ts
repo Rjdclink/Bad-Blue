@@ -609,8 +609,13 @@ export async function executeVerifiedArbitragePlan(
 }
 
 async function getCurrentBlock(): Promise<number> {
-  // In production, query actual blockchain
-  return Math.floor(Date.now() / 12000); // Simulate block number
+  await multiProviderRpcManager.initialize(['ethereum']);
+  const { result } = await multiProviderRpcManager.execute(
+    'ethereum',
+    'blocks',
+    provider => provider.getBlockNumber(),
+  );
+  return result;
 }
 
 // Export types

@@ -177,7 +177,8 @@ export function attachWebSocketTransportGuards(
     handlers.onFailure(error);
   };
   const onClose = () => {
-    if (!failed) failed = true;
+    if (failed) return;
+    failed = true;
     handlers.onClose?.();
   };
   socket.on('open', onOpen);
@@ -265,6 +266,8 @@ interface SubscriptionRecord extends LogicalSubscription {
   migrationTimer: NodeJS.Timeout | null;
   pollingTimer: NodeJS.Timeout | null;
   migrating: boolean;
+  connectionSequence: number;
+  connectionId: number;
 }
 
 /**
@@ -284,6 +287,7 @@ export class MultiProviderRpcManager {
   private readonly httpProviderFactory: (url: string) => ethers.providers.JsonRpcProvider;
   private readonly websocketProviderFactory: (url: string) => ethers.providers.WebSocketProvider;
   private readonly discoverConfiguredProviders: boolean;
+  private readonly websocketRecoveryTimers = new Map<string, NodeJS.Timeout>();
   private subscriptionSequence = 0;
 
   constructor(options: MultiProviderRpcManagerOptions = {}) {
@@ -541,6 +545,8 @@ export class MultiProviderRpcManager {
       state: 'degraded', callback, currentProvider: null, socketCleanup: null,
       migrationTimer: null, migrating: false,
       pollingTimer: null,
+      connectionSequence: 0,
+      connectionId: 0,
       unsubscribe: async () => this.unsubscribe(record.id),
     };
     this.subscriptions.set(record.id, record);
@@ -551,6 +557,8 @@ export class MultiProviderRpcManager {
   private async connectSubscription(record: SubscriptionRecord): Promise<void> {
     if (this.shuttingDown || record.state === 'shutting_down' || record.migrating) return;
     record.migrating = true;
+    const connectionId = ++record.connectionSequence;
+    record.connectionId = connectionId;
     const currentCandidate = record.provider
       ? (this.candidates.get(record.chain) || []).find(candidate => candidate.provider === record.provider)
       : undefined;
@@ -573,13 +581,25 @@ export class MultiProviderRpcManager {
       let opened = false;
       const cleanup = socket && typeof socket.on === 'function' ? attachWebSocketTransportGuards(socket, {
         onOpen: () => { opened = true; },
-        onFailure: error => this.handleSubscriptionTransportFailure(record, candidate, error),
-        onClose: () => this.handleSubscriptionTransportFailure(record, candidate, new Error('WebSocket closed')),
+        onFailure: error => this.handleSubscriptionTransportFailure(record, candidate, connectionId, error),
+        onClose: () => this.handleSubscriptionTransportFailure(record, candidate, connectionId, new Error('WebSocket closed')),
       }) : null;
       await this.withTimeout(wsProvider.ready, this.operationTimeoutMs, 'WebSocket connection timed out');
       if (!opened && socket) opened = true;
       const event = record.type === 'blocks' ? 'block' : 'pending';
-      wsProvider.on(event, record.callback);
+      wsProvider.on(event, value => {
+        if (record.connectionId !== connectionId || record.currentProvider !== wsProvider || record.state === 'shutting_down') return;
+        try {
+          record.callback(value);
+        } catch (error) {
+          logger.warn('Logical RPC subscription callback failed', {
+            component: 'MultiProviderRpcManager',
+            chain: record.chain,
+            type: record.type,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
       record.currentProvider = wsProvider;
       record.socketCleanup = cleanup;
       record.provider = candidate.provider;
@@ -593,6 +613,7 @@ export class MultiProviderRpcManager {
       candidate.websocketCooldownUntil = 0;
       candidate.websocketLastObservedAt = Date.now();
       candidate.websocketLastError = undefined;
+      this.clearWebSocketRecovery(candidate);
       this.failoverGenerations.set(record.chain, (this.failoverGenerations.get(record.chain) || 0) + 1);
     } catch (error) {
       if (selectedCandidate) {
@@ -603,9 +624,9 @@ export class MultiProviderRpcManager {
         failedCandidate.websocketLastObservedAt = Date.now();
         failedCandidate.websocketConsecutiveSuccesses = 0;
         failedCandidate.websocketLastError = error instanceof Error ? error.message : String(error);
+        this.scheduleWebSocketRecovery(failedCandidate);
       }
-      try { wsProvider?.removeAllListeners(); } catch { /* transport cleanup is best effort */ }
-      try { (wsProvider as any)?.destroy?.(); } catch { /* transport cleanup is best effort */ }
+      this.destroyWebSocketProvider(wsProvider);
       record.state = 'unavailable';
       if (record.type === 'blocks') this.startSubscriptionPolling(record);
       logger.warn('Logical RPC subscription unavailable', {
@@ -618,14 +639,15 @@ export class MultiProviderRpcManager {
     }
   }
 
-  private handleSubscriptionTransportFailure(record: SubscriptionRecord, candidate: RpcCandidate, error: unknown): void {
-    if (record.state === 'shutting_down' || record.provider !== candidate.provider) return;
+  private handleSubscriptionTransportFailure(record: SubscriptionRecord, candidate: RpcCandidate, connectionId: number, error: unknown): void {
+    if (record.state === 'shutting_down' || record.connectionId !== connectionId || record.provider !== candidate.provider) return;
     candidate.websocketConsecutiveFailures += 1;
     candidate.websocketState = candidate.websocketConsecutiveFailures >= this.failureThreshold ? 'cooldown' : 'degraded';
     candidate.websocketCooldownUntil = Date.now() + this.cooldownMs;
     candidate.websocketLastObservedAt = Date.now();
     candidate.websocketConsecutiveSuccesses = 0;
     candidate.websocketLastError = error instanceof Error ? error.message : String(error);
+    this.scheduleWebSocketRecovery(candidate);
     record.state = 'degraded';
     this.detachSubscriptionTransport(record);
     if (record.type === 'blocks') this.startSubscriptionPolling(record);
@@ -633,12 +655,70 @@ export class MultiProviderRpcManager {
   }
 
   private detachSubscriptionTransport(record: SubscriptionRecord): void {
+    record.connectionId = ++record.connectionSequence;
     record.socketCleanup?.();
     record.socketCleanup = null;
-    try { record.currentProvider?.removeAllListeners(); } catch { /* transport cleanup is best effort */ }
-    try { (record.currentProvider as any)?.destroy?.(); } catch { /* transport cleanup is best effort */ }
+    this.destroyWebSocketProvider(record.currentProvider);
     record.currentProvider = null;
     record.transport = null;
+  }
+
+  private webSocketRecoveryKey(candidate: RpcCandidate): string {
+    return `${candidate.chain}:${candidate.provider}`;
+  }
+
+  private clearWebSocketRecovery(candidate: RpcCandidate): void {
+    const key = this.webSocketRecoveryKey(candidate);
+    const timer = this.websocketRecoveryTimers.get(key);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.websocketRecoveryTimers.delete(key);
+  }
+
+  private scheduleWebSocketRecovery(candidate: RpcCandidate): void {
+    if (this.shuttingDown || !candidate.websocketUrl || candidate.websocketState === 'shutting_down') return;
+    const key = this.webSocketRecoveryKey(candidate);
+    if (this.websocketRecoveryTimers.has(key)) return;
+    const delay = Math.max(250, candidate.websocketCooldownUntil - Date.now());
+    const timer = setTimeout(() => {
+      this.websocketRecoveryTimers.delete(key);
+      void this.probeWebSocketRecovery(candidate);
+    }, delay);
+    this.websocketRecoveryTimers.set(key, timer);
+  }
+
+  private async probeWebSocketRecovery(candidate: RpcCandidate): Promise<void> {
+    if (this.shuttingDown || !candidate.websocketUrl || ['healthy', 'shutting_down'].includes(candidate.websocketState)) return;
+    candidate.websocketState = 'connecting';
+    let provider: ethers.providers.WebSocketProvider | null = null;
+    try {
+      provider = this.websocketProviderFactory(candidate.websocketUrl);
+      await this.withTimeout(provider.ready, this.operationTimeoutMs, 'WebSocket recovery probe timed out');
+      candidate.websocketState = 'healthy';
+      candidate.websocketConsecutiveFailures = 0;
+      candidate.websocketConsecutiveSuccesses += 1;
+      candidate.websocketCooldownUntil = 0;
+      candidate.websocketLastObservedAt = Date.now();
+      candidate.websocketLastError = undefined;
+    } catch (error) {
+      candidate.websocketConsecutiveFailures += 1;
+      candidate.websocketState = 'cooldown';
+      candidate.websocketCooldownUntil = Date.now() + this.cooldownMs;
+      candidate.websocketLastObservedAt = Date.now();
+      candidate.websocketLastError = error instanceof Error ? error.message : String(error);
+      this.scheduleWebSocketRecovery(candidate);
+    } finally {
+      this.destroyWebSocketProvider(provider);
+    }
+  }
+
+  private destroyWebSocketProvider(provider: ethers.providers.WebSocketProvider | null): void {
+    if (!provider) return;
+    try { provider.removeAllListeners(); } catch { /* transport cleanup is best effort */ }
+    const socket = (provider as any)._websocket as WebSocketTransportLike | undefined;
+    try { socket?.removeAllListeners?.(); } catch { /* transport cleanup is best effort */ }
+    try { (provider as any).destroy?.(); } catch { /* transport cleanup is best effort */ }
+    try { socket?.terminate?.(); } catch { try { socket?.close?.(); } catch { /* already closed */ } }
   }
 
   private scheduleSubscriptionMigration(record: SubscriptionRecord): void {
@@ -683,6 +763,8 @@ export class MultiProviderRpcManager {
 
   async destroy(): Promise<void> {
     this.shuttingDown = true;
+    for (const timer of this.websocketRecoveryTimers.values()) clearTimeout(timer);
+    this.websocketRecoveryTimers.clear();
     for (const id of Array.from(this.subscriptions.keys())) await this.unsubscribe(id);
     for (const candidates of this.candidates.values()) {
       for (const candidate of candidates) {
@@ -760,66 +842,6 @@ export interface ContractVerification {
   sourceCode?: string;
   abi?: any[];
 }
-
-// ============================================================================
-// ALCHEMY ENDPOINTS BY CHAIN AND REGION
-// ============================================================================
-
-const ALCHEMY_ENDPOINTS: Record<SupportedChain, Record<EdenRegion, string>> = {
-  ethereum: {
-    'us-east-1': 'https://eth-mainnet.g.alchemy.com/v2',
-    'us-west-2': 'https://eth-mainnet.g.alchemy.com/v2',
-    'eu-central-1': 'https://eth-mainnet.g.alchemy.com/v2',
-    'eu-west-2': 'https://eth-mainnet.g.alchemy.com/v2',
-    'ap-northeast-1': 'https://eth-mainnet.g.alchemy.com/v2',
-    'ap-southeast-1': 'https://eth-mainnet.g.alchemy.com/v2',
-    'local': 'https://eth-mainnet.g.alchemy.com/v2'
-  },
-  polygon: {
-    'us-east-1': 'https://polygon-mainnet.g.alchemy.com/v2',
-    'us-west-2': 'https://polygon-mainnet.g.alchemy.com/v2',
-    'eu-central-1': 'https://polygon-mainnet.g.alchemy.com/v2',
-    'eu-west-2': 'https://polygon-mainnet.g.alchemy.com/v2',
-    'ap-northeast-1': 'https://polygon-mainnet.g.alchemy.com/v2',
-    'ap-southeast-1': 'https://polygon-mainnet.g.alchemy.com/v2',
-    'local': 'https://polygon-mainnet.g.alchemy.com/v2'
-  },
-  arbitrum: {
-    'us-east-1': 'https://arb-mainnet.g.alchemy.com/v2',
-    'us-west-2': 'https://arb-mainnet.g.alchemy.com/v2',
-    'eu-central-1': 'https://arb-mainnet.g.alchemy.com/v2',
-    'eu-west-2': 'https://arb-mainnet.g.alchemy.com/v2',
-    'ap-northeast-1': 'https://arb-mainnet.g.alchemy.com/v2',
-    'ap-southeast-1': 'https://arb-mainnet.g.alchemy.com/v2',
-    'local': 'https://arb-mainnet.g.alchemy.com/v2'
-  },
-  optimism: {
-    'us-east-1': 'https://opt-mainnet.g.alchemy.com/v2',
-    'us-west-2': 'https://opt-mainnet.g.alchemy.com/v2',
-    'eu-central-1': 'https://opt-mainnet.g.alchemy.com/v2',
-    'eu-west-2': 'https://opt-mainnet.g.alchemy.com/v2',
-    'ap-northeast-1': 'https://opt-mainnet.g.alchemy.com/v2',
-    'ap-southeast-1': 'https://opt-mainnet.g.alchemy.com/v2',
-    'local': 'https://opt-mainnet.g.alchemy.com/v2'
-  },
-  base: {
-    'us-east-1': 'https://base-mainnet.g.alchemy.com/v2',
-    'us-west-2': 'https://base-mainnet.g.alchemy.com/v2',
-    'eu-central-1': 'https://base-mainnet.g.alchemy.com/v2',
-    'eu-west-2': 'https://base-mainnet.g.alchemy.com/v2',
-    'ap-northeast-1': 'https://base-mainnet.g.alchemy.com/v2',
-    'ap-southeast-1': 'https://base-mainnet.g.alchemy.com/v2',
-    'local': 'https://base-mainnet.g.alchemy.com/v2'
-  }
-};
-
-const ALCHEMY_WS_ENDPOINTS: Record<SupportedChain, string> = {
-  ethereum: 'wss://eth-mainnet.g.alchemy.com/v2',
-  polygon: 'wss://polygon-mainnet.g.alchemy.com/v2',
-  arbitrum: 'wss://arb-mainnet.g.alchemy.com/v2',
-  optimism: 'wss://opt-mainnet.g.alchemy.com/v2',
-  base: 'wss://base-mainnet.g.alchemy.com/v2'
-};
 
 // ============================================================================
 // ETHERSCAN ENDPOINTS BY CHAIN
@@ -959,27 +981,19 @@ export class AdvancedRateLimiter {
 // ============================================================================
 
 export class AlchemyProvider {
-  private httpProvider: ethers.providers.JsonRpcProvider | null = null;
-  private wsProvider: ethers.providers.WebSocketProvider | null = null;
   private rateLimiter: AdvancedRateLimiter;
   private chain: SupportedChain;
-  private region: EdenRegion;
-  private apiKey: string;
   private latencyHistory: number[] = [];
   private readonly MAX_LATENCY_SAMPLES = 100;
-  private wsState: RpcProviderState = 'unconfigured';
-  private wsFailureCount = 0;
-  private wsReconnectTimer: NodeJS.Timeout | null = null;
-  private wsReconnecting = false;
   private blockSubscriptions: Array<(blockNumber: number) => void> = [];
   private pendingSubscriptions: Array<(txHash: string) => void> = [];
-  private blockPollingTimer: NodeJS.Timeout | null = null;
-  private wsSocket: { on?: (event: string, listener: (...args: any[]) => void) => void; removeAllListeners?: () => void; close?: () => void; terminate?: () => void } | null = null;
+  private blockSubscription: LogicalSubscription | null = null;
+  private pendingSubscription: LogicalSubscription | null = null;
+  private blockSubscriptionPromise: Promise<void> | null = null;
+  private pendingSubscriptionPromise: Promise<void> | null = null;
 
   constructor(config: BlockchainProviderConfig) {
     this.chain = config.chain;
-    this.region = config.region || 'us-east-1';
-    this.apiKey = config.alchemyApiKey || process.env.ALCHEMY_API_KEY || '';
     
     // Alchemy free tier: 330 CU/s, ~25-30 requests/second
     this.rateLimiter = new AdvancedRateLimiter({
@@ -991,142 +1005,20 @@ export class AlchemyProvider {
   }
 
   /**
-   * Initialize HTTP and WebSocket providers
+   * Initialize shared RPC access for this chain.
    */
   async initialize(): Promise<void> {
-    if (!this.apiKey) {
-      this.wsState = 'unconfigured';
-      throw new Error(`ALCHEMY_API_KEY is required for ${this.chain} Alchemy access`);
-    }
-    const httpUrl = `${ALCHEMY_ENDPOINTS[this.chain][this.region]}/${this.apiKey}`;
-    const wsUrl = `${ALCHEMY_WS_ENDPOINTS[this.chain]}/${this.apiKey}`;
-
-    try {
-      this.httpProvider = new ethers.providers.JsonRpcProvider(httpUrl);
-      
-      // Test connection with latency measurement
-      const start = Date.now();
-      await this.httpProvider.getBlockNumber();
-      const latency = Date.now() - start;
-      this.recordLatency(latency);
-
-      logger.info('Alchemy HTTP provider initialized', {
-        component: 'AlchemyProvider',
-        chain: this.chain,
-        region: this.region,
-        latency: `${latency}ms`
-      });
-
-      // Initialize WebSocket for real-time data
-      try {
-        await this.connectWebSocket(wsUrl);
-        logger.info('Alchemy WebSocket provider initialized', {
-          component: 'AlchemyProvider',
-          chain: this.chain
-        });
-      } catch (wsError) {
-        this.wsState = 'degraded';
-        this.destroyFailedWebSocket();
-        this.startBlockPolling();
-        this.scheduleWebSocketReconnect();
-        logger.warn('WebSocket initialization failed, using HTTP only', {
-          component: 'AlchemyProvider',
-          error: wsError instanceof Error ? wsError.message : String(wsError)
-        });
-      }
-    } catch (error) {
-      logger.error('Failed to initialize Alchemy provider', {
-        component: 'AlchemyProvider',
-        chain: this.chain,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      throw error;
-    }
-  }
-
-  private async connectWebSocket(wsUrl: string): Promise<void> {
-    this.wsState = 'connecting';
-    const provider = new ethers.providers.WebSocketProvider(wsUrl);
-    this.wsProvider = provider;
-    this.attachWebSocketGuards();
-    await provider.ready;
-    this.wsState = 'healthy';
-    if (this.blockPollingTimer) {
-      clearInterval(this.blockPollingTimer);
-      this.blockPollingTimer = null;
-    }
-    this.blockSubscriptions.forEach(callback => provider.on('block', callback));
-    this.pendingSubscriptions.forEach(callback => provider.on('pending', callback));
-  }
-
-  private attachWebSocketGuards(): void {
-    const socket = (this.wsProvider as any)?._websocket;
-    if (!socket || typeof socket.on !== 'function') {
-      this.wsState = 'degraded';
-      return;
-    }
-    this.wsSocket = socket;
-    attachWebSocketTransportGuards(socket, {
-      onOpen: () => {
-      this.wsState = 'healthy';
-      this.wsFailureCount = 0;
-      },
-      onFailure: (error: unknown) => {
-      this.wsFailureCount++;
-      this.wsState = 'degraded';
-      logger.warn('Alchemy WebSocket transport degraded; HTTP remains available', {
-        component: 'AlchemyProvider', chain: this.chain,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      this.destroyFailedWebSocket();
-      this.startBlockPolling();
-      this.scheduleWebSocketReconnect();
-      },
-      onClose: () => {
-      if (this.wsState !== 'shutting_down') {
-        this.wsState = 'degraded';
-        this.scheduleWebSocketReconnect();
-      }
-      },
-    });
-  }
-
-  private scheduleWebSocketReconnect(): void {
-    if (this.wsReconnectTimer || this.wsReconnecting || this.wsState === 'shutting_down') return;
-    this.wsReconnectTimer = setTimeout(async () => {
-      this.wsReconnectTimer = null;
-      this.wsReconnecting = true;
-      try {
-        await this.connectWebSocket(`${ALCHEMY_WS_ENDPOINTS[this.chain]}/${this.apiKey}`);
-      } catch (error) {
-        this.wsState = 'degraded';
-        logger.warn('Alchemy WebSocket reconnect failed; HTTP remains available', {
-          component: 'AlchemyProvider', chain: this.chain,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        this.scheduleWebSocketReconnect();
-      } finally {
-        this.wsReconnecting = false;
-      }
-    }, Math.max(1000, Number(process.env.ALCHEMY_WS_RECONNECT_DELAY_MS || 5000)));
-  }
-
-  private destroyFailedWebSocket(): void {
-    const socket = this.wsSocket;
-    if (!socket) return;
-    try { socket.removeAllListeners?.(); } catch { /* transport cleanup is best effort */ }
-    try { socket.terminate?.(); } catch { try { socket.close?.(); } catch { /* already closed */ } }
-    this.wsSocket = null;
-    this.wsProvider?.removeAllListeners();
-    this.wsProvider = null;
+    await multiProviderRpcManager.initialize([this.chain]);
   }
 
   getHealth(): RpcHealthObservation {
-    return {
-      provider: 'Alchemy', chain: this.chain, transport: 'websocket', state: this.wsState,
-      success: this.wsState === 'healthy', latencyMs: this.getAverageLatency() || null,
-      observedAt: Date.now(), consecutiveFailures: this.wsFailureCount,
-      consecutiveSuccesses: this.wsState === 'healthy' ? 1 : 0,
+    const snapshots = multiProviderRpcManager.getHealth(this.chain);
+    const observation = snapshots.find(item => item.provider === 'Alchemy')?.http
+      || snapshots.find(item => item.http.success)?.http
+      || snapshots[0]?.http;
+    return observation || {
+      provider: 'shared-rpc', chain: this.chain, transport: 'http', state: 'unavailable',
+      success: false, latencyMs: null, observedAt: Date.now(), consecutiveFailures: 0, consecutiveSuccesses: 0,
     };
   }
 
@@ -1152,105 +1044,58 @@ export class AlchemyProvider {
    * Get current block number
    */
   async getBlockNumber(): Promise<number> {
-    await this.rateLimiter.waitForSlot();
-    
-    const start = Date.now();
-    try {
-      const blockNumber = await this.httpProvider!.getBlockNumber();
-      this.rateLimiter.recordRequest();
-      this.recordLatency(Date.now() - start);
-      return blockNumber;
-    } catch (error) {
-      this.rateLimiter.recordError(this.isRateLimitError(error));
-      throw error;
-    }
+    return this.execute('blocks', provider => provider.getBlockNumber());
   }
 
   /**
    * Get block by number
    */
   async getBlock(blockNumber: number | 'latest' | 'pending'): Promise<BlockData | null> {
-    await this.rateLimiter.waitForSlot();
-
-    const start = Date.now();
-    try {
-      const block = await this.httpProvider!.getBlock(blockNumber);
-      this.rateLimiter.recordRequest();
-      this.recordLatency(Date.now() - start);
-
-      if (!block) return null;
-
-      return {
-        number: block.number,
-        hash: block.hash || '',
-        timestamp: block.timestamp,
-        transactions: block.transactions as string[],
-        baseFeePerGas: block.baseFeePerGas?.toString()
-      };
-    } catch (error) {
-      this.rateLimiter.recordError(this.isRateLimitError(error));
-      throw error;
-    }
+    const block = await this.execute('blocks', provider => provider.getBlock(blockNumber));
+    if (!block) return null;
+    return {
+      number: block.number,
+      hash: block.hash || '',
+      timestamp: block.timestamp,
+      transactions: block.transactions as string[],
+      baseFeePerGas: block.baseFeePerGas?.toString()
+    };
   }
 
   /**
    * Get gas price data (EIP-1559 compatible)
    */
   async getGasData(): Promise<GasData> {
-    await this.rateLimiter.waitForSlot();
-
-    const start = Date.now();
-    try {
-      const feeData = await this.httpProvider!.getFeeData();
-      this.rateLimiter.recordRequest();
-      this.recordLatency(Date.now() - start);
-
-      return {
-        baseFee: (feeData.maxFeePerGas || ethers.BigNumber.from(0)).toString(),
-        maxPriorityFee: (feeData.maxPriorityFeePerGas || ethers.BigNumber.from(0)).toString(),
-        maxFee: (feeData.maxFeePerGas || ethers.BigNumber.from(0)).toString(),
-        gasPrice: (feeData.gasPrice || ethers.BigNumber.from(0)).toString(),
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      this.rateLimiter.recordError(this.isRateLimitError(error));
-      throw error;
-    }
+    const feeData = await this.execute('gas', provider => provider.getFeeData());
+    return {
+      baseFee: (feeData.maxFeePerGas || ethers.BigNumber.from(0)).toString(),
+      maxPriorityFee: (feeData.maxPriorityFeePerGas || ethers.BigNumber.from(0)).toString(),
+      maxFee: (feeData.maxFeePerGas || ethers.BigNumber.from(0)).toString(),
+      gasPrice: (feeData.gasPrice || ethers.BigNumber.from(0)).toString(),
+      timestamp: Date.now()
+    };
   }
 
   /**
    * Get pending transactions from mempool (Alchemy enhanced API)
    */
   async getPendingTransactions(options?: { fromAddress?: string; toAddress?: string }): Promise<TransactionData[]> {
-    await this.rateLimiter.waitForSlot();
-
-    const start = Date.now();
-    try {
-      // Use Alchemy's alchemy_pendingTransactions enhanced API
-      const params: any = {};
-      if (options?.fromAddress) params.fromAddress = options.fromAddress;
-      if (options?.toAddress) params.toAddress = options.toAddress;
-
-      const result = await this.httpProvider!.send('alchemy_pendingTransactions', [params]);
-      this.rateLimiter.recordRequest();
-      this.recordLatency(Date.now() - start);
-
-      return (result || []).map((tx: any) => ({
-        hash: tx.hash,
-        from: tx.from,
-        to: tx.to,
-        value: tx.value || '0',
-        gasPrice: tx.gasPrice || '0',
-        gasLimit: tx.gas || '0',
-        nonce: parseInt(tx.nonce, 16),
-        data: tx.input,
-        blockNumber: null,
-        status: 'pending' as const
-      }));
-    } catch (error) {
-      this.rateLimiter.recordError(this.isRateLimitError(error));
-      throw error;
-    }
+    const params: Record<string, string> = {};
+    if (options?.fromAddress) params.fromAddress = options.fromAddress;
+    if (options?.toAddress) params.toAddress = options.toAddress;
+    const result = await this.execute('pending_transactions', provider => provider.send('alchemy_pendingTransactions', [params]));
+    return (result || []).map((tx: any) => ({
+      hash: tx.hash,
+      from: tx.from,
+      to: tx.to,
+      value: tx.value || '0',
+      gasPrice: tx.gasPrice || '0',
+      gasLimit: tx.gas || '0',
+      nonce: parseInt(tx.nonce, 16),
+      data: tx.input,
+      blockNumber: null,
+      status: 'pending' as const
+    }));
   }
 
   /**
@@ -1258,21 +1103,16 @@ export class AlchemyProvider {
    */
   onBlock(callback: (blockNumber: number) => void): void {
     this.blockSubscriptions.push(callback);
-    if (this.wsProvider) {
-      this.wsProvider.on('block', callback);
-    } else this.startBlockPolling();
-  }
-
-  private startBlockPolling(): void {
-    if (this.blockPollingTimer) return;
-    this.blockPollingTimer = setInterval(async () => {
-      try {
-        const blockNumber = await this.getBlockNumber();
-        this.blockSubscriptions.forEach(callback => callback(blockNumber));
-      } catch (error) {
-        logger.warn('Alchemy HTTP block polling degraded', { component: 'AlchemyProvider', error });
-      }
-    }, 2000);
+    if (!this.blockSubscription && !this.blockSubscriptionPromise) {
+      this.blockSubscriptionPromise = multiProviderRpcManager.subscribe(this.chain, 'blocks', value => {
+        if (typeof value === 'number') this.blockSubscriptions.forEach(listener => listener(value));
+      }).then(subscription => { this.blockSubscription = subscription; }).catch(error => {
+        logger.warn('Shared block subscription unavailable', {
+          component: 'AlchemyProvider', chain: this.chain,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }).finally(() => { this.blockSubscriptionPromise = null; });
+    }
   }
 
   /**
@@ -1280,8 +1120,15 @@ export class AlchemyProvider {
    */
   onPendingTransaction(callback: (txHash: string) => void): void {
     this.pendingSubscriptions.push(callback);
-    if (this.wsProvider) {
-      this.wsProvider.on('pending', callback);
+    if (!this.pendingSubscription && !this.pendingSubscriptionPromise) {
+      this.pendingSubscriptionPromise = multiProviderRpcManager.subscribe(this.chain, 'pending_transactions', value => {
+        if (typeof value === 'string') this.pendingSubscriptions.forEach(listener => listener(value));
+      }).then(subscription => { this.pendingSubscription = subscription; }).catch(error => {
+        logger.warn('Shared pending subscription unavailable', {
+          component: 'AlchemyProvider', chain: this.chain,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }).finally(() => { this.pendingSubscriptionPromise = null; });
     }
   }
 
@@ -1291,31 +1138,27 @@ export class AlchemyProvider {
   async sendTransaction(signedTx: string): Promise<string> {
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: this.chain });
     await this.rateLimiter.waitForSlot();
-
-    const start = Date.now();
-    try {
-      const response = await this.httpProvider!.sendTransaction(signedTx);
-      this.rateLimiter.recordRequest();
-      this.recordLatency(Date.now() - start);
-      return response.hash;
-    } catch (error) {
-      this.rateLimiter.recordError(this.isRateLimitError(error));
-      throw error;
-    }
+    const { http } = await multiProviderRpcManager.getProvider(this.chain, 'json_rpc');
+    const response = await http.sendTransaction(signedTx);
+    this.rateLimiter.recordRequest();
+    return response.hash;
   }
 
   /**
    * Get transaction receipt
    */
   async getTransactionReceipt(txHash: string): Promise<ethers.providers.TransactionReceipt | null> {
-    await this.rateLimiter.waitForSlot();
+    return this.execute('receipts', provider => provider.getTransactionReceipt(txHash));
+  }
 
-    const start = Date.now();
+  private async execute<T>(capability: RpcCapability, operation: (provider: ethers.providers.JsonRpcProvider) => Promise<T>): Promise<T> {
+    await this.rateLimiter.waitForSlot();
+    const startedAt = Date.now();
     try {
-      const receipt = await this.httpProvider!.getTransactionReceipt(txHash);
+      const { result } = await multiProviderRpcManager.execute(this.chain, capability, operation);
       this.rateLimiter.recordRequest();
-      this.recordLatency(Date.now() - start);
-      return receipt;
+      this.recordLatency(Date.now() - startedAt);
+      return result;
     } catch (error) {
       this.rateLimiter.recordError(this.isRateLimitError(error));
       throw error;
@@ -1347,21 +1190,10 @@ export class AlchemyProvider {
    * Cleanup resources
    */
   async destroy(): Promise<void> {
-    this.wsState = 'shutting_down';
-    if (this.wsReconnectTimer) {
-      clearTimeout(this.wsReconnectTimer);
-      this.wsReconnectTimer = null;
-    }
-    if (this.blockPollingTimer) {
-      clearInterval(this.blockPollingTimer);
-      this.blockPollingTimer = null;
-    }
-    this.wsReconnecting = false;
-    this.destroyFailedWebSocket();
-    if (this.wsProvider) {
-      // ethers v5 doesn't have destroy method, use removeAllListeners
-      this.wsProvider.removeAllListeners();
-    }
+    await this.blockSubscription?.unsubscribe();
+    await this.pendingSubscription?.unsubscribe();
+    this.blockSubscription = null;
+    this.pendingSubscription = null;
     this.blockSubscriptions = [];
     this.pendingSubscriptions = [];
   }
@@ -1709,8 +1541,10 @@ export class BlockchainAPIService {
       chains
     });
 
+    await multiProviderRpcManager.initialize(chains);
+
     for (const chain of chains) {
-      // Initialize Alchemy (access layer)
+      // Keep the legacy accessor as a manager-backed compatibility facade.
       if (process.env.ALCHEMY_API_KEY?.trim()) {
         const alchemyProvider = new AlchemyProvider({
           chain,
@@ -1721,7 +1555,7 @@ export class BlockchainAPIService {
           await alchemyProvider.initialize();
           this.alchemyProviders.set(chain, alchemyProvider);
         } catch (error) {
-          logger.warn('Alchemy unavailable; continuing with independent provider paths', {
+          logger.warn('Shared RPC unavailable for Alchemy compatibility facade', {
             component: 'BlockchainAPIService',
             chain,
             error: error instanceof Error ? error.message : String(error),
@@ -1729,7 +1563,7 @@ export class BlockchainAPIService {
           await alchemyProvider.destroy();
         }
       } else {
-        logger.info('Alchemy is unconfigured; continuing without Alchemy access layer', {
+        logger.info('Alchemy is unconfigured; continuing without legacy compatibility facade', {
           component: 'BlockchainAPIService', chain,
         });
       }

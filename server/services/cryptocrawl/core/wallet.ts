@@ -5,8 +5,8 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type { ChainId } from './lux-swarm';
+import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
 
-const { JsonRpcProvider } = providers;
 const { formatEther, parseEther } = utils;
 
 interface ChainConfig {
@@ -48,14 +48,8 @@ const __dirname = dirname(__filename);
 const chainsPath = join(__dirname, '../config/chains.json');
 const chainConfigs: Record<ChainId, ChainConfig> = JSON.parse(readFileSync(chainsPath, 'utf-8'));
 
-// Substitute environment variables in RPC URLs
-const getRpcUrl = (config: ChainConfig): string => {
-  if (config.rpc) return config.rpc;
-  if (config.rpcTemplate) {
-    return config.rpcTemplate.replace(/\$\{(\w+)\}/g, (_, key) => process.env[key] || '');
-  }
-  throw new Error('No RPC URL configured');
-};
+const isManagedChain = (chain: string): chain is ChainId & RpcSupportedChain =>
+  ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism', 'ethereum'].includes(chain);
 
 class WalletManager {
   private wallet?: Wallet;
@@ -96,16 +90,30 @@ class WalletManager {
         address: this.wallet.address,
         encryptedKey,
         mnemonic: this.wallet.mnemonic?.phrase,
-        chains: Object.keys(chainConfigs) as ChainId[]
+        chains: Object.keys(chainConfigs).filter(isManagedChain)
       };
       this.saveToDB(data);
     }
 
-    // Connect providers for all chains
-    for (const [chainId, config] of Object.entries(chainConfigs)) {
-      const rpcUrl = getRpcUrl(config);
-      const provider = new JsonRpcProvider(rpcUrl);
-      this.providers.set(chainId as ChainId, provider);
+    const managedChains = Object.keys(chainConfigs).filter(isManagedChain);
+    await multiProviderRpcManager.initialize(managedChains);
+
+    for (const chainId of managedChains) {
+      const config = chainConfigs[chainId];
+      let managedProvider;
+      try {
+        managedProvider = await multiProviderRpcManager.getProvider(chainId, 'json_rpc');
+      } catch (discoveryError) {
+        if (!config.rpc?.trim()) throw discoveryError;
+        await multiProviderRpcManager.registerProvider({
+          provider: 'WalletConfiguredRPC',
+          chain: chainId,
+          httpUrl: config.rpc,
+          priority: 1,
+        });
+        managedProvider = await multiProviderRpcManager.getProvider(chainId, 'json_rpc');
+      }
+      this.providers.set(chainId, managedProvider.http);
     }
 
     return {

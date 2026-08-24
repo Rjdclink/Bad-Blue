@@ -144,7 +144,7 @@ async function verifyHttpFailureDoesNotDropHealthyWebSocket(): Promise<void> {
 }
 
 async function verifyPendingCapabilityAndCooldownRecovery(): Promise<void> {
-  const { manager, http } = await makeManager();
+  const { manager, http, sockets } = await makeManager();
   await register(manager, 'QuickNode', 'http://quicknode');
   const pending = await manager.subscribe('ethereum', 'pending_transactions', () => undefined);
   assert.equal(pending.state, 'unavailable');
@@ -171,10 +171,36 @@ function verifyTransportGuard(): void {
   socket.emit('error', new Error('second transport error'));
   socket.emit('close');
   assert.equal(failures, 1);
-  assert.equal(closes, 1);
+  assert.equal(closes, 0);
   cleanup();
   assert.equal(socket.listenerCount('error'), 0);
   assert.equal(socket.listenerCount('close'), 0);
+}
+
+async function verifyRecoveredWebSocketDoesNotDuplicateSubscription(): Promise<void> {
+  const { manager, sockets } = await makeManager(5);
+  await register(manager, 'Alchemy', 'http://alchemy', { websocket: 'ws://alchemy' });
+  await register(manager, 'Infura', 'http://infura', { websocket: 'ws://infura' });
+  const blocks: number[] = [];
+  const subscription = await manager.subscribe('ethereum', 'blocks', value => {
+    if (typeof value === 'number') blocks.push(value);
+  });
+
+  sockets.get('ws://alchemy')![0]._websocket.emit('error', new Error('connection lost'));
+  await wait(1200);
+  assert.equal(subscription.provider, 'Infura');
+
+  await wait(4200);
+  const alchemyConnections = sockets.get('ws://alchemy') || [];
+  assert.equal(alchemyConnections.length, 2);
+  assert.equal(manager.getHealth('ethereum').find(observation => observation.provider === 'Alchemy')?.websocket.state, 'healthy');
+
+  alchemyConnections[0].emit('block', 5);
+  sockets.get('ws://infura')![0].emit('block', 6);
+  assert.deepEqual(blocks, [6]);
+
+  await subscription.unsubscribe();
+  await manager.destroy();
 }
 
 verifyTransportGuard();
@@ -182,4 +208,5 @@ await verifyHttpFailoverAndProvenance();
 await verifyWebSocketMigrationAndStaleCallbackSuppression();
 await verifyHttpFailureDoesNotDropHealthyWebSocket();
 await verifyPendingCapabilityAndCooldownRecovery();
+await verifyRecoveredWebSocketDoesNotDuplicateSubscription();
 console.log('Provider failover matrix passed');

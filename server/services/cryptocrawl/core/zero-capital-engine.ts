@@ -56,6 +56,7 @@ import { CrawlerStrategy, type ComputeWorkload } from '../../computationalBeam/t
 import type { GateEvaluation } from '../../cryptara/marketGates/types.js';
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { calculateProgressivePositionSize, type PositionSizingDecision } from '../risk/progressive-position-sizing.js';
+import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -224,12 +225,39 @@ export class AutonomousZeroCapitalEngine {
     const nonEuropaRoutes = configuredRoutes.filter(route => route.chain !== 'europa');
     this.configuredRoutes = nonEuropaRoutes;
 
-    // Initialize providers for each chain
+    const ordinaryChains = Object.keys(RPC_ENDPOINTS)
+      .filter((chain): chain is RpcSupportedChain => chain !== 'europa');
+    await multiProviderRpcManager.initialize(ordinaryChains);
+
     for (const [chain, rpcUrl] of Object.entries(RPC_ENDPOINTS)) {
       try {
-        const provider = new providers.JsonRpcProvider(rpcUrl);
-        await provider.getNetwork(); // Verify connection
-        this.providers.set(chain as SupportedChain, provider);
+        if (chain === 'europa') {
+          const provider = new providers.JsonRpcProvider(rpcUrl);
+          await provider.getNetwork();
+          this.providers.set(chain as SupportedChain, provider);
+          logger.info(`[ZeroCapitalEngine] Connected to ${chain}`, { component: 'ZeroCapitalEngine', chain });
+          continue;
+        }
+
+        let managedProvider;
+        try {
+          managedProvider = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
+        } catch (discoveryError) {
+          await multiProviderRpcManager.registerProvider({
+            provider: 'ZeroCapitalConfiguredRPC',
+            chain: chain as RpcSupportedChain,
+            httpUrl: rpcUrl,
+            priority: 1,
+          });
+          managedProvider = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
+          logger.info('[ZeroCapitalEngine] Registered configured RPC fallback with shared manager', {
+            component: 'ZeroCapitalEngine',
+            chain,
+            discoveryError: discoveryError instanceof Error ? discoveryError.message : String(discoveryError),
+          });
+        }
+
+        this.providers.set(chain as SupportedChain, managedProvider.http);
         logger.info(`[ZeroCapitalEngine] Connected to ${chain}`, { component: 'ZeroCapitalEngine', chain });
       } catch (error) {
         logger.warn(`[ZeroCapitalEngine] Failed to connect to ${chain}`, { 
