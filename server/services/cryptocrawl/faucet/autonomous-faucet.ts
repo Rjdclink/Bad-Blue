@@ -1827,7 +1827,6 @@ class AutonomousCryptoFaucet {
       
       // Update timestamp
       this.marketConditions.timestamp = Date.now();
-      this.marketConditions.lastMarketDataError = undefined;
 
       if (this.tradingViewAnalysis?.dataProvenance === 'live' && cheapestChain) {
         const cryptara = getCryptara();

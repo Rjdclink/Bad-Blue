@@ -8,6 +8,7 @@ import { balanceMonitor } from '../bridge/balance-monitor';
 import { WalletManager } from '../core/wallet';
 import type { ChainId as WalletChainId } from '../core/lux-swarm.js';
 import { scheduledMonteCarloTraining } from '../training/scheduled-monte-carlo-training';
+import { stageManager } from '../governance/stage-management.js';
 
 const router = express.Router();
 const wss = new WebSocketServer({noServer: true});
@@ -278,6 +279,9 @@ function inferTradingIntent(): { intent: TradingIntent; confidence: number; reas
  * This is the core function that keeps the faucet running
  */
 async function ensureFaucetAlwaysOn(): Promise<boolean> {
+  const { initializeGovernance } = await import('../governance/index.js');
+  await initializeGovernance();
+
   // Check if manually disabled by user
   if (divineOptimizerState.manuallyDisabled) {
     console.log('[DivineOptimizer] Faucet manually disabled by user - respecting override');
@@ -287,7 +291,7 @@ async function ensureFaucetAlwaysOn(): Promise<boolean> {
   // Check if faucet is active
   const isActive = autonomousFaucet.isActive();
   
-  if (!isActive && DIVINE_OPTIMIZER_CONFIG.FAUCET_ALWAYS_ON) {
+  if (!isActive && DIVINE_OPTIMIZER_CONFIG.FAUCET_ALWAYS_ON && stageManager.isAutomaticallyActivated()) {
     // Check restart cooldown
     const now = Date.now();
     if (divineOptimizerState.restartAttempts >= DIVINE_OPTIMIZER_CONFIG.MAX_RESTART_ATTEMPTS) {
@@ -305,7 +309,9 @@ async function ensureFaucetAlwaysOn(): Promise<boolean> {
     
     try {
       await new Promise(resolve => setTimeout(resolve, DIVINE_OPTIMIZER_CONFIG.AUTO_RESTART_DELAY_MS));
-      await autonomousFaucet.runAutonomousLoop();
+      autonomousFaucet.runAutonomousLoop().catch(err => {
+        console.error('[DivineOptimizer] Auto-restarted faucet stopped:', err);
+      });
       divineOptimizerState.autoRestartCount++;
       divineOptimizerState.restartAttempts = 0; // Reset on success
       console.log('[DivineOptimizer] ✅ Faucet auto-restarted successfully!');
@@ -428,13 +434,24 @@ function manuallyEnableFaucet(): void {
 // AUTO-START: Initialize autonomous faucet on module load (Divine Auto-Activation)
 // This ensures arbitrage begins automatically when server starts with valid RPC connections
 setTimeout(() => {
-  console.log('[CryptoCrawl] 🚀 Divine Auto-Start: Initiating autonomous faucet...');
-  if (!autonomousFaucet.isActive()) {
-    autonomousFaucet.runAutonomousLoop().catch(err => {
+  void (async () => {
+    try {
+      // Governance persistence must be restored before the faucet can inspect its pause state.
+      const { initializeGovernance } = await import('../governance/index.js');
+      await initializeGovernance();
+      console.log('[CryptoCrawl] 🚀 Divine Auto-Start: Initiating autonomous faucet...');
+      if (stageManager.isAutomaticallyActivated() && !autonomousFaucet.isActive()) {
+        autonomousFaucet.runAutonomousLoop().catch(err => {
+          console.error('[CryptoCrawl] Failed to auto-start autonomous faucet:', err);
+        });
+        console.log('[CryptoCrawl] ✅ Autonomous faucet started - Zero-capital arbitrage ACTIVE');
+      } else if (!stageManager.isAutomaticallyActivated()) {
+        console.log('[CryptoCrawl] Faucet auto-start skipped - canonical governance is paused or requires authorization');
+      }
+    } catch (err) {
       console.error('[CryptoCrawl] Failed to auto-start autonomous faucet:', err);
-    });
-    console.log('[CryptoCrawl] ✅ Autonomous faucet started - Zero-capital arbitrage ACTIVE');
-  }
+    }
+  })();
 }, 5000); // 5 second delay to allow RPC connections to initialize
 
 // AUTO-START: Monte Carlo training is optional (disabled by default).
@@ -610,12 +627,17 @@ router.post('/faucet/toggle', async (req, res) => {
   
   // Control the autonomous faucet AND the Divine Optimizer manual override
   if (enabled) {
+    const { initializeGovernance } = await import('../governance/index.js');
+    await initializeGovernance();
+
     // Remove manual override and start faucet
     manuallyEnableFaucet();
-    if (!autonomousFaucet.isActive()) {
+    if (stageManager.isAutomaticallyActivated() && !autonomousFaucet.isActive()) {
       autonomousFaucet.runAutonomousLoop().catch(err => {
         console.error('[Faucet] Failed to start autonomous loop:', err);
       });
+    } else if (!stageManager.isAutomaticallyActivated()) {
+      console.log('[Faucet] Start skipped - canonical governance is paused or requires authorization');
     }
   } else {
     // Set manual override to disable and stop faucet
