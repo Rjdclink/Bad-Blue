@@ -18,6 +18,8 @@ import { MasterOrchestrator } from '../core/master-orchestrator.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
 import { stageManager } from '../governance/stage-management.js';
+import { evaluateAutomaticStageProgression } from '../governance/automatic-stage-progression.js';
+import { getCryptara } from '../../cryptara/index.js';
 import logger from '../../../logger.js';
 
 // Babel Integration - IP Protection Systems + Cain Reasoning
@@ -1813,11 +1815,51 @@ class AutonomousCryptoFaucet {
       this.marketConditions.lastMarketDataError = undefined;
 
       if (this.tradingViewAnalysis?.dataProvenance === 'live' && cheapestChain) {
+        const cryptara = getCryptara();
+        const marketGate = cryptara.evaluateMarketGates({
+          chain: cheapestChain,
+          pairOrSymbol: plan?.symbol || symbol,
+          venue: plan?.buyVenue || 'market-data-validation',
+          expectedProfitUsd: plan?.netProfitUsd || 0,
+          volatilityRegime: {
+            liquidityScore: Math.max(0.1, this.tradingViewAnalysis.summary.strength / 100),
+            recentPriceMovement: Math.abs(TradingViewEngine.signalToScore(this.tradingViewAnalysis.summary.signal)) / 100,
+          },
+          venueLatency: {
+            p50Ms: { live_quotes: Math.max(0, Date.now() - quoteValidation!.validatedAt) },
+            maxP50Ms: maxQuoteAgeMs,
+          },
+          feesRebates: {
+            takerFeeBps: plan ? Math.round((plan.costs.totalCostsUsd / Math.max(plan.notionalUsd, 1)) * 10_000) : 0,
+          },
+          crossVenueFees: plan ? {
+            buyVenue: plan.buyVenue,
+            sellVenue: plan.sellVenue,
+            buyTakerFeeBps: Math.round((plan.costs.buyFeeUsd / Math.max(plan.notionalUsd, 1)) * 10_000),
+            sellTakerFeeBps: Math.round((plan.costs.sellFeeUsd / Math.max(plan.notionalUsd, 1)) * 10_000),
+            grossSpreadBps: Math.max(0, plan.spreadPct * 100),
+          } : undefined,
+          drawdownCaps: {
+            drawdownPct: 0,
+            maxDrawdownPct: 5,
+          },
+          slippage: {
+            expectedSlippageBps: plan ? Math.round((plan.costs.totalCostsUsd / Math.max(plan.notionalUsd, 1)) * 10_000) : 0,
+            maxSlippageBps: 50,
+          },
+        }, {
+          blockOnUnknownCritical: true,
+          criticalSignals: ['volatilityRegime', 'venueLatency', 'feesRebates', 'crossVenueFees', 'slippage', 'drawdownCaps'],
+        });
+        if (marketGate.decision !== 'ALLOW') {
+          throw new Error(`Cryptara market gate blocked live validation: ${marketGate.blockReasons.join('; ')}`);
+        }
         await stageManager.recordLiveValidation({
           passed: true,
           chainHealthy: true,
           timestamp: quoteValidation!.validatedAt,
         });
+        await evaluateAutomaticStageProgression(marketGate);
       }
 
       logger.debug('[FAUCET] Market conditions updated', {

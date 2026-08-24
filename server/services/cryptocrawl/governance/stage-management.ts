@@ -120,12 +120,12 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
     description: 'First live actions inside pre-approved envelopes',
     
     canExecuteTrades: true,
-    requiresHumanApproval: true,
-    requiresExplicitUnpause: true,
+    requiresHumanApproval: false,
+    requiresExplicitUnpause: false,
     
     maxPairsAllowed: 10,
     maxVenuesAllowed: 3,
-    allowedChains: ['polygon', 'arbitrum'],
+    allowedChains: ['polygon', 'arbitrum', 'europa'],
     
     minDailyProfit: 200,
     maxDailyProfit: 500,
@@ -151,12 +151,12 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
     description: 'Incremental scope widening with forced cool-downs',
     
     canExecuteTrades: true,
-    requiresHumanApproval: true,
-    requiresExplicitUnpause: true,
+    requiresHumanApproval: false,
+    requiresExplicitUnpause: false,
     
     maxPairsAllowed: 20,
     maxVenuesAllowed: 5,
-    allowedChains: ['polygon', 'arbitrum', 'optimism'],
+    allowedChains: ['polygon', 'arbitrum', 'optimism', 'europa'],
     
     minDailyProfit: 500,
     maxDailyProfit: 1500,
@@ -183,11 +183,11 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
     
     canExecuteTrades: true,
     requiresHumanApproval: false, // Conditional autonomy within bounds
-    requiresExplicitUnpause: true,
+    requiresExplicitUnpause: false,
     
     maxPairsAllowed: 50,
     maxVenuesAllowed: 10,
-    allowedChains: ['polygon', 'arbitrum', 'optimism', 'avalanche'],
+    allowedChains: ['polygon', 'arbitrum', 'optimism', 'avalanche', 'europa'],
     
     minDailyProfit: 1500,
     maxDailyProfit: 5000,
@@ -214,11 +214,11 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
     
     canExecuteTrades: true,
     requiresHumanApproval: false,
-    requiresExplicitUnpause: true,
+    requiresExplicitUnpause: false,
     
     maxPairsAllowed: 100,
     maxVenuesAllowed: 15,
-    allowedChains: ['polygon', 'arbitrum', 'optimism', 'avalanche', 'bsc'],
+    allowedChains: ['polygon', 'arbitrum', 'optimism', 'avalanche', 'bsc', 'europa'],
     
     minDailyProfit: 5000,
     maxDailyProfit: 15000,
@@ -249,7 +249,7 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
     
     maxPairsAllowed: 200,
     maxVenuesAllowed: 25,
-    allowedChains: ['polygon', 'arbitrum', 'optimism', 'avalanche', 'bsc', 'ethereum'],
+    allowedChains: ['polygon', 'arbitrum', 'optimism', 'avalanche', 'bsc', 'ethereum', 'europa'],
     
     minDailyProfit: 15000,
     maxDailyProfit: 35000,
@@ -280,6 +280,9 @@ export interface StageState {
   pauseReason?: string;
   lastPauseTimestamp?: number;
   unpauseRequiresAuthorization: boolean;
+  activationMode: 'automatic' | 'manual' | 'none';
+  activatedAt?: number;
+  manualHold: boolean;
   
   // Authorization tracking
   lastUnpauseTimestamp?: number;
@@ -307,6 +310,11 @@ export interface StageState {
   blockingAnomaly: boolean;
   killSwitchActive: boolean;
   uncertainties: string[];
+
+  automaticAdvancementEvidence: AutomaticAdvancementEvidence | null;
+  automaticAdvancementBlockers: string[];
+  cryptaraExecutionEvidence: PersistedCryptaraExecutionEvidence[];
+  profitLadderState: Record<string, unknown> | null;
 }
 
 export interface ProofMetrics {
@@ -330,6 +338,70 @@ export interface ProofMetrics {
   
   // Stage-specific requirements
   meetsAdvancementCriteria: boolean;
+}
+
+export interface CryptaraRankingEvidence {
+  evaluatedAt: number;
+  sampleCount: number;
+  successfulExecutions: number;
+  successRate: number;
+  averageNetProfitUsd: number;
+  averageSlippageBps: number;
+  preferredChains: string[];
+  preferredExecutionModes: Array<'standard' | 'zero_capital' | 'flashbots'>;
+  riskBudget: 'defensive' | 'balanced' | 'aggressive';
+  notionalMultiplier: number;
+  maxSlippageBps: number;
+  chainPerformance: Array<{
+    chain: string;
+    netRealizedProfitUsd: number;
+    successfulExecutions: number;
+    totalExecutions: number;
+    rankingScore: number;
+  }>;
+}
+
+export interface AutomaticAdvancementEvidence {
+  evaluatedAt: number;
+  marketGate: {
+    decision: 'ALLOW' | 'BLOCK';
+    evaluatedAt: number;
+    reasons: string[];
+  };
+  cryptara: CryptaraRankingEvidence;
+  profitLadder: {
+    currentTierId: number;
+    readyForNextTier: boolean;
+    blockers: string[];
+  };
+  risk: {
+    circuitBreakersClear: boolean;
+    trippedCircuitBreakers: string[];
+  };
+}
+
+export interface AutomaticAdvancementResult {
+  advanced: boolean;
+  fromStage: Stage;
+  toStage?: Stage;
+  blockers: string[];
+}
+
+export interface PersistedCryptaraExecutionEvidence {
+  source: 'master_pipeline' | 'zero_capital' | 'flash_loan' | 'manual';
+  opportunityId?: string;
+  chain: string;
+  symbol: string;
+  strategy: string;
+  success: boolean;
+  expectedProfitUsd: number;
+  realizedProfitUsd: number;
+  feeUsd: number;
+  slippageBps: number;
+  latencyMs: number;
+  usedZeroCapital: boolean;
+  timestamp: number;
+  notes?: string;
 }
 
 // ============================================================================
@@ -419,62 +491,78 @@ export class StageManager extends EventEmitter {
       };
     }
     
-    // Check if current stage requires explicit unpause
-    if (this.config.requiresExplicitUnpause) {
-      log.info('UNPAUSE request received', {
-        stage: this.config.stageName,
-        authority,
-        scope,
-        duration,
-      });
+    log.info('Manual UNPAUSE request received', {
+      stage: this.config.stageName,
+      authority,
+      scope,
+      duration,
+    });
       
-      // Record authorization
-      this.state.isPaused = false;
-      this.state.pauseReason = undefined;
-      this.state.lastUnpauseTimestamp = Date.now();
-      this.state.lastUnpauseAuthority = authority;
-      this.state.lastUnpauseScope = scope;
-      this.state.lastUnpauseDuration = duration;
+    // Record optional manual override activation.
+    this.state.isPaused = false;
+    this.state.pauseReason = undefined;
+    this.state.lastUnpauseTimestamp = Date.now();
+    this.state.lastUnpauseAuthority = authority;
+    this.state.lastUnpauseScope = scope;
+    this.state.lastUnpauseDuration = duration;
+    this.state.unpauseRequiresAuthorization = false;
+    this.state.activationMode = 'manual';
+    this.state.activatedAt = Date.now();
+    this.state.manualHold = false;
       
-      // Schedule automatic pause if duration specified
-      if (duration > 0) {
-        setTimeout(() => {
-          this.pause('Duration expired');
-        }, duration);
-      }
-      
-      // Emit event
-      this.emit('unpaused', {
-        stage: this.state.currentStage,
-        authority,
-        scope,
-        duration,
-        timestamp: Date.now(),
-      });
-      
-      this.recordStateChange({ isPaused: false });
-      await this.persistState();
-      
-      return {
-        success: true,
-        message: `System UNPAUSED by ${authority} for scope: ${scope}`,
-      };
-    } else {
-      return {
-        success: false,
-        message: 'Current stage does not require explicit unpause',
-      };
+    // Schedule automatic pause if duration specified.
+    if (duration > 0) {
+      setTimeout(() => {
+        this.pause('Duration expired');
+      }, duration);
     }
+      
+    this.emit('unpaused', {
+      stage: this.state.currentStage,
+      authority,
+      scope,
+      duration,
+      automatic: false,
+      timestamp: Date.now(),
+    });
+      
+    this.recordStateChange({ isPaused: false, activationMode: 'manual', manualHold: false });
+    await this.persistState();
+      
+    return {
+      success: true,
+      message: `System manually activated by ${authority} for scope: ${scope}`,
+    };
+  }
+
+  private activateAutomatically(reason: string, evidence?: AutomaticAdvancementEvidence): void {
+    this.state.isPaused = false;
+    this.state.pauseReason = undefined;
+    this.state.unpauseRequiresAuthorization = false;
+    this.state.activationMode = 'automatic';
+    this.state.activatedAt = Date.now();
+    this.state.manualHold = false;
+    this.emit('unpaused', {
+      stage: this.state.currentStage,
+      authority: 'system',
+      scope: reason,
+      duration: 0,
+      automatic: true,
+      evidence,
+      timestamp: this.state.activatedAt,
+    });
   }
   
   /**
    * PAUSE the system with absolute semantics
    */
-  pause(reason: string): void {
+  pause(reason: string, options?: { manualOverride?: boolean }): void {
     if (this.state.isPaused) {
       log.warn('System already paused', { reason });
       this.state.pauseReason = reason;
       this.state.lastPauseTimestamp = Date.now();
+      this.state.activationMode = 'none';
+      this.state.manualHold = this.state.manualHold || options?.manualOverride === true;
       this.recordStateChange({ pauseReason: reason, lastPauseTimestamp: this.state.lastPauseTimestamp });
       return;
     }
@@ -485,6 +573,8 @@ export class StageManager extends EventEmitter {
     this.state.pauseReason = reason;
     this.state.lastPauseTimestamp = Date.now();
     this.state.unpauseRequiresAuthorization = this.config.requiresExplicitUnpause;
+    this.state.activationMode = 'none';
+    this.state.manualHold = options?.manualOverride === true;
     
     this.emit('paused', {
       stage: this.state.currentStage,
@@ -555,6 +645,7 @@ export class StageManager extends EventEmitter {
     const previousStage = this.state.currentStage;
     this.state.currentStage = targetStage;
     this.config = STAGE_CONFIGS[targetStage];
+    this.state.proofMetrics = this.getEmptyProofMetrics();
     
     // Reset to paused state
     this.state.isPaused = true;
@@ -586,6 +677,103 @@ export class StageManager extends EventEmitter {
       message: `Advanced to ${this.config.stageName}. System paused - requires UNPAUSE.`,
     };
   }
+
+  async evaluateAutomaticAdvancement(evidence: AutomaticAdvancementEvidence): Promise<AutomaticAdvancementResult> {
+    const normalizedEvidence = normalizeAutomaticAdvancementEvidence(evidence);
+    this.state.automaticAdvancementEvidence = normalizedEvidence;
+
+    const blockers = this.getAutomaticAdvancementBlockers(normalizedEvidence);
+    this.state.automaticAdvancementBlockers = blockers;
+    if (blockers.length > 0) {
+      this.recordStateChange({
+        automaticAdvancementEvidence: normalizedEvidence,
+        automaticAdvancementBlockers: blockers,
+      });
+      await this.persistState();
+      return { advanced: false, fromStage: this.state.currentStage, blockers };
+    }
+
+    const { profitLadder } = await import('./profit-ladder.js');
+    const tierAdvance = profitLadder.advanceToNextTier();
+    if (!tierAdvance.success) {
+      const tierBlocker = `Profit ladder did not advance: ${tierAdvance.message}`;
+      this.state.automaticAdvancementBlockers = [tierBlocker];
+      this.recordStateChange({ automaticAdvancementBlockers: [tierBlocker] });
+      await this.persistState();
+      return { advanced: false, fromStage: this.state.currentStage, blockers: [tierBlocker] };
+    }
+    this.state.profitLadderState = profitLadder.exportState();
+
+    const previousStage = this.state.currentStage;
+    const nextStage = (previousStage + 1) as Stage;
+    this.state.currentStage = nextStage;
+    this.config = STAGE_CONFIGS[nextStage];
+    this.state.proofMetrics = this.getEmptyProofMetrics();
+    this.state.automaticAdvancementBlockers = [];
+
+    log.info('STAGE ADVANCED AUTOMATICALLY FROM VERIFIED EVIDENCE', {
+      from: STAGE_CONFIGS[previousStage].stageName,
+      to: this.config.stageName,
+      cryptaraRiskBudget: normalizedEvidence.cryptara.riskBudget,
+      preferredChains: normalizedEvidence.cryptara.preferredChains,
+      profitLadderTier: normalizedEvidence.profitLadder.currentTierId,
+    });
+    this.emit('stage-advanced', {
+      previousStage,
+      currentStage: nextStage,
+      authority: 'system',
+      automatic: true,
+      evidence: normalizedEvidence,
+      timestamp: Date.now(),
+    });
+    this.activateAutomatically(`automatic_stage_advancement:${previousStage}->${nextStage}`, normalizedEvidence);
+    this.recordStateChange({
+      currentStage: nextStage,
+      isPaused: false,
+      activationMode: 'automatic',
+      manualHold: false,
+      automaticAdvancementEvidence: normalizedEvidence,
+      automaticAdvancementBlockers: [],
+    });
+    await this.persistState();
+    return { advanced: true, fromStage: previousStage, toStage: nextStage, blockers: [] };
+  }
+
+  async recordExecutionEvidence(input: {
+    success: boolean;
+    realizedProfitUsd: number;
+    automaticEvidence: AutomaticAdvancementEvidence;
+    cryptaraFeedback: PersistedCryptaraExecutionEvidence;
+  }): Promise<AutomaticAdvancementResult> {
+    if (!Number.isFinite(input.realizedProfitUsd)) {
+      throw new Error('Execution evidence requires a finite realized profit value');
+    }
+    const metrics = this.state.proofMetrics;
+    const previousTrades = metrics.totalTrades;
+    metrics.totalTrades += 1;
+    if (input.success) {
+      metrics.winningTrades += 1;
+      this.state.dailyProfitUSD += input.realizedProfitUsd;
+      this.state.totalProfitUSD += input.realizedProfitUsd;
+    } else {
+      metrics.losingTrades += 1;
+    }
+    metrics.successRate = metrics.winningTrades / metrics.totalTrades;
+    metrics.avgProfitPerTrade = ((metrics.avgProfitPerTrade * previousTrades) + input.realizedProfitUsd) / metrics.totalTrades;
+    metrics.meetsAdvancementCriteria = this.checkAdvancementCriteria();
+    this.state.cryptaraExecutionEvidence.push(normalizeCryptaraExecutionEvidence(input.cryptaraFeedback));
+    if (this.state.cryptaraExecutionEvidence.length > 1000) {
+      this.state.cryptaraExecutionEvidence = this.state.cryptaraExecutionEvidence.slice(-1000);
+    }
+    this.emit('execution-evidence-recorded', {
+      stage: this.state.currentStage,
+      metrics: { ...metrics },
+      success: input.success,
+      realizedProfitUsd: input.realizedProfitUsd,
+      timestamp: Date.now(),
+    });
+    return this.evaluateAutomaticAdvancement(input.automaticEvidence);
+  }
   
   /**
    * Update proof metrics (called by trading engine)
@@ -612,6 +800,7 @@ export class StageManager extends EventEmitter {
    */
   private checkAdvancementCriteria(): boolean {
     const m = this.state.proofMetrics;
+    m.uptime = this.state.activatedAt ? Math.max(0, Date.now() - this.state.activatedAt) : 0;
 
     if (this.state.currentStage === Stage.STAGE_1_CONSTRAINED_PILOT) {
       return m.chainHealthy &&
@@ -642,6 +831,33 @@ export class StageManager extends EventEmitter {
     if (m.uptime < requiredUptimeHours * 3600 * 1000) return false;
     
     return true;
+  }
+
+  private getAutomaticAdvancementBlockers(evidence: AutomaticAdvancementEvidence): string[] {
+    const blockers: string[] = [];
+    if (this.state.currentStage >= Stage.STAGE_6_CONDITIONAL_AUTONOMY) {
+      blockers.push('Already at the highest stage');
+    }
+    if (this.state.manualHold) blockers.push('A human pause or stop override is active');
+    if (this.state.killSwitchActive) blockers.push('Kill-switch is active');
+    if (this.state.blockingAnomaly) blockers.push('Blocking anomaly is active');
+    if (this.state.uncertainties.length > 0) blockers.push(`Pending uncertainty: ${this.state.uncertainties[0]}`);
+    if (!this.state.proofMetrics.meetsAdvancementCriteria) blockers.push('StageManager proof metrics do not meet the current stage criteria');
+    if (evidence.marketGate.decision !== 'ALLOW') blockers.push('Cryptara market gate did not authorize advancement');
+    if (!evidence.risk.circuitBreakersClear) blockers.push(`Risk circuit breakers are tripped: ${evidence.risk.trippedCircuitBreakers.join(', ')}`);
+    if (evidence.cryptara.riskBudget === 'defensive') blockers.push('Cryptara performance ranking selected a defensive risk budget');
+    if (evidence.cryptara.preferredChains.length === 0) blockers.push('Cryptara performance ranking has no preferred chain');
+    if (this.state.currentStage >= Stage.STAGE_2_PROOF_OF_SIGNAL && evidence.cryptara.sampleCount < this.state.proofMetrics.totalTrades) {
+      blockers.push('Persisted Cryptara execution history does not cover all recorded StageManager trades');
+    }
+    if (evidence.profitLadder.currentTierId !== this.state.currentStage - 1) {
+      blockers.push('Profit-ladder tier is not aligned with the current governance stage');
+    }
+    if (!evidence.profitLadder.readyForNextTier) {
+      blockers.push(...evidence.profitLadder.blockers.map(blocker => `Profit ladder: ${blocker}`));
+      if (evidence.profitLadder.blockers.length === 0) blockers.push('Profit ladder is not ready for the next tier');
+    }
+    return blockers;
   }
   
   // ============================================================================
@@ -675,7 +891,7 @@ export class StageManager extends EventEmitter {
     });
     
     // Automatic pause if required by stage
-    if (this.config.automaticPauseAfterCycle) {
+    if (this.config.automaticPauseAfterCycle && this.state.activationMode !== 'automatic') {
       this.pause('Automatic pause after cycle completion');
     }
   }
@@ -741,7 +957,11 @@ export class StageManager extends EventEmitter {
   }
   
   requiresHumanApproval(): boolean {
-    return this.config.requiresHumanApproval;
+    return this.config.requiresHumanApproval && this.state.activationMode !== 'automatic';
+  }
+
+  isAutomaticallyActivated(): boolean {
+    return this.state.activationMode === 'automatic' && !this.state.isPaused;
   }
   
   getMaxDailyProfit(): number {
@@ -778,6 +998,8 @@ export class StageManager extends EventEmitter {
     this.state.pauseReason = `Kill-switch: ${reason}`;
     this.state.lastPauseTimestamp = Date.now();
     this.state.unpauseRequiresAuthorization = true;
+    this.state.activationMode = 'none';
+    this.state.manualHold = false;
     this.emit('kill-switch-engaged', { stage: this.state.currentStage, reason, timestamp: Date.now() });
     this.recordStateChange({
       killSwitchActive: true,
@@ -793,10 +1015,12 @@ export class StageManager extends EventEmitter {
     }
     this.state.killSwitchActive = false;
     this.state.isPaused = true;
-    this.state.pauseReason = 'Kill switch reset - awaiting human authorization';
+    this.state.pauseReason = 'Kill switch reset - awaiting fresh qualifying evidence or manual activation';
     this.state.lastPauseTimestamp = Date.now();
+    this.state.activationMode = 'none';
+    this.state.manualHold = false;
     this.recordStateChange({ killSwitchActive: false, isPaused: true, pauseReason: this.state.pauseReason, lastPauseTimestamp: this.state.lastPauseTimestamp });
-    return { success: true, message: 'Kill switch reset. System remains paused.' };
+    return { success: true, message: 'Kill switch reset. System remains paused until requalification or manual activation.' };
   }
 
   reportUncertainty(uncertainty: string): void {
@@ -863,10 +1087,11 @@ export class StageManager extends EventEmitter {
   private createInitialState(): StageState {
     return {
       currentStage: Stage.STAGE_1_CONSTRAINED_PILOT,
-      isPaused: true,
-      pauseReason: 'Initial state - awaiting human authorization',
-      lastPauseTimestamp: Date.now(),
-      unpauseRequiresAuthorization: true,
+      isPaused: false,
+      unpauseRequiresAuthorization: false,
+      activationMode: 'automatic',
+      activatedAt: Date.now(),
+      manualHold: false,
       cycleCount: 0,
       dailyProfitUSD: 0,
       totalProfitUSD: 0,
@@ -876,6 +1101,10 @@ export class StageManager extends EventEmitter {
       blockingAnomaly: false,
       killSwitchActive: false,
       uncertainties: [],
+      automaticAdvancementEvidence: null,
+      automaticAdvancementBlockers: [],
+      cryptaraExecutionEvidence: [],
+      profitLadderState: null,
     };
   }
 
@@ -933,6 +1162,20 @@ export class StageManager extends EventEmitter {
   getStateHistory(): Array<{ timestamp: number; state: Partial<StageState> }> {
     return [...this.stateHistory];
   }
+
+  getCryptaraExecutionEvidence(): PersistedCryptaraExecutionEvidence[] {
+    return this.state.cryptaraExecutionEvidence.map(entry => ({ ...entry }));
+  }
+
+  getProfitLadderState(): Record<string, unknown> | null {
+    return this.state.profitLadderState ? { ...this.state.profitLadderState } : null;
+  }
+
+  async recordProfitLadderState(value: Record<string, unknown>): Promise<void> {
+    this.state.profitLadderState = { ...value };
+    this.recordStateChange({ profitLadderState: this.state.profitLadderState });
+    await this.persistState();
+  }
   
   /**
    * Export full state for persistence
@@ -953,11 +1196,23 @@ export class StageManager extends EventEmitter {
     }
 
     const restored = this.normalizeRestoredState(data.state);
-    if (!restored.isPaused) {
+    const mayResumeAutomatic =
+      restored.activationMode === 'automatic' &&
+      !restored.isPaused &&
+      !restored.manualHold &&
+      !restored.killSwitchActive &&
+      !restored.blockingAnomaly &&
+      restored.uncertainties.length === 0 &&
+      (restored.currentStage === Stage.STAGE_1_CONSTRAINED_PILOT || restored.automaticAdvancementEvidence !== null);
+    if (!mayResumeAutomatic && !restored.isPaused) {
       restored.isPaused = true;
       restored.pauseReason = 'restart_requires_human_unpause';
       restored.lastPauseTimestamp = Date.now();
       restored.unpauseRequiresAuthorization = true;
+      restored.activationMode = 'none';
+      restored.manualHold = true;
+    } else if (mayResumeAutomatic) {
+      restored.unpauseRequiresAuthorization = false;
     }
 
     this.state = restored;
@@ -991,6 +1246,13 @@ export class StageManager extends EventEmitter {
       pauseReason: optionalString(value.pauseReason),
       lastPauseTimestamp: optionalTimestamp(value.lastPauseTimestamp),
       unpauseRequiresAuthorization: requireBoolean('unpauseRequiresAuthorization', value.unpauseRequiresAuthorization),
+      activationMode: value.activationMode === 'automatic' || value.activationMode === 'manual' || value.activationMode === 'none'
+        ? value.activationMode
+        : requireBoolean('isPaused', value.isPaused) ? 'none' : 'manual',
+      activatedAt: optionalTimestamp(value.activatedAt),
+      manualHold: value.manualHold === undefined || value.manualHold === null
+        ? false
+        : requireBoolean('manualHold', value.manualHold),
       lastUnpauseTimestamp: optionalTimestamp(value.lastUnpauseTimestamp),
       lastUnpauseAuthority: optionalString(value.lastUnpauseAuthority),
       lastUnpauseScope: optionalString(value.lastUnpauseScope),
@@ -1006,6 +1268,18 @@ export class StageManager extends EventEmitter {
       blockingAnomaly: requireBoolean('blockingAnomaly', value.blockingAnomaly),
       killSwitchActive: requireBoolean('killSwitchActive', value.killSwitchActive),
       uncertainties: requireStringArray('uncertainties', value.uncertainties),
+      automaticAdvancementEvidence: value.automaticAdvancementEvidence === undefined || value.automaticAdvancementEvidence === null
+        ? null
+        : normalizeAutomaticAdvancementEvidence(value.automaticAdvancementEvidence),
+      automaticAdvancementBlockers: value.automaticAdvancementBlockers === undefined || value.automaticAdvancementBlockers === null
+        ? []
+        : requireStringArray('automaticAdvancementBlockers', value.automaticAdvancementBlockers),
+      cryptaraExecutionEvidence: value.cryptaraExecutionEvidence === undefined || value.cryptaraExecutionEvidence === null
+        ? []
+        : requireCryptaraExecutionEvidence(value.cryptaraExecutionEvidence),
+      profitLadderState: value.profitLadderState === undefined || value.profitLadderState === null
+        ? null
+        : requireRecord('profitLadderState', value.profitLadderState),
     };
   }
 
@@ -1040,6 +1314,98 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function normalizeAutomaticAdvancementEvidence(value: unknown): AutomaticAdvancementEvidence {
+  if (!isRecord(value) || !isRecord(value.marketGate) || !isRecord(value.cryptara) || !isRecord(value.profitLadder) || !isRecord(value.risk)) {
+    throw new Error('Persisted automatic advancement evidence has an invalid shape');
+  }
+  const gateDecision = value.marketGate.decision;
+  if (gateDecision !== 'ALLOW' && gateDecision !== 'BLOCK') {
+    throw new Error('Persisted automatic advancement evidence has an invalid market gate decision');
+  }
+  const riskBudget = value.cryptara.riskBudget;
+  if (riskBudget !== 'defensive' && riskBudget !== 'balanced' && riskBudget !== 'aggressive') {
+    throw new Error('Persisted automatic advancement evidence has an invalid Cryptara risk budget');
+  }
+  if (!Array.isArray(value.cryptara.chainPerformance)) {
+    throw new Error('Persisted automatic advancement evidence has invalid chain performance');
+  }
+  const chainPerformance = value.cryptara.chainPerformance.map(entry => {
+    if (!isRecord(entry)) throw new Error('Persisted automatic advancement evidence has an invalid chain performance entry');
+    return {
+      chain: requireNonEmptyString('chain', entry.chain),
+      netRealizedProfitUsd: requireFiniteNumber('netRealizedProfitUsd', entry.netRealizedProfitUsd),
+      successfulExecutions: requireNonNegativeInteger('successfulExecutions', entry.successfulExecutions),
+      totalExecutions: requireNonNegativeInteger('totalExecutions', entry.totalExecutions),
+      rankingScore: requireFiniteNumber('rankingScore', entry.rankingScore),
+    };
+  });
+  const preferredExecutionModes = requireStringArray('preferredExecutionModes', value.cryptara.preferredExecutionModes);
+  if (preferredExecutionModes.some(mode => mode !== 'standard' && mode !== 'zero_capital' && mode !== 'flashbots')) {
+    throw new Error('Persisted automatic advancement evidence has an invalid Cryptara execution mode');
+  }
+
+  return {
+    evaluatedAt: requireNonNegativeNumber('evaluatedAt', value.evaluatedAt),
+    marketGate: {
+      decision: gateDecision,
+      evaluatedAt: requireNonNegativeNumber('marketGate.evaluatedAt', value.marketGate.evaluatedAt),
+      reasons: requireStringArray('marketGate.reasons', value.marketGate.reasons),
+    },
+    cryptara: {
+      evaluatedAt: requireNonNegativeNumber('cryptara.evaluatedAt', value.cryptara.evaluatedAt),
+      sampleCount: requireNonNegativeInteger('cryptara.sampleCount', value.cryptara.sampleCount),
+      successfulExecutions: requireNonNegativeInteger('cryptara.successfulExecutions', value.cryptara.successfulExecutions),
+      successRate: requireUnitInterval('cryptara.successRate', value.cryptara.successRate),
+      averageNetProfitUsd: requireFiniteNumber('cryptara.averageNetProfitUsd', value.cryptara.averageNetProfitUsd),
+      averageSlippageBps: requireNonNegativeNumber('cryptara.averageSlippageBps', value.cryptara.averageSlippageBps),
+      preferredChains: requireStringArray('cryptara.preferredChains', value.cryptara.preferredChains),
+      preferredExecutionModes: preferredExecutionModes as Array<'standard' | 'zero_capital' | 'flashbots'>,
+      riskBudget,
+      notionalMultiplier: requireNonNegativeNumber('cryptara.notionalMultiplier', value.cryptara.notionalMultiplier),
+      maxSlippageBps: requireNonNegativeNumber('cryptara.maxSlippageBps', value.cryptara.maxSlippageBps),
+      chainPerformance,
+    },
+    profitLadder: {
+      currentTierId: requireNonNegativeInteger('profitLadder.currentTierId', value.profitLadder.currentTierId),
+      readyForNextTier: requireBoolean('profitLadder.readyForNextTier', value.profitLadder.readyForNextTier),
+      blockers: requireStringArray('profitLadder.blockers', value.profitLadder.blockers),
+    },
+    risk: {
+      circuitBreakersClear: requireBoolean('risk.circuitBreakersClear', value.risk.circuitBreakersClear),
+      trippedCircuitBreakers: requireStringArray('risk.trippedCircuitBreakers', value.risk.trippedCircuitBreakers),
+    },
+  };
+}
+
+function requireCryptaraExecutionEvidence(value: unknown): PersistedCryptaraExecutionEvidence[] {
+  if (!Array.isArray(value)) throw new Error('Persisted Cryptara execution evidence must be an array');
+  return value.slice(-1000).map(normalizeCryptaraExecutionEvidence);
+}
+
+function normalizeCryptaraExecutionEvidence(value: PersistedCryptaraExecutionEvidence | unknown): PersistedCryptaraExecutionEvidence {
+  if (!isRecord(value)) throw new Error('Persisted Cryptara execution evidence has an invalid shape');
+  const source = value.source;
+  if (source !== 'master_pipeline' && source !== 'zero_capital' && source !== 'flash_loan' && source !== 'manual') {
+    throw new Error('Persisted Cryptara execution evidence has an invalid source');
+  }
+  return {
+    source,
+    opportunityId: optionalString(value.opportunityId),
+    chain: requireNonEmptyString('chain', value.chain),
+    symbol: requireNonEmptyString('symbol', value.symbol),
+    strategy: requireNonEmptyString('strategy', value.strategy),
+    success: requireBoolean('success', value.success),
+    expectedProfitUsd: requireFiniteNumber('expectedProfitUsd', value.expectedProfitUsd),
+    realizedProfitUsd: requireFiniteNumber('realizedProfitUsd', value.realizedProfitUsd),
+    feeUsd: requireNonNegativeNumber('feeUsd', value.feeUsd),
+    slippageBps: requireNonNegativeNumber('slippageBps', value.slippageBps),
+    latencyMs: requireNonNegativeNumber('latencyMs', value.latencyMs),
+    usedZeroCapital: requireBoolean('usedZeroCapital', value.usedZeroCapital),
+    timestamp: requireNonNegativeNumber('timestamp', value.timestamp),
+    notes: optionalString(value.notes),
+  };
+}
+
 function requireFiniteNumber(name: string, value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Persisted governance state has invalid ${name}`);
   return value;
@@ -1066,6 +1432,16 @@ function requireUnitInterval(name: string, value: unknown): number {
 function requireBoolean(name: string, value: unknown): boolean {
   if (typeof value !== 'boolean') throw new Error(`Persisted governance state has invalid ${name}`);
   return value;
+}
+
+function requireNonEmptyString(name: string, value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`Persisted governance state has invalid ${name}`);
+  return value;
+}
+
+function requireRecord(name: string, value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error(`Persisted governance state has invalid ${name}`);
+  return { ...value };
 }
 
 function optionalString(value: unknown): string | undefined {

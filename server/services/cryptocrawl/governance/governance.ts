@@ -404,6 +404,10 @@ export class CryptocrawlGovernance {
   private activeEnvelope: ExecutionEnvelope | null = null;
   private executionsInEnvelope = 0;
 
+  constructor() {
+    stageManager.on('stage-advanced', () => this.clearEnvelope());
+  }
+
   getState(): Readonly<GovernanceState> {
     const state = stageManager.getState();
     const config = stageManager.getStageConfig();
@@ -438,8 +442,12 @@ export class CryptocrawlGovernance {
 
   pause(actor: GovernanceActor, reason = 'manual_pause'): void {
     this.clearEnvelope();
-    stageManager.pause(reason);
+    stageManager.pause(reason, { manualOverride: actor === 'human' });
     logger.info('[Governance] Paused through canonical StageManager', { component: 'CryptocrawlGovernance', actor, reason });
+  }
+
+  isAutomaticallyActivated(): boolean {
+    return stageManager.isAutomaticallyActivated();
   }
 
   async unpauseWithEnvelope(input: {
@@ -525,7 +533,7 @@ export class CryptocrawlGovernance {
   }
 
   completeAdvisoryCycle(actor: GovernanceActor, reason = 'advisory_cycle_complete'): void {
-    if (this.getState().stage === 1) this.pause(actor, reason);
+    if (this.getState().stage === 1 && !stageManager.isAutomaticallyActivated()) this.pause(actor, reason);
   }
 
   requireAllowed(action: GovernanceAction, context?: { chain?: string; pair?: string; venue?: string }): void {
@@ -544,7 +552,13 @@ export class CryptocrawlGovernance {
       throw new GovernanceError('PAUSED', 'System is paused', { stage: state.stage, pauseReason: state.pauseReason });
     }
     const envelope = this.activeEnvelope;
-    if (!envelope) throw new GovernanceError('NO_ACTIVE_ENVELOPE', 'No active envelope (UNPAUSE required)', { stage: state.stage });
+    if (!envelope) {
+      if (stageManager.isAutomaticallyActivated()) {
+        this.requireAutomaticActivationAllowed(action, context);
+        return;
+      }
+      throw new GovernanceError('NO_ACTIVE_ENVELOPE', 'No active envelope (UNPAUSE required)', { stage: state.stage });
+    }
     if (isExpired(envelope, at)) {
       this.pause('system', 'envelope_expired');
       throw new GovernanceError('ENVELOPE_EXPIRED', 'Active envelope has expired', { envelopeId: envelope.id, expiresAt: envelope.expiresAt });
@@ -587,6 +601,41 @@ export class CryptocrawlGovernance {
   private clearEnvelope(): void {
     this.activeEnvelope = null;
     this.executionsInEnvelope = 0;
+  }
+
+  private requireAutomaticActivationAllowed(
+    action: GovernanceAction,
+    context?: { chain?: string; pair?: string; venue?: string },
+  ): void {
+    const state = stageManager.getState();
+    const config = stageManager.getStageConfig();
+    if (state.currentStage === 1) {
+      if (action !== 'ADVISE') {
+        throw new GovernanceError('STAGE_VIOLATION', 'Automatic Stage 1 activation permits advisory work only', { action });
+      }
+      return;
+    }
+    if ((action === 'EXECUTE_OPPORTUNITY' || action === 'SUBMIT_TX') && !config.killSwitchArmed) {
+      throw new GovernanceError('KILL_SWITCH_NOT_ARMED', 'Kill-switch must be armed before any live action', { stage: state.currentStage, action });
+    }
+    if (action === 'PERSIST_LONG_TERM_MEMORY' && state.currentStage < 4) {
+      throw new GovernanceError('STAGE_VIOLATION', 'Long-term memory remains unavailable before Stage 4', { stage: state.currentStage });
+    }
+    if (action === 'EVOLVE_STRATEGY' && !config.canSelfExpand) {
+      throw new GovernanceError('ACTION_NOT_ALLOWED', 'Evolution lock remains active for this stage', { stage: state.currentStage });
+    }
+    if (action === 'EXECUTE_OPPORTUNITY' || action === 'SUBMIT_TX') {
+      if (!context?.chain) {
+        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Automatic execution requires an explicit chain context', { stage: state.currentStage, action });
+      }
+      if (!config.allowedChains.includes(context.chain)) {
+        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Chain is outside automatic stage scope', {
+          chain: context.chain,
+          allowedChains: config.allowedChains,
+          stage: state.currentStage,
+        });
+      }
+    }
   }
 }
 

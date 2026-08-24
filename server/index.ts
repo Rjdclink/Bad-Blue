@@ -274,6 +274,27 @@ async function initializeServices(): Promise<void> {
   }
 
   try {
+    const { cryptaraGovernance } = await import('./services/cryptocrawl/governance/cryptara-integration.js');
+    await cryptaraGovernance.initialize();
+    console.log('[STARTUP] ✓ CryptoCrawler Cryptara governance bridge initialized');
+  } catch (error: any) {
+    console.warn('[STARTUP] ⚠ CryptoCrawler Cryptara governance bridge unavailable:', error?.message ?? error);
+  }
+
+  try {
+    const { stageManager } = await import('./services/cryptocrawl/governance/stage-management.js');
+    if (stageManager.isAutomaticallyActivated() && stageManager.getCurrentStage() >= 2) {
+      const { startCryptoCrawlerRuntime } = await import('./services/cryptocrawl/api/admin-api.js');
+      const result = await startCryptoCrawlerRuntime();
+      if (!result.success && result.status !== 409) {
+        console.warn('[STARTUP] ⚠ CryptoCrawler automatic runtime resume unavailable:', result.payload.error);
+      }
+    }
+  } catch (error: any) {
+    console.warn('[STARTUP] ⚠ CryptoCrawler automatic runtime resume failed:', error?.message ?? error);
+  }
+
+  try {
     const { badblueWorker } = await import('./badblueWorker');
     await badblueWorker.initialize();
     console.log('[STARTUP] ✓ LegalWhat Worker initialized');

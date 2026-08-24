@@ -19,6 +19,8 @@
     "check": "tsc",
     "wire-check": "NO_EXECUTION=true NO_INTERVALS=true CRYPTARA_MODE=SILENT_WATCHER_ONLY tsx scripts/wire-check.ts",
     "verify:beam": "tsx server/services/computationalBeam/testing/verify-beam-workloads.ts",
+    "verify:capital-hierarchy": "tsx server/services/cryptocrawl/testing/verify-capital-hierarchy.ts",
+    "verify:autonomous-stages": "tsx server/services/cryptocrawl/testing/verify-autonomous-stage-progression.ts",
     "dryrun:cryptocrawl": "NO_EXECUTION=true NO_INTERVALS=true CRYPTARA_MODE=SILENT_WATCHER_ONLY tsx server/services/cryptocrawl/testing/live-market-dry-run.ts",
     "cryptocrawl:receiver:compile": "tsx scripts/cryptocrawl/compile-flashloan-receiver.ts",
     "cryptocrawl:sushi-v3-receiver:compile": "tsx scripts/cryptocrawl/compile-sushi-v3-flash-receiver.ts",

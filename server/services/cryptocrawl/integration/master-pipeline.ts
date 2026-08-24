@@ -17,6 +17,7 @@ import { getCryptara } from '../../cryptara/index.js';
 import { networkHealth } from '../bridge/network-health.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { PER_CHAIN_RISK } from '../config/perChainRisk.js';
 import { TradingViewEngine } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
@@ -951,7 +952,7 @@ class MasterPipeline {
         this.opportunitiesProcessed++;
         this.totalProfit += result.profit || 0;
 
-        cryptara.recordExecutionResult({
+        await recordCryptaraExecutionEvidence({
           source: 'master_pipeline',
           opportunityId: opp.asset,
           chain: String(opp.chain).toLowerCase(),
@@ -965,7 +966,7 @@ class MasterPipeline {
           latencyMs: chainLatencyMs || 0,
           usedZeroCapital: false,
           timestamp: Date.now(),
-        });
+        }, gate);
         
         // Record outcome for RL learning
         this.rlBidder.recordOutcome(gasContext, optimalBid, true);
@@ -979,7 +980,7 @@ class MasterPipeline {
           totalProcessed: this.opportunitiesProcessed
         });
       } else {
-        cryptara.recordExecutionResult({
+        await recordCryptaraExecutionEvidence({
           source: 'master_pipeline',
           opportunityId: opp.asset,
           chain: String(opp.chain).toLowerCase(),
@@ -993,7 +994,7 @@ class MasterPipeline {
           latencyMs: chainLatencyMs || 0,
           usedZeroCapital: false,
           timestamp: Date.now(),
-        });
+        }, gate);
         this.rlBidder.recordOutcome(gasContext, optimalBid, false);
       }
     } catch (error) {

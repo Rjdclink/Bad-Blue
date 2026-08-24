@@ -191,6 +191,26 @@ export interface CryptaraAutonomousDirective {
   liquidityPressure: number;
 }
 
+export interface CryptaraChainPerformance {
+  chain: string;
+  netRealizedProfitUsd: number;
+  successfulExecutions: number;
+  totalExecutions: number;
+  rankingScore: number;
+}
+
+export interface CryptaraPerformanceRanking {
+  evaluatedAt: number;
+  sampleCount: number;
+  successfulExecutions: number;
+  successRate: number;
+  averageNetProfitUsd: number;
+  averageSlippageBps: number;
+  chains: CryptaraChainPerformance[];
+  preferredChains: string[];
+  directive: CryptaraAutonomousDirective;
+}
+
 export interface CryptaraConnectorReadiness {
   checkedAt: number;
   strictLive: boolean;
@@ -338,32 +358,9 @@ export class Cryptara extends EventEmitter {
 
   private recomputeAutonomousDirective(): void {
     const recent = this.executionHistory.slice(-120);
-    const successful = recent.filter(entry => entry.success);
-    const successRate = recent.length > 0 ? successful.length / recent.length : 0.5;
-    const avgNetProfit = successful.length > 0
-      ? successful.reduce((sum, entry) => sum + entry.realizedProfitUsd, 0) / successful.length
-      : 0;
-    const avgSlippageBps = recent.length > 0
-      ? recent.reduce((sum, entry) => sum + Math.max(0, entry.slippageBps), 0) / recent.length
-      : 12;
-
-    const chainPerformance = new Map<string, { net: number; wins: number; total: number }>();
-    for (const entry of recent) {
-      const current = chainPerformance.get(entry.chain) || { net: 0, wins: 0, total: 0 };
-      current.net += entry.realizedProfitUsd;
-      current.total += 1;
-      if (entry.success) current.wins += 1;
-      chainPerformance.set(entry.chain, current);
-    }
-
-    const preferredChains = Array.from(chainPerformance.entries())
-      .sort((a, b) => {
-        const scoreA = a[1].net + (a[1].wins / Math.max(1, a[1].total)) * 10;
-        const scoreB = b[1].net + (b[1].wins / Math.max(1, b[1].total)) * 10;
-        return scoreB - scoreA;
-      })
-      .slice(0, 3)
-      .map(([chain]) => chain);
+    const ranking = this.calculateExecutionRanking();
+    const { successRate, averageNetProfitUsd: avgNetProfit, averageSlippageBps: avgSlippageBps } = ranking;
+    const preferredChains = ranking.chains.slice(0, 3).map(chain => chain.chain);
 
     const riskLevel = this.lastSurveillanceData?.riskLevel || 'medium';
     const liquidityPressure = Math.min(1, (this.lastMempoolAnalysis?.totalPending || 0) / 8000);
@@ -431,12 +428,79 @@ export class Cryptara extends EventEmitter {
     this.recomputeAutonomousDirective();
   }
 
+  restoreExecutionHistory(history: CryptaraExecutionFeedback[]): void {
+    this.executionHistory = history
+      .filter(entry =>
+        typeof entry.chain === 'string' &&
+        typeof entry.symbol === 'string' &&
+        typeof entry.strategy === 'string' &&
+        typeof entry.success === 'boolean' &&
+        Number.isFinite(entry.expectedProfitUsd) &&
+        Number.isFinite(entry.realizedProfitUsd) &&
+        Number.isFinite(entry.feeUsd) &&
+        Number.isFinite(entry.slippageBps) &&
+        Number.isFinite(entry.latencyMs) &&
+        Number.isFinite(entry.timestamp),
+      )
+      .slice(-1000)
+      .map(entry => ({ ...entry }));
+    this.recomputeAutonomousDirective();
+  }
+
   getAutonomousDirective(): CryptaraAutonomousDirective {
     return { ...this.autonomousDirective, preferredChains: [...this.autonomousDirective.preferredChains], preferredExecutionModes: [...this.autonomousDirective.preferredExecutionModes] };
   }
 
+  getPerformanceRanking(): CryptaraPerformanceRanking {
+    const ranking = this.calculateExecutionRanking();
+    return {
+      evaluatedAt: Date.now(),
+      ...ranking,
+      preferredChains: [...this.autonomousDirective.preferredChains],
+      directive: this.getAutonomousDirective(),
+    };
+  }
+
   getExecutionHistory(limit: number = 100): CryptaraExecutionFeedback[] {
     return this.executionHistory.slice(-Math.max(1, limit));
+  }
+
+  private calculateExecutionRanking(): Omit<CryptaraPerformanceRanking, 'evaluatedAt' | 'preferredChains' | 'directive'> {
+    const recent = this.executionHistory.slice(-120);
+    const successful = recent.filter(entry => entry.success);
+    const successRate = recent.length > 0 ? successful.length / recent.length : 0.5;
+    const averageNetProfitUsd = successful.length > 0
+      ? successful.reduce((sum, entry) => sum + entry.realizedProfitUsd, 0) / successful.length
+      : 0;
+    const averageSlippageBps = recent.length > 0
+      ? recent.reduce((sum, entry) => sum + Math.max(0, entry.slippageBps), 0) / recent.length
+      : 12;
+    const chainPerformance = new Map<string, { net: number; wins: number; total: number }>();
+    for (const entry of recent) {
+      const current = chainPerformance.get(entry.chain) || { net: 0, wins: 0, total: 0 };
+      current.net += entry.realizedProfitUsd;
+      current.total += 1;
+      if (entry.success) current.wins += 1;
+      chainPerformance.set(entry.chain, current);
+    }
+    const chains = Array.from(chainPerformance.entries())
+      .map(([chain, performance]) => ({
+        chain,
+        netRealizedProfitUsd: performance.net,
+        successfulExecutions: performance.wins,
+        totalExecutions: performance.total,
+        rankingScore: performance.net + (performance.wins / Math.max(1, performance.total)) * 10,
+      }))
+      .sort((a, b) => b.rankingScore - a.rankingScore);
+
+    return {
+      sampleCount: recent.length,
+      successfulExecutions: successful.length,
+      successRate,
+      averageNetProfitUsd,
+      averageSlippageBps,
+      chains,
+    };
   }
 
   getConnectorReadiness(): CryptaraConnectorReadiness {

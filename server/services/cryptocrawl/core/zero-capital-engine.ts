@@ -48,6 +48,12 @@ import { resolveEuropaExternalGasDifficulty } from '../execution/adapters/skale-
 import { buildEuropaSushiV3FlashPayload } from '../execution/adapters/europa-sushi-v3-flash-builder.js';
 import { EUROPA_SUSHI } from '../execution/adapters/europa-sushi-registry.js';
 import { discoverProfitableEuropaRoute } from '../execution/adapters/europa-dynamic-route-discovery.js';
+import { CapitalHierarchyPlanner, type CapitalHierarchyPlan, type ChainFundingRequirement } from './capital-hierarchy.js';
+import { computationalBeam } from '../../computationalBeam/index.js';
+import { CrawlerStrategy, type ComputeWorkload } from '../../computationalBeam/types.js';
+import type { GateEvaluation } from '../../cryptara/marketGates/types.js';
+import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
+import { calculateProgressivePositionSize, type PositionSizingDecision } from '../risk/progressive-position-sizing.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -138,6 +144,7 @@ export class AutonomousZeroCapitalEngine {
   private executionWallets: Map<SupportedChain, Wallet> = new Map();
   private europaAdapter: EuropaZeroGasAdapter | null = null;
   private readonly capitalProvenance = new PostgresStage4CapitalProvenanceStore();
+  private readonly capitalHierarchy = new CapitalHierarchyPlanner();
   private readonly capitalScope = process.env.ZERO_CAPITAL_CAPITAL_SCOPE?.trim() || 'cryptocrawler';
   private state: SystemState;
   private isScanning: boolean = false;
@@ -152,6 +159,7 @@ export class AutonomousZeroCapitalEngine {
   private isExecuting: boolean = false;
   private lastLiveSignalCheckAt = 0;
   private liveSignalReady = false;
+  private readonly cryptaraGateEvidence = new Map<string, GateEvaluation>();
 
   constructor() {
     this.state = {
@@ -509,12 +517,12 @@ export class AutonomousZeroCapitalEngine {
     return Number.isFinite(normalized) ? Math.max(0, normalized) : 0;
   }
 
-  private recordCryptaraExecutionFeedback(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): void {
+  private async recordCryptaraExecutionFeedback(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): Promise<void> {
     try {
       const cryptara = getCryptara();
       if (!cryptara.getStatus().isRunning) return;
 
-      cryptara.recordExecutionResult({
+      await recordCryptaraExecutionEvidence({
         source: 'zero_capital',
         opportunityId: opportunity.id,
         chain: opportunity.chain,
@@ -529,9 +537,11 @@ export class AutonomousZeroCapitalEngine {
         usedZeroCapital: true,
         timestamp: Date.now(),
         notes: result.error,
-      });
+      }, this.cryptaraGateEvidence.get(opportunity.id));
     } catch {
       // Cryptara feedback is best-effort only.
+    } finally {
+      this.cryptaraGateEvidence.delete(opportunity.id);
     }
   }
 
@@ -573,7 +583,7 @@ export class AutonomousZeroCapitalEngine {
         this.isExecuting = false;
       }
 
-      this.recordCryptaraExecutionFeedback(opportunity, result);
+      await this.recordCryptaraExecutionFeedback(opportunity, result);
 
       // Update state
       this.state.totalTrades++;
@@ -821,6 +831,9 @@ export class AutonomousZeroCapitalEngine {
       getCryptocrawlGovernance().pause('system', gate.actions.autoPauseReason || 'zero_capital_cryptara_gate');
     }
 
+    if (gate.decision === 'ALLOW') {
+      this.cryptaraGateEvidence.set(opportunity.id, gate);
+    }
     return gate.decision === 'ALLOW';
   }
 
@@ -831,6 +844,29 @@ export class AutonomousZeroCapitalEngine {
   private async executeZeroCapitalArbitrage(
     opportunity: ZeroCapitalOpportunity
   ): Promise<ExecutionResult> {
+    const capitalPlan = await this.assessCapitalHierarchy(opportunity);
+    const chainSnapshot = capitalPlan.chains.find(chain => chain.chain === opportunity.chain);
+    const positionSizing = calculateProgressivePositionSize({
+      requestedNotionalUsd: this.toUsdEstimate(opportunity.flashLoanAmount, opportunity.inputTokenDecimals),
+      availableCapitalUsd: capitalPlan.source === 'wallet' && chainSnapshot
+        ? this.toUsdEstimate(chainSnapshot.assetBalance, opportunity.inputTokenDecimals)
+        : 0,
+      expectedNetProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+      expectedCostUsd: this.toUsdEstimate(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals),
+      expectedSlippageBps: opportunity.expectedSlippageBps,
+      liquidityScore: opportunity.confidence,
+      volatilityScore: Math.min(1, opportunity.expectedSlippageBps / 100),
+      providerHealthy: this.providers.has(opportunity.chain),
+      zeroCapitalAvailable: capitalPlan.source === 'europa-zero-capital' || capitalPlan.source === 'flashbots-zero-capital',
+    });
+    if (!positionSizing.approved) {
+      return { success: false, error: `Progressive position sizing deferred execution: ${positionSizing.reasons.join('; ')}` };
+    }
+    const beamValidation = await this.validateCapitalPlanThroughBeam(capitalPlan, opportunity, positionSizing);
+    if (!beamValidation.approved) {
+      return { success: false, error: `Beam rejected capital plan: ${beamValidation.reason}` };
+    }
+
     const governance = getCryptocrawlGovernance();
     const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
     const venue = opportunity.chain === 'europa' ? 'europa' : 'flashbots';
@@ -838,14 +874,21 @@ export class AutonomousZeroCapitalEngine {
     governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair, venue });
     governance.recordExecutionAttempt();
 
-    if (opportunity.chain === 'europa') {
+    if (capitalPlan.source === 'wallet') {
+      return {
+        success: false,
+        error: 'Wallet capital is sufficient, but this Zero Capital route has no verified wallet-funded execution adapter; opportunity deferred without invoking a more complex capital mechanism',
+      };
+    }
+
+    if (capitalPlan.source === 'europa-zero-capital') {
       return this.executeWithEuropa(opportunity);
     }
 
-    if (opportunity.chain !== 'ethereum') {
+    if (capitalPlan.source !== 'flashbots-zero-capital' || opportunity.chain !== 'ethereum') {
       return {
         success: false,
-        error: `True zero-capital execution is unavailable on ${opportunity.chain} until a verified gas-sponsorship adapter is implemented`,
+        error: `Capital hierarchy deferred ${opportunity.chain}: ${capitalPlan.reasons.join('; ')}`,
       };
     }
 
@@ -857,6 +900,82 @@ export class AutonomousZeroCapitalEngine {
     }
 
     return this.executeWithFlashbots(opportunity);
+  }
+
+  private async assessCapitalHierarchy(opportunity: ZeroCapitalOpportunity): Promise<CapitalHierarchyPlan> {
+    const provider = this.providers.get(opportunity.chain);
+    const gasPrice = provider
+      ? (await provider.getFeeData()).maxFeePerGas || (await provider.getFeeData()).gasPrice || BigNumber.from(0)
+      : BigNumber.from(0);
+    const conservativeGasLimit = BigInt(Math.max(21_000, Number(process.env.ZERO_CAPITAL_WALLET_GAS_LIMIT || 500_000)));
+    const gasRequirement = opportunity.gasEstimate > 0n
+      ? opportunity.gasEstimate
+      : BigInt(gasPrice.toString()) * conservativeGasLimit;
+    const reserveBps = Math.max(0, Math.min(10_000, Number(process.env.ZERO_CAPITAL_WALLET_ASSET_RESERVE_BPS || 1_000)));
+    const assetRequired = opportunity.flashLoanAmount + opportunity.estimatedExecutionCostInInputToken;
+    const assetSafetyReserve = assetRequired * BigInt(reserveBps) / 10_000n;
+    const requirements: ChainFundingRequirement[] = [{
+      chain: opportunity.chain,
+      assetToken: opportunity.inputToken,
+      assetRequired,
+      nativeGasRequired: gasRequirement,
+      bridgeNativeRequired: 0n,
+      destinationNativeRequired: 0n,
+      nativeSafetyReserve: gasRequirement,
+      assetSafetyReserve,
+    }];
+    const europaEligible = opportunity.chain === 'europa' &&
+      !!this.europaAdapter &&
+      !!process.env.ZERO_CAPITAL_EUROPA_RECEIVER?.trim() &&
+      !!process.env.ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH?.trim();
+    const flashbotsEligible = opportunity.chain === 'ethereum' && !!this.flashbotsProvider && !!this.executionWallets.get('ethereum');
+
+    return this.capitalHierarchy.assess({
+      walletAddress: this.executionWallets.get(opportunity.chain)?.address,
+      providers: this.providers,
+      requirements,
+      alternatives: {
+        europaEligible,
+        flashbotsEligible,
+        europaReason: europaEligible ? undefined : 'Europa zero-capital prerequisites are unavailable for this route',
+        flashbotsReason: flashbotsEligible ? undefined : 'Flashbots zero-capital prerequisites are unavailable for this route',
+      },
+    });
+  }
+
+  private async validateCapitalPlanThroughBeam(
+    plan: CapitalHierarchyPlan,
+    opportunity: ZeroCapitalOpportunity,
+    positionSizing: PositionSizingDecision,
+  ): Promise<{ approved: boolean; reason: string }> {
+    if (!computationalBeam.isOperational()) {
+      await computationalBeam.initialize();
+    }
+    const workload: ComputeWorkload<{ plan: CapitalHierarchyPlan; opportunityId: string; positionSizing: PositionSizingDecision }, { approved: boolean; reason: string }> = {
+      id: `capital-hierarchy:${opportunity.id}`,
+      type: 'CAPITAL_HIERARCHY_VALIDATION',
+      input: { plan, opportunityId: opportunity.id, positionSizing },
+      timeoutMs: Math.max(1_000, Number(process.env.ZERO_CAPITAL_BEAM_VALIDATION_TIMEOUT_MS || 10_000)),
+      execute: ({ plan: candidatePlan, positionSizing: candidateSizing }) => {
+        if (candidatePlan.source === 'defer') {
+          return { approved: false, reason: candidatePlan.reasons.join('; ') || 'No complete capital path is available' };
+        }
+        if (candidatePlan.source === 'wallet' && !candidatePlan.walletSufficient) {
+          return { approved: false, reason: 'Wallet path selected without complete lifecycle funding' };
+        }
+        if (!candidateSizing.approved || candidateSizing.proposedNotionalUsd <= 0) {
+          return { approved: false, reason: 'Position sizing did not authorize an executable exposure' };
+        }
+        return { approved: true, reason: `Beam validated ${candidatePlan.source} capital path` };
+      },
+      validate: result => typeof result.approved === 'boolean' && typeof result.reason === 'string',
+    };
+    const execution = await computationalBeam.executeCrawlerTask(
+      CrawlerStrategy.ARBITRAGE,
+      { opportunityId: opportunity.id, capitalSource: plan.source, proposedNotionalUsd: positionSizing.proposedNotionalUsd },
+      { timeout: workload.timeoutMs, workload },
+    );
+    return execution.result as { approved: boolean; reason: string };
   }
 
   private async executeWithEuropa(opportunity: ZeroCapitalOpportunity): Promise<ExecutionResult> {

@@ -1,5 +1,9 @@
 # Operational Runbook - Quick Reference
 
+## Phase 8 - Integrate Zero Capital / Europa / Beam
+
+The capital decision begins with the authoritative wallet assessment. Zero Capital/Europa is the redundancy/escalation path when existing wallet capital is insufficient, inefficient, or inappropriate under the existing architecture. Beam must consume the relevant wallet/Europa result and perform its intended computational role before execution. Railway provides the production computational runtime for these systems; it is not itself a source of blockchain capital or gas. Preserve this hierarchy throughout the execution architecture.
+
 ## 🚀 Quick Start Commands
 
 ### Initialize System

@@ -4,6 +4,7 @@ import { UltraLowLatencyExecutor } from './ultra-low-latency-executor.js';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { getCryptara, type CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { centralizedExchangeExecutor, type ArbitrageExecutionResult } from './centralized-exchange-executor.js';
 import type { QuoteVenue, VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { buildOnchainPayloadFromPlan, type OnchainExecutionPlan } from './adapters/onchain-payload-builder.js';
@@ -144,9 +145,9 @@ function shouldBlockForDirective(opp: Opportunity): string | null {
   return null;
 }
 
-function recordCryptaraExecutionFeedback(feedback: CryptaraExecutionFeedback): void {
+async function recordCryptaraExecutionFeedback(feedback: CryptaraExecutionFeedback): Promise<void> {
   try {
-    getCryptara().recordExecutionResult(feedback);
+    await recordCryptaraExecutionEvidence(feedback);
   } catch (error) {
     logger.warn('Failed to record Cryptara execution feedback', {
       component: 'ExecutionOrchestrator',
@@ -350,7 +351,7 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
     }
 
     if (!opp.skipCryptaraFeedback) {
-      recordCryptaraExecutionFeedback({
+      await recordCryptaraExecutionFeedback({
         source: opp.requiresFlashLoan ? 'flash_loan' : 'manual',
         opportunityId: opp.id,
         chain: normalizeChain(opp.chain),
@@ -371,7 +372,7 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
     return executionResult;
   } catch (error) {
     if (!opp.skipCryptaraFeedback) {
-      recordCryptaraExecutionFeedback({
+      await recordCryptaraExecutionFeedback({
         source: opp.requiresFlashLoan ? 'flash_loan' : 'manual',
         opportunityId: opp.id,
         chain: normalizeChain(opp.chain),
@@ -468,7 +469,7 @@ export async function executeVerifiedArbitragePlan(
     Math.round(((plan.grossProfitUsd - plan.netProfitUsd) / Math.max(plan.notionalUsd, 1)) * 10000),
   );
 
-  recordCryptaraExecutionFeedback({
+  await recordCryptaraExecutionFeedback({
     source: options?.source || 'manual',
     opportunityId: `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`,
     chain: normalizedChain,

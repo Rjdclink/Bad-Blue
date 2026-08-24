@@ -62,6 +62,12 @@ async function initializeGovernanceState(): Promise<void> {
   console.log('[GOVERNANCE] Initializing 6-Stage Deployment System...');
 
   const restored = await stageManager.restorePersistence(new PostgresStageManagerStateStore());
+  const persistedProfitLadder = stageManager.getProfitLadderState();
+  if (persistedProfitLadder) {
+    profitLadder.importState(persistedProfitLadder);
+  }
+  const { getCryptara } = await import('../../cryptara/index.js');
+  getCryptara().restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
   
   const currentStage = stageManager.getCurrentStage();
   const stageConfig = stageManager.getStageConfig();

@@ -3,6 +3,7 @@ import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
 import { getCryptara } from '../../cryptara/index.js';
 import { verifyCanonicalCryptoSetup } from '../verification/canonicalCryptoVerifier.js';
@@ -372,7 +373,7 @@ router.post('/mode', (req, res) => {
       });
     }
 
-    // Governance requirements: stage >= 2 and kill-switch armed and system unpaused via envelope.
+    // Governance requirements: stage >= 2, kill-switch armed, and an active automatic or manual control state.
     const gov = governance.getState();
     if (gov.stage < 2) {
       return res.status(400).json({ success: false, error: 'Cannot enable AUTOMATIC: governance stage must be >= 2', governance: gov });
@@ -380,8 +381,8 @@ router.post('/mode', (req, res) => {
     if (!gov.killSwitch.armed) {
       return res.status(400).json({ success: false, error: 'Cannot enable AUTOMATIC: kill-switch must be armed', governance: gov });
     }
-    if (gov.paused || !gov.activeEnvelope) {
-      return res.status(400).json({ success: false, error: 'Cannot enable AUTOMATIC: system must be UNPAUSED with an active envelope', governance: gov });
+    if (gov.paused || (!gov.activeEnvelope && !governance.isAutomaticallyActivated())) {
+      return res.status(400).json({ success: false, error: 'Cannot enable AUTOMATIC: system is not active under a valid governance control state', governance: gov });
     }
   }
 
@@ -426,36 +427,61 @@ async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures:
   return { stopped, failures };
 }
 
-// POST /admin/crypto/start - Start governed on-chain monitoring.
-router.post('/start', async (_req, res) => {
+type CryptoCrawlerStartResult = {
+  success: boolean;
+  status: number;
+  payload: Record<string, unknown>;
+};
+
+export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartResult> {
   if (systemState.lifecycle !== 'STOPPED' && systemState.lifecycle !== 'FAILED') {
-    return res.status(409).json({
+    return {
+      success: false,
+      status: 409,
+      payload: {
       success: false,
       error: `CryptoCrawler is ${systemState.lifecycle.toLowerCase()}`,
       lifecycle: systemState.lifecycle,
-    });
+      },
+    };
   }
 
   if (governance.getState().stage === 1) {
-    return res.status(409).json({
+    return {
       success: false,
-      error: 'Governance Stage 1 is advisory-only. Set stage >= 2 and UNPAUSE with an envelope before starting.',
+      status: 409,
+      payload: {
+      success: false,
+      error: 'Governance Stage 1 is advisory-only. Monitoring starts automatically after verified Stage 2 progression.',
       governance: governance.getState(),
-    });
+      },
+    };
   }
 
   try {
     governance.requireAllowed('ADVISE');
   } catch (error) {
-    return handleGovernanceError(res, error);
+    return {
+      success: false,
+      status: error instanceof GovernanceError ? 400 : 500,
+      payload: {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        governance: governance.getState(),
+      },
+    };
   }
 
   if (!notifyCryptocrawlerStarting()) {
-    return res.status(409).json({
+    return {
+      success: false,
+      status: 409,
+      payload: {
       success: false,
       error: 'PANTHEON currently owns the crawler runtime. Stop PANTHEON before starting CryptoCrawler.',
       pantheon: getPantheonSystemStatus(),
-    });
+      },
+    };
   }
 
   systemState.lifecycle = 'INITIALIZING';
@@ -475,34 +501,68 @@ router.post('/start', async (_req, res) => {
     systemState.running = true;
     systemState.startedAt = Date.now();
 
-    return res.json({
+    return {
       success: true,
-      message: 'Governed on-chain monitoring started',
-      lifecycle: systemState.lifecycle,
-      startedAt: new Date(systemState.startedAt).toISOString(),
-      cryptoCrawl: cryptoCrawlState.getStatus(),
-      monitoring: {
-        enabled: zeroCapitalEngine.getState().isRunning,
-        pipelineRunning: pipeline.isRunning(),
-        executionEnabled: false,
-        mechanism: 'Verified RPC monitoring',
+      status: 200,
+      payload: {
+        success: true,
+        message: 'Governed on-chain monitoring started',
+        lifecycle: systemState.lifecycle,
+        startedAt: new Date(systemState.startedAt).toISOString(),
+        cryptoCrawl: cryptoCrawlState.getStatus(),
+        monitoring: {
+          enabled: zeroCapitalEngine.getState().isRunning,
+          pipelineRunning: pipeline.isRunning(),
+          executionEnabled: false,
+          mechanism: 'Verified RPC monitoring',
+        },
+        governance: governance.getState(),
+        pantheon: getPantheonSystemStatus(),
       },
-      governance: governance.getState(),
-      pantheon: getPantheonSystemStatus(),
-    });
+    };
   } catch (error) {
     const cleanup = await stopCryptoCrawlerRuntime();
     systemState.lifecycle = cleanup.stopped ? 'FAILED' : 'DEGRADED';
     systemState.lastError = error instanceof Error ? error.message : String(error);
 
-    return res.status(503).json({
+    return {
       success: false,
-      error: systemState.lastError,
-      lifecycle: systemState.lifecycle,
-      cleanup,
-      governance: governance.getState(),
-    });
+      status: 503,
+      payload: {
+        success: false,
+        error: systemState.lastError,
+        lifecycle: systemState.lifecycle,
+        cleanup,
+        governance: governance.getState(),
+      },
+    };
   }
+}
+
+async function startAutomaticCryptoCrawlerRuntime(reason: string): Promise<void> {
+  if (!governance.isAutomaticallyActivated() || stageManager.getCurrentStage() < 2) return;
+  const result = await startCryptoCrawlerRuntime();
+  if (!result.success && result.status !== 409) {
+    console.warn('[CryptoCrawl] Automatic runtime activation failed', { reason, error: result.payload.error });
+  }
+}
+
+stageManager.on('stage-advanced', event => {
+  if (event.automatic === true) {
+    void startAutomaticCryptoCrawlerRuntime(`stage_advanced:${event.previousStage}->${event.currentStage}`);
+  }
+});
+
+stageManager.on('unpaused', event => {
+  if (event.automatic === true) {
+    void startAutomaticCryptoCrawlerRuntime(`automatic_activation:${event.stage}`);
+  }
+});
+
+// POST /admin/crypto/start - Start governed on-chain monitoring.
+router.post('/start', async (_req, res) => {
+  const result = await startCryptoCrawlerRuntime();
+  return res.status(result.status).json(result.payload);
 });
 
 // POST /admin/crypto/stop - Stop the exact components started by this controller.

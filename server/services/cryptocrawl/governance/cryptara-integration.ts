@@ -20,6 +20,7 @@ import { profitLadder } from './profit-ladder';
 import { composer } from './composer-interface';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import { networkHealth } from '../bridge/network-health.js';
+import { evaluateAutomaticStageProgression } from './automatic-stage-progression.js';
 
 const log = createLogger('CryptaraIntegration');
 
@@ -408,6 +409,7 @@ export class CryptaraGovernance extends EventEmitter {
     };
     
     await stageManager.updateProofMetrics(updatedMetrics);
+    await evaluateAutomaticStageProgression();
   }
   
   // ============================================================================
@@ -450,6 +452,7 @@ export class CryptaraGovernance extends EventEmitter {
         timestamp: Date.now(),
       });
     }
+    await evaluateAutomaticStageProgression();
     
     log.info('Daily reconciliation complete', {
       dailyProfit: state.dailyProfitUSD,
