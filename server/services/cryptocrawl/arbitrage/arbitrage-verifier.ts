@@ -16,6 +16,7 @@ import type { ChainId as BridgeChainId } from '../bridge/types';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
+import { cexOrderBookStreams, type CexOrderBookStreamStats, type CexStreamVenue } from '../intelligence/cex-order-book-stream.js';
 
 export type QuoteVenue = 'coinbase' | 'kraken' | 'okx';
 
@@ -38,6 +39,7 @@ export interface TopOfBookQuote {
   ask: number;
   timestamp: number;
   depth?: OrderBookDepth;
+  transport: 'rest' | 'websocket';
 }
 
 export interface LiveQuoteValidation {
@@ -46,6 +48,7 @@ export interface LiveQuoteValidation {
   quoteCount: number;
   freshQuoteCount: number;
   valid: boolean;
+  streamStats?: Readonly<CexOrderBookStreamStats>;
 }
 
 export interface FeeModel {
@@ -192,7 +195,7 @@ async function fetchCoinbaseTopOfBook(symbol: string): Promise<TopOfBookQuote> {
   if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0) {
     throw new Error('Invalid Coinbase quote');
   }
-  return { venue: 'coinbase', symbol, bid, ask, timestamp: Date.now(), depth: { bids, asks, observedAt: Date.now(), source: 'coinbase' } };
+  return { venue: 'coinbase', symbol, bid, ask, timestamp: Date.now(), transport: 'rest', depth: { bids, asks, observedAt: Date.now(), source: 'coinbase' } };
 }
 
 async function fetchKrakenTopOfBook(symbol: string): Promise<TopOfBookQuote> {
@@ -207,7 +210,7 @@ async function fetchKrakenTopOfBook(symbol: string): Promise<TopOfBookQuote> {
   if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0) {
     throw new Error('Invalid Kraken quote');
   }
-  return { venue: 'kraken', symbol, bid, ask, timestamp: Date.now(), depth: { bids, asks, observedAt: Date.now(), source: 'kraken' } };
+  return { venue: 'kraken', symbol, bid, ask, timestamp: Date.now(), transport: 'rest', depth: { bids, asks, observedAt: Date.now(), source: 'kraken' } };
 }
 
 function okxInstId(symbol: string): string {
@@ -229,7 +232,13 @@ async function fetchOkxTopOfBook(symbol: string): Promise<TopOfBookQuote> {
   if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0) {
     throw new Error('Invalid OKX quote');
   }
-  return { venue: 'okx', symbol, bid, ask, timestamp: Date.now(), depth: { bids, asks, observedAt: Date.now(), source: 'okx' } };
+  return { venue: 'okx', symbol, bid, ask, timestamp: Date.now(), transport: 'rest', depth: { bids, asks, observedAt: Date.now(), source: 'okx' } };
+}
+
+async function fetchStreamQuote(venue: CexStreamVenue, symbol: string): Promise<TopOfBookQuote | null> {
+  const quote = await cexOrderBookStreams.getQuote(venue, symbol);
+  if (!quote) return null;
+  return { venue, symbol, bid: quote.bid, ask: quote.ask, timestamp: quote.timestamp, transport: 'websocket', depth: { ...quote.depth, source: venue } };
 }
 
 function normalizeBookLevels(raw: unknown): OrderBookLevel[] {
@@ -270,9 +279,9 @@ function consumeSellBids(bids: OrderBookLevel[], requestedQuantity: number): { q
 
 async function fetchQuotes(symbol: string): Promise<TopOfBookQuote[]> {
   const tasks = [
-    fetchCoinbaseTopOfBook(symbol),
-    fetchKrakenTopOfBook(symbol),
-    fetchOkxTopOfBook(symbol),
+    fetchStreamQuote('coinbase', symbol).then(quote => quote || fetchCoinbaseTopOfBook(symbol)),
+    fetchStreamQuote('kraken', symbol).then(quote => quote || fetchKrakenTopOfBook(symbol)),
+    fetchStreamQuote('okx', symbol).then(quote => quote || fetchOkxTopOfBook(symbol)),
   ];
 
   const settled = await Promise.allSettled(tasks);
@@ -337,6 +346,7 @@ export class ArbitrageVerifier {
         quoteCount: quotes.length,
         freshQuoteCount: freshQuotes.length,
         valid: freshQuotes.length >= 2,
+        streamStats: cexOrderBookStreams.getStats(),
       };
       if (freshQuotes.length < 2) return null;
 
@@ -405,7 +415,7 @@ export class ArbitrageVerifier {
                 status: 'measured',
                 buyAvailableBaseQty: buy.depth.asks.reduce((sum, level) => sum + level.quantity, 0),
                 sellAvailableBaseQty: sell.depth.bids.reduce((sum, level) => sum + level.quantity, 0),
-                source: [`${buy.venue}:order_book`, `${sell.venue}:order_book`],
+                source: [`${buy.venue}:order_book:${buy.transport}`, `${sell.venue}:order_book:${sell.transport}`],
               },
               bridge,
             };
