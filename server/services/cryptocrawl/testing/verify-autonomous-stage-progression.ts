@@ -65,7 +65,9 @@ function evidence(): AutomaticAdvancementEvidence {
 
 function makeCurrentTierReady(): void {
   const tier = profitLadder.getCurrentTier();
-  const nextTierCapital = tier.id < 5
+  const nextTierCapital = tier.id === 0
+    ? 0
+    : tier.id < 5
     ? [5_000, 20_000, 50_000, 150_000, 400_000][tier.id]
     : 400_000;
   profitLadder.setCapital(nextTierCapital);
@@ -87,6 +89,12 @@ async function main(): Promise<void> {
   try {
   const manager = new (StageManager as any)() as StageManager;
   const cryptara = getCryptara();
+  profitLadder.setCapital(137.42);
+  assert.equal(profitLadder.getCapitalRequirement().current, 137.42);
+  assert.equal(profitLadder.getCapitalVerificationStatus(), 'unavailable');
+  profitLadder.setVerifiedCapital(0);
+  assert.equal(profitLadder.getCapitalRequirement().current, 0);
+  assert.equal(profitLadder.getCapitalVerificationStatus(), 'verified');
   for (let index = 0; index < 100; index += 1) {
     cryptara.recordExecutionResult(createFeedback(index));
   }

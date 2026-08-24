@@ -6,6 +6,13 @@ import { coinGeckoPriceClient } from './coingecko-client';
 const { JsonRpcProvider } = providers;
 const { formatEther, formatUnits } = ethers.utils;
 
+export interface VerifiedPortfolioValue {
+  status: 'verified' | 'unavailable';
+  totalUsd: number;
+  balances: TokenBalance[];
+  reason?: string;
+}
+
 class BalanceMonitor {
   private providers: Map<ChainId, providers.JsonRpcProvider> = new Map();
   private prices: Map<string, number> = new Map();
@@ -117,6 +124,42 @@ class BalanceMonitor {
       chains.map(chain => this.getBalance(chain))
     );
     return balances;
+  }
+
+  async getVerifiedPortfolioValue(): Promise<VerifiedPortfolioValue> {
+    try {
+      if (this.providers.size === 0) this.initializeProviders();
+      const balances = await Promise.all(
+        (['polygon', 'arbitrum', 'avalanche', 'bsc'] as ChainId[]).map(chain => this.getBalanceStrict(chain)),
+      );
+      return {
+        status: 'verified',
+        totalUsd: balances.reduce((sum, balance) => sum + balance.totalUsd, 0),
+        balances,
+      };
+    } catch (error) {
+      return {
+        status: 'unavailable',
+        totalUsd: 0,
+        balances: [],
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async getBalanceStrict(chain: ChainId): Promise<TokenBalance> {
+    const provider = this.providers.get(chain);
+    if (!provider) throw new Error(`Provider not initialized for ${chain}`);
+    await this.updatePrices();
+    const config = SUPPORTED_CHAINS[chain];
+    const nativeBalanceWei = await provider.getBalance(USER_WALLET);
+    const native = parseFloat(formatEther(nativeBalanceWei));
+    const nativeUsd = native * (this.prices.get(config.currency) || 0);
+    const usdtContract = new Contract(config.usdt, ERC20_ABI, provider);
+    const usdt = parseFloat(formatUnits(await usdtContract.balanceOf(USER_WALLET), await usdtContract.decimals()));
+    const usdcContract = new Contract(config.usdc, ERC20_ABI, provider);
+    const usdc = parseFloat(formatUnits(await usdcContract.balanceOf(USER_WALLET), await usdcContract.decimals()));
+    return { chain, native, nativeUsd, usdt, usdc, totalUsd: nativeUsd + usdt + usdc };
   }
 
   async getTotalPortfolioValue(): Promise<number> {

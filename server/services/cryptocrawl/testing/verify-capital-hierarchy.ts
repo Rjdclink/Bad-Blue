@@ -62,6 +62,10 @@ async function main(): Promise<void> {
   assert.equal(europa.source, 'europa-zero-capital');
   await validateThroughBeam('wallet-insufficient-europa', europa.source, true);
 
+  const flashbots = selectCapitalSource([chainSnapshot(false, false)], { europaEligible: false, flashbotsEligible: true });
+  assert.equal(flashbots.source, 'flashbots-zero-capital');
+  await validateThroughBeam('wallet-insufficient-flashbots', flashbots.source, true);
+
   const deferred = selectCapitalSource([chainSnapshot(false, false)], {
     europaEligible: false,
     flashbotsEligible: false,

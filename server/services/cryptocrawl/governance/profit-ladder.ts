@@ -243,6 +243,7 @@ export class ProfitLadder extends EventEmitter {
   private currentTier: ProfitTier;
   private tierPerformance: Map<number, TierPerformance> = new Map();
   private currentCapitalUSD: number = 0;
+  private capitalVerificationStatus: 'verified' | 'unavailable' = 'unavailable';
   
   private constructor() {
     super();
@@ -423,9 +424,8 @@ export class ProfitLadder extends EventEmitter {
       blockers.push(`Sharpe ratio ${performance.sharpeRatio.toFixed(2)} < ${tier.minSharpeRatio.toFixed(2)}`);
     }
     
-    // Check capital requirement for next tier
     const nextTier = PROFIT_TIERS[tier.id + 1];
-    if (nextTier && this.currentCapitalUSD < nextTier.minCapitalUSD) {
+    if (tier.id > 0 && nextTier && this.currentCapitalUSD < nextTier.minCapitalUSD) {
       blockers.push(`Capital $${this.currentCapitalUSD} < $${nextTier.minCapitalUSD} required`);
     }
     
@@ -473,6 +473,21 @@ export class ProfitLadder extends EventEmitter {
       capital: capitalUSD,
       timestamp: Date.now(),
     });
+  }
+
+  setVerifiedCapital(capitalUSD: number): void {
+    if (!Number.isFinite(capitalUSD) || capitalUSD < 0) throw new Error('Verified capital must be a finite non-negative amount');
+    this.currentCapitalUSD = capitalUSD;
+    this.capitalVerificationStatus = 'verified';
+    this.emit('capital-updated', { capital: capitalUSD, verified: true, timestamp: Date.now() });
+  }
+
+  markCapitalUnavailable(): void {
+    this.capitalVerificationStatus = 'unavailable';
+  }
+
+  getCapitalVerificationStatus(): 'verified' | 'unavailable' {
+    return this.capitalVerificationStatus;
   }
   
   /**
@@ -636,9 +651,8 @@ export class ProfitLadder extends EventEmitter {
     if (data.tierPerformance) {
       this.tierPerformance = new Map(data.tierPerformance);
     }
-    if (data.currentCapital) {
-      this.currentCapitalUSD = data.currentCapital;
-    }
+    this.currentCapitalUSD = 0;
+    this.capitalVerificationStatus = 'unavailable';
     
     log.info('State imported', {
       tier: this.currentTier.name,
