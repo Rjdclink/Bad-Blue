@@ -24,6 +24,7 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "moduleResolution": "bundler",
+    "ignoreDeprecations": "6.0",
     "downlevelIteration": true,
     "baseUrl": ".",
     "types": ["node", "vite/client"],

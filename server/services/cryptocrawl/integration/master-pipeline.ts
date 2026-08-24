@@ -789,6 +789,16 @@ class MasterPipeline {
         ),
       );
 
+      if (process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true' && !('settlement' in opp)) {
+        logger.warn('Opportunity rejected before execution: measured settlement context is unavailable', {
+          component: 'MasterPipeline',
+          opportunityId: opp.asset,
+          chain: opp.chain,
+          reason: 'estimated slippage and fees cannot authorize a live generic opportunity',
+        });
+        return;
+      }
+
       const feeUsd = estimatedNotionalUsd * (venueFeeBps / 10000);
       const slippageUsd = estimatedNotionalUsd * (expectedSlippageBps / 10000);
       const netExpectedProfitUsd = opp.profitEstimate - feeUsd - slippageUsd - estimatedGasUsd;
@@ -803,6 +813,16 @@ class MasterPipeline {
           slippageUsd,
           gasUsd: estimatedGasUsd,
           netExpectedProfitUsd,
+        });
+        return;
+      }
+
+      if (process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true' && !('onchainPlan' in opp)) {
+        logger.warn('Opportunity rejected before execution: structured on-chain plan is unavailable', {
+          component: 'MasterPipeline',
+          opportunityId: opp.asset,
+          chain: opp.chain,
+          reason: 'generic LuxSwarm opportunities do not contain token-addressed route and settlement metadata',
         });
         return;
       }
@@ -826,25 +846,8 @@ class MasterPipeline {
             pairOrSymbol: opp.pair || opp.asset,
             venue: 'uniswap',
             expectedProfitUsd: netExpectedProfitUsd,
-            orderFlow: mempool ? {
-              windowMs: 60_000,
-              trades: mempool.arbitrageOpportunities.slice(0, 50).map(tx => ({
-                ts: tx.timestamp,
-                side: 'buy' as const,
-                size: Math.max(1, parseInt(tx.gas, 16) || 1),
-                price: parseInt(tx.gasPrice || '0', 16),
-              })),
-            } : undefined,
-            liquidityHeatmap: {
-              referencePrice: estimatedNotionalUsd,
-              requiredDepth: Math.max(250, estimatedNotionalUsd * 0.4),
-              bandBps: 50,
-              bids: [{ price: estimatedNotionalUsd * 0.998, size: Math.max(0, (mempool?.swapTransactions || 0) * 0.8) }],
-              asks: [{ price: estimatedNotionalUsd * 1.002, size: Math.max(0, (mempool?.swapTransactions || 0) * 0.8) }],
-            },
             volatilityRegime: {
               gasPriceGwei: gasGwei,
-              liquidityScore: technicalSignal ? Math.max(0.1, technicalSignal.summary.strength / 100) : undefined,
               mempoolActivity: mempool?.totalPending,
             },
             venueLatency: {
