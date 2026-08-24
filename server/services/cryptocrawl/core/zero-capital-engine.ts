@@ -33,6 +33,7 @@ import { getCryptara } from '../../cryptara/index.js';
 import { TradingViewEngine } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { stageManager } from '../governance/stage-management.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
 import {
@@ -294,13 +295,22 @@ export class AutonomousZeroCapitalEngine {
     }
 
     this.state.isRunning = true;
-    const executionOptIn = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
+    const executionRequested = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
+    const executionOptIn = executionRequested && stageManager.canExecuteTrades();
     const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
     const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
     const zeroCapitalConfirmed = process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK';
     const europaRoutes = this.configuredRoutes.filter(route => route.chain === 'europa');
     const nonEuropaRoutes = this.configuredRoutes.filter(route => route.chain !== 'europa');
     let bootstrapExecutionEnabled = executionOptIn;
+
+    if (executionRequested && !executionOptIn) {
+      logger.info('[ZeroCapitalEngine] Execution request deferred because the current governance stage is monitoring-only', {
+        component: 'ZeroCapitalEngine',
+        stage: stageManager.getCurrentStage(),
+        paused: stageManager.isPaused(),
+      });
+    }
 
     if (executionOptIn) {
       if (process.env.NO_EXECUTION === 'true') {
@@ -411,7 +421,11 @@ export class AutonomousZeroCapitalEngine {
     } else {
       logger.info('[ZeroCapitalEngine] Execution loop disabled; monitoring mode only', {
         component: 'ZeroCapitalEngine',
-        reason: executionOptIn ? 'Verified internally generated capital is available; zero-capital bootstrap is dormant' : 'Set ZERO_CAPITAL_ENABLE_EXECUTION=true only after Europa bootstrap prerequisites are verified',
+        reason: executionRequested && !executionOptIn
+          ? 'Current governance stage does not permit trade execution'
+          : executionOptIn
+            ? 'Verified internally generated capital is available; zero-capital bootstrap is dormant'
+            : 'Set ZERO_CAPITAL_ENABLE_EXECUTION=true only after Europa bootstrap prerequisites are verified',
       });
     }
   }

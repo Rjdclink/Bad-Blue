@@ -1248,13 +1248,6 @@ class AutonomousCryptoFaucet {
     };
   }
 
-    logger.info('[FAUCET] Opening validators evaluated', {
-      component: 'AutonomousFaucet',
-      passed: passedCount,
-      total: validators.length,
-      validators: validators.map(validator => ({ name: validator.name, passed: validator.passed, details: validator.details })),
-    });
-
   // ==========================================================================
   // STATE MACHINE - Strict, atomic state transitions
   // ==========================================================================
@@ -1925,9 +1918,6 @@ class AutonomousCryptoFaucet {
           blockOnUnknownCritical: true,
           criticalSignals: ['volatilityRegime', 'venueLatency', 'feesRebates', 'crossVenueFees', 'slippage', 'drawdownCaps'],
         });
-        if (marketGate.decision !== 'ALLOW') {
-          throw new Error(`Cryptara market gate blocked live validation: ${marketGate.blockReasons.join('; ')}`);
-        }
         const progression = await evaluateAutomaticStageProgression(marketGate);
         logger.info('[FAUCET] Cryptara market gate evaluated', {
           component: 'AutonomousFaucet',
@@ -1942,6 +1932,9 @@ class AutonomousCryptoFaucet {
           toStage: progression.toStage,
           blockers: progression.blockers,
         });
+        if (marketGate.decision !== 'ALLOW') {
+          throw new Error(`Cryptara market gate blocked live validation: ${marketGate.blockReasons.join('; ')}`);
+        }
       }
 
       logger.debug('[FAUCET] Market conditions updated', {
@@ -2028,6 +2021,18 @@ class AutonomousCryptoFaucet {
           costs: plan.costs,
           quoteAgeMs: plan.quoteAgeMs,
           bridge: plan.bridge ?? null,
+        });
+        return;
+      }
+
+      if (!stageManager.canExecuteTrades()) {
+        this.state.lastArbitrageDecision = 'SKIP';
+        logger.info('[FAUCET] Verified arbitrage observed but execution is unavailable at the current governance stage', {
+          component: 'AutonomousFaucet',
+          stage: stageManager.getCurrentStage(),
+          symbol: plan.symbol,
+          netProfitUsd: plan.netProfitUsd,
+          executionMode: this.state.executionMode,
         });
         return;
       }
