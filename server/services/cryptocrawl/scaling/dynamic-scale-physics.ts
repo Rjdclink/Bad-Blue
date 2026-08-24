@@ -8,10 +8,13 @@ interface ScaleMetrics {
   currentProfile: ComputeProfile;
   marketVolatility: number;
   opportunityDensity: number;
-  avgProfitPerHour: number;
+  avgProfitPerHour: number | null;
+  profitabilityStatus: ProfitabilityStatus;
   capacityMultiplier: number;
   costMultiplier: number;
 }
+
+type ProfitabilityStatus = 'PROFITABILITY_UNKNOWN' | 'PROFITABILITY_KNOWN_ZERO' | 'PROFITABILITY_KNOWN';
 
 interface RegionConfig {
   chain: Chain;
@@ -24,14 +27,14 @@ class DynamicScalePhysics {
   private currentProfile: ComputeProfile = 'medium';
   private priceHistory: number[] = [];
   private opportunityHistory: number[] = [];
-  private profitHistory: number[] = [];
+  private profitHistory: Array<number | null> = [];
   private readonly MAX_HISTORY = 60; // Track last 60 minutes
 
   constructor() {
     // Initialize with some baseline data
     this.priceHistory = Array(60).fill(0);
     this.opportunityHistory = Array(60).fill(0);
-    this.profitHistory = Array(60).fill(0);
+    this.profitHistory = Array(60).fill(null);
   }
 
   adjustComputeProfile(): ComputeProfile {
@@ -159,6 +162,14 @@ class DynamicScalePhysics {
   optimizeCosts(): void {
     const avgProfitPerHour = this.getAverageProfitPerHour();
 
+    if (avgProfitPerHour === null) {
+      logger.info('Profitability unknown - retaining current compute profile', {
+        component: 'DynamicScalePhysics',
+        profitabilityStatus: 'PROFITABILITY_UNKNOWN',
+      });
+      return;
+    }
+
     if (avgProfitPerHour < 50) {
       // Scale down to 20% capacity
       logger.warn('Low profitability detected - scaling down', {
@@ -179,11 +190,12 @@ class DynamicScalePhysics {
     }
   }
 
-  private getAverageProfitPerHour(): number {
-    if (this.profitHistory.length === 0) return 0;
-    
-    const totalProfit = this.profitHistory.reduce((sum, profit) => sum + profit, 0);
-    const hours = this.profitHistory.length / 60; // Convert minutes to hours
+  private getAverageProfitPerHour(): number | null {
+    const observedProfits = this.profitHistory.filter((profit): profit is number => profit !== null);
+    if (observedProfits.length === 0) return null;
+
+    const totalProfit = observedProfits.reduce((sum, profit) => sum + profit, 0);
+    const hours = observedProfits.length / 60; // Convert observed minutes to hours
     
     return totalProfit / Math.max(hours, 1);
   }
@@ -230,8 +242,8 @@ class DynamicScalePhysics {
     }
   }
 
-  recordProfit(profit: number): void {
-    this.profitHistory.push(profit);
+  recordProfit(profit: number | null | undefined): void {
+    this.profitHistory.push(typeof profit === 'number' && Number.isFinite(profit) ? profit : null);
     if (this.profitHistory.length > this.MAX_HISTORY) {
       this.profitHistory.shift();
     }
@@ -243,6 +255,7 @@ class DynamicScalePhysics {
       marketVolatility: this.calculateMarketVolatility(),
       opportunityDensity: this.getOpportunityDensity(),
       avgProfitPerHour: this.getAverageProfitPerHour(),
+      profitabilityStatus: this.getProfitabilityStatus(),
       capacityMultiplier: this.getCapacityMultiplier(),
       costMultiplier: this.getCostMultiplier()
     };
@@ -262,6 +275,12 @@ class DynamicScalePhysics {
       this.currentProfile = profile;
     }
   }
+
+  private getProfitabilityStatus(): ProfitabilityStatus {
+    const average = this.getAverageProfitPerHour();
+    if (average === null) return 'PROFITABILITY_UNKNOWN';
+    return average === 0 ? 'PROFITABILITY_KNOWN_ZERO' : 'PROFITABILITY_KNOWN';
+  }
 }
 
 export { 
@@ -270,5 +289,6 @@ export {
   type Chain, 
   type Region, 
   type ScaleMetrics,
+  type ProfitabilityStatus,
   type RegionConfig
 };

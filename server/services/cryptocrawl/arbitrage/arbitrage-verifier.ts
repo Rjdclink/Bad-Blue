@@ -314,9 +314,14 @@ function configuredTakerFeeBps(venue: QuoteVenue): number | null {
 
 export class ArbitrageVerifier {
   private lastLiveQuoteValidation: LiveQuoteValidation | null = null;
+  private liveQuoteValidations = new Map<string, LiveQuoteValidation>();
 
   getLastLiveQuoteValidation(): Readonly<LiveQuoteValidation> | null {
     return this.lastLiveQuoteValidation ? { ...this.lastLiveQuoteValidation } : null;
+  }
+
+  getLiveQuoteValidations(): ReadonlyArray<Readonly<LiveQuoteValidation>> {
+    return [...this.liveQuoteValidations.values()].map(validation => ({ ...validation }));
   }
 
   /**
@@ -340,7 +345,7 @@ export class ArbitrageVerifier {
       const freshQuotes = quotes.filter(quote => now - quote.timestamp <= req.maxQuoteAgeMs);
       const freshestTs = freshQuotes.length > 0 ? Math.max(...freshQuotes.map(quote => quote.timestamp)) : 0;
       const quoteAgeMs = freshQuotes.length > 0 ? now - freshestTs : Number.POSITIVE_INFINITY;
-      this.lastLiveQuoteValidation = {
+      const validation: LiveQuoteValidation = {
         symbol,
         validatedAt: now,
         quoteCount: quotes.length,
@@ -348,6 +353,12 @@ export class ArbitrageVerifier {
         valid: freshQuotes.length >= 2,
         streamStats: cexOrderBookStreams.getStats(),
       };
+      this.lastLiveQuoteValidation = validation;
+      this.liveQuoteValidations.set(symbol, validation);
+      if (this.liveQuoteValidations.size > 64) {
+        const oldestSymbol = this.liveQuoteValidations.keys().next().value;
+        if (oldestSymbol) this.liveQuoteValidations.delete(oldestSymbol);
+      }
       if (freshQuotes.length < 2) return null;
 
       let gasUsd = 0;

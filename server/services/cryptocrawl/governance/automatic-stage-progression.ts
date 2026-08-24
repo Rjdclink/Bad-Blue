@@ -86,7 +86,31 @@ export async function recordCryptaraExecutionEvidence(
     slippageBps: feedback.slippageBps,
     latencyMs: feedback.latencyMs,
     usedZeroCapital: feedback.usedZeroCapital,
-    provenance: [`execution:${feedback.source}`, feedback.success ? 'realized_execution' : 'execution_failure'],
+    provenance: [
+      `execution:${feedback.source}`,
+      ...(feedback.provenance || []),
+      feedback.success ? 'realized_execution' : 'execution_failure',
+    ],
+    settlement: feedback.settlement ? {
+      status: feedback.settlement.status,
+      terminal: feedback.settlement.terminal,
+      settlementConfirmed: feedback.settlement.settlementConfirmed,
+      transactionHash: feedback.settlement.transactionHash,
+      blockNumber: feedback.settlement.blockNumber,
+      realizedProfitUsd: feedback.settlement.realized?.netProfitUsd,
+      feeUsd: feedback.settlement.realized?.feeUsd,
+      slippageBps: feedback.settlement.realized?.slippageBps,
+      latencyMs: feedback.settlement.realized?.latencyMs,
+      expectedProfitUsd: feedback.settlement.expected?.netProfitUsd,
+      receipts: (feedback.settlement.receipts || []).slice(0, 8).map(receipt => ({
+        transactionHash: receipt.transactionHash,
+        blockNumber: receipt.blockNumber,
+        status: receipt.status,
+        gasUsed: receipt.gasUsed,
+        effectiveGasPrice: receipt.effectiveGasPrice,
+      })),
+      provenance: [...feedback.settlement.provenance].slice(0, 32),
+    } : undefined,
     prediction,
   };
   await instantLearningEngine.recordExecutionOutcome(outcome);

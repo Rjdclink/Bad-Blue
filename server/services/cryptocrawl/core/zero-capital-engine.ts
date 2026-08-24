@@ -29,7 +29,8 @@
 import { ethers, Wallet, providers, BigNumber, Contract } from 'ethers';
 import { FlashbotsBundleProvider, FlashbotsBundleResolution, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
-import { getCryptara } from '../../cryptara/index.js';
+import { getCryptara, type CryptaraRouteObservation } from '../../cryptara/index.js';
+import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { TradingViewEngine } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
@@ -70,8 +71,12 @@ export interface ZeroCapitalOpportunity {
   inputTokenDecimals: number;
   flashLoanAmount: bigint;
   expectedProfit: bigint;
+  grossProfit?: bigint;
   gasEstimate: bigint;
   estimatedExecutionCostInInputToken: bigint;
+  estimatedGasCostInInputToken?: bigint;
+  flashLoanFeeInInputToken?: bigint;
+  relayFeeInInputToken?: bigint;
   expectedSlippageBps: number;
   quoteLatencyMs: number;
   netProfitBps: number;
@@ -96,6 +101,9 @@ export interface ExecutionResult {
   profit?: bigint;
   profitVerified?: boolean;
   gasUsed?: bigint;
+  realizedFeeUsd?: number;
+  realizedSlippageBps?: number;
+  latencyMs?: number;
   slippage?: number;
   error?: string;
   blockNumber?: number;
@@ -495,6 +503,8 @@ export class AutonomousZeroCapitalEngine {
         this.state.currentOpportunities = viableOpportunities.length;
         viableCount = viableOpportunities.length;
 
+        await this.publishCryptaraRouteObservations(viableOpportunities);
+
         if (viableOpportunities.length > 0) {
           logger.info('[ZeroCapitalEngine] Opportunities discovered', {
             component: 'ZeroCapitalEngine',
@@ -521,6 +531,84 @@ export class AutonomousZeroCapitalEngine {
 
     // Adaptive schedule prevents hammering when APIs/chains are degraded.
     void scanCycle();
+  }
+
+  private async publishCryptaraRouteObservations(opportunities: ZeroCapitalOpportunity[]): Promise<void> {
+    const cryptara = getCryptara();
+    if (!cryptara.getStatus().isRunning || opportunities.length === 0) return;
+
+    let marketUniverse = [] as Awaited<ReturnType<typeof marketDataProviders.discoverUniverse>>;
+    try {
+      marketUniverse = await marketDataProviders.discoverUniverse();
+    } catch {
+      marketUniverse = [];
+    }
+
+    let tradingView: Awaited<ReturnType<typeof TradingViewEngine.getAnalysis>> | null = null;
+    try {
+      tradingView = await TradingViewEngine.getAnalysis(process.env.ZERO_CAPITAL_SIGNAL_SYMBOL || 'ETHUSDT', '1h');
+    } catch {
+      tradingView = null;
+    }
+
+    let mempool = null;
+    try {
+      mempool = alchemyIntegration.getMempoolAnalysis();
+    } catch {
+      mempool = null;
+    }
+
+    for (const opportunity of opportunities.slice(0, 10)) {
+      const finalLeg = opportunity.route[opportunity.route.length - 1];
+      if (!finalLeg) continue;
+      const routeObservation: CryptaraRouteObservation = {
+        chain: opportunity.chain,
+        inputToken: opportunity.inputToken,
+        outputToken: finalLeg.tokenOut,
+        inputAssetSymbol: opportunity.inputAssetSymbol,
+        inputAmountBaseUnits: opportunity.flashLoanAmount.toString(),
+        outputAmountBaseUnits: finalLeg.expectedAmountOut.toString(),
+        inputTokenDecimals: opportunity.inputTokenDecimals,
+        outputTokenDecimals: opportunity.inputTokenDecimals,
+        grossProfitBaseUnits: (opportunity.grossProfit ?? opportunity.expectedProfit).toString(),
+        expectedNetProfitBaseUnits: opportunity.expectedProfit.toString(),
+        estimatedGasCostBaseUnits: (opportunity.estimatedGasCostInInputToken ?? opportunity.estimatedExecutionCostInInputToken).toString(),
+        flashLoanFeeBaseUnits: (opportunity.flashLoanFeeInInputToken ?? 0n).toString(),
+        relayFeeBaseUnits: (opportunity.relayFeeInInputToken ?? 0n).toString(),
+        quoteLatencyMs: opportunity.quoteLatencyMs,
+        route: opportunity.route.map(leg => ({
+          protocol: leg.protocol,
+          tokenIn: leg.tokenIn,
+          tokenOut: leg.tokenOut,
+          amountInBaseUnits: leg.amountIn.toString(),
+          expectedAmountOutBaseUnits: leg.expectedAmountOut.toString(),
+          fee: leg.fee,
+        })),
+        observedAt: opportunity.timestamp,
+        expiresAt: opportunity.expiresAt,
+        executable: this.executionEnabled && (
+          opportunity.chain === 'europa' ? !!this.europaAdapter : opportunity.chain === 'ethereum' && !!this.flashbotsProvider
+        ),
+      };
+      const missingInformation = [
+        ...(routeObservation.executable ? [] : ['route_execution_capability']),
+        ...(marketUniverse.some(asset => asset.symbol.toUpperCase() === opportunity.inputAssetSymbol) ? [] : ['route_input_price_usd']),
+      ];
+      cryptara.recordOpportunityObservation({
+        opportunityId: opportunity.id,
+        observedAt: opportunity.timestamp,
+        chain: opportunity.chain,
+        symbol: opportunity.inputAssetSymbol,
+        plan: null,
+        tradingView,
+        mempool,
+        marketUniverse,
+        dexObservation: null,
+        routeObservation,
+        missingInformation,
+        provenance: ['configured_rpc_route_quote', `route:${opportunity.id}`, `chain:${opportunity.chain}`],
+      });
+    }
   }
 
   private startFundingLoop(): void {
@@ -650,18 +738,35 @@ export class AutonomousZeroCapitalEngine {
       const cryptara = getCryptara();
       if (!cryptara.getStatus().isRunning) return;
 
+      const hasMeasuredEconomics = result.success && result.profitVerified === true && typeof result.profit === 'bigint' &&
+        Number.isFinite(result.realizedFeeUsd) && result.realizedFeeUsd! >= 0 &&
+        Number.isFinite(result.realizedSlippageBps) && result.realizedSlippageBps! >= 0 &&
+        Number.isFinite(result.latencyMs) && result.latencyMs! > 0;
+      if (!hasMeasuredEconomics) {
+        logger.warn('[ZeroCapitalEngine] Execution lacks complete measured outcome economics; omitting Cryptara feedback', {
+          component: 'ZeroCapitalEngine',
+          opportunityId: opportunity.id,
+          success: result.success,
+          profitVerified: result.profitVerified === true,
+          hasRealizedFee: Number.isFinite(result.realizedFeeUsd),
+          hasRealizedSlippage: Number.isFinite(result.realizedSlippageBps),
+          hasMeasuredLatency: Number.isFinite(result.latencyMs) && result.latencyMs > 0,
+        });
+        return;
+      }
+
       await recordCryptaraExecutionEvidence({
         source: 'zero_capital',
         opportunityId: opportunity.id,
         chain: opportunity.chain,
         symbol: `${opportunity.inputToken}/${opportunity.outputToken}`,
         strategy: opportunity.type,
-        success: result.success && result.profitVerified === true,
+        success: true,
         expectedProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
         realizedProfitUsd: this.toUsdEstimate(result.profit, opportunity.inputTokenDecimals),
-        feeUsd: this.toUsdEstimate(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals),
-        slippageBps: typeof result.slippage === 'number' ? Math.max(0, Math.round(result.slippage * 10000)) : 0,
-        latencyMs: 0,
+        feeUsd: result.realizedFeeUsd!,
+        slippageBps: result.realizedSlippageBps!,
+        latencyMs: result.latencyMs!,
         usedZeroCapital: true,
         timestamp: Date.now(),
         notes: result.error,
@@ -820,8 +925,12 @@ export class AutonomousZeroCapitalEngine {
       inputTokenDecimals: quotedRoute.inputTokenDecimals,
       flashLoanAmount: quotedRoute.amountIn,
       expectedProfit: quotedRoute.netProfit,
+      grossProfit: quotedRoute.grossProfit,
       gasEstimate: 0n,
       estimatedExecutionCostInInputToken: estimatedExecutionCost,
+      estimatedGasCostInInputToken: quotedRoute.estimatedGasCostInInputToken,
+      flashLoanFeeInInputToken: quotedRoute.flashLoanFeeInInputToken,
+      relayFeeInInputToken: quotedRoute.relayFeeInInputToken,
       expectedSlippageBps: this.getExpectedSlippageBps(quotedRoute.route.length),
       quoteLatencyMs: quotedRoute.quoteLatencyMs,
       netProfitBps: quotedRoute.netProfitBps,

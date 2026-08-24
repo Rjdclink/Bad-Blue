@@ -263,7 +263,15 @@ class DeepLearningStore {
     const key = getExecutionOutcomeKey(outcome);
     if (this.executionOutcomeKeys.has(key)) return false;
     this.executionOutcomeKeys.add(key);
-    this.executionOutcomes.push({ ...outcome, provenance: [...outcome.provenance] });
+    this.executionOutcomes.push({
+      ...outcome,
+      provenance: [...outcome.provenance],
+      settlement: outcome.settlement ? {
+        ...outcome.settlement,
+        receipts: outcome.settlement.receipts.map(receipt => ({ ...receipt })),
+        provenance: [...outcome.settlement.provenance],
+      } : undefined,
+    });
     if (this.executionOutcomes.length > 500) {
       const removed = this.executionOutcomes.splice(0, this.executionOutcomes.length - 500);
       for (const item of removed) this.executionOutcomeKeys.delete(getExecutionOutcomeKey(item));
@@ -279,7 +287,16 @@ class DeepLearningStore {
   }
 
   getExecutionOutcomes(): ExecutionOutcomeObservation[] {
-    return this.executionOutcomes.map(outcome => ({ ...outcome, provenance: [...outcome.provenance], prediction: outcome.prediction ? { ...outcome.prediction } : undefined }));
+    return this.executionOutcomes.map(outcome => ({
+      ...outcome,
+      provenance: [...outcome.provenance],
+      prediction: outcome.prediction ? { ...outcome.prediction } : undefined,
+      settlement: outcome.settlement ? {
+        ...outcome.settlement,
+        receipts: outcome.settlement.receipts.map(receipt => ({ ...receipt })),
+        provenance: [...outcome.settlement.provenance],
+      } : undefined,
+    }));
   }
 
   /**

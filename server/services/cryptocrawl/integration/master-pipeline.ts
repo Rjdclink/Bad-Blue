@@ -4,7 +4,7 @@
 import { Wallet, providers } from 'ethers';
 import type { Opportunity } from '../core/lux-swarm';
 import { LuxSwarm } from '../core/lux-swarm.js';
-import { assessSharedExecutionEnvironment, executeWithMaxProfit, getSharedExecutionCapabilities, multiRelay, flashLoans, ultraLowLatency } from '../execution/index.js';
+import { assessSharedExecutionEnvironment, executeWithMaxProfit, getSharedExecutionCapabilities, multiRelay, ultraLowLatency } from '../execution/index.js';
 import { RealtimeDataStream } from '../scanner/realtime-stream.js';
 import { ReinforcementLearningBidder } from '../learning/reinforcement-learning-bidder.js';
 import { DynamicScalePhysics } from '../scaling/dynamic-scale-physics.js';
@@ -959,29 +959,39 @@ class MasterPipeline {
         }
       });
 
-      if (result.success) {
-        this.opportunitiesProcessed++;
-        this.totalProfit += result.profit || 0;
+      const realizedEconomics = result.normalized?.realized;
+      const realizedFeeUsd = realizedEconomics?.exchangeFeeUsd ?? realizedEconomics?.gasUsd;
+      const hasMeasuredSettlementEconomics = result.success && result.settlementConfirmed === true &&
+        Number.isFinite(result.profit) &&
+        Number.isFinite(realizedFeeUsd) &&
+        Number.isFinite(realizedEconomics?.slippageBps);
 
-        await recordCryptaraExecutionEvidence({
-          source: 'master_pipeline',
-          opportunityId: opp.asset,
-          chain: String(opp.chain).toLowerCase(),
-          symbol: marketSymbol,
-          strategy: 'triple_dip_execute_with_max_profit',
-          success: true,
-          expectedProfitUsd: netExpectedProfitUsd,
-          realizedProfitUsd: result.profit || netExpectedProfitUsd,
-          feeUsd,
-          slippageBps: expectedSlippageBps,
-          latencyMs: chainLatencyMs || 0,
-          usedZeroCapital: false,
-          timestamp: Date.now(),
-        }, gate);
+      if (hasMeasuredSettlementEconomics) {
+        this.opportunitiesProcessed++;
+        this.totalProfit += result.profit!;
+
+          await recordCryptaraExecutionEvidence({
+            source: 'master_pipeline',
+            opportunityId: opp.asset,
+            chain: String(opp.chain).toLowerCase(),
+            symbol: marketSymbol,
+            strategy: 'triple_dip_execute_with_max_profit',
+            success: true,
+            expectedProfitUsd: netExpectedProfitUsd,
+            realizedProfitUsd: result.profit!,
+            feeUsd: realizedFeeUsd!,
+            slippageBps: realizedEconomics!.slippageBps!,
+            latencyMs: chainLatencyMs || 0,
+            usedZeroCapital: false,
+            timestamp: Date.now(),
+            settlementConfirmed: result.normalized?.settlementConfirmed,
+            provenance: result.normalized?.provenance,
+            settlement: result.normalized,
+          }, gate);
         
         // Record outcome for RL learning
         this.rlBidder.recordOutcome(gasContext, optimalBid, true);
-        this.scalePhysics.recordProfit(result.profit || 0);
+        this.scalePhysics.recordProfit(result.profit);
 
         logger.info('Opportunity executed successfully', {
           component: 'MasterPipeline',
@@ -990,22 +1000,21 @@ class MasterPipeline {
           totalProfit: this.totalProfit,
           totalProcessed: this.opportunitiesProcessed
         });
-      } else {
-        await recordCryptaraExecutionEvidence({
-          source: 'master_pipeline',
+      } else if (result.success || result.status === 'settlement_unknown' || result.status === 'submitted') {
+        logger.info('Opportunity submitted or settled without complete economics; omitting outcome evidence', {
+          component: 'MasterPipeline',
           opportunityId: opp.asset,
-          chain: String(opp.chain).toLowerCase(),
-          symbol: marketSymbol,
-          strategy: 'triple_dip_execute_with_max_profit',
-          success: false,
-          expectedProfitUsd: netExpectedProfitUsd,
-          realizedProfitUsd: 0,
-          feeUsd,
-          slippageBps: expectedSlippageBps,
-          latencyMs: chainLatencyMs || 0,
-          usedZeroCapital: false,
-          timestamp: Date.now(),
-        }, gate);
+          transactionHash: result.txHash,
+          status: result.status,
+        });
+        this.scalePhysics.recordProfit(null);
+      } else {
+        logger.info('Opportunity execution failed without a measured settlement; omitting outcome evidence', {
+          component: 'MasterPipeline',
+          opportunityId: opp.asset,
+          status: result.status,
+          error: result.error,
+        });
         this.rlBidder.recordOutcome(gasContext, optimalBid, false);
       }
     } catch (error) {

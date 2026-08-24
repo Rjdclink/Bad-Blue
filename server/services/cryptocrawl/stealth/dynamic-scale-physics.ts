@@ -8,7 +8,7 @@ import type { Opportunity, ChainId } from '../core/lux-swarm';
 interface MarketConditions {
   volatility: number; // 0-100 scale
   opportunityDensity: number; // opportunities per minute
-  avgProfit: number;
+  avgProfit: number | null;
   timestamp: number;
 }
 
@@ -95,7 +95,7 @@ export class DynamicScalePhysics {
     const originalCost = this.profileCosts[this.currentProfile];
 
     // If density is very low and profit is minimal, scale to minimum
-    if (conditions.opportunityDensity < SCALING_CONFIG.LOW_DENSITY_THRESHOLD && conditions.avgProfit < 50) {
+    if (conditions.opportunityDensity < SCALING_CONFIG.LOW_DENSITY_THRESHOLD && conditions.avgProfit !== null && conditions.avgProfit < 50) {
       if (this.currentProfile !== 'low') {
         await this.scaleToProfile('low');
         const optimizedCost = this.profileCosts['low'];
@@ -131,7 +131,7 @@ export class DynamicScalePhysics {
 
     // Calculate volatility from profit variance
     const profits = opportunities.map(opp => opp.profitEstimate);
-    const avgProfit = profits.length > 0 ? profits.reduce((a, b) => a + b, 0) / profits.length : 0;
+    const avgProfit = profits.length > 0 ? profits.reduce((a, b) => a + b, 0) / profits.length : null;
     
     let volatility = 0;
     if (profits.length > 1) {

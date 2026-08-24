@@ -14,6 +14,26 @@ export interface ExecutionOutcomeObservation {
   latencyMs: number;
   usedZeroCapital: boolean;
   provenance: string[];
+  settlement?: {
+    status: string;
+    terminal: boolean;
+    settlementConfirmed: boolean;
+    transactionHash?: string;
+    blockNumber?: number;
+    realizedProfitUsd?: number;
+    feeUsd?: number;
+    slippageBps?: number;
+    latencyMs?: number;
+    expectedProfitUsd?: number;
+    receipts: Array<{
+      transactionHash?: string;
+      blockNumber?: number;
+      status?: number;
+      gasUsed?: string;
+      effectiveGasPrice?: string;
+    }>;
+    provenance: string[];
+  };
   prediction?: {
     probability: number;
     expectedPositive: boolean;

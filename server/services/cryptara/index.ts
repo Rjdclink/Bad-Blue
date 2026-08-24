@@ -30,9 +30,10 @@ import { getCryptocrawlGovernance } from '../cryptocrawl/governance/index.js';
 import { TradingViewEngine, type TechnicalAnalysis, type TradingViewHealthStatus } from '../cryptocrawl/babel/tradingview-integration.js';
 import { alchemyIntegration, type MempoolAnalysis, type AlchemyReadinessStatus } from '../cryptocrawl/capital-free/alchemy-integration.js';
 import type { VerifiedArbitragePlan } from '../cryptocrawl/arbitrage/arbitrage-verifier.js';
-import type { DexQuoteObservation, MarketUniverseAsset } from '../cryptocrawl/intelligence/market-data-providers.js';
+import { marketDataProviders, type DexQuoteObservation, type MarketUniverseAsset } from '../cryptocrawl/intelligence/market-data-providers.js';
 import { createMonteCarloEngine, type MarketCondition, type StrategyProfile } from '../cryptocrawl/validation/monte-carlo-engine.js';
 import type { ExecutionOutcomeObservation } from '../cryptocrawl/learning/execution-outcome.js';
+import type { NormalizedRealizedExecution } from '../cryptocrawl/execution/settlement-types.js';
 
 const log = createLogger('CRYPTARA');
 
@@ -79,8 +80,8 @@ export interface MarketSurveillanceData {
   timestamp: Date;
   chain: string;
   tokenActivity: TokenActivity[];
-  sentimentScore: number;
-  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  sentimentScore: number | null;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical' | 'unknown';
   patterns: DetectedPattern[];
   predictions: MarketPrediction[];
 }
@@ -88,11 +89,11 @@ export interface MarketSurveillanceData {
 export interface TokenActivity {
   token: string;
   chain: string;
-  volume24h: number;
-  priceChange24h: number;
-  liquidity: number;
-  holders: number;
-  transactions: number;
+  volume24h: number | null;
+  priceChange24h: number | null;
+  liquidity: number | null;
+  holders: number | null;
+  transactions: number | null;
 }
 
 export interface DetectedPattern {
@@ -151,7 +152,7 @@ export interface CryptaraStatus {
 export interface SentimentAnalysis {
   timestamp: Date;
   overallSentiment: number; // -1 to 1
-  socialVolume: number;
+  socialVolume: number | null;
   fearGreedIndex: number;
   dominantNarrative: string;
   keyTopics: string[];
@@ -181,6 +182,10 @@ export interface CryptaraExecutionFeedback {
   usedZeroCapital: boolean;
   timestamp: number;
   notes?: string;
+  settlementStatus?: string;
+  settlementConfirmed?: boolean;
+  provenance?: string[];
+  settlement?: NormalizedRealizedExecution;
 }
 
 export interface CryptaraAutonomousDirective {
@@ -231,6 +236,34 @@ export interface CryptaraConnectorReadiness {
   };
 }
 
+export interface CryptaraRouteObservation {
+  chain: string;
+  inputToken: string;
+  outputToken: string;
+  inputAssetSymbol: 'USDC' | 'USDT';
+  inputAmountBaseUnits: string;
+  outputAmountBaseUnits: string;
+  inputTokenDecimals: number;
+  outputTokenDecimals: number;
+  grossProfitBaseUnits: string;
+  expectedNetProfitBaseUnits: string;
+  estimatedGasCostBaseUnits: string;
+  flashLoanFeeBaseUnits: string;
+  relayFeeBaseUnits: string;
+  quoteLatencyMs: number;
+  route: Array<{
+    protocol: string;
+    tokenIn: string;
+    tokenOut: string;
+    amountInBaseUnits: string;
+    expectedAmountOutBaseUnits: string;
+    fee: number;
+  }>;
+  observedAt: number;
+  expiresAt: number;
+  executable: boolean;
+}
+
 export interface CryptaraOpportunityContext {
   opportunityId: string;
   observedAt: number;
@@ -241,6 +274,7 @@ export interface CryptaraOpportunityContext {
   mempool: MempoolAnalysis | null;
   marketUniverse: MarketUniverseAsset[];
   dexObservation: DexQuoteObservation | null;
+  routeObservation?: CryptaraRouteObservation;
   missingInformation: string[];
   provenance: string[];
 }
@@ -259,6 +293,15 @@ export interface CryptaraOpportunityAssessment {
   expectedSlippageBps: number | null;
   expectedPriceImpactBps: number | null;
   probabilityOfProfitableExecution: number | null;
+  monteCarlo: {
+    evaluatedAt: number;
+    probabilityOfProfit: number;
+    confidence: number;
+    valueAtRisk95: number;
+    expectedShortfall: number;
+    maxDrawdown: number;
+    marketRegime: string;
+  } | null;
   liquidityConfidence: number | null;
   dataCompleteness: number;
   riskLevel: MarketSurveillanceData['riskLevel'] | 'unknown';
@@ -269,6 +312,7 @@ export interface CryptaraOpportunityAssessment {
     marketCapUsd: number | null;
     priceChange24hPct: number | null;
   };
+  routeObservation?: CryptaraRouteObservation;
   missingInformation: string[];
   provenance: string[];
 }
@@ -506,6 +550,9 @@ export class Cryptara extends EventEmitter {
     this.latestOpportunityContext = {
       ...context,
       marketUniverse: context.marketUniverse.map(asset => ({ ...asset })),
+      routeObservation: context.routeObservation
+        ? { ...context.routeObservation, route: context.routeObservation.route.map(leg => ({ ...leg })) }
+        : undefined,
       provenance: [...context.provenance],
       missingInformation: [...context.missingInformation],
     };
@@ -517,6 +564,7 @@ export class Cryptara extends EventEmitter {
     const dexMaxAgeMs = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
     const tradingViewMaxAgeMs = Math.max(30_000, Number(process.env.TRADINGVIEW_DATA_TTL_MS || 300_000));
     const dexIsFresh = !!context.dexObservation && now - context.dexObservation.observedAt <= dexMaxAgeMs;
+    const routeIsFresh = !!context.routeObservation && now <= context.routeObservation.expiresAt && context.routeObservation.observedAt <= now;
     const marketData = {
       source: marketAsset?.source || null,
       priceUsd: marketAsset?.priceUsd ?? null,
@@ -529,14 +577,48 @@ export class Cryptara extends EventEmitter {
     if (marketData.volume24hUsd === null) missingInformation.push('provider_volume_24h_usd');
     if (marketAsset && now - marketAsset.observedAt > marketMaxAgeMs) missingInformation.push('stale_provider_market_data');
     if (context.dexObservation && !dexIsFresh) missingInformation.push('stale_dex_quote');
+    if (context.routeObservation && !routeIsFresh) missingInformation.push('stale_configured_route_quote');
     if (context.tradingView && now - context.tradingView.sourceTimestamp > tradingViewMaxAgeMs) missingInformation.push('stale_trading_view_analysis');
     const plan = context.plan;
     const hasPlanEconomics = !!plan && Number.isFinite(plan.netProfitUsd) && Number.isFinite(plan.notionalUsd) && plan.notionalUsd > 0;
-    const netProfitUsd = hasPlanEconomics ? plan!.netProfitUsd : null;
-    const netProfitMargin = hasPlanEconomics ? plan!.netProfitUsd / plan!.notionalUsd : null;
-    const quoteFreshness = plan && Number.isFinite(plan.quoteAgeMs)
-      ? Math.max(0, Math.min(1, 1 - plan.quoteAgeMs / Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000))))
+    const routeMarketAsset = context.routeObservation
+      ? context.marketUniverse.find(asset => asset.symbol.toUpperCase() === context.routeObservation!.inputAssetSymbol)
+      : undefined;
+    const routePriceUsd = routeMarketAsset?.priceUsd;
+    const routeProfitBaseUnits = context.routeObservation ? Number(context.routeObservation.expectedNetProfitBaseUnits) : NaN;
+    const routeAmountBaseUnits = context.routeObservation ? Number(context.routeObservation.inputAmountBaseUnits) : NaN;
+    const routeScale = context.routeObservation ? 10 ** context.routeObservation.inputTokenDecimals : 1;
+    const routeNetProfitUsd = routeIsFresh && Number.isFinite(routeProfitBaseUnits) && Number.isFinite(routePriceUsd)
+      ? (routeProfitBaseUnits / routeScale) * routePriceUsd!
       : null;
+    const routeNotionalUsd = routeIsFresh && Number.isFinite(routeAmountBaseUnits) && Number.isFinite(routePriceUsd)
+      ? (routeAmountBaseUnits / routeScale) * routePriceUsd!
+      : null;
+    if (context.routeObservation && routeNetProfitUsd === null) missingInformation.push('route_input_price_usd');
+    const hasRouteEconomics = routeNetProfitUsd !== null && routeNotionalUsd !== null && routeNotionalUsd > 0;
+    const netProfitUsd = hasPlanEconomics ? plan!.netProfitUsd : hasRouteEconomics ? routeNetProfitUsd : null;
+    const netProfitMargin = hasPlanEconomics
+      ? plan!.netProfitUsd / plan!.notionalUsd
+      : hasRouteEconomics ? routeNetProfitUsd! / routeNotionalUsd! : null;
+    const monteCarloMaxAgeMs = Math.max(60_000, Number(process.env.CRYPTARA_MONTE_CARLO_TTL_MS || 900_000));
+    const monteCarlo = this.latestMonteCarloEvidence &&
+      this.latestMonteCarloEvidence.sourceOpportunityId === context.opportunityId &&
+      context.observedAt - this.latestMonteCarloEvidence.evaluatedAt <= monteCarloMaxAgeMs &&
+      now - this.latestMonteCarloEvidence.evaluatedAt <= monteCarloMaxAgeMs &&
+      Number.isFinite(this.latestMonteCarloEvidence.probabilityOfProfit) &&
+      this.latestMonteCarloEvidence.probabilityOfProfit >= 0 &&
+      this.latestMonteCarloEvidence.probabilityOfProfit <= 1 &&
+      Number.isFinite(this.latestMonteCarloEvidence.confidence) &&
+      this.latestMonteCarloEvidence.confidence >= 0 &&
+      this.latestMonteCarloEvidence.confidence <= 1
+      ? { ...this.latestMonteCarloEvidence }
+      : null;
+    if (monteCarlo) provenance.push('cryptara_monte_carlo');
+    const quoteFreshness = hasPlanEconomics && plan && Number.isFinite(plan.quoteAgeMs)
+      ? Math.max(0, Math.min(1, 1 - plan.quoteAgeMs / Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000))))
+      : routeIsFresh && context.routeObservation
+        ? Math.max(0, Math.min(1, 1 - (now - context.routeObservation.observedAt) / Math.max(1, context.routeObservation.expiresAt - context.routeObservation.observedAt)))
+        : null;
     const liquidityEvidence = dexIsFresh
       ? (context.dexObservation.liquidityAvailable ? 1 : 0)
       : plan?.liquidity.status === 'measured'
@@ -544,15 +626,19 @@ export class Cryptara extends EventEmitter {
         : null;
     const marketRisk = this.deriveOpportunityRisk(context, missingInformation);
     const riskPenalty = marketRisk === 'critical' ? 0.9 : marketRisk === 'high' ? 0.65 : marketRisk === 'medium' ? 0.35 : marketRisk === 'low' ? 0.1 : null;
-    const executionConfidence = hasPlanEconomics && quoteFreshness !== null && riskPenalty !== null
+    const hasExecutableEvidence = hasPlanEconomics || (hasRouteEconomics && context.routeObservation?.executable === true);
+    const executionConfidence = hasExecutableEvidence && quoteFreshness !== null && riskPenalty !== null
       ? Number(Math.max(0, Math.min(1, quoteFreshness * 0.55 + (liquidityEvidence || 0) * 0.2 + Math.max(0, 1 - riskPenalty) * 0.25)).toFixed(4))
       : null;
+    const probabilityOfProfitableExecution = executionConfidence !== null
+      ? Math.min(executionConfidence, monteCarlo?.probabilityOfProfit ?? executionConfidence)
+      : null;
     const dataCompleteness = Number(Math.max(0, Math.min(1, 1 - missingInformation.length / 8)).toFixed(4));
-    const rankScore = netProfitMargin !== null && executionConfidence !== null
-      ? Number((netProfitMargin * 10000 * executionConfidence * dataCompleteness).toFixed(4))
+    const rankScore = netProfitMargin !== null && probabilityOfProfitableExecution !== null
+      ? Number((netProfitMargin * 10000 * probabilityOfProfitableExecution * dataCompleteness).toFixed(4))
       : null;
     const recommendation: CryptaraOpportunityAssessment['recommendation'] =
-      rankScore === null ? 'observe' : rankScore > 0 && executionConfidence! >= 0.6 ? 'consider' : 'reject';
+      rankScore === null ? 'observe' : rankScore > 0 && probabilityOfProfitableExecution! >= 0.6 ? 'consider' : 'reject';
     const assessment: CryptaraOpportunityAssessment = {
       opportunityId: context.opportunityId,
       evaluatedAt: Date.now(),
@@ -561,16 +647,24 @@ export class Cryptara extends EventEmitter {
       executionConfidence,
       netProfitUsd,
       netProfitMargin,
-      executableNotionalUsd: plan?.executableNotionalUsd ?? null,
-      grossProfitUsd: plan?.grossProfitUsd ?? null,
-      expectedCostsUsd: plan?.costs.totalCostsUsd ?? null,
+      executableNotionalUsd: plan?.executableNotionalUsd ?? routeNotionalUsd,
+      grossProfitUsd: plan?.grossProfitUsd ?? (context.routeObservation && routeMarketAsset?.priceUsd !== undefined
+        ? (Number(context.routeObservation.grossProfitBaseUnits) / routeScale) * routeMarketAsset.priceUsd
+        : null),
+      expectedCostsUsd: plan?.costs.totalCostsUsd ?? (context.routeObservation && routeMarketAsset?.priceUsd !== undefined
+        ? ((Number(context.routeObservation.estimatedGasCostBaseUnits) + Number(context.routeObservation.flashLoanFeeBaseUnits) + Number(context.routeObservation.relayFeeBaseUnits)) / routeScale) * routeMarketAsset.priceUsd
+        : null),
       expectedSlippageBps: plan?.expectedSlippageBps ?? null,
       expectedPriceImpactBps: plan?.expectedPriceImpactBps ?? null,
-      probabilityOfProfitableExecution: executionConfidence,
+      probabilityOfProfitableExecution,
+      monteCarlo,
       liquidityConfidence: liquidityEvidence,
       dataCompleteness,
       riskLevel: marketRisk,
       marketData,
+      routeObservation: context.routeObservation
+        ? { ...context.routeObservation, route: context.routeObservation.route.map(leg => ({ ...leg })) }
+        : undefined,
       missingInformation,
       provenance,
     };
@@ -670,7 +764,10 @@ export class Cryptara extends EventEmitter {
         Number.isFinite(entry.timestamp),
       )
       .slice(-1000)
-      .map(entry => ({ ...entry }));
+      .map(entry => ({
+        ...entry,
+        provenance: entry.provenance ? [...entry.provenance] : undefined,
+      }));
     this.recomputeAutonomousDirective();
   }
 
@@ -840,8 +937,7 @@ export class Cryptara extends EventEmitter {
     if (!this.status.isRunning) return;
 
     try {
-      // Simulate market surveillance
-      // In production, this would integrate with blockchain APIs
+        // Combine live market-provider observations with the live signal streams.
       const surveillanceData = await this.collectMarketData();
       
       // Detect patterns
@@ -879,71 +975,58 @@ export class Cryptara extends EventEmitter {
 
     const analysis = await TradingViewEngine.getAnalysis(symbol, '1h');
     this.lastTradingViewAnalysis = analysis;
+    const marketUniverse = await marketDataProviders.discoverUniverse();
 
-    let mempool: MempoolAnalysis = {
-      totalPending: 0,
-      swapTransactions: 0,
-      liquidityAdditions: 0,
-      largeTransfers: 0,
-      arbitrageOpportunities: [],
-      avgGasPrice: 0,
-      maxGasPrice: 0,
-    };
+    let mempool: MempoolAnalysis | null = null;
 
     try {
-      mempool = alchemyIntegration.getMempoolAnalysis();
-      this.lastMempoolAnalysis = mempool;
+      if (alchemyIntegration.isReady()) {
+        mempool = alchemyIntegration.getMempoolAnalysis();
+        this.lastMempoolAnalysis = mempool;
+      } else {
+        this.lastMempoolAnalysis = null;
+      }
     } catch {
-      // If mempool stream is unavailable, continue with TradingView-only signaling.
+      this.lastMempoolAnalysis = null;
     }
 
     const signalScore = TradingViewEngine.signalToScore(analysis.summary.signal);
     const normalizedSignal = signalScore / 2; // -1..1
-    const congestionFactor = Math.min(1, mempool.totalPending / 8000);
-    const gasPressureFactor = Math.min(1, mempool.avgGasPrice / 180_000_000_000); // normalize around ~180 gwei
-    const riskIndex = Math.max(
-      0,
-      Math.min(
-        1,
-        0.25 +
-          congestionFactor * 0.35 +
-          gasPressureFactor * 0.25 +
-          (normalizedSignal < 0 ? Math.abs(normalizedSignal) * 0.3 : 0),
-      )
-    );
+    const riskIndex = mempool
+      ? Math.max(
+          0,
+          Math.min(
+            1,
+            0.25 +
+              Math.min(1, mempool.totalPending / 8000) * 0.35 +
+              Math.min(1, mempool.avgGasPrice / 180_000_000_000) * 0.25 +
+              (normalizedSignal < 0 ? Math.abs(normalizedSignal) * 0.3 : 0),
+          )
+        )
+      : Number.NaN;
 
     const riskLevel: MarketSurveillanceData['riskLevel'] =
+      !Number.isFinite(riskIndex) ? 'unknown' :
       riskIndex >= 0.85 ? 'critical' :
       riskIndex >= 0.65 ? 'high' :
       riskIndex >= 0.4 ? 'medium' :
       'low';
 
-    const tokenActivity: TokenActivity[] = [
-      {
-        token: 'BTC',
-        chain: 'ethereum',
-        volume24h: Math.max(100_000, mempool.swapTransactions * 220_000),
-        priceChange24h: Number((normalizedSignal * 4.5).toFixed(3)),
-        liquidity: Math.max(0.1, 1 - riskIndex),
-        holders: 1_000_000 + mempool.largeTransfers,
-        transactions: Math.max(analysis.summary.strength, mempool.totalPending),
-      },
-      {
-        token: 'ETH',
-        chain: 'ethereum',
-        volume24h: Math.max(80_000, mempool.swapTransactions * 180_000),
-        priceChange24h: Number((normalizedSignal * 3.7).toFixed(3)),
-        liquidity: Math.max(0.1, 0.95 - riskIndex * 0.9),
-        holders: 600_000 + Math.floor(mempool.totalPending / 8),
-        transactions: Math.max(analysis.movingAverages.buyCount + analysis.movingAverages.sellCount, Math.floor(mempool.totalPending / 2)),
-      },
-    ];
+    const tokenActivity: TokenActivity[] = marketUniverse.map(asset => ({
+      token: asset.symbol.replace(/USDT$|USDC$|USD$/, ''),
+      chain: 'unknown',
+      volume24h: asset.volume24hUsd ?? null,
+      priceChange24h: asset.priceChange24hPct ?? null,
+      liquidity: null,
+      holders: null,
+      transactions: null,
+    }));
 
     const surveillance: MarketSurveillanceData = {
       timestamp: new Date(),
-      chain: 'ethereum',
+      chain: 'unknown',
       tokenActivity,
-      sentimentScore: Math.max(-1, Math.min(1, normalizedSignal - riskIndex * 0.25)),
+      sentimentScore: Number.isFinite(riskIndex) ? Math.max(-1, Math.min(1, normalizedSignal - riskIndex * 0.25)) : null,
       riskLevel,
       patterns: [],
       predictions: [],
@@ -1021,7 +1104,7 @@ export class Cryptara extends EventEmitter {
 
     const direction = this.signalToDirection(analysis.summary.signal);
     const baseConfidence = Math.max(0.45, Math.min(0.92, analysis.summary.strength / 100));
-    const riskPenalty = data.riskLevel === 'critical' ? 0.18 : data.riskLevel === 'high' ? 0.1 : 0.04;
+    const riskPenalty = data.riskLevel === 'critical' ? 0.18 : data.riskLevel === 'high' ? 0.1 : data.riskLevel === 'unknown' ? 0.15 : 0.04;
     const patternBoost = Math.min(0.12, patterns.length * 0.03);
     const confidence = Math.max(0.3, Math.min(0.97, baseConfidence + patternBoost - riskPenalty));
 
@@ -1037,19 +1120,7 @@ export class Cryptara extends EventEmitter {
       ],
     };
 
-    const secondary: MarketPrediction = {
-      asset: 'ETHUSDT',
-      timeframe: '1h',
-      direction,
-      confidence: Math.max(0.28, confidence - 0.08),
-      signals: [
-        'cross-asset-correlation',
-        `primary:${analysis.symbol}`,
-        `risk:${data.riskLevel}`,
-      ],
-    };
-
-    return [primary, secondary];
+    return [primary];
   }
 
   /**
@@ -1084,11 +1155,16 @@ export class Cryptara extends EventEmitter {
     const marketAsset = context?.marketUniverse.find(asset => asset.symbol === context.symbol);
     const priceHistory = marketAsset?.priceHistory;
     const mempool = context?.mempool;
+    const executionHistory = context
+      ? this.executionHistory.filter(entry => entry.symbol === context.symbol)
+      : [];
     const missingInformation: string[] = [];
     if (!context?.plan) missingInformation.push('verified_opportunity_economics');
     if (!priceHistory || priceHistory.length < 20) missingInformation.push('price_history');
     if (!mempool || mempool.avgGasPrice <= 0 || mempool.maxGasPrice <= 0) missingInformation.push('gas_observations');
     if (context?.tradingView?.dataProvenance !== 'live') missingInformation.push('live_technical_analysis');
+    if (executionHistory.length < 3) missingInformation.push('measured_execution_outcomes');
+    if (!executionHistory.some(entry => Number.isFinite(entry.latencyMs) && entry.latencyMs > 0)) missingInformation.push('measured_execution_latency');
     if (context?.plan && context.plan.quoteAgeMs > Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000))) missingInformation.push('fresh_verified_quote');
     if (marketAsset && Date.now() - marketAsset.observedAt > Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000))) missingInformation.push('fresh_price_history');
     if (missingInformation.length > 0) {
@@ -1119,10 +1195,15 @@ export class Cryptara extends EventEmitter {
         gasHistory: [mempool.avgGasPrice, mempool.maxGasPrice],
       };
       const plan = context.plan;
-      const executionHistory = this.executionHistory.filter(entry => entry.symbol === context.symbol);
-      const successRate = executionHistory.length > 0
-        ? executionHistory.filter(entry => entry.success).length / executionHistory.length
-        : 0.5;
+      const successRate = executionHistory.filter(entry => entry.success).length / executionHistory.length;
+      const timestamps = executionHistory.map(entry => entry.timestamp).filter(timestamp => Number.isFinite(timestamp)).sort((left, right) => left - right);
+      const observedDays = timestamps.length > 1
+        ? Math.max(1 / 24, (timestamps[timestamps.length - 1] - timestamps[0]) / (24 * 60 * 60 * 1000))
+        : 1;
+      const observedLatencyMs = executionHistory
+        .map(entry => entry.latencyMs)
+        .filter(latency => Number.isFinite(latency) && latency > 0)
+        .reduce((sum, latency, _index, values) => sum + latency / values.length, 0);
       const strategy: StrategyProfile = {
         name: 'verified-arbitrage-context',
         baseSuccessRate: successRate,
@@ -1130,10 +1211,10 @@ export class Cryptara extends EventEmitter {
         avgLossPerTrade: executionHistory.length > 0
           ? Math.max(0.0001, Math.abs(Math.min(...executionHistory.map(entry => entry.realizedProfitUsd))) / plan!.notionalUsd)
           : Math.max(0.0001, plan!.costs.totalCostsUsd / plan!.notionalUsd),
-        tradesPerDay: Math.max(1, executionHistory.length),
+        tradesPerDay: executionHistory.length / observedDays,
         gasPerTrade: plan!.costs.gasUsd / plan!.notionalUsd,
         slippageTolerance: Math.max(0.0001, (plan!.expectedSlippageBps ?? 0) / 10_000),
-        executionLatency: Math.max(1, plan!.quoteAgeMs),
+        executionLatency: observedLatencyMs,
         strategyType: 'arbitrage',
         mlFilterEnabled: false,
         multiChainEnabled: !!plan!.bridge,
@@ -1317,12 +1398,12 @@ export class Cryptara extends EventEmitter {
     }
 
     const analysis = this.lastTradingViewAnalysis || await TradingViewEngine.getAnalysis('BTCUSDT', '1h');
-    const mempool = this.lastMempoolAnalysis || alchemyIntegration.getMempoolAnalysis();
+    const mempool = this.lastMempoolAnalysis || (alchemyIntegration.isReady() ? alchemyIntegration.getMempoolAnalysis() : null);
     const signalScore = TradingViewEngine.signalToScore(analysis.summary.signal) / 2;
-    const pressure = Math.min(1, mempool.totalPending / 8000);
-    const overallSentiment = Math.max(-1, Math.min(1, signalScore - pressure * 0.2));
+    const pressure = mempool ? Math.min(1, mempool.totalPending / 8000) : null;
+    const overallSentiment = pressure === null ? signalScore : Math.max(-1, Math.min(1, signalScore - pressure * 0.2));
 
-    const fearGreedIndex = Math.max(0, Math.min(100, Math.round(50 + signalScore * 30 - pressure * 12)));
+    const fearGreedIndex = pressure === null ? Math.max(0, Math.min(100, Math.round(50 + signalScore * 30))) : Math.max(0, Math.min(100, Math.round(50 + signalScore * 30 - pressure * 12)));
     const dominantNarrative =
       analysis.summary.signal === 'strong_buy' || analysis.summary.signal === 'buy'
         ? 'Momentum expansion with selective arbitrage pressure'
@@ -1333,13 +1414,12 @@ export class Cryptara extends EventEmitter {
     return {
       timestamp: new Date(),
       overallSentiment,
-      socialVolume: Math.max(1000, mempool.totalPending * 18),
+      socialVolume: null,
       fearGreedIndex,
       dominantNarrative,
       keyTopics: [
         `signal:${analysis.summary.signal}`,
-        `mempool:${mempool.totalPending}`,
-        `swap-flow:${mempool.swapTransactions}`,
+        ...(mempool ? [`mempool:${mempool.totalPending}`, `swap-flow:${mempool.swapTransactions}`] : ['mempool:unavailable']),
       ],
     };
   }

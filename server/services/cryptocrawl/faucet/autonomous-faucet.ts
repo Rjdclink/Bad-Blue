@@ -17,7 +17,7 @@ import { MultiOraclePriceValidator } from '../validation/multi-oracle-validator.
 import { MasterOrchestrator } from '../core/master-orchestrator.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
-import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
+import { executeVerifiedArbitragePlan } from '../execution/index.js';
 import { stageManager } from '../governance/stage-management.js';
 import { evaluateAutomaticStageProgression } from '../governance/automatic-stage-progression.js';
 import { GovernanceError } from '../governance/types.js';
@@ -91,7 +91,7 @@ export interface FaucetState {
   // Arbitrage verification (real quotes + all-in costs)
   executionMode: 'disabled' | 'live';
   lastVerifiedArbitrage: VerifiedArbitragePlan | null;
-  lastArbitrageDecision: 'EXECUTE' | 'SKIP' | 'ERROR' | 'NONE';
+  lastArbitrageDecision: 'EXECUTE' | 'PENDING' | 'SKIP' | 'ERROR' | 'NONE';
 }
 
 export type FaucetMode = 'closed' | 'opening' | 'open' | 'closing' | 'cooldown' | 'stealth' | 'emergency';
@@ -1580,10 +1580,9 @@ class AutonomousCryptoFaucet {
   /**
    * Update TradingView technical analysis for optimization
    */
-  private async updateTradingViewAnalysis(): Promise<void> {
+  private async updateTradingViewAnalysis(symbol: string = 'BTCUSDT'): Promise<void> {
     try {
-      // Get technical analysis for BTC as market proxy
-      this.tradingViewAnalysis = await TradingViewEngine.getAnalysis('BTCUSDT', '1h');
+      this.tradingViewAnalysis = await TradingViewEngine.getAnalysis(symbol, '1h');
       this.marketConditions.technicalDataProvenance = this.tradingViewAnalysis.dataProvenance;
       this.marketConditions.technicalDataTimestamp = this.tradingViewAnalysis.sourceTimestamp;
       this.marketConditions.lastMarketDataError = undefined;
@@ -1859,6 +1858,8 @@ class AutonomousCryptoFaucet {
       const notionalUsd = Number(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD || 200);
       const maxQuoteAgeMs = Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000);
       const discoveredSymbols = await marketDataProviders.discoverUniverse();
+      const marketProviderStatuses = marketDataProviders.getProviderStatuses();
+      const degradedMarketProviders = marketProviderStatuses.filter(status => status.state === 'failed' || status.state === 'stale' || status.state === 'unavailable');
       const maxSymbols = Math.min(8, Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_SYMBOLS || 4)));
       const symbols = [...new Set([
         configuredSymbol,
@@ -1882,27 +1883,52 @@ class AutonomousCryptoFaucet {
         }));
       }
       const verifiedPlans = plans.filter((candidate): candidate is VerifiedArbitragePlan => candidate !== null);
-      const quoteValidation = arbitrageVerifier.getLastLiveQuoteValidation();
+      const quoteValidations = arbitrageVerifier.getLiveQuoteValidations();
+      const currentQuoteValidations = quoteValidations.filter(validation =>
+        validation.valid &&
+        symbols.includes(validation.symbol) &&
+        validation.validatedAt >= Date.now() - maxQuoteAgeMs,
+      );
+      const hasCurrentQuoteValidation = currentQuoteValidations.length > 0;
       const cryptara = getCryptara();
-      const candidateAssessments = verifiedPlans.map(candidate => cryptara.recordOpportunityObservation({
-        opportunityId: `${candidate.buyVenue}-${candidate.sellVenue}-${candidate.symbol}`,
-        observedAt: Date.now(),
-        chain: cheapestChain || 'unknown',
-        symbol: candidate.symbol,
-        plan: candidate,
-        tradingView: this.tradingViewAnalysis,
-        mempool: alchemyIntegration.getMempoolAnalysis(),
-        marketUniverse: discoveredSymbols,
-        dexObservation: null,
-        missingInformation: ['dex_liquidity'],
-        provenance: [
-          ...(this.tradingViewAnalysis?.dataProvenance === 'live' ? ['TradingView'] : []),
-          ...(quoteValidation?.valid ? ['direct_exchange_quotes'] : []),
-          ...(discoveredSymbols.length > 0 ? [...new Set(discoveredSymbols.flatMap(asset => asset.sources || [asset.source]))] : []),
-          ...(alchemyIntegration.isReady() ? ['Alchemy'] : []),
-          ...(cheapestChain ? ['gas_oracle'] : []),
-        ],
-      }));
+      const tradingViewBySymbol = new Map<string, Awaited<ReturnType<typeof TradingViewEngine.getAnalysis>>>();
+      for (const candidate of verifiedPlans) {
+        try {
+          tradingViewBySymbol.set(
+            candidate.symbol.toUpperCase(),
+            await TradingViewEngine.getAnalysis(candidate.symbol, '1h'),
+          );
+        } catch (error) {
+          logger.warn('[FAUCET] TradingView analysis unavailable for candidate', {
+            component: 'AutonomousFaucet',
+            symbol: candidate.symbol,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      const candidateAssessments = verifiedPlans.map(candidate => {
+        const candidateTradingView = tradingViewBySymbol.get(candidate.symbol.toUpperCase()) || null;
+        return cryptara.recordOpportunityObservation({
+          opportunityId: `${candidate.buyVenue}-${candidate.sellVenue}-${candidate.symbol}`,
+          observedAt: Date.now(),
+          chain: cheapestChain || 'unknown',
+          symbol: candidate.symbol,
+          plan: candidate,
+          tradingView: candidateTradingView,
+          mempool: alchemyIntegration.getMempoolAnalysis(),
+          marketUniverse: discoveredSymbols,
+          dexObservation: null,
+          missingInformation: ['dex_liquidity'],
+          provenance: [
+            ...(candidateTradingView?.dataProvenance === 'live' ? ['TradingView'] : []),
+            ...(hasCurrentQuoteValidation ? ['direct_exchange_quotes'] : []),
+            ...(discoveredSymbols.length > 0 ? [...new Set(discoveredSymbols.flatMap(asset => asset.sources || [asset.source]))] : []),
+            ...(alchemyIntegration.isReady() ? ['Alchemy'] : []),
+            ...(cheapestChain ? ['gas_oracle'] : []),
+            ...marketProviderStatuses.map(status => `provider:${status.provider}:${status.state}`),
+          ],
+        });
+      });
       const assessmentByOpportunity = new Map(candidateAssessments.map(assessment => [assessment.opportunityId, assessment]));
       const plan = [...verifiedPlans].sort((left, right) => {
         const leftScore = assessmentByOpportunity.get(`${left.buyVenue}-${left.sellVenue}-${left.symbol}`)?.rankScore;
@@ -1912,6 +1938,13 @@ class AutonomousCryptoFaucet {
         }
         return right.netProfitUsd - left.netProfitUsd;
       })[0] || null;
+      const quoteValidation = currentQuoteValidations.find(validation => validation.symbol === plan?.symbol)
+        || currentQuoteValidations.find(validation => validation.symbol === configuredSymbol)
+        || currentQuoteValidations[0]
+        || null;
+      if (plan && this.tradingViewAnalysis?.symbol.toUpperCase() !== plan.symbol.toUpperCase()) {
+        await this.updateTradingViewAnalysis(plan.symbol);
+      }
       const dexObservation = await marketDataProviders.getDexQuote({
         chainId: 137,
         sellToken: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
@@ -1919,10 +1952,6 @@ class AutonomousCryptoFaucet {
         sellAmount: '1000000',
         takerAddress: process.env.ZEROX_TAKER_ADDRESS?.trim(),
       });
-      const hasCurrentQuoteValidation = quoteValidation?.valid === true &&
-        symbols.includes(quoteValidation.symbol) &&
-        quoteValidation.validatedAt >= Date.now() - maxQuoteAgeMs;
-
       this.marketConditions.quoteDataProvenance = hasCurrentQuoteValidation ? 'live' : 'no-data';
       this.marketConditions.quoteDataTimestamp = hasCurrentQuoteValidation
         ? quoteValidation!.validatedAt
@@ -1949,15 +1978,17 @@ class AutonomousCryptoFaucet {
         missingInformation: [
           ...(plan ? [] : ['verified_opportunity_economics']),
           ...(dexObservation ? [] : ['dex_liquidity']),
-          ...(quoteValidation ? [] : ['centralized_quote_validation']),
+          ...(hasCurrentQuoteValidation ? [] : ['centralized_quote_validation']),
+          ...degradedMarketProviders.map(status => `provider_${status.provider}_${status.state}`),
         ],
         provenance: [
           ...(this.tradingViewAnalysis?.dataProvenance === 'live' ? ['TradingView'] : []),
-          ...(quoteValidation?.valid ? ['direct_exchange_quotes'] : []),
+          ...(hasCurrentQuoteValidation ? ['direct_exchange_quotes'] : []),
           ...(dexObservation ? ['0x'] : []),
           ...(discoveredSymbols.length > 0 ? [...new Set(discoveredSymbols.map(asset => asset.source))] : []),
           ...(alchemyIntegration.isReady() ? ['Alchemy'] : []),
           ...(cheapestChain ? ['gas_oracle'] : []),
+          ...marketProviderStatuses.map(status => `provider:${status.provider}:${status.state}`),
         ],
       });
       logger.info('[FAUCET] Cryptara opportunity assessed', {
@@ -2146,10 +2177,38 @@ class AutonomousCryptoFaucet {
         return;
       }
 
-      const result = await centralizedExchangeExecutor.execute(plan);
+      const result = await executeVerifiedArbitragePlan(plan, {
+        source: 'manual',
+        chain: plan.bridge?.from,
+        observedSlippageBps: plan.expectedSlippageBps,
+      });
+      if (result.status === 'settlement_unknown' || result.status === 'submitted') {
+        this.state.lastArbitrageDecision = 'PENDING';
+        logger.info('[FAUCET] Live exchange order pair remains unresolved; awaiting settlement evidence', {
+          component: 'AutonomousFaucet',
+          symbol: plan.symbol,
+          status: result.status,
+          buyOrderId: result.buyOrder?.orderId,
+          sellOrderId: result.sellOrder?.orderId,
+          error: result.error,
+        });
+        return;
+      }
+
       if (!result.success) {
+        if (result.status === 'filled' && result.settlementConfirmed) {
+          this.state.lastArbitrageDecision = 'PENDING';
+          logger.warn('[FAUCET] Exchange fills are terminal but realized economics are incomplete; awaiting accounting evidence', {
+            component: 'AutonomousFaucet',
+            symbol: plan.symbol,
+            buyOrderId: result.buyOrder?.orderId,
+            sellOrderId: result.sellOrder?.orderId,
+            error: result.error,
+          });
+          return;
+        }
         this.state.lastArbitrageDecision = 'ERROR';
-        this.recordFailure('exchange_order_pair_rejected');
+        this.recordFailure(`exchange_order_pair_${result.status}`);
         logger.error('[FAUCET] Exchange order pair was not fully accepted', {
           component: 'AutonomousFaucet',
           symbol: plan.symbol,
@@ -2160,11 +2219,22 @@ class AutonomousCryptoFaucet {
         return;
       }
 
+      if (!result.settlementConfirmed) {
+        this.state.lastArbitrageDecision = 'PENDING';
+        logger.info('[FAUCET] Live exchange order pair accepted; awaiting fill and settlement evidence', {
+          component: 'AutonomousFaucet',
+          symbol: plan.symbol,
+          buyOrderId: result.buyOrder?.orderId,
+          sellOrderId: result.sellOrder?.orderId,
+        });
+        return;
+      }
+
       this.state.lastArbitrageDecision = 'EXECUTE';
       this.state.tradesThisHour++;
       this.state.tradesThisDay++;
       this.recordSuccess();
-      logger.info('[FAUCET] Live exchange order pair accepted', {
+      logger.info('[FAUCET] Live exchange order pair settled', {
         component: 'AutonomousFaucet',
         symbol: plan.symbol,
         buyOrderId: result.buyOrder?.orderId,

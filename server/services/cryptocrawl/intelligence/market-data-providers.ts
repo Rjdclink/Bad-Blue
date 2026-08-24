@@ -48,6 +48,16 @@ export interface DexQuoteObservation {
   source: '0x';
 }
 
+export type MarketDataProviderName = 'coingecko' | 'coinstats' | '0x';
+export type MarketDataProviderState = 'live' | 'cached' | 'stale' | 'unavailable' | 'failed';
+
+export interface MarketDataProviderStatus {
+  provider: MarketDataProviderName;
+  state: MarketDataProviderState;
+  observedAt: number | null;
+  detail?: string;
+}
+
 const COINGECKO_TTL_MS = Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000));
 const COINSTATS_TTL_MS = Math.max(30_000, Number(process.env.COINSTATS_MARKET_TTL_MS || 300_000));
 const ZEROX_TTL_MS = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
@@ -57,12 +67,38 @@ interface CacheEntry<T> { value: T; expiresAt: number; }
 
 class MarketDataProviders {
   private universeCache: CacheEntry<MarketUniverseAsset[]> | null = null;
+  private lastUniverse: MarketUniverseAsset[] = [];
   private coinStatsCache: CacheEntry<MarketUniverseAsset[]> | null = null;
   private quoteCache = new Map<string, CacheEntry<DexQuoteObservation | null>>();
   private inFlight = new Map<string, Promise<unknown>>();
+  private providerStatuses: Record<MarketDataProviderName, MarketDataProviderStatus> = {
+    coingecko: { provider: 'coingecko', state: 'unavailable', observedAt: null, detail: 'not queried' },
+    coinstats: { provider: 'coinstats', state: 'unavailable', observedAt: null, detail: 'not queried' },
+    '0x': { provider: '0x', state: 'unavailable', observedAt: null, detail: 'not queried' },
+  };
+
+  getProviderStatuses(): MarketDataProviderStatus[] {
+    return Object.values(this.providerStatuses).map(status => ({ ...status }));
+  }
+
+  private setProviderStatus(provider: MarketDataProviderName, state: MarketDataProviderState, detail?: string): void {
+    this.providerStatuses[provider] = {
+      provider,
+      state,
+      observedAt: Date.now(),
+      ...(detail ? { detail } : {}),
+    };
+  }
 
   async discoverUniverse(): Promise<MarketUniverseAsset[]> {
-    if (this.universeCache && this.universeCache.expiresAt > Date.now()) return this.universeCache.value;
+    if (this.universeCache && this.universeCache.expiresAt > Date.now()) {
+      for (const provider of ['coingecko', 'coinstats'] as const) {
+        if (this.providerStatuses[provider].state === 'live') {
+          this.setProviderStatus(provider, 'cached', 'served from the market-universe cache');
+        }
+      }
+      return this.universeCache.value;
+    }
     const [coinGeckoAssets, coinStatsAssets] = await Promise.all([
       this.fetchCoinGeckoUniverse(),
       this.fetchCoinStatsUniverse(),
@@ -76,17 +112,35 @@ class MarketDataProviders {
       } : { ...asset, sources: [asset.source] });
     }
     const enriched = [...bySymbol.values()].slice(0, MAX_UNIVERSE_SIZE);
-    this.universeCache = { value: enriched, expiresAt: Date.now() + COINGECKO_TTL_MS };
-    return enriched;
+    if (enriched.length > 0) {
+      this.lastUniverse = enriched;
+      this.universeCache = { value: enriched, expiresAt: Date.now() + COINGECKO_TTL_MS };
+      return enriched;
+    }
+
+    if (this.lastUniverse.length > 0) {
+      this.setProviderStatus('coingecko', 'stale', 'live universe refresh failed; serving the last successful universe');
+      this.setProviderStatus('coinstats', 'stale', 'live universe refresh failed; serving the last successful universe');
+      this.universeCache = { value: this.lastUniverse, expiresAt: Date.now() + Math.min(COINGECKO_TTL_MS, 30_000) };
+      return this.lastUniverse;
+    }
+
+    return [];
   }
 
   async getDexQuote(request: { chainId: number; sellToken: string; buyToken: string; sellAmount: string; takerAddress?: string }): Promise<DexQuoteObservation | null> {
     const apiKey = process.env.ZEROX_API_KEY?.trim();
-    if (!apiKey) return null;
+    if (!apiKey) {
+      this.setProviderStatus('0x', 'unavailable', 'ZEROX_API_KEY is not configured');
+      return null;
+    }
     const executable = /^0x[a-fA-F0-9]{40}$/.test(request.takerAddress || '');
     const key = `${request.chainId}:${request.sellToken.toLowerCase()}:${request.buyToken.toLowerCase()}:${request.sellAmount}:${request.takerAddress || ''}`;
     const cached = this.quoteCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    if (cached && cached.expiresAt > Date.now()) {
+      this.setProviderStatus('0x', 'cached', 'served from the DEX quote cache');
+      return cached.value;
+    }
     const existing = this.inFlight.get(key) as Promise<DexQuoteObservation | null> | undefined;
     if (existing) return existing;
 
@@ -132,9 +186,11 @@ class MarketDataProviders {
         source: '0x',
       } : null;
       this.quoteCache.set(key, { value: observation, expiresAt: Date.now() + ZEROX_TTL_MS });
+      this.setProviderStatus('0x', observation ? 'live' : 'failed', observation ? undefined : '0x returned no usable buy amount');
       return observation;
-    }).catch(() => {
+    }).catch((error: unknown) => {
       this.quoteCache.set(key, { value: null, expiresAt: Date.now() + ZEROX_TTL_MS });
+      this.setProviderStatus('0x', 'failed', error instanceof Error ? error.message : String(error));
       return null;
     }).finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, promise);
@@ -147,7 +203,7 @@ class MarketDataProviders {
       const headers: HeadersInit = { accept: 'application/json' };
       if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
       const rows = await fetchJsonWithRetry<any[]>(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${MAX_UNIVERSE_SIZE}&page=1&sparkline=true`, { init: { headers }, maxRetries: 2, baseDelayMs: 500, maxDelayMs: 4_000, timeoutMs: 6_000 });
-      return rows.filter(row => typeof row?.symbol === 'string').map(row => ({
+      const assets = rows.filter(row => typeof row?.symbol === 'string').map(row => ({
         symbol: `${row.symbol.toUpperCase()}USDT`,
         coinGeckoId: row.id,
         marketCapRank: Number(row.market_cap_rank) || undefined,
@@ -160,13 +216,24 @@ class MarketDataProviders {
         sources: ['coingecko' as const],
         observedAt: Date.now(),
       }));
-    } catch { return []; }
+      this.setProviderStatus('coingecko', 'live');
+      return assets;
+    } catch (error) {
+      this.setProviderStatus('coingecko', this.lastUniverse.length > 0 ? 'stale' : 'failed', error instanceof Error ? error.message : String(error));
+      return [];
+    }
   }
 
   private async fetchCoinStatsUniverse(): Promise<MarketUniverseAsset[]> {
     const apiKey = process.env.COINSTATS_API_KEY?.trim();
-    if (!apiKey) return [];
-    if (this.coinStatsCache && this.coinStatsCache.expiresAt > Date.now()) return this.coinStatsCache.value;
+    if (!apiKey) {
+      this.setProviderStatus('coinstats', 'unavailable', 'COINSTATS_API_KEY is not configured');
+      return [];
+    }
+    if (this.coinStatsCache && this.coinStatsCache.expiresAt > Date.now()) {
+      this.setProviderStatus('coinstats', 'cached', 'served from the CoinStats cache');
+      return this.coinStatsCache.value;
+    }
     try {
       const rows = await fetchJsonWithRetry<any>(`https://openapiv1.coinstats.app/coins?currency=USD&limit=${MAX_UNIVERSE_SIZE}`, { init: { headers: { accept: 'application/json', 'X-API-KEY': apiKey } }, maxRetries: 2, timeoutMs: 6_000 });
       const assets = (Array.isArray(rows) ? rows : rows?.result || rows?.coins || []).filter((row: any) => typeof row?.symbol === 'string').map((row: any) => ({
@@ -180,8 +247,12 @@ class MarketDataProviders {
         observedAt: Date.now(),
       }));
       this.coinStatsCache = { value: assets, expiresAt: Date.now() + COINSTATS_TTL_MS };
+      this.setProviderStatus('coinstats', 'live');
       return assets;
-    } catch { return []; }
+    } catch (error) {
+      this.setProviderStatus('coinstats', this.coinStatsCache ? 'stale' : 'failed', error instanceof Error ? error.message : String(error));
+      return [];
+    }
   }
 }
 

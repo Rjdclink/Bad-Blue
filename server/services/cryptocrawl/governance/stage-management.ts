@@ -24,6 +24,7 @@ import { EventEmitter } from 'events';
 import { createLogger } from '../../../logger';
 import { randomUUID } from 'crypto';
 import type { StageManagerPersistedSnapshot, StageManagerStateStore } from './stage-state-store.js';
+import type { ExecutionStatus, NormalizedRealizedExecution } from '../execution/settlement-types.js';
 
 const log = createLogger('StageManagement');
 
@@ -402,6 +403,10 @@ export interface PersistedCryptaraExecutionEvidence {
   usedZeroCapital: boolean;
   timestamp: number;
   notes?: string;
+  settlementStatus?: string;
+  settlementConfirmed?: boolean;
+  provenance?: string[];
+  settlement?: NormalizedRealizedExecution;
 }
 
 // ============================================================================
@@ -1415,7 +1420,141 @@ function normalizeCryptaraExecutionEvidence(value: PersistedCryptaraExecutionEvi
     usedZeroCapital: requireBoolean('usedZeroCapital', value.usedZeroCapital),
     timestamp: requireNonNegativeNumber('timestamp', value.timestamp),
     notes: optionalString(value.notes),
+    settlementStatus: optionalString(value.settlementStatus),
+    settlementConfirmed: optionalBoolean(value.settlementConfirmed),
+    provenance: optionalStringArray(value.provenance),
+    settlement: value.settlement === undefined ? undefined : normalizePersistedSettlement(value.settlement),
   };
+}
+
+function normalizePersistedSettlement(value: unknown): NormalizedRealizedExecution {
+  if (!isRecord(value)) throw new Error('Persisted settlement has an invalid shape');
+  const status = value.status;
+  if (!isExecutionStatus(status)) throw new Error('Persisted settlement has an invalid status');
+  const predicted = requireRecord('settlement.predicted', value.predicted);
+  const realized = requireRecord('settlement.realized', value.realized);
+  const provenance = requireStringArray('settlement.provenance', value.provenance).slice(0, 50);
+  const orders = value.orders === undefined
+    ? undefined
+    : requireRecordArray('settlement.orders', value.orders).slice(0, 2).map((order, orderIndex) => normalizePersistedOrder(order, orderIndex));
+  const tokenAmounts = value.tokenAmounts === undefined
+    ? undefined
+    : requireRecordArray('settlement.tokenAmounts', value.tokenAmounts).slice(0, 100).map((tokenAmount, tokenIndex) => ({
+      token: requireNonEmptyString(`settlement.tokenAmounts[${tokenIndex}].token`, tokenAmount.token),
+      direction: requireSettlementDirection(`settlement.tokenAmounts[${tokenIndex}].direction`, tokenAmount.direction),
+      amount: requireNonEmptyString(`settlement.tokenAmounts[${tokenIndex}].amount`, tokenAmount.amount),
+      decimals: tokenAmount.decimals === undefined ? undefined : requireNonNegativeInteger(`settlement.tokenAmounts[${tokenIndex}].decimals`, tokenAmount.decimals),
+    }));
+  return {
+    status,
+    terminal: requireBoolean('settlement.terminal', value.terminal),
+    settlementConfirmed: requireBoolean('settlement.settlementConfirmed', value.settlementConfirmed),
+    submittedAt: requireNonNegativeNumber('settlement.submittedAt', value.submittedAt),
+    settledAt: nullableNonNegativeNumber('settlement.settledAt', value.settledAt),
+    venueOrRoute: requireNonEmptyString('settlement.venueOrRoute', value.venueOrRoute),
+    chain: value.chain === null ? null : requireNonEmptyString('settlement.chain', value.chain),
+    predicted: {
+      profitUsd: nullableFiniteNumber('settlement.predicted.profitUsd', predicted.profitUsd),
+      feeUsd: nullableFiniteNumber('settlement.predicted.feeUsd', predicted.feeUsd),
+      slippageBps: nullableFiniteNumber('settlement.predicted.slippageBps', predicted.slippageBps),
+    },
+    realized: {
+      acquisitionCostUsd: nullableFiniteNumber('settlement.realized.acquisitionCostUsd', realized.acquisitionCostUsd),
+      proceedsUsd: nullableFiniteNumber('settlement.realized.proceedsUsd', realized.proceedsUsd),
+      exchangeFeeUsd: nullableFiniteNumber('settlement.realized.exchangeFeeUsd', realized.exchangeFeeUsd),
+      gasUsd: nullableFiniteNumber('settlement.realized.gasUsd', realized.gasUsd),
+      gasUsed: nullableString('settlement.realized.gasUsed', realized.gasUsed),
+      effectiveGasPriceWei: nullableString('settlement.realized.effectiveGasPriceWei', realized.effectiveGasPriceWei),
+      slippageBps: nullableFiniteNumber('settlement.realized.slippageBps', realized.slippageBps),
+      netProfitUsd: nullableFiniteNumber('settlement.realized.netProfitUsd', realized.netProfitUsd),
+    },
+    provenance,
+    orders,
+    transactionHash: optionalString(value.transactionHash),
+    receiptStatus: value.receiptStatus === undefined ? undefined : requireReceiptStatus(value.receiptStatus),
+    tokenAmounts,
+    error: boundedOptionalString(value.error, 500),
+  };
+}
+
+function normalizePersistedOrder(value: Record<string, unknown>, orderIndex: number): NormalizedRealizedExecution['orders'][number] {
+  const fills = requireRecordArray(`settlement.orders[${orderIndex}].fills`, value.fills).slice(0, 100).map((fill, fillIndex) => ({
+    quantity: requireFiniteNumber(`settlement.orders[${orderIndex}].fills[${fillIndex}].quantity`, fill.quantity),
+    price: requireFiniteNumber(`settlement.orders[${orderIndex}].fills[${fillIndex}].price`, fill.price),
+    feeAmount: nullableFiniteNumber(`settlement.orders[${orderIndex}].fills[${fillIndex}].feeAmount`, fill.feeAmount),
+    feeAsset: nullableString(`settlement.orders[${orderIndex}].fills[${fillIndex}].feeAsset`, fill.feeAsset),
+    timestamp: nullableNonNegativeNumber(`settlement.orders[${orderIndex}].fills[${fillIndex}].timestamp`, fill.timestamp),
+    tradeId: optionalString(fill.tradeId),
+  }));
+  return {
+    venue: requireNonEmptyString(`settlement.orders[${orderIndex}].venue`, value.venue),
+    orderId: requireNonEmptyString(`settlement.orders[${orderIndex}].orderId`, value.orderId),
+    symbol: requireNonEmptyString(`settlement.orders[${orderIndex}].symbol`, value.symbol),
+    side: requireSettlementSide(`settlement.orders[${orderIndex}].side`, value.side),
+    status: isExecutionStatus(value.status) ? value.status : (() => { throw new Error(`Persisted settlement.orders[${orderIndex}] has an invalid status`); })(),
+    terminal: requireBoolean(`settlement.orders[${orderIndex}].terminal`, value.terminal),
+    requestedQuantity: requireFiniteNumber(`settlement.orders[${orderIndex}].requestedQuantity`, value.requestedQuantity),
+    filledQuantity: nullableFiniteNumber(`settlement.orders[${orderIndex}].filledQuantity`, value.filledQuantity),
+    remainingQuantity: nullableFiniteNumber(`settlement.orders[${orderIndex}].remainingQuantity`, value.remainingQuantity),
+    averageFillPrice: nullableFiniteNumber(`settlement.orders[${orderIndex}].averageFillPrice`, value.averageFillPrice),
+    fills,
+    feeAmount: nullableFiniteNumber(`settlement.orders[${orderIndex}].feeAmount`, value.feeAmount),
+    feeAsset: nullableString(`settlement.orders[${orderIndex}].feeAsset`, value.feeAsset),
+    submittedAt: requireNonNegativeNumber(`settlement.orders[${orderIndex}].submittedAt`, value.submittedAt),
+    terminalAt: nullableNonNegativeNumber(`settlement.orders[${orderIndex}].terminalAt`, value.terminalAt),
+    finalBalances: value.finalBalances === undefined ? undefined : requireStringRecord(`settlement.orders[${orderIndex}].finalBalances`, value.finalBalances),
+    error: boundedOptionalString(value.error, 500),
+  };
+}
+
+function isExecutionStatus(value: unknown): value is ExecutionStatus {
+  return value === 'submitted' || value === 'partially_filled' || value === 'filled' || value === 'cancelled' || value === 'rejected' || value === 'failed' || value === 'settlement_unknown';
+}
+
+function requireSettlementSide(name: string, value: unknown): 'buy' | 'sell' {
+  if (value !== 'buy' && value !== 'sell') throw new Error(`Persisted settlement has invalid ${name}`);
+  return value;
+}
+
+function requireSettlementDirection(name: string, value: unknown): 'in' | 'out' {
+  if (value !== 'in' && value !== 'out') throw new Error(`Persisted settlement has invalid ${name}`);
+  return value;
+}
+
+function requireReceiptStatus(value: unknown): 0 | 1 {
+  if (value !== 0 && value !== 1) throw new Error('Persisted settlement has an invalid receiptStatus');
+  return value;
+}
+
+function requireRecordArray(name: string, value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value) || !value.every(isRecord)) throw new Error(`Persisted governance state has invalid ${name}`);
+  return value;
+}
+
+function requireStringRecord(name: string, value: unknown): Record<string, string> {
+  const record = requireRecord(name, value);
+  if (!Object.values(record).every(entry => typeof entry === 'string')) throw new Error(`Persisted governance state has invalid ${name}`);
+  return Object.fromEntries(Object.entries(record).slice(0, 100)) as Record<string, string>;
+}
+
+function nullableFiniteNumber(name: string, value: unknown): number | null {
+  if (value === null) return null;
+  return requireFiniteNumber(name, value);
+}
+
+function nullableNonNegativeNumber(name: string, value: unknown): number | null {
+  if (value === null) return null;
+  return requireNonNegativeNumber(name, value);
+}
+
+function nullableString(name: string, value: unknown): string | null {
+  if (value === null) return null;
+  return requireNonEmptyString(name, value);
+}
+
+function boundedOptionalString(value: unknown, maxLength: number): string | undefined {
+  const string = optionalString(value);
+  return string === undefined ? undefined : string.slice(0, maxLength);
 }
 
 function requireFiniteNumber(name: string, value: unknown): number {
@@ -1462,6 +1601,11 @@ function optionalString(value: unknown): string | undefined {
   return value;
 }
 
+function optionalBoolean(value: unknown): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requireBoolean('boolean', value);
+}
+
 function optionalTimestamp(value: unknown): number | undefined {
   if (value === undefined || value === null) return undefined;
   return requireNonNegativeNumber('timestamp', value);
@@ -1477,6 +1621,11 @@ function requireStringArray(name: string, value: unknown): string[] {
     throw new Error(`Persisted governance state has invalid ${name}`);
   }
   return [...value];
+}
+
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requireStringArray('string array', value);
 }
 
 function isStateHistoryEntry(value: unknown): value is { timestamp: number; state: Partial<StageState> } {
