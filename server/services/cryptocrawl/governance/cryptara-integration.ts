@@ -235,20 +235,6 @@ export class CryptaraGovernance extends EventEmitter {
       };
     }
     
-    // Check if requires human approval
-    if (stageManager.requiresHumanApproval()) {
-      log.info('Trade requires human approval', {
-        proposalId: proposal.id,
-        estimatedProfit: proposal.estimatedProfitUSD,
-      });
-      
-      // In production, would queue for human review
-      return {
-        executed: false,
-        reason: 'Awaiting human approval',
-      };
-    }
-
     // Validate execution envelope with live fee/slippage/latency constraints.
     const executionEnvelope = await this.assessExecutionEnvelope(proposal);
     if (!executionEnvelope.approved) {
