@@ -409,6 +409,7 @@ export async function executeVerifiedArbitragePlan(
     chain?: string;
     source?: CryptaraExecutionFeedback['source'];
     observedSlippageBps?: number;
+    realizedProfitUsd?: number;
   },
 ): Promise<ArbitrageExecutionResult & { latencyMs: number; netExpectedProfitUsd: number }> {
   const governance = getCryptocrawlGovernance();
@@ -477,7 +478,9 @@ export async function executeVerifiedArbitragePlan(
     strategy: 'verified_cex_arbitrage',
     success: result.success,
     expectedProfitUsd: plan.netProfitUsd,
-    realizedProfitUsd: result.success ? plan.netProfitUsd : 0,
+    realizedProfitUsd: result.success && Number.isFinite(options?.realizedProfitUsd)
+      ? options!.realizedProfitUsd!
+      : 0,
     feeUsd: plan.costs.totalCostsUsd,
     slippageBps: approximatedExecutionDragBps,
     latencyMs,

@@ -286,12 +286,8 @@ export class ArbitrageVerifier {
 
       let gasUsd = 0;
       if (req.gas?.enabled) {
-        try {
-          const gp = await gasOracle.getGasPrice(req.gas.chain);
-          gasUsd = gp.usdCost;
-        } catch {
-          gasUsd = 0;
-        }
+        const gp = await gasOracle.getGasPrice(req.gas.chain);
+        gasUsd = gp.usdCost;
       }
 
       let bridgeFeeUsd = 0;

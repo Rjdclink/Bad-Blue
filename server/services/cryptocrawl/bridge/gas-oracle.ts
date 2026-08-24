@@ -112,14 +112,8 @@ class GasOracle {
         return this.gasPrices.get(chain)!;
       }
 
-      // Return default gas price on error
-      return {
-        chain,
-        gweiPrice: 0,
-        usdCost: 0,
-        congestionLevel: 'low',
-        timestamp: Date.now()
-      };
+      // An unavailable estimate must not be interpreted as free gas.
+      throw error;
     }
   }
 

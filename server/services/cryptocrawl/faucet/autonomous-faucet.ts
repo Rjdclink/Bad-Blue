@@ -1016,6 +1016,21 @@ class AutonomousCryptoFaucet {
       };
     }
 
+    if (this.marketConditions.lastMarketGateError) {
+      return {
+        shouldOpen: false,
+        shouldClose: false,
+        confidence: 0,
+        reasons: [`Cryptara market gate blocked current context: ${this.marketConditions.lastMarketGateError}`],
+        validators: [{
+          name: 'market_gate',
+          passed: false,
+          weight: 1,
+          details: this.marketConditions.lastMarketGateError,
+        }],
+      };
+    }
+
     // FIRST: Perform dimensional reasoning for adaptive decision making
     const reasoning = await this.performDimensionalReasoning();
     if (reasoning) {

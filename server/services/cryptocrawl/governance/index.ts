@@ -54,7 +54,10 @@ let governanceInitialization: Promise<void> | null = null;
 
 export function initializeGovernance(): Promise<void> {
   if (governanceInitialization) return governanceInitialization;
-  governanceInitialization = initializeGovernanceState();
+  governanceInitialization = initializeGovernanceState().catch(error => {
+    governanceInitialization = null;
+    throw error;
+  });
   return governanceInitialization;
 }
 
