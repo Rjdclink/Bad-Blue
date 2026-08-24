@@ -33,6 +33,8 @@
     "cryptocrawl:europa:route-discovery": "tsx scripts/cryptocrawl/verify-dynamic-europa-route.ts",
     "cryptocrawl:skale:difficulty-verify": "tsx scripts/cryptocrawl/verify-skale-difficulty-resolution.ts",
     "cryptocrawl:stage4:verify": "NO_EXECUTION=true tsx scripts/cryptocrawl/validate-zero-capital-layer.ts && tsx scripts/cryptocrawl/verify-stage4-execution-ledger.ts && tsx scripts/cryptocrawl/verify-stage4-capital-provenance.ts && tsx scripts/cryptocrawl/verify-railway-bootstrap-budget.ts && tsx scripts/cryptocrawl/verify-stage4-compute-coordinator.ts && tsx scripts/cryptocrawl/verify-europa-adapter.ts && tsx scripts/cryptocrawl/verify-skale-pow-adapter.ts && tsx scripts/cryptocrawl/verify-skale-pow-beam.ts && tsx scripts/cryptocrawl/verify-europa-sushi-registry.ts && tsx scripts/cryptocrawl/verify-sushi-v3-flash-receiver.ts && tsx scripts/cryptocrawl/verify-skale-difficulty-resolution.ts && tsx scripts/cryptocrawl/verify-dynamic-europa-route.ts && tsx scripts/cryptocrawl/verify-europa-network.ts",
+    "cryptocrawl:routes:verify": "tsx scripts/cryptocrawl/verify-zero-capital-route-retention.ts",
+    "cryptocrawl:faucet:verify": "node scripts/cryptocrawl/verify-faucet-alchemy-wiring.cjs",
     "cryptocrawl:governance:verify": "NO_EXECUTION=true tsx scripts/cryptocrawl/verify-canonical-governance.ts",
     "cryptocrawl:market-data:verify": "node scripts/cryptocrawl/verify-market-data-wiring.cjs",
     "cryptocrawl:cryptara:verify": "node scripts/cryptocrawl/verify-cryptara-wiring.cjs",

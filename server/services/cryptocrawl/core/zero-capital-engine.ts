@@ -159,6 +159,17 @@ const FLASH_LOAN_RECEIVER_EVENT_INTERFACE = new ethers.utils.Interface([
 ]);
 const ERC20_BALANCE_INTERFACE = ['function balanceOf(address owner) view returns (uint256)'];
 
+export function composeConfiguredZeroCapitalRoutes(
+  configuredRoutes: ConfiguredZeroCapitalRoute[],
+  dynamicEuropaRoute?: ConfiguredZeroCapitalRoute | null,
+): ConfiguredZeroCapitalRoute[] {
+  const nonEuropaRoutes = configuredRoutes.filter(route => route.chain !== 'europa');
+  const europaRoutes = configuredRoutes.filter(route => route.chain === 'europa');
+  return dynamicEuropaRoute
+    ? [...nonEuropaRoutes, ...europaRoutes, dynamicEuropaRoute]
+    : [...nonEuropaRoutes, ...europaRoutes];
+}
+
 // ============================================================================
 // AUTONOMOUS ZERO-CAPITAL ENGINE
 // ============================================================================
@@ -176,6 +187,7 @@ export class AutonomousZeroCapitalEngine {
   private isScanning: boolean = false;
   private opportunityQueue: ZeroCapitalOpportunity[] = [];
   private configuredRoutes: ConfiguredZeroCapitalRoute[] = [];
+  private configuredBaseRoutes: ConfiguredZeroCapitalRoute[] = [];
   private scanInterval: NodeJS.Timeout | null = null;
   private executionInterval: NodeJS.Timeout | null = null;
   private fundingInterval: NodeJS.Timeout | null = null;
@@ -222,8 +234,8 @@ export class AutonomousZeroCapitalEngine {
     logger.info('[ZeroCapitalEngine] Initializing providers...', { component: 'ZeroCapitalEngine' });
 
     const configuredRoutes = loadConfiguredZeroCapitalRoutes();
-    const nonEuropaRoutes = configuredRoutes.filter(route => route.chain !== 'europa');
-    this.configuredRoutes = nonEuropaRoutes;
+    this.configuredBaseRoutes = configuredRoutes;
+    this.configuredRoutes = composeConfiguredZeroCapitalRoutes(configuredRoutes);
 
     const ordinaryChains = Object.keys(RPC_ENDPOINTS)
       .filter((chain): chain is RpcSupportedChain => chain !== 'europa');
@@ -694,11 +706,11 @@ export class AutonomousZeroCapitalEngine {
   }
 
   private async refreshEuropaFundingRoute(): Promise<void> {
-    const nonEuropaRoutes = this.configuredRoutes.filter(route => route.chain !== 'europa');
     const dynamicEuropaRoute = await discoverProfitableEuropaRoute();
-    this.configuredRoutes = dynamicEuropaRoute
-      ? [...nonEuropaRoutes, dynamicEuropaRoute.route]
-      : nonEuropaRoutes;
+    this.configuredRoutes = composeConfiguredZeroCapitalRoutes(
+      this.configuredBaseRoutes,
+      dynamicEuropaRoute?.route,
+    );
   }
 
   private async refreshWalletResources(): Promise<WalletResourceSnapshot[]> {

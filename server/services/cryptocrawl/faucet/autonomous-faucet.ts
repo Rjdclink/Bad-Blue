@@ -22,6 +22,7 @@ import { stageManager } from '../governance/stage-management.js';
 import { evaluateAutomaticStageProgression } from '../governance/automatic-stage-progression.js';
 import { GovernanceError } from '../governance/types.js';
 import { getCryptara } from '../../cryptara/index.js';
+import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import logger from '../../../logger.js';
 
 // Babel Integration - IP Protection Systems + Cain Reasoning
@@ -1813,9 +1814,8 @@ class AutonomousCryptoFaucet {
 
   /**
    * Update market conditions from various sources
-   * NOTE: In production, this would integrate with real-time market data feeds.
-   * Current implementation uses the oracle validator for price validation
-   * and gas oracle for chain selection, with simulated values for other metrics.
+    * Uses live oracle, gas, quote, DEX, TradingView, and mempool evidence;
+    * unavailable measurements remain explicitly unknown.
    */
   private async updateMarketConditions(): Promise<void> {
     try {
@@ -1965,7 +1965,7 @@ class AutonomousCryptoFaucet {
       this.state.lastVerifiedArbitrage = plan;
       this.marketConditions.spreadOpportunities = plan ? 1 : 0;
 
-      const opportunityAssessment = cryptara.recordOpportunityObservation({
+      const opportunityAssessment = await cryptara.assessOpportunity({
         opportunityId: plan ? `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}` : `market-cycle-${Date.now()}`,
         observedAt: Date.now(),
         chain: cheapestChain || 'unknown',

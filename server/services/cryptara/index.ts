@@ -574,6 +574,21 @@ export class Cryptara extends EventEmitter {
     this.recomputeAutonomousDirective();
   }
 
+  async assessOpportunity(context: CryptaraOpportunityContext): Promise<CryptaraOpportunityAssessment> {
+    this.latestOpportunityContext = context;
+    if (context.plan && this.status.isRunning) {
+      try {
+        await this.runMonteCarloSimulation();
+      } catch (error) {
+        log.warn('Cryptara opportunity Monte Carlo unavailable; retaining explicit incomplete evidence', {
+          opportunityId: context.opportunityId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return this.recordOpportunityObservation(context);
+  }
+
   recordOpportunityObservation(context: CryptaraOpportunityContext): CryptaraOpportunityAssessment {
     this.latestOpportunityContext = {
       ...context,
