@@ -438,7 +438,7 @@ export class ProfitLadder extends EventEmitter {
     performance.meetsAdvancementCriteria = blockers.length === 0;
     performance.readyForNextTier = performance.meetsAdvancementCriteria && nextTier !== undefined;
     
-    if (performance.readyForNextTier && !performance.meetsAdvancementCriteria) {
+    if (performance.readyForNextTier) {
       log.info('Tier advancement criteria MET', {
         tier: tier.name,
         daysAtTarget: performance.daysAtTarget,

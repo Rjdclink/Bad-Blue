@@ -68,7 +68,7 @@ function makeCurrentTierReady(): void {
   const nextTierCapital = tier.id === 0
     ? 0
     : tier.id < 5
-    ? [5_000, 20_000, 50_000, 150_000, 400_000][tier.id]
+    ? [20_000, 50_000, 150_000, 400_000, 800_000][tier.id]
     : 400_000;
   profitLadder.setCapital(nextTierCapital);
   for (let day = 0; day < tier.daysRequiredAtTarget; day += 1) {
@@ -95,11 +95,18 @@ async function main(): Promise<void> {
   profitLadder.setVerifiedCapital(0);
   assert.equal(profitLadder.getCapitalRequirement().current, 0);
   assert.equal(profitLadder.getCapitalVerificationStatus(), 'verified');
+  profitLadder.setVerifiedCapital(4999);
+  assert.equal(profitLadder.getCapitalRequirement().current, 4999);
+  profitLadder.setVerifiedCapital(0);
   for (let index = 0; index < 100; index += 1) {
     cryptara.recordExecutionResult(createFeedback(index));
   }
 
   const transitions: Array<{ from: number; to: number; active: boolean }> = [];
+  let advancementEventEmitted = false;
+  profitLadder.once('advancement-criteria-met', () => {
+    advancementEventEmitted = true;
+  });
   for (let expectedStage = Stage.STAGE_1_CONSTRAINED_PILOT; expectedStage < Stage.STAGE_6_CONDITIONAL_AUTONOMY; expectedStage += 1) {
     assert.equal(manager.getCurrentStage(), expectedStage);
     now += THREE_DAYS_MS;
@@ -120,6 +127,9 @@ async function main(): Promise<void> {
       }
     }
     makeCurrentTierReady();
+    if (expectedStage === Stage.STAGE_1_CONSTRAINED_PILOT) {
+      assert.equal(advancementEventEmitted, true);
+    }
     const result = await manager.evaluateAutomaticAdvancement(evidence());
     assert.equal(result.advanced, true);
     assert.equal(result.fromStage, expectedStage);
