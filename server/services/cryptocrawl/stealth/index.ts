@@ -12,6 +12,7 @@ import { CircuitBreaker, CircuitBreakerState } from './circuit-breaker';
 import { TelemetrySystem } from './telemetry';
 import { loadConfig, type StealthConfig, STEALTH_PRESETS } from './config';
 import type { ExecutionResult, StealthMetrics, RLAction } from './types';
+import { stageManager } from '../governance/stage-management.js';
 
 const { JsonRpcProvider } = providers;
 
@@ -66,8 +67,9 @@ export class StealthSuperiority {
     this.telemetry.recordEvent('system_init_start', 'system', {}, 'info');
 
     try {
-      // Initialize executor with pre-signed pool
-      await this.executor.initialize(wallet, providers);
+      if (stageManager.canExecuteTrades()) {
+        await this.executor.initialize(wallet, providers);
+      }
 
       // Initialize operational integrity with providers
       for (const [chain, provider] of providers.entries()) {
