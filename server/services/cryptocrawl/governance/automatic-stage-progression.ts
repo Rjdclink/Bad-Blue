@@ -11,6 +11,8 @@ import {
 } from './stage-management.js';
 import { profitLadder } from './profit-ladder.js';
 import { riskGovernor } from './risk-governor.js';
+import { instantLearningEngine } from '../learning/instant-learning-engine.js';
+import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
 
 function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>): AutomaticAdvancementEvidence {
   const ranking = getCryptara().getPerformanceRanking();
@@ -67,7 +69,27 @@ export async function recordCryptaraExecutionEvidence(
   gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
 ): Promise<AutomaticAdvancementResult> {
   const cryptara = getCryptara();
+  const prediction = cryptara.getPendingOpportunityPrediction(feedback.opportunityId);
   cryptara.recordExecutionResult(feedback);
+  const outcome: ExecutionOutcomeObservation = {
+    eventId: `${feedback.opportunityId || `${feedback.symbol}:${feedback.strategy}`}:${feedback.timestamp}`,
+    opportunityId: feedback.opportunityId,
+    timestamp: feedback.timestamp,
+    source: feedback.source,
+    chain: feedback.chain,
+    symbol: feedback.symbol,
+    strategy: feedback.strategy,
+    success: feedback.success,
+    expectedProfitUsd: feedback.expectedProfitUsd,
+    realizedProfitUsd: feedback.realizedProfitUsd,
+    feeUsd: feedback.feeUsd,
+    slippageBps: feedback.slippageBps,
+    latencyMs: feedback.latencyMs,
+    usedZeroCapital: feedback.usedZeroCapital,
+    provenance: [`execution:${feedback.source}`, feedback.success ? 'realized_execution' : 'execution_failure'],
+    prediction,
+  };
+  await instantLearningEngine.recordExecutionOutcome(outcome);
   await stageManager.recordProfitLadderState(profitLadder.exportState());
   return stageManager.recordExecutionEvidence({
     success: feedback.success,

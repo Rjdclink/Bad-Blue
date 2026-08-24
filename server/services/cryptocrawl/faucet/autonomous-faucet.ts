@@ -16,6 +16,7 @@ import { gasOracle } from '../bridge/gas-oracle.js';
 import { MultiOraclePriceValidator } from '../validation/multi-oracle-validator.js';
 import { MasterOrchestrator } from '../core/master-orchestrator.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
 import { stageManager } from '../governance/stage-management.js';
 import { evaluateAutomaticStageProgression } from '../governance/automatic-stage-progression.js';
@@ -53,13 +54,14 @@ export interface MarketConditions {
   spreadOpportunities: number;  // Count of profitable spreads
   competitionLevel: number;     // MEV bot activity 0-1
   liquidityDepth: number;       // Available liquidity
-  technicalSignal: 'bullish' | 'bearish' | 'neutral';
+  technicalSignal: 'bullish' | 'bearish' | 'neutral' | 'unknown';
   timestamp: number;            // When conditions were last updated
   confidence: number;           // 0-1, confidence in the data quality
   technicalDataProvenance: 'live' | 'cached' | 'deterministic-fallback' | 'no-data';
   technicalDataTimestamp: number | null;
   quoteDataProvenance: 'live' | 'no-data';
   quoteDataTimestamp: number | null;
+  dexDataProvenance: 'live' | 'no-data';
   lastMarketDataError?: string;
   lastMarketGateError?: string;
 }
@@ -712,20 +714,21 @@ class AutonomousCryptoFaucet {
     // Initialize communication security state
     this.commSecurityState = TranslationFirewall.getSecurityState();
 
-    // Initialize market conditions with neutral defaults
+    // Keep unobserved market conditions unavailable until live inputs arrive.
     this.marketConditions = {
-      volatility: 50,
-      gasEfficiency: 5,
+      volatility: Number.NaN,
+      gasEfficiency: Number.NaN,
       spreadOpportunities: 0,
-      competitionLevel: 0.5,
-      liquidityDepth: 100000,
-      technicalSignal: 'neutral',
+      competitionLevel: Number.NaN,
+      liquidityDepth: Number.NaN,
+      technicalSignal: 'unknown',
       timestamp: Date.now(),
-      confidence: 0.5,
+      confidence: Number.NaN,
       technicalDataProvenance: 'no-data',
       technicalDataTimestamp: null,
       quoteDataProvenance: 'no-data',
       quoteDataTimestamp: null,
+      dexDataProvenance: 'no-data',
     };
     
     // Initialize circuit breaker - CLOSED state
@@ -1084,7 +1087,7 @@ class AutonomousCryptoFaucet {
     if (!competitionPasses) reasons.push(`Competition too high: ${(this.marketConditions.competitionLevel * 100).toFixed(1)}%`);
     
     // Validator 4: Technical Signal Check (weight: 15%)
-    const technicalPasses = this.marketConditions.technicalSignal !== 'bearish';
+    const technicalPasses = this.marketConditions.technicalSignal === 'bullish' || this.marketConditions.technicalSignal === 'neutral';
     validators.push({
       name: 'technical_signal',
       passed: technicalPasses,
@@ -1613,6 +1616,7 @@ class AutonomousCryptoFaucet {
       });
     } catch (error) {
       this.marketConditions.technicalDataProvenance = 'no-data';
+      this.marketConditions.technicalSignal = 'unknown';
       this.marketConditions.lastMarketDataError = error instanceof Error ? error.message : String(error);
       logger.warn('[FAUCET] Failed to update TradingView analysis', {
         component: 'AutonomousFaucet',
@@ -1851,33 +1855,79 @@ class AutonomousCryptoFaucet {
       }
 
       // "Real arbitrage" check (live quotes + explicit fees/costs)
-      const symbol = (process.env.CRYPTO_ARBITRAGE_SYMBOL || 'ETHUSDT').trim().toUpperCase();
+      const configuredSymbol = (process.env.CRYPTO_ARBITRAGE_SYMBOL || 'ETHUSDT').trim().toUpperCase();
       const notionalUsd = Number(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD || 200);
       const maxQuoteAgeMs = Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000);
-
-      const plan = await arbitrageVerifier.evaluateOnce({
-        symbol,
-        notionalUsd: Number.isFinite(notionalUsd) && notionalUsd > 0 ? notionalUsd : 200,
-        maxQuoteAgeMs: Number.isFinite(maxQuoteAgeMs) ? maxQuoteAgeMs : 5000,
-        gas: cheapestChain ? { enabled: true, chain: cheapestChain } : { enabled: false, chain: 'polygon' },
-        bridge: process.env.CRYPTO_ARBITRAGE_BRIDGE_ENABLED === 'true'
-          ? {
-              enabled: true,
-              fromChain: (process.env.CRYPTO_ARBITRAGE_BRIDGE_FROM as any) || 'polygon',
-              toChain: (process.env.CRYPTO_ARBITRAGE_BRIDGE_TO as any) || 'arbitrum',
-              token: (process.env.CRYPTO_ARBITRAGE_BRIDGE_TOKEN as any) || 'USDC',
-            }
-          : { enabled: false, fromChain: 'polygon', toChain: 'polygon', token: 'USDC' },
-      });
+      const discoveredSymbols = await marketDataProviders.discoverUniverse();
+      const maxSymbols = Math.min(8, Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_SYMBOLS || 4)));
+      const symbols = [...new Set([
+        configuredSymbol,
+        ...discoveredSymbols.map(asset => asset.symbol),
+      ])].slice(0, maxSymbols);
+      const plans: Array<VerifiedArbitragePlan | null> = [];
+      for (const symbol of symbols) {
+        plans.push(await arbitrageVerifier.evaluateOnce({
+          symbol,
+          notionalUsd: Number.isFinite(notionalUsd) && notionalUsd > 0 ? notionalUsd : 200,
+          maxQuoteAgeMs: Number.isFinite(maxQuoteAgeMs) ? maxQuoteAgeMs : 5000,
+          gas: cheapestChain ? { enabled: true, chain: cheapestChain } : { enabled: false, chain: 'polygon' },
+          bridge: process.env.CRYPTO_ARBITRAGE_BRIDGE_ENABLED === 'true'
+            ? {
+                enabled: true,
+                fromChain: (process.env.CRYPTO_ARBITRAGE_BRIDGE_FROM as any) || 'polygon',
+                toChain: (process.env.CRYPTO_ARBITRAGE_BRIDGE_TO as any) || 'arbitrum',
+                token: (process.env.CRYPTO_ARBITRAGE_BRIDGE_TOKEN as any) || 'USDC',
+              }
+            : { enabled: false, fromChain: 'polygon', toChain: 'polygon', token: 'USDC' },
+        }));
+      }
+      const verifiedPlans = plans.filter((candidate): candidate is VerifiedArbitragePlan => candidate !== null);
       const quoteValidation = arbitrageVerifier.getLastLiveQuoteValidation();
+      const cryptara = getCryptara();
+      const candidateAssessments = verifiedPlans.map(candidate => cryptara.recordOpportunityObservation({
+        opportunityId: `${candidate.buyVenue}-${candidate.sellVenue}-${candidate.symbol}`,
+        observedAt: Date.now(),
+        chain: cheapestChain || 'unknown',
+        symbol: candidate.symbol,
+        plan: candidate,
+        tradingView: this.tradingViewAnalysis,
+        mempool: alchemyIntegration.getMempoolAnalysis(),
+        marketUniverse: discoveredSymbols,
+        dexObservation: null,
+        missingInformation: ['dex_liquidity'],
+        provenance: [
+          ...(this.tradingViewAnalysis?.dataProvenance === 'live' ? ['TradingView'] : []),
+          ...(quoteValidation?.valid ? ['direct_exchange_quotes'] : []),
+          ...(discoveredSymbols.length > 0 ? [...new Set(discoveredSymbols.flatMap(asset => asset.sources || [asset.source]))] : []),
+          ...(alchemyIntegration.isReady() ? ['Alchemy'] : []),
+          ...(cheapestChain ? ['gas_oracle'] : []),
+        ],
+      }));
+      const assessmentByOpportunity = new Map(candidateAssessments.map(assessment => [assessment.opportunityId, assessment]));
+      const plan = [...verifiedPlans].sort((left, right) => {
+        const leftScore = assessmentByOpportunity.get(`${left.buyVenue}-${left.sellVenue}-${left.symbol}`)?.rankScore;
+        const rightScore = assessmentByOpportunity.get(`${right.buyVenue}-${right.sellVenue}-${right.symbol}`)?.rankScore;
+        if (leftScore !== null && rightScore !== null && leftScore !== undefined && rightScore !== undefined && leftScore !== rightScore) {
+          return rightScore - leftScore;
+        }
+        return right.netProfitUsd - left.netProfitUsd;
+      })[0] || null;
+      const dexObservation = await marketDataProviders.getDexQuote({
+        chainId: 137,
+        sellToken: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+        buyToken: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+        sellAmount: '1000000',
+        takerAddress: process.env.ZEROX_TAKER_ADDRESS?.trim(),
+      });
       const hasCurrentQuoteValidation = quoteValidation?.valid === true &&
-        quoteValidation.symbol === symbol &&
+        symbols.includes(quoteValidation.symbol) &&
         quoteValidation.validatedAt >= Date.now() - maxQuoteAgeMs;
 
       this.marketConditions.quoteDataProvenance = hasCurrentQuoteValidation ? 'live' : 'no-data';
       this.marketConditions.quoteDataTimestamp = hasCurrentQuoteValidation
         ? quoteValidation!.validatedAt
         : null;
+      this.marketConditions.dexDataProvenance = dexObservation?.liquidityAvailable ? 'live' : 'no-data';
       if (!hasCurrentQuoteValidation) {
         throw new Error('At least two fresh live market quotes are required to update faucet conditions');
       }
@@ -1886,12 +1936,56 @@ class AutonomousCryptoFaucet {
       this.state.lastVerifiedArbitrage = plan;
       this.marketConditions.spreadOpportunities = plan ? 1 : 0;
 
-      // Confidence: if we can build an all-in profitable plan, treat as high confidence.
-      this.marketConditions.confidence = plan ? 0.85 : 0.4;
-      this.marketConditions.volatility = plan ? Math.min(VALIDATION.maxVolatility, Math.max(VALIDATION.minVolatility, plan.spreadPct * 10)) : 50;
-      this.marketConditions.competitionLevel = 0.5; // no longer inferred from mock oracle data
-      this.marketConditions.liquidityDepth = 100000; // not modeled by this verifier
-      this.marketConditions.technicalSignal = plan ? 'bullish' : 'neutral';
+      const opportunityAssessment = cryptara.recordOpportunityObservation({
+        opportunityId: plan ? `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}` : `market-cycle-${Date.now()}`,
+        observedAt: Date.now(),
+        chain: cheapestChain || 'unknown',
+        symbol: plan?.symbol || configuredSymbol,
+        plan,
+        tradingView: this.tradingViewAnalysis,
+        mempool: alchemyIntegration.getMempoolAnalysis(),
+        marketUniverse: discoveredSymbols,
+        dexObservation,
+        missingInformation: [
+          ...(plan ? [] : ['verified_opportunity_economics']),
+          ...(dexObservation ? [] : ['dex_liquidity']),
+          ...(quoteValidation ? [] : ['centralized_quote_validation']),
+        ],
+        provenance: [
+          ...(this.tradingViewAnalysis?.dataProvenance === 'live' ? ['TradingView'] : []),
+          ...(quoteValidation?.valid ? ['direct_exchange_quotes'] : []),
+          ...(dexObservation ? ['0x'] : []),
+          ...(discoveredSymbols.length > 0 ? [...new Set(discoveredSymbols.map(asset => asset.source))] : []),
+          ...(alchemyIntegration.isReady() ? ['Alchemy'] : []),
+          ...(cheapestChain ? ['gas_oracle'] : []),
+        ],
+      });
+      logger.info('[FAUCET] Cryptara opportunity assessed', {
+        component: 'AutonomousFaucet',
+        opportunityId: opportunityAssessment.opportunityId,
+        recommendation: opportunityAssessment.recommendation,
+        rankScore: opportunityAssessment.rankScore,
+        executionConfidence: opportunityAssessment.executionConfidence,
+        missingInformation: opportunityAssessment.missingInformation,
+      });
+
+      const selectedMarketAsset = discoveredSymbols.find(asset => asset.symbol === (plan?.symbol || configuredSymbol));
+      const selectedPriceHistory = selectedMarketAsset?.priceHistory;
+      const observedReturns = selectedPriceHistory && selectedPriceHistory.length > 1
+        ? selectedPriceHistory.slice(1).map((price, index) => (price - selectedPriceHistory[index]) / selectedPriceHistory[index]).filter(Number.isFinite)
+        : [];
+      const observedVolatility = observedReturns.length > 1
+        ? Math.sqrt(observedReturns.reduce((sum, value) => sum + value * value, 0) / observedReturns.length) * Math.sqrt(365 * 24) * 100
+        : Number.NaN;
+      const mempoolAnalysis = alchemyIntegration.getMempoolAnalysis();
+      this.marketConditions.confidence = opportunityAssessment.executionConfidence ?? Number.NaN;
+      this.marketConditions.volatility = Number.isFinite(observedVolatility)
+        ? Math.min(VALIDATION.maxVolatility, Math.max(VALIDATION.minVolatility, observedVolatility))
+        : Number.NaN;
+      this.marketConditions.competitionLevel = mempoolAnalysis && mempoolAnalysis.totalPending > 0
+        ? Math.min(1, mempoolAnalysis.arbitrageOpportunities.length / mempoolAnalysis.totalPending)
+        : Number.NaN;
+      this.marketConditions.liquidityDepth = Number.NaN;
       
       // Update timestamp
       this.marketConditions.timestamp = Date.now();
@@ -1900,7 +1994,7 @@ class AutonomousCryptoFaucet {
         const cryptara = getCryptara();
         const marketGate = cryptara.evaluateMarketGates({
           chain: cheapestChain,
-          pairOrSymbol: plan?.symbol || symbol,
+          pairOrSymbol: plan?.symbol || configuredSymbol,
           venue: plan?.buyVenue || 'market-data-validation',
           expectedProfitUsd: plan?.netProfitUsd || 0,
           volatilityRegime: {

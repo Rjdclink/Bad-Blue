@@ -65,7 +65,11 @@ class CoinGeckoPriceClient {
       const idsQuery = dedupedIds.join(',');
       const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(idsQuery)}&vs_currencies=${encodeURIComponent(vsCurrency)}`;
 
+      const headers: HeadersInit = { accept: 'application/json' };
+      const apiKey = process.env.COINGECKO_API_KEY?.trim();
+      if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
       const payload = await fetchJsonWithRetry<Record<string, { [currency: string]: number }>>(url, {
+        init: { headers },
         maxRetries: 5,
         baseDelayMs: 750,
         maxDelayMs: 20000,

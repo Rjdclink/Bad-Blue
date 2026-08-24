@@ -1,5 +1,10 @@
 /**
- * CRYPTARA Module - Right Brain Crypto/OSINT Core
+ * CRYPTARA compatibility module - legacy right-brain crypto/OSINT adapter.
+ *
+ * The authoritative production intelligence and governance-facing singleton is
+ * server/services/cryptara/index.ts. This module remains available for the
+ * 4JI dual-brain compatibility surface and pathway experiments; it must not be
+ * used as a second execution or progression authority.
  * 
  * Pattern recognition, prediction, and crawler pathways for cryptocurrency
  * and open-source intelligence analysis. Autonomous yet sandboxed operation

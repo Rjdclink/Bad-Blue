@@ -9,6 +9,8 @@ import { EDEN_CONFIG } from '../eden/config';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import type { MarketConditionLevel } from '../core/market-condition-detector.js';
 import type { SimulationResult, StrategyProfile, MarketCondition } from '../validation/monte-carlo-engine';
+import type { ExecutionOutcomeObservation } from './execution-outcome.js';
+import { getExecutionOutcomeKey } from './execution-outcome.js';
 
 // ============================================
 // DEEP LEARNING DATA TYPES
@@ -96,6 +98,8 @@ class DeepLearningStore {
   private isInitialized: boolean = false;
   private pendingUpdates: number = 0;
   private readonly maxPendingUpdates = 50;
+  private executionOutcomes: ExecutionOutcomeObservation[] = [];
+  private executionOutcomeKeys = new Set<string>();
 
   constructor() {
     this.state = this.createInitialState();
@@ -246,6 +250,36 @@ class DeepLearningStore {
       winRate: result.winRate,
       sharpeRatio: result.sharpeRatio,
     });
+  }
+
+  async recordExecutionOutcome(outcome: ExecutionOutcomeObservation): Promise<boolean> {
+    if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) return false;
+    try {
+      getCryptocrawlGovernance().requireAllowed('PERSIST_LONG_TERM_MEMORY');
+    } catch {
+      return false;
+    }
+
+    const key = getExecutionOutcomeKey(outcome);
+    if (this.executionOutcomeKeys.has(key)) return false;
+    this.executionOutcomeKeys.add(key);
+    this.executionOutcomes.push({ ...outcome, provenance: [...outcome.provenance] });
+    if (this.executionOutcomes.length > 500) {
+      const removed = this.executionOutcomes.splice(0, this.executionOutcomes.length - 500);
+      for (const item of removed) this.executionOutcomeKeys.delete(getExecutionOutcomeKey(item));
+    }
+    logger.debug('Realized execution outcome recorded for learning', {
+      component: 'DeepLearningStore',
+      eventId: outcome.eventId,
+      opportunityId: outcome.opportunityId,
+      success: outcome.success,
+      provenance: outcome.provenance,
+    });
+    return true;
+  }
+
+  getExecutionOutcomes(): ExecutionOutcomeObservation[] {
+    return this.executionOutcomes.map(outcome => ({ ...outcome, provenance: [...outcome.provenance], prediction: outcome.prediction ? { ...outcome.prediction } : undefined }));
   }
 
   /**

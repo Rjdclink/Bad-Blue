@@ -4,6 +4,7 @@
 
 import logger from '../../../logger.js';
 import type { ChainId } from '../core/lux-swarm';
+import * as WebSocket from 'ws';
 
 // ============================================================================
 // CONFIGURATION
@@ -471,6 +472,8 @@ class AlchemyPendingTransactions {
   private pendingTxCache: Map<string, PendingTransaction> = new Map();
   private isMonitoring: boolean = false;
   private monitorLoop: NodeJS.Timeout | null = null;
+  private wsConnections = new Map<keyof typeof ALCHEMY_CONFIG.ENDPOINTS, WebSocket.WebSocket>();
+  private reconnectTimers = new Map<keyof typeof ALCHEMY_CONFIG.ENDPOINTS, NodeJS.Timeout>();
   private analyzedTxCount: number = 0;
   private pollInFlight: Set<keyof typeof ALCHEMY_CONFIG.ENDPOINTS> = new Set();
   private requestCount = 0;
@@ -545,6 +548,8 @@ class AlchemyPendingTransactions {
 
     this.subscriptions.set(subscriptionId, subscription);
 
+    void this.openWebSocket(network, subscription);
+
     // Start polling for pending transactions
     if (!this.isMonitoring) {
       this.isMonitoring = true;
@@ -583,6 +588,7 @@ class AlchemyPendingTransactions {
 
       if (this.subscriptions.size === 0) {
         this.isMonitoring = false;
+        this.closeWebSockets();
         if (this.monitorLoop) {
           clearInterval(this.monitorLoop);
           this.monitorLoop = null;
@@ -591,6 +597,7 @@ class AlchemyPendingTransactions {
     } else {
       // Stop all
       this.isMonitoring = false;
+      this.closeWebSockets();
       if (this.monitorLoop) {
         clearInterval(this.monitorLoop);
         this.monitorLoop = null;
@@ -602,6 +609,94 @@ class AlchemyPendingTransactions {
       component: 'AlchemyPendingTx',
       subscriptionId: subscriptionId || 'all',
     });
+  }
+
+  private async openWebSocket(
+    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
+    subscription: AlchemySubscription,
+  ): Promise<void> {
+    if (this.wsConnections.has(network)) return;
+
+    const endpoint = `${ALCHEMY_CONFIG.WS_ENDPOINTS[network]}/${this.apiKey}`;
+    try {
+      const socket = new WebSocket.WebSocket(endpoint);
+      this.wsConnections.set(network, socket);
+      socket.on('open', () => {
+        socket.send(JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'eth_subscribe',
+          params: ['alchemy_pendingTransactions', {
+            toAddress: subscription.filters.toAddress,
+            fromAddress: subscription.filters.fromAddress,
+            hashesOnly: false,
+          }],
+        }));
+        logger.info('[AlchemyPendingTx] WebSocket subscription active', {
+          component: 'AlchemyPendingTx',
+          network,
+        });
+      });
+      socket.on('message', data => {
+        try {
+          const payload = JSON.parse(data.toString()) as { params?: { result?: Record<string, string> } };
+          const transaction = payload.params?.result;
+          if (transaction?.hash) this.cacheTransaction(network, transaction);
+        } catch (error) {
+          logger.debug('[AlchemyPendingTx] Invalid WebSocket payload', {
+            component: 'AlchemyPendingTx',
+            network,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+      socket.on('error', error => logger.debug('[AlchemyPendingTx] WebSocket unavailable', {
+        component: 'AlchemyPendingTx',
+        network,
+        error: error.message,
+      }));
+      socket.on('close', () => {
+        this.wsConnections.delete(network);
+        logger.debug('[AlchemyPendingTx] WebSocket closed; polling fallback remains active', {
+          component: 'AlchemyPendingTx',
+          network,
+        });
+        if (subscription.isActive && this.isMonitoring && !this.reconnectTimers.has(network)) {
+          const timer = setTimeout(() => {
+            this.reconnectTimers.delete(network);
+            void this.openWebSocket(network, subscription);
+          }, 5000);
+          this.reconnectTimers.set(network, timer);
+        }
+      });
+    } catch (error) {
+      logger.debug('[AlchemyPendingTx] WebSocket setup failed; polling fallback remains active', {
+        component: 'AlchemyPendingTx',
+        network,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private cacheTransaction(network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS, tx: Record<string, string>): void {
+    if (this.pendingTxCache.has(tx.hash)) return;
+    const pendingTx = this.parseTransaction(tx);
+    if (this.isSwapTransaction(pendingTx)) pendingTx.potentialArbitrage = true;
+    this.pendingTxCache.set(tx.hash, pendingTx);
+    this.analyzedTxCount++;
+    if (this.pendingTxCache.size > ALCHEMY_CONFIG.MAX_PENDING_TX_CACHE) {
+      const firstKey = this.pendingTxCache.keys().next().value;
+      if (firstKey) this.pendingTxCache.delete(firstKey);
+    }
+  }
+
+  private closeWebSockets(): void {
+    for (const timer of this.reconnectTimers.values()) clearTimeout(timer);
+    this.reconnectTimers.clear();
+    for (const socket of this.wsConnections.values()) {
+      try { socket.close(); } catch { }
+    }
+    this.wsConnections.clear();
   }
 
   /**
@@ -627,25 +722,7 @@ class AlchemyPendingTransactions {
       const transactions = data.result?.transactions || [];
 
       for (const tx of transactions) {
-        if (this.pendingTxCache.has(tx.hash)) continue;
-        
-        const pendingTx = this.parseTransaction(tx);
-        
-        // Check if it's a potential arbitrage opportunity
-        if (this.isSwapTransaction(pendingTx)) {
-          pendingTx.potentialArbitrage = true;
-        }
-        
-        this.pendingTxCache.set(tx.hash, pendingTx);
-        this.analyzedTxCount++;
-        
-        // Maintain cache size
-        if (this.pendingTxCache.size > ALCHEMY_CONFIG.MAX_PENDING_TX_CACHE) {
-          const firstKey = this.pendingTxCache.keys().next().value;
-          if (firstKey) {
-            this.pendingTxCache.delete(firstKey);
-          }
-        }
+        this.cacheTransaction(network, tx);
       }
     } catch (error) {
       logger.debug('[AlchemyPendingTx] Poll skipped due to transient error', {

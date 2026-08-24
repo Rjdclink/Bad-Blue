@@ -29,6 +29,10 @@ import type { CryptaraMarketGateConfig, CryptaraMarketGateContext, GateEvaluatio
 import { getCryptocrawlGovernance } from '../cryptocrawl/governance/index.js';
 import { TradingViewEngine, type TechnicalAnalysis, type TradingViewHealthStatus } from '../cryptocrawl/babel/tradingview-integration.js';
 import { alchemyIntegration, type MempoolAnalysis, type AlchemyReadinessStatus } from '../cryptocrawl/capital-free/alchemy-integration.js';
+import type { VerifiedArbitragePlan } from '../cryptocrawl/arbitrage/arbitrage-verifier.js';
+import type { DexQuoteObservation, MarketUniverseAsset } from '../cryptocrawl/intelligence/market-data-providers.js';
+import { createMonteCarloEngine, type MarketCondition, type StrategyProfile } from '../cryptocrawl/validation/monte-carlo-engine.js';
+import type { ExecutionOutcomeObservation } from '../cryptocrawl/learning/execution-outcome.js';
 
 const log = createLogger('CRYPTARA');
 
@@ -227,6 +231,70 @@ export interface CryptaraConnectorReadiness {
   };
 }
 
+export interface CryptaraOpportunityContext {
+  opportunityId: string;
+  observedAt: number;
+  chain: string;
+  symbol: string;
+  plan: VerifiedArbitragePlan | null;
+  tradingView: TechnicalAnalysis | null;
+  mempool: MempoolAnalysis | null;
+  marketUniverse: MarketUniverseAsset[];
+  dexObservation: DexQuoteObservation | null;
+  missingInformation: string[];
+  provenance: string[];
+}
+
+export interface CryptaraOpportunityAssessment {
+  opportunityId: string;
+  evaluatedAt: number;
+  recommendation: 'observe' | 'consider' | 'reject';
+  rankScore: number | null;
+  executionConfidence: number | null;
+  netProfitUsd: number | null;
+  netProfitMargin: number | null;
+  executableNotionalUsd: number | null;
+  grossProfitUsd: number | null;
+  expectedCostsUsd: number | null;
+  expectedSlippageBps: number | null;
+  expectedPriceImpactBps: number | null;
+  probabilityOfProfitableExecution: number | null;
+  liquidityConfidence: number | null;
+  dataCompleteness: number;
+  riskLevel: MarketSurveillanceData['riskLevel'] | 'unknown';
+  marketData: {
+    source: MarketUniverseAsset['source'] | null;
+    priceUsd: number | null;
+    volume24hUsd: number | null;
+    marketCapUsd: number | null;
+    priceChange24hPct: number | null;
+  };
+  missingInformation: string[];
+  provenance: string[];
+}
+
+export interface CryptaraPredictionCalibration {
+  predictions: number;
+  evaluated: number;
+  correct: number;
+  accuracy: number | null;
+  meanAbsoluteError: number | null;
+}
+
+export interface CryptaraMonteCarloEvidence {
+  simulationId: string;
+  evaluatedAt: number;
+  sourceOpportunityId: string;
+  expectedProfit: number;
+  probabilityOfProfit: number;
+  valueAtRisk95: number;
+  expectedShortfall: number;
+  maxDrawdown: number;
+  marketRegime: string;
+  confidence: number;
+  missingInformation: string[];
+}
+
 // ============================================================================
 // BLOCKED DOMAINS (Legal, OSINT, Case Law)
 // ============================================================================
@@ -269,6 +337,11 @@ export class Cryptara extends EventEmitter {
   private lastMempoolAnalysis: MempoolAnalysis | null = null;
   private lastSurveillanceData: MarketSurveillanceData | null = null;
   private executionHistory: CryptaraExecutionFeedback[] = [];
+  private opportunityAssessments: CryptaraOpportunityAssessment[] = [];
+  private pendingOpportunityPredictions = new Map<string, { probability: number; expectedPositive: boolean; observedAt: number }>();
+  private predictionCalibration = { predictions: 0, evaluated: 0, correct: 0, absoluteError: 0 };
+  private latestMonteCarloEvidence: CryptaraMonteCarloEvidence | null = null;
+  private latestOpportunityContext: CryptaraOpportunityContext | null = null;
   private autonomousDirective: CryptaraAutonomousDirective;
   private connectorReadiness: CryptaraConnectorReadiness;
 
@@ -425,7 +498,161 @@ export class Cryptara extends EventEmitter {
     if (this.executionHistory.length > 1000) {
       this.executionHistory = this.executionHistory.slice(-1000);
     }
+    this.updatePredictionCalibration(feedback);
     this.recomputeAutonomousDirective();
+  }
+
+  recordOpportunityObservation(context: CryptaraOpportunityContext): CryptaraOpportunityAssessment {
+    this.latestOpportunityContext = {
+      ...context,
+      marketUniverse: context.marketUniverse.map(asset => ({ ...asset })),
+      provenance: [...context.provenance],
+      missingInformation: [...context.missingInformation],
+    };
+    const missingInformation = [...new Set(context.missingInformation)];
+    const provenance = [...new Set(context.provenance)];
+    const marketAsset = context.marketUniverse.find(asset => asset.symbol === context.symbol);
+    const now = Date.now();
+    const marketMaxAgeMs = Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000));
+    const dexMaxAgeMs = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
+    const tradingViewMaxAgeMs = Math.max(30_000, Number(process.env.TRADINGVIEW_DATA_TTL_MS || 300_000));
+    const dexIsFresh = !!context.dexObservation && now - context.dexObservation.observedAt <= dexMaxAgeMs;
+    const marketData = {
+      source: marketAsset?.source || null,
+      priceUsd: marketAsset?.priceUsd ?? null,
+      volume24hUsd: marketAsset?.volume24hUsd ?? null,
+      marketCapUsd: marketAsset?.marketCapUsd ?? null,
+      priceChange24hPct: marketAsset?.priceChange24hPct ?? null,
+    };
+    if (!marketAsset) missingInformation.push('provider_market_asset');
+    if (marketData.priceUsd === null) missingInformation.push('provider_price_usd');
+    if (marketData.volume24hUsd === null) missingInformation.push('provider_volume_24h_usd');
+    if (marketAsset && now - marketAsset.observedAt > marketMaxAgeMs) missingInformation.push('stale_provider_market_data');
+    if (context.dexObservation && !dexIsFresh) missingInformation.push('stale_dex_quote');
+    if (context.tradingView && now - context.tradingView.sourceTimestamp > tradingViewMaxAgeMs) missingInformation.push('stale_trading_view_analysis');
+    const plan = context.plan;
+    const hasPlanEconomics = !!plan && Number.isFinite(plan.netProfitUsd) && Number.isFinite(plan.notionalUsd) && plan.notionalUsd > 0;
+    const netProfitUsd = hasPlanEconomics ? plan!.netProfitUsd : null;
+    const netProfitMargin = hasPlanEconomics ? plan!.netProfitUsd / plan!.notionalUsd : null;
+    const quoteFreshness = plan && Number.isFinite(plan.quoteAgeMs)
+      ? Math.max(0, Math.min(1, 1 - plan.quoteAgeMs / Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000))))
+      : null;
+    const liquidityEvidence = dexIsFresh
+      ? (context.dexObservation.liquidityAvailable ? 1 : 0)
+      : plan?.liquidity.status === 'measured'
+        ? 1
+        : null;
+    const marketRisk = this.deriveOpportunityRisk(context, missingInformation);
+    const riskPenalty = marketRisk === 'critical' ? 0.9 : marketRisk === 'high' ? 0.65 : marketRisk === 'medium' ? 0.35 : marketRisk === 'low' ? 0.1 : null;
+    const executionConfidence = hasPlanEconomics && quoteFreshness !== null && riskPenalty !== null
+      ? Number(Math.max(0, Math.min(1, quoteFreshness * 0.55 + (liquidityEvidence || 0) * 0.2 + Math.max(0, 1 - riskPenalty) * 0.25)).toFixed(4))
+      : null;
+    const dataCompleteness = Number(Math.max(0, Math.min(1, 1 - missingInformation.length / 8)).toFixed(4));
+    const rankScore = netProfitMargin !== null && executionConfidence !== null
+      ? Number((netProfitMargin * 10000 * executionConfidence * dataCompleteness).toFixed(4))
+      : null;
+    const recommendation: CryptaraOpportunityAssessment['recommendation'] =
+      rankScore === null ? 'observe' : rankScore > 0 && executionConfidence! >= 0.6 ? 'consider' : 'reject';
+    const assessment: CryptaraOpportunityAssessment = {
+      opportunityId: context.opportunityId,
+      evaluatedAt: Date.now(),
+      recommendation,
+      rankScore,
+      executionConfidence,
+      netProfitUsd,
+      netProfitMargin,
+      executableNotionalUsd: plan?.executableNotionalUsd ?? null,
+      grossProfitUsd: plan?.grossProfitUsd ?? null,
+      expectedCostsUsd: plan?.costs.totalCostsUsd ?? null,
+      expectedSlippageBps: plan?.expectedSlippageBps ?? null,
+      expectedPriceImpactBps: plan?.expectedPriceImpactBps ?? null,
+      probabilityOfProfitableExecution: executionConfidence,
+      liquidityConfidence: liquidityEvidence,
+      dataCompleteness,
+      riskLevel: marketRisk,
+      marketData,
+      missingInformation,
+      provenance,
+    };
+
+    this.opportunityAssessments.push(assessment);
+    if (this.opportunityAssessments.length > 200) this.opportunityAssessments.shift();
+    this.predictionCalibration.predictions++;
+    if (executionConfidence !== null) {
+      this.pendingOpportunityPredictions.set(context.opportunityId, {
+        probability: executionConfidence,
+        expectedPositive: netProfitUsd !== null && netProfitUsd > 0,
+        observedAt: context.observedAt,
+      });
+    }
+    this.emit('opportunity:assessed', assessment);
+    return { ...assessment, marketData: { ...assessment.marketData }, missingInformation: [...missingInformation], provenance: [...provenance] };
+  }
+
+  getLatestOpportunityAssessment(): CryptaraOpportunityAssessment | null {
+    const assessment = this.opportunityAssessments[this.opportunityAssessments.length - 1];
+    return assessment ? { ...assessment, marketData: { ...assessment.marketData }, missingInformation: [...assessment.missingInformation], provenance: [...assessment.provenance] } : null;
+  }
+
+  getPredictionCalibration(): CryptaraPredictionCalibration {
+    return {
+      predictions: this.predictionCalibration.predictions,
+      evaluated: this.predictionCalibration.evaluated,
+      correct: this.predictionCalibration.correct,
+      accuracy: this.predictionCalibration.evaluated > 0 ? this.predictionCalibration.correct / this.predictionCalibration.evaluated : null,
+      meanAbsoluteError: this.predictionCalibration.evaluated > 0
+        ? this.predictionCalibration.absoluteError / this.predictionCalibration.evaluated
+        : null,
+    };
+  }
+
+  getPendingOpportunityPrediction(opportunityId?: string): ExecutionOutcomeObservation['prediction'] | undefined {
+    if (!opportunityId) return undefined;
+    const prediction = this.pendingOpportunityPredictions.get(opportunityId);
+    return prediction
+      ? {
+          probability: prediction.probability,
+          expectedPositive: prediction.expectedPositive,
+          observedAt: prediction.observedAt,
+          model: 'cryptara-opportunity-assessment',
+        }
+      : undefined;
+  }
+
+  getLatestMonteCarloEvidence(): CryptaraMonteCarloEvidence | null {
+    return this.latestMonteCarloEvidence
+      ? { ...this.latestMonteCarloEvidence, missingInformation: [...this.latestMonteCarloEvidence.missingInformation] }
+      : null;
+  }
+
+  private updatePredictionCalibration(feedback: CryptaraExecutionFeedback): void {
+    if (!feedback.opportunityId) return;
+    const prediction = this.pendingOpportunityPredictions.get(feedback.opportunityId);
+    if (!prediction) return;
+    const predictionTtlMs = Math.max(60_000, Number(process.env.CRYPTARA_PREDICTION_TTL_MS || 900_000));
+    if (feedback.timestamp - prediction.observedAt > predictionTtlMs) {
+      this.pendingOpportunityPredictions.delete(feedback.opportunityId);
+      return;
+    }
+    const realizedPositive = feedback.success && feedback.realizedProfitUsd > 0;
+    this.predictionCalibration.evaluated++;
+    if (prediction.expectedPositive === realizedPositive) this.predictionCalibration.correct++;
+    this.predictionCalibration.absoluteError += Math.abs(prediction.probability - (realizedPositive ? 1 : 0));
+    this.pendingOpportunityPredictions.delete(feedback.opportunityId);
+  }
+
+  private deriveOpportunityRisk(context: CryptaraOpportunityContext, missingInformation: string[]): CryptaraOpportunityAssessment['riskLevel'] {
+    const pending = context.mempool?.totalPending;
+    if (!context.tradingView && pending === undefined) {
+      if (!missingInformation.includes('market_risk_signals')) missingInformation.push('market_risk_signals');
+      return 'unknown';
+    }
+    const signal = context.tradingView?.summary.signal;
+    const congestionRisk = pending !== undefined && pending > 8000;
+    if (congestionRisk || signal === 'strong_sell') return 'critical';
+    if (pending !== undefined && pending > 2000 || signal === 'sell') return 'high';
+    if (pending !== undefined && pending > 1000 || signal === 'neutral') return 'medium';
+    return 'low';
   }
 
   restoreExecutionHistory(history: CryptaraExecutionFeedback[]): void {
@@ -836,6 +1063,7 @@ export class Cryptara extends EventEmitter {
     const intervalMs = this.config.monteCarloInterval * 60 * 60 * 1000;
     
     this.simulationInterval = setInterval(async () => {
+      if (!this.latestOpportunityContext) return;
       await this.runMonteCarloSimulation();
     }, intervalMs);
 
@@ -852,92 +1080,94 @@ export class Cryptara extends EventEmitter {
       throw new Error('CRYPTARA is not running. Call initialize() first.');
     }
 
-    log.info('Starting Monte Carlo simulation');
+    const context = this.latestOpportunityContext;
+    const marketAsset = context?.marketUniverse.find(asset => asset.symbol === context.symbol);
+    const priceHistory = marketAsset?.priceHistory;
+    const mempool = context?.mempool;
+    const missingInformation: string[] = [];
+    if (!context?.plan) missingInformation.push('verified_opportunity_economics');
+    if (!priceHistory || priceHistory.length < 20) missingInformation.push('price_history');
+    if (!mempool || mempool.avgGasPrice <= 0 || mempool.maxGasPrice <= 0) missingInformation.push('gas_observations');
+    if (context?.tradingView?.dataProvenance !== 'live') missingInformation.push('live_technical_analysis');
+    if (context?.plan && context.plan.quoteAgeMs > Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000))) missingInformation.push('fresh_verified_quote');
+    if (marketAsset && Date.now() - marketAsset.observedAt > Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000))) missingInformation.push('fresh_price_history');
+    if (missingInformation.length > 0) {
+      throw new Error(`Cryptara Monte Carlo requires measured context: ${missingInformation.join(', ')}`);
+    }
+
+    log.info('Starting Cryptara Monte Carlo simulation from measured opportunity context', {
+      opportunityId: context.opportunityId,
+      symbol: context.symbol,
+    });
     this.status.totalSimulations++;
 
     try {
-      const baseline = this.lastSurveillanceData || await this.collectMarketData();
-      const signal = this.lastTradingViewAnalysis?.summary.signal || 'neutral';
-      const sentiment = baseline.sentimentScore;
-      const bullishBias = Math.max(0, Math.min(1, (sentiment + 1) / 2));
-      const riskPenalty = baseline.riskLevel === 'critical'
-        ? 0.35
-        : baseline.riskLevel === 'high'
-          ? 0.25
-          : baseline.riskLevel === 'medium'
-            ? 0.15
-            : 0.08;
-
-      let bullishProbability = 0.25 + bullishBias * 0.45;
-      if (signal.includes('buy')) bullishProbability += 0.12;
-      if (signal.includes('sell')) bullishProbability -= 0.12;
-      bullishProbability = Math.max(0.1, Math.min(0.7, bullishProbability));
-
-      let bearishProbability = 0.2 + riskPenalty * 0.8 - bullishBias * 0.2;
-      bearishProbability = Math.max(0.1, Math.min(0.6, bearishProbability));
-
-      let sidewaysProbability = 1 - bullishProbability - bearishProbability;
-      if (sidewaysProbability < 0.1) {
-        const deficit = 0.1 - sidewaysProbability;
-        bullishProbability -= deficit / 2;
-        bearishProbability -= deficit / 2;
-        sidewaysProbability = 0.1;
-      }
-
-      const normalization = bullishProbability + bearishProbability + sidewaysProbability;
-      bullishProbability /= normalization;
-      bearishProbability /= normalization;
-      sidewaysProbability /= normalization;
-
-      const volatility = Math.max(0.08, Math.min(0.6, 0.12 + riskPenalty * 0.9));
-      const bullishReturn = Math.max(-0.02, 0.02 + bullishBias * 0.14 - riskPenalty * 0.04);
-      const bearishReturn = Math.min(-0.01, -0.02 - riskPenalty * 0.18 + bullishBias * 0.03);
-      const sidewaysReturn = 0.004 + (0.05 - riskPenalty * 0.03);
-
-      const expectedPortfolioReturn =
-        bullishProbability * bullishReturn +
-        bearishProbability * bearishReturn +
-        sidewaysProbability * sidewaysReturn;
-
+      const returns = priceHistory.slice(1).map((price, index) => (price - priceHistory[index]) / priceHistory[index]);
+      const volatility = Math.sqrt(returns.reduce((sum, value) => sum + Math.pow(value, 2), 0) / returns.length) * Math.sqrt(365 * 24);
+      const gasRange = (mempool.maxGasPrice - mempool.avgGasPrice) / mempool.avgGasPrice;
+      const market: MarketCondition = {
+        volatility: Math.max(0.01, Math.min(2, volatility)),
+        liquidityScore: Math.max(0, Math.min(1, Math.min(
+          context.plan!.liquidity.buyAvailableBaseQty ?? 0,
+          context.plan!.liquidity.sellAvailableBaseQty ?? 0,
+        ) / Math.max(context.plan!.baseQty, 1e-12))),
+        gasVolatility: Math.max(0, Math.min(2, gasRange)),
+        competitorDensity: Math.max(0, Math.min(1, mempool.arbitrageOpportunities.length / Math.max(1, mempool.swapTransactions))),
+        networkCongestion: Math.max(0, Math.min(1, mempool.totalPending / 8000)),
+        priceHistory,
+        volumeHistory: marketAsset?.volume24hUsd ? [marketAsset.volume24hUsd] : [],
+        gasHistory: [mempool.avgGasPrice, mempool.maxGasPrice],
+      };
+      const plan = context.plan;
+      const executionHistory = this.executionHistory.filter(entry => entry.symbol === context.symbol);
+      const successRate = executionHistory.length > 0
+        ? executionHistory.filter(entry => entry.success).length / executionHistory.length
+        : 0.5;
+      const strategy: StrategyProfile = {
+        name: 'verified-arbitrage-context',
+        baseSuccessRate: successRate,
+        avgProfitPerTrade: Math.max(0.0001, plan!.netProfitUsd / plan!.notionalUsd),
+        avgLossPerTrade: executionHistory.length > 0
+          ? Math.max(0.0001, Math.abs(Math.min(...executionHistory.map(entry => entry.realizedProfitUsd))) / plan!.notionalUsd)
+          : Math.max(0.0001, plan!.costs.totalCostsUsd / plan!.notionalUsd),
+        tradesPerDay: Math.max(1, executionHistory.length),
+        gasPerTrade: plan!.costs.gasUsd / plan!.notionalUsd,
+        slippageTolerance: Math.max(0.0001, (plan!.expectedSlippageBps ?? 0) / 10_000),
+        executionLatency: Math.max(1, plan!.quoteAgeMs),
+        strategyType: 'arbitrage',
+        mlFilterEnabled: false,
+        multiChainEnabled: !!plan!.bridge,
+        mempoolMonitoring: true,
+      };
+      const simulation = await createMonteCarloEngine({ simulations: 1000, timeHorizonDays: 1, ensembleCount: 3 }).runSimulation(strategy, market);
       const result: MonteCarloResult = {
         simulationId: `sim-${Date.now()}`,
         timestamp: new Date(),
-        iterations: 10000,
+        iterations: 1000,
         scenarios: [
-          {
-            name: 'Bullish Market',
-            probability: Number(bullishProbability.toFixed(4)),
-            expectedReturn: Number(bullishReturn.toFixed(4)),
-            maxDrawdown: Number((0.06 + riskPenalty * 0.4).toFixed(4)),
-            sharpeRatio: Number((bullishReturn / Math.max(volatility, 0.08)).toFixed(3)),
-          },
-          {
-            name: 'Bearish Market',
-            probability: Number(bearishProbability.toFixed(4)),
-            expectedReturn: Number(bearishReturn.toFixed(4)),
-            maxDrawdown: Number((0.14 + riskPenalty * 0.55).toFixed(4)),
-            sharpeRatio: Number((bearishReturn / Math.max(volatility, 0.08)).toFixed(3)),
-          },
-          {
-            name: 'Sideways Market',
-            probability: Number(sidewaysProbability.toFixed(4)),
-            expectedReturn: Number(sidewaysReturn.toFixed(4)),
-            maxDrawdown: Number((0.08 + riskPenalty * 0.3).toFixed(4)),
-            sharpeRatio: Number((sidewaysReturn / Math.max(volatility * 0.8, 0.06)).toFixed(3)),
-          },
+          { name: 'Measured opportunity distribution', probability: simulation.scenarioResults.probabilityOfProfit, expectedReturn: simulation.expectedProfit, maxDrawdown: simulation.maxDrawdown, sharpeRatio: simulation.sharpeRatio },
         ],
-        optimalStrategy: this.selectOptimalStrategy(signal, baseline.riskLevel),
+        optimalStrategy: 'verified-arbitrage-context',
         riskMetrics: {
-          valueAtRisk: Number((0.03 + riskPenalty * 0.18).toFixed(4)),
-          expectedShortfall: Number((0.05 + riskPenalty * 0.25).toFixed(4)),
-          maxDrawdown: Number((0.09 + riskPenalty * 0.33).toFixed(4)),
-          volatility: Number(volatility.toFixed(4)),
+          valueAtRisk: simulation.valueAtRisk95,
+          expectedShortfall: simulation.conditionalVaR,
+          maxDrawdown: simulation.maxDrawdown,
+          volatility: simulation.marketRegime.volatilityPercentile / 100,
         },
-        learnings: [
-          `Expected blended return ${expectedPortfolioReturn.toFixed(4)} under current signal ${signal}`,
-          `Mempool pressure: ${this.lastMempoolAnalysis?.totalPending ?? 0} pending tx; adjust execution cadence to avoid fee spikes`,
-          `Risk regime ${baseline.riskLevel}; enforce slippage guardrails before deployment`,
-        ],
+        learnings: simulation.performanceBreakdown.recommendation ? [simulation.performanceBreakdown.recommendation] : [],
+      };
+      this.latestMonteCarloEvidence = {
+        simulationId: result.simulationId,
+        evaluatedAt: Date.now(),
+        sourceOpportunityId: context.opportunityId,
+        expectedProfit: simulation.expectedProfit,
+        probabilityOfProfit: simulation.scenarioResults.probabilityOfProfit,
+        valueAtRisk95: simulation.valueAtRisk95,
+        expectedShortfall: simulation.conditionalVaR,
+        maxDrawdown: simulation.maxDrawdown,
+        marketRegime: simulation.marketRegime.regime,
+        confidence: simulation.ensembleConfidence,
+        missingInformation: [],
       };
 
       this.status.lastSimulationTime = new Date();

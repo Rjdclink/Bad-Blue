@@ -16,6 +16,7 @@ import { EDEN_CONFIG } from '../eden/config';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import type { MarketConditionLevel } from '../core/market-condition-detector.js';
 import type { SimulationResult, StrategyProfile, MarketCondition } from '../validation/monte-carlo-engine';
+import type { ExecutionOutcomeObservation } from './execution-outcome.js';
 
 // ============================================
 // INSTANT LEARNING CONFIGURATION
@@ -426,6 +427,18 @@ class InstantLearningEngine {
       confidenceScore: currentParams.confidenceScore,
       totalSims: this.state.realtimeMetrics.totalSimulations,
     });
+  }
+
+  async recordExecutionOutcome(outcome: ExecutionOutcomeObservation): Promise<boolean> {
+    if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) return false;
+    try {
+      getCryptocrawlGovernance().requireAllowed('PERSIST_LONG_TERM_MEMORY');
+    } catch {
+      return false;
+    }
+    // Realized outcomes are kept separate from simulation statistics and only
+    // forwarded to the deduplicated persistent learning boundary.
+    return deepLearningStore.recordExecutionOutcome(outcome);
   }
 
   /**

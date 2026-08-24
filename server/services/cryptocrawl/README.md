@@ -196,6 +196,13 @@ ENABLE_EMERGENCY_DECOMMISSION=false
 
 # RPC Endpoints
 ALCHEMY_API_KEY=your-alchemy-key
+
+# Market discovery and DEX pricing (optional; read only from deployment secrets)
+COINGECKO_API_KEY=your-coingecko-demo-key
+COINSTATS_API_KEY=your-coinstats-key
+ZEROX_API_KEY=your-0x-api-key
+CRYPTO_MARKET_UNIVERSE_SIZE=12
+CRYPTO_ARBITRAGE_MAX_SYMBOLS=4
 ```
 
 ## 💰 Profitability Directive
