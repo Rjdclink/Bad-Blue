@@ -1353,7 +1353,7 @@ class AutonomousCryptoFaucet {
     if (to === 'open') {
       // Only start the heavy orchestrator if explicitly enabled.
       // Stage Two focus: arbitrage verification + profit-flow, not unrelated subsystems.
-      if (process.env.CRYPTOCRAWL_ENABLE_ORCHESTRATOR === 'true') {
+      if (process.env.CRYPTOCRAWL_ENABLE_ORCHESTRATOR === 'true' && stageManager.canExecuteTrades()) {
         try {
           await MasterOrchestrator.start();
         } catch (error) {
