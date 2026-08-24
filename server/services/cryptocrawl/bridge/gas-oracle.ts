@@ -123,6 +123,19 @@ class GasOracle {
     }
   }
 
+  async checkChainConnectivity(chain: ChainId): Promise<boolean> {
+    try {
+      if (this.providers.size === 0) this.initializeProviders();
+      const provider = this.providers.get(chain);
+      if (!provider) return false;
+      await provider.getNetwork();
+      await provider.getBlockNumber();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async updateAllGasPrices(): Promise<void> {
     const chains: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];
     await Promise.all(chains.map(chain => this.getGasPrice(chain)));

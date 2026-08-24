@@ -1755,6 +1755,20 @@ class AutonomousCryptoFaucet {
    */
   private async updateMarketConditions(): Promise<void> {
     try {
+      const validation = await this.oracleValidator.validatePrice('ETH', 'polygon');
+      const chainHealthy = await gasOracle.checkChainConnectivity('polygon');
+      await stageManager.recordLiveValidation({
+        passed: validation.recommendation === 'proceed' && chainHealthy,
+        chainHealthy,
+        timestamp: Date.now(),
+      });
+      if (validation.recommendation !== 'proceed') {
+        throw new Error(`Oracle validation did not proceed: ${validation.recommendation}`);
+      }
+      if (!chainHealthy) {
+        throw new Error('Blockchain RPC connectivity validation failed');
+      }
+
       // Gas efficiency from the gas oracle (USD estimate for a simple tx)
       const cheapestChain = await gasOracle.getCheapestChain();
       if (cheapestChain) {
@@ -1854,11 +1868,6 @@ class AutonomousCryptoFaucet {
         if (marketGate.decision !== 'ALLOW') {
           throw new Error(`Cryptara market gate blocked live validation: ${marketGate.blockReasons.join('; ')}`);
         }
-        await stageManager.recordLiveValidation({
-          passed: true,
-          chainHealthy: true,
-          timestamp: quoteValidation!.validatedAt,
-        });
         await evaluateAutomaticStageProgression(marketGate);
       }
 
