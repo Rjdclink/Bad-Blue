@@ -286,6 +286,7 @@ export class CryptaraGovernance extends EventEmitter {
   }> {
     let gasUsd = 0;
     let latencyHealthy = true;
+    let gasEstimateError: string | undefined;
 
     const chain = proposal.chain.toLowerCase();
     const isBridgeChain = chain === 'polygon' || chain === 'arbitrum' || chain === 'avalanche' || chain === 'bsc';
@@ -294,15 +295,26 @@ export class CryptaraGovernance extends EventEmitter {
       try {
         const gp = await gasOracle.getGasPrice(chain as any);
         gasUsd = gp.usdCost;
-      } catch {
-        gasUsd = 0;
+      } catch (error) {
+        gasEstimateError = error instanceof Error ? error.message : String(error);
       }
 
       try {
         const health = await networkHealth.checkNetwork(chain as any);
         latencyHealthy = health.isHealthy;
       } catch {
-        latencyHealthy = true;
+        latencyHealthy = false;
+      }
+
+      if (gasEstimateError) {
+        return {
+          approved: false,
+          reason: `Execution blocked: gas estimate unavailable (${gasEstimateError})`,
+          netExpectedProfitUSD: 0,
+          gasUsd,
+          feeUsd: 0,
+          slippageUsd: 0,
+        };
       }
     }
 

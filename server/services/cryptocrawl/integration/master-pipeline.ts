@@ -761,13 +761,24 @@ class MasterPipeline {
       // Volatility regime: use minimal inputs; integrators can supply richer metrics later.
       let gasGwei: number | undefined;
       let estimatedGasUsd = 0;
+      let gasEstimateError: string | undefined;
       try {
         const gp = await gasOracle.getGasPrice(opp.chain as any);
         gasGwei = gp.gweiPrice;
         estimatedGasUsd = gp.usdCost;
-      } catch {
+      } catch (error) {
         gasGwei = undefined;
-        estimatedGasUsd = 0;
+        gasEstimateError = error instanceof Error ? error.message : String(error);
+      }
+
+      if (gasEstimateError) {
+        logger.warn('Opportunity rejected before execution: gas estimate unavailable', {
+          component: 'MasterPipeline',
+          opportunityId: opp.asset,
+          chain: opp.chain,
+          error: gasEstimateError,
+        });
+        return;
       }
 
       const expectedSlippageBps = Math.max(
