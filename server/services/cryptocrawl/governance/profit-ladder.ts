@@ -434,11 +434,12 @@ export class ProfitLadder extends EventEmitter {
       blockers.push(`Max drawdown ${(performance.maxDrawdown * 100).toFixed(1)}% > ${tier.maxDrawdownPercent}%`);
     }
     
+    const wasReadyForNextTier = performance.readyForNextTier;
     performance.blockers = blockers;
     performance.meetsAdvancementCriteria = blockers.length === 0;
     performance.readyForNextTier = performance.meetsAdvancementCriteria && nextTier !== undefined;
     
-    if (performance.readyForNextTier) {
+    if (performance.readyForNextTier && !wasReadyForNextTier) {
       log.info('Tier advancement criteria MET', {
         tier: tier.name,
         daysAtTarget: performance.daysAtTarget,

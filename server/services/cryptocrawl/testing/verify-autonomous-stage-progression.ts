@@ -103,9 +103,9 @@ async function main(): Promise<void> {
   }
 
   const transitions: Array<{ from: number; to: number; active: boolean }> = [];
-  let advancementEventEmitted = false;
-  profitLadder.once('advancement-criteria-met', () => {
-    advancementEventEmitted = true;
+  let advancementEventCount = 0;
+  profitLadder.on('advancement-criteria-met', () => {
+    advancementEventCount += 1;
   });
   for (let expectedStage = Stage.STAGE_1_CONSTRAINED_PILOT; expectedStage < Stage.STAGE_6_CONDITIONAL_AUTONOMY; expectedStage += 1) {
     assert.equal(manager.getCurrentStage(), expectedStage);
@@ -128,7 +128,9 @@ async function main(): Promise<void> {
     }
     makeCurrentTierReady();
     if (expectedStage === Stage.STAGE_1_CONSTRAINED_PILOT) {
-      assert.equal(advancementEventEmitted, true);
+      assert.equal(advancementEventCount, 1);
+      makeCurrentTierReady();
+      assert.equal(advancementEventCount, 1);
     }
     const result = await manager.evaluateAutomaticAdvancement(evidence());
     assert.equal(result.advanced, true);
