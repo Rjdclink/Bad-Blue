@@ -61,6 +61,7 @@ export interface MarketConditions {
   quoteDataProvenance: 'live' | 'no-data';
   quoteDataTimestamp: number | null;
   lastMarketDataError?: string;
+  lastMarketGateError?: string;
 }
 
 export interface FaucetState {
@@ -124,6 +125,13 @@ export interface OpenCloseDecision {
   reasons: string[];
   validators: ValidatorResult[];
 }
+
+type ExpectedProfitAssessment = {
+  status: 'VALID_POSITIVE' | 'VALID_ZERO' | 'VALID_NEGATIVE' | 'INCOMPLETE_DATA';
+  grossProfitUsd: number | null;
+  netProfitUsd: number | null;
+  reason: string;
+};
 
 export interface ValidatorResult {
   name: string;
@@ -787,7 +795,7 @@ class AutonomousCryptoFaucet {
       // Build reasoning context from current market conditions
       const context: ReasoningContext = {
         volatility: this.marketConditions.volatility / 100,
-        expectedProfitability: await this.calculateExpectedProfit() / 100,
+        expectedProfitability: Math.max(0, (await this.calculateExpectedProfit()).netProfitUsd ?? 0) / 100,
         gasEfficiency: 1 - (this.marketConditions.gasEfficiency / 20), // Invert: lower gas = better
         marketPosition: this.state.dailyTargetProgress / 100,
         signalStrength: this.marketConditions.confidence,
@@ -1030,14 +1038,15 @@ class AutonomousCryptoFaucet {
     
     // Validator 1: Market Profitability Check (weight: 25%)
     const expectedProfit = await this.calculateExpectedProfit();
-    const profitPasses = expectedProfit >= DECISION_CONFIG.minExpectedProfitToOpen;
+    const profitPasses = expectedProfit.status === 'VALID_POSITIVE' &&
+      (expectedProfit.netProfitUsd ?? Number.NEGATIVE_INFINITY) >= DECISION_CONFIG.minExpectedProfitToOpen;
     validators.push({
       name: 'profitability',
       passed: profitPasses,
       weight: 0.25,
-      details: `Expected profit: $${expectedProfit.toFixed(2)} (min: $${DECISION_CONFIG.minExpectedProfitToOpen})`,
+      details: `Status: ${expectedProfit.status}; gross=${expectedProfit.grossProfitUsd === null ? 'n/a' : `$${expectedProfit.grossProfitUsd.toFixed(2)}`}; net=${expectedProfit.netProfitUsd === null ? 'n/a' : `$${expectedProfit.netProfitUsd.toFixed(2)}`}; ${expectedProfit.reason}`,
     });
-    if (!profitPasses) reasons.push(`Insufficient expected profit: $${expectedProfit.toFixed(2)}`);
+    if (!profitPasses) reasons.push(`Insufficient expected profit: ${expectedProfit.netProfitUsd === null ? expectedProfit.status : `$${expectedProfit.netProfitUsd.toFixed(2)}`}`);
     
     // Validator 2: Gas Cost Check (weight: 20%)
     const gasPasses = this.marketConditions.gasEfficiency <= DECISION_CONFIG.maxGasToOpen;
@@ -1092,6 +1101,16 @@ class AutonomousCryptoFaucet {
     // Calculate weighted confidence score
     const confidence = validators.reduce((sum, v) => sum + (v.passed ? v.weight : 0), 0);
     const passedCount = validators.filter(v => v.passed).length;
+    logger.info('[FAUCET] Opening validators evaluated', {
+      component: 'AutonomousFaucet',
+      passed: passedCount,
+      total: validators.length,
+      validators: validators.map(validator => ({
+        name: validator.name,
+        passed: validator.passed,
+        details: validator.details,
+      })),
+    });
     
     // Decision: Should we OPEN?
     const shouldOpen = 
@@ -1135,6 +1154,21 @@ class AutonomousCryptoFaucet {
         }],
       };
     }
+
+    if (this.marketConditions.lastMarketGateError) {
+      return {
+        shouldOpen: false,
+        shouldClose: true,
+        confidence: 0,
+        reasons: [`Cryptara market gate blocked current context: ${this.marketConditions.lastMarketGateError}`],
+        validators: [{
+          name: 'market_gate',
+          passed: false,
+          weight: 1,
+          details: this.marketConditions.lastMarketGateError,
+        }],
+      };
+    }
     
     // Validator 1: Profit Cap Check - MUST close if cap reached
     const profitCapReached = this.state.profitThisHour >= STEALTH_CONFIG.maxHourlyProfit;
@@ -1168,14 +1202,15 @@ class AutonomousCryptoFaucet {
     
     // Validator 4: Market Conditions Degradation
     const expectedProfit = await this.calculateExpectedProfit();
-    const profitTooLow = expectedProfit < DECISION_CONFIG.emergencyCloseThreshold;
+    const profitTooLow = expectedProfit.status !== 'VALID_POSITIVE' ||
+      (expectedProfit.netProfitUsd ?? Number.NEGATIVE_INFINITY) < DECISION_CONFIG.emergencyCloseThreshold;
     validators.push({
       name: 'market_degradation',
       passed: !profitTooLow,
       weight: 0.15,
-      details: `Expected profit: $${expectedProfit.toFixed(2)}`,
+      details: `Status: ${expectedProfit.status}; net=${expectedProfit.netProfitUsd === null ? 'n/a' : `$${expectedProfit.netProfitUsd.toFixed(2)}`}; ${expectedProfit.reason}`,
     });
-    if (profitTooLow) reasons.push(`Profit expectation collapsed: $${expectedProfit.toFixed(2)}`);
+    if (profitTooLow) reasons.push(`Profit expectation unavailable or below threshold: ${expectedProfit.netProfitUsd === null ? expectedProfit.status : `$${expectedProfit.netProfitUsd.toFixed(2)}`}`);
     
     // Validator 5: Circuit Breaker Tripped
     validators.push({
@@ -1212,6 +1247,13 @@ class AutonomousCryptoFaucet {
       validators,
     };
   }
+
+    logger.info('[FAUCET] Opening validators evaluated', {
+      component: 'AutonomousFaucet',
+      passed: passedCount,
+      total: validators.length,
+      validators: validators.map(validator => ({ name: validator.name, passed: validator.passed, details: validator.details })),
+    });
 
   // ==========================================================================
   // STATE MACHINE - Strict, atomic state transitions
@@ -1766,8 +1808,18 @@ class AutonomousCryptoFaucet {
    */
   private async updateMarketConditions(): Promise<void> {
     try {
+      delete this.marketConditions.lastMarketGateError;
       const validation = await this.oracleValidator.validatePrice('ETH', 'polygon');
       const chainHealthy = await gasOracle.checkChainConnectivity('polygon');
+      logger.info('[FAUCET] MultiOracle validation completed', {
+        component: 'AutonomousFaucet',
+        asset: 'ETH',
+        chain: 'polygon',
+        recommendation: validation.recommendation,
+        isValid: validation.isValid,
+        confidence: validation.confidence,
+        chainHealthy,
+      });
       await stageManager.recordLiveValidation({
         passed: validation.recommendation === 'proceed' && chainHealthy,
         chainHealthy,
@@ -1793,13 +1845,11 @@ class AutonomousCryptoFaucet {
       // "Real arbitrage" check (live quotes + explicit fees/costs)
       const symbol = (process.env.CRYPTO_ARBITRAGE_SYMBOL || 'ETHUSDT').trim().toUpperCase();
       const notionalUsd = Number(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD || 200);
-      const minNetProfitUsd = Number(process.env.CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD || 0.5);
       const maxQuoteAgeMs = Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000);
 
-      const plan = await arbitrageVerifier.verifyOnce({
+      const plan = await arbitrageVerifier.evaluateOnce({
         symbol,
         notionalUsd: Number.isFinite(notionalUsd) && notionalUsd > 0 ? notionalUsd : 200,
-        minNetProfitUsd: Number.isFinite(minNetProfitUsd) ? minNetProfitUsd : 0.5,
         maxQuoteAgeMs: Number.isFinite(maxQuoteAgeMs) ? maxQuoteAgeMs : 5000,
         gas: cheapestChain ? { enabled: true, chain: cheapestChain } : { enabled: false, chain: 'polygon' },
         bridge: process.env.CRYPTO_ARBITRAGE_BRIDGE_ENABLED === 'true'
@@ -1878,11 +1928,19 @@ class AutonomousCryptoFaucet {
         if (marketGate.decision !== 'ALLOW') {
           throw new Error(`Cryptara market gate blocked live validation: ${marketGate.blockReasons.join('; ')}`);
         }
-        await evaluateAutomaticStageProgression(marketGate);
-        logger.info('[FAUCET] Automatic progression evaluation completed', {
+        const progression = await evaluateAutomaticStageProgression(marketGate);
+        logger.info('[FAUCET] Cryptara market gate evaluated', {
           component: 'AutonomousFaucet',
-          stage: stageManager.getCurrentStage(),
-          marketDecision: marketGate.decision,
+          decision: marketGate.decision,
+          signals: marketGate.signals.map(signal => ({ id: signal.id, status: signal.status, message: signal.message })),
+          blockReasons: marketGate.blockReasons,
+        });
+        logger.info('[FAUCET] Automatic progression evaluated', {
+          component: 'AutonomousFaucet',
+          advanced: progression.advanced,
+          fromStage: progression.fromStage,
+          toStage: progression.toStage,
+          blockers: progression.blockers,
         });
       }
 
@@ -1900,10 +1958,21 @@ class AutonomousCryptoFaucet {
         });
         return;
       }
-      this.marketConditions.lastMarketDataError = error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.startsWith('Cryptara market gate blocked')) {
+        this.marketConditions.lastMarketGateError = errorMessage;
+        logger.warn('[FAUCET] Cryptara rejected current market context; retaining live data', {
+          component: 'AutonomousFaucet',
+          error: errorMessage,
+          technicalDataProvenance: this.marketConditions.technicalDataProvenance,
+          quoteDataProvenance: this.marketConditions.quoteDataProvenance,
+        });
+        return;
+      }
+      this.marketConditions.lastMarketDataError = errorMessage;
       logger.warn('[FAUCET] Failed to update market conditions, using cached values', {
         component: 'AutonomousFaucet',
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       });
     }
   }
@@ -2105,10 +2174,28 @@ class AutonomousCryptoFaucet {
    * Calculate expected profit using all available signals
    * Enhanced with TradingView signal integration
    */
-  private async calculateExpectedProfit(): Promise<number> {
-    // "Real arbitrage": expected profit is the all-in net profit from the last verified plan.
-    // If we have no plan, expected profit is 0.
-    return this.lastArbitragePlan?.netProfitUsd ?? 0;
+  private async calculateExpectedProfit(): Promise<ExpectedProfitAssessment> {
+    const plan = this.lastArbitragePlan;
+    if (!plan) {
+      return {
+        status: 'INCOMPLETE_DATA',
+        grossProfitUsd: null,
+        netProfitUsd: null,
+        reason: 'No complete cross-venue arbitrage plan is available from current live quotes',
+      };
+    }
+
+    const status = plan.netProfitUsd > 0
+      ? 'VALID_POSITIVE'
+      : plan.netProfitUsd < 0
+        ? 'VALID_NEGATIVE'
+        : 'VALID_ZERO';
+    return {
+      status,
+      grossProfitUsd: plan.grossProfitUsd,
+      netProfitUsd: plan.netProfitUsd,
+      reason: 'All-in plan includes venue fees, gas, bridge fees, and validated quote prices',
+    };
   }
 
   /**
