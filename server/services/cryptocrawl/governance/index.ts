@@ -66,6 +66,10 @@ async function initializeGovernanceState(): Promise<void> {
   if (persistedProfitLadder) {
     profitLadder.importState(persistedProfitLadder);
   }
+  const configuredCapital = Number(process.env.CRYPTOCRAWL_CAPITAL_USD);
+  if (Number.isFinite(configuredCapital) && configuredCapital >= 0) {
+    profitLadder.setCapital(configuredCapital);
+  }
   const { getCryptara } = await import('../../cryptara/index.js');
   getCryptara().restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
   

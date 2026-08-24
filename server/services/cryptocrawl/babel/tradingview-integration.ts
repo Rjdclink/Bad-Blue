@@ -299,6 +299,13 @@ export class TradingViewEngine {
     }
   }
 
+  private static mapSymbol(symbol: string): string {
+    const aliases: Record<string, string> = {
+      MATICUSDT: 'POLUSDT',
+    };
+    return aliases[symbol.toUpperCase()] || symbol.toUpperCase();
+  }
+
   private static async queueRateLimitedRequest<T>(task: () => Promise<T>): Promise<T> {
     const run = this.requestQueue.then(async () => {
       const elapsed = Date.now() - this.lastRequestAt;
@@ -328,7 +335,7 @@ export class TradingViewEngine {
     timeframe: string,
   ): Promise<TechnicalAnalysis> {
     const interval = this.mapInterval(timeframe);
-    const ticker = `${TRADINGVIEW_CONFIG.defaultExchange}:${symbol.toUpperCase()}`;
+    const ticker = `${TRADINGVIEW_CONFIG.defaultExchange}:${this.mapSymbol(symbol)}`;
     const cols = [
       'Recommend.All', 'RSI', 'Stoch.K', 'Stoch.D', 'CCI20', 'ADX', 'AO', 'Mom',
       'MACD.macd', 'MACD.signal', 'W.R', 'UO',
