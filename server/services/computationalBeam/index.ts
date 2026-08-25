@@ -135,6 +135,17 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
       // The waiter may already be settled by a routing failure; consume its rejection.
       void completion.catch(() => undefined);
       this.emit('crawler-task-failed', { taskId, strategy, error });
+
+      if (config?.workload?.type === 'INITIAL_GAS_BOOTSTRAP_ANALYSIS' && process.env.RAILWAY_ENVIRONMENT?.trim()) {
+        const result = await this.executeRailwayBootstrapAnalysis(config.workload, crawlerTask.config.timeout);
+        this.emit('crawler-task-completed', {
+          taskId,
+          strategy,
+          computeSource: 'railway-bootstrap-fallback',
+          beamError: error instanceof Error ? error.message : String(error),
+        });
+        return { success: true, taskId, result, computeSource: 'railway-bootstrap-fallback' };
+      }
       
       // Attempt fallback if configured
       if (config?.fallbackStrategy) {
@@ -145,6 +156,51 @@ export class ComputationalBeamOrchestrator extends EventEmitter {
       }
 
       throw error;
+    }
+  }
+
+  /**
+   * Bootstrap readiness analysis is pure trusted in-process computation. When
+   * Beam routing is temporarily unavailable on Railway, execute that exact
+   * workload locally instead of idling. The next cycle still tries Beam first,
+   * so the Railway fallback stops automatically as soon as Beam routing returns.
+   */
+  private async executeRailwayBootstrapAnalysis(
+    workload: ComputeWorkload<any, any>,
+    timeoutMs: number,
+  ): Promise<unknown> {
+    const controller = new AbortController();
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new ComputationalBeamError(
+            `Railway bootstrap fallback timed out after ${timeoutMs}ms`,
+            'TASK_TIMEOUT',
+            { workloadId: workload.id, timeoutMs },
+          ));
+        }, timeoutMs);
+      });
+      const result = await Promise.race([
+        Promise.resolve(workload.execute(workload.input, {
+          signal: controller.signal,
+          workerId: 'railway-bootstrap-fallback',
+          startedAt: new Date(),
+        })),
+        timedOut,
+      ]);
+      const valid = await workload.validate(result, workload.input);
+      if (!valid) {
+        throw new ComputationalBeamError(
+          `Railway bootstrap fallback produced invalid output for ${workload.id}`,
+          'TASK_FAILED',
+          { workloadId: workload.id },
+        );
+      }
+      return result;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
