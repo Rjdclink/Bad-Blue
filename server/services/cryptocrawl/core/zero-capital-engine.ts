@@ -59,8 +59,8 @@ import { calculateProgressivePositionSize, type PositionSizingDecision } from '.
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import { assessInitialGasReadiness, type InitialGasReadiness } from '../initial-gas-readiness.js';
-import { assertConfiguredWalletAddress, normalizePrivateKey, walletFromPrivateKey } from './wallet-identity.js';
-import { getOrCreateFlashbotsAuthPrivateKey } from '../execution/adapters/flashbots-auth-identity.js';
+import { assertConfiguredWalletAddress, normalizePrivateKey, resolveConfiguredWalletAddress, walletFromPrivateKey } from './wallet-identity.js';
+import { resolveOrCreateFlashbotsAuthIdentity } from '../execution/adapters/flashbots-auth-identity.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -141,6 +141,7 @@ export interface SystemState {
 export interface WalletResourceSnapshot {
   chain: SupportedChain;
   walletAddress?: string;
+  walletAddressSource?: 'execution_wallet' | 'bridge_wallet';
   nativeBalance: string;
   assetBalances: Record<string, string>;
   observedAt: number;
@@ -219,6 +220,8 @@ export class AutonomousZeroCapitalEngine {
   private lastLiveSignalCheckAt = 0;
   private liveSignalReady = false;
   private readonly cryptaraGateEvidence = new Map<string, GateEvaluation>();
+  private routeDiscoveryStatus: 'not_attempted' | 'not_profitable' | 'discovered' | 'unavailable' = 'not_attempted';
+  private routeDiscoveryLastError?: string;
 
   constructor() {
     this.state = {
@@ -340,8 +343,8 @@ export class AutonomousZeroCapitalEngine {
     }
     if (ethProvider) {
       try {
-        const flashbotsAuthKey = await getOrCreateFlashbotsAuthPrivateKey(configuredFlashbotsAuthKey);
-        this.authSigner = walletFromPrivateKey(flashbotsAuthKey);
+        const flashbotsIdentity = await resolveOrCreateFlashbotsAuthIdentity(configuredFlashbotsAuthKey);
+        this.authSigner = walletFromPrivateKey(flashbotsIdentity.privateKey);
         this.flashbotsProvider = await FlashbotsBundleProvider.create(
           ethProvider,
           this.authSigner,
@@ -349,6 +352,8 @@ export class AutonomousZeroCapitalEngine {
         );
         logger.info('[ZeroCapitalEngine] Flashbots provider initialized (gasless execution enabled)', {
           component: 'ZeroCapitalEngine',
+          authIdentitySource: flashbotsIdentity.source,
+          authIdentityAddress: flashbotsIdentity.address,
         });
       } catch (error) {
         logger.warn('[ZeroCapitalEngine] Flashbots initialization failed, will use standard execution', {
@@ -371,7 +376,10 @@ export class AutonomousZeroCapitalEngine {
       component: 'ZeroCapitalEngine',
       connectedChains: this.providers.size,
       flashbotsEnabled: !!this.flashbotsProvider,
+      configuredBaseRoutes: this.configuredBaseRoutes.length,
       configuredRoutes: this.configuredRoutes.length,
+      europaRouteDiscovery: this.routeDiscoveryStatus,
+      europaRouteDiscoveryLastError: this.routeDiscoveryLastError,
     });
   }
 
@@ -548,12 +556,24 @@ export class AutonomousZeroCapitalEngine {
 
   private async refreshInitialGasReadiness(): Promise<InitialGasReadiness> {
     const walletAddresses = new Map<SupportedChain, string>();
+    const walletAddressSources = new Map<SupportedChain, 'execution_wallet' | 'bridge_wallet'>();
+    const configuredWallet = resolveConfiguredWalletAddress();
     for (const [chain, wallet] of this.executionWallets.entries()) {
       walletAddresses.set(chain, wallet.address);
+      walletAddressSources.set(chain, 'execution_wallet');
+    }
+    if (configuredWallet.address) {
+      for (const chain of this.providers.keys()) {
+        if (!walletAddresses.has(chain)) {
+          walletAddresses.set(chain, configuredWallet.address);
+          walletAddressSources.set(chain, 'bridge_wallet');
+        }
+      }
     }
     const readiness = await assessInitialGasReadiness({
       providers: this.providers,
       walletAddresses,
+      walletAddressSources,
     });
     this.state.initialGasReadiness = readiness;
     this.state.bootstrapState = readiness.initialGasReady ? 'INITIAL_GAS_READY' : 'PRE_STAGE_1_BOOTSTRAP';
@@ -900,11 +920,19 @@ export class AutonomousZeroCapitalEngine {
   }
 
   private async refreshEuropaFundingRoute(): Promise<void> {
-    const dynamicEuropaRoute = await discoverProfitableEuropaRoute();
-    this.configuredRoutes = composeConfiguredZeroCapitalRoutes(
-      this.configuredBaseRoutes,
-      dynamicEuropaRoute?.route,
-    );
+    try {
+      const dynamicEuropaRoute = await discoverProfitableEuropaRoute();
+      this.routeDiscoveryStatus = dynamicEuropaRoute ? 'discovered' : 'not_profitable';
+      this.routeDiscoveryLastError = undefined;
+      this.configuredRoutes = composeConfiguredZeroCapitalRoutes(
+        this.configuredBaseRoutes,
+        dynamicEuropaRoute?.route,
+      );
+    } catch (error) {
+      this.routeDiscoveryStatus = 'unavailable';
+      this.routeDiscoveryLastError = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 
   private async refreshWalletResources(): Promise<WalletResourceSnapshot[]> {
@@ -915,30 +943,33 @@ export class AutonomousZeroCapitalEngine {
       assetsByChain.set(route.chain, assets);
     }
 
+    const configuredWallet = resolveConfiguredWalletAddress();
     const snapshots = await Promise.all(Array.from(this.providers.entries()).map(async ([chain, provider]) => {
       const wallet = this.executionWallets.get(chain);
+      const walletAddress = wallet?.address || configuredWallet.address;
       const observedAt = Date.now();
-      if (!wallet) {
+      if (!walletAddress) {
         return {
           chain,
           nativeBalance: '0',
           assetBalances: {},
           observedAt,
           status: 'unavailable' as const,
-          error: 'No authoritative execution wallet is configured',
+          error: configuredWallet.reason || 'No authoritative execution or bridge wallet is configured',
         };
       }
 
       try {
-        const nativeBalance = await provider.getBalance(wallet.address);
+        const nativeBalance = await provider.getBalance(walletAddress);
         const assetBalances: Record<string, string> = {};
         await Promise.all(Array.from(assetsByChain.get(chain) || []).map(async asset => {
-          const balance = await new Contract(asset, ERC20_BALANCE_INTERFACE, provider).balanceOf(wallet.address) as BigNumber;
+          const balance = await new Contract(asset, ERC20_BALANCE_INTERFACE, provider).balanceOf(walletAddress) as BigNumber;
           assetBalances[asset] = balance.toString();
         }));
         return {
           chain,
-          walletAddress: wallet.address,
+          walletAddress,
+          walletAddressSource: wallet ? 'execution_wallet' : configuredWallet.source || undefined,
           nativeBalance: nativeBalance.toString(),
           assetBalances,
           observedAt,
@@ -947,7 +978,8 @@ export class AutonomousZeroCapitalEngine {
       } catch (error) {
         return {
           chain,
-          walletAddress: wallet.address,
+          walletAddress,
+          walletAddressSource: wallet ? 'execution_wallet' : configuredWallet.source || undefined,
           nativeBalance: '0',
           assetBalances: {},
           observedAt,

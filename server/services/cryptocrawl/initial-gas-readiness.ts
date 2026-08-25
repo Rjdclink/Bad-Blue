@@ -101,7 +101,6 @@ export async function assessInitialGasReadiness(input: {
         walletAddress,
         walletAddressSource,
         rpcReachable: true,
-        walletAddress,
         nativeBalanceWei: null,
         nativeBalance: null,
         nativePriceUsd: null,

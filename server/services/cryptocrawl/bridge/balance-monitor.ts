@@ -1,8 +1,9 @@
 import { ethers, Contract } from 'ethers';
 import { ChainId, TokenBalance } from './types';
-import { SUPPORTED_CHAINS, ERC20_ABI, USER_WALLET, FALLBACK_PRICES } from './chain-config';
+import { SUPPORTED_CHAINS, ERC20_ABI } from './chain-config';
 import { coinGeckoPriceClient } from './coingecko-client';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
+import { resolveConfiguredWalletAddress } from '../core/wallet-identity.js';
 
 const { formatEther, formatUnits } = ethers.utils;
 
@@ -28,24 +29,21 @@ class BalanceMonitor {
   }
 
   private async updatePrices(): Promise<void> {
-    try {
-      const prices = await coinGeckoPriceClient.getSymbolPrices(
-        ['POL', 'ETH', 'AVAX', 'BNB', 'USDT', 'USDC'],
-        FALLBACK_PRICES,
-      );
+    const prices = await coinGeckoPriceClient.getLiveSymbolPrices(
+      ['POL', 'ETH', 'AVAX', 'BNB', 'USDT', 'USDC'],
+    );
+    this.prices.clear();
+    prices.forEach((value, symbol) => {
+      this.prices.set(symbol, value);
+    });
+  }
 
-      prices.forEach((value, symbol) => {
-        this.prices.set(symbol, value);
-      });
-    } catch (error) {
-      console.error('Failed to update prices:', error);
-      // Use fallback prices if API fails
-      if (this.prices.size === 0) {
-        Object.entries(FALLBACK_PRICES).forEach(([key, value]) => {
-          this.prices.set(key, value);
-        });
-      }
+  private getWalletAddress(): string {
+    const resolved = resolveConfiguredWalletAddress();
+    if (!resolved.address) {
+      throw new Error(resolved.reason || 'No configured bridge or execution wallet is available');
     }
+    return resolved.address;
   }
 
   async getBalance(chain: ChainId): Promise<TokenBalance> {
@@ -55,17 +53,21 @@ class BalanceMonitor {
       await this.updatePrices();
 
       const config = SUPPORTED_CHAINS[chain];
+      const walletAddress = this.getWalletAddress();
+      const nativePrice = this.prices.get(config.currency);
+      if (nativePrice === undefined) {
+        throw new Error(`Live USD price for ${config.currency} is unavailable`);
+      }
       const { result: observedBalance, provenance } = await multiProviderRpcManager.execute(chain, 'contract_calls', async provider => {
-        const nativeBalanceWei = await provider.getBalance(USER_WALLET);
+        const nativeBalanceWei = await provider.getBalance(walletAddress);
         const native = parseFloat(formatEther(nativeBalanceWei));
-        const nativePrice = this.prices.get(config.currency) || 0;
         const nativeUsd = native * nativePrice;
         const usdtContract = new Contract(config.usdt, ERC20_ABI, provider);
-        const usdtBalanceRaw = await usdtContract.balanceOf(USER_WALLET);
+        const usdtBalanceRaw = await usdtContract.balanceOf(walletAddress);
         const usdtDecimals = await usdtContract.decimals();
         const usdt = parseFloat(formatUnits(usdtBalanceRaw, usdtDecimals));
         const usdcContract = new Contract(config.usdc, ERC20_ABI, provider);
-        const usdcBalanceRaw = await usdcContract.balanceOf(USER_WALLET);
+        const usdcBalanceRaw = await usdcContract.balanceOf(walletAddress);
         const usdcDecimals = await usdcContract.decimals();
         const usdc = parseFloat(formatUnits(usdcBalanceRaw, usdcDecimals));
         return { native, nativeUsd, usdt, usdc, totalUsd: nativeUsd + usdt + usdc };
@@ -119,13 +121,18 @@ class BalanceMonitor {
     await this.initializeProviders();
     await this.updatePrices();
     const config = SUPPORTED_CHAINS[chain];
+    const walletAddress = this.getWalletAddress();
+    const nativePrice = this.prices.get(config.currency);
+    if (nativePrice === undefined) {
+      throw new Error(`Live USD price for ${config.currency} is unavailable`);
+    }
     const { result, provenance } = await multiProviderRpcManager.execute(chain, 'contract_calls', async provider => {
-      const native = parseFloat(formatEther(await provider.getBalance(USER_WALLET)));
-      const nativeUsd = native * (this.prices.get(config.currency) || 0);
+      const native = parseFloat(formatEther(await provider.getBalance(walletAddress)));
+      const nativeUsd = native * nativePrice;
       const usdtContract = new Contract(config.usdt, ERC20_ABI, provider);
-      const usdt = parseFloat(formatUnits(await usdtContract.balanceOf(USER_WALLET), await usdtContract.decimals()));
+      const usdt = parseFloat(formatUnits(await usdtContract.balanceOf(walletAddress), await usdtContract.decimals()));
       const usdcContract = new Contract(config.usdc, ERC20_ABI, provider);
-      const usdc = parseFloat(formatUnits(await usdcContract.balanceOf(USER_WALLET), await usdcContract.decimals()));
+      const usdc = parseFloat(formatUnits(await usdcContract.balanceOf(walletAddress), await usdcContract.decimals()));
       return { native, nativeUsd, usdt, usdc, totalUsd: nativeUsd + usdt + usdc };
     });
     return { chain, ...result, provenance };
