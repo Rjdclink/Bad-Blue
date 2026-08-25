@@ -18,18 +18,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
-      
       - name: Install dependencies
         run: npm ci
-      
       - name: Build
-        run: npm run build --if-present
-      
+        run: npm run build
       - name: Run TypeScript compilation check
-        run: npx tsc --noEmit || true
+        run: npm run check
+      - name: Verify native-gas funding lifecycle
+        run: npm run verify:native-gas-funding
+      - name: Verify automatic native-gas plan
+        run: npm run verify:automatic-native-gas-plan
+      - name: Verify autonomous stage progression
+        run: npm run verify:autonomous-stages
