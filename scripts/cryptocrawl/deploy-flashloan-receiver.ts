@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { Wallet, providers, ContractFactory, utils } from 'ethers';
 import { compileFlashLoanReceiver, compileSushiV3FlashReceiver } from './compile-flashloan-receiver.js';
+import { sendEuropaZeroGasProvisioningTransaction } from './europa-zero-gas-provisioning.js';
 import { EUROPA_NETWORK } from '../../server/services/cryptocrawl/execution/adapters/europa-network.js';
 import { EUROPA_SUSHI } from '../../server/services/cryptocrawl/execution/adapters/europa-sushi-registry.js';
 
@@ -30,7 +31,7 @@ const DEPLOYMENT_CHAINS: Record<SupportedDeploymentChain, { chainId: number; rpc
     balancerVault: '0xBA12222222228d8Ba445958a75a0704d566BF2C8',
   },
   europa: {
-    chainId: 2046399126,
+    chainId: EUROPA_NETWORK.chainId,
     rpcEnv: 'EUROPA_RPC_URL',
   },
 };
@@ -71,11 +72,19 @@ async function main(): Promise<void> {
   }
 
   const owner = requireAddress('ZERO_CAPITAL_DEPLOY_OWNER', process.env.ZERO_CAPITAL_DEPLOY_OWNER?.trim() || wallet.address);
-  const receiverKind = process.env.ZERO_CAPITAL_DEPLOY_RECEIVER?.trim() || 'balancer';
+  if (chain === 'europa' && owner.toLowerCase() !== wallet.address.toLowerCase()) {
+    throw new Error('Europa zero-capital provisioning requires ZERO_CAPITAL_DEPLOY_OWNER to be the canonical WALLET_PRIVATE_KEY address');
+  }
+
+  const receiverKind = process.env.ZERO_CAPITAL_DEPLOY_RECEIVER?.trim() || (chain === 'europa' ? 'sushi-v3' : 'balancer');
   const isSushiV3 = receiverKind === 'sushi-v3';
   if (receiverKind !== 'balancer' && !isSushiV3) {
     throw new Error('ZERO_CAPITAL_DEPLOY_RECEIVER must be balancer or sushi-v3');
   }
+  if (chain !== 'europa' && isSushiV3) {
+    throw new Error('The reviewed Sushi V3 receiver deployment path is currently restricted to SKALE Europa');
+  }
+
   const infrastructure = isSushiV3
     ? requireAddress('ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY', process.env.ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY?.trim() || EUROPA_SUSHI.v3Factory)
     : requireAddress(
@@ -83,10 +92,16 @@ async function main(): Promise<void> {
       process.env.ZERO_CAPITAL_BALANCER_VAULT?.trim() ||
         (chain === 'europa' ? process.env.ZERO_CAPITAL_EUROPA_BALANCER_VAULT?.trim() || '' : chainConfig.balancerVault || ''),
     );
+  if (isSushiV3 && infrastructure.toLowerCase() !== EUROPA_SUSHI.v3Factory.toLowerCase()) {
+    throw new Error(`Europa Sushi V3 receiver must use the verified factory ${EUROPA_SUSHI.v3Factory}`);
+  }
+
   const artifact = isSushiV3 ? await compileSushiV3FlashReceiver() : await compileFlashLoanReceiver();
   const factory = new ContractFactory(artifact.abi, artifact.bytecode, wallet);
   const deployTransaction = factory.getDeployTransaction(infrastructure, owner);
-  const estimatedGas = await provider.estimateGas(deployTransaction);
+  const deployData = String(deployTransaction.data || '');
+  if (!utils.isHexString(deployData) || deployData === '0x') throw new Error('Compiled receiver deployment transaction has no bytecode');
+  const estimatedGas = await provider.estimateGas({ ...deployTransaction, from: wallet.address });
   const broadcastAllowed =
     process.env.ZERO_CAPITAL_DEPLOY === 'true' &&
     process.env.ZERO_CAPITAL_DEPLOY_CONFIRMATION === 'DEPLOY_FLASHLOAN_RECEIVER';
@@ -102,16 +117,53 @@ async function main(): Promise<void> {
       receiverKind,
       estimatedGas: estimatedGas.toString(),
       compiler: artifact.compiler,
+      zeroGasProvisioning: chain === 'europa',
       nextStep: 'Set ZERO_CAPITAL_DEPLOY=true and ZERO_CAPITAL_DEPLOY_CONFIRMATION=DEPLOY_FLASHLOAN_RECEIVER to broadcast.',
     }, null, 2));
     return;
   }
 
-  const contract = await factory.deploy(infrastructure, owner, {
-    gasLimit: estimatedGas.mul(120).div(100),
-  });
-  const receipt = await contract.deployTransaction.wait();
-  const code = await provider.getCode(contract.address);
+  let contractAddress: string;
+  let transactionHash: string;
+  let blockNumber: number;
+  let computeSource: string | undefined;
+  let zeroMonetaryGasVerified = false;
+
+  if (chain === 'europa') {
+    const gasLimit = estimatedGas.mul(125).div(100);
+    const provisioning = await sendEuropaZeroGasProvisioningTransaction({
+      provider,
+      wallet,
+      workloadId: `europa-receiver-deploy:${artifact.contractName}:${wallet.address}`,
+      transaction: {
+        data: deployData,
+        value: deployTransaction.value || 0,
+        gasLimit,
+      },
+    });
+    const expectedContractAddress = utils.getContractAddress({ from: wallet.address, nonce: provisioning.nonce });
+    contractAddress = provisioning.receipt.contractAddress
+      ? requireAddress('Europa deployment receipt contract address', provisioning.receipt.contractAddress)
+      : expectedContractAddress;
+    if (contractAddress.toLowerCase() !== expectedContractAddress.toLowerCase()) {
+      throw new Error(`Europa deployment address mismatch: expected ${expectedContractAddress}, received ${contractAddress}`);
+    }
+    transactionHash = provisioning.transactionHash;
+    blockNumber = provisioning.receipt.blockNumber;
+    computeSource = provisioning.computeSource;
+    zeroMonetaryGasVerified = provisioning.zeroMonetaryGasVerified;
+  } else {
+    const contract = await factory.deploy(infrastructure, owner, {
+      gasLimit: estimatedGas.mul(120).div(100),
+    });
+    const receipt = await contract.deployTransaction.wait();
+    if (!receipt || receipt.status !== 1) throw new Error('Receiver deployment reverted');
+    contractAddress = contract.address;
+    transactionHash = contract.deployTransaction.hash;
+    blockNumber = receipt.blockNumber;
+  }
+
+  const code = await provider.getCode(contractAddress);
   if (code === '0x') {
     throw new Error('Deployment receipt succeeded but no contract bytecode exists at the deployed address');
   }
@@ -120,15 +172,17 @@ async function main(): Promise<void> {
     contract: artifact.contractName,
     chain,
     chainId: network.chainId,
-    address: contract.address,
+    address: contractAddress,
     owner,
     infrastructure,
     receiverKind,
     deployer: wallet.address,
-    transactionHash: contract.deployTransaction.hash,
-    blockNumber: receipt.blockNumber,
+    transactionHash,
+    blockNumber,
     compiler: artifact.compiler,
     codeHash: utils.keccak256(code),
+    zeroMonetaryGasVerified,
+    ...(computeSource ? { computeSource } : {}),
     deployedAt: new Date().toISOString(),
   };
   const outputPath = resolve(process.cwd(), `contracts/cryptocrawl/deployments/${chain}.json`);
@@ -139,8 +193,8 @@ async function main(): Promise<void> {
     ...deploymentRecord,
     deploymentRecord: outputPath,
     nextStep: chain === 'europa'
-      ? `Set ZERO_CAPITAL_EUROPA_RECEIVER=${contract.address} and ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=${utils.keccak256(code)} only after independent contract review and zero-balance receipt validation.`
-      : `Set ZERO_CAPITAL_FLASHLOAN_RECEIVER=${contract.address} only after independent contract review and testnet validation.`,
+      ? `Set ZERO_CAPITAL_EUROPA_RECEIVER=${contractAddress} and ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=${utils.keccak256(code)}, then run the receiver configuration command for Europa.`
+      : `Set ZERO_CAPITAL_FLASHLOAN_RECEIVER=${contractAddress} only after independent contract review and testnet validation.`,
   }, null, 2));
 }
 
