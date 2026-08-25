@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { assertConfiguredWalletAddress, normalizePrivateKey } from '../core/wallet-identity.js';
 
 export type CheckStatus = 'PASS' | 'FAIL';
 
@@ -75,8 +76,9 @@ export function verifyCanonicalCryptoSetup(): CanonicalCryptoVerificationReport 
   if (nonEmpty(bridgeWalletAddrEnv) && nonEmpty(bridgeWalletPkEnv)) {
     try {
       const expected = ethers.utils.getAddress(process.env[bridgeWalletAddrEnv]!.trim());
-      const wallet = new ethers.Wallet(process.env[bridgeWalletPkEnv]!.trim());
-      const derived = ethers.utils.getAddress(wallet.address);
+      const privateKey = normalizePrivateKey(process.env[bridgeWalletPkEnv]);
+      if (!privateKey) throw new Error('WALLET_PRIVATE_KEY must be a 32-byte hexadecimal private key');
+      const derived = assertConfiguredWalletAddress(privateKey, expected);
       checks.push({
         name: 'Signer private key matches bridge wallet address',
         status: expected === derived ? 'PASS' : 'FAIL',

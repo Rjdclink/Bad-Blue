@@ -6,6 +6,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type { ChainId } from './lux-swarm';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
+import { assertConfiguredWalletAddress, normalizePrivateKey, walletFromPrivateKey } from './wallet-identity.js';
 
 const { formatEther, parseEther } = utils;
 
@@ -70,21 +71,22 @@ class WalletManager {
     // Try to load from DB (simplified - in production would query database)
     const stored = this.loadFromDB();
     
-    const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
+    const privateKey = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
     if (!privateKey) {
       throw new Error('WALLET_PRIVATE_KEY is required for WalletManager');
     }
+    assertConfiguredWalletAddress(privateKey);
 
     if (stored) {
-      const configuredWallet = new Wallet(privateKey);
+      const configuredWallet = walletFromPrivateKey(privateKey);
       const storedPrivateKey = this.decrypt(stored.encryptedKey);
-      const storedWallet = new Wallet(storedPrivateKey);
+      const storedWallet = walletFromPrivateKey(storedPrivateKey);
       if (configuredWallet.address.toLowerCase() !== storedWallet.address.toLowerCase()) {
         throw new Error('WALLET_PRIVATE_KEY does not match the stored CryptoCrawler wallet');
       }
       this.wallet = configuredWallet;
     } else {
-      this.wallet = new Wallet(privateKey);
+      this.wallet = walletFromPrivateKey(privateKey);
       const encryptedKey = this.encrypt(this.wallet.privateKey);
       const data: WalletData = {
         address: this.wallet.address,

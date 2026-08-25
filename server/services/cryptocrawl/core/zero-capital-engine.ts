@@ -59,6 +59,8 @@ import { calculateProgressivePositionSize, type PositionSizingDecision } from '.
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import { assessInitialGasReadiness, type InitialGasReadiness } from '../initial-gas-readiness.js';
+import { assertConfiguredWalletAddress, normalizePrivateKey, walletFromPrivateKey } from './wallet-identity.js';
+import { getOrCreateFlashbotsAuthPrivateKey } from '../execution/adapters/flashbots-auth-identity.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -167,10 +169,6 @@ const FLASH_LOAN_RECEIVER_EVENT_INTERFACE = new ethers.utils.Interface([
   'event FlashLoanExecuted(address indexed initiator, address indexed loanToken, uint256 loanAmount, uint256 profit)',
 ]);
 const ERC20_BALANCE_INTERFACE = ['function balanceOf(address owner) view returns (uint256)'];
-
-function isPrivateKey(value: string | undefined): value is string {
-  return typeof value === 'string' && /^0x[a-fA-F0-9]{64}$/.test(value);
-}
 
 export function composeConfiguredZeroCapitalRoutes(
   configuredRoutes: ConfiguredZeroCapitalRoute[],
@@ -311,16 +309,17 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
-    const configuredWalletPrivateKey = process.env.WALLET_PRIVATE_KEY?.trim();
-    const walletPrivateKey = isPrivateKey(configuredWalletPrivateKey) ? configuredWalletPrivateKey : undefined;
+    const configuredWalletPrivateKey = process.env.WALLET_PRIVATE_KEY;
+    const walletPrivateKey = normalizePrivateKey(configuredWalletPrivateKey) || undefined;
     if (configuredWalletPrivateKey && !walletPrivateKey) {
       logger.warn('[ZeroCapitalEngine] WALLET_PRIVATE_KEY is not a valid 32-byte hex private key; signing is disabled', {
         component: 'ZeroCapitalEngine',
       });
     }
     if (walletPrivateKey) {
+      assertConfiguredWalletAddress(walletPrivateKey);
       for (const [chain, provider] of this.providers.entries()) {
-        this.executionWallets.set(chain, new Wallet(walletPrivateKey, provider));
+        this.executionWallets.set(chain, walletFromPrivateKey(walletPrivateKey).connect(provider));
       }
       const europaWallet = this.executionWallets.get('europa');
       if (europaWallet) {
@@ -333,18 +332,16 @@ export class AutonomousZeroCapitalEngine {
 
     // Initialize Flashbots for Ethereum mainnet (gasless execution)
     const ethProvider = this.providers.get('ethereum');
-    const configuredFlashbotsAuthKey = process.env.FLASHBOTS_AUTH_KEY?.trim();
-    const flashbotsAuthKey = isPrivateKey(configuredFlashbotsAuthKey)
-      ? configuredFlashbotsAuthKey
-      : walletPrivateKey;
-    if (configuredFlashbotsAuthKey && !isPrivateKey(configuredFlashbotsAuthKey)) {
-      logger.warn('[ZeroCapitalEngine] FLASHBOTS_AUTH_KEY is not a valid 32-byte hex private key; Flashbots will use the wallet signer when valid', {
+    const configuredFlashbotsAuthKey = normalizePrivateKey(process.env.FLASHBOTS_AUTH_KEY);
+    if (process.env.FLASHBOTS_AUTH_KEY?.trim() && !configuredFlashbotsAuthKey) {
+      logger.warn('[ZeroCapitalEngine] FLASHBOTS_AUTH_KEY is not a valid 32-byte hex private key; the persisted application-owned identity will be used', {
         component: 'ZeroCapitalEngine',
       });
     }
-    if (ethProvider && flashbotsAuthKey) {
+    if (ethProvider) {
       try {
-        this.authSigner = new Wallet(flashbotsAuthKey);
+        const flashbotsAuthKey = await getOrCreateFlashbotsAuthPrivateKey(configuredFlashbotsAuthKey);
+        this.authSigner = walletFromPrivateKey(flashbotsAuthKey);
         this.flashbotsProvider = await FlashbotsBundleProvider.create(
           ethProvider,
           this.authSigner,
@@ -359,6 +356,15 @@ export class AutonomousZeroCapitalEngine {
           error: (error as Error).message,
         });
       }
+    }
+
+    try {
+      await this.refreshEuropaFundingRoute();
+    } catch (error) {
+      logger.warn('[ZeroCapitalEngine] Initial Europa route discovery unavailable; route refresh will retry during funding cycles', {
+        component: 'ZeroCapitalEngine',
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     logger.info('[ZeroCapitalEngine] Initialization complete', {
