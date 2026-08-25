@@ -1,13 +1,19 @@
 import { BigNumber, ethers, providers } from 'ethers';
-import type { BuiltOnchainPayload } from './onchain-payload-builder.js';
 
 const MAX_U256 = (1n << 256n) - 1n;
+
+export interface SkaleExternalGasPayload {
+  to?: string;
+  data: string;
+  value: string;
+  gasLimit: number;
+}
 
 export interface SkaleExternalGasPowRequest {
   workloadId: string;
   sender: string;
   nonce: number;
-  payload: BuiltOnchainPayload;
+  payload: SkaleExternalGasPayload;
   requiredGas: bigint;
   externalGasDifficulty: bigint;
   maxAttempts: number;
@@ -110,9 +116,11 @@ export class SkaleExternalGasPowAdapter {
     if (externalGas < request.requiredGas) return false;
 
     try {
+      const to = request.payload.to?.trim();
+      if (to && !ethers.utils.isAddress(to)) return false;
       const estimate = await this.provider.estimateGas({
         from: ethers.utils.getAddress(request.sender),
-        to: request.payload.to,
+        ...(to ? { to: ethers.utils.getAddress(to) } : {}),
         data: request.payload.data,
         value: BigNumber.from(request.payload.value),
         gasPrice: BigNumber.from(solution.gasPriceWei),
