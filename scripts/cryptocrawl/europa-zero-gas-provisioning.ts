@@ -51,6 +51,11 @@ function requireHexData(value: string): string {
   return normalized;
 }
 
+function positiveInteger(label: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${label} must be a positive safe integer`);
+  return value;
+}
+
 export async function sendEuropaZeroGasProvisioningTransaction(input: {
   provider: providers.JsonRpcProvider;
   wallet: Wallet;
@@ -88,8 +93,18 @@ export async function sendEuropaZeroGasProvisioningTransaction(input: {
 
   const difficulty = (await resolveEuropaExternalGasDifficulty(input.provider)).difficulty;
   const compute = new Stage4PowComputeCoordinator(input.provider);
-  const configuredWorkers = Number(process.env.ZERO_CAPITAL_EUROPA_POW_WORKERS || '');
-  const confirmationTimeoutMs = Math.max(10_000, input.confirmationTimeoutMs || Number(process.env.ZERO_CAPITAL_EUROPA_PROVISIONING_TIMEOUT_MS || 120_000));
+  const configuredWorkersRaw = Number(process.env.ZERO_CAPITAL_EUROPA_POW_WORKERS || '0');
+  const configuredWorkers = configuredWorkersRaw === 0
+    ? undefined
+    : positiveInteger('ZERO_CAPITAL_EUROPA_POW_WORKERS', configuredWorkersRaw);
+  const maxAttempts = positiveInteger(
+    'ZERO_CAPITAL_EUROPA_POW_MAX_ATTEMPTS',
+    Number(process.env.ZERO_CAPITAL_EUROPA_POW_MAX_ATTEMPTS || 250_000),
+  );
+  const confirmationTimeoutMs = positiveInteger(
+    'ZERO_CAPITAL_EUROPA_PROVISIONING_TIMEOUT_MS',
+    Math.max(10_000, input.confirmationTimeoutMs || Number(process.env.ZERO_CAPITAL_EUROPA_PROVISIONING_TIMEOUT_MS || 120_000)),
+  );
   const pow = await compute.findProof({
     workloadId: input.workloadId,
     sender,
@@ -102,9 +117,9 @@ export async function sendEuropaZeroGasProvisioningTransaction(input: {
     },
     requiredGas: BigInt(estimatedGas.toString()),
     externalGasDifficulty: difficulty,
-    maxAttempts: Math.max(1, Number(process.env.ZERO_CAPITAL_EUROPA_POW_MAX_ATTEMPTS || 250_000)),
+    maxAttempts,
   }, {
-    workerCount: Number.isInteger(configuredWorkers) && configuredWorkers > 0 ? configuredWorkers : undefined,
+    workerCount: configuredWorkers,
     timeoutMs: confirmationTimeoutMs,
   });
 
@@ -123,8 +138,9 @@ export async function sendEuropaZeroGasProvisioningTransaction(input: {
   if (submitted.hash.toLowerCase() !== expectedTransactionHash.toLowerCase()) {
     throw new Error(`Europa provisioning transaction hash mismatch: expected ${expectedTransactionHash}, received ${submitted.hash}`);
   }
-  const receipt = await submitted.wait(1);
-  if (!receipt || receipt.status !== 1) throw new Error('Europa zero-gas provisioning transaction reverted');
+  const receipt = await input.provider.waitForTransaction(submitted.hash, 1, confirmationTimeoutMs);
+  if (!receipt) throw new Error(`Europa zero-gas provisioning transaction ${submitted.hash} was not confirmed before the timeout`);
+  if (receipt.status !== 1) throw new Error('Europa zero-gas provisioning transaction reverted');
 
   const nativeAfter = await input.provider.getBalance(sender);
   if (!nativeAfter.eq(nativeBefore)) {
