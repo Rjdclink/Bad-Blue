@@ -639,6 +639,16 @@ export class AutonomousZeroCapitalEngine {
 
   private async attemptInitialGasBootstrap(readiness: InitialGasReadiness): Promise<void> {
     if (readiness.initialGasReady) return;
+    const beamBootstrap = await this.analyzeBootstrapReadinessThroughBeam(readiness);
+    if (!beamBootstrap.continueBootstrap) {
+      this.state.lastFundingError = beamBootstrap.reason;
+      logger.info('[ZeroCapitalEngine] Computational Beam found no valid bootstrap analysis path', {
+        component: 'ZeroCapitalEngine',
+        status: readiness.status,
+        reason: beamBootstrap.reason,
+      });
+      return;
+    }
     if (!this.executionEligible) {
       this.state.lastFundingError = 'PRE_STAGE_1_BOOTSTRAP remains observation-only; no qualifying paid-chain native funding or zero-gas conversion path is available';
       logger.info('[ZeroCapitalEngine] Corrective bootstrap deferred by authoritative stage capability', {
@@ -723,6 +733,79 @@ export class AutonomousZeroCapitalEngine {
     if (!postExecutionReadiness.initialGasReady) {
       throw new Error(await this.describeNativeGasFundingBlocker(postExecutionReadiness));
     }
+  }
+
+  private async analyzeBootstrapReadinessThroughBeam(readiness: InitialGasReadiness): Promise<{ continueBootstrap: boolean; reason: string }> {
+    if (!computationalBeam.isOperational()) {
+      await computationalBeam.initialize();
+    }
+
+    const workload: ComputeWorkload<{
+      readiness: Pick<InitialGasReadiness, 'status' | 'thresholdUsd' | 'usableNativeGasUsd' | 'selectedChain'>;
+      verifiedNativeMeasurements: Array<{
+        chain: SupportedChain;
+        nativeSymbol: string;
+        nativeBalanceWei: string;
+        nativePriceUsd: number;
+        usableNativeGasUsd: number;
+      }>;
+      availableChains: SupportedChain[];
+      routeDiscoveryStatus: string;
+      executionEligible: boolean;
+    }, { continueBootstrap: boolean; reason: string }> = {
+      id: `bootstrap-readiness:${readiness.observedAt}`,
+      type: 'INITIAL_GAS_BOOTSTRAP_ANALYSIS',
+      input: {
+        readiness: {
+          status: readiness.status,
+          thresholdUsd: readiness.thresholdUsd,
+          usableNativeGasUsd: readiness.usableNativeGasUsd,
+          selectedChain: readiness.selectedChain,
+        },
+        verifiedNativeMeasurements: readiness.measurements
+          .filter(measurement => measurement.eligibleForReadinessCalculation && measurement.status === 'verified' &&
+            measurement.nativeBalanceWei !== null && measurement.nativePriceUsd !== null && measurement.usableNativeGasUsd !== null)
+          .map(measurement => ({
+            chain: measurement.chain,
+            nativeSymbol: measurement.nativeSymbol,
+            nativeBalanceWei: measurement.nativeBalanceWei!,
+            nativePriceUsd: measurement.nativePriceUsd!,
+            usableNativeGasUsd: measurement.usableNativeGasUsd!,
+          })),
+        availableChains: Array.from(this.providers.keys()),
+        routeDiscoveryStatus: this.routeDiscoveryStatus,
+        executionEligible: this.executionEligible,
+      },
+      timeoutMs: Math.max(1_000, Number(process.env.ZERO_CAPITAL_BEAM_BOOTSTRAP_TIMEOUT_MS || 10_000)),
+      execute: ({ readiness: measuredReadiness, verifiedNativeMeasurements, availableChains }) => {
+        if (measuredReadiness.usableNativeGasUsd !== null && measuredReadiness.usableNativeGasUsd >= measuredReadiness.thresholdUsd) {
+          return { continueBootstrap: false, reason: 'Live readiness evidence already meets the initial native-gas threshold' };
+        }
+        if (availableChains.length === 0) {
+          return { continueBootstrap: false, reason: 'No reachable chain provider is available for bootstrap analysis' };
+        }
+        if (verifiedNativeMeasurements.some(measurement => measurement.usableNativeGasUsd < 0)) {
+          return { continueBootstrap: false, reason: 'Native-gas measurement contained an invalid negative value' };
+        }
+        return {
+          continueBootstrap: true,
+          reason: `Beam analyzed ${verifiedNativeMeasurements.length} verified paid-chain native measurement(s) while readiness remains below ${measuredReadiness.thresholdUsd} USD; route economics and funding capability remain separately gated`,
+        };
+      },
+      validate: result => typeof result.continueBootstrap === 'boolean' && typeof result.reason === 'string',
+    };
+
+    const execution = await computationalBeam.executeCrawlerTask(
+      CrawlerStrategy.ARBITRAGE,
+      {
+        readinessStatus: readiness.status,
+        thresholdUsd: readiness.thresholdUsd,
+        usableNativeGasUsd: readiness.usableNativeGasUsd,
+        availableChains: workload.input.availableChains,
+      },
+      { timeout: workload.timeoutMs, workload },
+    );
+    return execution.result as { continueBootstrap: boolean; reason: string };
   }
 
   private async describeNativeGasFundingBlocker(readiness: InitialGasReadiness): Promise<string> {
