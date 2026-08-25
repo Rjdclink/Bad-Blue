@@ -151,6 +151,7 @@ export class SuperBatteryLayer extends EventEmitter {
     const data = JSON.stringify({
       type: task.type,
       payload: task.payload,
+      workloadId: task.workload?.id ?? null,
     });
     return crypto.createHash('sha256').update(data).digest('hex');
   }
