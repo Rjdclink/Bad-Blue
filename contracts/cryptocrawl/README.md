@@ -1,24 +1,128 @@
-# Cryptocrawl Flash-Loan Receiver
+# CryptoCrawler Flash-Loan Receivers
 
-`CryptocrawlBalancerFlashLoanReceiver.sol` is a Balancer V2 flash-loan receiver for atomic, cyclic USDC/USDT arbitrage routes. It does not trade until it is deployed, an owner or operator submits a route, and all application-side live-execution guards are explicitly enabled.
+CryptoCrawler has two receiver paths:
 
-## Compile
+- `CryptocrawlBalancerFlashLoanReceiver.sol` for the legacy paid-chain route configuration.
+- `CryptocrawlSushiV3FlashReceiver.sol` for the SKALE Europa zero-monetary-gas bootstrap path.
+
+Neither receiver trades merely because it is compiled. Live execution remains behind the application governance and explicit live-risk confirmations.
+
+## Compile and Verify
 
 ```sh
 npm run cryptocrawl:receiver:compile
+npm run cryptocrawl:sushi-v3-receiver:compile
+npm run cryptocrawl:stage4:verify
 ```
 
-The compiler script uses a pinned `solc@0.8.24` through `npx` by default. In CI, set `ZERO_CAPITAL_SOLC_BIN` to a vetted compiler binary and optionally set `ZERO_CAPITAL_SOLC_ARGS`.
+The compiler is pinned to `solc@0.8.24` through `npx` by default. A vetted compiler can be supplied with `ZERO_CAPITAL_SOLC_BIN` and `ZERO_CAPITAL_SOLC_ARGS`.
 
-## Validate Locally
+## Europa Production Receiver
+
+The production zero-capital bootstrap path uses the Sushi V3 receiver on SKALE Europa. The reviewed infrastructure addresses are built into `europa-sushi-registry.ts`; the receiver constructor is bound to the verified Sushi V3 factory and the canonical execution wallet is the owner.
+
+For Europa, the deployment script defaults `ZERO_CAPITAL_DEPLOY_RECEIVER` to `sushi-v3`. Both receiver deployment and receiver allow-list configuration use the same SKALE external-gas PoW path as live Europa execution. The provisioning helper verifies the Europa chain ID, obtains the current external-gas difficulty, obtains a bounded PoW solution through the Stage 4 compute coordinator, signs the transaction with that PoW gas price, verifies the receipt, and rejects the transaction if the wallet's native balance changes.
+
+### 1. Dry-run the deployment
 
 ```sh
-npm run cryptocrawl:receiver:validate
+ZERO_CAPITAL_DEPLOY_CHAIN=europa \
+WALLET_PRIVATE_KEY=... \
+npm run cryptocrawl:receiver:deploy
 ```
 
-This is offline and does not connect to a chain or submit transactions. It validates the route planner, receiver calldata builder, and receiver callback-state safeguards.
+`EUROPA_RPC_URL` is optional because the reviewed public Europa RPC is built in. `ZERO_CAPITAL_DEPLOY_OWNER` may be omitted; for Europa it must resolve to the canonical `WALLET_PRIVATE_KEY` address.
 
-## Deployment Dry Run
+### 2. Broadcast the zero-gas deployment
+
+```sh
+ZERO_CAPITAL_DEPLOY_CHAIN=europa \
+ZERO_CAPITAL_DEPLOY_RECEIVER=sushi-v3 \
+ZERO_CAPITAL_DEPLOY=true \
+ZERO_CAPITAL_DEPLOY_CONFIRMATION=DEPLOY_FLASHLOAN_RECEIVER \
+WALLET_PRIVATE_KEY=... \
+npm run cryptocrawl:receiver:deploy
+```
+
+The successful deployment writes `contracts/cryptocrawl/deployments/europa.json` and prints two values that must come from the actual on-chain receipt and bytecode:
+
+```text
+ZERO_CAPITAL_EUROPA_RECEIVER=<deployed contract address>
+ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=<keccak256 of deployed bytecode>
+```
+
+Do not invent either value. The runtime independently fetches the deployed code, recomputes the hash, and verifies that the receiver is bound to the expected Sushi V3 factory.
+
+### 3. Configure the Europa receiver allow lists
+
+Set the two deployment values above, then dry-run:
+
+```sh
+ZERO_CAPITAL_DEPLOY_CHAIN=europa \
+ZERO_CAPITAL_EUROPA_RECEIVER=0x... \
+ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=0x... \
+WALLET_PRIVATE_KEY=... \
+npm run cryptocrawl:receiver:configure
+```
+
+For Europa, the configurator does **not** depend on `ZERO_CAPITAL_ROUTE_CONFIG`. The bootstrap routes are discovered dynamically, so the configurator derives the exact allow list from the reviewed Europa registry:
+
+- Target: the verified Sushi Route Processor.
+- Approval tokens: Europa USDC, SKL, and ETH used by the two validated triangular cycles.
+- Operators: none are required because the canonical execution wallet owns the receiver.
+
+The script verifies the receiver code hash, owner, and Sushi V3 factory before proposing any write. Existing allow-list entries are detected and skipped.
+
+Broadcast configuration with:
+
+```sh
+ZERO_CAPITAL_DEPLOY_CHAIN=europa \
+ZERO_CAPITAL_EUROPA_RECEIVER=0x... \
+ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=0x... \
+ZERO_CAPITAL_CONFIGURE_RECEIVER=true \
+ZERO_CAPITAL_CONFIGURE_RECEIVER_CONFIRMATION=CONFIGURE_FLASHLOAN_RECEIVER \
+WALLET_PRIVATE_KEY=... \
+npm run cryptocrawl:receiver:configure
+```
+
+Each Europa configuration transaction is submitted through the zero-monetary-gas PoW provisioning helper and the script verifies every required mapping after confirmation.
+
+## Europa PoW Compute Requirements
+
+`EUROPA_EXTERNAL_GAS_DIFFICULTY` is required only when the available Europa RPC endpoints do not expose `debug_getConfig` or `skale_getConfig`.
+
+The Stage 4 compute coordinator uses this hierarchy:
+
+1. configured zero-dollar remote compute providers;
+2. local Beam when the runtime is explicitly verified free;
+3. bounded Railway emergency compute while native-gas bootstrap/recovery is active.
+
+When Railway emergency compute is enabled, configure its existing budget governor variables rather than bypassing the governor. Receiver provisioning is infrastructure work, but it remains inside the same bounded bootstrap/recovery compute policy.
+
+## Runtime Europa Gates
+
+The live Europa zero-capital path requires, among the other governance checks:
+
+```text
+NO_EXECUTION != true
+CRYPTO_ARBITRAGE_LIVE_EXECUTION=true
+CRYPTO_ARBITRAGE_LIVE_CONFIRMATION=I_ACCEPT_LIVE_ORDER_RISK
+ZERO_CAPITAL_ENABLE_EXECUTION=true
+ZERO_CAPITAL_EXECUTION_CONFIRMATION=I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK
+ZERO_CAPITAL_EUROPA_EXECUTION_CONFIRMATION=I_ACCEPT_EUROPA_ZERO_GAS_EXECUTION_RISK
+ZERO_CAPITAL_EUROPA_RECEIVER=<verified deployed address>
+ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=<verified deployed code hash>
+ZERO_CAPITAL_ZEROX_API_KEY=<0x API key>
+WALLET_PRIVATE_KEY=<canonical execution wallet key>
+```
+
+The engine separately verifies Europa/Arbitrum connectivity, receiver bytecode and factory identity, SKALE PoW difficulty, capital provenance, live market gates, source-funded Meson settlement, 0x Gasless conversion, destination transaction receipts, and the destination native-balance increase.
+
+## Legacy Paid-Chain Receiver
+
+For Ethereum, Polygon, Arbitrum, or Optimism, the deployment script continues to support the Balancer receiver. These paths use `ZERO_CAPITAL_FLASHLOAN_RECEIVER` and `ZERO_CAPITAL_RECEIVER_CONFIG` and retain their existing paid-chain/sponsorship requirements. They are not a substitute for the Europa zero-monetary-gas bootstrap path.
+
+A legacy deployment dry run is:
 
 ```sh
 ZERO_CAPITAL_DEPLOY_CHAIN=arbitrum \
@@ -27,97 +131,11 @@ WALLET_PRIVATE_KEY=... \
 npm run cryptocrawl:receiver:deploy
 ```
 
-The deploy script is dry-run by default. Broadcasting requires both:
+Broadcasting still requires:
 
-```sh
+```text
 ZERO_CAPITAL_DEPLOY=true
 ZERO_CAPITAL_DEPLOY_CONFIRMATION=DEPLOY_FLASHLOAN_RECEIVER
 ```
 
-After a successful deployment, it writes the address to `contracts/cryptocrawl/deployments/<chain>.json`. Do not set `ZERO_CAPITAL_FLASHLOAN_RECEIVER` until the deployed bytecode, constructor values, and contract review are independently verified.
-
-## Configure Receiver Allow Lists
-
-The receiver rejects arbitrary call targets and approval tokens. The configuration script derives the required router and approval-token allowlists from `ZERO_CAPITAL_ROUTE_CONFIG`, then rejects missing or unexpected addresses. Configure only the routers and stablecoins used by your reviewed route configuration:
-
-```sh
-ZERO_CAPITAL_DEPLOY_CHAIN=arbitrum \
-ARBITRUM_RPC_URL=https://... \
-WALLET_PRIVATE_KEY=... \
-ZERO_CAPITAL_FLASHLOAN_RECEIVER=0x... \
-ZERO_CAPITAL_RECEIVER_CONFIG='{"operators":["0x..."],"targets":["0x..."],"approvalTokens":["0x..."]}' \
-npm run cryptocrawl:receiver:configure
-```
-
-This is dry-run by default. Broadcasting requires both:
-
-```sh
-ZERO_CAPITAL_CONFIGURE_RECEIVER=true
-ZERO_CAPITAL_CONFIGURE_RECEIVER_CONFIRMATION=CONFIGURE_FLASHLOAN_RECEIVER
-```
-
-The configuration signer must be the receiver owner. An owner multisig should submit equivalent `setOperator`, `setAllowedTarget`, and `setAllowedApprovalToken` transactions directly rather than sharing a signer key.
-
-## Route Configuration
-
-`ZERO_CAPITAL_ROUTE_CONFIG` is a JSON array. Every route must be a cyclic, contiguous USDC/USDT path that ends in the borrowed token. Amounts are integer base units and six-decimal stablecoin accounting is enforced.
-
-```json
-[
-	{
-		"id": "ethereum-usdc-weth-usdc",
-		"chain": "ethereum",
-		"inputAssetSymbol": "USDC",
-		"inputToken": "0x...",
-		"inputTokenDecimals": 6,
-		"amountIn": "1000000000",
-		"estimatedGasCostInInputToken": "200000",
-		"relayFeeInInputToken": "100000",
-		"flashLoanFeeBps": 0,
-		"minNetProfitBps": 50,
-		"legs": [
-			{ "protocol": "uniswapV3", "tokenIn": "0x...", "tokenOut": "0x...", "feeTier": 500 },
-			{ "protocol": "sushiswap", "tokenIn": "0x...", "tokenOut": "0x...", "fee": 0.003 }
-		]
-	}
-]
-```
-
-The route quoter queries each configured leg live, rejects non-cyclic or non-profitable paths after configured flash-loan, gas, and relay costs, then applies Cryptara’s live signal, latency, gas, slippage, and governance gates before queueing a candidate.
-
-## Live Execution Gates
-
-The application requires all of these before zero-capital execution starts:
-
-- `NO_EXECUTION` is not `true`
-- `CRYPTO_ARBITRAGE_LIVE_EXECUTION=true`
-- `CRYPTO_ARBITRAGE_LIVE_CONFIRMATION=I_ACCEPT_LIVE_ORDER_RISK`
-- `ZERO_CAPITAL_ENABLE_EXECUTION=true`
-- `ZERO_CAPITAL_EXECUTION_CONFIRMATION=I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK`
-- `ZERO_CAPITAL_FLASHLOAN_RECEIVER` is a deployed receiver address
-- Receiver allow lists contain the specific routers and stablecoins used by the configured route
-- `WALLET_PRIVATE_KEY`, chain RPC, live TradingView, and live Alchemy are available
-- `ZERO_CAPITAL_ROUTE_CONFIG` contains a cyclic USDC/USDT route that clears its fee, gas, and net-profit floor
-- `ZERO_CAPITAL_FLASHBOTS_PAYMENT_MODE=external_sponsor`, the matching sponsor address, and an explicit sponsor confirmation are set for the currently supported live path
-
-Recommended conservative runtime settings:
-
-```sh
-ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS=9990
-ZERO_CAPITAL_MAX_SLIPPAGE_BPS=20
-ZERO_CAPITAL_MAX_GAS_GWEI=60
-ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS=1000
-ZERO_CAPITAL_SIGNAL_RECHECK_MS=5000
-ZERO_CAPITAL_FLASHBOTS_FEE_BUFFER_BPS=12000
-ZERO_CAPITAL_FLASHBOTS_MAX_FEE_GWEI=60
-ZERO_CAPITAL_FLASHBOTS_PRIORITY_FEE_GWEI=1
-ZERO_CAPITAL_FLASHBOTS_MAX_PRIORITY_FEE_GWEI=3
-ZERO_CAPITAL_FLASHBOTS_WAIT_TIMEOUT_MS=45000
-ZERO_CAPITAL_FLASHBOTS_PAYMENT_MODE=external_sponsor
-ZERO_CAPITAL_FLASHBOTS_SPONSOR_ADDRESS=0x...
-ZERO_CAPITAL_FLASHBOTS_SPONSOR_CONFIRMATION=I_CONFIRM_EXTERNAL_FLASHBOTS_GAS_SPONSOR
-```
-
-The receiver and planner are deployable, but the currently supported live path is explicitly **external-sponsor funded**, not strictly zero-capital. Direct submissions on other chains require native gas and are deliberately blocked until a dedicated, reviewed gas-sponsorship adapter exists. Do not describe a deployment as zero-capital-ready until a true profit-share or gas-sponsorship payment adapter has been implemented, tested on a fork or testnet, and verified with an included receiver event.
-
-The receiver enforces repayment plus `minProfit` atomically. A route failure or insufficient final balance reverts the transaction.
+Legacy allow-list configuration still derives the exact routers and approval tokens from `ZERO_CAPITAL_ROUTE_CONFIG` and rejects missing or unexpected addresses.
