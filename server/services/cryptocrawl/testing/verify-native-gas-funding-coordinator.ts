@@ -30,6 +30,13 @@ function request(idempotencyKey: string): NativeGasFundingRequest {
   };
 }
 
+function nonEuropaRequest(idempotencyKey: string): NativeGasFundingRequest {
+  return {
+    ...request(idempotencyKey),
+    evidence: { ...evidence, sourceChain: 'polygon' },
+  };
+}
+
 const unavailable: NativeGasFundingStrategy = {
   name: 'bridge_refuel',
   async quote() {
@@ -84,10 +91,10 @@ const successfulReserve: NativeGasFundingStrategy = {
 };
 
 const failedRelay: NativeGasFundingStrategy = {
-  name: 'profit_funded_relayer',
+  name: 'bridge_refuel',
   async quote() {
     return {
-      strategy: 'profit_funded_relayer',
+      strategy: 'bridge_refuel',
       available: true,
       economicallyViable: true,
       sourceProceedsRequiredBaseUnits: '1',
@@ -104,10 +111,10 @@ const failedRelay: NativeGasFundingStrategy = {
 };
 
 const invalidEconomics: NativeGasFundingStrategy = {
-  name: 'profit_funded_relayer',
+  name: 'bridge_refuel',
   async quote() {
     return {
-      strategy: 'profit_funded_relayer',
+      strategy: 'bridge_refuel',
       available: true,
       economicallyViable: true,
       sourceProceedsRequiredBaseUnits: '0',
@@ -124,10 +131,10 @@ const invalidEconomics: NativeGasFundingStrategy = {
 };
 
 const unknownSubmission: NativeGasFundingStrategy = {
-  name: 'profit_funded_relayer',
+  name: 'bridge_refuel',
   async quote() {
     return {
-      strategy: 'profit_funded_relayer',
+      strategy: 'bridge_refuel',
       available: true,
       economicallyViable: true,
       sourceProceedsRequiredBaseUnits: '1',
@@ -146,14 +153,21 @@ const unknownSubmission: NativeGasFundingStrategy = {
 async function main(): Promise<void> {
   const store = new InMemoryNativeGasFundingAttemptStore();
   const coordinator = new NativeGasFundingCoordinator([unavailable, successfulReserve], store);
-  const settled = await coordinator.settleVerifiedProfit(request('funding-1'));
+  const settled = await coordinator.settleVerifiedProfit(nonEuropaRequest('funding-1'));
   assert.equal(settled.state, 'SETTLED');
   assert.equal(settled.destinationReceiptVerified, true);
   assert.equal(settled.deliveredNativeWei, '100');
 
-  const replayed = await coordinator.settleVerifiedProfit(request('funding-1'));
+  const replayed = await coordinator.settleVerifiedProfit(nonEuropaRequest('funding-1'));
   assert.equal(replayed.state, 'SETTLED');
   assert.equal(replayed.destinationTransactionHash, settled.destinationTransactionHash);
+
+  const europaReserveResult = await new NativeGasFundingCoordinator(
+    [successfulReserve],
+    new InMemoryNativeGasFundingAttemptStore(),
+  ).settleVerifiedProfit(request('funding-europa-reserve'));
+  assert.equal(europaReserveResult.state, 'FAILED');
+  assert.match(europaReserveResult.error || '', /internal_native_reserve/);
 
   const unavailableResult = await new NativeGasFundingCoordinator(
     [unavailable],

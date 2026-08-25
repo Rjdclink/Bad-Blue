@@ -1,7 +1,7 @@
-import { BigNumber, Contract, Wallet, utils } from 'ethers';
+import { BigNumber, Wallet, utils } from 'ethers';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 
-export type NativeGasFundingStrategyName = 'internal_native_reserve' | 'profit_funded_relayer' | 'bridge_refuel';
+export type NativeGasFundingStrategyName = 'internal_native_reserve' | 'bridge_refuel';
 export type NativeGasFundingAttemptState = 'PLANNED' | 'SUBMITTED' | 'SETTLED' | 'FAILED';
 
 export interface VerifiedProfitEvidence {
@@ -95,11 +95,6 @@ export class NativeGasFundingSubmissionUnknownError extends Error {
 
 function positiveInteger(label: string, value: string): bigint {
   if (!/^\d+$/.test(value) || BigInt(value) <= 0n) throw new Error(`${label} must be a positive integer string`);
-  return BigInt(value);
-}
-
-function nonNegativeInteger(label: string, value: string): bigint {
-  if (!/^\d+$/.test(value)) throw new Error(`${label} must be a non-negative integer string`);
   return BigInt(value);
 }
 
@@ -332,182 +327,6 @@ export class InternalNativeReserveStrategy implements NativeGasFundingStrategy {
   }
 }
 
-const ERC20_BALANCE_ABI = ['function balanceOf(address owner) view returns (uint256)'];
-
-export class ProfitFundedNativeGasRelayerStrategy implements NativeGasFundingStrategy {
-  readonly name = 'profit_funded_relayer' as const;
-
-  constructor(
-    private readonly sourceWallet: Wallet,
-    private readonly destinationWallets: ReadonlyMap<string, Wallet>,
-    private readonly sourceProfitToken?: string,
-  ) {}
-
-  async quote(request: NativeGasFundingRequest): Promise<NativeGasFundingQuote> {
-    try {
-      const sourceProvider = this.sourceWallet.provider;
-      if (!sourceProvider) return this.unavailable('Profit relayer source wallet has no connected Europa provider');
-      if (request.evidence.sourceChain !== 'europa') return this.unavailable('Profit-funded relayer source chain must be Europa');
-      const sourceNetwork = await sourceProvider.getNetwork();
-      if (sourceNetwork.chainId !== 2046399126) return this.unavailable(`Europa relayer provider chain mismatch: received ${sourceNetwork.chainId}`);
-      const sourceAddress = await this.sourceWallet.getAddress();
-      if (sourceAddress.toLowerCase() !== address('profit recipient', request.evidence.recipient).toLowerCase()) {
-        return this.unavailable('Verified profit recipient is not the configured project relayer source wallet');
-      }
-      const sourceToken = address('profit token', request.evidence.profitToken);
-      if (this.sourceProfitToken && sourceToken.toLowerCase() !== address('configured Europa profit token', this.sourceProfitToken).toLowerCase()) {
-        return this.unavailable('Verified profit token is not the configured Europa profit token');
-      }
-      const sourceBefore = nonNegativeInteger('sourceRecipientBalanceBeforeBaseUnits', request.evidence.sourceRecipientBalanceBeforeBaseUnits || '0');
-      const sourceAfter = nonNegativeInteger('sourceRecipientBalanceAfterBaseUnits', request.evidence.sourceRecipientBalanceAfterBaseUnits || '0');
-      const realizedProfit = positiveInteger('realizedProfitBaseUnits', request.evidence.realizedProfitBaseUnits);
-      if (sourceAfter - sourceBefore < realizedProfit) {
-        return this.unavailable('Europa source recipient balance delta is smaller than verified realized profit');
-      }
-      const observedSourceBalance = BigInt((await new Contract(sourceToken, ERC20_BALANCE_ABI, sourceProvider).balanceOf(sourceAddress) as BigNumber).toString());
-      if (observedSourceBalance < sourceAfter) {
-        return this.unavailable('Europa source relayer wallet no longer holds the verified proceeds');
-      }
-
-      const destinationWallet = this.destinationWallets.get(request.destinationChain);
-      if (!destinationWallet?.provider) return this.unavailable(`No project relayer destination wallet is configured for ${request.destinationChain}`);
-      const destination = address('destinationWallet', request.destinationWallet);
-      const relayerAddress = await destinationWallet.getAddress();
-      if (relayerAddress.toLowerCase() === destination.toLowerCase()) return this.unavailable('Relayer destination wallet and execution wallet must be different');
-      const chainId = expectedChainId(request.destinationChain);
-      if (!chainId) return this.unavailable(`Unsupported paid-chain destination ${request.destinationChain}`);
-      const network = await destinationWallet.provider.getNetwork();
-      if (network.chainId !== chainId) return this.unavailable(`Destination relayer provider chain mismatch: expected ${chainId}, received ${network.chainId}`);
-      const required = BigNumber.from(positiveInteger('requiredNativeWei', request.requiredNativeWei).toString());
-      const minimum = BigNumber.from(positiveInteger('minimumDeliveredNativeWei', request.minimumDeliveredNativeWei || request.requiredNativeWei).toString());
-      if (required.lt(minimum)) return this.unavailable('Required native delivery is below the configured minimum');
-      const feeData = await destinationWallet.provider.getFeeData();
-      const gasPrice = feeData.maxFeePerGas || feeData.gasPrice;
-      if (!gasPrice || gasPrice.lte(0)) return this.unavailable('Destination relayer live gas price is unavailable');
-      const gasLimit = await destinationWallet.provider.estimateGas({ from: relayerAddress, to: destination, value: required });
-      const gasCost = gasLimit.mul(gasPrice);
-      const balance = await destinationWallet.provider.getBalance(relayerAddress);
-      if (balance.lt(required.add(gasCost))) return this.unavailable('Project relayer lacks destination native inventory for delivery and its transaction fee');
-
-      return {
-        strategy: this.name,
-        available: true,
-        economicallyViable: true,
-        sourceProceedsRequiredBaseUnits: realizedProfit.toString(),
-        estimatedNetProceedsBaseUnits: realizedProfit.toString(),
-        estimatedCostNativeWei: gasCost.toString(),
-        estimatedDeliveredNativeWei: required.toString(),
-        reimbursementRequired: true,
-        reason: 'Verified Europa proceeds are held by the project relayer and live destination inventory covers native delivery plus gas',
-      };
-    } catch (error) {
-      return this.unavailable(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async settle(request: NativeGasFundingRequest, quote: NativeGasFundingQuote): Promise<NativeGasFundingSettlement> {
-    if (!quote.available || !quote.economicallyViable) throw new Error(quote.reason);
-    const destinationWallet = this.destinationWallets.get(request.destinationChain);
-    if (!destinationWallet?.provider) throw new Error(`No destination relayer wallet is configured for ${request.destinationChain}`);
-    const destination = address('destinationWallet', request.destinationWallet);
-    const relayerAddress = await destinationWallet.getAddress();
-    const provider = destinationWallet.provider;
-    if (!this.sourceWallet.provider) throw new Error('Profit relayer source wallet provider disappeared');
-    const required = BigNumber.from(positiveInteger('requiredNativeWei', request.requiredNativeWei).toString());
-    getCryptocrawlGovernance().requireBootstrapSettlementAllowed({
-      chain: request.destinationChain,
-      pair: 'NATIVE_GAS_SETTLEMENT',
-      venue: 'profit_funded_relayer',
-    });
-    const before = await provider.getBalance(destination);
-    const feeData = await provider.getFeeData();
-    const gasPrice = feeData.maxFeePerGas || feeData.gasPrice;
-    if (!gasPrice || gasPrice.lte(0)) throw new Error('Destination relayer live gas price is unavailable');
-    const gasLimit = await provider.estimateGas({ from: relayerAddress, to: destination, value: required });
-    if ((await provider.getBalance(relayerAddress)).lt(required.add(gasLimit.mul(gasPrice)))) {
-      throw new Error('Project relayer destination inventory changed before submission and is insufficient');
-    }
-
-    let transaction;
-    try {
-      transaction = await destinationWallet.sendTransaction({ to: destination, value: required, gasLimit, gasPrice });
-    } catch (error) {
-      throw new NativeGasFundingSubmissionUnknownError(
-        `Project relayer destination submission outcome is unknown: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    let receipt;
-    try {
-      receipt = await transaction.wait();
-    } catch (error) {
-      throw new NativeGasFundingSubmissionUnknownError(
-        `Project relayer destination receipt outcome is unknown: ${error instanceof Error ? error.message : String(error)}`,
-        transaction.hash,
-      );
-    }
-    if (!receipt || receipt.status !== 1) throw new Error('Project relayer destination transfer receipt was missing or reverted');
-    const after = await provider.getBalance(destination);
-    const delivered = after.sub(before);
-    const minimum = BigNumber.from(positiveInteger('minimumDeliveredNativeWei', request.minimumDeliveredNativeWei || request.requiredNativeWei).toString());
-    if (delivered.lt(minimum)) {
-      throw new NativeGasFundingSubmissionUnknownError(
-        `Project relayer delivered ${delivered.toString()} wei, below minimum ${minimum.toString()}; reconciliation is required`,
-        receipt.transactionHash || transaction.hash,
-      );
-    }
-
-    const sourceBefore = nonNegativeInteger('sourceRecipientBalanceBeforeBaseUnits', request.evidence.sourceRecipientBalanceBeforeBaseUnits || '0');
-    const sourceAfter = nonNegativeInteger('sourceRecipientBalanceAfterBaseUnits', request.evidence.sourceRecipientBalanceAfterBaseUnits || '0');
-    const realizedProfit = positiveInteger('realizedProfitBaseUnits', request.evidence.realizedProfitBaseUnits);
-    if (sourceAfter - sourceBefore < realizedProfit) throw new Error('Project relayer reimbursement is not backed by the verified Europa source balance delta');
-    const sourceToken = address('profit token', request.evidence.profitToken);
-    const sourceAddress = await this.sourceWallet.getAddress();
-    if (sourceAddress.toLowerCase() !== request.evidence.recipient.toLowerCase()) throw new Error('Project relayer source identity changed during settlement');
-    const currentSourceBalance = BigInt((await new Contract(sourceToken, ERC20_BALANCE_ABI, this.sourceWallet.provider).balanceOf(sourceAddress) as BigNumber).toString());
-    if (currentSourceBalance < sourceAfter) {
-      throw new NativeGasFundingSubmissionUnknownError(
-        'Project relayer no longer holds the verified Europa proceeds after destination settlement; reconciliation is required',
-        receipt.transactionHash || transaction.hash,
-      );
-    }
-    return {
-      strategy: this.name,
-      state: 'SETTLED',
-      sourceTransactionHash: request.evidence.sourceTransactionHash,
-      destinationTransactionHash: receipt.transactionHash || transaction.hash,
-      destinationReceiptVerified: true,
-      destinationNativeBalanceBeforeWei: before.toString(),
-      destinationNativeBalanceAfterWei: after.toString(),
-      deliveredNativeWei: delivered.toString(),
-      reimbursementRequired: true,
-      reimbursementVerified: true,
-      sourceProceedsAllocatedBaseUnits: realizedProfit.toString(),
-      provenance: [
-        `source_receipt:${request.evidence.sourceTransactionHash}`,
-        `source_recipient:${sourceAddress}`,
-        'source_profit_balance_delta_verified',
-        `destination_receipt:${receipt.transactionHash || transaction.hash}`,
-        'destination_native_balance_delta_verified',
-        'project_owned_profit_funded_relayer',
-      ],
-    };
-  }
-
-  private unavailable(reason: string): NativeGasFundingQuote {
-    return {
-      strategy: this.name,
-      available: false,
-      economicallyViable: false,
-      sourceProceedsRequiredBaseUnits: '0',
-      estimatedNetProceedsBaseUnits: '0',
-      estimatedCostNativeWei: '0',
-      estimatedDeliveredNativeWei: '0',
-      reimbursementRequired: true,
-      reason,
-    };
-  }
-}
-
 export class NativeGasFundingCoordinator {
   constructor(
     private readonly strategies: readonly NativeGasFundingStrategy[],
@@ -587,7 +406,11 @@ export class NativeGasFundingCoordinator {
         };
       }
     }));
-    const candidates = quotes.filter(candidate => candidate.quote.available && this.isEconomicallyViable(request, candidate.quote)).sort((left, right) => {
+    const candidates = quotes.filter(candidate =>
+      candidate.quote.available &&
+      !(request.evidence.sourceChain === 'europa' && candidate.quote.strategy === 'internal_native_reserve') &&
+      this.isEconomicallyViable(request, candidate.quote)
+    ).sort((left, right) => {
       const leftCost = BigInt(left.quote.estimatedCostNativeWei);
       const rightCost = BigInt(right.quote.estimatedCostNativeWei);
       return leftCost < rightCost ? -1 : leftCost > rightCost ? 1 : 0;

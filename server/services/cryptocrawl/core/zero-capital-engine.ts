@@ -58,13 +58,12 @@ import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-p
 import { calculateProgressivePositionSize, type PositionSizingDecision } from '../risk/progressive-position-sizing.js';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
-import { assessInitialGasReadiness, type InitialGasReadiness } from '../initial-gas-readiness.js';
+import { assessInitialGasReadiness, calculateAutomaticNativeGasPlan, type InitialGasReadiness } from '../initial-gas-readiness.js';
 import { assertConfiguredWalletAddress, normalizePrivateKey, resolveConfiguredWalletAddress, walletFromPrivateKey } from './wallet-identity.js';
 import { getOrCreateFlashbotsAuthPrivateKey } from '../execution/adapters/flashbots-auth-identity.js';
 import {
   NativeGasFundingCoordinator,
   PostgresNativeGasFundingAttemptStore,
-  ProfitFundedNativeGasRelayerStrategy,
 } from '../execution/native-gas-funding-coordinator.js';
 
 // ============================================================================
@@ -343,23 +342,8 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
-    const relayerPrivateKey = normalizePrivateKey(process.env.ZERO_CAPITAL_PROFIT_RELAYER_PRIVATE_KEY);
-    const relayerSourceProvider = this.providers.get('europa');
-    const relayerDestinationWallets = new Map<string, Wallet>();
-    if (relayerPrivateKey) {
-      for (const [chain, provider] of this.providers.entries()) {
-        if (chain !== 'europa') relayerDestinationWallets.set(chain, walletFromPrivateKey(relayerPrivateKey).connect(provider));
-      }
-    }
-    const strategies = relayerPrivateKey && relayerSourceProvider && relayerDestinationWallets.size > 0
-      ? [new ProfitFundedNativeGasRelayerStrategy(
-        walletFromPrivateKey(relayerPrivateKey).connect(relayerSourceProvider),
-        relayerDestinationWallets,
-        EUROPA_SUSHI.tokens.usdc,
-      )]
-      : [];
     this.nativeGasFundingCoordinator = new NativeGasFundingCoordinator(
-      strategies,
+      [],
       new PostgresNativeGasFundingAttemptStore(),
     );
 
@@ -689,22 +673,17 @@ export class AutonomousZeroCapitalEngine {
       });
       return;
     }
-    const destinationChain = process.env.ZERO_CAPITAL_NATIVE_GAS_DESTINATION_CHAIN?.trim();
-    const relayerPrivateKey = normalizePrivateKey(process.env.ZERO_CAPITAL_PROFIT_RELAYER_PRIVATE_KEY);
-    const requiredNativeWei = process.env.ZERO_CAPITAL_NATIVE_GAS_SETTLEMENT_AMOUNT_WEI?.trim();
-    const relayerSourceAddress = relayerPrivateKey ? walletFromPrivateKey(relayerPrivateKey).address : undefined;
-    const configuredProfitRecipient = process.env.ZERO_CAPITAL_EUROPA_PROFIT_RECIPIENT?.trim();
-    if (!destinationChain || destinationChain === 'europa' || !this.executionWallets.has(destinationChain as SupportedChain) ||
-      !requiredNativeWei || !/^\d+$/.test(requiredNativeWei) || BigInt(requiredNativeWei) <= 0n ||
-      !this.nativeGasFundingCoordinator || !relayerPrivateKey ||
-      (configuredProfitRecipient && configuredProfitRecipient.toLowerCase() !== relayerSourceAddress!.toLowerCase())) {
-      this.state.lastFundingError = 'Project-owned profit-funded relayer is not fully configured; Europa bootstrap remains observation-only';
+    const settlementPlan = await this.calculateAutomaticBootstrapSettlementPlan(readiness);
+    if (!settlementPlan || !this.nativeGasFundingCoordinator) {
+      this.state.lastFundingError = 'No live paid-chain destination and no source-funded settlement adapter are available; Europa bootstrap remains observation-only';
       return;
     }
+    const destinationChain = settlementPlan.destinationChain;
+    const requiredNativeWei = settlementPlan.requiredNativeWei;
     getCryptocrawlGovernance().requireBootstrapSettlementAllowed({
       chain: destinationChain,
       pair: 'NATIVE_GAS_SETTLEMENT',
-      venue: 'profit_funded_relayer',
+      venue: 'bridge_refuel',
     });
     if (this.pendingEuropaProfit) {
       const pending = this.pendingEuropaProfit;
@@ -813,21 +792,19 @@ export class AutonomousZeroCapitalEngine {
   ): Promise<boolean> {
     const coordinator = this.nativeGasFundingCoordinator;
     const sourceWallet = this.executionWallets.get('europa');
-    const destinationChain = process.env.ZERO_CAPITAL_NATIVE_GAS_DESTINATION_CHAIN?.trim() as SupportedChain | undefined;
-    const requiredNativeWei = process.env.ZERO_CAPITAL_NATIVE_GAS_SETTLEMENT_AMOUNT_WEI?.trim();
     if (!coordinator || !sourceWallet || !result.txHash || !result.profit || result.profit <= 0n ||
         result.receiptStatus !== 1 || result.profitVerified !== true || result.zeroMonetaryGasVerified !== true) {
       this.state.lastFundingError = 'Verified Europa profit is required before native-gas funding can be attempted';
       return false;
     }
-    if (!destinationChain || destinationChain === 'europa' || !this.providers.has(destinationChain)) {
-      this.state.lastFundingError = 'No configured paid-chain destination is available for profit-funded native-gas settlement';
+    const readiness = await this.refreshInitialGasReadiness();
+    const settlementPlan = await this.calculateAutomaticBootstrapSettlementPlan(readiness);
+    if (!settlementPlan) {
+      this.state.lastFundingError = 'No live paid-chain destination can be selected for source-funded native-gas settlement';
       return false;
     }
-    if (!requiredNativeWei || !/^\d+$/.test(requiredNativeWei) || BigInt(requiredNativeWei) <= 0n) {
-      this.state.lastFundingError = 'ZERO_CAPITAL_NATIVE_GAS_SETTLEMENT_AMOUNT_WEI must be a positive configured amount';
-      return false;
-    }
+    const destinationChain = settlementPlan.destinationChain;
+    const requiredNativeWei = settlementPlan.requiredNativeWei;
     const destinationWallet = this.executionWallets.get(destinationChain);
     if (!destinationWallet) {
       this.state.lastFundingError = `No authoritative execution wallet is configured on destination chain ${destinationChain}`;
@@ -894,6 +871,16 @@ export class AutonomousZeroCapitalEngine {
       destinationTransactionHash: funding.destinationTransactionHash,
     });
     return true;
+  }
+
+  private async calculateAutomaticBootstrapSettlementPlan(readiness: InitialGasReadiness) {
+    const walletAddresses = new Map<SupportedChain, string>();
+    for (const [chain, wallet] of this.executionWallets.entries()) walletAddresses.set(chain, wallet.address);
+    return calculateAutomaticNativeGasPlan({
+      readiness,
+      providers: this.providers,
+      walletAddresses,
+    });
   }
   private async analyzeBootstrapReadinessThroughBeam(readiness: InitialGasReadiness): Promise<{ continueBootstrap: boolean; reason: string }> {
     if (!computationalBeam.isOperational()) {
@@ -974,10 +961,10 @@ export class AutonomousZeroCapitalEngine {
     const destinationEvidence = paidChains.length > 0
       ? paidChains.map(chain => {
         const wallet = this.executionWallets.get(chain);
-        return `${chain}:${wallet ? 'signer-configured' : 'observation-only'}`;
+        return `${chain}:${wallet ? 'execution-wallet-observed' : 'observation-only'}`;
       }).join(', ')
       : 'none';
-    return `BLOCKED ON EXTERNAL DEPENDENCY: project-owned profit-funded relayer settlement is configured as the canonical path, but verified Europa ${capitalState.asset || EUROPA_SUSHI.tokens.usdc} proceeds did not produce qualifying paid-chain native gas (${readiness.reason || readiness.status}). The irreducible requirement is real native liquidity in the configured destination relayer wallet, plus valid live RPC and relayer configuration; native currency cannot be manufactured by software for the destination transaction that pays validator fees. Existing bridge helpers remain transfer/URL-only and the simulation-only Superchain relayer/paymaster is not used. Destination evidence: ${destinationEvidence}. No settlement transaction was submitted.`;
+    return `BLOCKED ON SOURCE-FUNDED SETTLEMENT CAPABILITY: verified Europa ${capitalState.asset || EUROPA_SUSHI.tokens.usdc} proceeds did not produce qualifying paid-chain native gas (${readiness.reason || readiness.status}). Destination and amount were derived from live RPC evidence, but no deployed protocol adapter proves source-token conversion or protocol-native cross-chain delivery, including the adapter's first native expenditure. Native currency cannot be manufactured by software for the destination transaction that pays validator fees. Existing bridge helpers are transfer/URL-only and the simulation-only Superchain relayer/paymaster is not used. Destination evidence: ${destinationEvidence}. No settlement transaction was submitted.`;
   }
 
   private async startMarketOperations(): Promise<void> {
@@ -1897,11 +1884,9 @@ export class AutonomousZeroCapitalEngine {
     const balancerVault = process.env.ZERO_CAPITAL_EUROPA_BALANCER_VAULT?.trim() || '';
     const configuredReceiverKind = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND?.trim();
     const receiverKind: 'sushi-v3' | 'balancer' = configuredReceiverKind === 'balancer' ? 'balancer' : 'sushi-v3';
-    const relayerPrivateKey = normalizePrivateKey(process.env.ZERO_CAPITAL_PROFIT_RELAYER_PRIVATE_KEY);
-    const relayerSourceAddress = relayerPrivateKey ? walletFromPrivateKey(relayerPrivateKey).address : executionWallet.address;
-    const profitRecipient = process.env.ZERO_CAPITAL_EUROPA_PROFIT_RECIPIENT?.trim() || relayerSourceAddress;
-    if (profitRecipient.toLowerCase() !== executionWallet.address.toLowerCase() && profitRecipient.toLowerCase() !== relayerSourceAddress.toLowerCase()) {
-      return { success: false, error: 'Europa bootstrap profit recipient must be the trusted executor wallet or configured project relayer source wallet' };
+    const profitRecipient = process.env.ZERO_CAPITAL_EUROPA_PROFIT_RECIPIENT?.trim() || executionWallet.address;
+    if (profitRecipient.toLowerCase() !== executionWallet.address.toLowerCase()) {
+      return { success: false, error: 'Europa bootstrap profit recipient must be the trusted execution wallet; an externally funded relayer is not a source of bootstrap capital' };
     }
 
     try {

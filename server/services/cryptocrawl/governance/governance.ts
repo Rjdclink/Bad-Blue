@@ -554,8 +554,8 @@ export class CryptocrawlGovernance {
     if (state.initialGasReady) {
       throw new GovernanceError('CONSTRAINT_VIOLATION', 'Bootstrap settlement is disabled after initial gas readiness', { stage: state.currentStage });
     }
-    if (context.pair !== 'NATIVE_GAS_SETTLEMENT' || context.venue !== 'profit_funded_relayer' || !context.chain || context.chain === 'europa') {
-      throw new GovernanceError('CONSTRAINT_VIOLATION', 'Bootstrap settlement context is outside the dedicated profit-funded relayer boundary', { context });
+    if (context.pair !== 'NATIVE_GAS_SETTLEMENT' || context.venue !== 'bridge_refuel' || !context.chain || context.chain === 'europa') {
+      throw new GovernanceError('CONSTRAINT_VIOLATION', 'Bootstrap settlement context is outside the dedicated source-funded bridge/refuel boundary', { context });
     }
   }
 

@@ -42,6 +42,16 @@ export interface InitialGasReadiness {
   reason?: string;
 }
 
+export interface AutomaticNativeGasPlan {
+  destinationChain: SupportedChain;
+  destinationWallet: string;
+  requiredNativeWei: string;
+  thresholdDeficitUsd: number;
+  estimatedNextTransactionGasWei: string;
+  estimatedNextTransactionGasUsd: number;
+  provenance: string[];
+}
+
 const NATIVE_ASSETS: Record<string, { symbol: string; decimals: number; eligible: boolean; exclusionReason?: string }> = {
   ethereum: { symbol: 'ETH', decimals: 18, eligible: true },
   polygon: { symbol: 'POL', decimals: 18, eligible: true },
@@ -313,4 +323,70 @@ export async function assessInitialGasReadiness(input: {
     provenance: ['confirmed_native_balance', 'coingecko_live_usd_price'],
     reason: `Verified native-gas readiness is $${total.toFixed(2)}; $${thresholdUsd.toFixed(2)} is required`,
   };
+}
+
+/**
+ * Derive the smallest live paid-chain funding target that would open the
+ * configured readiness threshold. This only plans a target; it does not
+ * imply that a source-to-destination settlement rail exists.
+ */
+export async function calculateAutomaticNativeGasPlan(input: {
+  readiness: InitialGasReadiness;
+  providers: ReadonlyMap<SupportedChain, providers.Provider>;
+  walletAddresses: ReadonlyMap<SupportedChain, string>;
+  safetyMultiplier?: number;
+}): Promise<AutomaticNativeGasPlan | null> {
+  const deficitUsd = Math.max(0, input.readiness.thresholdUsd - (input.readiness.usableNativeGasUsd ?? 0));
+  if (deficitUsd <= 0) return null;
+
+  const measurements = new Map(input.readiness.measurements.map(measurement => [measurement.chain, measurement]));
+  const candidates: Array<AutomaticNativeGasPlan & { totalCostUsd: number }> = [];
+  const safetyMultiplier = input.safetyMultiplier ?? 1.25;
+
+  for (const [chain, provider] of input.providers.entries()) {
+    if (chain === 'europa') continue;
+    const walletAddress = input.walletAddresses.get(chain);
+    const measurement = measurements.get(chain);
+    if (!walletAddress || !measurement || measurement.status !== 'verified' ||
+        measurement.nativePriceUsd === null || measurement.nativePriceUsd <= 0) continue;
+
+    try {
+      const feeData = await provider.getFeeData();
+      const gasPrice = feeData.maxFeePerGas || feeData.gasPrice;
+      if (!gasPrice || gasPrice.lte(0)) continue;
+      const gasLimit = await provider.estimateGas({ from: walletAddress, to: walletAddress, value: 0 });
+      const gasCostWei = gasLimit.mul(gasPrice);
+      const gasCostNative = Number(ethers.utils.formatUnits(gasCostWei, measurement.nativeDecimals || 18));
+      const gasCostUsd = gasCostNative * measurement.nativePriceUsd;
+      if (!Number.isFinite(gasCostUsd)) continue;
+
+      const requiredNative = (deficitUsd + gasCostUsd * safetyMultiplier) / measurement.nativePriceUsd;
+      if (!Number.isFinite(requiredNative) || requiredNative <= 0) continue;
+      const requiredNativeWei = ethers.utils.parseUnits(requiredNative.toFixed(measurement.nativeDecimals || 18), measurement.nativeDecimals || 18);
+      candidates.push({
+        destinationChain: chain,
+        destinationWallet: walletAddress,
+        requiredNativeWei: requiredNativeWei.toString(),
+        thresholdDeficitUsd: deficitUsd,
+        estimatedNextTransactionGasWei: gasCostWei.toString(),
+        estimatedNextTransactionGasUsd: gasCostUsd,
+        totalCostUsd: deficitUsd + gasCostUsd * safetyMultiplier,
+        provenance: [
+          'live_native_balance_measurement',
+          'live_native_usd_price',
+          'live_fee_data',
+          'rpc_gas_estimate',
+          'automatic_destination_selection',
+          'automatic_amount_calculation',
+        ],
+      });
+    } catch {
+      // A chain with incomplete live evidence cannot be selected for funding.
+    }
+  }
+
+  candidates.sort((left, right) => left.totalCostUsd - right.totalCostUsd);
+  if (candidates.length === 0) return null;
+  const { totalCostUsd: _totalCostUsd, ...plan } = candidates[0];
+  return plan;
 }

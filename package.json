@@ -21,6 +21,7 @@
     "verify:beam": "tsx server/services/computationalBeam/testing/verify-beam-workloads.ts",
     "verify:capital-hierarchy": "tsx server/services/cryptocrawl/testing/verify-capital-hierarchy.ts",
     "verify:native-gas-funding": "tsx server/services/cryptocrawl/testing/verify-native-gas-funding-coordinator.ts",
+    "verify:automatic-native-gas-plan": "tsx server/services/cryptocrawl/testing/verify-automatic-native-gas-plan.ts",
     "verify:autonomous-stages": "tsx server/services/cryptocrawl/testing/verify-autonomous-stage-progression.ts",
     "verify:settlement-lifecycle": "tsx server/services/cryptocrawl/testing/verify-settlement-lifecycle.ts",
     "verify:provider-failover": "tsx server/services/cryptocrawl/testing/verify-provider-failover.ts",
