@@ -2,28 +2,34 @@ import 'dotenv/config';
 import { Contract, Wallet, providers, utils } from 'ethers';
 import { buildSwapCallFromLeg } from '../../server/services/cryptocrawl/execution/adapters/onchain-payload-builder.js';
 import { loadConfiguredZeroCapitalRoutes } from '../../server/services/cryptocrawl/execution/adapters/onchain-route-quoter.js';
+import { EUROPA_NETWORK } from '../../server/services/cryptocrawl/execution/adapters/europa-network.js';
+import { EUROPA_SUSHI } from '../../server/services/cryptocrawl/execution/adapters/europa-sushi-registry.js';
+import {
+  getEuropaSushiV3ReceiverConfiguration,
+  sendEuropaZeroGasProvisioningTransaction,
+  type EuropaReceiverConfiguration,
+} from './europa-zero-gas-provisioning.js';
 
-type SupportedDeploymentChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism';
+type SupportedDeploymentChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'europa';
 
 const DEPLOYMENT_CHAINS: Record<SupportedDeploymentChain, { chainId: number; rpcEnv: string }> = {
   ethereum: { chainId: 1, rpcEnv: 'ETHEREUM_RPC_URL' },
   polygon: { chainId: 137, rpcEnv: 'POLYGON_RPC_URL' },
   arbitrum: { chainId: 42161, rpcEnv: 'ARBITRUM_RPC_URL' },
   optimism: { chainId: 10, rpcEnv: 'OPTIMISM_RPC_URL' },
+  europa: { chainId: EUROPA_NETWORK.chainId, rpcEnv: 'EUROPA_RPC_URL' },
 };
 
 const RECEIVER_ABI = [
   'function owner() view returns (address)',
+  'function factory() view returns (address)',
+  'function operators(address operator) view returns (bool)',
+  'function allowedTargets(address target) view returns (bool)',
+  'function allowedApprovalTokens(address token) view returns (bool)',
   'function setOperator(address operator, bool allowed)',
   'function setAllowedTarget(address target, bool allowed)',
   'function setAllowedApprovalToken(address token, bool allowed)',
 ];
-
-interface ReceiverConfiguration {
-  operators?: string[];
-  targets?: string[];
-  approvalTokens?: string[];
-}
 
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -33,10 +39,10 @@ function requireEnv(name: string): string {
 
 function parseChain(value: string | undefined): SupportedDeploymentChain {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism') {
+  if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism' || normalized === 'europa') {
     return normalized;
   }
-  throw new Error('ZERO_CAPITAL_DEPLOY_CHAIN must be ethereum, polygon, arbitrum, or optimism');
+  throw new Error('ZERO_CAPITAL_DEPLOY_CHAIN must be ethereum, polygon, arbitrum, optimism, or europa');
 }
 
 function normalizeAddresses(label: string, values: unknown): string[] {
@@ -49,7 +55,7 @@ function normalizeAddresses(label: string, values: unknown): string[] {
   })));
 }
 
-function parseConfiguration(): ReceiverConfiguration {
+function parseConfiguration(): EuropaReceiverConfiguration {
   const raw = process.env.ZERO_CAPITAL_RECEIVER_CONFIG?.trim();
   if (!raw) {
     throw new Error('ZERO_CAPITAL_RECEIVER_CONFIG is required and must contain operators, targets, and approvalTokens arrays');
@@ -71,7 +77,7 @@ function parseConfiguration(): ReceiverConfiguration {
   };
 }
 
-function validateRouteAllowLists(receiverAddress: string, configuration: ReceiverConfiguration): void {
+function validateRouteAllowLists(receiverAddress: string, configuration: EuropaReceiverConfiguration): void {
   const routes = loadConfiguredZeroCapitalRoutes();
   if (routes.length === 0) {
     throw new Error('ZERO_CAPITAL_ROUTE_CONFIG must contain approved cyclic routes before receiver allowlists can be configured');
@@ -96,8 +102,8 @@ function validateRouteAllowLists(receiverAddress: string, configuration: Receive
     }
   }
 
-  const configuredTargets = new Set((configuration.targets || []).map(utils.getAddress));
-  const configuredApprovalTokens = new Set((configuration.approvalTokens || []).map(utils.getAddress));
+  const configuredTargets = new Set(configuration.targets.map(utils.getAddress));
+  const configuredApprovalTokens = new Set(configuration.approvalTokens.map(utils.getAddress));
   const missingTargets = [...expectedTargets].filter(address => !configuredTargets.has(address));
   const missingTokens = [...expectedApprovalTokens].filter(address => !configuredApprovalTokens.has(address));
   const unexpectedTargets = [...configuredTargets].filter(address => !expectedTargets.has(address));
@@ -117,9 +123,15 @@ function validateRouteAllowLists(receiverAddress: string, configuration: Receive
 async function main(): Promise<void> {
   const chain = parseChain(process.env.ZERO_CAPITAL_DEPLOY_CHAIN);
   const chainConfig = DEPLOYMENT_CHAINS[chain];
-  const rpcUrl = process.env.ZERO_CAPITAL_DEPLOY_RPC_URL?.trim() || requireEnv(chainConfig.rpcEnv);
-  const receiverAddress = requireEnv('ZERO_CAPITAL_FLASHLOAN_RECEIVER');
-  if (!utils.isAddress(receiverAddress)) throw new Error('ZERO_CAPITAL_FLASHLOAN_RECEIVER must be a valid EVM address');
+  const rpcUrl = process.env.ZERO_CAPITAL_DEPLOY_RPC_URL?.trim() ||
+    (chain === 'europa' ? EUROPA_NETWORK.rpcUrl : requireEnv(chainConfig.rpcEnv));
+  const receiverAddressRaw = chain === 'europa'
+    ? requireEnv('ZERO_CAPITAL_EUROPA_RECEIVER')
+    : requireEnv('ZERO_CAPITAL_FLASHLOAN_RECEIVER');
+  if (!utils.isAddress(receiverAddressRaw)) {
+    throw new Error(`${chain === 'europa' ? 'ZERO_CAPITAL_EUROPA_RECEIVER' : 'ZERO_CAPITAL_FLASHLOAN_RECEIVER'} must be a valid EVM address`);
+  }
+  const receiverAddress = utils.getAddress(receiverAddressRaw);
 
   const provider = new providers.JsonRpcProvider(rpcUrl);
   const wallet = new Wallet(requireEnv('WALLET_PRIVATE_KEY'), provider);
@@ -129,23 +141,48 @@ async function main(): Promise<void> {
   }
 
   const code = await provider.getCode(receiverAddress);
-  if (code === '0x') throw new Error('ZERO_CAPITAL_FLASHLOAN_RECEIVER has no deployed bytecode on the configured chain');
+  if (code === '0x') throw new Error(`${chain === 'europa' ? 'ZERO_CAPITAL_EUROPA_RECEIVER' : 'ZERO_CAPITAL_FLASHLOAN_RECEIVER'} has no deployed bytecode on the configured chain`);
+  if (chain === 'europa') {
+    const expectedCodeHash = requireEnv('ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH').toLowerCase();
+    if (!/^0x[a-f0-9]{64}$/.test(expectedCodeHash)) {
+      throw new Error('ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH must be a 32-byte keccak256 hash');
+    }
+    const actualCodeHash = utils.keccak256(code).toLowerCase();
+    if (actualCodeHash !== expectedCodeHash) {
+      throw new Error(`Europa receiver bytecode hash mismatch: expected ${expectedCodeHash}, received ${actualCodeHash}`);
+    }
+  }
 
-  const configuration = parseConfiguration();
-  validateRouteAllowLists(receiverAddress, configuration);
+  const configuration = chain === 'europa'
+    ? getEuropaSushiV3ReceiverConfiguration()
+    : parseConfiguration();
+  if (chain !== 'europa') validateRouteAllowLists(receiverAddress, configuration);
+
   const receiver = new Contract(receiverAddress, RECEIVER_ABI, wallet);
   const receiverOwner = utils.getAddress(await receiver.owner());
   if (receiverOwner !== utils.getAddress(wallet.address)) {
     throw new Error(`WALLET_PRIVATE_KEY address ${wallet.address} is not the receiver owner ${receiverOwner}; configure through the owner wallet or multisig`);
   }
-  const operations = [
-    ...(configuration.operators || []).map(address => ({ method: 'setOperator', args: [address, true] })),
-    ...(configuration.targets || []).map(address => ({ method: 'setAllowedTarget', args: [address, true] })),
-    ...(configuration.approvalTokens || []).map(address => ({ method: 'setAllowedApprovalToken', args: [address, true] })),
-  ];
+  if (chain === 'europa') {
+    const receiverKind = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND?.trim() || 'sushi-v3';
+    if (receiverKind !== 'sushi-v3') {
+      throw new Error('Automatic Europa provisioning currently supports ZERO_CAPITAL_EUROPA_RECEIVER_KIND=sushi-v3 only');
+    }
+    const receiverFactory = utils.getAddress(await receiver.factory());
+    if (receiverFactory.toLowerCase() !== EUROPA_SUSHI.v3Factory.toLowerCase()) {
+      throw new Error(`Europa receiver factory mismatch: expected ${EUROPA_SUSHI.v3Factory}, received ${receiverFactory}`);
+    }
+  }
 
-  if (operations.length === 0) {
-    throw new Error('Receiver configuration must contain at least one operator, target, or approval token');
+  const operations: Array<{ method: 'setOperator' | 'setAllowedTarget' | 'setAllowedApprovalToken'; address: string }> = [];
+  for (const address of configuration.operators) {
+    if (!await receiver.operators(address)) operations.push({ method: 'setOperator', address });
+  }
+  for (const address of configuration.targets) {
+    if (!await receiver.allowedTargets(address)) operations.push({ method: 'setAllowedTarget', address });
+  }
+  for (const address of configuration.approvalTokens) {
+    if (!await receiver.allowedApprovalTokens(address)) operations.push({ method: 'setAllowedApprovalToken', address });
   }
 
   const broadcastAllowed =
@@ -154,13 +191,28 @@ async function main(): Promise<void> {
   const preview: Array<Record<string, unknown>> = [];
 
   for (const operation of operations) {
-    const populated = await receiver.populateTransaction[operation.method](...operation.args);
+    const populated = await receiver.populateTransaction[operation.method](operation.address, true);
+    if (!populated.to || !populated.data) throw new Error(`${operation.method} did not produce an executable transaction`);
     const estimatedGas = await provider.estimateGas({ ...populated, from: wallet.address });
     preview.push({
       method: operation.method,
-      args: operation.args,
+      args: [operation.address, true],
       estimatedGas: estimatedGas.toString(),
+      zeroGasProvisioning: chain === 'europa',
     });
+  }
+
+  if (operations.length === 0) {
+    console.log(JSON.stringify({
+      mode: 'already_configured',
+      chain,
+      chainId: network.chainId,
+      receiver: receiverAddress,
+      signer: wallet.address,
+      owner: receiverOwner,
+      configuration,
+    }, null, 2));
+    return;
   }
 
   if (!broadcastAllowed) {
@@ -168,9 +220,10 @@ async function main(): Promise<void> {
       mode: 'dry_run',
       chain,
       chainId: network.chainId,
-      receiver: utils.getAddress(receiverAddress),
+      receiver: receiverAddress,
       signer: wallet.address,
       owner: receiverOwner,
+      configuration,
       operations: preview,
       nextStep: 'Set ZERO_CAPITAL_CONFIGURE_RECEIVER=true and ZERO_CAPITAL_CONFIGURE_RECEIVER_CONFIRMATION=CONFIGURE_FLASHLOAN_RECEIVER to broadcast.',
     }, null, 2));
@@ -178,21 +231,51 @@ async function main(): Promise<void> {
   }
 
   const transactions: string[] = [];
+  const computeSources: string[] = [];
   for (const operation of operations) {
-    const transaction = await receiver[operation.method](...operation.args);
-    const receipt = await transaction.wait();
-    if (receipt.status !== 1) throw new Error(`${operation.method} transaction reverted`);
-    transactions.push(transaction.hash);
+    if (chain === 'europa') {
+      const populated = await receiver.populateTransaction[operation.method](operation.address, true);
+      if (!populated.to || !populated.data) throw new Error(`${operation.method} did not produce an executable Europa transaction`);
+      const provisioning = await sendEuropaZeroGasProvisioningTransaction({
+        provider,
+        wallet,
+        workloadId: `europa-receiver-config:${operation.method}:${operation.address}`,
+        transaction: {
+          to: String(populated.to),
+          data: String(populated.data),
+          value: populated.value || 0,
+        },
+      });
+      transactions.push(provisioning.transactionHash);
+      computeSources.push(provisioning.computeSource);
+    } else {
+      const transaction = await receiver[operation.method](operation.address, true);
+      const receipt = await transaction.wait();
+      if (!receipt || receipt.status !== 1) throw new Error(`${operation.method} transaction reverted`);
+      transactions.push(transaction.hash);
+    }
+  }
+
+  for (const address of configuration.operators) {
+    if (!await receiver.operators(address)) throw new Error(`Receiver operator ${address} was not enabled`);
+  }
+  for (const address of configuration.targets) {
+    if (!await receiver.allowedTargets(address)) throw new Error(`Receiver target ${address} was not enabled`);
+  }
+  for (const address of configuration.approvalTokens) {
+    if (!await receiver.allowedApprovalTokens(address)) throw new Error(`Receiver approval token ${address} was not enabled`);
   }
 
   console.log(JSON.stringify({
     mode: 'configured',
     chain,
     chainId: network.chainId,
-    receiver: utils.getAddress(receiverAddress),
+    receiver: receiverAddress,
     signer: wallet.address,
     owner: receiverOwner,
+    configuration,
     transactions,
+    ...(computeSources.length > 0 ? { computeSources, zeroMonetaryGasVerified: true } : {}),
   }, null, 2));
 }
 
