@@ -7,9 +7,9 @@
  */
 
 import { 
-  Task,
-  TaskType,
-  TaskIntensity,
+  Task, 
+  TaskType, 
+  TaskIntensity, 
   RoutingDecision,
   ComputeLayer,
   TaskRoutingError 
