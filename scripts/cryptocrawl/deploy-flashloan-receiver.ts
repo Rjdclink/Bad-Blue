@@ -81,6 +81,9 @@ async function main(): Promise<void> {
   if (receiverKind !== 'balancer' && !isSushiV3) {
     throw new Error('ZERO_CAPITAL_DEPLOY_RECEIVER must be balancer or sushi-v3');
   }
+  if (chain === 'europa' && !isSushiV3) {
+    throw new Error('Automatic Europa zero-capital provisioning supports the reviewed sushi-v3 receiver only');
+  }
   if (chain !== 'europa' && isSushiV3) {
     throw new Error('The reviewed Sushi V3 receiver deployment path is currently restricted to SKALE Europa');
   }
@@ -89,8 +92,7 @@ async function main(): Promise<void> {
     ? requireAddress('ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY', process.env.ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY?.trim() || EUROPA_SUSHI.v3Factory)
     : requireAddress(
       'ZERO_CAPITAL_BALANCER_VAULT',
-      process.env.ZERO_CAPITAL_BALANCER_VAULT?.trim() ||
-        (chain === 'europa' ? process.env.ZERO_CAPITAL_EUROPA_BALANCER_VAULT?.trim() || '' : chainConfig.balancerVault || ''),
+      process.env.ZERO_CAPITAL_BALANCER_VAULT?.trim() || chainConfig.balancerVault || '',
     );
   if (isSushiV3 && infrastructure.toLowerCase() !== EUROPA_SUSHI.v3Factory.toLowerCase()) {
     throw new Error(`Europa Sushi V3 receiver must use the verified factory ${EUROPA_SUSHI.v3Factory}`);
