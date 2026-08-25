@@ -3,6 +3,7 @@ import { BigNumber } from 'ethers';
 import {
   buildEuropaExecutionFingerprint,
   calculateEuropaNativeFee,
+  getEuropaReceiverProfitEventName,
 } from '../../server/services/cryptocrawl/execution/adapters/europa-zero-gas-adapter.js';
 
 const payload = {
@@ -28,5 +29,8 @@ assert.notEqual(first, changedNonce, 'Transaction state changes must invalidate 
 assert.equal(calculateEuropaNativeFee(BigNumber.from(0), BigNumber.from(0)).toString(), '0');
 assert.equal(calculateEuropaNativeFee(BigNumber.from(10), BigNumber.from(7)).toString(), '3');
 assert.equal(calculateEuropaNativeFee(BigNumber.from(7), BigNumber.from(10)).toString(), '0');
+assert.equal(getEuropaReceiverProfitEventName(undefined), 'FlashLoanExecuted');
+assert.equal(getEuropaReceiverProfitEventName('balancer'), 'FlashLoanExecuted');
+assert.equal(getEuropaReceiverProfitEventName('sushi-v3'), 'SushiV3FlashExecuted');
 
-console.log('Europa transaction state and zero-fee proof verification passed');
+console.log('Europa transaction state, zero-fee proof, and receiver event verification passed');
