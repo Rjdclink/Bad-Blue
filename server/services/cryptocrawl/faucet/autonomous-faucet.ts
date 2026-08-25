@@ -1919,7 +1919,7 @@ class AutonomousCryptoFaucet {
           mempool: alchemyIntegration.getMempoolAnalysis(),
           marketUniverse: discoveredSymbols,
           dexObservation: null,
-          missingInformation: ['dex_liquidity'],
+          missingInformation: [],
           provenance: [
             ...(candidateTradingView?.dataProvenance === 'live' ? ['TradingView'] : []),
             ...(hasCurrentQuoteValidation ? ['direct_exchange_quotes'] : []),
@@ -1946,13 +1946,19 @@ class AutonomousCryptoFaucet {
       if (plan && this.tradingViewAnalysis?.symbol.toUpperCase() !== plan.symbol.toUpperCase()) {
         await this.updateTradingViewAnalysis(plan.symbol);
       }
-      const dexObservation = await marketDataProviders.getDexQuote({
-        chainId: 137,
-        sellToken: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
-        buyToken: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
-        sellAmount: '1000000',
-        takerAddress: process.env.ZEROX_TAKER_ADDRESS?.trim(),
-      });
+      const dexChainId = Number(process.env.ZEROX_CHAIN_ID);
+      const dexSellToken = process.env.ZEROX_SELL_TOKEN?.trim();
+      const dexBuyToken = process.env.ZEROX_BUY_TOKEN?.trim();
+      const dexSellAmount = process.env.ZEROX_SELL_AMOUNT?.trim();
+      const dexObservation = Number.isInteger(dexChainId) && dexChainId > 0 && dexSellToken && dexBuyToken && dexSellAmount
+        ? await marketDataProviders.getDexQuote({
+            chainId: dexChainId,
+            sellToken: dexSellToken,
+            buyToken: dexBuyToken,
+            sellAmount: dexSellAmount,
+            takerAddress: process.env.ZEROX_TAKER_ADDRESS?.trim(),
+          })
+        : null;
       this.marketConditions.quoteDataProvenance = hasCurrentQuoteValidation ? 'live' : 'no-data';
       this.marketConditions.quoteDataTimestamp = hasCurrentQuoteValidation
         ? quoteValidation!.validatedAt
@@ -1978,7 +1984,6 @@ class AutonomousCryptoFaucet {
         dexObservation,
         missingInformation: [
           ...(plan ? [] : ['verified_opportunity_economics']),
-          ...(dexObservation ? [] : ['dex_liquidity']),
           ...(hasCurrentQuoteValidation ? [] : ['centralized_quote_validation']),
           ...degradedMarketProviders.map(status => `provider_${status.provider}_${status.state}`),
         ],
@@ -2028,7 +2033,7 @@ class AutonomousCryptoFaucet {
           chain: cheapestChain,
           pairOrSymbol: plan?.symbol || configuredSymbol,
           venue: plan?.buyVenue || 'market-data-validation',
-          expectedProfitUsd: plan?.netProfitUsd || 0,
+          expectedProfitUsd: plan?.netProfitUsd,
           volatilityRegime: {
             liquidityScore: Math.max(0.1, this.tradingViewAnalysis.summary.strength / 100),
             recentPriceMovement: Math.abs(TradingViewEngine.signalToScore(this.tradingViewAnalysis.summary.signal)) / 100,
@@ -2037,22 +2042,22 @@ class AutonomousCryptoFaucet {
             p50Ms: { live_quotes: Math.max(0, Date.now() - quoteValidation!.validatedAt) },
             maxP50Ms: maxQuoteAgeMs,
           },
-          feesRebates: {
-            takerFeeBps: plan ? Math.round((plan.costs.totalCostsUsd / Math.max(plan.notionalUsd, 1)) * 10_000) : 0,
-          },
+          feesRebates: plan ? {
+            takerFeeBps: Math.round(((plan.costs.buyFeeUsd + plan.costs.sellFeeUsd) / Math.max(plan.notionalUsd, 1)) * 10_000),
+          } : undefined,
           crossVenueFees: plan ? {
             buyVenue: plan.buyVenue,
             sellVenue: plan.sellVenue,
             buyTakerFeeBps: Math.round((plan.costs.buyFeeUsd / Math.max(plan.notionalUsd, 1)) * 10_000),
             sellTakerFeeBps: Math.round((plan.costs.sellFeeUsd / Math.max(plan.notionalUsd, 1)) * 10_000),
-            grossSpreadBps: Math.max(0, plan.spreadPct * 100),
+            grossSpreadBps: plan.spreadPct * 100,
           } : undefined,
           drawdownCaps: {
-            drawdownPct: 0,
-            maxDrawdownPct: 5,
+            drawdownPct: stageManager.getState().currentDrawdownPercent,
+            maxDrawdownPct: stageManager.getStageConfig().maxDrawdownPercent,
           },
           slippage: {
-            expectedSlippageBps: plan ? Math.round((plan.costs.totalCostsUsd / Math.max(plan.notionalUsd, 1)) * 10_000) : 0,
+            expectedSlippageBps: plan?.expectedSlippageBps ?? undefined,
             maxSlippageBps: 50,
           },
         }, {

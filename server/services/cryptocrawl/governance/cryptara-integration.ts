@@ -383,27 +383,33 @@ export class CryptaraGovernance extends EventEmitter {
   private async updateProofMetrics(simulationResult: any): Promise<void> {
     const state = stageManager.getState();
     const scenarios = Array.isArray(simulationResult?.scenarios) ? simulationResult.scenarios : [];
-    const positiveProbability = scenarios
-      .filter((scenario: any) => Number(scenario?.expectedReturn || 0) > 0)
-      .reduce((sum: number, scenario: any) => sum + Number(scenario?.probability || 0), 0);
+    const validScenarios = scenarios.filter((scenario: any) => {
+      const probability = Number(scenario?.probability);
+      const expectedReturn = Number(scenario?.expectedReturn);
+      return Number.isFinite(probability) && probability >= 0 && probability <= 1 && Number.isFinite(expectedReturn);
+    });
+    if (validScenarios.length === 0) {
+      log.warn('Monte Carlo result did not contain a measured scenario probability; proof metrics unchanged');
+      return;
+    }
 
-    const weightedSharpe = scenarios.length > 0
-      ? scenarios.reduce(
-          (sum: number, scenario: any) => sum + Number(scenario?.probability || 0) * Number(scenario?.sharpeRatio || 0),
+    const positiveProbability = validScenarios
+      .filter((scenario: any) => Number(scenario.expectedReturn) > 0)
+      .reduce((sum: number, scenario: any) => sum + Number(scenario.probability), 0);
+    const monteCarloPassRate = Math.max(0, Math.min(1, positiveProbability));
+    const weightedSharpe = validScenarios.every((scenario: any) => Number.isFinite(Number(scenario?.sharpeRatio)))
+      ? validScenarios.reduce(
+          (sum: number, scenario: any) => sum + Number(scenario.probability) * Number(scenario.sharpeRatio),
           0,
         )
-      : 1;
+      : undefined;
+    const maxDrawdown = Number(simulationResult?.riskMetrics?.maxDrawdown);
 
-    const maxDrawdown = Number(simulationResult?.riskMetrics?.maxDrawdown || state.proofMetrics.maxDrawdown || 0.1);
-    const successRate = Math.max(0.35, Math.min(0.98, 0.45 + positiveProbability * 0.5 - maxDrawdown * 0.25));
-    const monteCarloPassRate = Math.max(0.3, Math.min(0.99, 0.55 + positiveProbability * 0.35 - maxDrawdown * 0.2));
-
-    const updatedMetrics = {
-      successRate,
-      sharpeRatio: weightedSharpe,
+    const updatedMetrics: Parameters<typeof stageManager.updateProofMetrics>[0] = {
       monteCarloPassRate,
       monteCarloSimulations: state.proofMetrics.monteCarloSimulations + 1,
-      maxDrawdown,
+      ...(weightedSharpe !== undefined ? { sharpeRatio: weightedSharpe } : {}),
+      ...(Number.isFinite(maxDrawdown) ? { maxDrawdown } : {}),
     };
     
     await stageManager.updateProofMetrics(updatedMetrics);

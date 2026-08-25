@@ -165,7 +165,9 @@ class MarketDataProviders {
         buyAmount: payload.buyAmount,
         price: Number.isFinite(sellAmount) && sellAmount > 0 ? buyAmount / sellAmount : undefined,
         guaranteedPrice: Number(payload?.guaranteedPrice) || undefined,
-        liquidityAvailable: payload?.liquidityAvailable === true,
+        liquidityAvailable: payload?.liquidityAvailable === undefined
+          ? buyAmount > 0
+          : payload.liquidityAvailable === true,
         route,
         priceImpact: Number.isFinite(priceImpact) ? priceImpact : undefined,
         estimatedGas: typeof payload?.estimatedGas === 'string' ? payload.estimatedGas : undefined,

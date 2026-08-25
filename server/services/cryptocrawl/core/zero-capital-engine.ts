@@ -164,6 +164,10 @@ const FLASH_LOAN_RECEIVER_EVENT_INTERFACE = new ethers.utils.Interface([
 ]);
 const ERC20_BALANCE_INTERFACE = ['function balanceOf(address owner) view returns (uint256)'];
 
+function isPrivateKey(value: string | undefined): value is string {
+  return typeof value === 'string' && /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
 export function composeConfiguredZeroCapitalRoutes(
   configuredRoutes: ConfiguredZeroCapitalRoute[],
   dynamicEuropaRoute?: ConfiguredZeroCapitalRoute | null,
@@ -285,7 +289,13 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
-    const walletPrivateKey = process.env.WALLET_PRIVATE_KEY?.trim();
+    const configuredWalletPrivateKey = process.env.WALLET_PRIVATE_KEY?.trim();
+    const walletPrivateKey = isPrivateKey(configuredWalletPrivateKey) ? configuredWalletPrivateKey : undefined;
+    if (configuredWalletPrivateKey && !walletPrivateKey) {
+      logger.warn('[ZeroCapitalEngine] WALLET_PRIVATE_KEY is not a valid 32-byte hex private key; signing is disabled', {
+        component: 'ZeroCapitalEngine',
+      });
+    }
     if (walletPrivateKey) {
       for (const [chain, provider] of this.providers.entries()) {
         this.executionWallets.set(chain, new Wallet(walletPrivateKey, provider));
@@ -301,7 +311,15 @@ export class AutonomousZeroCapitalEngine {
 
     // Initialize Flashbots for Ethereum mainnet (gasless execution)
     const ethProvider = this.providers.get('ethereum');
-    const flashbotsAuthKey = process.env.FLASHBOTS_AUTH_KEY?.trim() || walletPrivateKey;
+    const configuredFlashbotsAuthKey = process.env.FLASHBOTS_AUTH_KEY?.trim();
+    const flashbotsAuthKey = isPrivateKey(configuredFlashbotsAuthKey)
+      ? configuredFlashbotsAuthKey
+      : walletPrivateKey;
+    if (configuredFlashbotsAuthKey && !isPrivateKey(configuredFlashbotsAuthKey)) {
+      logger.warn('[ZeroCapitalEngine] FLASHBOTS_AUTH_KEY is not a valid 32-byte hex private key; Flashbots will use the wallet signer when valid', {
+        component: 'ZeroCapitalEngine',
+      });
+    }
     if (ethProvider && flashbotsAuthKey) {
       try {
         this.authSigner = new Wallet(flashbotsAuthKey);
@@ -1109,6 +1127,13 @@ export class AutonomousZeroCapitalEngine {
       mempoolActivity = mempool.totalPending;
       networkCongestion = Math.min(1, mempool.totalPending / 8000);
     }
+    const routeFeeBps = opportunity.route.reduce((total, leg) => total + leg.fee * 10000, 0);
+    const firstRouteLeg = opportunity.route[0];
+    const lastRouteLeg = opportunity.route[opportunity.route.length - 1];
+    const grossSpreadBps = opportunity.flashLoanAmount > 0n
+      ? Number((opportunity.grossProfit || opportunity.expectedProfit) * 10000n) / Number(opportunity.flashLoanAmount)
+      : Number.NaN;
+    const stageState = stageManager.getState();
     const gate = cryptara.evaluateMarketGates({
       chain: opportunity.chain,
       pairOrSymbol: pair,
@@ -1125,15 +1150,18 @@ export class AutonomousZeroCapitalEngine {
         p50Ms: { route_quote: opportunity.quoteLatencyMs },
         maxP50Ms: Math.max(100, Number(process.env.ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS || 1000)),
       },
-      feesRebates: { takerFeeBps: 0 },
+      feesRebates: Number.isFinite(routeFeeBps) ? { takerFeeBps: routeFeeBps } : undefined,
       crossVenueFees: {
-        buyVenue: 'route_quote',
-        sellVenue: isEuropa ? 'europa' : 'flashbots',
-        buyTakerFeeBps: 0,
-        sellTakerFeeBps: 0,
-        grossSpreadBps: opportunity.netProfitBps,
+        buyVenue: `route:${firstRouteLeg?.protocol || 'unknown'}`,
+        sellVenue: `route:${lastRouteLeg?.protocol || 'unknown'}`,
+        buyTakerFeeBps: (firstRouteLeg?.fee || 0) * 10000,
+        sellTakerFeeBps: (lastRouteLeg?.fee || 0) * 10000,
+        grossSpreadBps,
       },
-      drawdownCaps: { drawdownPct: 0, maxDrawdownPct: 5 },
+      drawdownCaps: {
+        drawdownPct: stageState.currentDrawdownPercent,
+        maxDrawdownPct: stageManager.getStageConfig().maxDrawdownPercent,
+      },
       profitReinvestment: {
         realizedProfitUsd: this.toUsdEstimate(this.state.totalProfit, 6),
         requestedNotionalUsd: 0,
