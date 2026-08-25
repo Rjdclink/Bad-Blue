@@ -336,6 +336,13 @@ export class NativeGasFundingCoordinator {
   async settleVerifiedProfit(request: NativeGasFundingRequest): Promise<NativeGasFundingSettlement> {
     requireVerifiedProfit(request.evidence);
     const destination = address('destinationWallet', request.destinationWallet);
+    if (request.evidence.sourceChain === 'europa') {
+      request = {
+        ...request,
+        destinationWallet: destination,
+        idempotencyKey: `europa-profit-native-gas:${request.evidence.sourceTransactionHash.toLowerCase()}:${request.destinationChain.toLowerCase()}:${destination.toLowerCase()}`,
+      };
+    }
     const required = positiveInteger('requiredNativeWei', request.requiredNativeWei);
     const reserved = await this.store.reserve({
       idempotencyKey: request.idempotencyKey,
