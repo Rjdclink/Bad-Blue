@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { providers } from 'ethers';
 import { SkalePowBeamWorkloadAdapter } from '../../../computationalBeam/skalePowWorkloadAdapter.js';
+import { isBootstrapRecoveryActive } from './bootstrap-recovery-state.js';
 import {
   SkaleExternalGasPowAdapter,
   type SkaleExternalGasPowRequest,
@@ -216,6 +217,9 @@ export class Stage4PowComputeCoordinator {
       };
     }
 
+    if (!isBootstrapRecoveryActive()) {
+      throw new Error('Railway emergency compute is disabled while verified native-gas readiness is satisfied');
+    }
     return this.findProofWithRailwayEmergency(request, options);
   }
 
