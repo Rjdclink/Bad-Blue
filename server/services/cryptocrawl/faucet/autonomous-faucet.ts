@@ -1906,9 +1906,10 @@ class AutonomousCryptoFaucet {
           });
         }
       }
-      const candidateAssessments = verifiedPlans.map(candidate => {
+      const candidateAssessments: Awaited<ReturnType<typeof cryptara.assessOpportunity>>[] = [];
+      for (const candidate of verifiedPlans) {
         const candidateTradingView = tradingViewBySymbol.get(candidate.symbol.toUpperCase()) || null;
-        return cryptara.recordOpportunityObservation({
+        candidateAssessments.push(await cryptara.assessOpportunity({
           opportunityId: `${candidate.buyVenue}-${candidate.sellVenue}-${candidate.symbol}`,
           observedAt: Date.now(),
           chain: cheapestChain || 'unknown',
@@ -1927,8 +1928,8 @@ class AutonomousCryptoFaucet {
             ...(cheapestChain ? ['gas_oracle'] : []),
             ...marketProviderStatuses.map(status => `provider:${status.provider}:${status.state}`),
           ],
-        });
-      });
+        }));
+      }
       const assessmentByOpportunity = new Map(candidateAssessments.map(assessment => [assessment.opportunityId, assessment]));
       const plan = [...verifiedPlans].sort((left, right) => {
         const leftScore = assessmentByOpportunity.get(`${left.buyVenue}-${left.sellVenue}-${left.symbol}`)?.rankScore;

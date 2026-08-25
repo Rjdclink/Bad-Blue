@@ -66,6 +66,7 @@ export interface NormalizedRealizedExecution {
   provenance: string[];
   orders?: NormalizedOrderSettlement[];
   transactionHash?: string;
+  blockNumber?: number;
   receiptStatus?: 0 | 1;
   tokenAmounts?: Array<{
     token: string;

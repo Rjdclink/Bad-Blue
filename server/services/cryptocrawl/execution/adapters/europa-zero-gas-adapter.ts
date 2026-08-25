@@ -36,6 +36,7 @@ export interface EuropaExecutionProof {
   transactionHash?: string;
   blockNumber?: number;
   gasUsed?: bigint;
+  receiptStatus?: 0 | 1;
   startingNativeBalanceWei?: bigint;
   endingNativeBalanceWei?: bigint;
   nativeFeeWei?: bigint;
@@ -259,7 +260,16 @@ export class EuropaZeroGasAdapter {
 
     if (receipt.status !== 1) {
       await this.ledger.markFailed(executionKey, 'Europa transaction reverted');
-      return { executionKey, transactionHash, zeroMonetaryGasVerified: false, success: false, error: 'Europa transaction reverted' };
+      return {
+        executionKey,
+        transactionHash,
+        blockNumber: receipt.blockNumber,
+        gasUsed: BigInt(receipt.gasUsed.toString()),
+        receiptStatus: 0,
+        zeroMonetaryGasVerified: false,
+        success: false,
+        error: 'Europa transaction reverted',
+      };
     }
 
     const endingNativeBalance = await provider.getBalance(signerAddress);
@@ -287,6 +297,7 @@ export class EuropaZeroGasAdapter {
         transactionHash,
         blockNumber: receipt.blockNumber,
         gasUsed: BigInt(receipt.gasUsed.toString()),
+        receiptStatus: 1,
         startingNativeBalanceWei: BigInt(startingNativeBalance.toString()),
         endingNativeBalanceWei: BigInt(endingNativeBalance.toString()),
         nativeFeeWei: BigInt(measuredNativeFee.toString()),
@@ -306,6 +317,7 @@ export class EuropaZeroGasAdapter {
         transactionHash,
         blockNumber: receipt.blockNumber,
         gasUsed: BigInt(receipt.gasUsed.toString()),
+        receiptStatus: 1,
         startingNativeBalanceWei: BigInt(startingNativeBalance.toString()),
         endingNativeBalanceWei: BigInt(endingNativeBalance.toString()),
         nativeFeeWei: BigInt(measuredNativeFee.toString()),
@@ -325,6 +337,7 @@ export class EuropaZeroGasAdapter {
       transactionHash,
       blockNumber: receipt.blockNumber,
       gasUsed: BigInt(receipt.gasUsed.toString()),
+      receiptStatus: 1,
       startingNativeBalanceWei: BigInt(startingNativeBalance.toString()),
       endingNativeBalanceWei: BigInt(endingNativeBalance.toString()),
       nativeFeeWei: BigInt(measuredNativeFee.toString()),

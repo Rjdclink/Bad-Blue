@@ -176,9 +176,9 @@ export interface CryptaraExecutionFeedback {
   strategy: string;
   success: boolean;
   expectedProfitUsd: number;
-  realizedProfitUsd: number;
-  feeUsd: number;
-  slippageBps: number;
+  realizedProfitUsd: number | null;
+  feeUsd: number | null;
+  slippageBps: number | null;
   latencyMs: number;
   usedZeroCapital: boolean;
   timestamp: number;
@@ -576,17 +576,25 @@ export class Cryptara extends EventEmitter {
 
   async assessOpportunity(context: CryptaraOpportunityContext): Promise<CryptaraOpportunityAssessment> {
     this.latestOpportunityContext = context;
+    let monteCarloMissingInformation: string[] = [];
     if (context.plan && this.status.isRunning) {
       try {
         await this.runMonteCarloSimulation();
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        monteCarloMissingInformation = message.startsWith('Cryptara Monte Carlo requires measured context: ')
+          ? message.replace('Cryptara Monte Carlo requires measured context: ', '').split(', ').filter(Boolean)
+          : ['monte_carlo_evidence'];
         log.warn('Cryptara opportunity Monte Carlo unavailable; retaining explicit incomplete evidence', {
           opportunityId: context.opportunityId,
-          error: error instanceof Error ? error.message : String(error),
+          error: message,
         });
       }
     }
-    return this.recordOpportunityObservation(context);
+    return this.recordOpportunityObservation({
+      ...context,
+      missingInformation: [...context.missingInformation, ...monteCarloMissingInformation],
+    });
   }
 
   recordOpportunityObservation(context: CryptaraOpportunityContext): CryptaraOpportunityAssessment {
@@ -657,6 +665,9 @@ export class Cryptara extends EventEmitter {
       this.latestMonteCarloEvidence.confidence <= 1
       ? { ...this.latestMonteCarloEvidence }
       : null;
+    if (context.plan && !monteCarlo && !missingInformation.includes('monte_carlo_evidence')) {
+      missingInformation.push('monte_carlo_evidence');
+    }
     if (monteCarlo) provenance.push('cryptara_monte_carlo');
     const quoteFreshness = hasPlanEconomics && plan && Number.isFinite(plan.quoteAgeMs)
       ? Math.max(0, Math.min(1, 1 - plan.quoteAgeMs / Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000))))
@@ -674,8 +685,8 @@ export class Cryptara extends EventEmitter {
     const executionConfidence = hasExecutableEvidence && quoteFreshness !== null && riskPenalty !== null
       ? Number(Math.max(0, Math.min(1, quoteFreshness * 0.55 + (liquidityEvidence || 0) * 0.2 + Math.max(0, 1 - riskPenalty) * 0.25)).toFixed(4))
       : null;
-    const probabilityOfProfitableExecution = executionConfidence !== null
-      ? Math.min(executionConfidence, monteCarlo?.probabilityOfProfit ?? executionConfidence)
+    const probabilityOfProfitableExecution = executionConfidence !== null && monteCarlo !== null
+      ? Math.min(executionConfidence, monteCarlo.probabilityOfProfit)
       : null;
     const dataCompleteness = Number(Math.max(0, Math.min(1, 1 - missingInformation.length / 8)).toFixed(4));
     const rankScore = netProfitMargin !== null && probabilityOfProfitableExecution !== null
@@ -772,7 +783,7 @@ export class Cryptara extends EventEmitter {
       this.pendingOpportunityPredictions.delete(feedback.opportunityId);
       return;
     }
-    const realizedPositive = feedback.success && feedback.realizedProfitUsd > 0;
+    const realizedPositive = feedback.success && feedback.realizedProfitUsd !== null && feedback.realizedProfitUsd > 0;
     this.predictionCalibration.evaluated++;
     if (prediction.expectedPositive === realizedPositive) this.predictionCalibration.correct++;
     this.predictionCalibration.absoluteError += Math.abs(prediction.probability - (realizedPositive ? 1 : 0));
@@ -789,7 +800,7 @@ export class Cryptara extends EventEmitter {
     if (!hasMempoolEvidence && !missingInformation.includes('mempool_evidence')) missingInformation.push('mempool_evidence');
     const signal = context.tradingView?.summary.signal;
     const congestionRisk = pending !== undefined && pending > 8000;
-    if (congestionRisk || signal === 'strong_sell') return 'critical';
+      if (congestionRisk || signal === 'strong_sell') return 'critical';
     if (pending !== undefined && pending > 2000 || signal === 'sell') return 'high';
     if (pending !== undefined && pending > 1000 || signal === 'neutral') return 'medium';
     return 'low';
@@ -803,9 +814,9 @@ export class Cryptara extends EventEmitter {
         typeof entry.strategy === 'string' &&
         typeof entry.success === 'boolean' &&
         Number.isFinite(entry.expectedProfitUsd) &&
-        Number.isFinite(entry.realizedProfitUsd) &&
-        Number.isFinite(entry.feeUsd) &&
-        Number.isFinite(entry.slippageBps) &&
+        (entry.realizedProfitUsd === null || Number.isFinite(entry.realizedProfitUsd)) &&
+        (entry.feeUsd === null || Number.isFinite(entry.feeUsd)) &&
+        (entry.slippageBps === null || Number.isFinite(entry.slippageBps)) &&
         Number.isFinite(entry.latencyMs) &&
         Number.isFinite(entry.timestamp),
       )
@@ -838,17 +849,19 @@ export class Cryptara extends EventEmitter {
   private calculateExecutionRanking(): Omit<CryptaraPerformanceRanking, 'evaluatedAt' | 'preferredChains' | 'directive'> {
     const recent = this.executionHistory.slice(-120);
     const successful = recent.filter(entry => entry.success);
+    const measuredSuccessful = successful.filter(entry => entry.realizedProfitUsd !== null);
     const successRate = recent.length > 0 ? successful.length / recent.length : 0.5;
-    const averageNetProfitUsd = successful.length > 0
-      ? successful.reduce((sum, entry) => sum + entry.realizedProfitUsd, 0) / successful.length
+    const averageNetProfitUsd = measuredSuccessful.length > 0
+      ? measuredSuccessful.reduce((sum, entry) => sum + entry.realizedProfitUsd!, 0) / measuredSuccessful.length
       : 0;
-    const averageSlippageBps = recent.length > 0
-      ? recent.reduce((sum, entry) => sum + Math.max(0, entry.slippageBps), 0) / recent.length
+    const measuredSlippage = recent.filter(entry => entry.slippageBps !== null);
+    const averageSlippageBps = measuredSlippage.length > 0
+      ? measuredSlippage.reduce((sum, entry) => sum + Math.max(0, entry.slippageBps!), 0) / measuredSlippage.length
       : 12;
     const chainPerformance = new Map<string, { net: number; wins: number; total: number }>();
     for (const entry of recent) {
       const current = chainPerformance.get(entry.chain) || { net: 0, wins: 0, total: 0 };
-      current.net += entry.realizedProfitUsd;
+      if (entry.realizedProfitUsd !== null) current.net += entry.realizedProfitUsd;
       current.total += 1;
       if (entry.success) current.wins += 1;
       chainPerformance.set(entry.chain, current);
@@ -1207,13 +1220,16 @@ export class Cryptara extends EventEmitter {
     const executionHistory = context
       ? this.executionHistory.filter(entry => entry.symbol === context.symbol)
       : [];
+    const measuredExecutionHistory = executionHistory.filter(entry =>
+      entry.realizedProfitUsd !== null && Number.isFinite(entry.realizedProfitUsd),
+    );
     const missingInformation: string[] = [];
     if (!context?.plan) missingInformation.push('verified_opportunity_economics');
     if (!priceHistory || priceHistory.length < 20) missingInformation.push('price_history');
     if (!mempool || mempool.avgGasPrice <= 0 || mempool.maxGasPrice <= 0) missingInformation.push('gas_observations');
     if (context?.tradingView?.dataProvenance !== 'live') missingInformation.push('live_technical_analysis');
-    if (executionHistory.length < 3) missingInformation.push('measured_execution_outcomes');
-    if (!executionHistory.some(entry => Number.isFinite(entry.latencyMs) && entry.latencyMs > 0)) missingInformation.push('measured_execution_latency');
+    if (measuredExecutionHistory.length < 3) missingInformation.push('measured_execution_outcomes');
+    if (!measuredExecutionHistory.some(entry => Number.isFinite(entry.latencyMs) && entry.latencyMs > 0)) missingInformation.push('measured_execution_latency');
     if (context?.plan && context.plan.quoteAgeMs > Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000))) missingInformation.push('fresh_verified_quote');
     if (marketAsset && Date.now() - marketAsset.observedAt > Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000))) missingInformation.push('fresh_price_history');
     if (missingInformation.length > 0) {
@@ -1244,12 +1260,12 @@ export class Cryptara extends EventEmitter {
         gasHistory: [mempool.avgGasPrice, mempool.maxGasPrice],
       };
       const plan = context.plan;
-      const successRate = executionHistory.filter(entry => entry.success).length / executionHistory.length;
-      const timestamps = executionHistory.map(entry => entry.timestamp).filter(timestamp => Number.isFinite(timestamp)).sort((left, right) => left - right);
+      const successRate = measuredExecutionHistory.filter(entry => entry.success).length / measuredExecutionHistory.length;
+      const timestamps = measuredExecutionHistory.map(entry => entry.timestamp).filter(timestamp => Number.isFinite(timestamp)).sort((left, right) => left - right);
       const observedDays = timestamps.length > 1
         ? Math.max(1 / 24, (timestamps[timestamps.length - 1] - timestamps[0]) / (24 * 60 * 60 * 1000))
         : 1;
-      const observedLatencyMs = executionHistory
+      const observedLatencyMs = measuredExecutionHistory
         .map(entry => entry.latencyMs)
         .filter(latency => Number.isFinite(latency) && latency > 0)
         .reduce((sum, latency, _index, values) => sum + latency / values.length, 0);
@@ -1257,10 +1273,10 @@ export class Cryptara extends EventEmitter {
         name: 'verified-arbitrage-context',
         baseSuccessRate: successRate,
         avgProfitPerTrade: Math.max(0.0001, plan!.netProfitUsd / plan!.notionalUsd),
-        avgLossPerTrade: executionHistory.length > 0
-          ? Math.max(0.0001, Math.abs(Math.min(...executionHistory.map(entry => entry.realizedProfitUsd))) / plan!.notionalUsd)
+        avgLossPerTrade: measuredExecutionHistory.length > 0
+          ? Math.max(0.0001, Math.abs(Math.min(...measuredExecutionHistory.map(entry => entry.realizedProfitUsd!))) / plan!.notionalUsd)
           : Math.max(0.0001, plan!.costs.totalCostsUsd / plan!.notionalUsd),
-        tradesPerDay: executionHistory.length / observedDays,
+        tradesPerDay: measuredExecutionHistory.length / observedDays,
         gasPerTrade: plan!.costs.gasUsd / plan!.notionalUsd,
         slippageTolerance: Math.max(0.0001, (plan!.expectedSlippageBps ?? 0) / 10_000),
         executionLatency: observedLatencyMs,

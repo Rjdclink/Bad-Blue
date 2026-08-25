@@ -57,6 +57,7 @@ import type { GateEvaluation } from '../../cryptara/marketGates/types.js';
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { calculateProgressivePositionSize, type PositionSizingDecision } from '../risk/progressive-position-sizing.js';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
+import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -99,9 +100,13 @@ export interface SwapRoute {
 export interface ExecutionResult {
   success: boolean;
   txHash?: string;
+  normalized?: NormalizedRealizedExecution;
   profit?: bigint;
   profitVerified?: boolean;
   gasUsed?: bigint;
+  receiptStatus?: 0 | 1;
+  nativeFeeWei?: bigint;
+  zeroMonetaryGasVerified?: boolean;
   realizedFeeUsd?: number;
   realizedSlippageBps?: number;
   latencyMs?: number;
@@ -773,24 +778,59 @@ export class AutonomousZeroCapitalEngine {
     return Number.isFinite(normalized) ? Math.max(0, normalized) : 0;
   }
 
+  private normalizeZeroCapitalSettlement(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): NormalizedRealizedExecution | undefined {
+    if (!result.txHash || result.blockNumber === undefined) return undefined;
+    const realizedProfitUsd = result.profit !== undefined
+      ? this.toUsdEstimate(result.profit, opportunity.inputTokenDecimals)
+      : null;
+    const gasVerified = result.zeroMonetaryGasVerified === true && result.nativeFeeWei === 0n;
+    const submittedAt = Date.now() - Math.max(0, result.latencyMs || 0);
+    return {
+      status: result.success && result.profitVerified === true ? 'filled' : 'failed',
+      terminal: true,
+      settlementConfirmed: result.success && result.profitVerified === true,
+      submittedAt,
+      settledAt: Date.now(),
+      venueOrRoute: opportunity.route.map(step => step.protocol).join('->') || 'zero-capital',
+      chain: opportunity.chain,
+      predicted: {
+        profitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+        feeUsd: this.toUsdEstimate(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals),
+        slippageBps: opportunity.expectedSlippageBps,
+      },
+      realized: {
+        acquisitionCostUsd: null,
+        proceedsUsd: null,
+        exchangeFeeUsd: null,
+        gasUsd: gasVerified ? 0 : null,
+        gasUsed: result.gasUsed?.toString() || null,
+        effectiveGasPriceWei: null,
+        slippageBps: result.realizedSlippageBps ?? null,
+        netProfitUsd: gasVerified ? realizedProfitUsd : null,
+      },
+      provenance: [
+        'zero_capital:receipt',
+        ...(result.gasUsed !== undefined ? ['receipt:gas_used'] : []),
+        ...(gasVerified ? ['capital_provenance:zero_monetary_gas'] : []),
+        ...(realizedProfitUsd !== null ? ['capital_provenance:realized_profit'] : ['priced:realized_usd_incomplete']),
+      ],
+      transactionHash: result.txHash,
+      blockNumber: result.blockNumber,
+      receiptStatus: result.receiptStatus,
+      error: result.error,
+    };
+  }
+
   private async recordCryptaraExecutionFeedback(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): Promise<void> {
     try {
       const cryptara = getCryptara();
-      if (!cryptara.getStatus().isRunning) return;
-
-      const hasMeasuredEconomics = result.success && result.profitVerified === true && typeof result.profit === 'bigint' &&
-        Number.isFinite(result.realizedFeeUsd) && result.realizedFeeUsd! >= 0 &&
-        Number.isFinite(result.realizedSlippageBps) && result.realizedSlippageBps! >= 0 &&
-        Number.isFinite(result.latencyMs) && result.latencyMs! > 0;
-      if (!hasMeasuredEconomics) {
-        logger.warn('[ZeroCapitalEngine] Execution lacks complete measured outcome economics; omitting Cryptara feedback', {
+      const normalized = result.normalized || this.normalizeZeroCapitalSettlement(opportunity, result);
+      if (!normalized?.terminal) {
+        logger.warn('[ZeroCapitalEngine] Execution settlement is not terminal; deferring Cryptara feedback', {
           component: 'ZeroCapitalEngine',
           opportunityId: opportunity.id,
           success: result.success,
-          profitVerified: result.profitVerified === true,
-          hasRealizedFee: Number.isFinite(result.realizedFeeUsd),
-          hasRealizedSlippage: Number.isFinite(result.realizedSlippageBps),
-          hasMeasuredLatency: Number.isFinite(result.latencyMs) && result.latencyMs > 0,
+          txHash: result.txHash,
         });
         return;
       }
@@ -801,15 +841,19 @@ export class AutonomousZeroCapitalEngine {
         chain: opportunity.chain,
         symbol: `${opportunity.inputToken}/${opportunity.outputToken}`,
         strategy: opportunity.type,
-        success: true,
-        expectedProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
-        realizedProfitUsd: this.toUsdEstimate(result.profit, opportunity.inputTokenDecimals),
-        feeUsd: result.realizedFeeUsd!,
-        slippageBps: result.realizedSlippageBps!,
-        latencyMs: result.latencyMs!,
+        success: result.success,
+        expectedProfitUsd: normalized.predicted.profitUsd ?? this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+        realizedProfitUsd: normalized.realized.netProfitUsd,
+        feeUsd: normalized.realized.gasUsd,
+        slippageBps: normalized.realized.slippageBps,
+        latencyMs: result.latencyMs || 0,
         usedZeroCapital: true,
         timestamp: Date.now(),
         notes: result.error,
+        settlementStatus: normalized.status,
+        settlementConfirmed: normalized.settlementConfirmed,
+        provenance: normalized.provenance,
+        settlement: normalized,
       }, this.cryptaraGateEvidence.get(opportunity.id));
     } catch {
       // Cryptara feedback is best-effort only.
@@ -1332,15 +1376,20 @@ export class AutonomousZeroCapitalEngine {
       } else if (!proof.success) {
         await this.capitalProvenance.markRecoveryRequired(this.capitalScope);
       }
-      return {
+      const executionResult: ExecutionResult = {
         success: proof.success,
         txHash: proof.transactionHash,
         profit: proof.realizedProfit,
         profitVerified: proof.success && proof.zeroMonetaryGasVerified,
         gasUsed: proof.gasUsed,
+        receiptStatus: proof.receiptStatus,
+        nativeFeeWei: proof.nativeFeeWei,
+        zeroMonetaryGasVerified: proof.zeroMonetaryGasVerified,
         error: proof.error,
         blockNumber: proof.blockNumber,
       };
+      executionResult.normalized = this.normalizeZeroCapitalSettlement(opportunity, executionResult);
+      return executionResult;
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -1440,14 +1489,17 @@ export class AutonomousZeroCapitalEngine {
         }
 
         this.state.gaslessTransactions++;
-        return {
+        const executionResult: ExecutionResult = {
           success: true,
           txHash: receiverReceipt.transactionHash,
           profit: realizedProfit,
           profitVerified: true,
           gasUsed: BigInt(receiverReceipt.gasUsed.toString()),
+          receiptStatus: 1,
           blockNumber: receiverReceipt.blockNumber,
         };
+        executionResult.normalized = this.normalizeZeroCapitalSettlement(opportunity, executionResult);
+        return executionResult;
       } else {
         return { success: false, error: `Bundle not included (resolution=${resolution})` };
       }

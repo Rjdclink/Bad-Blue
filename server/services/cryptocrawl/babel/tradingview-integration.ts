@@ -237,7 +237,10 @@ export class TradingViewEngine {
 
     // Return cached if fresh (less than 1 minute old)
     if (cached && Date.now() - cached.timestamp < TRADINGVIEW_CONFIG.cacheTtlMs) {
-      return { ...cached, dataProvenance: 'cached' };
+      return {
+        ...cached,
+        dataProvenance: cached.dataProvenance === 'live' ? 'cached' : 'deterministic-fallback',
+      };
     }
 
     const inFlight = this.inFlightAnalysis.get(cacheKey);
@@ -378,6 +381,9 @@ export class TradingViewEngine {
       const row = payload?.data?.[0]?.d;
       if (!Array.isArray(row) || row.length < cols.length) {
         throw new Error('Unexpected TradingView payload shape');
+      }
+      if (!row.slice(0, cols.length).every(value => typeof value === 'number' && Number.isFinite(value))) {
+        throw new Error('TradingView payload contains incomplete indicator data');
       }
 
       const toNumber = (value: unknown, fallback: number = 0): number => {

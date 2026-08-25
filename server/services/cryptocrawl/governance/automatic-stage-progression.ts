@@ -71,6 +71,13 @@ export async function recordCryptaraExecutionEvidence(
   const cryptara = getCryptara();
   const prediction = cryptara.getPendingOpportunityPrediction(feedback.opportunityId);
   cryptara.recordExecutionResult(feedback);
+  const settlementCosts = feedback.settlement
+    ? [feedback.settlement.realized.exchangeFeeUsd, feedback.settlement.realized.gasUsd]
+      .filter((value): value is number => value !== null && Number.isFinite(value))
+    : [];
+  const settlementFeeUsd = settlementCosts.length > 0
+    ? settlementCosts.reduce((sum, value) => sum + value, 0)
+    : feedback.feeUsd;
   const outcome: ExecutionOutcomeObservation = {
     eventId: `${feedback.opportunityId || `${feedback.symbol}:${feedback.strategy}`}:${feedback.timestamp}`,
     opportunityId: feedback.opportunityId,
@@ -82,7 +89,7 @@ export async function recordCryptaraExecutionEvidence(
     success: feedback.success,
     expectedProfitUsd: feedback.expectedProfitUsd,
     realizedProfitUsd: feedback.realizedProfitUsd,
-    feeUsd: feedback.feeUsd,
+    feeUsd: settlementFeeUsd,
     slippageBps: feedback.slippageBps,
     latencyMs: feedback.latencyMs,
     usedZeroCapital: feedback.usedZeroCapital,
@@ -97,18 +104,20 @@ export async function recordCryptaraExecutionEvidence(
       settlementConfirmed: feedback.settlement.settlementConfirmed,
       transactionHash: feedback.settlement.transactionHash,
       blockNumber: feedback.settlement.blockNumber,
-      realizedProfitUsd: feedback.settlement.realized?.netProfitUsd,
-      feeUsd: feedback.settlement.realized?.feeUsd,
-      slippageBps: feedback.settlement.realized?.slippageBps,
-      latencyMs: feedback.settlement.realized?.latencyMs,
-      expectedProfitUsd: feedback.settlement.expected?.netProfitUsd,
-      receipts: (feedback.settlement.receipts || []).slice(0, 8).map(receipt => ({
-        transactionHash: receipt.transactionHash,
-        blockNumber: receipt.blockNumber,
-        status: receipt.status,
-        gasUsed: receipt.gasUsed,
-        effectiveGasPrice: receipt.effectiveGasPrice,
-      })),
+      realizedProfitUsd: feedback.settlement.realized.netProfitUsd,
+      feeUsd: settlementFeeUsd,
+      slippageBps: feedback.settlement.realized.slippageBps,
+      latencyMs: feedback.settlement.settledAt !== null
+        ? Math.max(0, feedback.settlement.settledAt - feedback.settlement.submittedAt)
+        : undefined,
+      expectedProfitUsd: feedback.settlement.predicted.profitUsd,
+      receipts: feedback.settlement.transactionHash ? [{
+        transactionHash: feedback.settlement.transactionHash,
+        blockNumber: feedback.settlement.blockNumber,
+        status: feedback.settlement.receiptStatus,
+        gasUsed: feedback.settlement.realized.gasUsed || undefined,
+        effectiveGasPrice: feedback.settlement.realized.effectiveGasPriceWei || undefined,
+      }] : [],
       provenance: [...feedback.settlement.provenance].slice(0, 32),
     } : undefined,
     prediction,

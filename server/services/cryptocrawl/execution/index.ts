@@ -221,6 +221,13 @@ async function recordCryptaraExecutionFeedback(feedback: CryptaraExecutionFeedba
   }
 }
 
+function measuredSettlementFeeUsd(economics: NormalizedRealizedExecution['realized'] | undefined): number | null {
+  if (!economics) return null;
+  const measuredCosts = [economics.exchangeFeeUsd, economics.gasUsd]
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  return measuredCosts.length > 0 ? measuredCosts.reduce((sum, value) => sum + value, 0) : null;
+}
+
 export function getSharedExecutionCapabilities(): SharedExecutionCapabilities {
   return {
     ...SHARED_EXECUTION_CAPABILITIES,
@@ -428,11 +435,8 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
     }
 
     const realizedEconomics = executionResult.normalized?.realized;
-    const hasMeasuredSettlementEconomics = executionResult.settlementConfirmed === true &&
-      Number.isFinite(realizedEconomics?.netProfitUsd) &&
-      Number.isFinite(realizedEconomics?.gasUsd) &&
-      Number.isFinite(realizedEconomics?.slippageBps);
-    if (!opp.skipCryptaraFeedback && hasMeasuredSettlementEconomics) {
+    const terminalSettlement = executionResult.normalized?.terminal === true;
+    if (!opp.skipCryptaraFeedback && terminalSettlement) {
       await recordCryptaraExecutionFeedback({
         source: opp.requiresFlashLoan ? 'flash_loan' : 'manual',
         opportunityId: opp.id,
@@ -440,10 +444,10 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
         symbol: opp.pair || opp.asset,
         strategy: opp.type,
         success: executionResult.success,
-        expectedProfitUsd: opp.profit,
-        realizedProfitUsd: realizedEconomics!.netProfitUsd!,
-        feeUsd: realizedEconomics!.gasUsd!,
-        slippageBps: realizedEconomics!.slippageBps!,
+        expectedProfitUsd: executionResult.normalized?.predicted.profitUsd ?? opp.profit,
+        realizedProfitUsd: realizedEconomics?.netProfitUsd ?? null,
+        feeUsd: measuredSettlementFeeUsd(realizedEconomics),
+        slippageBps: realizedEconomics?.slippageBps ?? null,
         latencyMs: executionResult.latency || 0,
         usedZeroCapital: opp.usedZeroCapital ?? !!opp.requiresFlashLoan,
         timestamp: Date.now(),
@@ -453,8 +457,8 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
         settlement: executionResult.normalized,
         notes: executionResult.error,
       });
-    } else if (!opp.skipCryptaraFeedback) {
-      logger.warn('Execution settlement lacks complete measured economics; omitting Cryptara feedback', {
+    } else if (!opp.skipCryptaraFeedback && !terminalSettlement) {
+      logger.warn('Execution settlement is not terminal; deferring Cryptara feedback', {
         component: 'ExecutionOrchestrator',
         opportunityId: opp.id,
         expectedProfitUsd: opp.profit,
@@ -560,12 +564,8 @@ export async function executeVerifiedArbitragePlan(
   const realizedProfitUsd = normalized?.realized.netProfitUsd;
   const realizedFeeUsd = normalized?.realized.exchangeFeeUsd;
   const realizedSlippageBps = normalized?.realized.slippageBps;
-  const hasMeasuredEconomics = result.settlementConfirmed === true &&
-    Number.isFinite(realizedProfitUsd) &&
-    Number.isFinite(realizedFeeUsd) &&
-    Number.isFinite(realizedSlippageBps);
   const settlementConfirmed = result.settlementConfirmed === true;
-  if (hasMeasuredEconomics) {
+  if (normalized?.terminal === true) {
     await recordCryptaraExecutionFeedback({
       source: options?.source || 'manual',
       opportunityId: `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`,
@@ -573,10 +573,10 @@ export async function executeVerifiedArbitragePlan(
       symbol: plan.symbol,
       strategy: 'verified_cex_arbitrage',
       success: result.success,
-      expectedProfitUsd: plan.netProfitUsd,
-      realizedProfitUsd: realizedProfitUsd!,
-      feeUsd: realizedFeeUsd!,
-      slippageBps: realizedSlippageBps!,
+      expectedProfitUsd: normalized.predicted.profitUsd ?? plan.netProfitUsd,
+      realizedProfitUsd: realizedProfitUsd ?? null,
+      feeUsd: measuredSettlementFeeUsd(normalized.realized),
+      slippageBps: realizedSlippageBps ?? null,
       latencyMs,
       usedZeroCapital: false,
       timestamp: Date.now(),
@@ -587,7 +587,7 @@ export async function executeVerifiedArbitragePlan(
       notes: result.error,
     });
   } else {
-    logger.warn('CEX settlement lacks complete measured economics; omitting Cryptara feedback', {
+    logger.warn('CEX settlement is not terminal; deferring Cryptara feedback', {
       component: 'ExecutionOrchestrator',
       opportunityId: `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`,
       expectedProfitUsd: plan.netProfitUsd,

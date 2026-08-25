@@ -4,6 +4,9 @@ import { executeCexPlan, type CexSettlementAdapter } from '../execution/cex-sett
 import { DexSettlementObserver } from '../execution/dex-settlement-observer.js';
 import type { NormalizedOrderSettlement } from '../execution/settlement-types.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { getCryptara, type CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
+import { stageManager } from '../governance/stage-management.js';
 
 const WALLET = '0x0000000000000000000000000000000000000001';
 const ROUTER = '0x0000000000000000000000000000000000000002';
@@ -84,6 +87,33 @@ function adapterFor(states: {
   };
 }
 
+function sequencedAdapterFor(states: {
+  buy: NormalizedOrderSettlement[];
+  sell: NormalizedOrderSettlement[];
+}): CexSettlementAdapter {
+  const queryCounts = new Map<string, number>();
+  return {
+    async submit(request) {
+      return {
+        venue: request.side === 'buy' ? 'kraken' : 'okx',
+        orderId: `${request.side}-order`,
+        symbol: request.symbol,
+        side: request.side,
+        requestedQuantity: request.quantity,
+        submittedAt: 900,
+      };
+    },
+    async query(order) {
+      const key = order.side;
+      const index = queryCounts.get(key) || 0;
+      queryCounts.set(key, index + 1);
+      const sequence = order.side === 'buy' ? states.buy : states.sell;
+      return sequence[Math.min(index, sequence.length - 1)];
+    },
+    async cancel() {},
+  };
+}
+
 function transferLog(token: string, from: string, to: string, amount: string): providers.Log {
   const iface = new ethers.utils.Interface(['event Transfer(address indexed from, address indexed to, uint256 value)']);
   const encoded = iface.encodeEventLog('Transfer', [from, to, amount]);
@@ -103,7 +133,7 @@ function transferLog(token: string, from: string, to: string, amount: string): p
 export async function verifySettlementLifecycle(): Promise<void> {
   const fullAdapter = adapterFor({
       buy: orderSettlement({ venue: 'kraken', side: 'buy', status: 'filled', terminal: true, quantity: 100, price: 100, fee: 10 }),
-      sell: orderSettlement({ venue: 'okx', side: 'sell', status: 'filled', terminal: true, quantity: 100, price: 101, fee: -10 }),
+      sell: orderSettlement({ venue: 'okx', side: 'sell', status: 'filled', terminal: true, quantity: 100, price: 101, fee: 10 }),
     });
   const full = await executeCexPlan(cexPlan(), {
     adapters: { kraken: fullAdapter, okx: fullAdapter },
@@ -114,6 +144,51 @@ export async function verifySettlementLifecycle(): Promise<void> {
   assert.equal(full.success, true);
   assert.equal(full.settlementConfirmed, true);
   assert.equal(full.normalized?.realized.netProfitUsd, 80);
+  assert.equal(full.normalized?.predicted.profitUsd, 80);
+  assert.equal(full.normalized?.realized.exchangeFeeUsd, 20);
+
+  const rebate = await executeCexPlan(cexPlan(), {
+    adapters: {
+      kraken: adapterFor({
+        buy: orderSettlement({ venue: 'kraken', side: 'buy', status: 'filled', terminal: true, quantity: 100, price: 100, fee: -10 }),
+        sell: orderSettlement({ venue: 'okx', side: 'sell', status: 'filled', terminal: true, quantity: 100, price: 101, fee: 10 }),
+      }),
+      okx: adapterFor({
+        buy: orderSettlement({ venue: 'kraken', side: 'buy', status: 'filled', terminal: true, quantity: 100, price: 100, fee: -10 }),
+        sell: orderSettlement({ venue: 'okx', side: 'sell', status: 'filled', terminal: true, quantity: 100, price: 101, fee: 10 }),
+      }),
+    },
+    settlementTimeoutMs: 0,
+    sleep: async () => {},
+  });
+  assert.equal(rebate.normalized?.realized.exchangeFeeUsd, 0);
+  assert.equal(rebate.normalized?.realized.netProfitUsd, 100);
+
+  let polledNow = 900;
+  const polled = await executeCexPlan(cexPlan(), {
+    adapters: {
+      kraken: sequencedAdapterFor({
+        buy: [
+          orderSettlement({ venue: 'kraken', side: 'buy', status: 'submitted', terminal: false, quantity: 0, price: null, fee: null }),
+          orderSettlement({ venue: 'kraken', side: 'buy', status: 'filled', terminal: true, quantity: 100, price: 100, fee: 10 }),
+        ],
+        sell: [],
+      }),
+      okx: sequencedAdapterFor({
+        buy: [],
+        sell: [
+          orderSettlement({ venue: 'okx', side: 'sell', status: 'submitted', terminal: false, quantity: 0, price: null, fee: null }),
+          orderSettlement({ venue: 'okx', side: 'sell', status: 'filled', terminal: true, quantity: 100, price: 101, fee: 10 }),
+        ],
+      }),
+    },
+    settlementTimeoutMs: 1,
+    pollIntervalMs: 1,
+    now: () => polledNow,
+    sleep: async milliseconds => { polledNow += Math.max(1, milliseconds); },
+  });
+  assert.equal(polled.status, 'filled');
+  assert.equal(polled.settlementConfirmed, true);
 
   const partialAdapter = adapterFor({
       buy: orderSettlement({ venue: 'kraken', side: 'buy', status: 'partially_filled', terminal: true, quantity: 50, price: 100, fee: 5 }),
@@ -215,6 +290,69 @@ export async function verifySettlementLifecycle(): Promise<void> {
   assert.equal(reverted.status, 'failed');
   assert.equal(reverted.settlementConfirmed, false);
   assert.equal(reverted.normalized.realized.netProfitUsd, null);
+
+  const incompleteAssessment = await getCryptara().assessOpportunity({
+    opportunityId: `missing-monte-carlo-${Date.now()}`,
+    observedAt: Date.now(),
+    chain: 'cex',
+    symbol: 'ETHUSDT',
+    plan: cexPlan(),
+    tradingView: null,
+    mempool: null,
+    marketUniverse: [],
+    dexObservation: null,
+    missingInformation: [],
+    provenance: [],
+  });
+  assert.equal(incompleteAssessment.monteCarlo, null);
+  assert.equal(incompleteAssessment.probabilityOfProfitableExecution, null);
+  assert.ok(incompleteAssessment.missingInformation.includes('monte_carlo_evidence'));
+
+  const feedback: CryptaraExecutionFeedback = {
+    source: 'manual',
+    opportunityId: `terminal-rejection-${Date.now()}`,
+    chain: 'cex',
+    symbol: 'ETHUSDT',
+    strategy: 'verified_cex_arbitrage',
+    success: false,
+    expectedProfitUsd: 80,
+    realizedProfitUsd: null,
+    feeUsd: null,
+    slippageBps: null,
+    latencyMs: 120,
+    usedZeroCapital: false,
+    timestamp: Date.now(),
+    settlementStatus: 'rejected',
+    settlementConfirmed: true,
+    provenance: ['kraken:authenticated_order_query'],
+    settlement: {
+      status: 'rejected',
+      terminal: true,
+      settlementConfirmed: true,
+      submittedAt: 900,
+      settledAt: 1020,
+      venueOrRoute: 'kraken->okx',
+      chain: 'cex',
+      predicted: { profitUsd: 80, feeUsd: 20, slippageBps: 5 },
+      realized: {
+        acquisitionCostUsd: null,
+        proceedsUsd: null,
+        exchangeFeeUsd: null,
+        gasUsd: null,
+        gasUsed: null,
+        effectiveGasPriceWei: null,
+        slippageBps: null,
+        netProfitUsd: null,
+      },
+      provenance: ['kraken:authenticated_order_query'],
+    },
+  };
+  const historyBefore = getCryptara().getExecutionHistory().length;
+  const stageEvidenceBefore = stageManager.getState().cryptaraExecutionEvidence.length;
+  await recordCryptaraExecutionEvidence(feedback);
+  assert.equal(getCryptara().getExecutionHistory().length, historyBefore + 1);
+  assert.equal(stageManager.getState().cryptaraExecutionEvidence.length, stageEvidenceBefore + 1);
+  assert.equal(stageManager.getState().cryptaraExecutionEvidence.at(-1)?.realizedProfitUsd, null);
 }
 
 if (process.argv[1]?.endsWith('/verify-settlement-lifecycle.ts')) {

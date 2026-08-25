@@ -8,9 +8,9 @@ export interface ExecutionOutcomeObservation {
   strategy: string;
   success: boolean;
   expectedProfitUsd: number;
-  realizedProfitUsd: number;
-  feeUsd: number;
-  slippageBps: number;
+  realizedProfitUsd: number | null;
+  feeUsd: number | null;
+  slippageBps: number | null;
   latencyMs: number;
   usedZeroCapital: boolean;
   provenance: string[];
@@ -20,9 +20,9 @@ export interface ExecutionOutcomeObservation {
     settlementConfirmed: boolean;
     transactionHash?: string;
     blockNumber?: number;
-    realizedProfitUsd?: number;
-    feeUsd?: number;
-    slippageBps?: number;
+    realizedProfitUsd?: number | null;
+    feeUsd?: number | null;
+    slippageBps?: number | null;
     latencyMs?: number;
     expectedProfitUsd?: number;
     receipts: Array<{

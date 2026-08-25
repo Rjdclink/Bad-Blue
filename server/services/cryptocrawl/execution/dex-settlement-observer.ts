@@ -303,6 +303,7 @@ export class DexSettlementObserver {
         ...(economics.netProfitUsd !== null ? ['priced:realized_usd'] : ['priced:realized_usd_incomplete']),
       ],
       transactionHash: request.txHash,
+      blockNumber: receipt.blockNumber,
       receiptStatus: successful ? 1 : 0,
       tokenAmounts: tokenAmounts.map(transfer => ({
         ...transfer,

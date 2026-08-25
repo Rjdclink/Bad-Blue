@@ -396,9 +396,9 @@ export interface PersistedCryptaraExecutionEvidence {
   strategy: string;
   success: boolean;
   expectedProfitUsd: number;
-  realizedProfitUsd: number;
-  feeUsd: number;
-  slippageBps: number;
+  realizedProfitUsd: number | null;
+  feeUsd: number | null;
+  slippageBps: number | null;
   latencyMs: number;
   usedZeroCapital: boolean;
   timestamp: number;
@@ -746,17 +746,14 @@ export class StageManager extends EventEmitter {
 
   async recordExecutionEvidence(input: {
     success: boolean;
-    realizedProfitUsd: number;
+    realizedProfitUsd: number | null;
     automaticEvidence: AutomaticAdvancementEvidence;
     cryptaraFeedback: PersistedCryptaraExecutionEvidence;
   }): Promise<AutomaticAdvancementResult> {
-    if (!Number.isFinite(input.realizedProfitUsd)) {
-      throw new Error('Execution evidence requires a finite realized profit value');
-    }
     const metrics = this.state.proofMetrics;
     const previousTrades = metrics.totalTrades;
     metrics.totalTrades += 1;
-    if (input.success) {
+    if (input.success && input.realizedProfitUsd !== null && Number.isFinite(input.realizedProfitUsd)) {
       metrics.winningTrades += 1;
       this.state.dailyProfitUSD += input.realizedProfitUsd;
       this.state.totalProfitUSD += input.realizedProfitUsd;
@@ -764,7 +761,9 @@ export class StageManager extends EventEmitter {
       metrics.losingTrades += 1;
     }
     metrics.successRate = metrics.winningTrades / metrics.totalTrades;
-    metrics.avgProfitPerTrade = ((metrics.avgProfitPerTrade * previousTrades) + input.realizedProfitUsd) / metrics.totalTrades;
+    if (input.realizedProfitUsd !== null && Number.isFinite(input.realizedProfitUsd)) {
+      metrics.avgProfitPerTrade = ((metrics.avgProfitPerTrade * previousTrades) + input.realizedProfitUsd) / metrics.totalTrades;
+    }
     metrics.meetsAdvancementCriteria = this.checkAdvancementCriteria();
     this.state.cryptaraExecutionEvidence.push(normalizeCryptaraExecutionEvidence(input.cryptaraFeedback));
     if (this.state.cryptaraExecutionEvidence.length > 1000) {
@@ -1413,9 +1412,9 @@ function normalizeCryptaraExecutionEvidence(value: PersistedCryptaraExecutionEvi
     strategy: requireNonEmptyString('strategy', value.strategy),
     success: requireBoolean('success', value.success),
     expectedProfitUsd: requireFiniteNumber('expectedProfitUsd', value.expectedProfitUsd),
-    realizedProfitUsd: requireFiniteNumber('realizedProfitUsd', value.realizedProfitUsd),
-    feeUsd: requireNonNegativeNumber('feeUsd', value.feeUsd),
-    slippageBps: requireNonNegativeNumber('slippageBps', value.slippageBps),
+    realizedProfitUsd: nullableFiniteNumber('realizedProfitUsd', value.realizedProfitUsd),
+    feeUsd: nullableFiniteNumber('feeUsd', value.feeUsd),
+    slippageBps: nullableFiniteNumber('slippageBps', value.slippageBps),
     latencyMs: requireNonNegativeNumber('latencyMs', value.latencyMs),
     usedZeroCapital: requireBoolean('usedZeroCapital', value.usedZeroCapital),
     timestamp: requireNonNegativeNumber('timestamp', value.timestamp),
@@ -1471,6 +1470,7 @@ function normalizePersistedSettlement(value: unknown): NormalizedRealizedExecuti
     provenance,
     orders,
     transactionHash: optionalString(value.transactionHash),
+    blockNumber: value.blockNumber === undefined ? undefined : requireNonNegativeInteger('settlement.blockNumber', value.blockNumber),
     receiptStatus: value.receiptStatus === undefined ? undefined : requireReceiptStatus(value.receiptStatus),
     tokenAmounts,
     error: boundedOptionalString(value.error, 500),

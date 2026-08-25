@@ -81,9 +81,9 @@ function nullableNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function feeMagnitude(value: unknown): number | null {
+function signedFeeAmount(value: unknown): number | null {
   const parsed = nullableNumber(value);
-  return parsed === null ? null : Math.abs(parsed);
+  return parsed;
 }
 
 function positiveNumber(value: unknown): number | null {
@@ -225,7 +225,7 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
           const trade = value as Record<string, unknown>;
           const quantity = positiveNumber(trade.vol) || 0;
           const price = positiveNumber(trade.price) || 0;
-          const feeAmount = feeMagnitude(trade.fee);
+          const feeAmount = signedFeeAmount(trade.fee);
           const feeAsset = typeof trade.feeCurrency === 'string'
             ? trade.feeCurrency
             : typeof trade.fee_currency === 'string' ? trade.fee_currency : null;
@@ -244,11 +244,11 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
       const feeAsset = typeof row.feeCurrency === 'string'
         ? row.feeCurrency
         : typeof row.fee_currency === 'string' ? row.fee_currency : null;
-      fills = [{ quantity: filledQuantity, price: averageFillPrice, feeAmount: feeMagnitude(row.fee), feeAsset, timestamp: timestampMilliseconds(row.closetm || row.time || row.opentm) }];
-      tradeFees = [feeMagnitude(row.fee)];
+      fills = [{ quantity: filledQuantity, price: averageFillPrice, feeAmount: signedFeeAmount(row.fee), feeAsset, timestamp: timestampMilliseconds(row.closetm || row.time || row.opentm) }];
+      tradeFees = [signedFeeAmount(row.fee)];
       tradeFeeAssets = [feeAsset];
     }
-    const feeAmount = fills.length > 0 ? sumNumbers(tradeFees) : feeMagnitude(row.fee);
+    const feeAmount = fills.length > 0 ? sumNumbers(tradeFees) : signedFeeAmount(row.fee);
     const classification = classifyOrderStatus(String(row.status || 'pending'), filledQuantity, requestedQuantity);
     let finalBalances: Record<string, string> | undefined;
     if (classification.terminal) {
@@ -329,7 +329,7 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
       const fillRows = await this.privateRequest('/api/v5/trade/fills', 'GET', { instId: `${base}-${quote}`, ordId: order.orderId, limit: '100' });
       fills = fillRows.map((fill: Record<string, unknown>) => ({
         quantity: positiveNumber(fill.fillSz) || 0, price: positiveNumber(fill.fillPx) || 0,
-        feeAmount: feeMagnitude(fill.fee), feeAsset: typeof fill.feeCcy === 'string' ? fill.feeCcy : null,
+        feeAmount: signedFeeAmount(fill.fee), feeAsset: typeof fill.feeCcy === 'string' ? fill.feeCcy : null,
         timestamp: timestampMilliseconds(fill.ts), tradeId: typeof fill.tradeId === 'string' ? fill.tradeId : undefined,
       })).filter((fill: ExecutionFill) => fill.quantity > 0 && fill.price > 0);
     } catch (error) {
@@ -338,7 +338,7 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    const feeValues = fills.length > 0 ? fills.map(fill => fill.feeAmount) : [feeMagnitude(row.fee)];
+    const feeValues = fills.length > 0 ? fills.map(fill => fill.feeAmount) : [signedFeeAmount(row.fee)];
     const feeAssets = fills.length > 0 ? fills.map(fill => fill.feeAsset) : [typeof row.feeCcy === 'string' ? row.feeCcy : null];
     const classification = classifyOrderStatus(String(row.state || 'live'), filledQuantity, requestedQuantity);
     let finalBalances: Record<string, string> | undefined;
@@ -379,7 +379,7 @@ function knownFeeUsd(order: NormalizedOrderSettlement, baseAsset: string, quoteA
   if (order.feeAmount === null) return null;
   if (order.feeAmount === 0) return 0;
   if (!order.feeAsset) return null;
-  const feeAmount = Math.abs(order.feeAmount);
+  const feeAmount = order.feeAmount;
   const feeAsset = order.feeAsset.toUpperCase();
   if (feeAsset === quoteAsset.toUpperCase() || feeAsset === 'USD' || feeAsset === 'USDT' || feeAsset === 'USDC') return feeAmount;
   if (feeAsset === baseAsset.toUpperCase() && order.averageFillPrice !== null) return feeAmount * order.averageFillPrice;
