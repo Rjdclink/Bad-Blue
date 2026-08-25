@@ -10,14 +10,17 @@ const RECEIVER_ABI = [
   'function vault() view returns (address)',
   'function factory() view returns (address)',
   'event FlashLoanExecuted(address indexed initiator, address indexed loanToken, uint256 loanAmount, uint256 profit)',
+  'event SushiV3FlashExecuted(address indexed initiator, address indexed pool, address indexed profitToken, uint256 profit)',
 ];
+
+type EuropaReceiverKind = 'balancer' | 'sushi-v3';
 
 export interface EuropaAtomicExecutionRequest {
   opportunityId: string;
   receiver: string;
   receiverCodeHash: string;
   balancerVault: string;
-  receiverKind?: 'balancer' | 'sushi-v3';
+  receiverKind?: EuropaReceiverKind;
   sushiV3Factory?: string;
   inputToken: string;
   profitRecipient?: string;
@@ -70,6 +73,10 @@ function parseNonNegativeInteger(label: string, value: string | undefined, fallb
   const normalized = (value || fallback).trim();
   if (!/^\d+$/.test(normalized)) throw new Error(`${label} must be a non-negative integer string`);
   return BigNumber.from(normalized);
+}
+
+export function getEuropaReceiverProfitEventName(receiverKind: EuropaReceiverKind | undefined): 'FlashLoanExecuted' | 'SushiV3FlashExecuted' {
+  return receiverKind === 'sushi-v3' ? 'SushiV3FlashExecuted' : 'FlashLoanExecuted';
 }
 
 export function buildEuropaExecutionFingerprint(input: {
@@ -294,7 +301,11 @@ export class EuropaZeroGasAdapter {
     const realizedProfit = endingProfitRecipientInputBalance.gt(startingProfitRecipientInputBalance)
       ? endingProfitRecipientInputBalance.sub(startingProfitRecipientInputBalance)
       : BigNumber.from(0);
-    const receiverEvent = receipt.logs.find(log => log.address.toLowerCase() === receiver.toLowerCase() && log.topics[0] === receiverContract.interface.getEventTopic('FlashLoanExecuted'));
+    const profitEventName = getEuropaReceiverProfitEventName(request.receiverKind);
+    const profitEventTopic = receiverContract.interface.getEventTopic(profitEventName);
+    const receiverEvent = receipt.logs.find(log =>
+      log.address.toLowerCase() === receiver.toLowerCase() && log.topics[0] === profitEventTopic
+    );
     const emittedProfit = receiverEvent
       ? BigNumber.from(receiverContract.interface.parseLog(receiverEvent).args.profit)
       : BigNumber.from(0);
@@ -350,7 +361,7 @@ export class EuropaZeroGasAdapter {
         computeSource,
         zeroMonetaryGasVerified: true,
         success: false,
-        error: 'Europa transaction succeeded but did not prove a positive atomic profit; emitted profit did not equal the verified profit-recipient balance delta',
+        error: `Europa transaction succeeded but did not prove a positive atomic profit; ${profitEventName} profit did not equal the verified profit-recipient balance delta`,
       };
     }
 
