@@ -7,9 +7,9 @@
  */
 
 import { 
-  Task, 
-  TaskType, 
-  TaskIntensity, 
+  Task,
+  TaskType,
+  TaskIntensity,
   RoutingDecision,
   ComputeLayer,
   TaskRoutingError 
@@ -104,7 +104,7 @@ export class WorkloadRouter extends EventEmitter {
       this.taskOutcomes.set(task.id, { error: message });
       this.emit('task-failed', { taskId: task.id, error: message });
       throw new TaskRoutingError(
-        `Failed to route task ${task.id}`,
+        `Failed to route task ${task.id}: ${message}`,
         { taskId: task.id, error }
       );
     }
