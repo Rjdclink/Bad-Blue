@@ -517,7 +517,7 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
     systemState.lifecycle = 'RUNNING';
     systemState.running = true;
     systemState.startedAt = Date.now();
-    console.log('[CryptoCrawl] Runtime active; Stage 1 observation loop scheduled', {
+    console.log('[CryptoCrawl] Runtime active; autonomous monitoring lifecycle is running', {
       faucetId: autonomousFaucet.getFaucetId(),
       stage: governance.getState().stage,
     });

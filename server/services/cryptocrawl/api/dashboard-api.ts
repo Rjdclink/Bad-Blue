@@ -451,7 +451,7 @@ setTimeout(() => {
         if (!result.success) {
           throw new Error(String(result.payload.error || 'CryptoCrawler runtime failed to start'));
         }
-        console.log('[CryptoCrawl] ✅ Autonomous runtime started - Stage 1 observation ACTIVE');
+        console.log('[CryptoCrawl] ✅ Autonomous runtime started - monitoring lifecycle ACTIVE');
       } else if (!stageManager.isAutomaticallyActivated()) {
         console.log('[CryptoCrawl] Faucet auto-start skipped - canonical governance is paused or requires authorization');
       }

@@ -204,6 +204,9 @@ export class CRYPTARAModule extends EventEmitter {
    * Start continuous sandbox boundary monitoring
    */
   private startBoundaryMonitoring(): void {
+    if (process.env.NO_INTERVALS === 'true' || process.env.CRYPTARA_MODE === 'SILENT_WATCHER_ONLY') {
+      return;
+    }
     if (this.boundaryCheckInterval) {
       clearInterval(this.boundaryCheckInterval);
     }

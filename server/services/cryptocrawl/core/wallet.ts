@@ -193,7 +193,7 @@ class WalletManager {
 
   private saveToDB(data: WalletData): void {
     // In production: INSERT INTO crypto_wallets VALUES (...)
-    console.log('[WALLET] Created new wallet:', data.address);
+    console.log('[WALLET] Persisted configured wallet record:', data.address);
   }
 }
 

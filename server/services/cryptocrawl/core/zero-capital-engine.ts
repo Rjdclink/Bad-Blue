@@ -60,7 +60,7 @@ import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } fro
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import { assessInitialGasReadiness, type InitialGasReadiness } from '../initial-gas-readiness.js';
 import { assertConfiguredWalletAddress, normalizePrivateKey, resolveConfiguredWalletAddress, walletFromPrivateKey } from './wallet-identity.js';
-import { resolveOrCreateFlashbotsAuthIdentity } from '../execution/adapters/flashbots-auth-identity.js';
+import { getOrCreateFlashbotsAuthPrivateKey } from '../execution/adapters/flashbots-auth-identity.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -343,8 +343,8 @@ export class AutonomousZeroCapitalEngine {
     }
     if (ethProvider) {
       try {
-        const flashbotsIdentity = await resolveOrCreateFlashbotsAuthIdentity(configuredFlashbotsAuthKey);
-        this.authSigner = walletFromPrivateKey(flashbotsIdentity.privateKey);
+        const flashbotsAuthPrivateKey = await getOrCreateFlashbotsAuthPrivateKey(configuredFlashbotsAuthKey);
+        this.authSigner = walletFromPrivateKey(flashbotsAuthPrivateKey);
         this.flashbotsProvider = await FlashbotsBundleProvider.create(
           ethProvider,
           this.authSigner,
@@ -352,8 +352,7 @@ export class AutonomousZeroCapitalEngine {
         );
         logger.info('[ZeroCapitalEngine] Flashbots provider initialized (gasless execution enabled)', {
           component: 'ZeroCapitalEngine',
-          authIdentitySource: flashbotsIdentity.source,
-          authIdentityAddress: flashbotsIdentity.address,
+          authIdentityAddress: this.authSigner.address,
         });
       } catch (error) {
         logger.warn('[ZeroCapitalEngine] Flashbots initialization failed, will use standard execution', {
@@ -412,7 +411,7 @@ export class AutonomousZeroCapitalEngine {
     const zeroCapitalConfirmed = process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK';
     const europaRoutes = this.configuredRoutes.filter(route => route.chain === 'europa');
     const nonEuropaRoutes = this.configuredRoutes.filter(route => route.chain !== 'europa');
-    let bootstrapExecutionEnabled = executionOptIn;
+    let executionEnabledForLifecycle = executionOptIn;
 
     if (executionRequested && !executionOptIn) {
       logger.info('[ZeroCapitalEngine] Execution request deferred because the current governance stage is monitoring-only', {
@@ -457,7 +456,7 @@ export class AutonomousZeroCapitalEngine {
           throw new Error(`Europa bootstrap recovery is blocked while capital provenance is ${capitalState.lifecycle}; reconcile the recorded transaction before starting another execution`);
         }
         if (capitalState.lifecycle === 'SELF_FUNDED' && BigInt(capitalState.internallyGeneratedBalance) > 0n) {
-          bootstrapExecutionEnabled = false;
+          executionEnabledForLifecycle = false;
           logger.info('[ZeroCapitalEngine] Europa bootstrap is dormant because verified internally generated capital is available', {
             component: 'ZeroCapitalEngine',
             generation: capitalState.generation,
@@ -509,7 +508,7 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
-    this.executionEligible = bootstrapExecutionEnabled;
+    this.executionEligible = executionEnabledForLifecycle;
     this.executionEnabled = false;
     this.initialGasReadyCallback = options.onInitialGasReady;
     this.initialGasLostCallback = options.onInitialGasLost;
@@ -529,7 +528,7 @@ export class AutonomousZeroCapitalEngine {
         this.startBootstrapReadinessLoop();
       }
     } else {
-      this.startBootstrapReadinessLoop();
+      await this.runBootstrapReadinessCycle();
       logger.warn('[ZeroCapitalEngine] Remaining in PRE_STAGE_1_BOOTSTRAP; market operations are locked until verified native-gas readiness reaches the configured threshold', {
         component: 'ZeroCapitalEngine',
         status: this.state.initialGasReadiness.status,
@@ -609,6 +608,15 @@ export class AutonomousZeroCapitalEngine {
       } else {
         this.suspendMarketOperations();
         this.state.lastFundingError = readiness.reason;
+        await this.attemptInitialGasBootstrap(readiness);
+        if (this.state.initialGasReadiness.initialGasReady && stageManager.isMarketOperationsAllowed()) {
+          if (this.bootstrapInterval) {
+            clearTimeout(this.bootstrapInterval);
+            this.bootstrapInterval = null;
+          }
+          await this.startMarketOperations();
+          return;
+        }
         logger.info('[ZeroCapitalEngine] Initial gas readiness recheck remains gated', {
           component: 'ZeroCapitalEngine',
           status: readiness.status,
@@ -629,6 +637,106 @@ export class AutonomousZeroCapitalEngine {
     }
   }
 
+  private async attemptInitialGasBootstrap(readiness: InitialGasReadiness): Promise<void> {
+    if (readiness.initialGasReady) return;
+    if (!this.executionEligible) {
+      this.state.lastFundingError = 'PRE_STAGE_1_BOOTSTRAP remains observation-only; no qualifying paid-chain native funding or zero-gas conversion path is available';
+      logger.info('[ZeroCapitalEngine] Corrective bootstrap deferred by authoritative stage capability', {
+        component: 'ZeroCapitalEngine',
+        stage: stageManager.getCurrentStage(),
+        status: readiness.status,
+        reason: this.state.lastFundingError,
+      });
+      return;
+    }
+
+    const capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
+    if (capitalState.lifecycle === 'ATOMIC_EXECUTION_PENDING' || capitalState.lifecycle === 'FIRST_PROFIT_VERIFIED') {
+      throw new Error(`Europa bootstrap is blocked while capital provenance is ${capitalState.lifecycle}; reconcile the recorded transaction before retrying`);
+    }
+    if (capitalState.lifecycle === 'SELF_FUNDED' && BigInt(capitalState.internallyGeneratedBalance) > 0n) {
+      this.state.lastFundingError = 'Europa bootstrap produced verified input-token capital, but no qualifying paid-chain native gas; native funding or an explicitly supported conversion path is required';
+      logger.info('[ZeroCapitalEngine] Europa bootstrap is dormant after verified profit because native-gas readiness remains independent', {
+        component: 'ZeroCapitalEngine',
+        asset: capitalState.asset,
+        internallyGeneratedBalance: capitalState.internallyGeneratedBalance,
+        status: readiness.status,
+      });
+      return;
+    }
+
+    const europaProvider = this.providers.get('europa');
+    if (!europaProvider || !this.europaAdapter) {
+      throw new Error('Europa bootstrap requires a reachable Europa provider and trusted execution wallet');
+    }
+
+    await this.refreshEuropaFundingRoute();
+    const quotedRoutes = await quoteConfiguredZeroCapitalRoutesForChain('europa', europaProvider, this.configuredRoutes);
+    const quotedRoute = quotedRoutes[0];
+    if (!quotedRoute) {
+      throw new Error(`Europa bootstrap has no live profitable route; discovery=${this.routeDiscoveryStatus}${this.routeDiscoveryLastError ? `: ${this.routeDiscoveryLastError}` : ''}`);
+    }
+
+    const block = await europaProvider.getBlock('latest');
+    const opportunity = this.createOpportunityFromQuotedRoute(quotedRoute, block.timestamp);
+    const cryptara = getCryptara();
+    if (!cryptara.getStatus().isRunning) await cryptara.initialize();
+    if (!await this.isCandidateAllowedByCryptara(opportunity, europaProvider)) {
+      throw new Error(`Europa bootstrap candidate ${opportunity.id} was rejected by live Cryptara market gates`);
+    }
+
+    const capitalPlan = await this.assessCapitalHierarchy(opportunity);
+    const chainSnapshot = capitalPlan.chains.find(chain => chain.chain === 'europa');
+    const positionSizing = calculateProgressivePositionSize({
+      requestedNotionalUsd: this.toUsdEstimate(opportunity.flashLoanAmount, opportunity.inputTokenDecimals),
+      availableCapitalUsd: 0,
+      expectedNetProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+      expectedCostUsd: this.toUsdEstimate(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals),
+      expectedSlippageBps: opportunity.expectedSlippageBps,
+      liquidityScore: opportunity.confidence,
+      volatilityScore: Math.min(1, opportunity.expectedSlippageBps / 100),
+      providerHealthy: !!chainSnapshot && this.providers.has('europa'),
+      zeroCapitalAvailable: capitalPlan.source === 'europa-zero-capital',
+    });
+    const beamValidation = await this.validateCapitalPlanThroughBeam(capitalPlan, opportunity, positionSizing);
+    if (!beamValidation.approved) {
+      throw new Error(`Beam rejected Europa bootstrap capital plan: ${beamValidation.reason}`);
+    }
+
+    const governance = getCryptocrawlGovernance();
+    governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: 'europa', pair: `${opportunity.inputAssetSymbol}/CYCLIC`, venue: 'europa' });
+    governance.requireAllowed('SUBMIT_TX', { chain: 'europa', pair: `${opportunity.inputAssetSymbol}/CYCLIC`, venue: 'europa' });
+    governance.recordExecutionAttempt();
+
+    logger.warn('[ZeroCapitalEngine] Submitting explicitly enabled Europa corrective bootstrap candidate', {
+      component: 'ZeroCapitalEngine',
+      opportunityId: opportunity.id,
+      expectedProfit: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+      routeDiscovery: this.routeDiscoveryStatus,
+    });
+    const result = await this.executeWithEuropa(opportunity);
+    await this.recordCryptaraExecutionFeedback(opportunity, result);
+    const postExecutionReadiness = await this.refreshInitialGasReadiness();
+    if (!result.success) {
+      throw new Error(result.error || 'Europa bootstrap execution did not prove a successful result');
+    }
+    if (!postExecutionReadiness.initialGasReady) {
+      throw new Error(await this.describeNativeGasFundingBlocker(postExecutionReadiness));
+    }
+  }
+
+  private async describeNativeGasFundingBlocker(readiness: InitialGasReadiness): Promise<string> {
+    const capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
+    const paidChains = Array.from(this.providers.keys()).filter(chain => chain !== 'europa');
+    const destinationEvidence = paidChains.length > 0
+      ? paidChains.map(chain => {
+        const wallet = this.executionWallets.get(chain);
+        return `${chain}:${wallet ? 'signer-configured' : 'observation-only'}`;
+      }).join(', ')
+      : 'none';
+    return `Verified Europa ${capitalState.asset || 'input-token'} proceeds did not produce qualifying paid-chain native gas (${readiness.reason || readiness.status}). No canonical executable bridge/conversion path is available from Europa to a paid-chain native asset; existing bridge helpers are transfer/URL-only and paid-chain swap or unwrap transactions require native gas. Destination evidence: ${destinationEvidence}`;
+  }
+
   private async startMarketOperations(): Promise<void> {
     if (this.marketOperationsStarted || !this.state.isRunning || !stageManager.isMarketOperationsAllowed()) return;
     this.marketOperationsStarted = true;
@@ -646,6 +754,7 @@ export class AutonomousZeroCapitalEngine {
         this.state.marketOperationsEnabled = false;
         this.executionEnabled = false;
         this.suspendMarketOperations();
+        this.startBootstrapReadinessLoop();
         throw error;
       }
     }
@@ -676,7 +785,6 @@ export class AutonomousZeroCapitalEngine {
         });
       });
     }
-    this.startBootstrapReadinessLoop();
   }
 
   /**
@@ -816,7 +924,9 @@ export class AutonomousZeroCapitalEngine {
         inputAmountBaseUnits: opportunity.flashLoanAmount.toString(),
         outputAmountBaseUnits: finalLeg.expectedAmountOut.toString(),
         inputTokenDecimals: opportunity.inputTokenDecimals,
-        outputTokenDecimals: opportunity.inputTokenDecimals,
+        outputTokenDecimals: finalLeg.tokenOut.toLowerCase() === opportunity.inputToken.toLowerCase()
+          ? opportunity.inputTokenDecimals
+          : null,
         grossProfitBaseUnits: (opportunity.grossProfit ?? opportunity.expectedProfit).toString(),
         expectedNetProfitBaseUnits: opportunity.expectedProfit.toString(),
         estimatedGasCostBaseUnits: (opportunity.estimatedGasCostInInputToken ?? opportunity.estimatedExecutionCostInInputToken).toString(),
@@ -839,7 +949,6 @@ export class AutonomousZeroCapitalEngine {
       };
       const missingInformation = [
         ...(routeObservation.executable ? [] : ['route_execution_capability']),
-        ...(marketUniverse.some(asset => asset.symbol.toUpperCase() === opportunity.inputAssetSymbol) ? [] : ['route_input_price_usd']),
       ];
       cryptara.recordOpportunityObservation({
         opportunityId: opportunity.id,
@@ -909,6 +1018,7 @@ export class AutonomousZeroCapitalEngine {
           error: this.state.lastFundingError,
         });
         this.suspendMarketOperations();
+        this.startBootstrapReadinessLoop();
       } finally {
         this.isFunding = false;
         this.state.fundingCycleActive = false;
@@ -1554,7 +1664,6 @@ export class AutonomousZeroCapitalEngine {
       if (capitalState.lifecycle !== 'ZERO_GAS_EXECUTION_READY') {
         return { success: false, error: `Europa bootstrap is not ready in capital lifecycle state ${capitalState.lifecycle}` };
       }
-      await this.capitalProvenance.markAtomicExecutionPending(this.capitalScope, `opportunity:${opportunity.id}`);
       const payload = receiverKind === 'sushi-v3'
         ? await buildEuropaSushiV3FlashPayload({
           receiver,
@@ -1574,6 +1683,7 @@ export class AutonomousZeroCapitalEngine {
           receiver,
           profitRecipient,
         }));
+      await this.capitalProvenance.markAtomicExecutionPending(this.capitalScope, `opportunity:${opportunity.id}`);
       const configuredPowWorkers = Number(process.env.ZERO_CAPITAL_EUROPA_POW_WORKERS || '');
       const proof = await adapter.execute({
         opportunityId: opportunity.id,

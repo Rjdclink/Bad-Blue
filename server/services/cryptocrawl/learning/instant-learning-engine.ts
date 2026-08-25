@@ -10,6 +10,7 @@
 // - Continuous evolution based on results
 
 import logger from '../../../logger.js';
+import { randomUUID } from 'crypto';
 import { deepLearningStore, type LearnedParameter } from './deep-learning-store';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { EDEN_CONFIG } from '../eden/config';
@@ -458,7 +459,7 @@ class InstantLearningEngine {
       await this.supabase
         .from('cryptocrawler_learning_records')
         .insert({
-          id: `learn-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          id: `learn-${Date.now()}-${randomUUID()}`,
           timestamp: new Date(),
           market_condition: conditionLevel,
           

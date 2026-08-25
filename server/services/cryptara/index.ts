@@ -35,6 +35,7 @@ import { createMonteCarloEngine, type MarketCondition, type StrategyProfile } fr
 import type { ExecutionOutcomeObservation } from '../cryptocrawl/learning/execution-outcome.js';
 import type { NormalizedRealizedExecution } from '../cryptocrawl/execution/settlement-types.js';
 import { multiProviderRpcManager } from '../cryptocrawl/api/blockchain-providers.js';
+import type { MarketConditionLevel } from '../cryptocrawl/core/market-condition-detector.js';
 
 const log = createLogger('CRYPTARA');
 
@@ -62,6 +63,28 @@ function isNoIntervals(): boolean {
   if (getCryptaraMode() === 'SILENT_WATCHER_ONLY') return true;
   if (process.env.NO_INTERVALS === 'true') return true;
   return process.env.ALLOW_INTERVALS !== 'true';
+}
+
+function findMarketAsset(marketUniverse: MarketUniverseAsset[], symbol: string): MarketUniverseAsset | undefined {
+  const normalized = symbol.trim().toUpperCase();
+  const direct = marketUniverse.find(asset => asset.symbol.toUpperCase() === normalized);
+  if (direct) return direct;
+  const providerSymbol = normalized === 'USDC' || normalized === 'USDT'
+    ? `${normalized}USDT`
+    : undefined;
+  return providerSymbol
+    ? marketUniverse.find(asset => asset.symbol.toUpperCase() === providerSymbol)
+    : undefined;
+}
+
+function classifyLearningCondition(market: MarketCondition): MarketConditionLevel {
+  const stress = (1 - market.liquidityScore) * 0.35 +
+    market.networkCongestion * 0.25 +
+    Math.min(1, market.volatility / 2) * 0.25 +
+    market.competitorDensity * 0.15;
+  if (stress <= 0.3) return 'ideal';
+  if (stress >= 0.65) return 'poor';
+  return 'average';
 }
 
 // ============================================================================
@@ -250,7 +273,7 @@ export interface CryptaraRouteObservation {
   inputAmountBaseUnits: string;
   outputAmountBaseUnits: string;
   inputTokenDecimals: number;
-  outputTokenDecimals: number;
+  outputTokenDecimals: number | null;
   grossProfitBaseUnits: string;
   expectedNetProfitBaseUnits: string;
   estimatedGasCostBaseUnits: string;
@@ -612,7 +635,7 @@ export class Cryptara extends EventEmitter {
     const missingInformation = [...new Set(context.missingInformation)];
     const provenance = [...new Set(context.provenance)];
     if (!context.mempool?.available || context.mempool.observedAt === null) missingInformation.push('mempool_evidence');
-    const marketAsset = context.marketUniverse.find(asset => asset.symbol === context.symbol);
+    const marketAsset = findMarketAsset(context.marketUniverse, context.symbol);
     const now = Date.now();
     const marketMaxAgeMs = Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000));
     const dexMaxAgeMs = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
@@ -636,7 +659,7 @@ export class Cryptara extends EventEmitter {
     const plan = context.plan;
     const hasPlanEconomics = !!plan && Number.isFinite(plan.netProfitUsd) && Number.isFinite(plan.notionalUsd) && plan.notionalUsd > 0;
     const routeMarketAsset = context.routeObservation
-      ? context.marketUniverse.find(asset => asset.symbol.toUpperCase() === context.routeObservation!.inputAssetSymbol)
+      ? findMarketAsset(context.marketUniverse, context.routeObservation.inputAssetSymbol)
       : undefined;
     const routePriceUsd = routeMarketAsset?.priceUsd;
     const routeProfitBaseUnits = context.routeObservation ? Number(context.routeObservation.expectedNetProfitBaseUnits) : NaN;
@@ -1216,7 +1239,7 @@ export class Cryptara extends EventEmitter {
     }
 
     const context = this.latestOpportunityContext;
-    const marketAsset = context?.marketUniverse.find(asset => asset.symbol === context.symbol);
+    const marketAsset = context ? findMarketAsset(context.marketUniverse, context.symbol) : undefined;
     const priceHistory = marketAsset?.priceHistory;
     const mempool = context?.mempool;
     const executionHistory = context
@@ -1304,6 +1327,15 @@ export class Cryptara extends EventEmitter {
         },
         learnings: simulation.performanceBreakdown.recommendation ? [simulation.performanceBreakdown.recommendation] : [],
       };
+      try {
+        const { instantLearningEngine } = await import('../cryptocrawl/learning/instant-learning-engine.js');
+        await instantLearningEngine.learnFromSimulation(strategy, market, classifyLearningCondition(market), simulation);
+      } catch (error) {
+        log.warn('Cryptara Monte Carlo learning update was unavailable; retaining simulation evidence', {
+          opportunityId: context.opportunityId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       this.latestMonteCarloEvidence = {
         simulationId: result.simulationId,
         evaluatedAt: Date.now(),
