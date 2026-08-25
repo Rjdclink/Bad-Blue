@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import type { providers } from 'ethers';
 import { SkalePowBeamWorkloadAdapter } from '../../../computationalBeam/skalePowWorkloadAdapter.js';
-import { isBootstrapRecoveryActive } from './bootstrap-recovery-state.js';
 import {
   SkaleExternalGasPowAdapter,
   type SkaleExternalGasPowRequest,
@@ -217,84 +216,52 @@ export class Stage4PowComputeCoordinator {
       };
     }
 
-    if (!isBootstrapRecoveryActive()) {
-      throw new Error('Railway emergency compute is disabled while verified native-gas readiness is satisfied');
-    }
-    return this.findProofWithRailwayEmergency(request, options);
+    return this.findProofWithRailwayEmergency(request);
   }
 
-  private async findProofWithRailwayEmergency(
-    request: SkaleExternalGasPowRequest,
-    options?: { workerCount?: number; timeoutMs?: number },
-  ): Promise<Stage4PowComputeResult> {
+  private async findProofWithRailwayEmergency(request: SkaleExternalGasPowRequest): Promise<Stage4PowComputeResult> {
     if (this.environment.RAILWAY_BOOTSTRAP_ENABLE_EMERGENCY !== 'true') {
       throw new Error('No zero-dollar bootstrap compute is available and Railway emergency compute is disabled; failing closed');
     }
-
-    const isRailwayRuntime = Boolean(this.environment.RAILWAY_ENVIRONMENT?.trim());
-    if (!this.railwayProvider && !isRailwayRuntime) {
-      throw new Error('Railway emergency compute requires RAILWAY_BOOTSTRAP_COMPUTE_URL outside a Railway runtime');
+    if (!this.railwayProvider) {
+      throw new Error('Railway emergency compute requires RAILWAY_BOOTSTRAP_COMPUTE_URL');
     }
-
-    if (this.railwayProvider) {
-      const availability = await this.railwayProvider.availability(request.signal);
-      if (!availability.available) {
-        throw new Error(`Railway emergency compute is unavailable: ${availability.detail || 'unknown health failure'}`);
-      }
+    const availability = await this.railwayProvider.availability(request.signal);
+    if (!availability.available) {
+      throw new Error(`Railway emergency compute is unavailable: ${availability.detail || 'unknown health failure'}`);
     }
-
     const cpuMs = requirePositiveInteger('RAILWAY_BOOTSTRAP_PROJECTED_CPU_MS', this.environment.RAILWAY_BOOTSTRAP_PROJECTED_CPU_MS || '');
     const memoryMb = requirePositiveInteger('RAILWAY_BOOTSTRAP_PROJECTED_MEMORY_MB', this.environment.RAILWAY_BOOTSTRAP_PROJECTED_MEMORY_MB || '');
-    const cpuUsdPerHour = this.requireEnvironment('RAILWAY_BOOTSTRAP_CPU_USD_PER_HOUR');
-    const memoryGbUsdPerHour = this.requireEnvironment('RAILWAY_BOOTSTRAP_MEMORY_GB_USD_PER_HOUR');
     const projectedMicroUsd = estimateRailwayIncrementalMicroUsd({
       cpuMilliseconds: cpuMs,
       memoryMegabyteMilliseconds: cpuMs * memoryMb,
-      cpuUsdPerHour,
-      memoryGbUsdPerHour,
+      cpuUsdPerHour: this.requireEnvironment('RAILWAY_BOOTSTRAP_CPU_USD_PER_HOUR'),
+      memoryGbUsdPerHour: this.requireEnvironment('RAILWAY_BOOTSTRAP_MEMORY_GB_USD_PER_HOUR'),
     });
     const eventId = `stage4:${request.workloadId}`;
     const workId = crypto.randomUUID();
     await this.railwayBudget.reserve(eventId, workId, projectedMicroUsd);
     try {
-      let solution: SkaleExternalGasPowSolution;
-      let providerId: string;
-      let actualCpuMs: number;
-      let actualMemoryMegabyteMs: number;
-
-      if (this.railwayProvider) {
-        const result = await this.railwayProvider.solve(request, request.signal);
-        solution = result.solution;
-        providerId = this.railwayProvider.id;
-        actualCpuMs = result.metrics?.cpuMilliseconds ?? cpuMs;
-        actualMemoryMegabyteMs = result.metrics?.memoryMegabyteMilliseconds ?? cpuMs * memoryMb;
-      } else {
-        const local = await new SkalePowBeamWorkloadAdapter(this.provider).findProofThroughBeam(request, options);
-        solution = local.solution;
-        providerId = 'railway-local-beam';
-        actualCpuMs = Math.max(1, local.metrics.elapsedMs * Math.max(1, local.metrics.workersUsed));
-        actualMemoryMegabyteMs = Math.max(1, local.metrics.elapsedMs) * memoryMb;
-      }
-
+      const result = await this.railwayProvider.solve(request, request.signal);
       const verifier = new SkaleExternalGasPowAdapter(this.provider);
-      if (!await verifier.verifyProof(request, solution)) {
+      if (!await verifier.verifyProof(request, result.solution)) {
         throw new Error('Railway emergency compute returned an invalid SKALE PoW proof');
       }
       const actualMicroUsd = estimateRailwayIncrementalMicroUsd({
-        cpuMilliseconds: actualCpuMs,
-        memoryMegabyteMilliseconds: actualMemoryMegabyteMs,
-        cpuUsdPerHour,
-        memoryGbUsdPerHour,
+        cpuMilliseconds: result.metrics?.cpuMilliseconds ?? cpuMs,
+        memoryMegabyteMilliseconds: result.metrics?.memoryMegabyteMilliseconds ?? cpuMs * memoryMb,
+        cpuUsdPerHour: this.requireEnvironment('RAILWAY_BOOTSTRAP_CPU_USD_PER_HOUR'),
+        memoryGbUsdPerHour: this.requireEnvironment('RAILWAY_BOOTSTRAP_MEMORY_GB_USD_PER_HOUR'),
       });
       const budget = await this.railwayBudget.settle(eventId, workId, actualMicroUsd);
       if (budget.hardLimitReached) {
         throw new Error('RAILWAY_BOOTSTRAP_HARD_BUDGET_REACHED');
       }
       return {
-        solution,
+        solution: result.solution,
         source: 'railway-emergency',
-        providerId,
-        attempts: solution.attempts,
+        providerId: this.railwayProvider.id,
+        attempts: result.solution.attempts,
       };
     } catch (error) {
       await this.railwayBudget.cancel(eventId, workId);

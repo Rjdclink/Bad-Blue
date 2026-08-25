@@ -18,8 +18,6 @@ const evidence = {
   sourceBalanceEvidenceVerified: true,
   zeroMonetaryGasVerified: true,
   zeroExternalCapitalVerified: true,
-  sourceRecipientBalanceBeforeBaseUnits: '0',
-  sourceRecipientBalanceAfterBaseUnits: '1000000',
 };
 
 function request(idempotencyKey: string): NativeGasFundingRequest {
@@ -88,41 +86,6 @@ const successfulReserve: NativeGasFundingStrategy = {
       reimbursementVerified: true,
       sourceProceedsAllocatedBaseUnits: '0',
       provenance: ['test_destination_receipt', 'test_native_balance_delta'],
-    };
-  },
-};
-
-let successfulBridgeSettles = 0;
-const successfulBridge: NativeGasFundingStrategy = {
-  name: 'bridge_refuel',
-  async quote(input) {
-    return {
-      strategy: 'bridge_refuel',
-      available: true,
-      economicallyViable: true,
-      sourceProceedsRequiredBaseUnits: input.evidence.realizedProfitBaseUnits,
-      estimatedNetProceedsBaseUnits: '1',
-      estimatedCostNativeWei: '0',
-      estimatedDeliveredNativeWei: '100',
-      reimbursementRequired: true,
-      reason: 'Test source-funded bridge is available',
-    };
-  },
-  async settle(input) {
-    successfulBridgeSettles += 1;
-    return {
-      strategy: 'bridge_refuel',
-      state: 'SETTLED',
-      sourceTransactionHash: input.evidence.sourceTransactionHash,
-      destinationTransactionHash: `0x${'7'.repeat(64)}`,
-      destinationReceiptVerified: true,
-      destinationNativeBalanceBeforeWei: '0',
-      destinationNativeBalanceAfterWei: '100',
-      deliveredNativeWei: '100',
-      reimbursementRequired: true,
-      reimbursementVerified: true,
-      sourceProceedsAllocatedBaseUnits: input.evidence.realizedProfitBaseUnits,
-      provenance: ['test_source_funded_bridge'],
     };
   },
 };
@@ -216,23 +179,9 @@ async function main(): Promise<void> {
   const fallbackResult = await new NativeGasFundingCoordinator(
     [failedRelay, successfulReserve],
     new InMemoryNativeGasFundingAttemptStore(),
-  ).settleVerifiedProfit(nonEuropaRequest('funding-fallback'));
+  ).settleVerifiedProfit(request('funding-fallback'));
   assert.equal(fallbackResult.state, 'SETTLED');
   assert.equal(fallbackResult.strategy, 'internal_native_reserve');
-
-  const europaIdempotencyCoordinator = new NativeGasFundingCoordinator(
-    [successfulBridge],
-    new InMemoryNativeGasFundingAttemptStore(),
-  );
-  const firstEuropaSettlement = await europaIdempotencyCoordinator.settleVerifiedProfit(request('unstable-caller-key-1'));
-  const secondEuropaSettlement = await europaIdempotencyCoordinator.settleVerifiedProfit({
-    ...request('unstable-caller-key-2'),
-    requiredNativeWei: '99',
-  });
-  assert.equal(firstEuropaSettlement.state, 'SETTLED');
-  assert.equal(secondEuropaSettlement.state, 'SETTLED');
-  assert.equal(secondEuropaSettlement.destinationTransactionHash, firstEuropaSettlement.destinationTransactionHash);
-  assert.equal(successfulBridgeSettles, 1);
 
   const invalidEconomicsResult = await new NativeGasFundingCoordinator(
     [invalidEconomics],
@@ -256,22 +205,13 @@ async function main(): Promise<void> {
     /receipt-backed zero-capital realized-profit evidence/,
   );
 
-  await assert.rejects(
-    () => coordinator.settleVerifiedProfit({
-      ...request('funding-external-input'),
-      evidence: { ...evidence, sourceRecipientBalanceBeforeBaseUnits: '1', sourceRecipientBalanceAfterBaseUnits: '1000001' },
-    }),
-    /zero input-token starting balance/,
-  );
-
   console.log(JSON.stringify({
     settled: settled.state,
     replayed: replayed.state,
     unavailable: unavailableResult.state,
     fallback: fallbackResult.state,
-    europaStableIdempotency: successfulBridgeSettles === 1,
     unknownSubmission: unknownSubmissionResult.state,
-    proofGate: 'rejected_unverified_or_externally_seeded_profit',
+    proofGate: 'rejected_unverified_profit',
   }));
 }
 

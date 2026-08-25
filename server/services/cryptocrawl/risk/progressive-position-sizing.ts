@@ -58,12 +58,11 @@ export function calculateProgressivePositionSize(
 ): PositionSizingDecision {
   const reasons: string[] = [];
   const { stage, state, directive, ranking } = context;
-  const bootstrapRecovery = request.zeroCapitalAvailable && !stageManager.isInitialGasReady();
 
   if (!Number.isFinite(request.requestedNotionalUsd) || request.requestedNotionalUsd <= 0) {
     return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['Requested notional must be positive'] };
   }
-  if (!stage.canExecuteTrades && !bootstrapRecovery) {
+  if (!stage.canExecuteTrades) {
     return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: [`${stage.stageName} does not permit position sizing for execution`] };
   }
   if (!request.providerHealthy) {
@@ -78,20 +77,8 @@ export function calculateProgressivePositionSize(
   if (request.expectedSlippageBps > directive.maxSlippageBps) {
     return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['Expected slippage exceeds Cryptara directive limit'] };
   }
-  if (directive.riskBudget === 'defensive' && !bootstrapRecovery) {
+  if (directive.riskBudget === 'defensive') {
     return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['Cryptara performance ranking selected a defensive risk budget'] };
-  }
-
-  if (bootstrapRecovery) {
-    if (state.currentDrawdownPercent > stage.maxDrawdownPercent) {
-      return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['Bootstrap/recovery is blocked because current drawdown exceeds the canonical stage cap'] };
-    }
-    return {
-      approved: true,
-      proposedNotionalUsd: request.requestedNotionalUsd,
-      maxPermittedNotionalUsd: request.requestedNotionalUsd,
-      reasons: ['Dedicated zero-capital bootstrap/recovery sizing is permitted only while verified native gas remains below threshold; ordinary stage execution authority is unchanged'],
-    };
   }
 
   const realizedCapitalUsd = Math.max(0, state.totalProfitUSD);

@@ -46,33 +46,6 @@ import { riskGovernor } from './risk-governor';
 import { killSwitch } from './kill-switch';
 import { composer } from './composer-interface';
 import { profitLadder } from './profit-ladder';
-import { GovernanceError } from './types.js';
-
-/**
- * Dedicated bootstrap/recovery authority. This never grants ordinary trading
- * permission. It exists only while verified native-gas readiness is below the
- * configured threshold and is valid at any governance stage so a later gas
- * depletion can recover through the same source-funded path.
- */
-export function requireBootstrapRecoveryAllowed(context: { chain: string; pair: string; venue: string }): void {
-  const state = stageManager.getState();
-  const config = stageManager.getStageConfig();
-  if (state.isPaused) {
-    throw new GovernanceError('PAUSED', 'Bootstrap recovery is paused', { reason: state.pauseReason });
-  }
-  if (state.killSwitchActive) {
-    throw new GovernanceError('KILL_SWITCH_ENGAGED', 'Bootstrap recovery is blocked by the kill-switch');
-  }
-  if (!config.killSwitchArmed) {
-    throw new GovernanceError('KILL_SWITCH_NOT_ARMED', 'Bootstrap recovery requires the canonical kill-switch to be armed');
-  }
-  if (state.initialGasReady) {
-    throw new GovernanceError('CONSTRAINT_VIOLATION', 'Bootstrap recovery is disabled after initial gas readiness', { stage: state.currentStage });
-  }
-  if (context.pair !== 'NATIVE_GAS_SETTLEMENT' || context.venue !== 'bridge_refuel' || !context.chain || context.chain === 'europa') {
-    throw new GovernanceError('CONSTRAINT_VIOLATION', 'Bootstrap recovery context is outside the dedicated source-funded bridge/refuel boundary', { context });
-  }
-}
 
 /**
  * Initialize governance system

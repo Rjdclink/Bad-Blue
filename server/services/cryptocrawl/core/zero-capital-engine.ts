@@ -33,7 +33,7 @@ import { getCryptara, type CryptaraRouteObservation } from '../../cryptara/index
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { TradingViewEngine } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
-import { getCryptocrawlGovernance, requireBootstrapRecoveryAllowed } from '../governance/index.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 import { stageManager } from '../governance/stage-management.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
@@ -65,10 +65,6 @@ import {
   NativeGasFundingCoordinator,
   PostgresNativeGasFundingAttemptStore,
 } from '../execution/native-gas-funding-coordinator.js';
-import {
-  MESON_ZEROEX_NATIVE_GAS_DESTINATIONS,
-  MesonZeroExNativeGasStrategy,
-} from '../execution/meson-zeroex-native-gas-strategy.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -346,13 +342,8 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
-    const europaFundingWallet = this.executionWallets.get('europa');
-    const arbitrumFundingWallet = this.executionWallets.get('arbitrum');
-    const nativeGasStrategies = europaFundingWallet && arbitrumFundingWallet
-      ? [new MesonZeroExNativeGasStrategy(europaFundingWallet, arbitrumFundingWallet)]
-      : [];
     this.nativeGasFundingCoordinator = new NativeGasFundingCoordinator(
-      nativeGasStrategies,
+      [],
       new PostgresNativeGasFundingAttemptStore(),
     );
 
@@ -400,7 +391,6 @@ export class AutonomousZeroCapitalEngine {
       flashbotsEnabled: !!this.flashbotsProvider,
       configuredBaseRoutes: this.configuredBaseRoutes.length,
       configuredRoutes: this.configuredRoutes.length,
-      nativeGasFundingStrategies: nativeGasStrategies.map(strategy => strategy.name),
       europaRouteDiscovery: this.routeDiscoveryStatus,
       europaRouteDiscoveryLastError: this.routeDiscoveryLastError,
     });
@@ -429,22 +419,23 @@ export class AutonomousZeroCapitalEngine {
 
     this.state.isRunning = true;
     const executionRequested = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
-    const ordinaryExecutionAuthorizedAtStart = executionRequested && stageManager.canExecuteTrades();
+    const executionOptIn = executionRequested && stageManager.canExecuteTrades();
     const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
     const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
     const zeroCapitalConfirmed = process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK';
     const europaRoutes = this.configuredRoutes.filter(route => route.chain === 'europa');
     const nonEuropaRoutes = this.configuredRoutes.filter(route => route.chain !== 'europa');
+    let executionEnabledForLifecycle = executionOptIn;
 
-    if (executionRequested && !ordinaryExecutionAuthorizedAtStart) {
-      logger.info('[ZeroCapitalEngine] Ordinary trade execution is deferred by the current governance stage; bootstrap/recovery authority remains independently gated while native gas is below threshold', {
+    if (executionRequested && !executionOptIn) {
+      logger.info('[ZeroCapitalEngine] Execution request deferred because the current governance stage is monitoring-only', {
         component: 'ZeroCapitalEngine',
         stage: stageManager.getCurrentStage(),
         paused: stageManager.isPaused(),
       });
     }
 
-    if (executionRequested) {
+    if (executionOptIn) {
       if (process.env.NO_EXECUTION === 'true') {
         throw new Error('ZERO_CAPITAL_ENABLE_EXECUTION=true conflicts with NO_EXECUTION=true');
       }
@@ -464,12 +455,6 @@ export class AutonomousZeroCapitalEngine {
         if (!this.europaAdapter) {
           throw new Error('Europa execution requires WALLET_PRIVATE_KEY and a reachable Europa RPC provider');
         }
-        if (!this.executionWallets.get('arbitrum')) {
-          throw new Error('Europa source-funded bootstrap requires a reachable Arbitrum RPC and the canonical execution wallet for native-gas delivery');
-        }
-        if (!(process.env.ZERO_CAPITAL_ZEROX_API_KEY?.trim() || process.env.ZERO_EX_API_KEY?.trim())) {
-          throw new Error('Europa source-funded bootstrap requires ZERO_CAPITAL_ZEROX_API_KEY or ZERO_EX_API_KEY for the 0x Gasless USDC-to-native settlement step');
-        }
         const europaReceiverKind = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND?.trim() || 'sushi-v3';
         const receiverInfrastructureReady = europaReceiverKind === 'sushi-v3'
           ? !process.env.ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY?.trim() || process.env.ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY.trim() === EUROPA_SUSHI.v3Factory
@@ -485,12 +470,19 @@ export class AutonomousZeroCapitalEngine {
           throw new Error(`Europa bootstrap recovery is blocked while capital provenance is ${capitalState.lifecycle}; reconcile the recorded transaction before starting another execution`);
         }
         if (capitalState.lifecycle === 'SELF_FUNDED' && BigInt(capitalState.internallyGeneratedBalance) > 0n) {
-          logger.info('[ZeroCapitalEngine] Europa bootstrap has verified internally generated proceeds awaiting source-funded native-gas settlement', {
+          executionEnabledForLifecycle = false;
+          logger.info('[ZeroCapitalEngine] Europa bootstrap is dormant because verified internally generated capital is available', {
             component: 'ZeroCapitalEngine',
             generation: capitalState.generation,
             asset: capitalState.asset,
           });
-        } else if (capitalState.lifecycle !== 'SELF_FUNDED') {
+        } else {
+          if (capitalState.lifecycle === 'SELF_FUNDED') {
+            if (process.env.ZERO_CAPITAL_RECOVERY_CONFIRMATION !== 'I_CONFIRM_GLOBAL_INTERNAL_CAPITAL_EXHAUSTED') {
+              throw new Error('Capital provenance shows SELF_FUNDED with no recorded balance; global capital exhaustion must be explicitly reconciled before bootstrap recovery');
+            }
+            await this.capitalProvenance.markRecoveryRequired(this.capitalScope);
+          }
           await this.capitalProvenance.markZeroGasExecutionReady(this.capitalScope);
         }
         await this.europaAdapter.checkReadiness();
@@ -530,7 +522,7 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
-    this.executionEligible = executionRequested;
+    this.executionEligible = executionEnabledForLifecycle;
     this.executionEnabled = false;
     this.initialGasReadyCallback = options.onInitialGasReady;
     this.initialGasLostCallback = options.onInitialGasLost;
@@ -559,20 +551,18 @@ export class AutonomousZeroCapitalEngine {
       });
     }
 
-    if (this.executionEligible && this.state.initialGasReadiness.initialGasReady && stageManager.canExecuteTrades()) {
-      logger.info('[ZeroCapitalEngine] Ordinary execution mode enabled for zero-capital arbitrage', {
+    if (this.executionEligible && this.state.initialGasReadiness.initialGasReady) {
+      logger.info('[ZeroCapitalEngine] Execution mode enabled for zero-capital arbitrage', {
         component: 'ZeroCapitalEngine',
       });
     } else {
-      logger.info('[ZeroCapitalEngine] Execution loop is currently gated', {
+      logger.info('[ZeroCapitalEngine] Execution loop disabled; monitoring mode only', {
         component: 'ZeroCapitalEngine',
-        reason: !executionRequested
-          ? 'Live execution was not requested'
-          : !this.state.initialGasReadiness.initialGasReady
-            ? 'Initial native-gas readiness is below threshold; bootstrap/recovery authority is active instead of ordinary market execution'
-            : !stageManager.canExecuteTrades()
-              ? 'Current governance stage permits monitoring/advisory work but not ordinary trade execution'
-              : 'Ordinary execution prerequisites are not currently active',
+        reason: executionRequested && !executionOptIn
+          ? 'Current governance stage does not permit trade execution'
+          : this.state.initialGasReadiness.initialGasReady && executionOptIn
+            ? 'Verified internally generated capital is available; zero-capital bootstrap is dormant'
+            : 'Initial native-gas readiness has not opened Stage 1 market operations',
       });
     }
   }
@@ -674,8 +664,8 @@ export class AutonomousZeroCapitalEngine {
       return;
     }
     if (!this.executionEligible) {
-      this.state.lastFundingError = 'Bootstrap/recovery execution is not configured; set the live zero-capital execution controls before attempting source-funded recovery';
-      logger.info('[ZeroCapitalEngine] Corrective bootstrap deferred because live zero-capital execution is not configured', {
+      this.state.lastFundingError = 'PRE_STAGE_1_BOOTSTRAP remains observation-only; no qualifying paid-chain native funding or zero-gas conversion path is available';
+      logger.info('[ZeroCapitalEngine] Corrective bootstrap deferred by authoritative stage capability', {
         component: 'ZeroCapitalEngine',
         stage: stageManager.getCurrentStage(),
         status: readiness.status,
@@ -685,11 +675,12 @@ export class AutonomousZeroCapitalEngine {
     }
     const settlementPlan = await this.calculateAutomaticBootstrapSettlementPlan(readiness);
     if (!settlementPlan || !this.nativeGasFundingCoordinator) {
-      this.state.lastFundingError = 'No live supported paid-chain destination is available for the configured source-funded settlement rail';
+      this.state.lastFundingError = 'No live paid-chain destination and no source-funded settlement adapter are available; Europa bootstrap remains observation-only';
       return;
     }
     const destinationChain = settlementPlan.destinationChain;
-    requireBootstrapRecoveryAllowed({
+    const requiredNativeWei = settlementPlan.requiredNativeWei;
+    getCryptocrawlGovernance().requireBootstrapSettlementAllowed({
       chain: destinationChain,
       pair: 'NATIVE_GAS_SETTLEMENT',
       venue: 'bridge_refuel',
@@ -700,12 +691,11 @@ export class AutonomousZeroCapitalEngine {
       if (settled) {
         this.pendingEuropaProfit = undefined;
         await this.refreshWalletResources();
-        await this.refreshInitialGasReadiness();
       }
       return;
     }
 
-    let capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
+    const capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
     if (capitalState.lifecycle === 'SELF_FUNDED' && BigInt(capitalState.internallyGeneratedBalance) > 0n) {
       if (capitalState.asset && capitalState.originTransactionHash && capitalState.sourceRecipient &&
           capitalState.sourceRecipientBalanceBeforeBaseUnits !== undefined && capitalState.sourceRecipientBalanceAfterBaseUnits !== undefined) {
@@ -724,10 +714,7 @@ export class AutonomousZeroCapitalEngine {
           profitRecipientEndingInputBalance: BigInt(capitalState.sourceRecipientBalanceAfterBaseUnits),
         };
         const settled = await this.settleVerifiedEuropaProfit(recoveredOpportunity, recoveredResult);
-        if (settled) {
-          await this.refreshWalletResources();
-          await this.refreshInitialGasReadiness();
-        }
+        if (settled) await this.refreshWalletResources();
         return;
       }
       this.state.lastFundingError = 'Persisted Europa profit lacks source recipient custody proof; reconciliation is required before another bootstrap attempt';
@@ -735,21 +722,6 @@ export class AutonomousZeroCapitalEngine {
     }
     if (capitalState.lifecycle === 'ATOMIC_EXECUTION_PENDING' || capitalState.lifecycle === 'FIRST_PROFIT_VERIFIED') {
       throw new Error(`Europa bootstrap is blocked while capital provenance is ${capitalState.lifecycle}; reconcile the recorded transaction before retrying`);
-    }
-    if (capitalState.lifecycle === 'SELF_FUNDED' && BigInt(capitalState.internallyGeneratedBalance) === 0n) {
-      const completedSourceFundedSettlement = capitalState.latestExecutionKey?.startsWith('native-gas:') === true;
-      if (!completedSourceFundedSettlement && process.env.ZERO_CAPITAL_RECOVERY_CONFIRMATION !== 'I_CONFIRM_GLOBAL_INTERNAL_CAPITAL_EXHAUSTED') {
-        throw new Error('Capital provenance shows SELF_FUNDED with no recorded balance and no verified native-gas settlement; reconciliation is required before bootstrap recovery');
-      }
-      await this.capitalProvenance.markRecoveryRequired(this.capitalScope);
-      capitalState = await this.capitalProvenance.markZeroGasExecutionReady(this.capitalScope);
-      logger.info('[ZeroCapitalEngine] Previous internally generated proceeds were fully allocated; zero-gas bootstrap authority re-opened because paid native gas remains below threshold', {
-        component: 'ZeroCapitalEngine',
-        generation: capitalState.generation,
-        verifiedPreviousSettlement: completedSourceFundedSettlement,
-      });
-    } else if (capitalState.lifecycle === 'ZERO' || capitalState.lifecycle === 'ZERO_RECOVERY_REQUIRED') {
-      capitalState = await this.capitalProvenance.markZeroGasExecutionReady(this.capitalScope);
     }
 
     const europaProvider = this.providers.get('europa');
@@ -798,24 +770,15 @@ export class AutonomousZeroCapitalEngine {
     });
     const result = await this.executeWithEuropa(opportunity);
     await this.recordCryptaraExecutionFeedback(opportunity, result);
-    let fundingSettled = false;
     if (result.success) {
       this.pendingEuropaProfit = { opportunity, result };
-      fundingSettled = await this.settleVerifiedEuropaProfit(opportunity, result);
-      if (fundingSettled) this.pendingEuropaProfit = undefined;
+      const settled = await this.settleVerifiedEuropaProfit(opportunity, result);
+      if (settled) this.pendingEuropaProfit = undefined;
       await this.refreshWalletResources();
     }
     const postExecutionReadiness = await this.refreshInitialGasReadiness();
     if (!result.success) {
       throw new Error(result.error || 'Europa bootstrap execution did not prove a successful result');
-    }
-    if (!postExecutionReadiness.initialGasReady && fundingSettled) {
-      logger.info('[ZeroCapitalEngine] Incremental source-funded native gas was verified; bootstrap will continue until the configured USD threshold is reached', {
-        component: 'ZeroCapitalEngine',
-        thresholdUsd: postExecutionReadiness.thresholdUsd,
-        usableNativeGasUsd: postExecutionReadiness.usableNativeGasUsd,
-      });
-      return;
     }
     if (!postExecutionReadiness.initialGasReady) {
       throw new Error(await this.describeNativeGasFundingBlocker(postExecutionReadiness));
@@ -837,7 +800,7 @@ export class AutonomousZeroCapitalEngine {
     const readiness = await this.refreshInitialGasReadiness();
     const settlementPlan = await this.calculateAutomaticBootstrapSettlementPlan(readiness);
     if (!settlementPlan) {
-      this.state.lastFundingError = 'No live supported paid-chain destination can be selected for source-funded native-gas settlement';
+      this.state.lastFundingError = 'No live paid-chain destination can be selected for source-funded native-gas settlement';
       return false;
     }
     const destinationChain = settlementPlan.destinationChain;
@@ -873,7 +836,6 @@ export class AutonomousZeroCapitalEngine {
       destinationChain,
       destinationWallet: destinationWallet.address,
       requiredNativeWei,
-      minimumDeliveredNativeWei: '1',
     });
     if (funding.state !== 'SETTLED' || !funding.destinationReceiptVerified || !funding.deliveredNativeWei) {
       this.state.lastFundingError = funding.error || 'Native-gas funding did not produce a verified destination settlement';
@@ -914,13 +876,9 @@ export class AutonomousZeroCapitalEngine {
   private async calculateAutomaticBootstrapSettlementPlan(readiness: InitialGasReadiness) {
     const walletAddresses = new Map<SupportedChain, string>();
     for (const [chain, wallet] of this.executionWallets.entries()) walletAddresses.set(chain, wallet.address);
-    const supportedDestinations = new Set<string>(MESON_ZEROEX_NATIVE_GAS_DESTINATIONS);
-    const settlementProviders = new Map<SupportedChain, providers.JsonRpcProvider>(
-      Array.from(this.providers.entries()).filter(([chain]) => supportedDestinations.has(chain)),
-    );
     return calculateAutomaticNativeGasPlan({
       readiness,
-      providers: settlementProviders,
+      providers: this.providers,
       walletAddresses,
     });
   }
@@ -999,19 +957,21 @@ export class AutonomousZeroCapitalEngine {
 
   private async describeNativeGasFundingBlocker(readiness: InitialGasReadiness): Promise<string> {
     const capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
-    const destinationEvidence = MESON_ZEROEX_NATIVE_GAS_DESTINATIONS.map(chain => {
-      const wallet = this.executionWallets.get(chain as SupportedChain);
-      const provider = this.providers.get(chain as SupportedChain);
-      return `${chain}:${provider ? 'rpc' : 'no-rpc'}:${wallet ? 'execution-wallet' : 'no-wallet'}`;
-    }).join(', ');
-    return `SOURCE-FUNDED SETTLEMENT NOT YET VERIFIED: Europa ${capitalState.asset || EUROPA_SUSHI.tokens.usdc} proceeds have not yet produced sufficient verified paid-chain native gas (${readiness.reason || readiness.status}). The configured production rail is Europa USDC -> Meson -> Arbitrum USDC -> 0x Gasless -> native ETH, with bridge/conversion/gas costs charged from generated proceeds. A live quote, API credential, liquidity, settlement, receipt, or balance proof is currently unavailable. Destination evidence: ${destinationEvidence}.`;
+    const paidChains = Array.from(this.providers.keys()).filter(chain => chain !== 'europa');
+    const destinationEvidence = paidChains.length > 0
+      ? paidChains.map(chain => {
+        const wallet = this.executionWallets.get(chain);
+        return `${chain}:${wallet ? 'execution-wallet-observed' : 'observation-only'}`;
+      }).join(', ')
+      : 'none';
+    return `BLOCKED ON SOURCE-FUNDED SETTLEMENT CAPABILITY: verified Europa ${capitalState.asset || EUROPA_SUSHI.tokens.usdc} proceeds did not produce qualifying paid-chain native gas (${readiness.reason || readiness.status}). Destination and amount were derived from live RPC evidence, but no deployed protocol adapter proves source-token conversion or protocol-native cross-chain delivery, including the adapter's first native expenditure. Native currency cannot be manufactured by software for the destination transaction that pays validator fees. Existing bridge helpers are transfer/URL-only and the simulation-only Superchain relayer/paymaster is not used. Destination evidence: ${destinationEvidence}. No settlement transaction was submitted.`;
   }
 
   private async startMarketOperations(): Promise<void> {
     if (this.marketOperationsStarted || !this.state.isRunning || !stageManager.isMarketOperationsAllowed()) return;
     this.marketOperationsStarted = true;
     this.state.marketOperationsEnabled = true;
-    this.executionEnabled = this.executionEligible && stageManager.canExecuteTrades();
+    this.executionEnabled = this.executionEligible;
     this.startScanningLoop();
     this.startFundingLoop();
     if (this.executionEnabled) this.startExecutionLoop();
@@ -1264,27 +1224,10 @@ export class AutonomousZeroCapitalEngine {
         if (!readiness.initialGasReady || !stageManager.isMarketOperationsAllowed()) {
           this.suspendMarketOperations();
           this.state.lastFundingError = readiness.reason || 'Initial gas readiness is no longer verified';
-          if (!readiness.initialGasReady) this.startBootstrapReadinessLoop();
           return;
         }
         await this.refreshWalletResources();
         await this.refreshEuropaFundingRoute();
-
-        const ordinaryExecutionAllowed = this.executionEligible && stageManager.canExecuteTrades();
-        if (ordinaryExecutionAllowed && !this.executionEnabled) {
-          this.executionEnabled = true;
-          this.startExecutionLoop();
-          logger.info('[ZeroCapitalEngine] Governance now permits ordinary execution; execution loop activated without restarting the engine', {
-            component: 'ZeroCapitalEngine',
-            stage: stageManager.getCurrentStage(),
-          });
-        } else if (!ordinaryExecutionAllowed && this.executionEnabled) {
-          this.executionEnabled = false;
-          if (this.executionInterval) {
-            clearInterval(this.executionInterval);
-            this.executionInterval = null;
-          }
-        }
 
         if (this.executionEnabled && this.providers.has('europa')) {
           const europaOpportunities = await this.scanChainForOpportunities('europa', this.providers.get('europa')!);
@@ -2316,7 +2259,7 @@ export class AutonomousZeroCapitalEngine {
         ...resource,
         assetBalances: { ...resource.assetBalances },
       })),
-      capitalRequired: 'Measured wallet resources first; verified Europa zero-gas/Beam path next; source-funded Meson/0x native-gas settlement when below threshold; ordinary execution remains governed by stage authority',
+      capitalRequired: 'Measured wallet resources first; verified Europa zero-gas/Beam path next; legacy Flashbots sponsorship only when explicitly configured',
     };
   }
 }
