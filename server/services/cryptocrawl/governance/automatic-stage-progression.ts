@@ -68,6 +68,10 @@ export async function recordCryptaraExecutionEvidence(
   feedback: CryptaraExecutionFeedback,
   gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
 ): Promise<AutomaticAdvancementResult> {
+  if (!feedback.settlement || feedback.settlement.terminal !== true) {
+    throw new Error('Execution evidence requires a terminal normalized settlement');
+  }
+
   const cryptara = getCryptara();
   const prediction = cryptara.getPendingOpportunityPrediction(feedback.opportunityId);
   cryptara.recordExecutionResult(feedback);

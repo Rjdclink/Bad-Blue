@@ -255,24 +255,9 @@ export class CryptaraGovernance extends EventEmitter {
       expectedSlippageUsd: executionEnvelope.slippageUsd,
     });
 
-    const profitUSD = executionEnvelope.netExpectedProfitUSD;
-    
-    // Record trade with stage manager
-    stageManager.recordTrade(profitUSD);
-    
-    // Update circuit breakers
-    riskGovernor.updateCircuitBreaker('daily-loss', -Math.abs(profitUSD < 0 ? profitUSD : 0));
-    
-    this.emit('trade-executed', {
-      proposalId: proposal.id,
-      profitUSD,
-      timestamp: Date.now(),
-    });
-    
     return {
-      executed: true,
-      reason: 'Trade approved and executed with governance envelope checks',
-      profitUSD,
+      executed: false,
+      reason: 'Trade approved by governance envelope; canonical execution and terminal settlement are required before recording evidence',
     };
   }
 

@@ -1132,7 +1132,8 @@ class AutonomousCryptoFaucet {
     });
     
     // Decision: Should we OPEN?
-    const shouldOpen = 
+    const shouldOpen =
+      profitPasses &&
       confidence >= DECISION_CONFIG.minConfidenceToOpen &&
       passedCount >= DECISION_CONFIG.minValidatorsToOpen &&
       !this.circuitBreaker.isOpen;
@@ -2372,6 +2373,38 @@ class AutonomousCryptoFaucet {
         grossProfitUsd: null,
         netProfitUsd: null,
         reason: 'No complete cross-venue arbitrage plan is available from current live quotes',
+      };
+    }
+
+    const requiredEconomics = [
+      plan.notionalUsd,
+      plan.buyAsk,
+      plan.sellBid,
+      plan.baseQty,
+      plan.grossProfitUsd,
+      plan.netProfitUsd,
+      plan.costs.buyFeeUsd,
+      plan.costs.sellFeeUsd,
+      plan.costs.gasUsd,
+      plan.costs.bridgeFeeUsd,
+      plan.costs.totalCostsUsd,
+      plan.quoteAgeMs,
+      plan.executableNotionalUsd,
+    ];
+    const hasCompleteEconomics = requiredEconomics.every(value => Number.isFinite(value)) &&
+      plan.notionalUsd > 0 &&
+      plan.baseQty > 0 &&
+      plan.executableNotionalUsd > 0 &&
+      plan.buyAsk > 0 &&
+      plan.sellBid > 0 &&
+      plan.quoteAgeMs >= 0 &&
+      plan.liquidity.status === 'measured';
+    if (!hasCompleteEconomics) {
+      return {
+        status: 'INCOMPLETE_DATA',
+        grossProfitUsd: null,
+        netProfitUsd: null,
+        reason: 'Verified arbitrage plan is missing complete executable economics',
       };
     }
 

@@ -432,17 +432,16 @@ export class ConjoinedTwinCrawler {
    * Execute an opportunity
    */
   private async executeOpportunity(opportunity: Opportunity): Promise<any> {
-    // Placeholder - would integrate with actual execution engine
-    logger.info('Executing opportunity', {
+    logger.warn('Twin execution rejected: opportunity is not a verified execution plan', {
       component: 'ConjoinedTwinCrawler',
       asset: opportunity.asset,
       chain: opportunity.chain
     });
 
     return {
-      success: true,
-      profit: opportunity.profitEstimate,
-      gasUsed: 200000
+      success: false,
+      status: 'rejected',
+      error: 'LuxSwarm observations cannot authorize execution without a verified plan and measured settlement'
     };
   }
 

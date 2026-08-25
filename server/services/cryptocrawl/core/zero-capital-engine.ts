@@ -793,7 +793,7 @@ export class AutonomousZeroCapitalEngine {
   private toUsdEstimate(value: bigint | undefined, decimals: number): number {
     if (!value) return 0;
     const normalized = Number(ethers.utils.formatUnits(value.toString(), decimals));
-    return Number.isFinite(normalized) ? Math.max(0, normalized) : 0;
+    return Number.isFinite(normalized) ? normalized : 0;
   }
 
   private normalizeZeroCapitalSettlement(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): NormalizedRealizedExecution | undefined {

@@ -170,7 +170,7 @@ export class StageGovernor extends EventEmitter {
   reportAnomaly(anomaly: string, severity: 'low' | 'medium' | 'high' | 'critical'): void { stageManager.reportAnomaly(anomaly, severity); }
 
   markRequirementMet(type: StageRequirement['type'], value: number): void {
-    if (type === 'monte_carlo_consensus') stageManager.updateProofMetrics({ monteCarloPassRate: value });
+    throw new Error(`Requirement ${type} cannot be marked manually; automatic governance requires measured evidence`);
   }
 
   checkAdvancementReady(): { ready: boolean; unmetRequirements: string[] } {
@@ -186,14 +186,13 @@ export class StageGovernor extends EventEmitter {
   getAdvisoryCycles(_limit: number = 10): AdvisoryCycleResult[] { return []; }
 
   recordProfit(amount: number): { recorded: boolean; dailyTotal: number; withinLimits: boolean; currentTier: number } {
-    stageManager.recordTrade(amount);
     const dailyTotal = stageManager.getCurrentDailyProfit();
     const config = stageManager.getStageConfig();
     let currentTier = 0;
     for (const tier of this.getProfitLadder()) {
       if (tier.unlocked) currentTier = tier.tier;
     }
-    return { recorded: true, dailyTotal, withinLimits: dailyTotal <= config.maxDailyProfit, currentTier };
+    return { recorded: false, dailyTotal, withinLimits: dailyTotal <= config.maxDailyProfit, currentTier };
   }
 }
 

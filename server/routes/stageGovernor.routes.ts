@@ -473,6 +473,11 @@ router.post('/mark-requirement', async (req, res) => {
         error: 'Missing required fields: type and value',
       });
     }
+
+    return res.status(409).json({
+      success: false,
+      error: 'Stage requirements are derived automatically from measured evidence and cannot be marked manually',
+    });
     
     log.info('Marking requirement', { type, value });
     
@@ -514,6 +519,11 @@ router.post('/record-profit', async (req, res) => {
         error: 'Missing or invalid field: amount must be a number',
       });
     }
+
+    return res.status(409).json({
+      success: false,
+      error: 'Profit ladder evidence is recorded only from terminal normalized settlement',
+    });
     
     log.info('Recording profit', { amount });
     

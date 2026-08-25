@@ -685,6 +685,16 @@ class MasterPipeline {
 
   async executeOpportunity(opp: Opportunity): Promise<void> {
     try {
+      if (process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true') {
+        logger.warn('Master pipeline opportunity rejected: generic LuxSwarm execution is not authoritative', {
+          component: 'MasterPipeline',
+          opportunityId: opp.asset,
+          chain: opp.chain,
+          reason: 'live execution must use the canonical verified arbitrage plan path with measured economics',
+        });
+        return;
+      }
+
       // ============================================================
       // CRYPTARA MARKET GATE (advisory evaluators -> hard execution gate)
       // ============================================================
