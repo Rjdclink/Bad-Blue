@@ -20,6 +20,8 @@ export interface EuropaAtomicExecutionRequest {
   receiverKind?: 'balancer' | 'sushi-v3';
   sushiV3Factory?: string;
   inputToken: string;
+  profitRecipient?: string;
+  maxExternalProfitRecipientBalance?: string;
   payload: BuiltOnchainPayload;
   maxExternalNativeBalanceWei?: string;
   maxExternalInputBalance?: string;
@@ -42,6 +44,9 @@ export interface EuropaExecutionProof {
   nativeFeeWei?: bigint;
   startingInputBalance?: bigint;
   endingInputBalance?: bigint;
+  profitRecipient?: string;
+  profitRecipientStartingInputBalance?: bigint;
+  profitRecipientEndingInputBalance?: bigint;
   realizedProfit?: bigint;
   pow?: SkaleExternalGasPowSolution;
   computeSource?: Stage4ComputeSource;
@@ -120,6 +125,7 @@ export class EuropaZeroGasAdapter {
     const { provider } = await this.rpcPool.getHealthyProvider();
     const signer = this.signer.connect(provider);
     const signerAddress = await signer.getAddress();
+    const profitRecipient = requireAddress('Europa profit recipient', request.profitRecipient || signerAddress);
     const maxExternalNativeBalance = parseNonNegativeInteger('maxExternalNativeBalanceWei', request.maxExternalNativeBalanceWei, '0');
     const startingNativeBalance = await provider.getBalance(signerAddress);
     if (startingNativeBalance.gt(maxExternalNativeBalance)) {
@@ -147,6 +153,15 @@ export class EuropaZeroGasAdapter {
 
     const inputTokenContract = new Contract(inputToken, ERC20_ABI, provider);
     const startingInputBalance = BigNumber.from(await inputTokenContract.balanceOf(signerAddress));
+    const startingProfitRecipientInputBalance = BigNumber.from(await inputTokenContract.balanceOf(profitRecipient));
+    const maxExternalProfitRecipientBalance = parseNonNegativeInteger(
+      'maxExternalProfitRecipientBalance',
+      request.maxExternalProfitRecipientBalance,
+      '0',
+    );
+    if (profitRecipient.toLowerCase() !== signerAddress.toLowerCase() && startingProfitRecipientInputBalance.gt(maxExternalProfitRecipientBalance)) {
+      throw new Error(`Europa profit recipient has ${startingProfitRecipientInputBalance.toString()} input-token units; bootstrap recipient balance exceeds the configured external-capital bound`);
+    }
     const maxExternalInputBalance = parseNonNegativeInteger('maxExternalInputBalance', request.maxExternalInputBalance, '0');
     if (startingInputBalance.gt(maxExternalInputBalance)) {
       throw new Error(`Europa executor has ${startingInputBalance.toString()} input-token units; bootstrap requires at most ${maxExternalInputBalance.toString()} externally supplied execution capital`);
@@ -274,9 +289,10 @@ export class EuropaZeroGasAdapter {
 
     const endingNativeBalance = await provider.getBalance(signerAddress);
     const endingInputBalance = BigNumber.from(await inputTokenContract.balanceOf(signerAddress));
+    const endingProfitRecipientInputBalance = BigNumber.from(await inputTokenContract.balanceOf(profitRecipient));
     const measuredNativeFee = calculateEuropaNativeFee(startingNativeBalance, endingNativeBalance);
-    const realizedProfit = endingInputBalance.gt(startingInputBalance)
-      ? endingInputBalance.sub(startingInputBalance)
+    const realizedProfit = endingProfitRecipientInputBalance.gt(startingProfitRecipientInputBalance)
+      ? endingProfitRecipientInputBalance.sub(startingProfitRecipientInputBalance)
       : BigNumber.from(0);
     const receiverEvent = receipt.logs.find(log => log.address.toLowerCase() === receiver.toLowerCase() && log.topics[0] === receiverContract.interface.getEventTopic('FlashLoanExecuted'));
     const emittedProfit = receiverEvent
@@ -303,6 +319,9 @@ export class EuropaZeroGasAdapter {
         nativeFeeWei: BigInt(measuredNativeFee.toString()),
         startingInputBalance: BigInt(startingInputBalance.toString()),
         endingInputBalance: BigInt(endingInputBalance.toString()),
+        profitRecipient,
+        profitRecipientStartingInputBalance: BigInt(startingProfitRecipientInputBalance.toString()),
+        profitRecipientEndingInputBalance: BigInt(endingProfitRecipientInputBalance.toString()),
         realizedProfit: BigInt(realizedProfit.toString()),
         pow,
         computeSource,
@@ -311,7 +330,7 @@ export class EuropaZeroGasAdapter {
         error: `Europa receipt consumed ${measuredNativeFee.toString()} native wei; zero-monetary-gas proof failed`,
       };
     }
-    if (realizedProfit.lte(0) || emittedProfit.lte(0)) {
+    if (realizedProfit.lte(0) || emittedProfit.lte(0) || !realizedProfit.eq(emittedProfit)) {
       return {
         executionKey,
         transactionHash,
@@ -323,12 +342,15 @@ export class EuropaZeroGasAdapter {
         nativeFeeWei: BigInt(measuredNativeFee.toString()),
         startingInputBalance: BigInt(startingInputBalance.toString()),
         endingInputBalance: BigInt(endingInputBalance.toString()),
+        profitRecipient,
+        profitRecipientStartingInputBalance: BigInt(startingProfitRecipientInputBalance.toString()),
+        profitRecipientEndingInputBalance: BigInt(endingProfitRecipientInputBalance.toString()),
         realizedProfit: BigInt(realizedProfit.toString()),
         pow,
         computeSource,
         zeroMonetaryGasVerified: true,
         success: false,
-        error: 'Europa transaction succeeded but did not prove a positive atomic profit',
+        error: 'Europa transaction succeeded but did not prove a positive atomic profit; emitted profit did not equal the verified profit-recipient balance delta',
       };
     }
 
@@ -343,6 +365,9 @@ export class EuropaZeroGasAdapter {
       nativeFeeWei: BigInt(measuredNativeFee.toString()),
       startingInputBalance: BigInt(startingInputBalance.toString()),
       endingInputBalance: BigInt(endingInputBalance.toString()),
+      profitRecipient,
+      profitRecipientStartingInputBalance: BigInt(startingProfitRecipientInputBalance.toString()),
+      profitRecipientEndingInputBalance: BigInt(endingProfitRecipientInputBalance.toString()),
       realizedProfit: BigInt(realizedProfit.toString()),
       pow,
       computeSource,

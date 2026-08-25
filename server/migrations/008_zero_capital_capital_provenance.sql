@@ -26,3 +26,7 @@ CREATE TABLE IF NOT EXISTS zero_capital_capital_events (
 
 CREATE INDEX IF NOT EXISTS zero_capital_capital_events_scope_idx
   ON zero_capital_capital_events (scope, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS zero_capital_capital_events_execution_key_idx
+  ON zero_capital_capital_events (scope, execution_key)
+  WHERE execution_key IS NOT NULL;

@@ -536,6 +536,29 @@ export class CryptocrawlGovernance {
     if (this.getState().stage === 1 && !stageManager.isAutomaticallyActivated()) this.pause(actor, reason);
   }
 
+  requireBootstrapSettlementAllowed(context: { chain: string; pair: string; venue: string }): void {
+    const state = stageManager.getState();
+    const config = stageManager.getStageConfig();
+    if (state.currentStage !== 1) {
+      throw new GovernanceError('STAGE_VIOLATION', 'Bootstrap settlement is restricted to pre-Stage-1 operation', { stage: state.currentStage });
+    }
+    if (state.isPaused) {
+      throw new GovernanceError('PAUSED', 'Bootstrap settlement is paused', { reason: state.pauseReason });
+    }
+    if (state.killSwitchActive) {
+      throw new GovernanceError('KILL_SWITCH_ENGAGED', 'Bootstrap settlement is blocked by the kill-switch');
+    }
+    if (!config.killSwitchArmed) {
+      throw new GovernanceError('KILL_SWITCH_NOT_ARMED', 'Bootstrap settlement requires the canonical kill-switch to be armed');
+    }
+    if (state.initialGasReady) {
+      throw new GovernanceError('CONSTRAINT_VIOLATION', 'Bootstrap settlement is disabled after initial gas readiness', { stage: state.currentStage });
+    }
+    if (context.pair !== 'NATIVE_GAS_SETTLEMENT' || context.venue !== 'profit_funded_relayer' || !context.chain || context.chain === 'europa') {
+      throw new GovernanceError('CONSTRAINT_VIOLATION', 'Bootstrap settlement context is outside the dedicated profit-funded relayer boundary', { context });
+    }
+  }
+
   requireAllowed(action: GovernanceAction, context?: { chain?: string; pair?: string; venue?: string }): void {
     const at = nowMs();
     const state = this.getState();

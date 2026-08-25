@@ -4,6 +4,7 @@ export type GovernanceActor = 'human' | 'composer' | 'system';
 
 export type GovernanceAction =
   | 'ADVISE'
+  | 'BOOTSTRAP_SETTLEMENT'
   | 'EXECUTE_OPPORTUNITY'
   | 'SUBMIT_TX'
   | 'PERSIST_LONG_TERM_MEMORY'
