@@ -352,7 +352,7 @@ export interface CryptaraRankingEvidence {
   successfulExecutions: number;
   successRate: number;
   averageNetProfitUsd: number;
-  averageSlippageBps: number;
+  averageSlippageBps: number | null;
   preferredChains: string[];
   preferredExecutionModes: Array<'standard' | 'zero_capital' | 'flashbots'>;
   riskBudget: 'defensive' | 'balanced' | 'aggressive';
@@ -856,6 +856,7 @@ export class StageManager extends EventEmitter {
     if (!evidence.risk.circuitBreakersClear) blockers.push(`Risk circuit breakers are tripped: ${evidence.risk.trippedCircuitBreakers.join(', ')}`);
     if (evidence.cryptara.riskBudget === 'defensive') blockers.push('Cryptara performance ranking selected a defensive risk budget');
     if (evidence.cryptara.preferredChains.length === 0) blockers.push('Cryptara performance ranking has no preferred chain');
+    if (evidence.cryptara.averageSlippageBps === null) blockers.push('Cryptara has no measured execution slippage history');
     if (this.state.currentStage >= Stage.STAGE_2_PROOF_OF_SIGNAL && evidence.cryptara.sampleCount < this.state.proofMetrics.totalTrades) {
       blockers.push('Persisted Cryptara execution history does not cover all recorded StageManager trades');
     }
@@ -1443,7 +1444,9 @@ function normalizeAutomaticAdvancementEvidence(value: unknown): AutomaticAdvance
       successfulExecutions: requireNonNegativeInteger('cryptara.successfulExecutions', value.cryptara.successfulExecutions),
       successRate: requireUnitInterval('cryptara.successRate', value.cryptara.successRate),
       averageNetProfitUsd: requireFiniteNumber('cryptara.averageNetProfitUsd', value.cryptara.averageNetProfitUsd),
-      averageSlippageBps: requireNonNegativeNumber('cryptara.averageSlippageBps', value.cryptara.averageSlippageBps),
+      averageSlippageBps: value.cryptara.averageSlippageBps === null
+        ? null
+        : requireNonNegativeNumber('cryptara.averageSlippageBps', value.cryptara.averageSlippageBps),
       preferredChains: requireStringArray('cryptara.preferredChains', value.cryptara.preferredChains),
       preferredExecutionModes: preferredExecutionModes as Array<'standard' | 'zero_capital' | 'flashbots'>,
       riskBudget,

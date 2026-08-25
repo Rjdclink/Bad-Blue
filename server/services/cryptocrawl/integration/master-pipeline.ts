@@ -22,6 +22,7 @@ import { PER_CHAIN_RISK } from '../config/perChainRisk.js';
 import { TradingViewEngine } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
+import { normalizePrivateKey, walletFromPrivateKey } from '../core/wallet-identity.js';
 
 type ConnectorReadiness = {
   networkHealth: { ready: boolean; detail: string };
@@ -94,7 +95,7 @@ class MasterPipeline {
   }
 
   private hasLiveWalletSigner(): boolean {
-    return !!process.env.WALLET_PRIVATE_KEY?.trim();
+    return !!normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
   }
 
   private hasCentralizedExchangeCredentials(): boolean {
@@ -126,8 +127,9 @@ class MasterPipeline {
 
     // In production, initialize wallet and providers from WalletManager
     // For now, create placeholder
-    if (process.env.WALLET_PRIVATE_KEY) {
-      this.wallet = new Wallet(process.env.WALLET_PRIVATE_KEY);
+    const walletPrivateKey = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
+    if (walletPrivateKey) {
+      this.wallet = walletFromPrivateKey(walletPrivateKey);
     }
 
     // Initialize providers for supported chains
@@ -459,8 +461,8 @@ class MasterPipeline {
         issues.push({
           id: 'flashbots-auth',
           severity: 'block',
-          detail: 'ZERO_CAPITAL_ENABLE_EXECUTION=true but no FLASHBOTS_AUTH_KEY or fallback execution signer is configured.',
-          remediation: 'Set FLASHBOTS_AUTH_KEY for Ethereum bundle submission or at minimum provide WALLET_PRIVATE_KEY for zero-capital execution signing.',
+          detail: 'ZERO_CAPITAL_ENABLE_EXECUTION=true but the application-owned Flashbots auth identity is not available to the readiness probe.',
+          remediation: 'Verify the Ethereum RPC and application database are available so the persisted Flashbots auth identity can be loaded or created.',
         });
       }
 
@@ -685,15 +687,13 @@ class MasterPipeline {
 
   async executeOpportunity(opp: Opportunity): Promise<void> {
     try {
-      if (process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true') {
-        logger.warn('Master pipeline opportunity rejected: generic LuxSwarm execution is not authoritative', {
-          component: 'MasterPipeline',
-          opportunityId: opp.asset,
-          chain: opp.chain,
-          reason: 'live execution must use the canonical verified arbitrage plan path with measured economics',
-        });
-        return;
-      }
+      logger.warn('Master pipeline opportunity rejected: generic LuxSwarm execution is not authoritative', {
+        component: 'MasterPipeline',
+        opportunityId: opp.asset,
+        chain: opp.chain,
+        reason: 'execution must use the canonical verified arbitrage plan path with measured economics',
+      });
+      return;
 
       // ============================================================
       // CRYPTARA MARKET GATE (advisory evaluators -> hard execution gate)
@@ -732,7 +732,16 @@ class MasterPipeline {
         250,
         Math.min(12000, opp.priority * 150 * Math.max(0.5, directive.notionalMultiplier)),
       );
-      const venueFeeBps = 30;
+      const venueFeeBps = Number(process.env.CRYPTOCRAWL_TAKER_FEE_BPS);
+      if (!Number.isFinite(venueFeeBps) || venueFeeBps < 0) {
+        logger.warn('Opportunity withheld before execution: venue fee measurement is unavailable', {
+          component: 'MasterPipeline',
+          opportunityId: opp.asset,
+          chain: opp.chain,
+          reason: 'generic opportunities do not include a verified route fee and CRYPTOCRAWL_TAKER_FEE_BPS is not configured',
+        });
+        return;
+      }
 
       // Latency gate: use chain health latency as a proxy until venue-specific latency is wired.
       let chainLatencyMs: number | undefined;

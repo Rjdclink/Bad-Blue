@@ -1,6 +1,7 @@
 import { Wallet, providers, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { walletFromPrivateKey } from '../core/wallet-identity.js';
 
 const { JsonRpcProvider } = providers;
 const { parseEther, parseUnits } = ethers.utils;
@@ -67,7 +68,7 @@ class UltraLowLatencyExecutor {
       throw new Error('Missing WALLET_PRIVATE_KEY (required for UltraLowLatencyExecutor signer)');
     }
     this.provider = new JsonRpcProvider(this.privateRpcUrl);
-    this.wallet = new Wallet(pk.trim(), this.provider);
+    this.wallet = walletFromPrivateKey(pk).connect(this.provider);
 
     logger.info('Initializing ultra-low-latency executor...', { 
       component: 'UltraLowLatencyExecutor' 

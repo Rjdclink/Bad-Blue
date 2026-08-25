@@ -1,7 +1,9 @@
-import { providers, Wallet } from 'ethers';
+import { providers } from 'ethers';
 import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
+import { getOrCreateFlashbotsAuthPrivateKey } from './adapters/flashbots-auth-identity.js';
+import { walletFromPrivateKey } from '../core/wallet-identity.js';
 
 interface RelayConfig {
   name: string;
@@ -59,7 +61,6 @@ class MultiRelaySubmitter {
   private metrics: Map<string, RelayMetrics> = new Map();
   private initialized = false;
   private provider!: providers.JsonRpcProvider;
-  private wallet!: Wallet;
 
   constructor() {
     // Initialize metrics for all relays
@@ -85,12 +86,10 @@ class MultiRelaySubmitter {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
-    if (!privateKey) throw new Error('Missing WALLET_PRIVATE_KEY (required for MultiRelaySubmitter)');
-
     await multiProviderRpcManager.initialize(['ethereum']);
     this.provider = (await multiProviderRpcManager.getProvider('ethereum', 'json_rpc')).http;
-    this.wallet = new Wallet(privateKey, this.provider);
+    const authPrivateKey = await getOrCreateFlashbotsAuthPrivateKey();
+    const authSigner = walletFromPrivateKey(authPrivateKey);
 
     logger.info('Initializing multi-relay connections...', { component: 'MultiRelaySubmitter' });
 
@@ -98,7 +97,7 @@ class MultiRelaySubmitter {
       try {
         const flashbotsProvider = await FlashbotsBundleProvider.create(
           this.provider,
-          this.wallet,
+          authSigner,
           relay.endpoint,
           'mainnet'
         );

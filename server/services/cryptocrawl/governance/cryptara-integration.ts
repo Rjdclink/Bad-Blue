@@ -269,7 +269,7 @@ export class CryptaraGovernance extends EventEmitter {
     feeUsd: number;
     slippageUsd: number;
   }> {
-    let gasUsd = 0;
+    let gasUsd = Number.isFinite(proposal.measuredGasUSD) ? proposal.measuredGasUSD! : Number.NaN;
     let latencyHealthy = true;
     let gasEstimateError: string | undefined;
 
@@ -291,12 +291,12 @@ export class CryptaraGovernance extends EventEmitter {
         latencyHealthy = false;
       }
 
-      if (gasEstimateError) {
+      if (gasEstimateError || !Number.isFinite(gasUsd)) {
         return {
           approved: false,
-          reason: `Execution blocked: gas estimate unavailable (${gasEstimateError})`,
+          reason: `Execution blocked: gas estimate unavailable (${gasEstimateError || 'no measured gas cost supplied'})`,
           netExpectedProfitUSD: 0,
-          gasUsd,
+          gasUsd: Number.isFinite(gasUsd) ? gasUsd : 0,
           feeUsd: 0,
           slippageUsd: 0,
         };
@@ -314,13 +314,20 @@ export class CryptaraGovernance extends EventEmitter {
       };
     }
 
-    const feeBps = 30; // Conservative taker-fee default in absence of venue-specific fees.
-    const feeUsd = proposal.positionSizeUSD * (feeBps / 10000);
+    const feeUsd = proposal.measuredFeeUSD;
+    const slippageUsd = proposal.measuredSlippageUSD;
+    if (!Number.isFinite(feeUsd) || feeUsd! < 0 || !Number.isFinite(slippageUsd) || slippageUsd! < 0) {
+      return {
+        approved: false,
+        reason: 'Execution blocked: measured venue fee and slippage are required',
+        netExpectedProfitUSD: 0,
+        gasUsd,
+        feeUsd: Number.isFinite(feeUsd) ? feeUsd! : 0,
+        slippageUsd: Number.isFinite(slippageUsd) ? slippageUsd! : 0,
+      };
+    }
 
-    const slippagePct = Math.min(0.02, Math.max(0.0005, proposal.estimatedRiskPercent / 100));
-    const slippageUsd = proposal.positionSizeUSD * slippagePct;
-
-    const netExpectedProfitUSD = proposal.estimatedProfitUSD - feeUsd - slippageUsd - gasUsd;
+    const netExpectedProfitUSD = proposal.estimatedProfitUSD - feeUsd! - slippageUsd! - gasUsd;
     if (netExpectedProfitUSD <= 0) {
       return {
         approved: false,

@@ -215,7 +215,7 @@ export interface CryptaraPerformanceRanking {
   successfulExecutions: number;
   successRate: number;
   averageNetProfitUsd: number;
-  averageSlippageBps: number;
+  averageSlippageBps: number | null;
   chains: CryptaraChainPerformance[];
   preferredChains: string[];
   directive: CryptaraAutonomousDirective;
@@ -426,7 +426,7 @@ export class Cryptara extends EventEmitter {
       maxSlippageBps: 20,
       notionalMultiplier: 1,
       minimumNetProfitUsd: 10,
-      preferredChains: ['polygon', 'arbitrum', 'base'],
+      preferredChains: this.config.supportedChains.slice(0, 3),
       preferredExecutionModes: ['standard', 'zero_capital'],
       feeSensitivity: 'medium',
       liquidityPressure: 0,
@@ -523,17 +523,19 @@ export class Cryptara extends EventEmitter {
         ? Math.max(0.5, 0.9 - (0.6 - successRate))
         : Math.max(0.7, Math.min(1.2, 0.95 + (successRate - 0.5) * 0.7));
 
-    const maxSlippageBps = Math.max(
-      6,
-      Math.min(
-        45,
-        Math.round(
-          (riskBudget === 'defensive' ? 14 : riskBudget === 'aggressive' ? 24 : 18) +
-          avgSlippageBps * 0.35 +
-          liquidityPressure * 8,
-        ),
-      ),
-    );
+    const maxSlippageBps = avgSlippageBps === null
+      ? 0
+      : Math.max(
+          6,
+          Math.min(
+            45,
+            Math.round(
+              (riskBudget === 'defensive' ? 14 : riskBudget === 'aggressive' ? 24 : 18) +
+              avgSlippageBps * 0.35 +
+              liquidityPressure * 8,
+            ),
+          ),
+        );
 
     const minimumNetProfitUsd = Math.max(5, Number((8 + liquidityPressure * 18 + (riskBudget === 'defensive' ? 6 : 0)).toFixed(2)));
 
@@ -556,7 +558,7 @@ export class Cryptara extends EventEmitter {
       maxSlippageBps,
       notionalMultiplier: Number(notionalMultiplier.toFixed(3)),
       minimumNetProfitUsd,
-      preferredChains: preferredChains.length > 0 ? preferredChains : ['polygon', 'arbitrum', 'base'],
+      preferredChains: preferredChains.length > 0 ? preferredChains : this.config.supportedChains.slice(0, 3),
       preferredExecutionModes,
       feeSensitivity: riskBudget === 'aggressive' ? 'medium' : 'high',
       liquidityPressure: Number(liquidityPressure.toFixed(4)),
@@ -857,7 +859,7 @@ export class Cryptara extends EventEmitter {
     const measuredSlippage = recent.filter(entry => entry.slippageBps !== null);
     const averageSlippageBps = measuredSlippage.length > 0
       ? measuredSlippage.reduce((sum, entry) => sum + Math.max(0, entry.slippageBps!), 0) / measuredSlippage.length
-      : 12;
+      : null;
     const chainPerformance = new Map<string, { net: number; wins: number; total: number }>();
     for (const entry of recent) {
       const current = chainPerformance.get(entry.chain) || { net: 0, wins: 0, total: 0 };

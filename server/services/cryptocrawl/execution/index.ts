@@ -1,7 +1,6 @@
 import { MultiRelaySubmitter } from './multi-relay-submitter.js';
 import { FlashLoanAggregator } from './flash-loan-aggregator.js';
 import { UltraLowLatencyExecutor } from './ultra-low-latency-executor.js';
-import { Wallet } from 'ethers';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { getCryptara, type CryptaraExecutionFeedback } from '../../cryptara/index.js';
@@ -12,6 +11,7 @@ import { buildOnchainPayloadFromPlan, type OnchainExecutionPlan } from './adapte
 import { DexSettlementObserver, type DexSettlementPriceContext } from './dex-settlement-observer.js';
 import type { NormalizedRealizedExecution } from './settlement-types.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
+import { normalizePrivateKey, walletFromPrivateKey } from '../core/wallet-identity.js';
 
 interface OpportunityData {
   to: string;
@@ -87,7 +87,7 @@ export interface SharedExecutionEnvironmentReadiness {
 }
 
 const SHARED_EXECUTION_CAPABILITIES: SharedExecutionCapabilities = {
-  explicitPayloadRequired: false,
+  explicitPayloadRequired: true,
   genericOnChainPayloadBuilder: false,
   structuredOnChainPayloadBuilder: true,
   autonomousRoutePlanner: true,
@@ -143,9 +143,9 @@ function resolveSettlementWalletAddress(explicitAddress?: string): string {
   if (explicitAddress?.trim()) return explicitAddress.trim();
   const configuredAddress = process.env.WALLET_ADDRESS?.trim();
   if (configuredAddress) return configuredAddress;
-  const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
+  const privateKey = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
   if (!privateKey) throw new Error('WALLET_ADDRESS or WALLET_PRIVATE_KEY is required for DEX settlement observation');
-  return new Wallet(privateKey).address;
+  return walletFromPrivateKey(privateKey).address;
 }
 
 async function observeDexSettlement(opp: Opportunity, txHash: string): Promise<{
@@ -245,12 +245,14 @@ export function assessSharedExecutionEnvironment(): SharedExecutionEnvironmentRe
     process.env.RPC_URL?.trim() ||
     process.env.ETHEREUM_RPC_URL?.trim()
   );
-  const walletConfigured = !!process.env.WALLET_PRIVATE_KEY?.trim();
+  const walletConfigured = !!normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
   const centralizedExchangeConfigured = !!(
     (process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()) ||
     (process.env.OKX_API_KEY?.trim() && process.env.OKX_API_SECRET?.trim() && process.env.OKX_API_PASSPHRASE?.trim())
   );
-  const flashbotsAuthConfigured = !!(process.env.FLASHBOTS_AUTH_KEY?.trim() || process.env.WALLET_PRIVATE_KEY?.trim());
+  // Flashbots auth is application-owned and persisted by the zero-capital engine.
+  // This synchronous probe can only report whether initialization has a usable RPC.
+  const flashbotsAuthConfigured = rpcConfigured;
   const zeroCapitalExecutionEnabled = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
   const zeroCapitalReceiverConfigured = !!process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER?.trim();
   const liveCentralizedReady = liveExecutionEnabled && liveExecutionConfirmed && centralizedExchangeConfigured;

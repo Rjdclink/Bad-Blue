@@ -35,8 +35,9 @@ export async function getOrCreateFlashbotsAuthPrivateKey(
   preferredPrivateKey?: string,
   store: FlashbotsAuthIdentityStore = new PostgresFlashbotsAuthIdentityStore(),
 ): Promise<string> {
-  const existing = normalizePrivateKey(await store.load() || undefined);
-  if (await store.load() && !existing) {
+  const storedValue = await store.load();
+  const existing = normalizePrivateKey(storedValue || undefined);
+  if (storedValue && !existing) {
     throw new Error('Persisted Flashbots auth identity is invalid; refusing to replace it automatically');
   }
   if (existing) return existing;

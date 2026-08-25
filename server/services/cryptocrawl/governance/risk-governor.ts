@@ -15,7 +15,7 @@
 import { EventEmitter } from 'events';
 import { createLogger } from '../../../logger';
 import { stageManager, StageConfig } from './stage-management';
-import { MonteCarloEngine, StrategyProfile, MarketCondition, MARKET_CONDITIONS } from '../validation/monte-carlo-engine';
+import { getCryptara } from '../../cryptara/index.js';
 
 const log = createLogger('RiskGovernor');
 
@@ -25,6 +25,7 @@ const log = createLogger('RiskGovernor');
 
 export interface TradeProposal {
   id: string;
+  opportunityId?: string;
   strategy: string;
   chain: string;
   pair: string;
@@ -32,6 +33,9 @@ export interface TradeProposal {
   positionSizeUSD: number;
   estimatedProfitUSD: number;
   estimatedRiskPercent: number;
+  measuredFeeUSD?: number;
+  measuredGasUSD?: number;
+  measuredSlippageUSD?: number;
   timestamp: number;
 }
 
@@ -84,23 +88,11 @@ export interface CircuitBreaker {
 
 export class RiskGovernor extends EventEmitter {
   private static instance: RiskGovernor | null = null;
-  private monteCarloEngine: MonteCarloEngine;
   private circuitBreakers: Map<string, CircuitBreaker> = new Map();
   private assessmentHistory: RiskAssessment[] = [];
   
   private constructor() {
     super();
-    
-    this.monteCarloEngine = new MonteCarloEngine({
-      simulations: 10000,
-      timeHorizonDays: 1,
-      enableRegimeDetection: true,
-      enableKellySizing: true,
-      enableFatTails: true,
-      enableEnsemble: true,
-      ensembleCount: 3,
-      learningEnabled: true,
-    });
     
     this.initializeCircuitBreakers();
     
@@ -243,7 +235,7 @@ export class RiskGovernor extends EventEmitter {
       assessment.checksPass.monteCarloCheck = true;
     } else {
       assessment.checksPass.monteCarloCheck = true;
-      assessment.confidenceScore = 0.8; // Default confidence
+      assessment.confidenceScore = 0;
     }
     
     // ========================================
@@ -312,55 +304,31 @@ export class RiskGovernor extends EventEmitter {
     kellyFraction: number;
     confidenceScore: number;
   }> {
-    // Create strategy profile from proposal
-    const strategy: StrategyProfile = {
-      name: proposal.strategy,
-      baseSuccessRate: 0.7, // Default, should come from historical data
-      avgProfitPerTrade: proposal.estimatedProfitUSD / proposal.positionSizeUSD,
-      avgLossPerTrade: proposal.estimatedRiskPercent,
-      tradesPerDay: 100, // Estimated
-      gasPerTrade: 0.002,
-      slippageTolerance: 0.003,
-      executionLatency: 20,
-      strategyType: 'arbitrage',
-      mlFilterEnabled: true,
-      multiChainEnabled: true,
-      mempoolMonitoring: true,
-    };
-    
-    // Determine market conditions
-    const marketCondition = MARKET_CONDITIONS.normal; // Should be dynamic
-    
-    // Run simulation
-    const result = await this.monteCarloEngine.runSimulation(strategy, marketCondition);
-    
-    // Calculate consensus (using ensemble confidence)
-    const consensus = result.ensembleConfidence;
-    
-    // Check approval criteria
-    const approved = 
-      result.expectedProfit > 0 &&
-      result.sharpeRatio > 1.0 &&
-      result.winRate > 0.6 &&
-      result.performanceBreakdown.tradingApproval === 'approved' &&
-      consensus >= 0.7;
-    
-    // Calculate recommended position size using Kelly
-    const kellyFraction = result.kellyCriterion.halfKellyFraction; // Use half-Kelly for safety
-    const recommendedPositionUSD = proposal.positionSizeUSD * kellyFraction;
-    
-    const reason = approved 
-      ? 'Monte Carlo consensus achieved'
-      : `Monte Carlo rejection: Sharpe=${result.sharpeRatio.toFixed(2)}, WinRate=${(result.winRate * 100).toFixed(1)}%, Approval=${result.performanceBreakdown.tradingApproval}`;
+    const evidence = getCryptara().getLatestMonteCarloEvidence();
+    const sourceOpportunityId = proposal.opportunityId || proposal.id;
+    const maxAgeMs = Math.max(60_000, Number(process.env.CRYPTARA_MONTE_CARLO_TTL_MS || 900_000));
+    const evidenceIsCurrent = evidence !== null &&
+      evidence.sourceOpportunityId === sourceOpportunityId &&
+      evidence.evaluatedAt <= Date.now() &&
+      Date.now() - evidence.evaluatedAt <= maxAgeMs;
+    const consensus = evidenceIsCurrent ? evidence!.probabilityOfProfit : 0;
+    const confidenceScore = evidenceIsCurrent ? evidence!.confidence : 0;
+    const approved = evidenceIsCurrent &&
+      evidence!.expectedProfit > 0 &&
+      consensus >= 0.7 &&
+      confidenceScore >= 0.7;
+    const reason = !evidenceIsCurrent
+      ? 'Current Cryptara Monte Carlo evidence is unavailable for this opportunity'
+      : approved ? 'Cryptara Monte Carlo evidence validated' : 'Cryptara Monte Carlo evidence is below threshold';
     
     return {
       approved,
       reason,
-      simulations: 10000,
+      simulations: evidenceIsCurrent ? 1 : 0,
       consensus,
-      recommendedPositionUSD,
-      kellyFraction,
-      confidenceScore: result.ensembleConfidence,
+      recommendedPositionUSD: approved ? proposal.positionSizeUSD : 0,
+      kellyFraction: 0,
+      confidenceScore,
     };
   }
   

@@ -9,7 +9,6 @@ import { autonomousFaucet } from '../faucet/autonomous-faucet.js';
 import { getCryptara } from '../../cryptara/index.js';
 import { verifyCanonicalCryptoSetup } from '../verification/canonicalCryptoVerifier.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
-import { getProfitLadderGovernor } from '../governance/profitLadder.js';
 import {
   getSystemStatus as getPantheonSystemStatus,
   notifyCryptocrawlerComplete,
@@ -226,40 +225,31 @@ router.get('/verify-chains', (_req, res) => {
 
 // GET /admin/crypto/ladder - Get current tier + recent cycle history
 router.get('/ladder', (_req, res) => {
-  const ladder = getProfitLadderGovernor();
-  res.json({ success: true, state: ladder.getState(), promotion: ladder.canPromote() });
+  res.json({
+    success: true,
+    state: profitLadder.exportState(),
+    progress: profitLadder.getProgressSummary(),
+  });
 });
 
-// POST /admin/crypto/ladder/record-cycle - Record one cycle's metrics (used by supervisor)
+// Compatibility endpoint: ladder evidence is produced by the governed runtime.
 router.post('/ladder/record-cycle', (req, res) => {
-  try {
-    const ladder = getProfitLadderGovernor();
-    const body = req.body || {};
-    ladder.recordCycle({
-      timestamp: Date.now(),
-      profitUsd: Number(body.profitUsd || 0),
-      anomaly: Boolean(body.anomaly),
-      slippageWithinBounds: Boolean(body.slippageWithinBounds),
-      latencyWithinBounds: Boolean(body.latencyWithinBounds),
-      signalConfidenceAvg: Number(body.signalConfidenceAvg || 0),
-      volatilityRegimeAcceptable: Boolean(body.volatilityRegimeAcceptable),
-      drawdownWithinThreshold: Boolean(body.drawdownWithinThreshold),
-    });
-    res.json({ success: true, state: ladder.getState(), promotion: ladder.canPromote() });
-  } catch (err) {
-    return handleGovernanceError(res, err);
-  }
+  res.status(409).json({
+    success: false,
+    error: 'Manual ladder evidence is not authoritative; record terminal runtime outcomes through the governed execution path',
+    state: profitLadder.exportState(),
+    progress: profitLadder.getProgressSummary(),
+  });
 });
 
-// POST /admin/crypto/ladder/promote - Promote to next tier (requires paused state)
+// Compatibility endpoint: automatic progression owns tier advancement.
 router.post('/ladder/promote', (_req, res) => {
-  try {
-    const ladder = getProfitLadderGovernor();
-    const next = ladder.promote();
-    res.json({ success: true, nextTierTargetUsd: next, state: ladder.getState() });
-  } catch (err) {
-    return handleGovernanceError(res, err);
-  }
+  res.status(409).json({
+    success: false,
+    error: 'Manual ladder promotion is not authoritative; StageManager advances from verified runtime evidence',
+    state: profitLadder.exportState(),
+    progress: profitLadder.getProgressSummary(),
+  });
 });
 
 // CryptoCrawl system state manager

@@ -1,24 +1,28 @@
 import {Wallet, providers} from 'ethers';
 import {FlashbotsBundleProvider} from '@flashbots/ethers-provider-bundle';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
+import { getOrCreateFlashbotsAuthPrivateKey } from '../execution/adapters/flashbots-auth-identity.js';
+import { walletFromPrivateKey } from '../core/wallet-identity.js';
 
 class FlashbotsEngine {
   private provider!: providers.JsonRpcProvider;
   private flashbots!: FlashbotsBundleProvider;
   private wallet!: Wallet;
+  private authSigner!: Wallet;
   
   async initialize() {
     await multiProviderRpcManager.initialize(['ethereum']);
     this.provider = (await multiProviderRpcManager.getProvider('ethereum', 'json_rpc')).http;
-    const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
-    if (!privateKey) {
+    const privateKey = process.env.WALLET_PRIVATE_KEY;
+    if (!privateKey?.trim()) {
       throw new Error('WALLET_PRIVATE_KEY is required for Flashbots execution');
     }
-    this.wallet = new Wallet(privateKey, this.provider);
+    this.wallet = walletFromPrivateKey(privateKey).connect(this.provider);
+    this.authSigner = walletFromPrivateKey(await getOrCreateFlashbotsAuthPrivateKey());
     
     this.flashbots = await FlashbotsBundleProvider.create(
       this.provider,
-      this.wallet,
+      this.authSigner,
       'https://relay.flashbots.net',
       'mainnet'
     );

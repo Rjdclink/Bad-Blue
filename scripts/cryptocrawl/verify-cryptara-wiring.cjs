@@ -29,6 +29,10 @@ const cryptara = read('server/services/cryptara/index.ts');
 const faucet = read('server/services/cryptocrawl/faucet/autonomous-faucet.ts');
 const execution = read('server/services/cryptocrawl/execution/index.ts');
 const progression = read('server/services/cryptocrawl/governance/automatic-stage-progression.ts');
+const riskGovernor = read('server/services/cryptocrawl/governance/risk-governor.ts');
+const cryptaraGovernance = read('server/services/cryptocrawl/governance/cryptara-integration.ts');
+const stageManagement = read('server/services/cryptocrawl/governance/stage-management.ts');
+const masterPipeline = read('server/services/cryptocrawl/integration/master-pipeline.ts');
 const tradingView = read('server/services/cryptocrawl/babel/tradingview-integration.ts');
 const legacy = read('server/cryptaraModule.ts');
 
@@ -41,7 +45,7 @@ assertContains(cryptara, 'getPredictionCalibration', 'prediction calibration is 
 assertNotContains(cryptara, 'requiresHumanApproval', 'Cryptara does not add a human approval prerequisite');
 
 assertContains(faucet, 'marketDataProviders.discoverUniverse()', 'canonical faucet discovers the broadened market universe');
-assertContains(faucet, 'recordOpportunityObservation', 'all verified faucet candidates reach Cryptara');
+assertContains(faucet, 'cryptara.assessOpportunity({', 'all verified faucet candidates reach Cryptara');
 assertContains(faucet, 'const candidateAssessments: Awaited<ReturnType<typeof cryptara.assessOpportunity>>[] = [];', 'candidate assessments use the authoritative Cryptara assessment contract');
 assertContains(faucet, 'candidateAssessments.push(await cryptara.assessOpportunity({', 'Cryptara assesses candidates before ranking');
 assertContains(faucet, 'const plan = [...verifiedPlans].sort(', 'candidate selection occurs after Cryptara assessments');
@@ -50,12 +54,21 @@ assertContains(faucet, 'arbitrageVerifier.evaluateOnce(', 'canonical live quote 
 assertContains(faucet, 'evaluateMarketGates(', 'Cryptara advisory gates remain in the faucet path');
 assertContains(execution, 'recordCryptaraExecutionFeedback({', 'execution outcomes are recorded');
 assertContains(execution, "normalized?.terminal === true", 'only terminal settlement results enter Cryptara feedback');
+assertContains(execution, 'explicitPayloadRequired: true', 'execution readiness reports the explicit payload requirement');
 assertContains(execution, 'measuredSettlementFeeUsd', 'measured exchange and network costs reach feedback');
 assertContains(progression, 'cryptara.recordExecutionResult(feedback)', 'governance forwards outcomes to authoritative Cryptara');
+assertContains(riskGovernor, 'measuredFeeUSD?: number;', 'governance proposals can carry measured venue fees');
+assertContains(cryptaraGovernance, 'measured venue fee and slippage are required', 'governance execution envelope fails closed without measured costs');
+assertNotContains(cryptaraGovernance, 'const feeBps = 30', 'governance does not fabricate a venue fee');
+assertContains(riskGovernor, 'getLatestMonteCarloEvidence()', 'risk governance consumes canonical Cryptara Monte Carlo evidence');
+assertNotContains(riskGovernor, 'baseSuccessRate: 0.7', 'risk governance does not fabricate a Monte Carlo success rate');
+assertNotContains(riskGovernor, 'MARKET_CONDITIONS.normal', 'risk governance does not force a normal market regime');
+assertContains(stageManagement, 'averageSlippageBps: value.cryptara.averageSlippageBps === null', 'missing slippage remains explicit in persisted evidence');
+assertContains(masterPipeline, 'generic LuxSwarm execution is not authoritative', 'generic observations cannot reach the execution boundary');
 assertContains(tradingView, "cached.dataProvenance === 'live' ? 'cached' : 'deterministic-fallback'", 'cached TradingView fallback provenance is preserved');
 assertContains(tradingView, 'TradingView payload contains incomplete indicator data', 'incomplete TradingView data cannot be labeled live');
 
 assertContains(legacy, 'compatibility module', 'legacy neural module is explicitly classified');
-assertContains(legacy, 'not be used as a second execution or progression authority', 'legacy module cannot claim governance authority');
+assertContains(legacy, 'used as a second execution or progression authority', 'legacy module cannot claim governance authority');
 
 console.log('Cryptara wiring verification passed.');
