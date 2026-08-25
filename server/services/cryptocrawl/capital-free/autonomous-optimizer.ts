@@ -247,6 +247,12 @@ export class AutonomousOptimizer {
    * Start the autonomous optimization loop
    */
   async start(): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      logger.warn('[AutonomousOptimizer] Production start rejected; optimizer uses synthetic market and execution outcomes', {
+        component: 'AutonomousOptimizer',
+      });
+      return;
+    }
     if (this.isRunning) {
       logger.warn('[AutonomousOptimizer] Already running', { component: 'AutonomousOptimizer' });
       return;

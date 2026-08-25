@@ -104,6 +104,16 @@ export class GasAcquisitionSystem {
     estimatedProfit: number,
     callback: (gasProvided: number) => Promise<number>
   ): Promise<GasAcquisitionResult> {
+    if (process.env.NODE_ENV === 'production') {
+      return {
+        success: false,
+        gasAcquired: 0,
+        profitSharePercent: 0,
+        poolUsed: 'unavailable',
+        transactionId: randomUUID(),
+        netProfitAfterGas: 0,
+      };
+    }
     const requestId = randomUUID();
     
     logger.debug('[GasAcquisition] Gas request initiated', {

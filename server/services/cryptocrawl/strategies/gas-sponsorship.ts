@@ -15,6 +15,7 @@
  */
 
 import { ethers, BigNumber } from 'ethers';
+import { randomUUID } from 'crypto';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
 // ============================================
@@ -210,7 +211,10 @@ export class GasSponsorshipManager {
    * Check if gas sponsorship is available and configured
    */
   isEnabled(): boolean {
-    return this.enabled && !!this.policyId;
+    // This module has no UserOperation/paymaster submission adapter. A policy ID
+    // alone cannot sponsor a direct EOA transaction, so never advertise this as
+    // a production capability.
+    return this.enabled && !!this.policyId && process.env.NODE_ENV !== 'production';
   }
 
   /**
@@ -285,6 +289,9 @@ export class GasSponsorshipManager {
     data: string,
     value: BigNumber = BigNumber.from(0)
   ): Promise<SponsoredTransaction> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Gas sponsorship is unavailable: no production paymaster or UserOperation adapter is configured');
+    }
     if (!this.isEnabled()) {
       throw new Error('Gas sponsorship is not enabled');
     }
@@ -299,7 +306,7 @@ export class GasSponsorshipManager {
       throw new Error('Daily gas sponsorship budget exceeded');
     }
 
-    const txId = `gs_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const txId = `gs_${Date.now()}_${randomUUID()}`;
     
     const sponsoredTx: SponsoredTransaction = {
       id: txId,
@@ -316,8 +323,7 @@ export class GasSponsorshipManager {
 
     this.sponsoredTxs.set(txId, sponsoredTx);
 
-    // In production, this would call Alchemy's Gas Manager API
-    // For now, we simulate sponsorship approval
+    // This remains a non-production simulation until a real paymaster adapter exists.
     await this.processSponsorship(sponsoredTx, estimate);
 
     return sponsoredTx;

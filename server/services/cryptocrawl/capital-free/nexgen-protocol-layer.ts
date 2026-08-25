@@ -458,6 +458,13 @@ export class NexGenProtocolLayer {
     profit: number;
     details: string;
   }> {
+    if (process.env.NODE_ENV === 'production') {
+      return {
+        success: false,
+        profit: 0,
+        details: 'Legacy capital-free orchestration is simulation-only; use the canonical governed execution pipeline',
+      };
+    }
     // 1. Make execution decision
     const decision = await this.makeExecutionDecision(opportunity);
     if (!decision.shouldExecute) {

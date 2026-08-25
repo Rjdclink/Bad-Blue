@@ -1115,6 +1115,9 @@ class SuperchainArbitrageRouter {
     route: string;
     latency: number;
   }> {
+    if (process.env.NODE_ENV === 'production') {
+      return { success: false, profit: 0, route: '', latency: 0 };
+    }
     const opportunity = this.opportunities.find(o => o.id === opportunityId);
     if (!opportunity || opportunity.executed) {
       return { success: false, profit: 0, route: '', latency: 0 };
@@ -1343,6 +1346,12 @@ export class SuperchainIntegration {
    * Start all Superchain services
    */
   async start(): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      logger.warn('[SuperchainIntegration] Production start rejected; Superchain services use simulation-only routes and sponsorship', {
+        component: 'SuperchainIntegration',
+      });
+      return;
+    }
     if (this.isActive) return;
 
     await this.relayer.start();
@@ -1375,6 +1384,13 @@ export class SuperchainIntegration {
     profit: number;
     details: string;
   }> {
+    if (process.env.NODE_ENV === 'production') {
+      return {
+        success: false,
+        profit: 0,
+        details: 'Superchain arbitrage is simulation-only; use the canonical governed execution pipeline',
+      };
+    }
     // Get best opportunity
     const opportunity = this.router.getBestOpportunity();
     if (!opportunity) {
