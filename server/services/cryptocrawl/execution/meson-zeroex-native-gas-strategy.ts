@@ -112,7 +112,7 @@ function stripEip712Domain(types: ZeroExTypedData['types']): ZeroExTypedData['ty
 
 function extractTransactionHashes(value: unknown, key = ''): string[] {
   if (typeof value === 'string') {
-    if (/^(transactionHash|txHash|transaction_hash|tx_hash)$/i.test(key) && /^0x[a-fA-F0-9]{64}$/.test(value)) return [value];
+    if (/^(hash|transactionHash|txHash|transaction_hash|tx_hash)$/i.test(key) && /^0x[a-fA-F0-9]{64}$/.test(value)) return [value];
     return [];
   }
   if (Array.isArray(value)) return value.flatMap(item => extractTransactionHashes(item));
@@ -331,8 +331,13 @@ export class MesonZeroExNativeGasStrategy implements NativeGasFundingStrategy {
       throw new Error(`Gasless conversion delivered ${delivered.toString()} native wei, below required ${minimumNative.toString()}`);
     }
     const usdcAfter = BigNumber.from(await destinationToken.balanceOf(destination));
-    if (usdcAfter.gte(usdcBefore.add(bridgedUsdc))) {
+    const expectedPreTradeUsdc = usdcBefore.add(bridgedUsdc.toString());
+    if (usdcAfter.gte(expectedPreTradeUsdc)) {
       throw new Error('Destination USDC did not decrease after the gasless conversion; reimbursement from bootstrap proceeds is unverified');
+    }
+    const spentUsdc = expectedPreTradeUsdc.sub(usdcAfter);
+    if (BigInt(spentUsdc.toString()) < gasFee) {
+      throw new Error(`Destination USDC expenditure ${spentUsdc.toString()} did not cover quoted relayer gas reimbursement ${gasFee.toString()}`);
     }
 
     return {
@@ -353,6 +358,7 @@ export class MesonZeroExNativeGasStrategy implements NativeGasFundingStrategy {
         `zeroex_trade:${tradeHash}`,
         `destination_receipt:${destinationTransactionHash}`,
         `zeroex_gas_fee_from_profit:${gasFee.toString()}`,
+        `destination_usdc_spent:${spentUsdc.toString()}`,
         'destination_native_balance_delta_verified',
         'source_funded_bridge_refuel',
       ],
@@ -506,7 +512,7 @@ export class MesonZeroExNativeGasStrategy implements NativeGasFundingStrategy {
         if (receipt?.status === 1) return hash;
         if (receipt?.status === 0) throw new Error(`0x Gasless transaction ${hash} reverted`);
       }
-      if (['failed', 'reverted', 'cancelled', 'canceled'].includes(statusName)) {
+      if (['failed', 'reverted', 'cancelled', 'canceled', 'expired'].includes(statusName)) {
         throw new Error(`0x Gasless trade ended in ${statusName}`);
       }
       await sleep(pollMs);
@@ -520,8 +526,8 @@ export class MesonZeroExNativeGasStrategy implements NativeGasFundingStrategy {
       sellToken: ARBITRUM_USDC,
       buyToken: NATIVE_TOKEN,
       sellAmount: sellAmount.toString(),
-      taker,
     });
+    if (kind === 'quote') params.set('taker', taker);
     return this.zeroExJson<ZeroExQuote>(`/gasless/${kind}?${params.toString()}`, { method: 'GET' });
   }
 
