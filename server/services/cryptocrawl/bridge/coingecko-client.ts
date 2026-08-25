@@ -130,6 +130,23 @@ class CoinGeckoPriceClient {
 
     return result;
   }
+
+  async getLiveSymbolPrices(symbols: string[]): Promise<SymbolPriceMap> {
+    const normalizedSymbols = [...new Set(symbols.map(symbol => symbol.toUpperCase()))];
+    const coinIds = normalizedSymbols
+      .map(symbol => SYMBOL_TO_COIN_ID[symbol])
+      .filter((coinId): coinId is string => Boolean(coinId));
+    const pricesByCoinId = await this.fetchByCoinIds(coinIds, 'usd');
+    const result = new Map<string, number>();
+    for (const symbol of normalizedSymbols) {
+      const coinId = SYMBOL_TO_COIN_ID[symbol];
+      const livePrice = coinId ? pricesByCoinId[coinId] : undefined;
+      if (typeof livePrice === 'number' && Number.isFinite(livePrice) && livePrice > 0) {
+        result.set(symbol, livePrice);
+      }
+    }
+    return result;
+  }
 }
 
 export const coinGeckoPriceClient = new CoinGeckoPriceClient();

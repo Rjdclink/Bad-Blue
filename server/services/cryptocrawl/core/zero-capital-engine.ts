@@ -58,6 +58,7 @@ import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-p
 import { calculateProgressivePositionSize, type PositionSizingDecision } from '../risk/progressive-position-sizing.js';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
+import { assessInitialGasReadiness, type InitialGasReadiness } from '../initial-gas-readiness.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -130,6 +131,9 @@ export interface SystemState {
   lastFundingCycleAt: number;
   lastFundingError?: string;
   walletResources: WalletResourceSnapshot[];
+  bootstrapState: 'PRE_STAGE_1_BOOTSTRAP' | 'INITIAL_GAS_READY';
+  initialGasReadiness: InitialGasReadiness;
+  marketOperationsEnabled: boolean;
 }
 
 export interface WalletResourceSnapshot {
@@ -206,7 +210,14 @@ export class AutonomousZeroCapitalEngine {
   private executionEnabled: boolean = false;
   private isExecuting: boolean = false;
   private isFunding: boolean = false;
+  private bootstrapInterval: NodeJS.Timeout | null = null;
+  private bootstrapInFlight = false;
+  private executionEligible = false;
+  private marketOperationsStarted = false;
+  private initialGasReadyCallback: (() => Promise<void>) | undefined;
+  private initialGasLostCallback: (() => Promise<void>) | undefined;
   private readonly fundingIntervalMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_FUNDING_INTERVAL_MS || 15000));
+  private readonly bootstrapRecheckMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_INITIAL_GAS_RECHECK_MS || 15000));
   private lastLiveSignalCheckAt = 0;
   private liveSignalReady = false;
   private readonly cryptaraGateEvidence = new Map<string, GateEvaluation>();
@@ -226,6 +237,17 @@ export class AutonomousZeroCapitalEngine {
       fundingCycles: 0,
       lastFundingCycleAt: 0,
       walletResources: [],
+      bootstrapState: 'PRE_STAGE_1_BOOTSTRAP',
+      initialGasReadiness: {
+        status: 'PRE_STAGE_1_BOOTSTRAP',
+        initialGasReady: false,
+        thresholdUsd: 20,
+        usableNativeGasUsd: null,
+        measurements: [],
+        observedAt: 0,
+        provenance: ['startup'],
+      },
+      marketOperationsEnabled: false,
     };
 
     logger.info('[ZeroCapitalEngine] Autonomous Zero-Capital Engine initialized', {
@@ -351,7 +373,10 @@ export class AutonomousZeroCapitalEngine {
    * Start the autonomous scanning and execution loop
    * THIS IS WHERE THE MAGIC HAPPENS - ZERO CAPITAL REQUIRED
    */
-  async start(): Promise<void> {
+  async start(options: {
+    onInitialGasReady?: () => Promise<void>;
+    onInitialGasLost?: () => Promise<void>;
+  } = {}): Promise<void> {
     if (this.state.isRunning) {
       logger.warn('[ZeroCapitalEngine] Engine already running', { component: 'ZeroCapitalEngine' });
       return;
@@ -470,7 +495,10 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
-    this.executionEnabled = bootstrapExecutionEnabled;
+    this.executionEligible = bootstrapExecutionEnabled;
+    this.executionEnabled = false;
+    this.initialGasReadyCallback = options.onInitialGasReady;
+    this.initialGasLostCallback = options.onInitialGasLost;
 
     logger.info('[ZeroCapitalEngine] Starting read-only on-chain monitoring...', {
       component: 'ZeroCapitalEngine',
@@ -479,24 +507,150 @@ export class AutonomousZeroCapitalEngine {
       executionEnabled: this.executionEnabled,
     });
 
-    this.startScanningLoop();
-    this.startFundingLoop();
+    await this.refreshInitialGasReadiness();
+    if (this.state.initialGasReadiness.initialGasReady) {
+      if (stageManager.isMarketOperationsAllowed()) {
+        await this.startMarketOperations();
+      } else {
+        this.startBootstrapReadinessLoop();
+      }
+    } else {
+      this.startBootstrapReadinessLoop();
+      logger.warn('[ZeroCapitalEngine] Remaining in PRE_STAGE_1_BOOTSTRAP; market operations are locked until verified native-gas readiness reaches the configured threshold', {
+        component: 'ZeroCapitalEngine',
+        status: this.state.initialGasReadiness.status,
+        thresholdUsd: this.state.initialGasReadiness.thresholdUsd,
+        usableNativeGasUsd: this.state.initialGasReadiness.usableNativeGasUsd,
+      });
+    }
 
-    if (this.executionEnabled) {
+    if (this.executionEligible && this.state.initialGasReadiness.initialGasReady) {
       logger.info('[ZeroCapitalEngine] Execution mode enabled for zero-capital arbitrage', {
         component: 'ZeroCapitalEngine',
       });
-      this.startExecutionLoop();
     } else {
       logger.info('[ZeroCapitalEngine] Execution loop disabled; monitoring mode only', {
         component: 'ZeroCapitalEngine',
         reason: executionRequested && !executionOptIn
           ? 'Current governance stage does not permit trade execution'
-          : executionOptIn
+          : this.state.initialGasReadiness.initialGasReady && executionOptIn
             ? 'Verified internally generated capital is available; zero-capital bootstrap is dormant'
-            : 'Set ZERO_CAPITAL_ENABLE_EXECUTION=true only after Europa bootstrap prerequisites are verified',
+            : 'Initial native-gas readiness has not opened Stage 1 market operations',
       });
     }
+  }
+
+  private async refreshInitialGasReadiness(): Promise<InitialGasReadiness> {
+    const walletAddresses = new Map<SupportedChain, string>();
+    for (const [chain, wallet] of this.executionWallets.entries()) {
+      walletAddresses.set(chain, wallet.address);
+    }
+    const readiness = await assessInitialGasReadiness({
+      providers: this.providers,
+      walletAddresses,
+    });
+    this.state.initialGasReadiness = readiness;
+    this.state.bootstrapState = readiness.initialGasReady ? 'INITIAL_GAS_READY' : 'PRE_STAGE_1_BOOTSTRAP';
+    this.state.marketOperationsEnabled = readiness.initialGasReady && stageManager.isMarketOperationsAllowed();
+    stageManager.setInitialGasReadiness(readiness);
+    this.state.marketOperationsEnabled = readiness.initialGasReady && stageManager.isMarketOperationsAllowed();
+    return readiness;
+  }
+
+  private startBootstrapReadinessLoop(): void {
+    if (this.bootstrapInterval) clearTimeout(this.bootstrapInterval);
+    const scheduleNext = (): void => {
+      if (!this.state.isRunning || this.marketOperationsStarted) return;
+      this.bootstrapInterval = setTimeout(() => {
+        void this.runBootstrapReadinessCycle();
+      }, this.bootstrapRecheckMs);
+    };
+    scheduleNext();
+  }
+
+  private async runBootstrapReadinessCycle(): Promise<void> {
+    if (!this.state.isRunning || this.marketOperationsStarted || this.bootstrapInFlight) return;
+    this.bootstrapInFlight = true;
+    try {
+      await this.refreshWalletResources();
+      const readiness = await this.refreshInitialGasReadiness();
+      if (readiness.initialGasReady && stageManager.isMarketOperationsAllowed()) {
+        if (this.bootstrapInterval) {
+          clearTimeout(this.bootstrapInterval);
+          this.bootstrapInterval = null;
+        }
+        await this.startMarketOperations();
+      } else {
+        this.suspendMarketOperations();
+        this.state.lastFundingError = readiness.reason;
+        logger.info('[ZeroCapitalEngine] Initial gas readiness recheck remains gated', {
+          component: 'ZeroCapitalEngine',
+          status: readiness.status,
+          thresholdUsd: readiness.thresholdUsd,
+          usableNativeGasUsd: readiness.usableNativeGasUsd,
+        });
+        this.startBootstrapReadinessLoop();
+      }
+    } catch (error) {
+      this.state.lastFundingError = error instanceof Error ? error.message : String(error);
+      logger.warn('[ZeroCapitalEngine] Initial gas readiness recheck failed; keeping market operations locked', {
+        component: 'ZeroCapitalEngine',
+        error: this.state.lastFundingError,
+      });
+      this.startBootstrapReadinessLoop();
+    } finally {
+      this.bootstrapInFlight = false;
+    }
+  }
+
+  private async startMarketOperations(): Promise<void> {
+    if (this.marketOperationsStarted || !this.state.isRunning || !stageManager.isMarketOperationsAllowed()) return;
+    this.marketOperationsStarted = true;
+    this.state.marketOperationsEnabled = true;
+    this.executionEnabled = this.executionEligible;
+    this.startScanningLoop();
+    this.startFundingLoop();
+    if (this.executionEnabled) this.startExecutionLoop();
+    if (this.initialGasReadyCallback) {
+      const callback = this.initialGasReadyCallback;
+      try {
+        await callback();
+      } catch (error) {
+        this.marketOperationsStarted = false;
+        this.state.marketOperationsEnabled = false;
+        this.executionEnabled = false;
+        this.suspendMarketOperations();
+        throw error;
+      }
+    }
+  }
+
+  private suspendMarketOperations(): void {
+    const wasStarted = this.marketOperationsStarted;
+    this.marketOperationsStarted = false;
+    this.state.marketOperationsEnabled = false;
+    this.executionEnabled = false;
+    if (this.scanInterval) {
+      clearTimeout(this.scanInterval);
+      this.scanInterval = null;
+    }
+    if (this.executionInterval) {
+      clearInterval(this.executionInterval);
+      this.executionInterval = null;
+    }
+    if (this.fundingInterval) {
+      clearTimeout(this.fundingInterval);
+      this.fundingInterval = null;
+    }
+    if (wasStarted && this.initialGasLostCallback) {
+      void this.initialGasLostCallback().catch(error => {
+        logger.warn('[ZeroCapitalEngine] Failed to stop downstream market operations after readiness loss', {
+          component: 'ZeroCapitalEngine',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+    this.startBootstrapReadinessLoop();
   }
 
   /**
@@ -529,6 +683,10 @@ export class AutonomousZeroCapitalEngine {
 
     const scanCycle = async () => {
       if (!this.state.isRunning) return;
+      if (!stageManager.isMarketOperationsAllowed()) {
+        scheduleNext(this.bootstrapRecheckMs);
+        return;
+      }
       if (this.isScanning) {
         scheduleNext(this.scanDelayMs);
         return;
@@ -697,6 +855,12 @@ export class AutonomousZeroCapitalEngine {
       this.isFunding = true;
       this.state.fundingCycleActive = true;
       try {
+        const readiness = await this.refreshInitialGasReadiness();
+        if (!readiness.initialGasReady || !stageManager.isMarketOperationsAllowed()) {
+          this.suspendMarketOperations();
+          this.state.lastFundingError = readiness.reason || 'Initial gas readiness is no longer verified';
+          return;
+        }
         await this.refreshWalletResources();
         await this.refreshEuropaFundingRoute();
 
@@ -718,10 +882,11 @@ export class AutonomousZeroCapitalEngine {
           component: 'ZeroCapitalEngine',
           error: this.state.lastFundingError,
         });
+        this.suspendMarketOperations();
       } finally {
         this.isFunding = false;
         this.state.fundingCycleActive = false;
-        scheduleNext();
+        if (this.marketOperationsStarted) scheduleNext();
       }
     };
 
@@ -1193,6 +1358,9 @@ export class AutonomousZeroCapitalEngine {
   private async executeZeroCapitalArbitrage(
     opportunity: ZeroCapitalOpportunity
   ): Promise<ExecutionResult> {
+    if (!stageManager.isMarketOperationsAllowed()) {
+      return { success: false, error: 'Market operations are locked behind initial gas readiness or governance state' };
+    }
     const capitalPlan = await this.assessCapitalHierarchy(opportunity);
     const chainSnapshot = capitalPlan.chains.find(chain => chain.chain === opportunity.chain);
     const positionSizing = calculateProgressivePositionSize({
@@ -1611,6 +1779,13 @@ export class AutonomousZeroCapitalEngine {
   stop(): void {
     this.state.isRunning = false;
     this.state.fundingCycleActive = false;
+    this.state.marketOperationsEnabled = false;
+    this.marketOperationsStarted = false;
+    this.executionEnabled = false;
+    this.executionEligible = false;
+    this.initialGasReadyCallback = undefined;
+    this.initialGasLostCallback = undefined;
+    stageManager.resetInitialGasReadiness();
     if (this.scanInterval) {
       clearTimeout(this.scanInterval);
       this.scanInterval = null;
@@ -1622,6 +1797,10 @@ export class AutonomousZeroCapitalEngine {
     if (this.fundingInterval) {
       clearTimeout(this.fundingInterval);
       this.fundingInterval = null;
+    }
+    if (this.bootstrapInterval) {
+      clearTimeout(this.bootstrapInterval);
+      this.bootstrapInterval = null;
     }
     logger.info('[ZeroCapitalEngine] Engine stopped', {
       component: 'ZeroCapitalEngine',
@@ -1662,6 +1841,9 @@ export class AutonomousZeroCapitalEngine {
     lastFundingCycleAt: number;
     lastFundingError?: string;
     walletResources: WalletResourceSnapshot[];
+    bootstrapState: 'PRE_STAGE_1_BOOTSTRAP' | 'INITIAL_GAS_READY';
+    initialGasReadiness: InitialGasReadiness;
+    marketOperationsEnabled: boolean;
     capitalRequired: string;
   } {
     return {
@@ -1680,6 +1862,13 @@ export class AutonomousZeroCapitalEngine {
       fundingCycles: this.state.fundingCycles,
       lastFundingCycleAt: this.state.lastFundingCycleAt,
       lastFundingError: this.state.lastFundingError,
+      bootstrapState: this.state.bootstrapState,
+      initialGasReadiness: {
+        ...this.state.initialGasReadiness,
+        measurements: this.state.initialGasReadiness.measurements.map(measurement => ({ ...measurement })),
+        provenance: [...this.state.initialGasReadiness.provenance],
+      },
+      marketOperationsEnabled: this.state.marketOperationsEnabled,
       walletResources: this.state.walletResources.map(resource => ({
         ...resource,
         assetBalances: { ...resource.assetBalances },

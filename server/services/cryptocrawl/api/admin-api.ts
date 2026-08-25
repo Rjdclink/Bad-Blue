@@ -500,16 +500,27 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   try {
     console.log('[CryptoCrawl] Starting crawler dependencies');
     await cryptoCrawlState.enable();
-    await zeroCapitalEngine.start();
-    await pipeline.run();
-
-    console.log('[CryptoCrawl] Starting authoritative AutonomousFaucet');
-    void autonomousFaucet.runAutonomousLoop().catch(error => {
-      console.error('[CryptoCrawl] AutonomousFaucet stopped during startup/operation', error);
-      autonomousFaucet.stop();
+    const startStage1MarketOperations = async (): Promise<void> => {
+      await pipeline.run();
+      console.log('[CryptoCrawl] Starting authoritative AutonomousFaucet');
+      void autonomousFaucet.runAutonomousLoop().catch(error => {
+        console.error('[CryptoCrawl] AutonomousFaucet stopped during startup/operation', error);
+        autonomousFaucet.stop();
+      });
+    };
+    await zeroCapitalEngine.start({
+      onInitialGasReady: startStage1MarketOperations,
+      onInitialGasLost: async () => {
+        await Promise.allSettled([
+          pipeline.stop(),
+          Promise.resolve(autonomousFaucet.stop()),
+        ]);
+      },
     });
 
-    if (!zeroCapitalEngine.getState().isRunning || !pipeline.isRunning() || !autonomousFaucet.isActive()) {
+    const marketOperationsAllowed = stageManager.isMarketOperationsAllowed();
+    if (!zeroCapitalEngine.getState().isRunning ||
+      (marketOperationsAllowed && (!pipeline.isRunning() || !autonomousFaucet.isActive()))) {
       throw new Error('CryptoCrawler monitoring dependencies did not remain running after startup');
     }
 
@@ -526,7 +537,9 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
       status: 200,
       payload: {
         success: true,
-        message: 'Governed on-chain monitoring started',
+        message: marketOperationsAllowed
+          ? 'Governed on-chain monitoring started'
+          : 'CryptoCrawler started in PRE_STAGE_1_BOOTSTRAP; market operations remain locked until verified initial gas readiness is established',
         lifecycle: systemState.lifecycle,
         startedAt: new Date(systemState.startedAt).toISOString(),
         cryptoCrawl: cryptoCrawlState.getStatus(),

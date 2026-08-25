@@ -287,6 +287,11 @@ async function ensureFaucetAlwaysOn(): Promise<boolean> {
     console.log('[DivineOptimizer] Faucet manually disabled by user - respecting override');
     return false;
   }
+
+  if (!stageManager.isMarketOperationsAllowed()) {
+    console.log('[DivineOptimizer] Faucet restart held in PRE_STAGE_1_BOOTSTRAP until initial gas readiness is verified');
+    return false;
+  }
   
   // Check if faucet is active
   const isActive = autonomousFaucet.isActive();
@@ -634,12 +639,12 @@ router.post('/faucet/toggle', async (req, res) => {
 
     // Remove manual override and start faucet
     manuallyEnableFaucet();
-    if (stageManager.isAutomaticallyActivated() && !autonomousFaucet.isActive()) {
+    if (stageManager.isMarketOperationsAllowed() && !autonomousFaucet.isActive()) {
       autonomousFaucet.runAutonomousLoop().catch(err => {
         console.error('[Faucet] Failed to start autonomous loop:', err);
       });
-    } else if (!stageManager.isAutomaticallyActivated()) {
-      console.log('[Faucet] Start skipped - canonical governance is paused or requires authorization');
+    } else if (!stageManager.isMarketOperationsAllowed()) {
+      console.log('[Faucet] Start skipped - initial gas readiness or canonical governance is not operational');
     }
   } else {
     // Set manual override to disable and stop faucet

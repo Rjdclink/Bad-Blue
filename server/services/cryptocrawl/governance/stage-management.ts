@@ -25,6 +25,7 @@ import { createLogger } from '../../../logger';
 import { randomUUID } from 'crypto';
 import type { StageManagerPersistedSnapshot, StageManagerStateStore } from './stage-state-store.js';
 import type { ExecutionStatus, NormalizedRealizedExecution } from '../execution/settlement-types.js';
+import type { InitialGasReadiness, InitialGasReadinessStatus } from '../initial-gas-readiness.js';
 
 const log = createLogger('StageManagement');
 
@@ -311,6 +312,10 @@ export interface StageState {
   blockingAnomaly: boolean;
   killSwitchActive: boolean;
   uncertainties: string[];
+
+  initialGasReady: boolean;
+  initialGasReadinessStatus: InitialGasReadinessStatus;
+  initialGasReadinessObservedAt?: number;
 
   automaticAdvancementEvidence: AutomaticAdvancementEvidence | null;
   automaticAdvancementBlockers: string[];
@@ -959,6 +964,43 @@ export class StageManager extends EventEmitter {
   canExecuteTrades(): boolean {
     return this.config.canExecuteTrades && !this.state.isPaused;
   }
+
+  setInitialGasReadiness(readiness: InitialGasReadiness): void {
+    this.state.initialGasReady = readiness.status === 'INITIAL_GAS_READY' && readiness.initialGasReady;
+    this.state.initialGasReadinessStatus = readiness.status;
+    this.state.initialGasReadinessObservedAt = readiness.observedAt;
+    this.recordStateChange({
+      initialGasReady: this.state.initialGasReady,
+      initialGasReadinessStatus: this.state.initialGasReadinessStatus,
+      initialGasReadinessObservedAt: this.state.initialGasReadinessObservedAt,
+    });
+    this.persistSoon();
+    this.emit('initial-gas-readiness-updated', {
+      ready: this.state.initialGasReady,
+      status: this.state.initialGasReadinessStatus,
+      observedAt: readiness.observedAt,
+    });
+  }
+
+  isInitialGasReady(): boolean {
+    return this.state.initialGasReady && this.state.initialGasReadinessStatus === 'INITIAL_GAS_READY';
+  }
+
+  resetInitialGasReadiness(): void {
+    this.state.initialGasReady = false;
+    this.state.initialGasReadinessStatus = 'PRE_STAGE_1_BOOTSTRAP';
+    this.state.initialGasReadinessObservedAt = undefined;
+    this.recordStateChange({
+      initialGasReady: false,
+      initialGasReadinessStatus: 'PRE_STAGE_1_BOOTSTRAP',
+      initialGasReadinessObservedAt: undefined,
+    });
+    this.persistSoon();
+  }
+
+  isMarketOperationsAllowed(): boolean {
+    return this.isInitialGasReady() && !this.state.isPaused && !this.state.killSwitchActive;
+  }
   
   requiresHumanApproval(): boolean {
     return this.config.requiresHumanApproval && this.state.activationMode !== 'automatic';
@@ -1105,6 +1147,8 @@ export class StageManager extends EventEmitter {
       blockingAnomaly: false,
       killSwitchActive: false,
       uncertainties: [],
+      initialGasReady: false,
+      initialGasReadinessStatus: 'PRE_STAGE_1_BOOTSTRAP',
       automaticAdvancementEvidence: null,
       automaticAdvancementBlockers: [],
       cryptaraExecutionEvidence: [],
@@ -1231,6 +1275,9 @@ export class StageManager extends EventEmitter {
       restored.unpauseRequiresAuthorization = false;
     }
 
+    restored.initialGasReady = false;
+    restored.initialGasReadinessStatus = 'PRE_STAGE_1_BOOTSTRAP';
+    restored.initialGasReadinessObservedAt = undefined;
     this.state = restored;
     this.config = STAGE_CONFIGS[restored.currentStage];
     this.state.proofMetrics.meetsAdvancementCriteria = this.checkAdvancementCriteria();
@@ -1284,6 +1331,11 @@ export class StageManager extends EventEmitter {
       blockingAnomaly: requireBoolean('blockingAnomaly', value.blockingAnomaly),
       killSwitchActive: requireBoolean('killSwitchActive', value.killSwitchActive),
       uncertainties: requireStringArray('uncertainties', value.uncertainties),
+      initialGasReady: value.initialGasReady === undefined || value.initialGasReady === null
+        ? false
+        : requireBoolean('initialGasReady', value.initialGasReady),
+      initialGasReadinessStatus: normalizeInitialGasReadinessStatus(value.initialGasReadinessStatus),
+      initialGasReadinessObservedAt: optionalTimestamp(value.initialGasReadinessObservedAt),
       automaticAdvancementEvidence: value.automaticAdvancementEvidence === undefined || value.automaticAdvancementEvidence === null
         ? null
         : normalizeAutomaticAdvancementEvidence(value.automaticAdvancementEvidence),
@@ -1328,6 +1380,24 @@ export class StageManager extends EventEmitter {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeInitialGasReadinessStatus(value: unknown): InitialGasReadinessStatus {
+  if (value === undefined || value === null) return 'PRE_STAGE_1_BOOTSTRAP';
+  const statuses: InitialGasReadinessStatus[] = [
+    'PRE_STAGE_1_BOOTSTRAP',
+    'INITIAL_GAS_READY',
+    'GAS_READY',
+    'GAS_BELOW_THRESHOLD',
+    'GAS_ZERO_BALANCE',
+    'BALANCE_UNKNOWN',
+    'PRICE_UNKNOWN',
+    'PROVIDER_UNAVAILABLE',
+  ];
+  if (typeof value !== 'string' || !statuses.includes(value as InitialGasReadinessStatus)) {
+    throw new Error('Persisted governance state has an invalid initial gas readiness status');
+  }
+  return value as InitialGasReadinessStatus;
 }
 
 function normalizeAutomaticAdvancementEvidence(value: unknown): AutomaticAdvancementEvidence {

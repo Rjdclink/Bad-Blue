@@ -1710,6 +1710,14 @@ class AutonomousCryptoFaucet {
         // Heartbeat for stall detection/observability
         this.state.lastLoopIterationAt = Date.now();
 
+        if (!stageManager.isMarketOperationsAllowed()) {
+          if (this.state.mode !== 'closed') {
+            this.state.mode = 'closed';
+          }
+          await this.sleep(Math.max(1000, Number(process.env.ZERO_CAPITAL_INITIAL_GAS_RECHECK_MS || 15000)));
+          continue;
+        }
+
         // Check circuit breaker recovery
         this.checkCircuitBreakerRecovery();
         
