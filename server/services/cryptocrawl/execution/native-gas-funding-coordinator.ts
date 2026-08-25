@@ -117,12 +117,28 @@ function requireTransactionHash(label: string, value: string | undefined): strin
 }
 
 function requireVerifiedProfit(evidence: VerifiedProfitEvidence): void {
-  positiveInteger('realizedProfitBaseUnits', evidence.realizedProfitBaseUnits);
+  const realizedProfit = positiveInteger('realizedProfitBaseUnits', evidence.realizedProfitBaseUnits);
   transactionHash('sourceTransactionHash', evidence.sourceTransactionHash);
   address('profit recipient', evidence.recipient);
   if (!evidence.sourceReceiptVerified || !evidence.sourceBalanceEvidenceVerified ||
       !evidence.zeroMonetaryGasVerified || !evidence.zeroExternalCapitalVerified) {
     throw new Error('Native-gas funding requires receipt-backed zero-capital realized-profit evidence');
+  }
+  if (evidence.sourceChain === 'europa') {
+    if (evidence.sourceRecipientBalanceBeforeBaseUnits === undefined || evidence.sourceRecipientBalanceAfterBaseUnits === undefined) {
+      throw new Error('Europa native-gas funding requires source-recipient balance evidence');
+    }
+    let before: bigint;
+    let after: bigint;
+    try {
+      before = BigInt(evidence.sourceRecipientBalanceBeforeBaseUnits);
+      after = BigInt(evidence.sourceRecipientBalanceAfterBaseUnits);
+    } catch {
+      throw new Error('Europa source-recipient balance evidence must be integer strings');
+    }
+    if (before !== 0n || after < before || after - before < realizedProfit) {
+      throw new Error('Europa native-gas funding requires proof that verified profit was created from a zero input-token starting balance');
+    }
   }
 }
 
