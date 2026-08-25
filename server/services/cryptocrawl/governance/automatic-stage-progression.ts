@@ -19,13 +19,18 @@ function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReas
   const progress = profitLadder.getProgressSummary();
   const trippedCircuitBreakers = riskGovernor.getTrippedCircuitBreakers().map(breaker => breaker.name);
   const recordedGate = stageManager.getState().automaticAdvancementEvidence?.marketGate;
+  const initialGasReady = stageManager.isInitialGasReady();
+  const candidateGateDecision = gate?.decision || recordedGate?.decision || 'BLOCK';
+  const candidateGateReasons = gate?.blockReasons || recordedGate?.reasons || ['No Cryptara market-gate authorization was recorded for this lifecycle evaluation'];
 
   return {
     evaluatedAt: Date.now(),
     marketGate: {
-      decision: gate?.decision || recordedGate?.decision || 'BLOCK',
+      decision: initialGasReady ? candidateGateDecision : 'BLOCK',
       evaluatedAt: gate?.metadata.evaluatedAt || recordedGate?.evaluatedAt || Date.now(),
-      reasons: gate?.blockReasons || recordedGate?.reasons || ['No Cryptara market-gate authorization was recorded for this lifecycle evaluation'],
+      reasons: initialGasReady
+        ? candidateGateReasons
+        : ['Initial native-gas readiness is not verified', ...candidateGateReasons],
     },
     cryptara: rankingToEvidence(ranking),
     profitLadder: {
