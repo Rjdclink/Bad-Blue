@@ -1,5 +1,4 @@
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
-import { rankDiscoveryUniverse } from './opportunity-scan-registry.js';
 
 export interface MarketUniverseAsset {
   symbol: string;
@@ -98,7 +97,7 @@ class MarketDataProviders {
           this.setProviderStatus(provider, 'cached', 'served from the market-universe cache');
         }
       }
-      return rankDiscoveryUniverse(this.universeCache.value);
+      return this.universeCache.value;
     }
     const [coinGeckoAssets, coinStatsAssets] = await Promise.all([
       this.fetchCoinGeckoUniverse(),
@@ -116,14 +115,14 @@ class MarketDataProviders {
     if (enriched.length > 0) {
       this.lastUniverse = enriched;
       this.universeCache = { value: enriched, expiresAt: Date.now() + COINGECKO_TTL_MS };
-      return rankDiscoveryUniverse(enriched);
+      return enriched;
     }
 
     if (this.lastUniverse.length > 0) {
       this.setProviderStatus('coingecko', 'stale', 'live universe refresh failed; serving the last successful universe');
       this.setProviderStatus('coinstats', 'stale', 'live universe refresh failed; serving the last successful universe');
       this.universeCache = { value: this.lastUniverse, expiresAt: Date.now() + Math.min(COINGECKO_TTL_MS, 30_000) };
-      return rankDiscoveryUniverse(this.lastUniverse);
+      return this.lastUniverse;
     }
 
     return [];
@@ -184,7 +183,7 @@ class MarketDataProviders {
           gasPrice: typeof payload.transaction.gasPrice === 'string' ? payload.transaction.gasPrice : undefined,
         } : undefined,
         quoteKind: executable ? 'quote' : 'price',
-        executable: executable && typeof payload?.transaction?.to === 'string' && typeof payload?.transaction?.data === 'string',
+        executable: executable && typeof payload?.transaction?.to === 'string' && typeof payload.transaction?.data === 'string',
         observedAt: Date.now(),
         source: '0x',
       } : null;
