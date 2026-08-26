@@ -21,6 +21,8 @@ const FLASHLOAN_RECEIVER_ABI = [
   'function executeBalancerFlashLoan(address loanToken, uint256 loanAmount, (address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps, uint256 minProfit, address profitRecipient) external',
 ];
 
+const MAX_ATOMIC_SWAP_STEPS = 8;
+
 function isAddress(value: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(value);
 }
@@ -62,6 +64,9 @@ function validateAtomicRouteBalance(plan: FlashLoanReceiverExecutionPlan): void 
     if (parseIntegerString(`steps[${index}].minAmountOut`, step.minAmountOut).lte(0)) {
       throw new Error(`Flash-loan step ${index} minAmountOut must be greater than zero`);
     }
+    if (step.recipient && !sameAddress(step.recipient, plan.receiver)) {
+      throw new Error(`Flash-loan step ${index} must keep swap proceeds inside the receiver`);
+    }
   }
 }
 
@@ -83,6 +88,9 @@ export function buildFlashLoanReceiverPayloadFromPlan(
   if (!Array.isArray(plan.steps) || plan.steps.length < 2) {
     throw new Error('Flash-loan execution requires at least two swap legs');
   }
+  if (plan.steps.length > MAX_ATOMIC_SWAP_STEPS) {
+    throw new Error(`Flash-loan execution exceeds the ${MAX_ATOMIC_SWAP_STEPS}-step atomic command limit`);
+  }
 
   validateAtomicRouteBalance(plan);
 
@@ -90,14 +98,28 @@ export function buildFlashLoanReceiverPayloadFromPlan(
   const loanAmount = parseIntegerString('loanAmount', plan.loanAmount);
   const minProfit = parseIntegerString('minProfit', plan.minProfit);
 
-  const encodedSteps = plan.steps.map(step => {
+  const encodedSteps = plan.steps.map((step, index) => {
     const swapCall = buildSwapCallFromLeg(plan.chain, plan.receiver, step);
+    const value = parseIntegerString(`steps[${index}].value`, swapCall.value);
+    const approvalAmount = parseIntegerString(`steps[${index}].approvalAmount`, swapCall.approvalAmount);
+    const amountIn = parseIntegerString(`steps[${index}].amountIn`, step.amountIn);
+
+    if (!value.isZero()) {
+      throw new Error(`Flash-loan step ${index} attempted an unsupported native-value transfer`);
+    }
+    if (!sameAddress(swapCall.approvalToken, step.tokenIn)) {
+      throw new Error(`Flash-loan step ${index} approval token does not match tokenIn`);
+    }
+    if (!approvalAmount.eq(amountIn)) {
+      throw new Error(`Flash-loan step ${index} approval amount must equal its exact input amount`);
+    }
+
     return {
       target: swapCall.target,
-      value: parseIntegerString('step.value', swapCall.value),
+      value,
       callData: swapCall.data,
       approvalToken: swapCall.approvalToken,
-      approvalAmount: parseIntegerString('step.approvalAmount', swapCall.approvalAmount),
+      approvalAmount,
     };
   });
 
