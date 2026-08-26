@@ -69,9 +69,9 @@ export const PROFIT_TIERS: Record<number, ProfitTier> = {
     maxDrawdownPercent: 0,
     maxDailyLossUSD: 0,
     
-    daysRequiredAtTarget: 3,
-    minSuccessRate: 0.7,
-    minSharpeRatio: 1.5,
+    daysRequiredAtTarget: 0,
+    minSuccessRate: 0,
+    minSharpeRatio: 0,
     
     maxPairs: 5,
     maxVenues: 2,
@@ -569,6 +569,7 @@ export class ProfitLadder extends EventEmitter {
     blockers: string[];
     percentToGoal: number;
   } {
+    if (this.currentTier.id === 0) this.checkAdvancementCriteria();
     const performance = this.getCurrentPerformance();
     const targetTierProfit = PROFIT_TIERS[5].maxDailyProfitUSD; // $35K
     const percentToGoal = (this.currentTier.maxDailyProfitUSD / targetTierProfit) * 100;
