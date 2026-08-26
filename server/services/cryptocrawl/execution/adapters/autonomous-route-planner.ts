@@ -57,6 +57,11 @@ function requireAddress(name: string, value: string | undefined): string {
   return normalized;
 }
 
+function boundedRouteHopLimit(value: number): number {
+  if (!Number.isFinite(value)) return 4;
+  return Math.max(2, Math.min(8, Math.trunc(value)));
+}
+
 export function buildFlashLoanExecutionPlanFromOpportunity(
   opportunity: RoutePlanningOpportunity,
   options?: {
@@ -64,10 +69,18 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     profitRecipient?: string;
     minOutputBps?: number;
     minProfitBps?: number;
+    maxRouteHops?: number;
   },
 ): FlashLoanReceiverExecutionPlan {
   if (!Array.isArray(opportunity.route) || opportunity.route.length < 2) {
     throw new Error('Autonomous zero-capital planning requires at least two route legs');
+  }
+
+  const maxRouteHops = boundedRouteHopLimit(
+    options?.maxRouteHops ?? Number(process.env.ZERO_CAPITAL_MAX_ROUTE_HOPS || 4),
+  );
+  if (opportunity.route.length > maxRouteHops) {
+    throw new Error(`Autonomous zero-capital route exceeds the configured ${maxRouteHops}-hop execution limit`);
   }
 
   const receiver = requireAddress(
