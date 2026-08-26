@@ -4,6 +4,7 @@ import {
   type CryptaraPerformanceRanking,
 } from '../../cryptara/index.js';
 import { opportunityMlRanker } from '../../cryptara/opportunity-ml-ranker.js';
+import { reevaluateLastMarketGate } from '../../cryptara/marketGates/index.js';
 import type { GateEvaluation } from '../../cryptara/marketGates/types.js';
 import {
   stageManager,
@@ -68,10 +69,34 @@ function rankingToEvidence(ranking: CryptaraPerformanceRanking): AutomaticAdvanc
   };
 }
 
+function isStageOneFeeBootstrapBlock(gate: Pick<GateEvaluation, 'decision' | 'blockReasons'> | undefined): boolean {
+  if (!gate || gate.decision !== 'BLOCK' || stageManager.getState().stage !== 1) return false;
+  return gate.blockReasons.some(reason => reason.includes('feesRebates') || reason.includes('crossVenueFees'));
+}
+
+async function refreshStageOneBootstrapGate(
+  gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
+): Promise<void> {
+  if (!isStageOneFeeBootstrapBlock(gate)) return;
+
+  // Re-run the exact last gate context after provider/fee evidence has had a chance to settle.
+  // This never changes critical-signal policy; it only replaces stale "unknown" evidence with
+  // a fresh measured pass/fail result. The original object is mutated so the faucet observes
+  // the refreshed decision and cannot diverge from StageManager.
+  for (const delayMs of [0, 150, 500]) {
+    if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+    const refreshed = reevaluateLastMarketGate();
+    if (!refreshed) return;
+    Object.assign(gate as GateEvaluation, refreshed);
+    if (!isStageOneFeeBootstrapBlock(refreshed)) return;
+  }
+}
+
 export async function evaluateAutomaticStageProgression(
   gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
 ): Promise<AutomaticAdvancementResult> {
   await telemetryBootstrap;
+  await refreshStageOneBootstrapGate(gate);
   await stageManager.recordProfitLadderState(profitLadder.exportState());
   return stageManager.evaluateAutomaticAdvancement(toAutomaticEvidence(gate));
 }
