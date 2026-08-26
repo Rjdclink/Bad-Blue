@@ -1,10 +1,15 @@
 import 'dotenv/config';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { Wallet, providers, ContractFactory, utils } from 'ethers';
+import { BigNumber, Wallet, providers, ContractFactory, utils } from 'ethers';
 import { compileFlashLoanReceiver, compileSushiV3FlashReceiver } from './compile-flashloan-receiver.js';
 import { EUROPA_NETWORK } from '../../server/services/cryptocrawl/execution/adapters/europa-network.js';
 import { EUROPA_SUSHI } from '../../server/services/cryptocrawl/execution/adapters/europa-sushi-registry.js';
+import {
+  calculateSkaleExternalGas,
+  deriveSkalePowCandidate,
+  resolveEuropaExternalGasDifficulty,
+} from '../../server/services/cryptocrawl/execution/adapters/skale-pow-adapter.js';
 
 type SupportedDeploymentChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'europa';
 
@@ -86,7 +91,8 @@ async function main(): Promise<void> {
   const artifact = isSushiV3 ? await compileSushiV3FlashReceiver() : await compileFlashLoanReceiver();
   const factory = new ContractFactory(artifact.abi, artifact.bytecode, wallet);
   const deployTransaction = factory.getDeployTransaction(infrastructure, owner);
-  const estimatedGas = await provider.estimateGas(deployTransaction);
+  const estimatedGas = await provider.estimateGas({ ...deployTransaction, from: wallet.address });
+  const gasLimit = estimatedGas.mul(120).div(100);
   const broadcastAllowed =
     process.env.ZERO_CAPITAL_DEPLOY === 'true' &&
     process.env.ZERO_CAPITAL_DEPLOY_CONFIRMATION === 'DEPLOY_FLASHLOAN_RECEIVER';
@@ -107,11 +113,64 @@ async function main(): Promise<void> {
     return;
   }
 
-  const contract = await factory.deploy(infrastructure, owner, {
-    gasLimit: estimatedGas.mul(120).div(100),
-  });
-  const receipt = await contract.deployTransaction.wait();
-  const code = await provider.getCode(contract.address);
+  let contractAddress: string;
+  let transactionHash: string;
+  let receipt: providers.TransactionReceipt;
+
+  if (chain === 'europa') {
+    const nonce = await provider.getTransactionCount(wallet.address, 'pending');
+    const { difficulty, source } = await resolveEuropaExternalGasDifficulty(provider);
+    const maxAttempts = Math.max(1, Number(process.env.ZERO_CAPITAL_EUROPA_DEPLOY_POW_MAX_ATTEMPTS || 1_000_000));
+    const workloadId = `deploy:${artifact.contractName}:${wallet.address}:${nonce}`;
+    let gasPrice: BigNumber | undefined;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const candidate = deriveSkalePowCandidate(workloadId, 0, 1, attempt);
+      const externalGas = calculateSkaleExternalGas(wallet.address, nonce, candidate, difficulty);
+      if (externalGas < BigInt(gasLimit.toString())) continue;
+      gasPrice = BigNumber.from(candidate.toString());
+      break;
+    }
+
+    if (!gasPrice) {
+      throw new Error(`SKALE external-gas proof not found in ${maxAttempts} attempts for Europa receiver deployment`);
+    }
+
+    const verifiedEstimate = await provider.estimateGas({
+      ...deployTransaction,
+      from: wallet.address,
+      gasPrice,
+    });
+    if (verifiedEstimate.gt(gasLimit)) {
+      throw new Error(`Europa deployment estimate ${verifiedEstimate.toString()} exceeds bounded gas limit ${gasLimit.toString()}`);
+    }
+
+    const signedTransaction = await wallet.signTransaction({
+      ...deployTransaction,
+      chainId: network.chainId,
+      nonce,
+      gasLimit,
+      gasPrice,
+    });
+    const response = await provider.sendTransaction(signedTransaction);
+    receipt = await response.wait();
+    if (receipt.status !== 1) {
+      throw new Error('Europa receiver deployment transaction reverted');
+    }
+    contractAddress = utils.getContractAddress({ from: wallet.address, nonce });
+    transactionHash = response.hash;
+    console.log(`[deploy-flashloan-receiver] Europa external-gas PoW accepted (${source})`);
+  } else {
+    const contract = await factory.deploy(infrastructure, owner, { gasLimit });
+    receipt = await contract.deployTransaction.wait();
+    if (receipt.status !== 1) {
+      throw new Error(`${chain} receiver deployment transaction reverted`);
+    }
+    contractAddress = contract.address;
+    transactionHash = contract.deployTransaction.hash;
+  }
+
+  const code = await provider.getCode(contractAddress);
   if (code === '0x') {
     throw new Error('Deployment receipt succeeded but no contract bytecode exists at the deployed address');
   }
@@ -120,12 +179,12 @@ async function main(): Promise<void> {
     contract: artifact.contractName,
     chain,
     chainId: network.chainId,
-    address: contract.address,
+    address: contractAddress,
     owner,
     infrastructure,
     receiverKind,
     deployer: wallet.address,
-    transactionHash: contract.deployTransaction.hash,
+    transactionHash,
     blockNumber: receipt.blockNumber,
     compiler: artifact.compiler,
     codeHash: utils.keccak256(code),
@@ -139,8 +198,8 @@ async function main(): Promise<void> {
     ...deploymentRecord,
     deploymentRecord: outputPath,
     nextStep: chain === 'europa'
-      ? `Set ZERO_CAPITAL_EUROPA_RECEIVER=${contract.address} and ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=${utils.keccak256(code)} only after independent contract review and zero-balance receipt validation.`
-      : `Set ZERO_CAPITAL_FLASHLOAN_RECEIVER=${contract.address} only after independent contract review and testnet validation.`,
+      ? `Set ZERO_CAPITAL_EUROPA_RECEIVER=${contractAddress} and ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=${utils.keccak256(code)} only after independent contract review and zero-balance receipt validation.`
+      : `Set ZERO_CAPITAL_FLASHLOAN_RECEIVER=${contractAddress} only after independent contract review and testnet validation.`,
   }, null, 2));
 }
 
