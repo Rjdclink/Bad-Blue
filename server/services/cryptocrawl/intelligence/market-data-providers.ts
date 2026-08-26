@@ -49,7 +49,7 @@ export interface DexQuoteObservation {
 }
 
 export type MarketDataProviderName = 'coingecko' | 'coinstats' | '0x';
-export type MarketDataProviderState = 'live' | 'cached' | 'stale' | 'unavailable' | 'failed';
+export type MarketDataProviderState = 'not_queried' | 'live' | 'cached' | 'stale' | 'unavailable' | 'failed';
 
 export interface MarketDataProviderStatus {
   provider: MarketDataProviderName;
@@ -85,9 +85,9 @@ class MarketDataProviders {
   private quoteCache = new Map<string, CacheEntry<DexQuoteObservation | null>>();
   private inFlight = new Map<string, Promise<unknown>>();
   private providerStatuses: Record<MarketDataProviderName, MarketDataProviderStatus> = {
-    coingecko: { provider: 'coingecko', state: 'unavailable', observedAt: null, detail: 'not queried' },
-    coinstats: { provider: 'coinstats', state: 'unavailable', observedAt: null, detail: 'not queried' },
-    '0x': { provider: '0x', state: 'unavailable', observedAt: null, detail: 'not queried' },
+    coingecko: { provider: 'coingecko', state: 'not_queried', observedAt: null, detail: 'not queried' },
+    coinstats: { provider: 'coinstats', state: 'not_queried', observedAt: null, detail: 'not queried' },
+    '0x': { provider: '0x', state: 'not_queried', observedAt: null, detail: 'not queried' },
   };
 
   getProviderStatuses(): MarketDataProviderStatus[] {
