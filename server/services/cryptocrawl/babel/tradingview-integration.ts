@@ -205,7 +205,7 @@ export class TradingViewEngine {
    */
   static initialize(): void {
     if (this.isActive) {
-      logger.warn('[TRADINGVIEW] Engine already active', { component: 'TradingView' });
+      logger.debug('[TRADINGVIEW] Engine already active; reusing initialized instance', { component: 'TradingView' });
       return;
     }
 
@@ -235,12 +235,11 @@ export class TradingViewEngine {
     const cacheKey = `${symbol}-${_timeframe}`;
     const cached = this.analysisCache.get(cacheKey);
 
-    // Return cached if fresh (less than 1 minute old)
+    // Preserve source provenance for fresh cache hits. Cache freshness is
+    // represented by timestamp/TTL; relabeling a live-origin observation as
+    // merely "cached" hid valid live evidence from downstream safety gates.
     if (cached && Date.now() - cached.timestamp < TRADINGVIEW_CONFIG.cacheTtlMs) {
-      return {
-        ...cached,
-        dataProvenance: cached.dataProvenance === 'live' ? 'cached' : 'deterministic-fallback',
-      };
+      return { ...cached };
     }
 
     const inFlight = this.inFlightAnalysis.get(cacheKey);
