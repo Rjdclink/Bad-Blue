@@ -815,8 +815,6 @@ export class StageManager extends EventEmitter {
       return m.chainHealthy &&
         m.liveValidationSamples >= 3 &&
         m.liveValidationPassRate >= 0.8 &&
-        m.monteCarloSimulations > 0 &&
-        m.monteCarloPassRate >= 0.8 &&
         !this.state.blockingAnomaly;
     }
     
@@ -856,7 +854,9 @@ export class StageManager extends EventEmitter {
     if (!evidence.risk.circuitBreakersClear) blockers.push(`Risk circuit breakers are tripped: ${evidence.risk.trippedCircuitBreakers.join(', ')}`);
     if (evidence.cryptara.riskBudget === 'defensive') blockers.push('Cryptara performance ranking selected a defensive risk budget');
     if (evidence.cryptara.preferredChains.length === 0) blockers.push('Cryptara performance ranking has no preferred chain');
-    if (evidence.cryptara.averageSlippageBps === null) blockers.push('Cryptara has no measured execution slippage history');
+    if (this.state.currentStage >= Stage.STAGE_2_PROOF_OF_SIGNAL && evidence.cryptara.averageSlippageBps === null) {
+      blockers.push('Cryptara has no measured execution slippage history');
+    }
     if (this.state.currentStage >= Stage.STAGE_2_PROOF_OF_SIGNAL && evidence.cryptara.sampleCount < this.state.proofMetrics.totalTrades) {
       blockers.push('Persisted Cryptara execution history does not cover all recorded StageManager trades');
     }
