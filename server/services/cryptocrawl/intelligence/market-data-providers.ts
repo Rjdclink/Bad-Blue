@@ -1,4 +1,5 @@
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
+import { rankDiscoveryUniverse } from './opportunity-scan-registry.js';
 
 export interface MarketUniverseAsset {
   symbol: string;
@@ -97,7 +98,7 @@ class MarketDataProviders {
           this.setProviderStatus(provider, 'cached', 'served from the market-universe cache');
         }
       }
-      return this.universeCache.value;
+      return rankDiscoveryUniverse(this.universeCache.value);
     }
     const [coinGeckoAssets, coinStatsAssets] = await Promise.all([
       this.fetchCoinGeckoUniverse(),
@@ -115,14 +116,14 @@ class MarketDataProviders {
     if (enriched.length > 0) {
       this.lastUniverse = enriched;
       this.universeCache = { value: enriched, expiresAt: Date.now() + COINGECKO_TTL_MS };
-      return enriched;
+      return rankDiscoveryUniverse(enriched);
     }
 
     if (this.lastUniverse.length > 0) {
       this.setProviderStatus('coingecko', 'stale', 'live universe refresh failed; serving the last successful universe');
       this.setProviderStatus('coinstats', 'stale', 'live universe refresh failed; serving the last successful universe');
       this.universeCache = { value: this.lastUniverse, expiresAt: Date.now() + Math.min(COINGECKO_TTL_MS, 30_000) };
-      return this.lastUniverse;
+      return rankDiscoveryUniverse(this.lastUniverse);
     }
 
     return [];
