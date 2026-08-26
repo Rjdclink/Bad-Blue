@@ -24,6 +24,20 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function credential(name: string): string | null {
+  const raw = process.env[name];
+  if (!raw) return null;
+  let value = raw.trim();
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      value = value.slice(1, -1).trim();
+    }
+  }
+  return value || null;
+}
+
 function configuredFee(venue: CexFeeVenue, symbol: string): CexFeeEvidence | null {
   const taker = finiteNumber(process.env[`CRYPTO_ARBITRAGE_${venue.toUpperCase()}_TAKER_FEE_BPS`]);
   if (taker === null || taker < 0) return null;
@@ -63,16 +77,33 @@ async function readJson(response: Response): Promise<any> {
 }
 
 async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
-  const apiKey = process.env.KRAKEN_API_KEY?.trim();
-  const apiSecret = process.env.KRAKEN_API_SECRET?.trim();
-  if (!apiKey || !apiSecret) return null;
+  const apiKey = credential('KRAKEN_API_KEY');
+  const apiSecret = credential('KRAKEN_API_SECRET');
+  if (!apiKey || !apiSecret) {
+    logger.warn('[CEX Fees] Kraken authenticated fee discovery unavailable because credentials are incomplete', {
+      component: 'CexFeeResolver',
+      venue: 'kraken',
+      symbol,
+      apiKeyPresent: Boolean(apiKey),
+      apiSecretPresent: Boolean(apiSecret),
+    });
+    return null;
+  }
+
+  let decodedSecret: Buffer;
+  try {
+    decodedSecret = Buffer.from(apiSecret, 'base64');
+    if (decodedSecret.length === 0) throw new Error('empty decoded secret');
+  } catch {
+    throw new Error('Kraken API secret is not valid base64');
+  }
 
   const path = '/0/private/TradeVolume';
   const nonce = String(Math.max(Date.now(), krakenNonce + 1));
   krakenNonce = Number(nonce);
   const body = new URLSearchParams({ nonce, pair: symbol, 'fee-info': 'true' }).toString();
   const hash = createHash('sha256').update(nonce + body).digest();
-  const signature = createHmac('sha512', Buffer.from(apiSecret, 'base64'))
+  const signature = createHmac('sha512', decodedSecret)
     .update(Buffer.concat([Buffer.from(path), hash]))
     .digest('base64');
   const response = await fetchWithTimeout(`https://api.kraken.com${path}`, {
@@ -90,7 +121,7 @@ async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | 
   const takerRow = Object.values(result.fees || {})[0] as Record<string, unknown> | undefined;
   const makerRow = Object.values(result.fees_maker || {})[0] as Record<string, unknown> | undefined;
   const takerPct = finiteNumber(takerRow?.fee);
-  if (takerPct === null) return null;
+  if (takerPct === null) throw new Error('Kraken TradeVolume response did not contain taker fee evidence for the requested pair');
   const makerPct = finiteNumber(makerRow?.fee);
   return {
     venue: 'kraken',
@@ -109,10 +140,20 @@ function okxInstrumentId(symbol: string): string {
 }
 
 async function fetchOkxFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
-  const apiKey = process.env.OKX_API_KEY?.trim();
-  const apiSecret = process.env.OKX_API_SECRET?.trim();
-  const passphrase = process.env.OKX_API_PASSPHRASE?.trim();
-  if (!apiKey || !apiSecret || !passphrase) return null;
+  const apiKey = credential('OKX_API_KEY');
+  const apiSecret = credential('OKX_API_SECRET');
+  const passphrase = credential('OKX_API_PASSPHRASE');
+  if (!apiKey || !apiSecret || !passphrase) {
+    logger.warn('[CEX Fees] OKX authenticated fee discovery unavailable because credentials are incomplete', {
+      component: 'CexFeeResolver',
+      venue: 'okx',
+      symbol,
+      apiKeyPresent: Boolean(apiKey),
+      apiSecretPresent: Boolean(apiSecret),
+      passphrasePresent: Boolean(passphrase),
+    });
+    return null;
+  }
 
   const query = new URLSearchParams({ instType: 'SPOT', instId: okxInstrumentId(symbol) }).toString();
   const path = `/api/v5/account/trade-fee?${query}`;
@@ -132,7 +173,7 @@ async function fetchOkxFeeEvidence(symbol: string): Promise<CexFeeEvidence | nul
   if (payload.code !== '0') throw new Error(`OKX fee request failed: ${payload.msg || payload.code}`);
   const row = payload.data?.[0];
   const takerRate = finiteNumber(row?.taker);
-  if (takerRate === null) return null;
+  if (takerRate === null) throw new Error('OKX trade-fee response did not contain taker fee evidence for the requested pair');
   const makerRate = finiteNumber(row?.maker);
   // OKX represents charged fees as negative rates and rebates as positive rates.
   return {
@@ -149,6 +190,7 @@ async function fetchOkxFeeEvidence(symbol: string): Promise<CexFeeEvidence | nul
 async function fetchLiveFeeEvidence(venue: CexFeeVenue, symbol: string): Promise<CexFeeEvidence | null> {
   if (venue === 'kraken') return fetchKrakenFeeEvidence(symbol);
   if (venue === 'okx') return fetchOkxFeeEvidence(symbol);
+  // Coinbase is currently market-data-only in CryptoCrawler's centralized execution layer.
   return null;
 }
 
@@ -164,17 +206,42 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
     try {
       const live = await fetchLiveFeeEvidence(venue, symbol);
       const evidence = live || configuredFee(venue, symbol);
-      if (evidence) feeCache.set(key, evidence);
+      if (evidence) {
+        feeCache.set(key, evidence);
+        logger.info('[CEX Fees] Fee evidence resolved', {
+          component: 'CexFeeResolver',
+          venue,
+          symbol,
+          source: evidence.source,
+          takerFeeBps: evidence.takerFeeBps,
+          makerFeeBps: evidence.makerFeeBps,
+          makerRebateBps: evidence.makerRebateBps,
+        });
+      } else if (venue !== 'coinbase') {
+        logger.warn('[CEX Fees] No executable fee evidence available for venue', {
+          component: 'CexFeeResolver',
+          venue,
+          symbol,
+        });
+      }
       return evidence ? { ...evidence } : null;
     } catch (error) {
-      logger.warn('[CEX Fees] Live fee discovery unavailable; checking configured fallback', {
+      logger.warn('[CEX Fees] Authenticated fee discovery failed; checking configured fallback', {
         component: 'CexFeeResolver',
         venue,
         symbol,
         error: error instanceof Error ? error.message : String(error),
       });
       const fallback = configuredFee(venue, symbol);
-      if (fallback) feeCache.set(key, fallback);
+      if (fallback) {
+        feeCache.set(key, fallback);
+        logger.info('[CEX Fees] Configured fee fallback resolved', {
+          component: 'CexFeeResolver',
+          venue,
+          symbol,
+          takerFeeBps: fallback.takerFeeBps,
+        });
+      }
       return fallback ? { ...fallback } : null;
     }
   })().finally(() => feeInFlight.delete(key));
