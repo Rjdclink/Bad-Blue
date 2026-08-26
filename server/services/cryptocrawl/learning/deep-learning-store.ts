@@ -103,7 +103,6 @@ class DeepLearningStore {
 
   constructor() {
     this.state = this.createInitialState();
-    this.initializeSupabase();
   }
 
   private createInitialState(): LearningState {
@@ -119,6 +118,8 @@ class DeepLearningStore {
   }
 
   private initializeSupabase(): void {
+    if (this.supabase) return;
+
     const supabaseUrl = process.env.SUPABASE_URL || EDEN_CONFIG.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_ANON_KEY || EDEN_CONFIG.SUPABASE_KEY;
 
@@ -135,7 +136,7 @@ class DeepLearningStore {
         });
       }
     } else {
-      logger.warn('Supabase credentials not available, learning will be in-memory only', {
+      logger.warn('Supabase credentials not available when governed learning persistence became eligible', {
         component: 'DeepLearningStore',
       });
     }
@@ -147,11 +148,12 @@ class DeepLearningStore {
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
 
-    // Stage 1–3: no long-term accumulation or persistence.
+    // Stage 1–3: no long-term accumulation or persistence. Do not initialize or
+    // warn about a persistence backend while governance deliberately forbids it.
     if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) {
-      logger.warn('Deep Learning Store disabled by governance (no long-term memory in Stage 1–3)', {
+      logger.info('Deep Learning Store persistence deferred by governance (no long-term memory in Stage 1–3)', {
         component: 'DeepLearningStore',
-        governance: getCryptocrawlGovernance().getState(),
+        stage: getCryptocrawlGovernance().getState().currentStage,
       });
       this.isInitialized = true;
       return;
@@ -161,7 +163,9 @@ class DeepLearningStore {
       component: 'DeepLearningStore',
     });
 
-    // Load existing data from Supabase
+    this.initializeSupabase();
+
+    // Load existing data from Supabase when a governed persistence backend is available.
     await this.loadLearnedParameters();
     await this.loadStrategyPerformance();
     await this.loadFailedStrategies();
@@ -176,6 +180,7 @@ class DeepLearningStore {
       learnedParams: this.state.learnedParameters.size,
       strategyRecords: this.state.strategyPerformance.size,
       failedStrategies: this.state.failedStrategies.size,
+      persistenceAvailable: this.supabase !== null,
     });
   }
 
