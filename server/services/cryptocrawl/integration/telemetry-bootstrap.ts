@@ -26,6 +26,24 @@ const ANKR_PUBLIC_HTTP: Partial<Record<SupportedChain, string>> = {
 
 let bootstrapPromise: Promise<void> | null = null;
 
+function logExecutionPosture(): void {
+  logger.info('[TelemetryBootstrap] Production execution posture', {
+    component: 'TelemetryBootstrap',
+    noExecutionGuardEnabled: process.env.NO_EXECUTION === 'true',
+    liveExecutionEnabled: process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true',
+    liveExecutionConfirmed: process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK',
+    zeroCapitalExecutionEnabled: process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true',
+    zeroCapitalExecutionConfirmed: process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK',
+    walletConfigured: !!process.env.WALLET_PRIVATE_KEY?.trim(),
+    krakenConfigured: !!(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()),
+    okxConfigured: !!(
+      process.env.OKX_API_KEY?.trim()
+      && process.env.OKX_API_SECRET?.trim()
+      && process.env.OKX_API_PASSPHRASE?.trim()
+    ),
+  });
+}
+
 function adoptLegacyProviderAliases(): void {
   const aliases: Array<{ canonical: string; candidates: string[] }> = [
     { canonical: 'ALCHEMY_API_KEY', candidates: ['ALCHEMY_KEY'] },
@@ -183,6 +201,7 @@ async function probeReadOnlyZeroX(): Promise<void> {
 export function ensureTelemetryBootstrap(): Promise<void> {
   if (!bootstrapPromise) {
     adoptLegacyProviderAliases();
+    logExecutionPosture();
     bootstrapPromise = (async () => {
       // Establish the shared manager once, then add optional providers serially so
       // health/provenance state cannot race during startup.
