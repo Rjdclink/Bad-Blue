@@ -1,10 +1,10 @@
-
-import { ObjectStorageService, getObjectStorageClient } from './objectStorage';
-
-const objectStorage = new ObjectStorageService();
-
 /**
- * Interface for persistent storage implementations
+ * Interface for optional external snapshot persistence.
+ *
+ * PostgreSQL is the authoritative durable store for application state in the
+ * current production architecture. This interface is retained because the
+ * persistence manager still calls it for optional backup metadata, but no
+ * cloud-object-storage dependency is required or implied.
  */
 export interface IPersistentStorage {
   save(key: string, data: any): Promise<void>;
@@ -19,39 +19,48 @@ export interface IPersistentStorage {
 }
 
 /**
- * Null implementation - no-op for environments without object storage
+ * Production implementation for the current PostgreSQL-primary deployment.
+ *
+ * Critical application data already persists in PostgreSQL. Optional external
+ * snapshot metadata is intentionally disabled until a real external snapshot
+ * backend is selected. Keeping this implementation explicit preserves existing
+ * callers without pretending that Google Cloud Storage exists in production.
  */
-class NullPersistentStorage implements IPersistentStorage {
-  async save(key: string, data: any): Promise<void> {
-    console.log(`ℹ️ Persistent storage not available - skipping save: ${key}`);
+class DatabasePrimaryPersistentStorage implements IPersistentStorage {
+  private logSkipped(operation: string, key?: string): void {
+    console.log(`ℹ️ External snapshot storage disabled; PostgreSQL remains authoritative - skipping ${operation}${key ? `: ${key}` : ''}`);
   }
 
-  async load<T>(key: string): Promise<T | null> {
+  async save(key: string, _data: any): Promise<void> {
+    this.logSkipped('snapshot save', key);
+  }
+
+  async load<T>(_key: string): Promise<T | null> {
     return null;
   }
 
   async delete(key: string): Promise<void> {
-    console.log(`ℹ️ Persistent storage not available - skipping delete: ${key}`);
+    this.logSkipped('snapshot delete', key);
   }
 
   async listKeys(): Promise<string[]> {
     return [];
   }
 
-  async exists(key: string): Promise<boolean> {
+  async exists(_key: string): Promise<boolean> {
     return false;
   }
 
-  async saveAppConfig(config: any): Promise<void> {
-    console.log('ℹ️ Persistent storage not available - skipping app config save');
+  async saveAppConfig(_config: any): Promise<void> {
+    this.logSkipped('app-config snapshot save');
   }
 
   async loadAppConfig<T>(): Promise<T | null> {
     return null;
   }
 
-  async saveWorkerState(state: any): Promise<void> {
-    console.log('ℹ️ Persistent storage not available - skipping worker state save');
+  async saveWorkerState(_state: any): Promise<void> {
+    this.logSkipped('worker-state snapshot save');
   }
 
   async loadWorkerState<T>(): Promise<T | null> {
@@ -59,214 +68,5 @@ class NullPersistentStorage implements IPersistentStorage {
   }
 }
 
-/**
- * Persistent storage service that survives deployments and republishing
- * Uses Google Cloud Storage for durable data persistence
- */
-export class PersistentStorage implements IPersistentStorage {
-  private bucketName: string;
-  private basePath: string;
-
-  constructor() {
-    // Get the private directory from environment
-    const privateDir = process.env.PRIVATE_OBJECT_DIR || '';
-    if (!privateDir) {
-      throw new Error('PRIVATE_OBJECT_DIR not set');
-    }
-
-    // Parse bucket name and base path
-    const parts = privateDir.split('/').filter(p => p);
-    this.bucketName = parts[0];
-    this.basePath = parts.slice(1).join('/') + '/persistent';
-  }
-
-  /**
-   * Save data to persistent storage
-   */
-  async save(key: string, data: any): Promise<void> {
-    try {
-      const client = await getObjectStorageClient();
-      if (!client) {
-        throw new Error('Object storage client not available');
-      }
-      
-      const filePath = `${this.basePath}/${key}.json`;
-      const bucket = client.bucket(this.bucketName);
-      const file = bucket.file(filePath);
-
-      const jsonData = JSON.stringify(data, null, 2);
-      await file.save(jsonData, {
-        contentType: 'application/json',
-        metadata: {
-          lastModified: new Date().toISOString(),
-        },
-      });
-
-      console.log(`✓ Saved persistent data: ${key}`);
-    } catch (error) {
-      console.error(`Error saving persistent data (${key}):`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Load data from persistent storage
-   */
-  async load<T>(key: string): Promise<T | null> {
-    try {
-      const client = await getObjectStorageClient();
-      if (!client) {
-        console.log(`Object storage not available - returning null for: ${key}`);
-        return null;
-      }
-      
-      const filePath = `${this.basePath}/${key}.json`;
-      const bucket = client.bucket(this.bucketName);
-      const file = bucket.file(filePath);
-
-      const [exists] = await file.exists();
-      if (!exists) {
-        return null;
-      }
-
-      const [contents] = await file.download();
-      const data = JSON.parse(contents.toString('utf-8'));
-
-      console.log(`✓ Loaded persistent data: ${key}`);
-      return data as T;
-    } catch (error) {
-      console.error(`Error loading persistent data (${key}):`, error);
-      return null;
-    }
-  }
-
-  /**
-   * Delete data from persistent storage
-   */
-  async delete(key: string): Promise<void> {
-    try {
-      const client = await getObjectStorageClient();
-      if (!client) {
-        console.log(`Object storage not available - skipping delete for: ${key}`);
-        return;
-      }
-      
-      const filePath = `${this.basePath}/${key}.json`;
-      const bucket = client.bucket(this.bucketName);
-      const file = bucket.file(filePath);
-
-      await file.delete();
-      console.log(`✓ Deleted persistent data: ${key}`);
-    } catch (error) {
-      console.error(`Error deleting persistent data (${key}):`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * List all keys in persistent storage
-   */
-  async listKeys(): Promise<string[]> {
-    try {
-      const client = await getObjectStorageClient();
-      if (!client) {
-        console.log('Object storage not available - returning empty list');
-        return [];
-      }
-      
-      const bucket = client.bucket(this.bucketName);
-      const [files] = await bucket.getFiles({
-        prefix: `${this.basePath}/`,
-      });
-
-      const keys = files.map(file => {
-        const name = file.name.replace(`${this.basePath}/`, '').replace('.json', '');
-        return name;
-      });
-
-      return keys;
-    } catch (error) {
-      console.error('Error listing persistent data keys:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Check if a key exists
-   */
-  async exists(key: string): Promise<boolean> {
-    try {
-      const client = await getObjectStorageClient();
-      if (!client) {
-        return false;
-      }
-      
-      const filePath = `${this.basePath}/${key}.json`;
-      const bucket = client.bucket(this.bucketName);
-      const file = bucket.file(filePath);
-
-      const [exists] = await file.exists();
-      return exists;
-    } catch (error) {
-      console.error(`Error checking if key exists (${key}):`, error);
-      return false;
-    }
-  }
-
-  /**
-   * Save application configuration that persists across deployments
-   */
-  async saveAppConfig(config: any): Promise<void> {
-    await this.save('app_config', config);
-  }
-
-  /**
-   * Load application configuration
-   */
-  async loadAppConfig<T>(): Promise<T | null> {
-    return await this.load<T>('app_config');
-  }
-
-  /**
-   * Save worker state (for BadBlue Worker)
-   */
-  async saveWorkerState(state: any): Promise<void> {
-    await this.save('worker_state', {
-      ...state,
-      savedAt: new Date().toISOString(),
-    });
-  }
-
-  /**
-   * Load worker state
-   */
-  async loadWorkerState<T>(): Promise<T | null> {
-    return await this.load<T>('worker_state');
-  }
-}
-
-/**
- * Factory function to create appropriate persistent storage implementation
- * Returns real implementation when Google Cloud Storage is configured,
- * returns null implementation otherwise (data stored in PostgreSQL only)
- */
-function createPersistentStorage(): IPersistentStorage {
-  const privateDir = process.env.PRIVATE_OBJECT_DIR;
-  const hasGCSCredentials = process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GCS_PROJECT_ID;
-  
-  if (privateDir && hasGCSCredentials) {
-    try {
-      console.log('✓ Google Cloud Storage configured - using persistent storage');
-      return new PersistentStorage();
-    } catch (error) {
-      console.warn('⚠️ Failed to initialize Google Cloud Storage, using null implementation:', error);
-      return new NullPersistentStorage();
-    }
-  } else {
-    console.log('ℹ️ Google Cloud Storage not configured - persistent storage disabled');
-    console.log('   (Data will be stored in PostgreSQL only)');
-    return new NullPersistentStorage();
-  }
-}
-
-export const persistentStorage: IPersistentStorage = createPersistentStorage();
+console.log('✓ PostgreSQL-primary persistence configured; external snapshot storage disabled');
+export const persistentStorage: IPersistentStorage = new DatabasePrimaryPersistentStorage();
