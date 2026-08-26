@@ -135,11 +135,12 @@ export function ensureTelemetryBootstrap(): Promise<void> {
   if (!bootstrapPromise) {
     adoptLegacyProviderAliases();
     bootstrapPromise = (async () => {
-      await Promise.all([
-        registerBestEffortAnkrFallbacks(),
-        startAlchemyTelemetry(),
-        probeReadOnlyZeroX(),
-      ]);
+      // Establish the shared manager once, then add optional providers serially so
+      // health/provenance state cannot race during startup.
+      await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);
+      await registerBestEffortAnkrFallbacks();
+      await startAlchemyTelemetry();
+      await probeReadOnlyZeroX();
 
       const healthyProviders = TELEMETRY_CHAINS.flatMap(chain =>
         multiProviderRpcManager.getHealth(chain)
