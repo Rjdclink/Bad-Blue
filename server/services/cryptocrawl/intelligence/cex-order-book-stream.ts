@@ -352,7 +352,7 @@ class CexOrderBookStreamManager {
   }
 
   private enabled(): boolean {
-    return process.env.CRYPTO_CEX_ORDER_BOOK_STREAM_ENABLED?.trim().toLowerCase() === 'true';
+    return process.env.CRYPTO_CEX_ORDER_BOOK_STREAM_ENABLED?.trim().toLowerCase() !== 'false';
   }
 
   private staleMs(): number {

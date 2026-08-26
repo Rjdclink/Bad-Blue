@@ -84,6 +84,8 @@ export interface VerifiedArbitragePlan {
   sellVenue: QuoteVenue;
   buyAsk: number;
   sellBid: number;
+  buyLimitPrice?: number;
+  sellLimitPrice?: number;
   baseQty: number;
   grossProfitUsd: number;
   netProfitUsd: number;
@@ -222,8 +224,8 @@ async function fetchOkxTopOfBook(symbol: string): Promise<TopOfBookQuote> {
   return { venue: 'okx', symbol, bid, ask, timestamp: observedAt, transport: 'rest', depth: { bids, asks, observedAt, source: 'okx' } };
 }
 
-async function fetchStreamQuote(venue: CexStreamVenue, symbol: string): Promise<TopOfBookQuote | null> {
-  const quote = await cexOrderBookStreams.getQuote(venue, symbol);
+async function fetchStreamQuote(venue: CexStreamVenue, symbol: string, maxAgeMs: number): Promise<TopOfBookQuote | null> {
+  const quote = await cexOrderBookStreams.getQuote(venue, symbol, maxAgeMs);
   if (!quote) return null;
   return { venue, symbol, bid: quote.bid, ask: quote.ask, timestamp: quote.timestamp, transport: 'websocket', depth: { ...quote.depth, source: venue } };
 }
@@ -236,39 +238,45 @@ function normalizeBookLevels(raw: unknown): OrderBookLevel[] {
   }).filter(level => Number.isFinite(level.price) && level.price > 0 && Number.isFinite(level.quantity) && level.quantity > 0);
 }
 
-function consumeBuyAsks(asks: OrderBookLevel[], requestedUsd: number): { quantity: number; spentUsd: number; averagePrice: number } | null {
+function consumeBuyAsks(asks: OrderBookLevel[], requestedUsd: number): { quantity: number; spentUsd: number; averagePrice: number; limitPrice: number } | null {
   let remainingUsd = requestedUsd;
   let quantity = 0;
   let spentUsd = 0;
+  let limitPrice = 0;
   for (const level of asks) {
     const levelSpend = Math.min(remainingUsd, level.price * level.quantity);
+    if (levelSpend <= 0) continue;
     quantity += levelSpend / level.price;
     spentUsd += levelSpend;
     remainingUsd -= levelSpend;
+    limitPrice = level.price;
     if (remainingUsd <= 0) break;
   }
-  return remainingUsd > 0 || quantity <= 0 ? null : { quantity, spentUsd, averagePrice: spentUsd / quantity };
+  return remainingUsd > 0 || quantity <= 0 || limitPrice <= 0 ? null : { quantity, spentUsd, averagePrice: spentUsd / quantity, limitPrice };
 }
 
-function consumeSellBids(bids: OrderBookLevel[], requestedQuantity: number): { quantity: number; proceedsUsd: number; averagePrice: number } | null {
+function consumeSellBids(bids: OrderBookLevel[], requestedQuantity: number): { quantity: number; proceedsUsd: number; averagePrice: number; limitPrice: number } | null {
   let remainingQuantity = requestedQuantity;
   let quantity = 0;
   let proceedsUsd = 0;
+  let limitPrice = 0;
   for (const level of bids) {
     const levelQuantity = Math.min(remainingQuantity, level.quantity);
+    if (levelQuantity <= 0) continue;
     quantity += levelQuantity;
     proceedsUsd += levelQuantity * level.price;
     remainingQuantity -= levelQuantity;
+    limitPrice = level.price;
     if (remainingQuantity <= 0) break;
   }
-  return remainingQuantity > 0 || quantity <= 0 ? null : { quantity, proceedsUsd, averagePrice: proceedsUsd / quantity };
+  return remainingQuantity > 0 || quantity <= 0 || limitPrice <= 0 ? null : { quantity, proceedsUsd, averagePrice: proceedsUsd / quantity, limitPrice };
 }
 
-async function fetchQuotes(symbol: string): Promise<TopOfBookQuote[]> {
+async function fetchQuotes(symbol: string, maxAgeMs: number): Promise<TopOfBookQuote[]> {
   const tasks = [
-    fetchStreamQuote('coinbase', symbol).then(quote => quote || fetchCoinbaseTopOfBook(symbol)),
-    fetchStreamQuote('kraken', symbol).then(quote => quote || fetchKrakenTopOfBook(symbol)),
-    fetchStreamQuote('okx', symbol).then(quote => quote || fetchOkxTopOfBook(symbol)),
+    fetchStreamQuote('coinbase', symbol, maxAgeMs).then(quote => quote || fetchCoinbaseTopOfBook(symbol)),
+    fetchStreamQuote('kraken', symbol, maxAgeMs).then(quote => quote || fetchKrakenTopOfBook(symbol)),
+    fetchStreamQuote('okx', symbol, maxAgeMs).then(quote => quote || fetchOkxTopOfBook(symbol)),
   ];
   const settled = await Promise.allSettled(tasks);
   const quotes: TopOfBookQuote[] = [];
@@ -342,7 +350,7 @@ export class ArbitrageVerifier {
     governance.requireAllowed('ADVISE', { chain: req.gas?.chain, pair: symbol });
 
     try {
-      const quotes = await fetchQuotes(symbol);
+      const quotes = await fetchQuotes(symbol, req.maxQuoteAgeMs);
       const now = Date.now();
       const freshQuotes = quotes.filter(quote => Number.isFinite(quote.timestamp) && quote.timestamp <= now && now - quote.timestamp <= req.maxQuoteAgeMs);
       const validation: LiveQuoteValidation = {
@@ -431,7 +439,7 @@ export class ArbitrageVerifier {
         this.crossVenueFeeContexts.delete(symbol);
       }
 
-      const quantityFractions = [0.1, 0.25, 0.5, 0.75, 1];
+      const quantityFractions = [0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
       let bestPlan: VerifiedArbitragePlan | null = null;
       for (const buy of freshQuotes) {
         for (const sell of freshQuotes) {
@@ -465,6 +473,8 @@ export class ArbitrageVerifier {
               sellVenue: sell.venue,
               buyAsk: buyFill.averagePrice,
               sellBid: sellFill.averagePrice,
+              buyLimitPrice: buyFill.limitPrice,
+              sellLimitPrice: sellFill.limitPrice,
               baseQty: buyFill.quantity,
               grossProfitUsd,
               netProfitUsd,
