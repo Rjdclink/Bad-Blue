@@ -70,7 +70,7 @@ function rankingToEvidence(ranking: CryptaraPerformanceRanking): AutomaticAdvanc
 }
 
 function isStageOneFeeBootstrapBlock(gate: Pick<GateEvaluation, 'decision' | 'blockReasons'> | undefined): boolean {
-  if (!gate || gate.decision !== 'BLOCK' || stageManager.getState().stage !== 1) return false;
+  if (!gate || gate.decision !== 'BLOCK' || stageManager.getState().currentStage !== 1) return false;
   return gate.blockReasons.some(reason => reason.includes('feesRebates') || reason.includes('crossVenueFees'));
 }
 
