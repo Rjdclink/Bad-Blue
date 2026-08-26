@@ -32,6 +32,39 @@ function parseIntegerString(label: string, raw: string): ethers.BigNumber {
   return ethers.BigNumber.from(raw);
 }
 
+function sameAddress(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+function validateAtomicRouteBalance(plan: FlashLoanReceiverExecutionPlan): void {
+  const firstStep = plan.steps[0];
+  const lastStep = plan.steps[plan.steps.length - 1];
+
+  if (!sameAddress(firstStep.tokenIn, plan.loanToken)) {
+    throw new Error('Flash-loan route must begin with the borrowed token');
+  }
+
+  for (let index = 1; index < plan.steps.length; index++) {
+    if (!sameAddress(plan.steps[index - 1].tokenOut, plan.steps[index].tokenIn)) {
+      throw new Error(`Flash-loan route is not token-contiguous at step ${index}`);
+    }
+  }
+
+  if (!sameAddress(lastStep.tokenOut, plan.loanToken)) {
+    throw new Error('Flash-loan route must end in the borrowed token so repayment remains atomic');
+  }
+
+  for (let index = 0; index < plan.steps.length; index++) {
+    const step = plan.steps[index];
+    if (parseIntegerString(`steps[${index}].amountIn`, step.amountIn).lte(0)) {
+      throw new Error(`Flash-loan step ${index} amountIn must be greater than zero`);
+    }
+    if (parseIntegerString(`steps[${index}].minAmountOut`, step.minAmountOut).lte(0)) {
+      throw new Error(`Flash-loan step ${index} minAmountOut must be greater than zero`);
+    }
+  }
+}
+
 export function buildFlashLoanReceiverPayloadFromPlan(
   plan: FlashLoanReceiverExecutionPlan,
 ): BuiltOnchainPayload {
@@ -50,6 +83,8 @@ export function buildFlashLoanReceiverPayloadFromPlan(
   if (!Array.isArray(plan.steps) || plan.steps.length < 2) {
     throw new Error('Flash-loan execution requires at least two swap legs');
   }
+
+  validateAtomicRouteBalance(plan);
 
   const iface = new ethers.utils.Interface(FLASHLOAN_RECEIVER_ABI);
   const loanAmount = parseIntegerString('loanAmount', plan.loanAmount);
