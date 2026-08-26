@@ -73,6 +73,8 @@ export interface VerifiedArbitragePlan {
   sellVenue: QuoteVenue;
   buyAsk: number;
   sellBid: number;
+  buyLimitPrice?: number;
+  sellLimitPrice?: number;
   baseQty: number;
   grossProfitUsd: number;
   netProfitUsd: number;
@@ -225,32 +227,38 @@ function normalizeBookLevels(raw: unknown): OrderBookLevel[] {
   }).filter(level => Number.isFinite(level.price) && level.price > 0 && Number.isFinite(level.quantity) && level.quantity > 0);
 }
 
-function consumeBuyAsks(asks: OrderBookLevel[], requestedUsd: number): { quantity: number; spentUsd: number; averagePrice: number } | null {
+function consumeBuyAsks(asks: OrderBookLevel[], requestedUsd: number): { quantity: number; spentUsd: number; averagePrice: number; limitPrice: number } | null {
   let remainingUsd = requestedUsd;
   let quantity = 0;
   let spentUsd = 0;
+  let limitPrice = 0;
   for (const level of asks) {
     const levelSpend = Math.min(remainingUsd, level.price * level.quantity);
+    if (levelSpend <= 0) continue;
     quantity += levelSpend / level.price;
     spentUsd += levelSpend;
     remainingUsd -= levelSpend;
+    limitPrice = level.price;
     if (remainingUsd <= 0) break;
   }
-  return remainingUsd > 0 || quantity <= 0 ? null : { quantity, spentUsd, averagePrice: spentUsd / quantity };
+  return remainingUsd > 0 || quantity <= 0 || limitPrice <= 0 ? null : { quantity, spentUsd, averagePrice: spentUsd / quantity, limitPrice };
 }
 
-function consumeSellBids(bids: OrderBookLevel[], requestedQuantity: number): { quantity: number; proceedsUsd: number; averagePrice: number } | null {
+function consumeSellBids(bids: OrderBookLevel[], requestedQuantity: number): { quantity: number; proceedsUsd: number; averagePrice: number; limitPrice: number } | null {
   let remainingQuantity = requestedQuantity;
   let quantity = 0;
   let proceedsUsd = 0;
+  let limitPrice = 0;
   for (const level of bids) {
     const levelQuantity = Math.min(remainingQuantity, level.quantity);
+    if (levelQuantity <= 0) continue;
     quantity += levelQuantity;
     proceedsUsd += levelQuantity * level.price;
     remainingQuantity -= levelQuantity;
+    limitPrice = level.price;
     if (remainingQuantity <= 0) break;
   }
-  return remainingQuantity > 0 || quantity <= 0 ? null : { quantity, proceedsUsd, averagePrice: proceedsUsd / quantity };
+  return remainingQuantity > 0 || quantity <= 0 || limitPrice <= 0 ? null : { quantity, proceedsUsd, averagePrice: proceedsUsd / quantity, limitPrice };
 }
 
 async function fetchQuotes(symbol: string): Promise<TopOfBookQuote[]> {
@@ -371,7 +379,7 @@ export class ArbitrageVerifier {
         );
       }));
 
-      const quantityFractions = [0.1, 0.25, 0.5, 0.75, 1];
+      const quantityFractions = [0.02, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.85, 1];
       let bestPlan: VerifiedArbitragePlan | null = null;
       for (const buy of freshQuotes) {
         for (const sell of freshQuotes) {
@@ -405,6 +413,8 @@ export class ArbitrageVerifier {
               sellVenue: sell.venue,
               buyAsk: buyFill.averagePrice,
               sellBid: sellFill.averagePrice,
+              buyLimitPrice: buyFill.limitPrice,
+              sellLimitPrice: sellFill.limitPrice,
               baseQty: buyFill.quantity,
               grossProfitUsd,
               netProfitUsd,
