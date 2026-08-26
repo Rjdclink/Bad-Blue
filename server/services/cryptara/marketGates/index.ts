@@ -3,8 +3,16 @@ import { opportunityMlRanker } from '../opportunity-ml-ranker.js';
 import { CryptaraMarketGateEngine as BaseCryptaraMarketGateEngine } from './engine.js';
 import type { CryptaraMarketGateConfig, CryptaraMarketGateContext, GateEvaluation } from './types.js';
 
+let lastGateEngine: CryptaraMarketGateEngine | null = null;
+let lastGateContext: CryptaraMarketGateContext | null = null;
+let lastGateConfig: CryptaraMarketGateConfig | null = null;
+
 export class CryptaraMarketGateEngine extends BaseCryptaraMarketGateEngine {
   evaluate(context: CryptaraMarketGateContext, config: CryptaraMarketGateConfig = {}): GateEvaluation {
+    lastGateEngine = this;
+    lastGateContext = { ...context };
+    lastGateConfig = { ...config, criticalSignals: config.criticalSignals ? [...config.criticalSignals] : undefined };
+
     const measuredFeeContext = context.pairOrSymbol
       ? arbitrageVerifier.getBestCrossVenueFeeContext([context.pairOrSymbol])
       : null;
@@ -34,6 +42,11 @@ export class CryptaraMarketGateEngine extends BaseCryptaraMarketGateEngine {
       signals: [...evaluation.signals, mlAssessment.signal],
     };
   }
+}
+
+export function reevaluateLastMarketGate(): GateEvaluation | null {
+  if (!lastGateEngine || !lastGateContext) return null;
+  return lastGateEngine.evaluate(lastGateContext, lastGateConfig || {});
 }
 
 export type {
