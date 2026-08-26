@@ -69,9 +69,9 @@ export const PROFIT_TIERS: Record<number, ProfitTier> = {
     maxDrawdownPercent: 0,
     maxDailyLossUSD: 0,
     
-    daysRequiredAtTarget: 3,
-    minSuccessRate: 0.7,
-    minSharpeRatio: 1.5,
+    daysRequiredAtTarget: 0,
+    minSuccessRate: 0,
+    minSharpeRatio: 0,
     
     maxPairs: 5,
     maxVenues: 2,
@@ -252,6 +252,7 @@ export class ProfitLadder extends EventEmitter {
     this.currentTier = PROFIT_TIERS[0];
     
     this.initializeTierPerformance(0);
+    this.checkAdvancementCriteria();
     
     log.info('Profit Ladder initialized', {
       tier: this.currentTier.name,
@@ -654,6 +655,7 @@ export class ProfitLadder extends EventEmitter {
     }
     this.currentCapitalUSD = 0;
     this.capitalVerificationStatus = 'unavailable';
+    if (this.currentTier.id === 0) this.checkAdvancementCriteria();
     
     log.info('State imported', {
       tier: this.currentTier.name,
