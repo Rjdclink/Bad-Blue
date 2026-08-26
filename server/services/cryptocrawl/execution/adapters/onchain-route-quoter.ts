@@ -66,6 +66,8 @@ export interface QuotedZeroCapitalRoute {
   route: RoutePlanningSwapStep[];
 }
 
+const inFlightLegQuotes = new WeakMap<providers.Provider, Map<string, Promise<BigNumber>>>();
+
 function isAddress(value: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(value);
 }
@@ -84,100 +86,74 @@ function normalizeAddress(value: string): string {
 
 function normalizeProtocol(value: unknown): SupportedSwapProtocol {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') {
-    return 'uniswapV3';
-  }
-  if (normalized === 'sushiswap' || normalized === 'sushi') {
-    return 'sushiswap';
-  }
-  if (normalized === 'sushiswapv3' || normalized === 'sushi_v3' || normalized === 'sushi-v3') {
-    return 'sushiswapV3';
-  }
+  if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') return 'uniswapV3';
+  if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
+  if (normalized === 'sushiswapv3' || normalized === 'sushi_v3' || normalized === 'sushi-v3') return 'sushiswapV3';
   throw new Error(`Unsupported route protocol: ${String(value)}`);
 }
 
 function asSupportedChain(value: unknown): SupportedExecutionChain {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism' || normalized === 'bsc' || normalized === 'avalanche' || normalized === 'europa') {
-    return normalized;
-  }
+  if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism' || normalized === 'bsc' || normalized === 'avalanche' || normalized === 'europa') return normalized;
   throw new Error(`Unsupported route chain: ${String(value)}`);
 }
 
+function maxQuoteLatencyMs(): number {
+  const configured = Number(process.env.ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS || 2500);
+  if (!Number.isFinite(configured)) return 2500;
+  return Math.max(250, Math.min(15000, Math.trunc(configured)));
+}
+
 function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapitalRoute {
-  if (!raw || typeof raw !== 'object') {
-    throw new Error(`Route ${index} must be an object`);
-  }
+  if (!raw || typeof raw !== 'object') throw new Error(`Route ${index} must be an object`);
 
   const candidate = raw as Record<string, unknown>;
   const chain = asSupportedChain(candidate.chain);
   const inputAssetSymbol = String(candidate.inputAssetSymbol || '').trim().toUpperCase();
-  if (inputAssetSymbol !== 'USDC' && inputAssetSymbol !== 'USDT') {
-    throw new Error(`Route ${index} must use USDC or USDT as its input asset`);
-  }
+  if (inputAssetSymbol !== 'USDC' && inputAssetSymbol !== 'USDT') throw new Error(`Route ${index} must use USDC or USDT as its input asset`);
 
   const inputToken = String(candidate.inputToken || '').trim();
-  if (!isAddress(inputToken)) {
-    throw new Error(`Route ${index} inputToken must be a valid EVM address`);
-  }
+  if (!isAddress(inputToken)) throw new Error(`Route ${index} inputToken must be a valid EVM address`);
 
   const inputTokenDecimals = Number(candidate.inputTokenDecimals);
-  if (!Number.isInteger(inputTokenDecimals) || inputTokenDecimals < 0 || inputTokenDecimals > 36) {
-    throw new Error(`Route ${index} inputTokenDecimals must be an integer from 0 to 36`);
-  }
-  if (inputTokenDecimals !== 6) {
-    throw new Error(`Route ${index} must use six-decimal USDC or USDT accounting`);
-  }
+  if (!Number.isInteger(inputTokenDecimals) || inputTokenDecimals < 0 || inputTokenDecimals > 36) throw new Error(`Route ${index} inputTokenDecimals must be an integer from 0 to 36`);
+  if (inputTokenDecimals !== 6) throw new Error(`Route ${index} must use six-decimal USDC or USDT accounting`);
 
   const rawLegs = candidate.legs;
-  if (!Array.isArray(rawLegs) || rawLegs.length < 2) {
-    throw new Error(`Route ${index} must contain at least two legs`);
-  }
+  if (!Array.isArray(rawLegs) || rawLegs.length < 2) throw new Error(`Route ${index} must contain at least two legs`);
 
   const legs = rawLegs.map((rawLeg, legIndex) => {
-    if (!rawLeg || typeof rawLeg !== 'object') {
-      throw new Error(`Route ${index} leg ${legIndex} must be an object`);
-    }
+    if (!rawLeg || typeof rawLeg !== 'object') throw new Error(`Route ${index} leg ${legIndex} must be an object`);
     const leg = rawLeg as Record<string, unknown>;
     const tokenIn = String(leg.tokenIn || '').trim();
     const tokenOut = String(leg.tokenOut || '').trim();
-    if (!isAddress(tokenIn) || !isAddress(tokenOut)) {
-      throw new Error(`Route ${index} leg ${legIndex} requires valid tokenIn and tokenOut addresses`);
-    }
+    if (!isAddress(tokenIn) || !isAddress(tokenOut)) throw new Error(`Route ${index} leg ${legIndex} requires valid tokenIn and tokenOut addresses`);
+    if (normalizeAddress(tokenIn) === normalizeAddress(tokenOut)) throw new Error(`Route ${index} leg ${legIndex} cannot swap a token into itself`);
+
+    const pool = leg.pool === undefined ? undefined : String(leg.pool).trim();
+    if (pool !== undefined && !isAddress(pool)) throw new Error(`Route ${index} leg ${legIndex} pool must be a valid EVM address`);
 
     const feeTier = leg.feeTier === undefined ? undefined : Number(leg.feeTier);
-    if (feeTier !== undefined && feeTier !== 500 && feeTier !== 3000 && feeTier !== 10000) {
-      throw new Error(`Route ${index} leg ${legIndex} feeTier must be 500, 3000, or 10000`);
-    }
+    if (feeTier !== undefined && feeTier !== 500 && feeTier !== 3000 && feeTier !== 10000) throw new Error(`Route ${index} leg ${legIndex} feeTier must be 500, 3000, or 10000`);
 
     const fee = leg.fee === undefined ? undefined : Number(leg.fee);
-    if (fee !== undefined && (!Number.isFinite(fee) || fee < 0 || fee > 0.1)) {
-      throw new Error(`Route ${index} leg ${legIndex} fee must be a decimal fraction between 0 and 0.1`);
-    }
+    if (fee !== undefined && (!Number.isFinite(fee) || fee < 0 || fee > 0.1)) throw new Error(`Route ${index} leg ${legIndex} fee must be a decimal fraction between 0 and 0.1`);
 
     return {
       protocol: normalizeProtocol(leg.protocol),
       tokenIn,
       tokenOut,
-      ...(leg.pool !== undefined ? { pool: String(leg.pool).trim() } : {}),
+      ...(pool !== undefined ? { pool } : {}),
       ...(feeTier !== undefined ? { feeTier: feeTier as 500 | 3000 | 10000 } : {}),
       ...(fee !== undefined ? { fee } : {}),
     };
   });
 
-  if (normalizeAddress(legs[0].tokenIn) !== normalizeAddress(inputToken)) {
-    throw new Error(`Route ${index} must start with inputToken`);
-  }
-
+  if (normalizeAddress(legs[0].tokenIn) !== normalizeAddress(inputToken)) throw new Error(`Route ${index} must start with inputToken`);
   for (let legIndex = 1; legIndex < legs.length; legIndex++) {
-    if (normalizeAddress(legs[legIndex - 1].tokenOut) !== normalizeAddress(legs[legIndex].tokenIn)) {
-      throw new Error(`Route ${index} leg ${legIndex} is not contiguous with the preceding leg`);
-    }
+    if (normalizeAddress(legs[legIndex - 1].tokenOut) !== normalizeAddress(legs[legIndex].tokenIn)) throw new Error(`Route ${index} leg ${legIndex} is not contiguous with the preceding leg`);
   }
-
-  if (normalizeAddress(legs[legs.length - 1].tokenOut) !== normalizeAddress(inputToken)) {
-    throw new Error(`Route ${index} must return to inputToken to repay the flash loan atomically`);
-  }
+  if (normalizeAddress(legs[legs.length - 1].tokenOut) !== normalizeAddress(inputToken)) throw new Error(`Route ${index} must return to inputToken to repay the flash loan atomically`);
 
   const amountIn = String(candidate.amountIn || '').trim();
   const estimatedGasCostInInputToken = String(candidate.estimatedGasCostInInputToken || '').trim();
@@ -188,12 +164,8 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
 
   const flashLoanFeeBps = candidate.flashLoanFeeBps === undefined ? 0 : Number(candidate.flashLoanFeeBps);
   const minNetProfitBps = candidate.minNetProfitBps === undefined ? 50 : Number(candidate.minNetProfitBps);
-  if (!Number.isFinite(flashLoanFeeBps) || flashLoanFeeBps < 0 || flashLoanFeeBps > 1000) {
-    throw new Error(`Route ${index} flashLoanFeeBps must be between 0 and 1000`);
-  }
-  if (!Number.isFinite(minNetProfitBps) || minNetProfitBps < 1 || minNetProfitBps > 5000) {
-    throw new Error(`Route ${index} minNetProfitBps must be between 1 and 5000`);
-  }
+  if (!Number.isFinite(flashLoanFeeBps) || flashLoanFeeBps < 0 || flashLoanFeeBps > 1000) throw new Error(`Route ${index} flashLoanFeeBps must be between 0 and 1000`);
+  if (!Number.isFinite(minNetProfitBps) || minNetProfitBps < 1 || minNetProfitBps > 5000) throw new Error(`Route ${index} minNetProfitBps must be between 1 and 5000`);
   if (chain === 'europa' && (toBigInt(`Route ${index} estimatedGasCostInInputToken`, estimatedGasCostInInputToken) !== 0n || toBigInt(`Route ${index} relayFeeInInputToken`, relayFeeInInputToken) !== 0n)) {
     throw new Error(`Route ${index} for Europa must not include estimated gas or relay fees; native-balance proof is enforced after receipt`);
   }
@@ -214,9 +186,7 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
 }
 
 export function loadConfiguredZeroCapitalRoutes(raw: string = process.env.ZERO_CAPITAL_ROUTE_CONFIG || ''): ConfiguredZeroCapitalRoute[] {
-  if (!raw.trim()) {
-    return [];
-  }
+  if (!raw.trim()) return [];
 
   let parsed: unknown;
   try {
@@ -224,20 +194,23 @@ export function loadConfiguredZeroCapitalRoutes(raw: string = process.env.ZERO_C
   } catch {
     throw new Error('ZERO_CAPITAL_ROUTE_CONFIG must be valid JSON');
   }
+  if (!Array.isArray(parsed)) throw new Error('ZERO_CAPITAL_ROUTE_CONFIG must be a JSON array');
 
-  if (!Array.isArray(parsed)) {
-    throw new Error('ZERO_CAPITAL_ROUTE_CONFIG must be a JSON array');
+  const routes = parsed.map(parseConfiguredRoute);
+  const routeIds = new Set<string>();
+  for (const route of routes) {
+    const normalizedId = route.id.toLowerCase();
+    if (routeIds.has(normalizedId)) throw new Error(`ZERO_CAPITAL_ROUTE_CONFIG contains duplicate route id: ${route.id}`);
+    routeIds.add(normalizedId);
   }
-
-  return parsed.map(parseConfiguredRoute);
+  return routes;
 }
 
-async function quoteLeg(
-  provider: providers.Provider,
-  chain: SupportedExecutionChain,
-  leg: ConfiguredRouteLeg,
-  amountIn: BigNumber,
-): Promise<BigNumber> {
+function legQuoteKey(chain: SupportedExecutionChain, leg: ConfiguredRouteLeg, amountIn: BigNumber): string {
+  return [chain, leg.protocol, normalizeAddress(leg.tokenIn), normalizeAddress(leg.tokenOut), leg.pool ? normalizeAddress(leg.pool) : '', leg.feeTier || '', leg.fee ?? '', amountIn.toString()].join(':');
+}
+
+async function quoteLegUncached(provider: providers.Provider, chain: SupportedExecutionChain, leg: ConfiguredRouteLeg, amountIn: BigNumber): Promise<BigNumber> {
   if (chain === 'europa' && leg.protocol === 'sushiswapV3') {
     const sender = process.env.ZERO_CAPITAL_EUROPA_QUOTE_SENDER?.trim() || '0x0e9878153c1500ec48b51cdd5325c7e374c9cdae';
     const recipient = process.env.ZERO_CAPITAL_EUROPA_QUOTE_RECIPIENT?.trim() || sender;
@@ -272,34 +245,38 @@ async function quoteLeg(
   }
 
   if (leg.protocol === 'uniswapV3') {
-    const quoterAddress = chain === 'europa'
-      ? process.env.EUROPA_UNISWAP_V3_QUOTER?.trim()
-      : UNISWAP_V3_QUOTERS[chain];
-    if (!quoterAddress) {
-      throw new Error(`No Uniswap V3 quoter configured for ${chain}`);
-    }
+    const quoterAddress = chain === 'europa' ? process.env.EUROPA_UNISWAP_V3_QUOTER?.trim() : UNISWAP_V3_QUOTERS[chain];
+    if (!quoterAddress) throw new Error(`No Uniswap V3 quoter configured for ${chain}`);
     const quoter = new Contract(quoterAddress, UNISWAP_V3_QUOTER_ABI, provider);
-    return BigNumber.from(await quoter.callStatic.quoteExactInputSingle(
-      leg.tokenIn,
-      leg.tokenOut,
-      leg.feeTier || 3000,
-      amountIn,
-      0,
-    ));
+    return BigNumber.from(await quoter.callStatic.quoteExactInputSingle(leg.tokenIn, leg.tokenOut, leg.feeTier || 3000, amountIn, 0));
   }
 
-  const routerAddress = chain === 'europa'
-    ? process.env.EUROPA_SUSHISWAP_ROUTER?.trim()
-    : SUSHISWAP_ROUTERS[chain];
-  if (!routerAddress) {
-    throw new Error(`No SushiSwap router configured for ${chain}`);
-  }
+  const routerAddress = chain === 'europa' ? process.env.EUROPA_SUSHISWAP_ROUTER?.trim() : SUSHISWAP_ROUTERS[chain];
+  if (!routerAddress) throw new Error(`No SushiSwap router configured for ${chain}`);
   const router = new Contract(routerAddress, SUSHISWAP_ROUTER_ABI, provider);
   const amounts = await router.getAmountsOut(amountIn, [leg.tokenIn, leg.tokenOut]);
-  if (!Array.isArray(amounts) || amounts.length < 2) {
-    throw new Error('SushiSwap quote returned no output amount');
-  }
+  if (!Array.isArray(amounts) || amounts.length < 2) throw new Error('SushiSwap quote returned no output amount');
   return BigNumber.from(amounts[amounts.length - 1]);
+}
+
+async function quoteLeg(provider: providers.Provider, chain: SupportedExecutionChain, leg: ConfiguredRouteLeg, amountIn: BigNumber): Promise<BigNumber> {
+  let providerQuotes = inFlightLegQuotes.get(provider);
+  if (!providerQuotes) {
+    providerQuotes = new Map<string, Promise<BigNumber>>();
+    inFlightLegQuotes.set(provider, providerQuotes);
+  }
+
+  const key = legQuoteKey(chain, leg, amountIn);
+  const existing = providerQuotes.get(key);
+  if (existing) return existing;
+
+  const pending = quoteLegUncached(provider, chain, leg, amountIn);
+  providerQuotes.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (providerQuotes.get(key) === pending) providerQuotes.delete(key);
+  }
 }
 
 function feeToDecimal(protocol: SupportedSwapProtocol, feeTier?: number, fee?: number): number {
@@ -308,20 +285,18 @@ function feeToDecimal(protocol: SupportedSwapProtocol, feeTier?: number, fee?: n
   return 0.003;
 }
 
-export async function quoteConfiguredZeroCapitalRoute(
-  route: ConfiguredZeroCapitalRoute,
-  provider: providers.Provider,
-): Promise<QuotedZeroCapitalRoute | null> {
+export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapitalRoute, provider: providers.Provider): Promise<QuotedZeroCapitalRoute | null> {
   const quoteStartedAt = Date.now();
+  const quoteDeadlineMs = maxQuoteLatencyMs();
   let currentAmount = BigNumber.from(route.amountIn);
   const initialAmount = currentAmount;
   const steps: RoutePlanningSwapStep[] = [];
 
   for (const leg of route.legs) {
+    if (Date.now() - quoteStartedAt > quoteDeadlineMs) return null;
     const amountOut = await quoteLeg(provider, route.chain, leg, currentAmount);
-    if (amountOut.lte(0)) {
-      return null;
-    }
+    if (amountOut.lte(0)) return null;
+    if (Date.now() - quoteStartedAt > quoteDeadlineMs) return null;
 
     steps.push({
       protocol: leg.protocol,
@@ -336,23 +311,17 @@ export async function quoteConfiguredZeroCapitalRoute(
 
   const finalAmount = BigInt(currentAmount.toString());
   const initial = BigInt(initialAmount.toString());
-  if (finalAmount <= initial) {
-    return null;
-  }
+  if (finalAmount <= initial) return null;
 
   const grossProfit = finalAmount - initial;
   const flashLoanFee = (initial * BigInt(Math.round((route.flashLoanFeeBps || 0)))) / 10000n;
   const gasCost = toBigInt('estimatedGasCostInInputToken', route.estimatedGasCostInInputToken);
   const relayFee = toBigInt('relayFeeInInputToken', route.relayFeeInInputToken);
   const netProfit = grossProfit - flashLoanFee - gasCost - relayFee;
-  if (netProfit <= 0n) {
-    return null;
-  }
+  if (netProfit <= 0n) return null;
 
   const netProfitBps = Number((netProfit * 10000n) / initial);
-  if (netProfitBps < (route.minNetProfitBps || 50)) {
-    return null;
-  }
+  if (netProfitBps < (route.minNetProfitBps || 50)) return null;
 
   return {
     id: route.id,
@@ -382,10 +351,12 @@ export async function quoteConfiguredZeroCapitalRoutesForChain(
   const quoted: QuotedZeroCapitalRoute[] = [];
 
   for (const result of settled) {
-    if (result.status === 'fulfilled' && result.value) {
-      quoted.push(result.value);
-    }
+    if (result.status === 'fulfilled' && result.value) quoted.push(result.value);
   }
 
-  return quoted.sort((left, right) => (right.netProfit > left.netProfit ? 1 : right.netProfit < left.netProfit ? -1 : 0));
+  return quoted.sort((left, right) => {
+    if (right.netProfit > left.netProfit) return 1;
+    if (right.netProfit < left.netProfit) return -1;
+    return left.quoteLatencyMs - right.quoteLatencyMs;
+  });
 }
