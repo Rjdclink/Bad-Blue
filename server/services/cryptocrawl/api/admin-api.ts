@@ -14,6 +14,7 @@ import {
   notifyCryptocrawlerComplete,
   notifyCryptocrawlerStarting,
 } from '../../pantheonCrawlerOrchestrator.js';
+import { deployFlashLoanReceiver } from '../../../../scripts/cryptocrawl/deploy-flashloan-receiver.js';
 
 const router = express.Router();
 
@@ -490,6 +491,28 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   try {
     console.log('[CryptoCrawl] Starting crawler dependencies');
     await cryptoCrawlState.enable();
+
+    if (process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true') {
+      const europaReceiverKind = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND?.trim() || 'sushi-v3';
+      const europaReceiver = process.env.ZERO_CAPITAL_EUROPA_RECEIVER?.trim();
+      const europaReceiverCodeHash = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH?.trim();
+
+      if (europaReceiverKind === 'sushi-v3' && !europaReceiver && !europaReceiverCodeHash) {
+        console.log('[CryptoCrawl] Europa Sushi V3 receiver absent; starting zero-gas receiver bootstrap');
+        const deployment = await deployFlashLoanReceiver({ chain: 'europa', receiverKind: 'sushi-v3' });
+        if (!deployment) {
+          throw new Error('Europa receiver bootstrap requires ZERO_CAPITAL_DEPLOY=true and ZERO_CAPITAL_DEPLOY_CONFIRMATION=DEPLOY_FLASHLOAN_RECEIVER');
+        }
+        process.env.ZERO_CAPITAL_EUROPA_RECEIVER = deployment.address;
+        process.env.ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH = deployment.codeHash;
+        console.log('[CryptoCrawl] Europa Sushi V3 receiver bootstrap completed and verified for this runtime', {
+          receiver: deployment.address,
+          codeHash: deployment.codeHash,
+          transactionHash: deployment.transactionHash,
+        });
+      }
+    }
+
     const startStage1MarketOperations = async (): Promise<void> => {
       await pipeline.run();
       console.log('[CryptoCrawl] Starting authoritative AutonomousFaucet');
