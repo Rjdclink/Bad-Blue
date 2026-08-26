@@ -1,4 +1,6 @@
-export { CryptaraMarketGateEngine } from './engine.js';
+export { CryptaraMarketGateEngine } from './memory-aware-engine.js';
+export { cryptaraMarketMemory, CryptaraMarketMemory } from './memory.js';
+export type { CryptaraMarketMemoryRecall } from './memory.js';
 export type {
   GateEvaluation,
   GateSignal,
@@ -24,4 +26,3 @@ export type {
   ProfitReinvestmentLadderContext,
   SlippageContext,
 } from './types.js';
-
