@@ -1,39 +1,24 @@
 /**
- * AUTONOMOUS ZERO-CAPITAL ARBITRAGE ENGINE
- * =========================================
- * 
- * CORE PHILOSOPHY: Capital-Free Autonomy
- * - System begins with ZERO initial capital
- * - ALL operations leverage meta-liquidity orchestration
- * - Gas, collateral, and trading exposure are temporarily sourced from:
- *   - Flash loans (Aave, Balancer, Uniswap - 0% to 0.09% fee)
- *   - Recursive yield mechanisms
- *   - Gas station networks (meta-transactions)
- * - Each action self-funds the next: PERPETUAL BOOTSTRAP LOOP
- * 
- * THE SECRET: Flash loans + MEV bundles allow us to:
- * 1. Borrow millions in a single transaction
- * 2. Execute arbitrage with borrowed funds
- * 3. Repay loan + fee from profits
- * 4. Keep remaining profit
- * 5. ALL IN ONE ATOMIC TRANSACTION - no upfront capital needed
- * 
- * GAS SOLUTION: Flashbots bundles pay miners from arbitrage profits
- * - Transaction 1: Flash loan borrow
- * - Transaction 2: Execute arbitrage
- * - Transaction 3: Repay flash loan
- * - Transaction 4: Pay miner bribe from profits
- * - If any step fails, ENTIRE bundle reverts - zero loss
+ * Autonomous zero-capital execution engine.
+ *
+ * Active production path:
+ * Cryptara/Tara intelligence -> Beam -> Monte Carlo profitability ->
+ * Alchemy Gas Manager (EIP-7702/ERC-4337) -> atomic flash-loan receiver ->
+ * receipt/profit verification -> Cryptara execution feedback.
+ *
+ * Europa/SKALE bootstrap and the historical $20 native-gas readiness gate are
+ * retired from this runtime path.
  */
 
-import { ethers, Wallet, providers, BigNumber, Contract } from 'ethers';
-import { FlashbotsBundleProvider, FlashbotsBundleResolution, FlashbotsBundleTransaction, FlashbotsBundleRawTransaction } from '@flashbots/ethers-provider-bundle';
+import { BigNumber, Wallet, ethers, providers } from 'ethers';
 import logger from '../../../logger.js';
-import { getCryptara, type CryptaraRouteObservation } from '../../cryptara/index.js';
-import { marketDataProviders } from '../intelligence/market-data-providers.js';
+import { getCryptara } from '../../cryptara/index.js';
+import { computationalBeam } from '../../computationalBeam/index.js';
+import { CrawlerStrategy, type ComputeWorkload } from '../../computationalBeam/types.js';
 import { TradingViewEngine } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
-import { getCryptocrawlGovernance, requireBootstrapRecoveryAllowed } from '../governance/index.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
+import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { stageManager } from '../governance/stage-management.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
@@ -43,36 +28,17 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
-import { EuropaZeroGasAdapter } from '../execution/adapters/europa-zero-gas-adapter.js';
-import { PostgresStage4ExecutionLedger } from '../execution/adapters/stage4-execution-ledger.js';
-import { PostgresStage4CapitalProvenanceStore, type VerifiedNativeGasFundingSettlement } from '../execution/adapters/stage4-capital-provenance.js';
-import { resolveEuropaExternalGasDifficulty } from '../execution/adapters/skale-pow-adapter.js';
-import { buildEuropaSushiV3FlashPayload } from '../execution/adapters/europa-sushi-v3-flash-builder.js';
-import { EUROPA_SUSHI } from '../execution/adapters/europa-sushi-registry.js';
-import { discoverProfitableEuropaRoute } from '../execution/adapters/europa-dynamic-route-discovery.js';
-import { CapitalHierarchyPlanner, type CapitalHierarchyPlan, type ChainFundingRequirement } from './capital-hierarchy.js';
-import { computationalBeam } from '../../computationalBeam/index.js';
-import { CrawlerStrategy, type ComputeWorkload } from '../../computationalBeam/types.js';
-import type { GateEvaluation } from '../../cryptara/marketGates/types.js';
-import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
-import { calculateProgressivePositionSize, type PositionSizingDecision } from '../risk/progressive-position-sizing.js';
+import { runProfitabilityMonteCarlo, type MonteCarloProfitabilityResult } from '../execution/adapters/monte-carlo-profitability.js';
+import { calculateProgressivePositionSize } from '../risk/progressive-position-sizing.js';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
-import { assessInitialGasReadiness, calculateAutomaticNativeGasPlan, type InitialGasReadiness } from '../initial-gas-readiness.js';
+import type { InitialGasReadiness } from '../initial-gas-readiness.js';
 import { assertConfiguredWalletAddress, normalizePrivateKey, resolveConfiguredWalletAddress, walletFromPrivateKey } from './wallet-identity.js';
-import { getOrCreateFlashbotsAuthPrivateKey } from '../execution/adapters/flashbots-auth-identity.js';
-import {
-  NativeGasFundingCoordinator,
-  PostgresNativeGasFundingAttemptStore,
-} from '../execution/native-gas-funding-coordinator.js';
-import {
-  MESON_ZEROEX_NATIVE_GAS_DESTINATIONS,
-  MesonZeroExNativeGasStrategy,
-} from '../execution/meson-zeroex-native-gas-strategy.js';
+import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 
-// ============================================================================
-// TYPES & INTERFACES
-// ============================================================================
+// The admin controller still reads this legacy switch before starting the engine.
+// Force the retired branch off so it cannot bootstrap/deploy Europa receivers.
+process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND = 'retired';
 
 export interface ZeroCapitalOpportunity {
   id: string;
@@ -129,6 +95,17 @@ export interface ExecutionResult {
   blockNumber?: number;
 }
 
+export interface WalletResourceSnapshot {
+  chain: SupportedChain;
+  walletAddress?: string;
+  walletAddressSource?: 'execution_wallet' | 'bridge_wallet';
+  nativeBalance: string;
+  assetBalances: Record<string, string>;
+  observedAt: number;
+  status: 'available' | 'unavailable';
+  error?: string;
+}
+
 export interface SystemState {
   isRunning: boolean;
   totalProfit: bigint;
@@ -149,97 +126,67 @@ export interface SystemState {
   marketOperationsEnabled: boolean;
 }
 
-export interface WalletResourceSnapshot {
-  chain: SupportedChain;
-  walletAddress?: string;
-  walletAddressSource?: 'execution_wallet' | 'bridge_wallet';
-  nativeBalance: string;
-  assetBalances: Record<string, string>;
-  observedAt: number;
-  status: 'available' | 'unavailable';
-  error?: string;
-}
-
 export type SupportedChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
+type ActiveExecutionChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc';
 
-// ============================================================================
-// CONSTANTS & CONFIGURATION
-// ============================================================================
-
-// RPC Endpoints (fallback to public, should use Alchemy/Infura in production)
-const RPC_ENDPOINTS: Record<SupportedChain, string> = {
+const RPC_ENDPOINTS: Record<ActiveExecutionChain, string> = {
   ethereum: process.env.ETHEREUM_RPC_URL || 'https://eth.llamarpc.com',
   polygon: process.env.POLYGON_RPC_URL || 'https://polygon.llamarpc.com',
   arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arbitrum.llamarpc.com',
   optimism: process.env.OPTIMISM_RPC_URL || 'https://optimism.llamarpc.com',
   bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org',
-  avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
-  europa: process.env.EUROPA_RPC_URL || 'https://mainnet.skalenodes.com/v1/europa',
 };
 
-const FLASH_LOAN_RECEIVER_EVENT_INTERFACE = new ethers.utils.Interface([
+const RECEIVER_EVENT = new ethers.utils.Interface([
   'event FlashLoanExecuted(address indexed initiator, address indexed loanToken, uint256 loanAmount, uint256 profit)',
 ]);
-const ERC20_BALANCE_INTERFACE = ['function balanceOf(address owner) view returns (uint256)'];
 
 export function composeConfiguredZeroCapitalRoutes(
   configuredRoutes: ConfiguredZeroCapitalRoute[],
-  dynamicEuropaRoute?: ConfiguredZeroCapitalRoute | null,
+  _dynamicEuropaRoute?: ConfiguredZeroCapitalRoute | null,
 ): ConfiguredZeroCapitalRoute[] {
-  const nonEuropaRoutes = configuredRoutes.filter(route => route.chain !== 'europa');
-  const europaRoutes = configuredRoutes.filter(route => route.chain === 'europa');
-  return dynamicEuropaRoute
-    ? [...nonEuropaRoutes, ...europaRoutes, dynamicEuropaRoute]
-    : [...nonEuropaRoutes, ...europaRoutes];
+  return configuredRoutes.filter(route => route.chain !== 'europa' && route.chain !== 'avalanche');
 }
 
-// ============================================================================
-// AUTONOMOUS ZERO-CAPITAL ENGINE
-// ============================================================================
+function sponsorshipReadiness(ready: boolean, reason?: string): InitialGasReadiness {
+  return {
+    status: ready ? 'INITIAL_GAS_READY' : 'PRE_STAGE_1_BOOTSTRAP',
+    initialGasReady: ready,
+    thresholdUsd: 0,
+    usableNativeGasUsd: 0,
+    measurements: [],
+    observedAt: Date.now(),
+    provenance: ['alchemy_gas_manager_policy', 'eip7702_smart_wallet', 'erc4337_user_operation'],
+    reason,
+  };
+}
 
 export class AutonomousZeroCapitalEngine {
-  private providers: Map<SupportedChain, providers.JsonRpcProvider> = new Map();
-  private flashbotsProvider: FlashbotsBundleProvider | null = null;
-  private authSigner: Wallet | null = null;
-  private executionWallets: Map<SupportedChain, Wallet> = new Map();
-  private europaAdapter: EuropaZeroGasAdapter | null = null;
-  private readonly capitalProvenance = new PostgresStage4CapitalProvenanceStore();
-  private nativeGasFundingCoordinator: NativeGasFundingCoordinator | null = null;
-  private readonly capitalHierarchy = new CapitalHierarchyPlanner();
-  private readonly capitalScope = process.env.ZERO_CAPITAL_CAPITAL_SCOPE?.trim() || 'cryptocrawler';
-  private state: SystemState;
-  private isScanning: boolean = false;
-  private opportunityQueue: ZeroCapitalOpportunity[] = [];
+  private readonly gasSponsor = getGasSponsorManager();
+  private readonly providers = new Map<SupportedChain, providers.JsonRpcProvider>();
+  private readonly executionWallets = new Map<SupportedChain, Wallet>();
   private configuredRoutes: ConfiguredZeroCapitalRoute[] = [];
-  private configuredBaseRoutes: ConfiguredZeroCapitalRoute[] = [];
-  private scanInterval: NodeJS.Timeout | null = null;
-  private executionInterval: NodeJS.Timeout | null = null;
-  private fundingInterval: NodeJS.Timeout | null = null;
-  private scanDelayMs: number = Number(process.env.ZERO_CAPITAL_SCAN_MIN_MS || 2500);
-  private readonly minScanDelayMs: number = Number(process.env.ZERO_CAPITAL_SCAN_MIN_MS || 2500);
-  private readonly maxScanDelayMs: number = Number(process.env.ZERO_CAPITAL_SCAN_MAX_MS || 15000);
-  private executionEnabled: boolean = false;
-  private isExecuting: boolean = false;
-  private isFunding: boolean = false;
-  private bootstrapInterval: NodeJS.Timeout | null = null;
-  private bootstrapInFlight = false;
-  private pendingEuropaProfit?: { opportunity: Pick<ZeroCapitalOpportunity, 'id' | 'inputToken'>; result: Pick<ExecutionResult, 'txHash' | 'profit' | 'profitVerified' | 'receiptStatus' | 'zeroMonetaryGasVerified' | 'profitRecipient' | 'profitRecipientStartingInputBalance' | 'profitRecipientEndingInputBalance' | 'normalized'> };
+  private opportunityQueue: ZeroCapitalOpportunity[] = [];
+  private state: SystemState;
+  private scanTimer: NodeJS.Timeout | null = null;
+  private executionTimer: NodeJS.Timeout | null = null;
+  private readinessTimer: NodeJS.Timeout | null = null;
+  private scanning = false;
+  private executing = false;
   private executionEligible = false;
+  private executionEnabled = false;
   private marketOperationsStarted = false;
   private initialGasReadyCallback: (() => Promise<void>) | undefined;
   private initialGasLostCallback: (() => Promise<void>) | undefined;
-  private readonly fundingIntervalMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_FUNDING_INTERVAL_MS || 15000));
-  private readonly bootstrapRecheckMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_INITIAL_GAS_RECHECK_MS || 15000));
-  private lastLiveSignalCheckAt = 0;
-  private liveSignalReady = false;
-  private readonly cryptaraGateEvidence = new Map<string, GateEvaluation>();
-  private routeDiscoveryStatus: 'not_attempted' | 'not_profitable' | 'discovered' | 'unavailable' = 'not_attempted';
-  private routeDiscoveryLastError?: string;
+  private scanDelayMs = Math.max(500, Number(process.env.ZERO_CAPITAL_SCAN_MIN_MS || 2500));
+  private readonly minScanDelayMs = Math.max(500, Number(process.env.ZERO_CAPITAL_SCAN_MIN_MS || 2500));
+  private readonly maxScanDelayMs = Math.max(this.minScanDelayMs, Number(process.env.ZERO_CAPITAL_SCAN_MAX_MS || 15000));
+  private readonly readinessIntervalMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_FUNDING_INTERVAL_MS || 15000));
 
   constructor() {
     this.state = {
       isRunning: false,
-      totalProfit: BigInt(0),
+      totalProfit: 0n,
       totalTrades: 0,
       successfulTrades: 0,
       includedUnverifiedTrades: 0,
@@ -252,1185 +199,521 @@ export class AutonomousZeroCapitalEngine {
       lastFundingCycleAt: 0,
       walletResources: [],
       bootstrapState: 'PRE_STAGE_1_BOOTSTRAP',
-      initialGasReadiness: {
-        status: 'PRE_STAGE_1_BOOTSTRAP',
-        initialGasReady: false,
-        thresholdUsd: 20,
-        usableNativeGasUsd: null,
-        measurements: [],
-        observedAt: 0,
-        provenance: ['startup'],
-      },
+      initialGasReadiness: sponsorshipReadiness(false, 'Alchemy Gas Manager readiness has not been checked'),
       marketOperationsEnabled: false,
     };
-
-    logger.info('[ZeroCapitalEngine] Autonomous Zero-Capital Engine initialized', {
-      component: 'ZeroCapitalEngine',
-      philosophy: 'Capital-Free Autonomy',
-      mechanism: 'Flash Loan + MEV Bundle = Zero Upfront Capital',
-    });
   }
 
-  /**
-   * Initialize the engine - NO PRIVATE KEY REQUIRED FOR SCANNING
-   * Private key only needed when executing (and even then, can use relayers)
-   */
   async initialize(): Promise<void> {
-    logger.info('[ZeroCapitalEngine] Initializing providers...', { component: 'ZeroCapitalEngine' });
+    this.configuredRoutes = composeConfiguredZeroCapitalRoutes(loadConfiguredZeroCapitalRoutes());
 
-    const configuredRoutes = loadConfiguredZeroCapitalRoutes();
-    this.configuredBaseRoutes = configuredRoutes;
-    this.configuredRoutes = composeConfiguredZeroCapitalRoutes(configuredRoutes);
-
-    const ordinaryChains = Object.keys(RPC_ENDPOINTS)
-      .filter((chain): chain is RpcSupportedChain => chain !== 'europa');
-    await multiProviderRpcManager.initialize(ordinaryChains);
-
-    for (const [chain, rpcUrl] of Object.entries(RPC_ENDPOINTS)) {
+    const chains = Object.keys(RPC_ENDPOINTS) as ActiveExecutionChain[];
+    await multiProviderRpcManager.initialize(chains as RpcSupportedChain[]);
+    for (const chain of chains) {
       try {
-        if (chain === 'europa') {
-          const provider = new providers.JsonRpcProvider(rpcUrl);
-          await provider.getNetwork();
-          this.providers.set(chain as SupportedChain, provider);
-          logger.info(`[ZeroCapitalEngine] Connected to ${chain}`, { component: 'ZeroCapitalEngine', chain });
-          continue;
-        }
-
-        let managedProvider;
+        let managed;
         try {
-          managedProvider = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
-        } catch (discoveryError) {
+          managed = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
+        } catch {
           await multiProviderRpcManager.registerProvider({
             provider: 'ZeroCapitalConfiguredRPC',
             chain: chain as RpcSupportedChain,
-            httpUrl: rpcUrl,
+            httpUrl: RPC_ENDPOINTS[chain],
             priority: 1,
           });
-          managedProvider = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
-          logger.info('[ZeroCapitalEngine] Registered configured RPC fallback with shared manager', {
-            component: 'ZeroCapitalEngine',
-            chain,
-            discoveryError: discoveryError instanceof Error ? discoveryError.message : String(discoveryError),
-          });
+          managed = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
         }
-
-        this.providers.set(chain as SupportedChain, managedProvider.http);
-        logger.info(`[ZeroCapitalEngine] Connected to ${chain}`, { component: 'ZeroCapitalEngine', chain });
+        await managed.http.getNetwork();
+        this.providers.set(chain, managed.http);
       } catch (error) {
-        logger.warn(`[ZeroCapitalEngine] Failed to connect to ${chain}`, { 
-          component: 'ZeroCapitalEngine', 
-          chain, 
-          error: (error as Error).message 
-        });
-      }
-    }
-
-    const configuredWalletPrivateKey = process.env.WALLET_PRIVATE_KEY;
-    const walletPrivateKey = normalizePrivateKey(configuredWalletPrivateKey) || undefined;
-    if (configuredWalletPrivateKey && !walletPrivateKey) {
-      logger.warn('[ZeroCapitalEngine] WALLET_PRIVATE_KEY is not a valid 32-byte hex private key; signing is disabled', {
-        component: 'ZeroCapitalEngine',
-      });
-    }
-    if (walletPrivateKey) {
-      assertConfiguredWalletAddress(walletPrivateKey);
-      for (const [chain, provider] of this.providers.entries()) {
-        this.executionWallets.set(chain, walletFromPrivateKey(walletPrivateKey).connect(provider));
-      }
-      const europaWallet = this.executionWallets.get('europa');
-      if (europaWallet) {
-        this.europaAdapter = new EuropaZeroGasAdapter(
-          europaWallet,
-          new PostgresStage4ExecutionLedger(),
-        );
-      }
-    }
-
-    const europaFundingWallet = this.executionWallets.get('europa');
-    const arbitrumFundingWallet = this.executionWallets.get('arbitrum');
-    const nativeGasStrategies = europaFundingWallet && arbitrumFundingWallet
-      ? [new MesonZeroExNativeGasStrategy(europaFundingWallet, arbitrumFundingWallet)]
-      : [];
-    this.nativeGasFundingCoordinator = new NativeGasFundingCoordinator(
-      nativeGasStrategies,
-      new PostgresNativeGasFundingAttemptStore(),
-    );
-
-    // Initialize Flashbots for Ethereum mainnet (gasless execution)
-    const ethProvider = this.providers.get('ethereum');
-    const configuredFlashbotsAuthKey = normalizePrivateKey(process.env.FLASHBOTS_AUTH_KEY);
-    if (process.env.FLASHBOTS_AUTH_KEY?.trim() && !configuredFlashbotsAuthKey) {
-      logger.warn('[ZeroCapitalEngine] FLASHBOTS_AUTH_KEY is not a valid 32-byte hex private key; the persisted application-owned identity will be used', {
-        component: 'ZeroCapitalEngine',
-      });
-    }
-    if (ethProvider) {
-      try {
-        const flashbotsAuthPrivateKey = await getOrCreateFlashbotsAuthPrivateKey(configuredFlashbotsAuthKey);
-        this.authSigner = walletFromPrivateKey(flashbotsAuthPrivateKey);
-        this.flashbotsProvider = await FlashbotsBundleProvider.create(
-          ethProvider,
-          this.authSigner,
-          'https://relay.flashbots.net'
-        );
-        logger.info('[ZeroCapitalEngine] Flashbots provider initialized (gasless execution enabled)', {
+        logger.warn('[ZeroCapitalEngine] RPC unavailable', {
           component: 'ZeroCapitalEngine',
-          authIdentityAddress: this.authSigner.address,
-        });
-      } catch (error) {
-        logger.warn('[ZeroCapitalEngine] Flashbots initialization failed, will use standard execution', {
-          component: 'ZeroCapitalEngine',
-          error: (error as Error).message,
+          chain,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
-    try {
-      await this.refreshEuropaFundingRoute();
-    } catch (error) {
-      logger.warn('[ZeroCapitalEngine] Initial Europa route discovery unavailable; route refresh will retry during funding cycles', {
-        component: 'ZeroCapitalEngine',
-        error: error instanceof Error ? error.message : String(error),
-      });
+    const rawPrivateKey = process.env.WALLET_PRIVATE_KEY;
+    const privateKey = normalizePrivateKey(rawPrivateKey) || undefined;
+    if (rawPrivateKey && !privateKey) throw new Error('WALLET_PRIVATE_KEY is not a valid 32-byte EVM private key');
+    if (privateKey) {
+      assertConfiguredWalletAddress(privateKey);
+      for (const [chain, provider] of this.providers) {
+        this.executionWallets.set(chain, walletFromPrivateKey(privateKey).connect(provider));
+      }
     }
 
-    logger.info('[ZeroCapitalEngine] Initialization complete', {
+    const alchemyNetworks = (['ethereum', 'polygon', 'arbitrum', 'optimism'] as const)
+      .filter(chain => this.providers.has(chain));
+    if (alchemyNetworks.length > 0) await alchemyIntegration.start([...alchemyNetworks]);
+
+    await this.refreshSponsorshipReadiness();
+    await this.refreshWalletResources();
+    logger.info('[ZeroCapitalEngine] Alchemy-sponsored execution initialized', {
       component: 'ZeroCapitalEngine',
-      connectedChains: this.providers.size,
-      flashbotsEnabled: !!this.flashbotsProvider,
-      configuredBaseRoutes: this.configuredBaseRoutes.length,
+      connectedChains: Array.from(this.providers.keys()),
       configuredRoutes: this.configuredRoutes.length,
-      nativeGasFundingStrategies: nativeGasStrategies.map(strategy => strategy.name),
-      europaRouteDiscovery: this.routeDiscoveryStatus,
-      europaRouteDiscoveryLastError: this.routeDiscoveryLastError,
+      sponsorshipReady: this.state.initialGasReadiness.initialGasReady,
     });
   }
 
-  /**
-   * Start the autonomous scanning and execution loop
-   * THIS IS WHERE THE MAGIC HAPPENS - ZERO CAPITAL REQUIRED
-   */
   async start(options: {
     onInitialGasReady?: () => Promise<void>;
     onInitialGasLost?: () => Promise<void>;
   } = {}): Promise<void> {
-    if (this.state.isRunning) {
-      logger.warn('[ZeroCapitalEngine] Engine already running', { component: 'ZeroCapitalEngine' });
-      return;
-    }
+    if (this.state.isRunning) return;
+    if (this.providers.size === 0) await this.initialize();
+    if (this.providers.size === 0) throw new Error('No supported blockchain provider is reachable');
 
-    if (this.providers.size === 0) {
-      await this.initialize();
-    }
-
-    if (this.providers.size === 0) {
-      throw new Error('No blockchain RPC providers are reachable; on-chain monitoring cannot start');
-    }
-
-    this.state.isRunning = true;
-    const executionRequested = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
-    const ordinaryExecutionAuthorizedAtStart = executionRequested && stageManager.canExecuteTrades();
-    const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
-    const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
-    const zeroCapitalConfirmed = process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK';
-    const europaRoutes = this.configuredRoutes.filter(route => route.chain === 'europa');
-    const nonEuropaRoutes = this.configuredRoutes.filter(route => route.chain !== 'europa');
-
-    if (executionRequested && !ordinaryExecutionAuthorizedAtStart) {
-      logger.info('[ZeroCapitalEngine] Ordinary trade execution is deferred by the current governance stage; bootstrap/recovery authority remains independently gated while native gas is below threshold', {
-        component: 'ZeroCapitalEngine',
-        stage: stageManager.getCurrentStage(),
-        paused: stageManager.isPaused(),
-      });
-    }
-
-    if (executionRequested) {
-      if (process.env.NO_EXECUTION === 'true') {
-        throw new Error('ZERO_CAPITAL_ENABLE_EXECUTION=true conflicts with NO_EXECUTION=true');
-      }
-      if (!liveExecutionEnabled || !liveExecutionConfirmed || !zeroCapitalConfirmed) {
-        throw new Error('Zero-capital execution requires both global live-execution confirmation and ZERO_CAPITAL_EXECUTION_CONFIRMATION');
-      }
-      if (!process.env.WALLET_PRIVATE_KEY?.trim()) {
-        throw new Error('WALLET_PRIVATE_KEY is required for zero-capital execution');
-      }
-      if (europaRoutes.length > 0 || nonEuropaRoutes.length === 0) {
-        if (nonEuropaRoutes.length > 0) {
-          throw new Error('Europa zero-monetary-gas bootstrap cannot be mixed with legacy externally sponsored routes in one execution configuration');
-        }
-        if (process.env.ZERO_CAPITAL_EUROPA_EXECUTION_CONFIRMATION !== 'I_ACCEPT_EUROPA_ZERO_GAS_EXECUTION_RISK') {
-          throw new Error('Europa execution requires ZERO_CAPITAL_EUROPA_EXECUTION_CONFIRMATION=I_ACCEPT_EUROPA_ZERO_GAS_EXECUTION_RISK');
-        }
-        if (!this.europaAdapter) {
-          throw new Error('Europa execution requires WALLET_PRIVATE_KEY and a reachable Europa RPC provider');
-        }
-        if (!this.executionWallets.get('arbitrum')) {
-          throw new Error('Europa source-funded bootstrap requires a reachable Arbitrum RPC and the canonical execution wallet for native-gas delivery');
-        }
-        if (!(process.env.ZERO_CAPITAL_ZEROX_API_KEY?.trim() || process.env.ZERO_EX_API_KEY?.trim())) {
-          throw new Error('Europa source-funded bootstrap requires ZERO_CAPITAL_ZEROX_API_KEY or ZERO_EX_API_KEY for the 0x Gasless USDC-to-native settlement step');
-        }
-        const europaReceiverKind = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND?.trim() || 'sushi-v3';
-        const receiverInfrastructureReady = europaReceiverKind === 'sushi-v3'
-          ? !process.env.ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY?.trim() || process.env.ZERO_CAPITAL_EUROPA_SUSHI_V3_FACTORY.trim() === EUROPA_SUSHI.v3Factory
-          : !!process.env.ZERO_CAPITAL_EUROPA_BALANCER_VAULT?.trim();
-        if (!process.env.ZERO_CAPITAL_EUROPA_RECEIVER?.trim() || !process.env.ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH?.trim() || !receiverInfrastructureReady) {
-          throw new Error(europaReceiverKind === 'sushi-v3'
-            ? 'Europa Sushi V3 execution requires ZERO_CAPITAL_EUROPA_RECEIVER and ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH; the verified Sushi factory is built in'
-            : 'Europa Balancer execution requires ZERO_CAPITAL_EUROPA_RECEIVER, ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH, and ZERO_CAPITAL_EUROPA_BALANCER_VAULT');
-        }
-        await resolveEuropaExternalGasDifficulty(this.providers.get('europa')!);
-        const capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
-        if (capitalState.lifecycle === 'ATOMIC_EXECUTION_PENDING' || capitalState.lifecycle === 'FIRST_PROFIT_VERIFIED') {
-          throw new Error(`Europa bootstrap recovery is blocked while capital provenance is ${capitalState.lifecycle}; reconcile the recorded transaction before starting another execution`);
-        }
-        if (capitalState.lifecycle === 'SELF_FUNDED' && BigInt(capitalState.internallyGeneratedBalance) > 0n) {
-          logger.info('[ZeroCapitalEngine] Europa bootstrap has verified internally generated proceeds awaiting source-funded native-gas settlement', {
-            component: 'ZeroCapitalEngine',
-            generation: capitalState.generation,
-            asset: capitalState.asset,
-          });
-        } else if (capitalState.lifecycle !== 'SELF_FUNDED') {
-          await this.capitalProvenance.markZeroGasExecutionReady(this.capitalScope);
-        }
-        await this.europaAdapter.checkReadiness();
-        this.liveSignalReady = true;
-        this.lastLiveSignalCheckAt = Date.now();
-      } else {
-        const receiverAddress = String(process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER || '').trim();
-        if (!/^0x[a-fA-F0-9]{40}$/.test(receiverAddress)) {
-          throw new Error('ZERO_CAPITAL_FLASHLOAN_RECEIVER must be a deployed EVM receiver address before execution is enabled');
-        }
-        if (process.env.ZERO_CAPITAL_ALLOW_LEGACY_EXTERNAL_SPONSOR !== 'true') {
-          throw new Error('Non-Europa zero-capital execution is disabled by default because it depends on an external gas sponsor; configure a verified Europa route instead');
-        }
-        if (!this.configuredRoutes.some(route => route.chain === 'ethereum')) {
-          throw new Error('Legacy external-sponsor execution requires an Ethereum Flashbots route');
-        }
-        if (!this.flashbotsProvider || !this.executionWallets.get('ethereum')) {
-          throw new Error('Legacy external-sponsor execution requires Ethereum RPC, FLASHBOTS_AUTH_KEY or WALLET_PRIVATE_KEY, and a usable Flashbots provider');
-        }
-        const paymentMode = process.env.ZERO_CAPITAL_FLASHBOTS_PAYMENT_MODE?.trim();
-        const sponsorAddress = process.env.ZERO_CAPITAL_FLASHBOTS_SPONSOR_ADDRESS?.trim();
-        const sponsorConfirmation = process.env.ZERO_CAPITAL_FLASHBOTS_SPONSOR_CONFIRMATION?.trim();
-        const executionWallet = this.executionWallets.get('ethereum')!;
-        if (paymentMode !== 'external_sponsor' || !/^0x[a-fA-F0-9]{40}$/.test(sponsorAddress || '') || executionWallet.address.toLowerCase() !== sponsorAddress!.toLowerCase() || sponsorConfirmation !== 'I_CONFIRM_EXTERNAL_FLASHBOTS_GAS_SPONSOR') {
-          throw new Error('Legacy external-sponsor execution requires the explicitly configured and confirmed Flashbots sponsor');
-        }
-        const cryptara = getCryptara();
-        if (!cryptara.getStatus().isRunning) await cryptara.initialize();
-        const readiness = await cryptara.validateLiveSignalReadiness({ strictLive: true });
-        if (!readiness.liveSignalReady) {
-          throw new Error(`Legacy execution requires live TradingView and Alchemy signals: ${readiness.tradingView.detail}; ${readiness.alchemy.detail}`);
-        }
-        await alchemyIntegration.start(['ethereum']);
-        if (!alchemyIntegration.isReady()) throw new Error('Legacy execution requires active Alchemy mempool monitoring on Ethereum');
-        this.liveSignalReady = true;
-        this.lastLiveSignalCheckAt = Date.now();
-      }
-    }
-
-    this.executionEligible = executionRequested;
-    this.executionEnabled = false;
+    this.executionEligible = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
     this.initialGasReadyCallback = options.onInitialGasReady;
     this.initialGasLostCallback = options.onInitialGasLost;
 
-    logger.info('[ZeroCapitalEngine] Starting read-only on-chain monitoring...', {
-      component: 'ZeroCapitalEngine',
-      mode: this.executionEnabled ? 'LIVE_EXECUTION_GATED' : 'MONITORING_ONLY',
-      connectedChains: this.providers.size,
-      executionEnabled: this.executionEnabled,
-    });
-
-    await this.refreshInitialGasReadiness();
-    if (this.state.initialGasReadiness.initialGasReady) {
-      if (stageManager.isMarketOperationsAllowed()) {
-        await this.startMarketOperations();
-      } else {
-        this.startBootstrapReadinessLoop();
+    if (this.executionEligible) {
+      if (process.env.NO_EXECUTION === 'true') throw new Error('ZERO_CAPITAL_ENABLE_EXECUTION=true conflicts with NO_EXECUTION=true');
+      if (
+        process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION !== 'true' ||
+        process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION !== 'I_ACCEPT_LIVE_ORDER_RISK' ||
+        process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION !== 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK'
+      ) {
+        throw new Error('Live zero-capital execution confirmations are incomplete');
       }
-    } else {
-      await this.runBootstrapReadinessCycle();
-      logger.warn('[ZeroCapitalEngine] Remaining in PRE_STAGE_1_BOOTSTRAP; market operations are locked until verified native-gas readiness reaches the configured threshold', {
-        component: 'ZeroCapitalEngine',
-        status: this.state.initialGasReadiness.status,
-        thresholdUsd: this.state.initialGasReadiness.thresholdUsd,
-        usableNativeGasUsd: this.state.initialGasReadiness.usableNativeGasUsd,
-      });
+      const receiver = String(process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER || '').trim();
+      if (!ethers.utils.isAddress(receiver)) throw new Error('ZERO_CAPITAL_FLASHLOAN_RECEIVER must be configured');
+      if (this.executionWallets.size === 0) throw new Error('WALLET_PRIVATE_KEY is required for sponsored execution');
+      const sponsor = this.gasSponsor.getReadiness();
+      if (!sponsor.ready) throw new Error(sponsor.reason || 'Alchemy Gas Manager is not ready');
+
+      const cryptara = getCryptara();
+      if (!cryptara.getStatus().isRunning) await cryptara.initialize();
+      const signals = await cryptara.validateLiveSignalReadiness({ strictLive: true });
+      if (!signals.liveSignalReady) {
+        throw new Error(`Cryptara/Tara live signal stack is not ready: ${signals.tradingView.detail}; ${signals.alchemy.detail}`);
+      }
     }
 
-    if (this.executionEligible && this.state.initialGasReadiness.initialGasReady && stageManager.canExecuteTrades()) {
-      logger.info('[ZeroCapitalEngine] Ordinary execution mode enabled for zero-capital arbitrage', {
-        component: 'ZeroCapitalEngine',
-      });
-    } else {
-      logger.info('[ZeroCapitalEngine] Execution loop is currently gated', {
-        component: 'ZeroCapitalEngine',
-        reason: !executionRequested
-          ? 'Live execution was not requested'
-          : !this.state.initialGasReadiness.initialGasReady
-            ? 'Initial native-gas readiness is below threshold; bootstrap/recovery authority is active instead of ordinary market execution'
-            : !stageManager.canExecuteTrades()
-              ? 'Current governance stage permits monitoring/advisory work but not ordinary trade execution'
-              : 'Ordinary execution prerequisites are not currently active',
-      });
+    this.state.isRunning = true;
+    const readiness = await this.refreshSponsorshipReadiness();
+    if (!readiness.initialGasReady) {
+      this.state.isRunning = false;
+      throw new Error(readiness.reason || 'Alchemy sponsored execution readiness is unavailable');
     }
+
+    if (stageManager.isMarketOperationsAllowed()) await this.startMarketOperations();
+    this.startReadinessLoop();
   }
 
-  private async refreshInitialGasReadiness(): Promise<InitialGasReadiness> {
-    const walletAddresses = new Map<SupportedChain, string>();
-    const walletAddressSources = new Map<SupportedChain, 'execution_wallet' | 'bridge_wallet'>();
+  private async refreshSponsorshipReadiness(): Promise<InitialGasReadiness> {
+    const sponsor = this.gasSponsor.getReadiness();
     const configuredWallet = resolveConfiguredWalletAddress();
-    for (const [chain, wallet] of this.executionWallets.entries()) {
-      walletAddresses.set(chain, wallet.address);
-      walletAddressSources.set(chain, 'execution_wallet');
-    }
-    if (configuredWallet.address) {
-      for (const chain of this.providers.keys()) {
-        if (!walletAddresses.has(chain)) {
-          walletAddresses.set(chain, configuredWallet.address);
-          walletAddressSources.set(chain, 'bridge_wallet');
-        }
-      }
-    }
-    const readiness = await assessInitialGasReadiness({
-      providers: this.providers,
-      walletAddresses,
-      walletAddressSources,
-    });
+    const walletReady = this.executionWallets.size > 0 || !!configuredWallet.address;
+    const providerReady = this.providers.size > 0;
+    const ready = sponsor.ready && walletReady && providerReady;
+    const reason = !sponsor.ready
+      ? sponsor.reason
+      : !walletReady
+        ? configuredWallet.reason || 'No authoritative execution wallet is configured'
+        : !providerReady
+          ? 'No supported execution-chain provider is reachable'
+          : undefined;
+
+    const readiness = sponsorshipReadiness(ready, reason);
     this.state.initialGasReadiness = readiness;
-    this.state.bootstrapState = readiness.initialGasReady ? 'INITIAL_GAS_READY' : 'PRE_STAGE_1_BOOTSTRAP';
-    this.state.marketOperationsEnabled = readiness.initialGasReady && stageManager.isMarketOperationsAllowed();
+    this.state.bootstrapState = ready ? 'INITIAL_GAS_READY' : 'PRE_STAGE_1_BOOTSTRAP';
     stageManager.setInitialGasReadiness(readiness);
-    this.state.marketOperationsEnabled = readiness.initialGasReady && stageManager.isMarketOperationsAllowed();
+    this.state.marketOperationsEnabled = ready && stageManager.isMarketOperationsAllowed();
     return readiness;
   }
 
-  private startBootstrapReadinessLoop(): void {
-    if (this.bootstrapInterval) clearTimeout(this.bootstrapInterval);
-    const scheduleNext = (): void => {
-      if (!this.state.isRunning || this.marketOperationsStarted) return;
-      this.bootstrapInterval = setTimeout(() => {
-        void this.runBootstrapReadinessCycle();
-      }, this.bootstrapRecheckMs);
-    };
-    scheduleNext();
-  }
-
-  private async runBootstrapReadinessCycle(): Promise<void> {
-    if (!this.state.isRunning || this.marketOperationsStarted || this.bootstrapInFlight) return;
-    this.bootstrapInFlight = true;
-    try {
-      await this.refreshWalletResources();
-      const readiness = await this.refreshInitialGasReadiness();
-      if (readiness.initialGasReady && stageManager.isMarketOperationsAllowed()) {
-        if (this.bootstrapInterval) {
-          clearTimeout(this.bootstrapInterval);
-          this.bootstrapInterval = null;
-        }
-        await this.startMarketOperations();
-      } else {
-        this.suspendMarketOperations();
-        this.state.lastFundingError = readiness.reason;
-        await this.attemptInitialGasBootstrap(readiness);
-        if (this.state.initialGasReadiness.initialGasReady && stageManager.isMarketOperationsAllowed()) {
-          if (this.bootstrapInterval) {
-            clearTimeout(this.bootstrapInterval);
-            this.bootstrapInterval = null;
-          }
-          await this.startMarketOperations();
-          return;
-        }
-        logger.info('[ZeroCapitalEngine] Initial gas readiness recheck remains gated', {
-          component: 'ZeroCapitalEngine',
-          status: readiness.status,
-          thresholdUsd: readiness.thresholdUsd,
-          usableNativeGasUsd: readiness.usableNativeGasUsd,
-        });
-        this.startBootstrapReadinessLoop();
-      }
-    } catch (error) {
-      this.state.lastFundingError = error instanceof Error ? error.message : String(error);
-      logger.warn('[ZeroCapitalEngine] Initial gas readiness recheck failed; keeping market operations locked', {
-        component: 'ZeroCapitalEngine',
-        error: this.state.lastFundingError,
-      });
-      this.startBootstrapReadinessLoop();
-    } finally {
-      this.bootstrapInFlight = false;
-    }
-  }
-
-  private async attemptInitialGasBootstrap(readiness: InitialGasReadiness): Promise<void> {
-    if (readiness.initialGasReady) return;
-    const beamBootstrap = await this.analyzeBootstrapReadinessThroughBeam(readiness);
-    if (!beamBootstrap.continueBootstrap) {
-      this.state.lastFundingError = beamBootstrap.reason;
-      logger.info('[ZeroCapitalEngine] Computational Beam found no valid bootstrap analysis path', {
-        component: 'ZeroCapitalEngine',
-        status: readiness.status,
-        reason: beamBootstrap.reason,
-      });
-      return;
-    }
-    if (!this.executionEligible) {
-      this.state.lastFundingError = 'Bootstrap/recovery execution is not configured; set the live zero-capital execution controls before attempting source-funded recovery';
-      logger.info('[ZeroCapitalEngine] Corrective bootstrap deferred because live zero-capital execution is not configured', {
-        component: 'ZeroCapitalEngine',
-        stage: stageManager.getCurrentStage(),
-        status: readiness.status,
-        reason: this.state.lastFundingError,
-      });
-      return;
-    }
-    const settlementPlan = await this.calculateAutomaticBootstrapSettlementPlan(readiness);
-    if (!settlementPlan || !this.nativeGasFundingCoordinator) {
-      this.state.lastFundingError = 'No live supported paid-chain destination is available for the configured source-funded settlement rail';
-      return;
-    }
-    const destinationChain = settlementPlan.destinationChain;
-    requireBootstrapRecoveryAllowed({
-      chain: destinationChain,
-      pair: 'NATIVE_GAS_SETTLEMENT',
-      venue: 'bridge_refuel',
-    });
-    if (this.pendingEuropaProfit) {
-      const pending = this.pendingEuropaProfit;
-      const settled = await this.settleVerifiedEuropaProfit(pending.opportunity, pending.result);
-      if (settled) {
-        this.pendingEuropaProfit = undefined;
+  private startReadinessLoop(): void {
+    if (this.readinessTimer) clearTimeout(this.readinessTimer);
+    const cycle = async (): Promise<void> => {
+      if (!this.state.isRunning) return;
+      this.state.fundingCycleActive = true;
+      try {
+        const readiness = await this.refreshSponsorshipReadiness();
         await this.refreshWalletResources();
-        await this.refreshInitialGasReadiness();
-      }
-      return;
-    }
+        this.state.fundingCycles++;
+        this.state.lastFundingCycleAt = Date.now();
+        this.state.lastFundingError = undefined;
 
-    let capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
-    if (capitalState.lifecycle === 'SELF_FUNDED' && BigInt(capitalState.internallyGeneratedBalance) > 0n) {
-      if (capitalState.asset && capitalState.originTransactionHash && capitalState.sourceRecipient &&
-          capitalState.sourceRecipientBalanceBeforeBaseUnits !== undefined && capitalState.sourceRecipientBalanceAfterBaseUnits !== undefined) {
-        const recoveredOpportunity: Pick<ZeroCapitalOpportunity, 'id' | 'inputToken'> = {
-          id: `recovered:${capitalState.originTransactionHash}`,
-          inputToken: capitalState.asset,
-        };
-        const recoveredResult: Pick<ExecutionResult, 'txHash' | 'profit' | 'profitVerified' | 'receiptStatus' | 'zeroMonetaryGasVerified' | 'profitRecipient' | 'profitRecipientStartingInputBalance' | 'profitRecipientEndingInputBalance' | 'normalized'> = {
-          txHash: capitalState.originTransactionHash,
-          profit: BigInt(capitalState.internallyGeneratedBalance),
-          profitVerified: true,
-          receiptStatus: 1,
-          zeroMonetaryGasVerified: true,
-          profitRecipient: capitalState.sourceRecipient,
-          profitRecipientStartingInputBalance: BigInt(capitalState.sourceRecipientBalanceBeforeBaseUnits),
-          profitRecipientEndingInputBalance: BigInt(capitalState.sourceRecipientBalanceAfterBaseUnits),
-        };
-        const settled = await this.settleVerifiedEuropaProfit(recoveredOpportunity, recoveredResult);
-        if (settled) {
-          await this.refreshWalletResources();
-          await this.refreshInitialGasReadiness();
+        if (!readiness.initialGasReady) {
+          this.suspendMarketOperations(readiness.reason || 'Alchemy sponsorship readiness was lost');
+        } else if (stageManager.isMarketOperationsAllowed() && !this.marketOperationsStarted) {
+          await this.startMarketOperations();
         }
-        return;
+
+        const mayExecute = this.executionEligible && stageManager.canExecuteTrades();
+        if (mayExecute && this.marketOperationsStarted && !this.executionEnabled) {
+          this.executionEnabled = true;
+          this.startExecutionLoop();
+        } else if (!mayExecute && this.executionEnabled) {
+          this.executionEnabled = false;
+          if (this.executionTimer) clearInterval(this.executionTimer);
+          this.executionTimer = null;
+        }
+      } catch (error) {
+        this.state.lastFundingError = error instanceof Error ? error.message : String(error);
+      } finally {
+        this.state.fundingCycleActive = false;
+        if (this.state.isRunning) this.readinessTimer = setTimeout(() => void cycle(), this.readinessIntervalMs);
       }
-      this.state.lastFundingError = 'Persisted Europa profit lacks source recipient custody proof; reconciliation is required before another bootstrap attempt';
-      return;
-    }
-    if (capitalState.lifecycle === 'ATOMIC_EXECUTION_PENDING' || capitalState.lifecycle === 'FIRST_PROFIT_VERIFIED') {
-      throw new Error(`Europa bootstrap is blocked while capital provenance is ${capitalState.lifecycle}; reconcile the recorded transaction before retrying`);
-    }
-    if (capitalState.lifecycle === 'SELF_FUNDED' && BigInt(capitalState.internallyGeneratedBalance) === 0n) {
-      const completedSourceFundedSettlement = capitalState.latestExecutionKey?.startsWith('native-gas:') === true;
-      if (!completedSourceFundedSettlement && process.env.ZERO_CAPITAL_RECOVERY_CONFIRMATION !== 'I_CONFIRM_GLOBAL_INTERNAL_CAPITAL_EXHAUSTED') {
-        throw new Error('Capital provenance shows SELF_FUNDED with no recorded balance and no verified native-gas settlement; reconciliation is required before bootstrap recovery');
-      }
-      await this.capitalProvenance.markRecoveryRequired(this.capitalScope);
-      capitalState = await this.capitalProvenance.markZeroGasExecutionReady(this.capitalScope);
-      logger.info('[ZeroCapitalEngine] Previous internally generated proceeds were fully allocated; zero-gas bootstrap authority re-opened because paid native gas remains below threshold', {
-        component: 'ZeroCapitalEngine',
-        generation: capitalState.generation,
-        verifiedPreviousSettlement: completedSourceFundedSettlement,
-      });
-    } else if (capitalState.lifecycle === 'ZERO' || capitalState.lifecycle === 'ZERO_RECOVERY_REQUIRED') {
-      capitalState = await this.capitalProvenance.markZeroGasExecutionReady(this.capitalScope);
-    }
-
-    const europaProvider = this.providers.get('europa');
-    if (!europaProvider || !this.europaAdapter) {
-      throw new Error('Europa bootstrap requires a reachable Europa provider and trusted execution wallet');
-    }
-
-    await this.refreshEuropaFundingRoute();
-    const quotedRoutes = await quoteConfiguredZeroCapitalRoutesForChain('europa', europaProvider, this.configuredRoutes);
-    const quotedRoute = quotedRoutes[0];
-    if (!quotedRoute) {
-      throw new Error(`Europa bootstrap has no live profitable route; discovery=${this.routeDiscoveryStatus}${this.routeDiscoveryLastError ? `: ${this.routeDiscoveryLastError}` : ''}`);
-    }
-
-    const block = await europaProvider.getBlock('latest');
-    const opportunity = this.createOpportunityFromQuotedRoute(quotedRoute, block.timestamp);
-    const cryptara = getCryptara();
-    if (!cryptara.getStatus().isRunning) await cryptara.initialize();
-    if (!await this.isCandidateAllowedByCryptara(opportunity, europaProvider)) {
-      throw new Error(`Europa bootstrap candidate ${opportunity.id} was rejected by live Cryptara market gates`);
-    }
-
-    const capitalPlan = await this.assessCapitalHierarchy(opportunity);
-    const chainSnapshot = capitalPlan.chains.find(chain => chain.chain === 'europa');
-    const positionSizing = calculateProgressivePositionSize({
-      requestedNotionalUsd: this.toUsdEstimate(opportunity.flashLoanAmount, opportunity.inputTokenDecimals),
-      availableCapitalUsd: 0,
-      expectedNetProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
-      expectedCostUsd: this.toUsdEstimate(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals),
-      expectedSlippageBps: opportunity.expectedSlippageBps,
-      liquidityScore: opportunity.confidence,
-      volatilityScore: Math.min(1, opportunity.expectedSlippageBps / 100),
-      providerHealthy: !!chainSnapshot && this.providers.has('europa'),
-      zeroCapitalAvailable: capitalPlan.source === 'europa-zero-capital',
-    });
-    const beamValidation = await this.validateCapitalPlanThroughBeam(capitalPlan, opportunity, positionSizing);
-    if (!beamValidation.approved) {
-      throw new Error(`Beam rejected Europa bootstrap capital plan: ${beamValidation.reason}`);
-    }
-
-    logger.warn('[ZeroCapitalEngine] Submitting explicitly enabled Europa corrective bootstrap candidate', {
-      component: 'ZeroCapitalEngine',
-      opportunityId: opportunity.id,
-      expectedProfit: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
-      routeDiscovery: this.routeDiscoveryStatus,
-    });
-    const result = await this.executeWithEuropa(opportunity);
-    await this.recordCryptaraExecutionFeedback(opportunity, result);
-    let fundingSettled = false;
-    if (result.success) {
-      this.pendingEuropaProfit = { opportunity, result };
-      fundingSettled = await this.settleVerifiedEuropaProfit(opportunity, result);
-      if (fundingSettled) this.pendingEuropaProfit = undefined;
-      await this.refreshWalletResources();
-    }
-    const postExecutionReadiness = await this.refreshInitialGasReadiness();
-    if (!result.success) {
-      throw new Error(result.error || 'Europa bootstrap execution did not prove a successful result');
-    }
-    if (!postExecutionReadiness.initialGasReady && fundingSettled) {
-      logger.info('[ZeroCapitalEngine] Incremental source-funded native gas was verified; bootstrap will continue until the configured USD threshold is reached', {
-        component: 'ZeroCapitalEngine',
-        thresholdUsd: postExecutionReadiness.thresholdUsd,
-        usableNativeGasUsd: postExecutionReadiness.usableNativeGasUsd,
-      });
-      return;
-    }
-    if (!postExecutionReadiness.initialGasReady) {
-      throw new Error(await this.describeNativeGasFundingBlocker(postExecutionReadiness));
-    }
-  }
-
-
-  private async settleVerifiedEuropaProfit(
-    opportunity: Pick<ZeroCapitalOpportunity, 'id' | 'inputToken'>,
-    result: Pick<ExecutionResult, 'txHash' | 'profit' | 'profitVerified' | 'receiptStatus' | 'zeroMonetaryGasVerified' | 'profitRecipient' | 'profitRecipientStartingInputBalance' | 'profitRecipientEndingInputBalance' | 'normalized'>,
-  ): Promise<boolean> {
-    const coordinator = this.nativeGasFundingCoordinator;
-    const sourceWallet = this.executionWallets.get('europa');
-    if (!coordinator || !sourceWallet || !result.txHash || !result.profit || result.profit <= 0n ||
-        result.receiptStatus !== 1 || result.profitVerified !== true || result.zeroMonetaryGasVerified !== true) {
-      this.state.lastFundingError = 'Verified Europa profit is required before native-gas funding can be attempted';
-      return false;
-    }
-    const readiness = await this.refreshInitialGasReadiness();
-    const settlementPlan = await this.calculateAutomaticBootstrapSettlementPlan(readiness);
-    if (!settlementPlan) {
-      this.state.lastFundingError = 'No live supported paid-chain destination can be selected for source-funded native-gas settlement';
-      return false;
-    }
-    const destinationChain = settlementPlan.destinationChain;
-    const requiredNativeWei = settlementPlan.requiredNativeWei;
-    const destinationWallet = this.executionWallets.get(destinationChain);
-    if (!destinationWallet) {
-      this.state.lastFundingError = `No authoritative execution wallet is configured on destination chain ${destinationChain}`;
-      return false;
-    }
-
-    logger.info('[ZeroCapitalEngine] Verified Europa profit reached native-gas funding coordinator', {
-      component: 'ZeroCapitalEngine',
-      opportunityId: opportunity.id,
-      sourceTransactionHash: result.txHash,
-      destinationChain,
-    });
-    const funding = await coordinator.settleVerifiedProfit({
-      idempotencyKey: `europa-profit-native-gas:${result.txHash}:${destinationChain}:${requiredNativeWei}`,
-      evidence: {
-        scope: this.capitalScope,
-        sourceChain: 'europa',
-        sourceTransactionHash: result.txHash,
-        profitToken: opportunity.inputToken,
-        realizedProfitBaseUnits: result.profit.toString(),
-        recipient: result.profitRecipient || sourceWallet.address,
-        sourceReceiptVerified: result.receiptStatus === 1,
-        sourceBalanceEvidenceVerified: result.profitVerified === true,
-        zeroMonetaryGasVerified: result.zeroMonetaryGasVerified === true,
-        zeroExternalCapitalVerified: result.normalized?.provenance.includes('zero_external_capital_verified') === true || result.zeroMonetaryGasVerified === true,
-        sourceRecipientBalanceBeforeBaseUnits: result.profitRecipientStartingInputBalance?.toString(),
-        sourceRecipientBalanceAfterBaseUnits: result.profitRecipientEndingInputBalance?.toString(),
-      },
-      destinationChain,
-      destinationWallet: destinationWallet.address,
-      requiredNativeWei,
-      minimumDeliveredNativeWei: '1',
-    });
-    if (funding.state !== 'SETTLED' || !funding.destinationReceiptVerified || !funding.deliveredNativeWei) {
-      this.state.lastFundingError = funding.error || 'Native-gas funding did not produce a verified destination settlement';
-      logger.warn('[ZeroCapitalEngine] Native-gas funding remained unavailable after verified Europa profit', {
-        component: 'ZeroCapitalEngine',
-        strategy: funding.strategy,
-        state: funding.state,
-        reason: this.state.lastFundingError,
-      });
-      return false;
-    }
-    if (!funding.destinationTransactionHash || !funding.destinationNativeBalanceBeforeWei || !funding.destinationNativeBalanceAfterWei) {
-      throw new Error('Native-gas funding reported settlement without complete destination receipt and balance evidence');
-    }
-    const settlementProof: VerifiedNativeGasFundingSettlement = {
-      scope: this.capitalScope,
-      sourceAsset: opportunity.inputToken,
-      sourceProceedsAllocatedBaseUnits: funding.sourceProceedsAllocatedBaseUnits,
-      destinationChain,
-      destinationTransactionHash: funding.destinationTransactionHash,
-      destinationReceiptVerified: funding.destinationReceiptVerified,
-      deliveredNativeWei: funding.deliveredNativeWei,
-      destinationNativeBalanceBeforeWei: funding.destinationNativeBalanceBeforeWei,
-      destinationNativeBalanceAfterWei: funding.destinationNativeBalanceAfterWei,
-      reimbursementRequired: funding.reimbursementRequired,
-      reimbursementVerified: funding.reimbursementVerified,
     };
-    await this.capitalProvenance.recordNativeGasFundingSettlement(settlementProof);
-    logger.info('[ZeroCapitalEngine] Native-gas destination settlement verified; readiness will be re-assessed from live RPC', {
-      component: 'ZeroCapitalEngine',
-      strategy: funding.strategy,
-      destinationChain,
-      destinationTransactionHash: funding.destinationTransactionHash,
-    });
-    return true;
-  }
-
-  private async calculateAutomaticBootstrapSettlementPlan(readiness: InitialGasReadiness) {
-    const walletAddresses = new Map<SupportedChain, string>();
-    for (const [chain, wallet] of this.executionWallets.entries()) walletAddresses.set(chain, wallet.address);
-    const supportedDestinations = new Set<string>(MESON_ZEROEX_NATIVE_GAS_DESTINATIONS);
-    const settlementProviders = new Map<SupportedChain, providers.JsonRpcProvider>(
-      Array.from(this.providers.entries()).filter(([chain]) => supportedDestinations.has(chain)),
-    );
-    return calculateAutomaticNativeGasPlan({
-      readiness,
-      providers: settlementProviders,
-      walletAddresses,
-    });
-  }
-  private async analyzeBootstrapReadinessThroughBeam(readiness: InitialGasReadiness): Promise<{ continueBootstrap: boolean; reason: string }> {
-    if (!computationalBeam.isOperational()) {
-      await computationalBeam.initialize();
-    }
-
-    const workload: ComputeWorkload<{
-      readiness: Pick<InitialGasReadiness, 'status' | 'thresholdUsd' | 'usableNativeGasUsd' | 'selectedChain'>;
-      verifiedNativeMeasurements: Array<{
-        chain: SupportedChain;
-        nativeSymbol: string;
-        nativeBalanceWei: string;
-        nativePriceUsd: number;
-        usableNativeGasUsd: number;
-      }>;
-      availableChains: SupportedChain[];
-      routeDiscoveryStatus: string;
-      executionEligible: boolean;
-    }, { continueBootstrap: boolean; reason: string }> = {
-      id: `bootstrap-readiness:${readiness.observedAt}`,
-      type: 'INITIAL_GAS_BOOTSTRAP_ANALYSIS',
-      input: {
-        readiness: {
-          status: readiness.status,
-          thresholdUsd: readiness.thresholdUsd,
-          usableNativeGasUsd: readiness.usableNativeGasUsd,
-          selectedChain: readiness.selectedChain,
-        },
-        verifiedNativeMeasurements: readiness.measurements
-          .filter(measurement => measurement.eligibleForReadinessCalculation && measurement.status === 'verified' &&
-            measurement.nativeBalanceWei !== null && measurement.nativePriceUsd !== null && measurement.usableNativeGasUsd !== null)
-          .map(measurement => ({
-            chain: measurement.chain,
-            nativeSymbol: measurement.nativeSymbol,
-            nativeBalanceWei: measurement.nativeBalanceWei!,
-            nativePriceUsd: measurement.nativePriceUsd!,
-            usableNativeGasUsd: measurement.usableNativeGasUsd!,
-          })),
-        availableChains: Array.from(this.providers.keys()),
-        routeDiscoveryStatus: this.routeDiscoveryStatus,
-        executionEligible: this.executionEligible,
-      },
-      timeoutMs: Math.max(1_000, Number(process.env.ZERO_CAPITAL_BEAM_BOOTSTRAP_TIMEOUT_MS || 10_000)),
-      execute: ({ readiness: measuredReadiness, verifiedNativeMeasurements, availableChains }) => {
-        if (measuredReadiness.usableNativeGasUsd !== null && measuredReadiness.usableNativeGasUsd >= measuredReadiness.thresholdUsd) {
-          return { continueBootstrap: false, reason: 'Live readiness evidence already meets the initial native-gas threshold' };
-        }
-        if (availableChains.length === 0) {
-          return { continueBootstrap: false, reason: 'No reachable chain provider is available for bootstrap analysis' };
-        }
-        if (verifiedNativeMeasurements.some(measurement => measurement.usableNativeGasUsd < 0)) {
-          return { continueBootstrap: false, reason: 'Native-gas measurement contained an invalid negative value' };
-        }
-        return {
-          continueBootstrap: true,
-          reason: `Beam analyzed ${verifiedNativeMeasurements.length} verified paid-chain native measurement(s) while readiness remains below ${measuredReadiness.thresholdUsd} USD; route economics and funding capability remain separately gated`,
-        };
-      },
-      validate: result => typeof result.continueBootstrap === 'boolean' && typeof result.reason === 'string',
-    };
-
-    const execution = await computationalBeam.executeCrawlerTask(
-      CrawlerStrategy.ARBITRAGE,
-      {
-        readinessStatus: readiness.status,
-        thresholdUsd: readiness.thresholdUsd,
-        usableNativeGasUsd: readiness.usableNativeGasUsd,
-        availableChains: workload.input.availableChains,
-      },
-      { timeout: workload.timeoutMs, workload },
-    );
-    return execution.result as { continueBootstrap: boolean; reason: string };
-  }
-
-  private async describeNativeGasFundingBlocker(readiness: InitialGasReadiness): Promise<string> {
-    const capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
-    const destinationEvidence = MESON_ZEROEX_NATIVE_GAS_DESTINATIONS.map(chain => {
-      const wallet = this.executionWallets.get(chain as SupportedChain);
-      const provider = this.providers.get(chain as SupportedChain);
-      return `${chain}:${provider ? 'rpc' : 'no-rpc'}:${wallet ? 'execution-wallet' : 'no-wallet'}`;
-    }).join(', ');
-    return `SOURCE-FUNDED SETTLEMENT NOT YET VERIFIED: Europa ${capitalState.asset || EUROPA_SUSHI.tokens.usdc} proceeds have not yet produced sufficient verified paid-chain native gas (${readiness.reason || readiness.status}). The configured production rail is Europa USDC -> Meson -> Arbitrum USDC -> 0x Gasless -> native ETH, with bridge/conversion/gas costs charged from generated proceeds. A live quote, API credential, liquidity, settlement, receipt, or balance proof is currently unavailable. Destination evidence: ${destinationEvidence}.`;
+    void cycle();
   }
 
   private async startMarketOperations(): Promise<void> {
-    if (this.marketOperationsStarted || !this.state.isRunning || !stageManager.isMarketOperationsAllowed()) return;
+    if (!this.state.isRunning || this.marketOperationsStarted || !stageManager.isMarketOperationsAllowed()) return;
     this.marketOperationsStarted = true;
     this.state.marketOperationsEnabled = true;
     this.executionEnabled = this.executionEligible && stageManager.canExecuteTrades();
     this.startScanningLoop();
-    this.startFundingLoop();
     if (this.executionEnabled) this.startExecutionLoop();
-    if (this.initialGasReadyCallback) {
-      const callback = this.initialGasReadyCallback;
-      try {
-        await callback();
-      } catch (error) {
-        this.marketOperationsStarted = false;
-        this.state.marketOperationsEnabled = false;
-        this.executionEnabled = false;
-        this.suspendMarketOperations();
-        this.startBootstrapReadinessLoop();
-        throw error;
-      }
-    }
+    if (this.initialGasReadyCallback) await this.initialGasReadyCallback();
   }
 
-  private suspendMarketOperations(): void {
+  private suspendMarketOperations(reason: string): void {
     const wasStarted = this.marketOperationsStarted;
     this.marketOperationsStarted = false;
     this.state.marketOperationsEnabled = false;
     this.executionEnabled = false;
-    if (this.scanInterval) {
-      clearTimeout(this.scanInterval);
-      this.scanInterval = null;
-    }
-    if (this.executionInterval) {
-      clearInterval(this.executionInterval);
-      this.executionInterval = null;
-    }
-    if (this.fundingInterval) {
-      clearTimeout(this.fundingInterval);
-      this.fundingInterval = null;
-    }
-    if (wasStarted && this.initialGasLostCallback) {
-      void this.initialGasLostCallback().catch(error => {
-        logger.warn('[ZeroCapitalEngine] Failed to stop downstream market operations after readiness loss', {
-          component: 'ZeroCapitalEngine',
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    }
+    this.state.lastFundingError = reason;
+    if (this.scanTimer) clearTimeout(this.scanTimer);
+    if (this.executionTimer) clearInterval(this.executionTimer);
+    this.scanTimer = null;
+    this.executionTimer = null;
+    if (wasStarted && this.initialGasLostCallback) void this.initialGasLostCallback().catch(() => undefined);
   }
 
-  /**
-   * Scanning Loop: Continuously discover zero-capital opportunities
-   */
   private startScanningLoop(): void {
-    if (this.scanInterval) {
-      clearTimeout(this.scanInterval);
-      this.scanInterval = null;
-    }
-
-    const scheduleNext = (delayMs: number): void => {
-      if (!this.state.isRunning) return;
-      this.scanInterval = setTimeout(() => {
-        void scanCycle();
-      }, delayMs);
-    };
-
-    const computeNextDelay = (hasErrors: boolean, opportunityCount: number): number => {
-      if (hasErrors) {
-        return Math.min(this.maxScanDelayMs, Math.floor(this.scanDelayMs * 1.5));
-      }
-
-      if (opportunityCount > 0) {
-        return this.minScanDelayMs;
-      }
-
-      return Math.min(this.maxScanDelayMs, Math.floor(this.scanDelayMs * 1.2));
-    };
-
-    const scanCycle = async () => {
-      if (!this.state.isRunning) return;
-      if (!stageManager.isMarketOperationsAllowed()) {
-        scheduleNext(this.bootstrapRecheckMs);
-        return;
-      }
-      if (this.isScanning) {
-        scheduleNext(this.scanDelayMs);
-        return;
-      }
-
-      this.isScanning = true;
-      let hasErrors = false;
-      let viableCount = 0;
-      
+    if (this.scanTimer) clearTimeout(this.scanTimer);
+    const cycle = async (): Promise<void> => {
+      if (!this.state.isRunning || !this.marketOperationsStarted || this.scanning) return;
+      this.scanning = true;
+      let degraded = false;
       try {
-        // Scan all connected chains in parallel
-        const scanPromises = Array.from(this.providers.entries()).map(
-          ([chain, provider]) => this.scanChainForOpportunities(chain as SupportedChain, provider)
+        const settled = await Promise.allSettled(
+          Array.from(this.providers.entries()).map(([chain, provider]) => this.scanChain(chain, provider)),
         );
-
-        const results = await Promise.allSettled(scanPromises);
-        
-        // Collect all opportunities
-        const newOpportunities: ZeroCapitalOpportunity[] = [];
-        for (const result of results) {
-          if (result.status === 'fulfilled' && result.value) {
-            newOpportunities.push(...result.value);
-          } else if (result.status === 'rejected') {
-            hasErrors = true;
-          }
+        const opportunities: ZeroCapitalOpportunity[] = [];
+        for (const result of settled) {
+          if (result.status === 'fulfilled') opportunities.push(...result.value);
+          else degraded = true;
         }
-
-        // Filter and sort by profit potential
-        const viableOpportunities = newOpportunities
-          .filter(opp => opp.expectedProfit > 0n)
-          .sort((a, b) => Number(b.expectedProfit - a.expectedProfit));
-
-        // Update queue
-        this.opportunityQueue = viableOpportunities;
-        this.state.currentOpportunities = viableOpportunities.length;
-        viableCount = viableOpportunities.length;
-
-        await this.publishCryptaraRouteObservations(viableOpportunities);
-
-        if (viableOpportunities.length > 0) {
-          logger.info('[ZeroCapitalEngine] Opportunities discovered', {
-            component: 'ZeroCapitalEngine',
-            count: viableOpportunities.length,
-            topProfit: ethers.utils.formatUnits(
-              (viableOpportunities[0]?.expectedProfit || 0).toString(),
-              viableOpportunities[0]?.inputTokenDecimals || 6,
-            ),
-          });
-        }
-
-      } catch (error) {
-        hasErrors = true;
-        logger.error('[ZeroCapitalEngine] Scanning error', {
-          component: 'ZeroCapitalEngine',
-          error: (error as Error).message,
-        });
+        this.opportunityQueue = opportunities
+          .filter(opportunity => opportunity.expectedProfit > 0n && Date.now() <= opportunity.expiresAt)
+          .sort((left, right) => left.expectedProfit === right.expectedProfit ? 0 : left.expectedProfit > right.expectedProfit ? -1 : 1);
+        this.state.currentOpportunities = this.opportunityQueue.length;
+        this.scanDelayMs = degraded
+          ? Math.min(this.maxScanDelayMs, Math.floor(this.scanDelayMs * 1.5))
+          : this.opportunityQueue.length > 0
+            ? this.minScanDelayMs
+            : Math.min(this.maxScanDelayMs, Math.floor(this.scanDelayMs * 1.2));
       } finally {
-        this.isScanning = false;
-        this.scanDelayMs = computeNextDelay(hasErrors, viableCount);
-        scheduleNext(this.scanDelayMs);
+        this.scanning = false;
+        if (this.state.isRunning && this.marketOperationsStarted) {
+          this.scanTimer = setTimeout(() => void cycle(), this.scanDelayMs);
+        }
       }
     };
-
-    // Adaptive schedule prevents hammering when APIs/chains are degraded.
-    void scanCycle();
+    void cycle();
   }
 
-  private async publishCryptaraRouteObservations(opportunities: ZeroCapitalOpportunity[]): Promise<void> {
-    const cryptara = getCryptara();
-    if (!cryptara.getStatus().isRunning || opportunities.length === 0) return;
-
-    let marketUniverse = [] as Awaited<ReturnType<typeof marketDataProviders.discoverUniverse>>;
-    try {
-      marketUniverse = await marketDataProviders.discoverUniverse();
-    } catch {
-      marketUniverse = [];
+  private async scanChain(
+    chain: SupportedChain,
+    provider: providers.JsonRpcProvider,
+  ): Promise<ZeroCapitalOpportunity[]> {
+    if (chain === 'europa' || chain === 'avalanche') return [];
+    const block = await provider.getBlock('latest');
+    const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, this.configuredRoutes);
+    const accepted: ZeroCapitalOpportunity[] = [];
+    for (const quote of quotes) {
+      const opportunity = this.fromQuotedRoute(quote, block.timestamp);
+      if (!this.executionEnabled || await this.isAllowedByCryptara(opportunity)) accepted.push(opportunity);
     }
-
-    let tradingView: Awaited<ReturnType<typeof TradingViewEngine.getAnalysis>> | null = null;
-    try {
-      tradingView = await TradingViewEngine.getAnalysis(process.env.ZERO_CAPITAL_SIGNAL_SYMBOL || 'ETHUSDT', '1h');
-    } catch {
-      tradingView = null;
-    }
-
-    let mempool = null;
-    try {
-      mempool = alchemyIntegration.getMempoolAnalysis();
-    } catch {
-      mempool = null;
-    }
-
-    for (const opportunity of opportunities.slice(0, 10)) {
-      const finalLeg = opportunity.route[opportunity.route.length - 1];
-      if (!finalLeg) continue;
-      const routeObservation: CryptaraRouteObservation = {
-        chain: opportunity.chain,
-        inputToken: opportunity.inputToken,
-        outputToken: finalLeg.tokenOut,
-        inputAssetSymbol: opportunity.inputAssetSymbol,
-        inputAmountBaseUnits: opportunity.flashLoanAmount.toString(),
-        outputAmountBaseUnits: finalLeg.expectedAmountOut.toString(),
-        inputTokenDecimals: opportunity.inputTokenDecimals,
-        outputTokenDecimals: finalLeg.tokenOut.toLowerCase() === opportunity.inputToken.toLowerCase()
-          ? opportunity.inputTokenDecimals
-          : null,
-        grossProfitBaseUnits: (opportunity.grossProfit ?? opportunity.expectedProfit).toString(),
-        expectedNetProfitBaseUnits: opportunity.expectedProfit.toString(),
-        estimatedGasCostBaseUnits: (opportunity.estimatedGasCostInInputToken ?? opportunity.estimatedExecutionCostInInputToken).toString(),
-        flashLoanFeeBaseUnits: (opportunity.flashLoanFeeInInputToken ?? 0n).toString(),
-        relayFeeBaseUnits: (opportunity.relayFeeInInputToken ?? 0n).toString(),
-        quoteLatencyMs: opportunity.quoteLatencyMs,
-        route: opportunity.route.map(leg => ({
-          protocol: leg.protocol,
-          tokenIn: leg.tokenIn,
-          tokenOut: leg.tokenOut,
-          amountInBaseUnits: leg.amountIn.toString(),
-          expectedAmountOutBaseUnits: leg.expectedAmountOut.toString(),
-          fee: leg.fee,
-        })),
-        observedAt: opportunity.timestamp,
-        expiresAt: opportunity.expiresAt,
-        executable: this.executionEnabled && (
-          opportunity.chain === 'europa' ? !!this.europaAdapter : opportunity.chain === 'ethereum' && !!this.flashbotsProvider
-        ),
-      };
-      const missingInformation = [
-        ...(routeObservation.executable ? [] : ['route_execution_capability']),
-      ];
-      cryptara.recordOpportunityObservation({
-        opportunityId: opportunity.id,
-        observedAt: opportunity.timestamp,
-        chain: opportunity.chain,
-        symbol: opportunity.inputAssetSymbol,
-        plan: null,
-        tradingView,
-        mempool,
-        marketUniverse,
-        dexObservation: null,
-        routeObservation,
-        missingInformation,
-        provenance: ['configured_rpc_route_quote', `route:${opportunity.id}`, `chain:${opportunity.chain}`],
-      });
-    }
+    return accepted;
   }
 
-  private startFundingLoop(): void {
-    if (this.fundingInterval) {
-      clearTimeout(this.fundingInterval);
-      this.fundingInterval = null;
-    }
-
-    const scheduleNext = (): void => {
-      if (!this.state.isRunning) return;
-      this.fundingInterval = setTimeout(() => {
-        void fundingCycle();
-      }, this.fundingIntervalMs);
-    };
-
-    const fundingCycle = async (): Promise<void> => {
-      if (!this.state.isRunning) return;
-      if (this.isFunding) {
-        scheduleNext();
-        return;
-      }
-
-      this.isFunding = true;
-      this.state.fundingCycleActive = true;
-      try {
-        const readiness = await this.refreshInitialGasReadiness();
-        if (!readiness.initialGasReady || !stageManager.isMarketOperationsAllowed()) {
-          this.suspendMarketOperations();
-          this.state.lastFundingError = readiness.reason || 'Initial gas readiness is no longer verified';
-          if (!readiness.initialGasReady) this.startBootstrapReadinessLoop();
-          return;
-        }
-        await this.refreshWalletResources();
-        await this.refreshEuropaFundingRoute();
-
-        const ordinaryExecutionAllowed = this.executionEligible && stageManager.canExecuteTrades();
-        if (ordinaryExecutionAllowed && !this.executionEnabled) {
-          this.executionEnabled = true;
-          this.startExecutionLoop();
-          logger.info('[ZeroCapitalEngine] Governance now permits ordinary execution; execution loop activated without restarting the engine', {
-            component: 'ZeroCapitalEngine',
-            stage: stageManager.getCurrentStage(),
-          });
-        } else if (!ordinaryExecutionAllowed && this.executionEnabled) {
-          this.executionEnabled = false;
-          if (this.executionInterval) {
-            clearInterval(this.executionInterval);
-            this.executionInterval = null;
-          }
-        }
-
-        if (this.executionEnabled && this.providers.has('europa')) {
-          const europaOpportunities = await this.scanChainForOpportunities('europa', this.providers.get('europa')!);
-          if (europaOpportunities.length > 0) {
-            this.opportunityQueue.push(...europaOpportunities);
-            this.state.currentOpportunities = this.opportunityQueue.length;
-          }
-        }
-
-        this.state.fundingCycles += 1;
-        this.state.lastFundingCycleAt = Date.now();
-        this.state.lastFundingError = undefined;
-      } catch (error) {
-        this.state.lastFundingCycleAt = Date.now();
-        this.state.lastFundingError = error instanceof Error ? error.message : String(error);
-        logger.warn('[ZeroCapitalEngine] Europa/Beam funding cycle degraded; trading loop remains independent', {
-          component: 'ZeroCapitalEngine',
-          error: this.state.lastFundingError,
-        });
-        this.suspendMarketOperations();
-        this.startBootstrapReadinessLoop();
-      } finally {
-        this.isFunding = false;
-        this.state.fundingCycleActive = false;
-        if (this.marketOperationsStarted) scheduleNext();
-      }
-    };
-
-    void fundingCycle();
-  }
-
-  private async refreshEuropaFundingRoute(): Promise<void> {
-    try {
-      const dynamicEuropaRoute = await discoverProfitableEuropaRoute();
-      this.routeDiscoveryStatus = dynamicEuropaRoute ? 'discovered' : 'not_profitable';
-      this.routeDiscoveryLastError = undefined;
-      this.configuredRoutes = composeConfiguredZeroCapitalRoutes(
-        this.configuredBaseRoutes,
-        dynamicEuropaRoute?.route,
-      );
-    } catch (error) {
-      this.routeDiscoveryStatus = 'unavailable';
-      this.routeDiscoveryLastError = error instanceof Error ? error.message : String(error);
-      throw error;
-    }
-  }
-
-  private async refreshWalletResources(): Promise<WalletResourceSnapshot[]> {
-    const assetsByChain = new Map<SupportedChain, Set<string>>();
-    for (const route of this.configuredRoutes) {
-      const assets = assetsByChain.get(route.chain) || new Set<string>();
-      if (ethers.utils.isAddress(route.inputToken)) assets.add(route.inputToken);
-      assetsByChain.set(route.chain, assets);
-    }
-
-    const configuredWallet = resolveConfiguredWalletAddress();
-    const snapshots = await Promise.all(Array.from(this.providers.entries()).map(async ([chain, provider]) => {
-      const wallet = this.executionWallets.get(chain);
-      const walletAddress = wallet?.address || configuredWallet.address;
-      const observedAt = Date.now();
-      if (!walletAddress) {
-        return {
-          chain,
-          nativeBalance: '0',
-          assetBalances: {},
-          observedAt,
-          status: 'unavailable' as const,
-          error: configuredWallet.reason || 'No authoritative execution or bridge wallet is configured',
-        };
-      }
-
-      try {
-        const nativeBalance = await provider.getBalance(walletAddress);
-        const assetBalances: Record<string, string> = {};
-        await Promise.all(Array.from(assetsByChain.get(chain) || []).map(async asset => {
-          const balance = await new Contract(asset, ERC20_BALANCE_INTERFACE, provider).balanceOf(walletAddress) as BigNumber;
-          assetBalances[asset] = balance.toString();
-        }));
-        return {
-          chain,
-          walletAddress,
-          walletAddressSource: wallet ? 'execution_wallet' : configuredWallet.source || undefined,
-          nativeBalance: nativeBalance.toString(),
-          assetBalances,
-          observedAt,
-          status: 'available' as const,
-        };
-      } catch (error) {
-        return {
-          chain,
-          walletAddress,
-          walletAddressSource: wallet ? 'execution_wallet' : configuredWallet.source || undefined,
-          nativeBalance: '0',
-          assetBalances: {},
-          observedAt,
-          status: 'unavailable' as const,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-    }));
-
-    this.state.walletResources = snapshots;
-    return snapshots;
-  }
-
-  private toUsdEstimate(value: bigint | undefined, decimals: number): number {
-    if (!value) return 0;
-    const normalized = Number(ethers.utils.formatUnits(value.toString(), decimals));
-    return Number.isFinite(normalized) ? normalized : 0;
-  }
-
-  private normalizeZeroCapitalSettlement(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): NormalizedRealizedExecution | undefined {
-    if (!result.txHash || result.blockNumber === undefined) return undefined;
-    const realizedProfitUsd = result.profit !== undefined
-      ? this.toUsdEstimate(result.profit, opportunity.inputTokenDecimals)
-      : null;
-    const gasVerified = result.zeroMonetaryGasVerified === true && result.nativeFeeWei === 0n;
-    const submittedAt = Date.now() - Math.max(0, result.latencyMs || 0);
+  private fromQuotedRoute(quote: QuotedZeroCapitalRoute, blockTimestamp: number): ZeroCapitalOpportunity {
+    const ttlMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_ROUTE_TTL_MS || 3000));
+    const executionCost = quote.estimatedGasCostInInputToken + quote.flashLoanFeeInInputToken + quote.relayFeeInInputToken;
     return {
-      status: result.success && result.profitVerified === true ? 'filled' : 'failed',
+      id: `${quote.id}-${blockTimestamp}-${Date.now()}`,
+      type: 'arbitrage',
+      chain: quote.chain,
+      inputToken: quote.inputToken,
+      outputToken: quote.inputToken,
+      inputAssetSymbol: quote.inputAssetSymbol,
+      inputTokenDecimals: quote.inputTokenDecimals,
+      flashLoanAmount: quote.amountIn,
+      expectedProfit: quote.netProfit,
+      grossProfit: quote.grossProfit,
+      gasEstimate: 0n,
+      estimatedExecutionCostInInputToken: executionCost,
+      estimatedGasCostInInputToken: quote.estimatedGasCostInInputToken,
+      flashLoanFeeInInputToken: quote.flashLoanFeeInInputToken,
+      relayFeeInInputToken: quote.relayFeeInInputToken,
+      expectedSlippageBps: this.expectedSlippageBps(quote.route.length),
+      quoteLatencyMs: quote.quoteLatencyMs,
+      netProfitBps: quote.netProfitBps,
+      route: quote.route.map(step => ({
+        protocol: step.protocol,
+        tokenIn: step.tokenIn,
+        tokenOut: step.tokenOut,
+        amountIn: BigInt(String(step.amountIn)),
+        expectedAmountOut: BigInt(String(step.expectedAmountOut)),
+        fee: step.fee,
+      })),
+      confidence: Math.min(0.99, 0.55 + Math.min(0.44, quote.netProfitBps / 1000)),
+      timestamp: Date.now(),
+      expiresAt: Date.now() + ttlMs,
+    };
+  }
+
+  private expectedSlippageBps(legs: number): number {
+    const minOutputBps = Math.max(9000, Math.min(10000, Number(process.env.ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS || 9990)));
+    return Math.max(0, legs * (10000 - minOutputBps));
+  }
+
+  private async isAllowedByCryptara(opportunity: ZeroCapitalOpportunity): Promise<boolean> {
+    const cryptara = getCryptara();
+    const directive = cryptara.getAutonomousDirective();
+    const maxSlippageBps = Math.max(1, Math.min(
+      directive.maxSlippageBps,
+      Number(process.env.ZERO_CAPITAL_MAX_SLIPPAGE_BPS || 20),
+    ));
+    if (!directive.preferredExecutionModes.includes('zero_capital')) return false;
+    if (directive.riskBudget === 'defensive' && !directive.preferredChains.includes(opportunity.chain)) return false;
+    if (opportunity.expectedSlippageBps > maxSlippageBps) return false;
+    if (this.toUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals) < directive.minimumNetProfitUsd) return false;
+
+    const readiness = await cryptara.validateLiveSignalReadiness({ strictLive: true });
+    if (!readiness.liveSignalReady) return false;
+    const analysis = await TradingViewEngine.getAnalysis(process.env.ZERO_CAPITAL_SIGNAL_SYMBOL || 'ETHUSDT', '1h');
+    if (TradingViewEngine.getHealthStatus().mode !== 'live') return false;
+    return analysis.summary.strength >= Math.max(0, Number(process.env.ZERO_CAPITAL_MIN_SIGNAL_STRENGTH || 0));
+  }
+
+  private async validateUnifiedControl(
+    opportunity: ZeroCapitalOpportunity,
+  ): Promise<{ approved: boolean; reason: string; monteCarlo: MonteCarloProfitabilityResult }> {
+    const notionalUsd = this.toUsd(opportunity.flashLoanAmount, opportunity.inputTokenDecimals);
+    const expectedNetProfitUsd = this.toUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals);
+    const executionCostUsd = this.toUsd(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals);
+    const monteCarlo = runProfitabilityMonteCarlo({
+      seed: opportunity.id,
+      notionalUsd,
+      expectedNetProfitUsd,
+      estimatedExecutionCostUsd: executionCostUsd,
+      expectedSlippageBps: opportunity.expectedSlippageBps,
+      quoteLatencyMs: opportunity.quoteLatencyMs,
+      confidence: opportunity.confidence,
+    });
+
+    const sizing = calculateProgressivePositionSize({
+      requestedNotionalUsd: notionalUsd,
+      availableCapitalUsd: 0,
+      expectedNetProfitUsd,
+      expectedCostUsd: executionCostUsd,
+      expectedSlippageBps: opportunity.expectedSlippageBps,
+      liquidityScore: opportunity.confidence,
+      volatilityScore: Math.min(1, opportunity.expectedSlippageBps / 100),
+      providerHealthy: this.providers.has(opportunity.chain),
+      zeroCapitalAvailable: this.gasSponsor.isEnabled(),
+    });
+
+    if (!computationalBeam.isOperational()) await computationalBeam.initialize();
+    const workload: ComputeWorkload<
+      { monteCarlo: MonteCarloProfitabilityResult; positionApproved: boolean; sponsorReady: boolean },
+      { approved: boolean; reason: string }
+    > = {
+      id: `beam-tara-monte-carlo:${opportunity.id}`,
+      type: 'MONTE_CARLO_EXECUTION_VALIDATION',
+      input: {
+        monteCarlo,
+        positionApproved: sizing.approved && sizing.proposedNotionalUsd > 0,
+        sponsorReady: this.gasSponsor.isEnabled(),
+      },
+      timeoutMs: Math.max(1000, Number(process.env.ZERO_CAPITAL_BEAM_VALIDATION_TIMEOUT_MS || 10_000)),
+      execute: input => {
+        if (!input.sponsorReady) return { approved: false, reason: 'Alchemy Gas Manager is not ready' };
+        if (!input.positionApproved) return { approved: false, reason: 'Progressive position sizing rejected the trade' };
+        if (!input.monteCarlo.approved) return { approved: false, reason: input.monteCarlo.reason };
+        return { approved: true, reason: `Beam approved Tara/Monte Carlo execution: ${input.monteCarlo.reason}` };
+      },
+      validate: result => typeof result.approved === 'boolean' && typeof result.reason === 'string',
+    };
+
+    const beam = await computationalBeam.executeCrawlerTask(
+      CrawlerStrategy.ARBITRAGE,
+      {
+        opportunityId: opportunity.id,
+        expectedNetProfitUsd,
+        expectedSlippageBps: opportunity.expectedSlippageBps,
+        profitableProbability: monteCarlo.profitableProbability,
+      },
+      { timeout: workload.timeoutMs, workload },
+    );
+    return { ...(beam.result as { approved: boolean; reason: string }), monteCarlo };
+  }
+
+  private startExecutionLoop(): void {
+    if (this.executionTimer) clearInterval(this.executionTimer);
+    this.executionTimer = setInterval(() => void this.executeNextOpportunity(), 500);
+  }
+
+  private async executeNextOpportunity(): Promise<void> {
+    if (!this.state.isRunning || !this.executionEnabled || this.executing) return;
+    const opportunity = this.opportunityQueue.shift();
+    if (!opportunity || Date.now() > opportunity.expiresAt) return;
+    this.executing = true;
+    let result: ExecutionResult;
+    try {
+      result = await this.executeOpportunity(opportunity);
+    } catch (error) {
+      result = { success: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      this.executing = false;
+    }
+
+    await this.recordExecutionFeedback(opportunity, result);
+    this.state.totalTrades++;
+    if (result.success && result.profitVerified) {
+      this.state.successfulTrades++;
+      this.state.totalProfit += result.profit || 0n;
+      this.state.lastTradeTimestamp = Date.now();
+    } else if (result.success) {
+      this.state.includedUnverifiedTrades++;
+      getCryptocrawlGovernance().pause('system', 'zero_capital_profit_unverified');
+    } else {
+      this.state.failedTrades++;
+    }
+  }
+
+  private async executeOpportunity(opportunity: ZeroCapitalOpportunity): Promise<ExecutionResult> {
+    if (!stageManager.isMarketOperationsAllowed() || !stageManager.canExecuteTrades()) {
+      return { success: false, error: 'Governance does not authorize live execution' };
+    }
+    if (opportunity.chain === 'europa' || opportunity.chain === 'avalanche') {
+      return { success: false, error: `${opportunity.chain} is not in the active Alchemy Wallet API execution set` };
+    }
+    if (!await this.isAllowedByCryptara(opportunity)) {
+      return { success: false, error: 'Cryptara/Tara rejected the opportunity at execution time' };
+    }
+
+    const control = await this.validateUnifiedControl(opportunity);
+    if (!control.approved) return { success: false, error: control.reason };
+
+    const governance = getCryptocrawlGovernance();
+    const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
+    governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opportunity.chain, pair, venue: 'alchemy-gas-manager' });
+    governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair, venue: 'alchemy-gas-manager' });
+    governance.recordExecutionAttempt();
+    return this.executeSponsored(opportunity);
+  }
+
+  private async executeSponsored(opportunity: ZeroCapitalOpportunity): Promise<ExecutionResult> {
+    const provider = this.providers.get(opportunity.chain);
+    const wallet = this.executionWallets.get(opportunity.chain);
+    if (!provider || !wallet) return { success: false, error: `No execution wallet/provider for ${opportunity.chain}` };
+
+    const startedAt = Date.now();
+    try {
+      const plan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
+        receiver: process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER,
+        profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || wallet.address,
+      });
+      const payload = buildFlashLoanReceiverPayloadFromPlan(plan);
+      const network = await provider.getNetwork();
+      const sponsored = await this.gasSponsor.execute({
+        wallet,
+        chainId: network.chainId,
+        calls: [{ to: payload.to, data: payload.data, value: BigNumber.from(payload.value) }],
+        timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_TX_TIMEOUT_MS || 60_000)),
+      });
+
+      let receipt = await provider.getTransactionReceipt(sponsored.transactionHash);
+      if (!receipt) receipt = await provider.waitForTransaction(sponsored.transactionHash, 1, 15_000);
+      if (!receipt || receipt.status !== 1) {
+        return { success: false, txHash: sponsored.transactionHash, error: 'Sponsored receiver transaction was not confirmed successfully' };
+      }
+
+      const profit = this.extractProfit(receipt, payload.to);
+      if (profit === null || profit <= 0n) {
+        return { success: false, txHash: sponsored.transactionHash, error: 'No positive verified FlashLoanExecuted profit was emitted' };
+      }
+
+      this.state.gaslessTransactions++;
+      const result: ExecutionResult = {
+        success: true,
+        txHash: sponsored.transactionHash,
+        profit,
+        profitVerified: true,
+        gasUsed: BigInt(receipt.gasUsed.toString()),
+        receiptStatus: 1,
+        nativeFeeWei: 0n,
+        zeroMonetaryGasVerified: true,
+        latencyMs: Date.now() - startedAt,
+        blockNumber: receipt.blockNumber,
+      };
+      result.normalized = this.normalizeSettlement(opportunity, result);
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        latencyMs: Date.now() - startedAt,
+      };
+    }
+  }
+
+  private extractProfit(receipt: providers.TransactionReceipt, receiver: string): bigint | null {
+    for (const entry of receipt.logs) {
+      if (entry.address.toLowerCase() !== receiver.toLowerCase()) continue;
+      try {
+        const parsed = RECEIVER_EVENT.parseLog(entry);
+        if (parsed.name === 'FlashLoanExecuted') return BigInt(parsed.args.profit.toString());
+      } catch {
+        // Ignore unrelated receiver logs.
+      }
+    }
+    return null;
+  }
+
+  private normalizeSettlement(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): NormalizedRealizedExecution | undefined {
+    if (!result.txHash || result.blockNumber === undefined) return undefined;
+    return {
+      status: result.success && result.profitVerified ? 'filled' : 'failed',
       terminal: true,
       settlementConfirmed: result.success && result.profitVerified === true,
-      submittedAt,
+      submittedAt: Date.now() - Math.max(0, result.latencyMs || 0),
       settledAt: Date.now(),
-      venueOrRoute: opportunity.route.map(step => step.protocol).join('->') || 'zero-capital',
+      venueOrRoute: opportunity.route.map(step => step.protocol).join('->') || 'alchemy-sponsored',
       chain: opportunity.chain,
       predicted: {
-        profitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
-        feeUsd: this.toUsdEstimate(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals),
+        profitUsd: this.toUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+        feeUsd: this.toUsd(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals),
         slippageBps: opportunity.expectedSlippageBps,
       },
       realized: {
         acquisitionCostUsd: null,
         proceedsUsd: null,
         exchangeFeeUsd: null,
-        gasUsd: gasVerified ? 0 : null,
+        gasUsd: null,
         gasUsed: result.gasUsed?.toString() || null,
         effectiveGasPriceWei: null,
         slippageBps: result.realizedSlippageBps ?? null,
-        netProfitUsd: gasVerified ? realizedProfitUsd : null,
+        netProfitUsd: result.profit !== undefined ? this.toUsd(result.profit, opportunity.inputTokenDecimals) : null,
       },
       provenance: [
-        'zero_capital:receipt',
-        ...(result.gasUsed !== undefined ? ['receipt:gas_used'] : []),
-        ...(gasVerified ? ['capital_provenance:zero_monetary_gas'] : []),
-        ...(realizedProfitUsd !== null ? ['capital_provenance:realized_profit'] : ['priced:realized_usd_incomplete']),
+        'cryptara_live_intelligence',
+        'computational_beam',
+        'monte_carlo_profitability',
+        'alchemy_gas_manager',
+        'eip7702_smart_wallet',
+        'erc4337_user_operation',
+        'flashloan_receiver_profit_verified',
       ],
       transactionHash: result.txHash,
       blockNumber: result.blockNumber,
@@ -1439,20 +722,10 @@ export class AutonomousZeroCapitalEngine {
     };
   }
 
-  private async recordCryptaraExecutionFeedback(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): Promise<void> {
+  private async recordExecutionFeedback(opportunity: ZeroCapitalOpportunity, result: ExecutionResult): Promise<void> {
     try {
-      const cryptara = getCryptara();
-      const normalized = result.normalized || this.normalizeZeroCapitalSettlement(opportunity, result);
-      if (!normalized?.terminal) {
-        logger.warn('[ZeroCapitalEngine] Execution settlement is not terminal; deferring Cryptara feedback', {
-          component: 'ZeroCapitalEngine',
-          opportunityId: opportunity.id,
-          success: result.success,
-          txHash: result.txHash,
-        });
-        return;
-      }
-
+      const normalized = result.normalized || this.normalizeSettlement(opportunity, result);
+      if (!normalized?.terminal) return;
       await recordCryptaraExecutionEvidence({
         source: 'zero_capital',
         opportunityId: opportunity.id,
@@ -1460,7 +733,7 @@ export class AutonomousZeroCapitalEngine {
         symbol: `${opportunity.inputToken}/${opportunity.outputToken}`,
         strategy: opportunity.type,
         success: result.success,
-        expectedProfitUsd: normalized.predicted.profitUsd ?? this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+        expectedProfitUsd: normalized.predicted.profitUsd ?? this.toUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals),
         realizedProfitUsd: normalized.realized.netProfitUsd,
         feeUsd: normalized.realized.gasUsd,
         slippageBps: normalized.realized.slippageBps,
@@ -1472,753 +745,62 @@ export class AutonomousZeroCapitalEngine {
         settlementConfirmed: normalized.settlementConfirmed,
         provenance: normalized.provenance,
         settlement: normalized,
-      }, this.cryptaraGateEvidence.get(opportunity.id));
+      });
     } catch {
-      // Cryptara feedback is best-effort only.
-    } finally {
-      this.cryptaraGateEvidence.delete(opportunity.id);
+      // Best-effort learning feedback; the on-chain receipt remains authoritative.
     }
   }
 
-  /**
-   * Execution Loop: Execute profitable opportunities with ZERO upfront capital
-   */
-  private startExecutionLoop(): void {
-    if (this.executionInterval) {
-      clearInterval(this.executionInterval);
-      this.executionInterval = null;
-    }
-
-    const executionCycle = async () => {
-      if (!this.state.isRunning || this.isExecuting) return;
-
-      // Get best opportunity
-      const opportunity = this.opportunityQueue.shift();
-      if (!opportunity) return;
-
-      // Verify opportunity is still valid
-      if (Date.now() > opportunity.expiresAt) {
-        logger.debug('[ZeroCapitalEngine] Opportunity expired', {
-          component: 'ZeroCapitalEngine',
-          id: opportunity.id,
-        });
-        return;
+  private async refreshWalletResources(): Promise<WalletResourceSnapshot[]> {
+    const configured = resolveConfiguredWalletAddress();
+    const snapshots = await Promise.all(Array.from(this.providers.entries()).map(async ([chain, provider]) => {
+      const wallet = this.executionWallets.get(chain);
+      const address = wallet?.address || configured.address;
+      const observedAt = Date.now();
+      if (!address) {
+        return {
+          chain,
+          nativeBalance: '0',
+          assetBalances: {},
+          observedAt,
+          status: 'unavailable' as const,
+          error: configured.reason || 'No execution wallet is configured',
+        };
       }
-
-      this.isExecuting = true;
-      let result: ExecutionResult;
       try {
-        result = await this.executeZeroCapitalArbitrage(opportunity);
+        const balance = await provider.getBalance(address);
+        return {
+          chain,
+          walletAddress: address,
+          walletAddressSource: wallet ? 'execution_wallet' as const : configured.source || undefined,
+          nativeBalance: balance.toString(),
+          assetBalances: {},
+          observedAt,
+          status: 'available' as const,
+        };
       } catch (error) {
-        result = {
-          success: false,
+        return {
+          chain,
+          walletAddress: address,
+          walletAddressSource: wallet ? 'execution_wallet' as const : configured.source || undefined,
+          nativeBalance: '0',
+          assetBalances: {},
+          observedAt,
+          status: 'unavailable' as const,
           error: error instanceof Error ? error.message : String(error),
         };
-      } finally {
-        this.isExecuting = false;
       }
-
-      await this.recordCryptaraExecutionFeedback(opportunity, result);
-
-      // Update state
-      this.state.totalTrades++;
-      if (result.success && result.profitVerified) {
-        this.state.successfulTrades++;
-        if (result.profit) {
-          this.state.totalProfit += result.profit;
-        }
-        this.state.lastTradeTimestamp = Date.now();
-        
-        logger.info('[ZeroCapitalEngine] ✅ PROFIT CAPTURED', {
-          component: 'ZeroCapitalEngine',
-          profit: result.profitVerified
-            ? ethers.utils.formatUnits((result.profit || 0).toString(), opportunity.inputTokenDecimals)
-            : 'unverified',
-          txHash: result.txHash,
-          gasUsed: result.gasUsed?.toString(),
-          capitalUsed: 'ZERO',
-        });
-      } else if (result.success) {
-        this.state.includedUnverifiedTrades++;
-        getCryptocrawlGovernance().pause('system', 'zero_capital_profit_unverified');
-        logger.warn('[ZeroCapitalEngine] Bundle inclusion observed but profit is not receiver-verified', {
-          component: 'ZeroCapitalEngine',
-          txHash: result.txHash,
-          capitalUsed: 'ZERO',
-        });
-      } else {
-        this.state.failedTrades++;
-        logger.warn('[ZeroCapitalEngine] Trade failed (no loss - atomic revert)', {
-          component: 'ZeroCapitalEngine',
-          error: result.error,
-          capitalLost: 'ZERO',
-        });
-      }
-    };
-
-    // Check for execution opportunities every 500ms, without overlapping submissions.
-    this.executionInterval = setInterval(() => {
-      void executionCycle();
-    }, 500);
+    }));
+    this.state.walletResources = snapshots;
+    return snapshots;
   }
 
-  /**
-   * Scan a specific chain for arbitrage opportunities
-   */
-  private async scanChainForOpportunities(
-    chain: SupportedChain,
-    provider: providers.JsonRpcProvider
-  ): Promise<ZeroCapitalOpportunity[]> {
-    const opportunities: ZeroCapitalOpportunity[] = [];
-
-    if (this.executionEnabled && chain !== 'ethereum' && chain !== 'europa') {
-      return opportunities;
-    }
-
-    try {
-      if (this.executionEnabled && chain !== 'europa') {
-        await this.ensureLiveSignalReadiness();
-      }
-
-      // Get current block for timestamp
-      const block = await provider.getBlock('latest');
-      
-      const quotedRoutes = await quoteConfiguredZeroCapitalRoutesForChain(
-        chain,
-        provider,
-        this.configuredRoutes,
-      );
-
-      for (const quotedRoute of quotedRoutes) {
-        const opportunity = this.createOpportunityFromQuotedRoute(quotedRoute, block.timestamp);
-        if (!this.executionEnabled || await this.isCandidateAllowedByCryptara(opportunity, provider)) {
-          opportunities.push(opportunity);
-        }
-      }
-
-    } catch (error) {
-      logger.debug('[ZeroCapitalEngine] Chain scan error', {
-        component: 'ZeroCapitalEngine',
-        chain,
-        error: (error as Error).message,
-      });
-    }
-
-    return opportunities;
+  private toUsd(value: bigint | undefined, decimals: number): number {
+    if (value === undefined) return 0;
+    const amount = Number(ethers.utils.formatUnits(value.toString(), decimals));
+    return Number.isFinite(amount) ? amount : 0;
   }
 
-  private createOpportunityFromQuotedRoute(
-    quotedRoute: QuotedZeroCapitalRoute,
-    blockTimestamp: number,
-  ): ZeroCapitalOpportunity {
-    const routeTtlMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_ROUTE_TTL_MS || 3000));
-    const estimatedExecutionCost =
-      quotedRoute.estimatedGasCostInInputToken +
-      quotedRoute.flashLoanFeeInInputToken +
-      quotedRoute.relayFeeInInputToken;
-
-    return {
-      id: `${quotedRoute.id}-${blockTimestamp}-${Date.now()}`,
-      type: 'arbitrage',
-      chain: quotedRoute.chain,
-      inputToken: quotedRoute.inputToken,
-      outputToken: quotedRoute.inputToken,
-      inputAssetSymbol: quotedRoute.inputAssetSymbol,
-      inputTokenDecimals: quotedRoute.inputTokenDecimals,
-      flashLoanAmount: quotedRoute.amountIn,
-      expectedProfit: quotedRoute.netProfit,
-      grossProfit: quotedRoute.grossProfit,
-      gasEstimate: 0n,
-      estimatedExecutionCostInInputToken: estimatedExecutionCost,
-      estimatedGasCostInInputToken: quotedRoute.estimatedGasCostInInputToken,
-      flashLoanFeeInInputToken: quotedRoute.flashLoanFeeInInputToken,
-      relayFeeInInputToken: quotedRoute.relayFeeInInputToken,
-      expectedSlippageBps: this.getExpectedSlippageBps(quotedRoute.route.length),
-      quoteLatencyMs: quotedRoute.quoteLatencyMs,
-      netProfitBps: quotedRoute.netProfitBps,
-      route: quotedRoute.route.map(step => ({
-        protocol: step.protocol,
-        tokenIn: step.tokenIn,
-        tokenOut: step.tokenOut,
-        amountIn: BigInt(String(step.amountIn)),
-        expectedAmountOut: BigInt(String(step.expectedAmountOut)),
-        fee: step.fee,
-      })),
-      confidence: Math.min(0.99, 0.55 + Math.min(0.44, quotedRoute.netProfitBps / 1000)),
-      timestamp: Date.now(),
-      expiresAt: Date.now() + routeTtlMs,
-    };
-  }
-
-  private getExpectedSlippageBps(routeLegCount: number): number {
-    const minOutputBps = Math.max(
-      9000,
-      Math.min(10000, Number(process.env.ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS || 9990)),
-    );
-    return Math.max(0, routeLegCount * (10000 - minOutputBps));
-  }
-
-  private async ensureLiveSignalReadiness(): Promise<void> {
-    const recheckMs = Math.max(5000, Number(process.env.ZERO_CAPITAL_SIGNAL_RECHECK_MS || 5000));
-    if (this.liveSignalReady && Date.now() - this.lastLiveSignalCheckAt < recheckMs) {
-      return;
-    }
-
-    const cryptara = getCryptara();
-    const readiness = await cryptara.validateLiveSignalReadiness({ strictLive: true });
-    this.liveSignalReady = readiness.liveSignalReady && alchemyIntegration.isReady();
-    this.lastLiveSignalCheckAt = Date.now();
-    if (!this.liveSignalReady) {
-      throw new Error(`Live signal stack degraded: ${readiness.tradingView.detail}; ${readiness.alchemy.detail}`);
-    }
-  }
-
-  private async isCandidateAllowedByCryptara(
-    opportunity: ZeroCapitalOpportunity,
-    provider: providers.JsonRpcProvider,
-  ): Promise<boolean> {
-    const cryptara = getCryptara();
-    const directive = cryptara.getAutonomousDirective();
-    const isEuropa = opportunity.chain === 'europa';
-    const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
-    const maxSlippageBps = Math.max(
-      1,
-      Math.min(directive.maxSlippageBps, Number(process.env.ZERO_CAPITAL_MAX_SLIPPAGE_BPS || 20)),
-    );
-    const maxGasGwei = Math.max(1, Number(process.env.ZERO_CAPITAL_MAX_GAS_GWEI || 60));
-
-    if (!directive.preferredExecutionModes.includes('zero_capital')) {
-      return false;
-    }
-    if (directive.riskBudget === 'defensive' && !directive.preferredChains.includes(opportunity.chain)) {
-      return false;
-    }
-    if (opportunity.expectedSlippageBps > maxSlippageBps) {
-      return false;
-    }
-    if (this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals) < directive.minimumNetProfitUsd) {
-      return false;
-    }
-
-    const [analysis, feeData] = await Promise.all([
-      TradingViewEngine.getAnalysis(process.env.ZERO_CAPITAL_SIGNAL_SYMBOL || 'ETHUSDT', '1h'),
-      provider.getFeeData(),
-    ]);
-    if (TradingViewEngine.getHealthStatus().mode !== 'live') {
-      return false;
-    }
-    const gasGwei = Number(ethers.utils.formatUnits(feeData.maxFeePerGas || feeData.gasPrice || 0, 'gwei'));
-    if (!Number.isFinite(gasGwei) || gasGwei <= 0 || gasGwei > maxGasGwei) {
-      return false;
-    }
-
-    let mempoolActivity = 0;
-    let networkCongestion = 0;
-    if (isEuropa) {
-      if (!this.europaAdapter) return false;
-      const europaHealth = await this.europaAdapter.checkReadiness();
-      if (!europaHealth.some(check => check.healthy)) return false;
-    } else {
-      const mempool = alchemyIntegration.getMempoolAnalysis();
-      const alchemyReadiness = await alchemyIntegration.readinessCheck({ strictLive: true, network: 'ethereum' });
-      if (!alchemyReadiness.ready || !alchemyIntegration.isReady()) {
-        return false;
-      }
-      mempoolActivity = mempool.totalPending;
-      networkCongestion = Math.min(1, mempool.totalPending / 8000);
-    }
-    const routeFeeBps = opportunity.route.reduce((total, leg) => total + leg.fee * 10000, 0);
-    const firstRouteLeg = opportunity.route[0];
-    const lastRouteLeg = opportunity.route[opportunity.route.length - 1];
-    const grossSpreadBps = opportunity.flashLoanAmount > 0n
-      ? Number((opportunity.grossProfit || opportunity.expectedProfit) * 10000n) / Number(opportunity.flashLoanAmount)
-      : Number.NaN;
-    const stageState = stageManager.getState();
-    const gate = cryptara.evaluateMarketGates({
-      chain: opportunity.chain,
-      pairOrSymbol: pair,
-      venue: isEuropa ? 'europa' : 'flashbots',
-      expectedProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
-      volatilityRegime: {
-        liquidityScore: Math.max(0.1, analysis.summary.strength / 100),
-        recentPriceMovement: Math.abs(TradingViewEngine.signalToScore(analysis.summary.signal)) / 100,
-        gasPriceGwei: gasGwei,
-        mempoolActivity,
-        networkCongestion,
-      },
-      venueLatency: {
-        p50Ms: { route_quote: opportunity.quoteLatencyMs },
-        maxP50Ms: Math.max(100, Number(process.env.ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS || 1000)),
-      },
-      feesRebates: Number.isFinite(routeFeeBps) ? { takerFeeBps: routeFeeBps } : undefined,
-      crossVenueFees: {
-        buyVenue: `route:${firstRouteLeg?.protocol || 'unknown'}`,
-        sellVenue: `route:${lastRouteLeg?.protocol || 'unknown'}`,
-        buyTakerFeeBps: (firstRouteLeg?.fee || 0) * 10000,
-        sellTakerFeeBps: (lastRouteLeg?.fee || 0) * 10000,
-        grossSpreadBps,
-      },
-      drawdownCaps: {
-        drawdownPct: stageState.currentDrawdownPercent,
-        maxDrawdownPct: stageManager.getStageConfig().maxDrawdownPercent,
-      },
-      profitReinvestment: {
-        realizedProfitUsd: this.toUsdEstimate(this.state.totalProfit, 6),
-        requestedNotionalUsd: 0,
-        reinvestFraction: 1,
-      },
-      slippage: {
-        expectedSlippageBps: opportunity.expectedSlippageBps,
-        maxSlippageBps,
-      },
-    }, {
-      blockOnUnknownCritical: true,
-      criticalSignals: ['volatilityRegime', 'venueLatency', 'slippage', 'drawdownCaps', 'feesRebates', 'crossVenueFees'],
-    });
-
-    if (gate.actions.requestAutoPause) {
-      getCryptocrawlGovernance().pause('system', gate.actions.autoPauseReason || 'zero_capital_cryptara_gate');
-    }
-
-    if (gate.decision === 'ALLOW') {
-      this.cryptaraGateEvidence.set(opportunity.id, gate);
-    }
-    return gate.decision === 'ALLOW';
-  }
-
-  /**
-   * Execute arbitrage with ZERO upfront capital using flash loans
-   * THIS IS THE CORE ZERO-CAPITAL MECHANISM
-   */
-  private async executeZeroCapitalArbitrage(
-    opportunity: ZeroCapitalOpportunity
-  ): Promise<ExecutionResult> {
-    if (!stageManager.isMarketOperationsAllowed()) {
-      return { success: false, error: 'Market operations are locked behind initial gas readiness or governance state' };
-    }
-    const capitalPlan = await this.assessCapitalHierarchy(opportunity);
-    const chainSnapshot = capitalPlan.chains.find(chain => chain.chain === opportunity.chain);
-    const positionSizing = calculateProgressivePositionSize({
-      requestedNotionalUsd: this.toUsdEstimate(opportunity.flashLoanAmount, opportunity.inputTokenDecimals),
-      availableCapitalUsd: capitalPlan.source === 'wallet' && chainSnapshot
-        ? this.toUsdEstimate(chainSnapshot.assetBalance, opportunity.inputTokenDecimals)
-        : 0,
-      expectedNetProfitUsd: this.toUsdEstimate(opportunity.expectedProfit, opportunity.inputTokenDecimals),
-      expectedCostUsd: this.toUsdEstimate(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals),
-      expectedSlippageBps: opportunity.expectedSlippageBps,
-      liquidityScore: opportunity.confidence,
-      volatilityScore: Math.min(1, opportunity.expectedSlippageBps / 100),
-      providerHealthy: this.providers.has(opportunity.chain),
-      zeroCapitalAvailable: capitalPlan.source === 'europa-zero-capital' || capitalPlan.source === 'flashbots-zero-capital',
-    });
-    if (!positionSizing.approved) {
-      return { success: false, error: `Progressive position sizing deferred execution: ${positionSizing.reasons.join('; ')}` };
-    }
-    const beamValidation = await this.validateCapitalPlanThroughBeam(capitalPlan, opportunity, positionSizing);
-    if (!beamValidation.approved) {
-      return { success: false, error: `Beam rejected capital plan: ${beamValidation.reason}` };
-    }
-
-    const governance = getCryptocrawlGovernance();
-    const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
-    const venue = opportunity.chain === 'europa' ? 'europa' : 'flashbots';
-    governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opportunity.chain, pair, venue });
-    governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair, venue });
-    governance.recordExecutionAttempt();
-
-    if (capitalPlan.source === 'wallet') {
-      return {
-        success: false,
-        error: 'Wallet capital is sufficient, but this Zero Capital route has no verified wallet-funded execution adapter; opportunity deferred without invoking a more complex capital mechanism',
-      };
-    }
-
-    if (capitalPlan.source === 'europa-zero-capital') {
-      return this.executeWithEuropa(opportunity);
-    }
-
-    if (capitalPlan.source !== 'flashbots-zero-capital' || opportunity.chain !== 'ethereum') {
-      return {
-        success: false,
-        error: `Capital hierarchy deferred ${opportunity.chain}: ${capitalPlan.reasons.join('; ')}`,
-      };
-    }
-
-    if (!this.flashbotsProvider || !this.authSigner) {
-      return {
-        success: false,
-        error: 'True zero-capital execution requires an initialized Flashbots provider and auth signer',
-      };
-    }
-
-    return this.executeWithFlashbots(opportunity);
-  }
-
-  private async assessCapitalHierarchy(opportunity: ZeroCapitalOpportunity): Promise<CapitalHierarchyPlan> {
-    await this.refreshWalletResources();
-    const provider = this.providers.get(opportunity.chain);
-    const gasPrice = provider
-      ? (await provider.getFeeData()).maxFeePerGas || (await provider.getFeeData()).gasPrice || BigNumber.from(0)
-      : BigNumber.from(0);
-    const conservativeGasLimit = BigInt(Math.max(21_000, Number(process.env.ZERO_CAPITAL_WALLET_GAS_LIMIT || 500_000)));
-    const gasRequirement = opportunity.gasEstimate > 0n
-      ? opportunity.gasEstimate
-      : BigInt(gasPrice.toString()) * conservativeGasLimit;
-    const assetRequired = opportunity.flashLoanAmount + opportunity.estimatedExecutionCostInInputToken;
-    const requirements: ChainFundingRequirement[] = [{
-      chain: opportunity.chain,
-      assetToken: opportunity.inputToken,
-      assetRequired,
-      nativeGasRequired: gasRequirement,
-      bridgeNativeRequired: 0n,
-      destinationNativeRequired: 0n,
-      nativeSafetyReserve: 0n,
-      assetSafetyReserve: 0n,
-    }];
-    const europaEligible = opportunity.chain === 'europa' &&
-      !!this.europaAdapter &&
-      !!process.env.ZERO_CAPITAL_EUROPA_RECEIVER?.trim() &&
-      !!process.env.ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH?.trim();
-    const flashbotsEligible = opportunity.chain === 'ethereum' && !!this.flashbotsProvider && !!this.executionWallets.get('ethereum');
-
-    return this.capitalHierarchy.assess({
-      walletAddress: this.executionWallets.get(opportunity.chain)?.address,
-      providers: this.providers,
-      requirements,
-      alternatives: {
-        europaEligible,
-        flashbotsEligible,
-        europaReason: europaEligible ? undefined : 'Europa zero-capital prerequisites are unavailable for this route',
-        flashbotsReason: flashbotsEligible ? undefined : 'Flashbots zero-capital prerequisites are unavailable for this route',
-      },
-    });
-  }
-
-  private async validateCapitalPlanThroughBeam(
-    plan: CapitalHierarchyPlan,
-    opportunity: ZeroCapitalOpportunity,
-    positionSizing: PositionSizingDecision,
-  ): Promise<{ approved: boolean; reason: string }> {
-    if (!computationalBeam.isOperational()) {
-      await computationalBeam.initialize();
-    }
-    const workload: ComputeWorkload<{ plan: CapitalHierarchyPlan; opportunityId: string; positionSizing: PositionSizingDecision }, { approved: boolean; reason: string }> = {
-      id: `capital-hierarchy:${opportunity.id}`,
-      type: 'CAPITAL_HIERARCHY_VALIDATION',
-      input: { plan, opportunityId: opportunity.id, positionSizing },
-      timeoutMs: Math.max(1_000, Number(process.env.ZERO_CAPITAL_BEAM_VALIDATION_TIMEOUT_MS || 10_000)),
-      execute: ({ plan: candidatePlan, positionSizing: candidateSizing }) => {
-        if (candidatePlan.source === 'defer') {
-          return { approved: false, reason: candidatePlan.reasons.join('; ') || 'No complete capital path is available' };
-        }
-        if (candidatePlan.source === 'wallet' && !candidatePlan.walletSufficient) {
-          return { approved: false, reason: 'Wallet path selected without complete lifecycle funding' };
-        }
-        if (!candidateSizing.approved || candidateSizing.proposedNotionalUsd <= 0) {
-          return { approved: false, reason: 'Position sizing did not authorize an executable exposure' };
-        }
-        return { approved: true, reason: `Beam validated ${candidatePlan.source} capital path` };
-      },
-      validate: result => typeof result.approved === 'boolean' && typeof result.reason === 'string',
-    };
-    const execution = await computationalBeam.executeCrawlerTask(
-      CrawlerStrategy.ARBITRAGE,
-      { opportunityId: opportunity.id, capitalSource: plan.source, proposedNotionalUsd: positionSizing.proposedNotionalUsd },
-      { timeout: workload.timeoutMs, workload },
-    );
-    return execution.result as { approved: boolean; reason: string };
-  }
-
-  private async executeWithEuropa(opportunity: ZeroCapitalOpportunity): Promise<ExecutionResult> {
-    const adapter = this.europaAdapter;
-    const executionWallet = this.executionWallets.get('europa');
-    if (!adapter || !executionWallet) {
-      return { success: false, error: 'Europa adapter is not initialized with a trusted signer' };
-    }
-
-    const receiver = process.env.ZERO_CAPITAL_EUROPA_RECEIVER?.trim() || '';
-    const receiverCodeHash = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH?.trim() || '';
-    const balancerVault = process.env.ZERO_CAPITAL_EUROPA_BALANCER_VAULT?.trim() || '';
-    const configuredReceiverKind = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND?.trim();
-    const receiverKind: 'sushi-v3' | 'balancer' = configuredReceiverKind === 'balancer' ? 'balancer' : 'sushi-v3';
-    const profitRecipient = process.env.ZERO_CAPITAL_EUROPA_PROFIT_RECIPIENT?.trim() || executionWallet.address;
-    if (profitRecipient.toLowerCase() !== executionWallet.address.toLowerCase()) {
-      return { success: false, error: 'Europa bootstrap profit recipient must be the trusted execution wallet; an externally funded relayer is not a source of bootstrap capital' };
-    }
-
-    try {
-      const capitalState = await this.capitalProvenance.getOrCreate(this.capitalScope);
-      if (capitalState.lifecycle !== 'ZERO_GAS_EXECUTION_READY') {
-        return { success: false, error: `Europa bootstrap is not ready in capital lifecycle state ${capitalState.lifecycle}` };
-      }
-      const payload = receiverKind === 'sushi-v3'
-        ? await buildEuropaSushiV3FlashPayload({
-          receiver,
-          flashPool: EUROPA_SUSHI.pools.usdcSkl,
-          flashToken: EUROPA_SUSHI.tokens.usdc,
-          flashAmount: opportunity.flashLoanAmount.toString(),
-          legs: opportunity.route.map(step => ({
-            tokenIn: step.tokenIn,
-            tokenOut: step.tokenOut,
-            amountIn: step.amountIn.toString(),
-            pool: undefined,
-          })),
-          minProfit: opportunity.expectedProfit.toString(),
-          profitRecipient,
-        })
-        : buildFlashLoanReceiverPayloadFromPlan(buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
-          receiver,
-          profitRecipient,
-        }));
-      await this.capitalProvenance.markAtomicExecutionPending(this.capitalScope, `opportunity:${opportunity.id}`);
-      const configuredPowWorkers = Number(process.env.ZERO_CAPITAL_EUROPA_POW_WORKERS || '');
-      const proof = await adapter.execute({
-        opportunityId: opportunity.id,
-        receiver,
-        receiverCodeHash,
-        balancerVault,
-        receiverKind,
-        sushiV3Factory: receiverKind === 'sushi-v3' ? EUROPA_SUSHI.v3Factory : undefined,
-        inputToken: opportunity.inputToken,
-        profitRecipient,
-        maxExternalProfitRecipientBalance: process.env.ZERO_CAPITAL_EUROPA_MAX_EXTERNAL_PROFIT_RECIPIENT_BALANCE || '0',
-        payload,
-        maxExternalNativeBalanceWei: process.env.ZERO_CAPITAL_EUROPA_MAX_EXTERNAL_NATIVE_BALANCE_WEI || '0',
-        maxExternalInputBalance: process.env.ZERO_CAPITAL_EUROPA_MAX_EXTERNAL_INPUT_BALANCE || '0',
-        externalGasPow: {
-          difficulty: (await resolveEuropaExternalGasDifficulty(this.providers.get('europa')!)).difficulty,
-          maxAttempts: Math.max(1, Number(process.env.ZERO_CAPITAL_EUROPA_POW_MAX_ATTEMPTS || 250_000)),
-          workerCount: Number.isInteger(configuredPowWorkers) && configuredPowWorkers > 0 ? configuredPowWorkers : undefined,
-        },
-      });
-      if (proof.success && proof.transactionHash && proof.executionKey && proof.realizedProfit && proof.realizedProfit > 0n && proof.startingNativeBalanceWei === 0n && proof.startingInputBalance === 0n) {
-        await this.capitalProvenance.markAtomicExecutionPending(this.capitalScope, proof.executionKey);
-        await this.capitalProvenance.recordVerifiedBootstrapProfit({
-          scope: this.capitalScope,
-          executionKey: proof.executionKey,
-          transactionHash: proof.transactionHash,
-          chain: 'europa',
-          asset: opportunity.inputToken,
-          residualProfit: proof.realizedProfit.toString(),
-          zeroMonetaryGasVerified: proof.zeroMonetaryGasVerified,
-          zeroExternalNativeCapitalVerified: true,
-          zeroExternalInputCapitalVerified: true,
-          sourceRecipient: proof.profitRecipient,
-          sourceRecipientBalanceBeforeBaseUnits: proof.profitRecipientStartingInputBalance?.toString(),
-          sourceRecipientBalanceAfterBaseUnits: proof.profitRecipientEndingInputBalance?.toString(),
-        });
-      } else if (!proof.transactionHash) {
-        await this.capitalProvenance.markZeroGasExecutionReady(this.capitalScope);
-      } else if (!proof.success) {
-        await this.capitalProvenance.markRecoveryRequired(this.capitalScope);
-      }
-      const executionResult: ExecutionResult = {
-        success: proof.success,
-        txHash: proof.transactionHash,
-        profit: proof.realizedProfit,
-        profitVerified: proof.success && proof.zeroMonetaryGasVerified,
-        gasUsed: proof.gasUsed,
-        receiptStatus: proof.receiptStatus,
-        nativeFeeWei: proof.nativeFeeWei,
-        profitRecipient: proof.profitRecipient,
-        profitRecipientStartingInputBalance: proof.profitRecipientStartingInputBalance,
-        profitRecipientEndingInputBalance: proof.profitRecipientEndingInputBalance,
-        zeroMonetaryGasVerified: proof.zeroMonetaryGasVerified,
-        error: proof.error,
-        blockNumber: proof.blockNumber,
-      };
-      executionResult.normalized = this.normalizeZeroCapitalSettlement(opportunity, executionResult);
-      return executionResult;
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
-    }
-  }
-
-  /**
-   * Execute using Flashbots - COMPLETELY GASLESS
-   * The miner gets paid from the arbitrage profits, not from our wallet
-   */
-  private async executeWithFlashbots(
-    opportunity: ZeroCapitalOpportunity
-  ): Promise<ExecutionResult> {
-    if (!this.flashbotsProvider || !this.authSigner) {
-      return { success: false, error: 'Flashbots not initialized' };
-    }
-
-    const executionWallet = this.executionWallets.get('ethereum');
-    if (!executionWallet) {
-      return { success: false, error: 'WALLET_PRIVATE_KEY is required for zero-capital flashbots execution' };
-    }
-
-    try {
-      const provider = this.providers.get('ethereum')!;
-      const blockNumber = await provider.getBlockNumber();
-      
-      // Build the flash-loan receiver execution payload
-      const executionPlan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
-        profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || executionWallet.address,
-      });
-      const flashLoanPayload = buildFlashLoanReceiverPayloadFromPlan(executionPlan);
-      
-      // Create Flashbots bundle
-      // The bundle atomically executes:
-      // 1. Flash loan borrow
-      // 2. Buy on DEX A
-      // 3. Sell on DEX B  
-      // 4. Repay flash loan + fee
-      // 5. Pay miner bribe from remaining profit
-      
-      const bundle: (FlashbotsBundleTransaction | FlashbotsBundleRawTransaction)[] = [
-        {
-          signer: executionWallet,
-          transaction: {
-            to: flashLoanPayload.to,
-            data: flashLoanPayload.data,
-            value: BigNumber.from(flashLoanPayload.value),
-            gasLimit: BigNumber.from(flashLoanPayload.gasLimit),
-            maxFeePerGas: await this.getBoundedFlashbotsMaxFee(provider),
-            maxPriorityFeePerGas: await this.getBoundedFlashbotsPriorityFee(provider),
-            type: 2,
-            chainId: 1,
-          },
-        } as FlashbotsBundleTransaction,
-      ];
-
-      // Simulate bundle first
-      const simulation = await this.flashbotsProvider.simulate(bundle as any, blockNumber + 1);
-      
-      if ('error' in simulation) {
-        return { success: false, error: `Simulation failed: ${simulation.error.message}` };
-      }
-      const simulatedGasUsed = BigNumber.from(simulation.totalGasUsed || 0);
-      const gasLimit = BigNumber.from(flashLoanPayload.gasLimit);
-      if (simulatedGasUsed.gt(gasLimit)) {
-        return {
-          success: false,
-          error: `Flashbots simulation used ${simulatedGasUsed.toString()} gas, exceeding configured receiver gas limit ${gasLimit.toString()}`,
-        };
-      }
-
-      // Submit bundle
-      const bundleSubmission = await this.flashbotsProvider.sendBundle(bundle as any, blockNumber + 1);
-      
-      if ('error' in bundleSubmission) {
-        return { success: false, error: `Bundle submission failed: ${bundleSubmission.error.message}` };
-      }
-
-      // Wait for inclusion
-      const resolution = await this.waitForBundleResolution(bundleSubmission);
-      
-      if (resolution === FlashbotsBundleResolution.BundleIncluded) {
-        const receipts = await bundleSubmission.receipts();
-        const receiverReceipt = receipts.find(receipt =>
-          receipt && receipt.to?.toLowerCase() === flashLoanPayload.to.toLowerCase(),
-        );
-        if (!receiverReceipt || receiverReceipt.status !== 1) {
-          return { success: false, error: 'Flashbots reported inclusion but the receiver transaction receipt is missing or reverted' };
-        }
-
-        const realizedProfit = this.extractReceiverProfit(receiverReceipt, flashLoanPayload.to);
-        if (realizedProfit === null) {
-          return {
-            success: false,
-            txHash: receiverReceipt.transactionHash,
-            error: 'Included receiver transaction did not emit FlashLoanExecuted',
-          };
-        }
-
-        this.state.gaslessTransactions++;
-        const executionResult: ExecutionResult = {
-          success: true,
-          txHash: receiverReceipt.transactionHash,
-          profit: realizedProfit,
-          profitVerified: true,
-          gasUsed: BigInt(receiverReceipt.gasUsed.toString()),
-          receiptStatus: 1,
-          blockNumber: receiverReceipt.blockNumber,
-        };
-        executionResult.normalized = this.normalizeZeroCapitalSettlement(opportunity, executionResult);
-        return executionResult;
-      } else {
-        return { success: false, error: `Bundle not included (resolution=${resolution})` };
-      }
-
-    } catch (error) {
-      return { success: false, error: (error as Error).message };
-    }
-  }
-
-  private async getBoundedFlashbotsMaxFee(provider: providers.JsonRpcProvider): Promise<BigNumber> {
-    const feeData = await provider.getFeeData();
-    const baseFee = feeData.maxFeePerGas || feeData.gasPrice;
-    if (!baseFee || baseFee.lte(0)) {
-      throw new Error('Ethereum fee data is unavailable for Flashbots bundle construction');
-    }
-
-    const feeBufferBps = Math.max(10000, Number(process.env.ZERO_CAPITAL_FLASHBOTS_FEE_BUFFER_BPS || 12000));
-    const maxFeeGwei = Math.max(1, Number(process.env.ZERO_CAPITAL_FLASHBOTS_MAX_FEE_GWEI || 60));
-    const buffered = baseFee.mul(feeBufferBps).div(10000);
-    const cap = ethers.utils.parseUnits(String(maxFeeGwei), 'gwei');
-    if (buffered.gt(cap)) {
-      throw new Error(`Dynamic Flashbots max fee ${ethers.utils.formatUnits(buffered, 'gwei')} gwei exceeds ZERO_CAPITAL_FLASHBOTS_MAX_FEE_GWEI=${maxFeeGwei}`);
-    }
-    return buffered;
-  }
-
-  private async getBoundedFlashbotsPriorityFee(provider: providers.JsonRpcProvider): Promise<BigNumber> {
-    const feeData = await provider.getFeeData();
-    const configuredFallback = ethers.utils.parseUnits(
-      String(Math.max(0, Number(process.env.ZERO_CAPITAL_FLASHBOTS_PRIORITY_FEE_GWEI || 1))),
-      'gwei',
-    );
-    const priorityFee = feeData.maxPriorityFeePerGas || configuredFallback;
-    const maxPriorityGwei = Math.max(0, Number(process.env.ZERO_CAPITAL_FLASHBOTS_MAX_PRIORITY_FEE_GWEI || 3));
-    const cap = ethers.utils.parseUnits(String(maxPriorityGwei), 'gwei');
-    return priorityFee.gt(cap) ? cap : priorityFee;
-  }
-
-  private async waitForBundleResolution(bundleSubmission: {
-    wait: () => Promise<FlashbotsBundleResolution>;
-  }): Promise<FlashbotsBundleResolution> {
-    const timeoutMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_FLASHBOTS_WAIT_TIMEOUT_MS || 45000));
-    let timeout: NodeJS.Timeout | null = null;
-    try {
-      return await Promise.race([
-        bundleSubmission.wait(),
-        new Promise<FlashbotsBundleResolution>((_, reject) => {
-          timeout = setTimeout(() => reject(new Error(`Flashbots bundle wait timed out after ${timeoutMs}ms`)), timeoutMs);
-        }),
-      ]);
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
-  }
-
-  private extractReceiverProfit(
-    receipt: providers.TransactionReceipt,
-    receiverAddress: string,
-  ): bigint | null {
-    for (const logEntry of receipt.logs) {
-      if (logEntry.address.toLowerCase() !== receiverAddress.toLowerCase()) {
-        continue;
-      }
-
-      try {
-        const parsed = FLASH_LOAN_RECEIVER_EVENT_INTERFACE.parseLog(logEntry);
-        if (parsed.name === 'FlashLoanExecuted') {
-          return BigInt(parsed.args.profit.toString());
-        }
-      } catch {
-        // Ignore unrelated receiver logs.
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Stop the engine
-   */
   stop(): void {
     this.state.isRunning = false;
     this.state.fundingCycleActive = false;
@@ -2229,66 +811,27 @@ export class AutonomousZeroCapitalEngine {
     this.initialGasReadyCallback = undefined;
     this.initialGasLostCallback = undefined;
     stageManager.resetInitialGasReadiness();
-    if (this.scanInterval) {
-      clearTimeout(this.scanInterval);
-      this.scanInterval = null;
-    }
-    if (this.executionInterval) {
-      clearInterval(this.executionInterval);
-      this.executionInterval = null;
-    }
-    if (this.fundingInterval) {
-      clearTimeout(this.fundingInterval);
-      this.fundingInterval = null;
-    }
-    if (this.bootstrapInterval) {
-      clearTimeout(this.bootstrapInterval);
-      this.bootstrapInterval = null;
-    }
-    logger.info('[ZeroCapitalEngine] Engine stopped', {
-      component: 'ZeroCapitalEngine',
-      finalStats: {
-        totalProfit: ethers.utils.formatUnits(this.state.totalProfit.toString(), 6),
-        totalTrades: this.state.totalTrades,
-        successRate: this.state.totalTrades > 0 
-          ? (this.state.successfulTrades / this.state.totalTrades * 100).toFixed(2) + '%'
-          : '0%',
-        includedUnverifiedTrades: this.state.includedUnverifiedTrades,
-        gaslessTransactions: this.state.gaslessTransactions,
-      },
-    });
+    if (this.scanTimer) clearTimeout(this.scanTimer);
+    if (this.executionTimer) clearInterval(this.executionTimer);
+    if (this.readinessTimer) clearTimeout(this.readinessTimer);
+    this.scanTimer = null;
+    this.executionTimer = null;
+    this.readinessTimer = null;
   }
 
-  /**
-   * Get current system state
-   */
   getState(): SystemState {
-    return { ...this.state };
+    return {
+      ...this.state,
+      walletResources: this.state.walletResources.map(item => ({ ...item, assetBalances: { ...item.assetBalances } })),
+      initialGasReadiness: {
+        ...this.state.initialGasReadiness,
+        measurements: this.state.initialGasReadiness.measurements.map(item => ({ ...item })),
+        provenance: [...this.state.initialGasReadiness.provenance],
+      },
+    };
   }
 
-  /**
-   * Get formatted stats for API
-   */
-  getStats(): {
-    isRunning: boolean;
-    totalProfit: string;
-    totalTrades: number;
-    successfulTrades: number;
-    includedUnverifiedTrades: number;
-    failedTrades: number;
-    successRate: string;
-    currentOpportunities: number;
-    gaslessTransactions: number;
-    fundingCycleActive: boolean;
-    fundingCycles: number;
-    lastFundingCycleAt: number;
-    lastFundingError?: string;
-    walletResources: WalletResourceSnapshot[];
-    bootstrapState: 'PRE_STAGE_1_BOOTSTRAP' | 'INITIAL_GAS_READY';
-    initialGasReadiness: InitialGasReadiness;
-    marketOperationsEnabled: boolean;
-    capitalRequired: string;
-  } {
+  getStats() {
     return {
       isRunning: this.state.isRunning,
       totalProfit: ethers.utils.formatUnits(this.state.totalProfit.toString(), 6),
@@ -2296,8 +839,8 @@ export class AutonomousZeroCapitalEngine {
       successfulTrades: this.state.successfulTrades,
       includedUnverifiedTrades: this.state.includedUnverifiedTrades,
       failedTrades: this.state.failedTrades,
-      successRate: this.state.totalTrades > 0 
-        ? (this.state.successfulTrades / this.state.totalTrades * 100).toFixed(2) + '%'
+      successRate: this.state.totalTrades > 0
+        ? `${((this.state.successfulTrades / this.state.totalTrades) * 100).toFixed(2)}%`
         : '0%',
       currentOpportunities: this.state.currentOpportunities,
       gaslessTransactions: this.state.gaslessTransactions,
@@ -2305,24 +848,14 @@ export class AutonomousZeroCapitalEngine {
       fundingCycles: this.state.fundingCycles,
       lastFundingCycleAt: this.state.lastFundingCycleAt,
       lastFundingError: this.state.lastFundingError,
+      walletResources: this.state.walletResources,
       bootstrapState: this.state.bootstrapState,
-      initialGasReadiness: {
-        ...this.state.initialGasReadiness,
-        measurements: this.state.initialGasReadiness.measurements.map(measurement => ({ ...measurement })),
-        provenance: [...this.state.initialGasReadiness.provenance],
-      },
+      initialGasReadiness: this.state.initialGasReadiness,
       marketOperationsEnabled: this.state.marketOperationsEnabled,
-      walletResources: this.state.walletResources.map(resource => ({
-        ...resource,
-        assetBalances: { ...resource.assetBalances },
-      })),
-      capitalRequired: 'Measured wallet resources first; verified Europa zero-gas/Beam path next; source-funded Meson/0x native-gas settlement when below threshold; ordinary execution remains governed by stage authority',
+      capitalRequired: 'No $20 native-gas bootstrap; Alchemy sponsors EIP-7702/ERC-4337 execution and Beam/Tara/Monte Carlo gate profitability before submission',
     };
   }
 }
 
-// Singleton instance
 export const zeroCapitalEngine = new AutonomousZeroCapitalEngine();
-
-// Export for use in routes
 export default zeroCapitalEngine;

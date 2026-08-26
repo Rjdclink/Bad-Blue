@@ -1,479 +1,218 @@
-/**
- * Gas Sponsorship Strategy Module
- * 
- * Implements Alchemy Gas Manager integration for sponsored transactions
- * across multiple chains. This enables zero-gas trading operations for
- * approved transaction types.
- * 
- * Supported Chains:
- * - Polygon (MATIC)
- * - Arbitrum (ARB)
- * - Avalanche (AVAX)
- * - BNB Chain (BSC)
- * 
- * @module strategies/gas-sponsorship
- */
+import { BigNumber, Wallet, ethers } from 'ethers';
 
-import { ethers, BigNumber } from 'ethers';
-import { randomUUID } from 'crypto';
-import { multiProviderRpcManager } from '../api/blockchain-providers.js';
+const ALCHEMY_WALLET_API_BASE = 'https://api.g.alchemy.com/v2';
+const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_POLL_MS = 1_000;
+const ALCHEMY_MODULAR_ACCOUNT_V2 = '0x69007702764179f14F51cdce752f4f775d74E139';
 
-// ============================================
-// TYPES & INTERFACES
-// ============================================
-
-export interface GasSponsorConfig {
-  policyId: string;
-  enabled: boolean;
-  supportedChains: ChainConfig[];
-  maxGasPerTx: BigNumber;
-  dailyBudget: number;
-  priorityFeeMultiplier: number;
-}
-
-export interface ChainConfig {
-  chainId: number;
-  name: string;
-  rpcUrl: string;
-  wsUrl: string;
-  nativeToken: string;
-  gasToken: string;
-  sponsorshipEnabled: boolean;
-}
-
-export interface SponsoredTransaction {
-  id: string;
-  chainId: number;
-  from: string;
+export interface SponsoredCall {
   to: string;
   data: string;
-  value: BigNumber;
-  gasLimit: BigNumber;
-  estimatedGasCost: BigNumber;
-  sponsorshipStatus: SponsorshipStatus;
-  txHash?: string;
-  timestamp: number;
+  value?: BigNumber | bigint | string | number;
 }
 
-export type SponsorshipStatus = 
-  | 'pending'
-  | 'sponsored'
-  | 'submitted'
-  | 'confirmed'
-  | 'failed'
-  | 'rejected';
-
-export interface GasSavingsReport {
-  totalSaved: number;
-  sponsoredTxCount: number;
-  avgSavingsPerTx: number;
-  byChain: Record<string, { count: number; saved: number }>;
-  period: { start: Date; end: Date };
+export interface GasSponsorshipReadiness {
+  ready: boolean;
+  reason?: string;
+  provider: 'alchemy-gas-manager';
 }
 
-export interface GasEstimate {
-  gasLimit: BigNumber;
-  maxFeePerGas: BigNumber;
-  maxPriorityFeePerGas: BigNumber;
-  estimatedCostWei: BigNumber;
-  estimatedCostUSD: number;
-  sponsorshipAvailable: boolean;
+export interface SponsoredExecutionResult {
+  callId: string;
+  transactionHash: string;
+  blockNumber?: number;
+  gasUsed?: bigint;
+  receiptStatus: 0 | 1;
 }
 
-// ============================================
-// CHAIN CONFIGURATIONS
-// ============================================
-
-const GAS_POLICY_ID = process.env.ALCHEMY_GAS_POLICY_ID || '';
-
-export const SUPPORTED_CHAINS: ChainConfig[] = [
-  {
-    chainId: 137,
-    name: 'polygon',
-    rpcUrl: process.env.POLYGON_RPC_URL || '',
-    wsUrl: process.env.POLYGON_WS_URL || '',
-    nativeToken: 'MATIC',
-    gasToken: 'MATIC',
-    sponsorshipEnabled: true
-  },
-  {
-    chainId: 42161,
-    name: 'arbitrum',
-    rpcUrl: process.env.ARBITRUM_RPC_URL || '',
-    wsUrl: process.env.ARBITRUM_WS_URL || '',
-    nativeToken: 'ETH',
-    gasToken: 'ETH',
-    sponsorshipEnabled: true
-  },
-  {
-    chainId: 43114,
-    name: 'avalanche',
-    rpcUrl: process.env.AVALANCHE_RPC_URL || '',
-    wsUrl: process.env.AVALANCHE_WS_URL || '',
-    nativeToken: 'AVAX',
-    gasToken: 'AVAX',
-    sponsorshipEnabled: true
-  },
-  {
-    chainId: 56,
-    name: 'bsc',
-    rpcUrl: process.env.BSC_RPC_URL || '',
-    wsUrl: process.env.BSC_WS_URL || '',
-    nativeToken: 'BNB',
-    gasToken: 'BNB',
-    sponsorshipEnabled: true
-  }
-];
-
-// ============================================
-// GAS PRICE ORACLE
-// ============================================
-
-interface GasPriceData {
-  chainId: number;
-  baseFee: BigNumber;
-  priorityFee: BigNumber;
-  maxFee: BigNumber;
-  timestamp: number;
-  blockNumber: number;
+interface JsonRpcEnvelope<T> {
+  result?: T;
+  error?: { code?: number; message?: string; data?: unknown };
 }
 
-const gasPriceCache = new Map<number, GasPriceData>();
+function requireHexAddress(label: string, value: string): string {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(value)) throw new Error(`${label} must be a valid EVM address`);
+  return value;
+}
 
-/**
- * Fetch current gas prices for a chain
- */
-export async function getGasPrice(chainId: number): Promise<GasPriceData | null> {
-  const cached = gasPriceCache.get(chainId);
-  if (cached && Date.now() - cached.timestamp < 12000) { // 12 second cache
-    return cached;
+function toHexValue(value: SponsoredCall['value']): string {
+  if (value === undefined) return '0x0';
+  if (typeof value === 'bigint') return ethers.utils.hexValue(BigNumber.from(value.toString()));
+  return ethers.utils.hexValue(BigNumber.from(value));
+}
+
+function stripEip712Domain(types: Record<string, Array<{ name: string; type: string }>>): Record<string, Array<{ name: string; type: string }>> {
+  const { EIP712Domain: _domain, ...rest } = types;
+  return rest;
+}
+
+export class AlchemyGasSponsorshipManager {
+  private readonly apiKey: string;
+  private readonly policyId: string;
+
+  constructor(environment: NodeJS.ProcessEnv = process.env) {
+    this.apiKey = String(environment.ALCHEMY_API_KEY || '').trim();
+    this.policyId = String(environment.ALCHEMY_GAS_POLICY_ID || '').trim();
   }
 
-  const chain = SUPPORTED_CHAINS.find(c => c.chainId === chainId);
-  if (!chain) return null;
-
-  try {
-    const { result } = await multiProviderRpcManager.execute(chain.name as any, 'gas', async provider => {
-      const [feeData, block] = await Promise.all([provider.getFeeData(), provider.getBlock('latest')]);
-      return { feeData, block };
-    });
-
-    const data: GasPriceData = {
-      chainId,
-      baseFee: result.feeData.gasPrice || BigNumber.from(0),
-      priorityFee: result.feeData.maxPriorityFeePerGas || BigNumber.from(0),
-      maxFee: result.feeData.maxFeePerGas || BigNumber.from(0),
-      timestamp: Date.now(),
-      blockNumber: result.block?.number || 0
-    };
-
-    gasPriceCache.set(chainId, data);
-    return data;
-  } catch (error) {
-    console.error(`[GasSponsor] Failed to fetch gas price for chain ${chainId}:`, error);
-    return null;
-  }
-}
-
-// ============================================
-// GAS SPONSORSHIP MANAGER
-// ============================================
-
-export class GasSponsorshipManager {
-  private policyId: string;
-  private enabled: boolean;
-  private dailyBudget: number;
-  private dailySpent: number;
-  private sponsoredTxs: Map<string, SponsoredTransaction>;
-  private savingsReport: GasSavingsReport;
-
-  constructor(config?: Partial<GasSponsorConfig>) {
-    this.policyId = config?.policyId || GAS_POLICY_ID;
-    this.enabled = config?.enabled ?? !!this.policyId;
-    this.dailyBudget = config?.dailyBudget || 100; // $100 default daily budget
-    this.dailySpent = 0;
-    this.sponsoredTxs = new Map();
-    this.savingsReport = {
-      totalSaved: 0,
-      sponsoredTxCount: 0,
-      avgSavingsPerTx: 0,
-      byChain: {},
-      period: { start: new Date(), end: new Date() }
-    };
-
-    // Initialize chain-specific tracking
-    for (const chain of SUPPORTED_CHAINS) {
-      this.savingsReport.byChain[chain.name] = { count: 0, saved: 0 };
-    }
-  }
-
-  /**
-   * Check if gas sponsorship is available and configured
-   */
   isEnabled(): boolean {
-    // This module has no UserOperation/paymaster submission adapter. A policy ID
-    // alone cannot sponsor a direct EOA transaction, so never advertise this as
-    // a production capability.
-    return this.enabled && !!this.policyId && process.env.NODE_ENV !== 'production';
+    return this.apiKey.length > 0 && this.policyId.length > 0;
   }
 
-  /**
-   * Get the gas policy ID (masked for security)
-   */
-  getPolicyId(): string | null {
-    if (!this.policyId) return null;
-    return `${this.policyId.slice(0, 8)}...${this.policyId.slice(-4)}`;
+  getReadiness(): GasSponsorshipReadiness {
+    if (!this.apiKey) {
+      return { ready: false, provider: 'alchemy-gas-manager', reason: 'ALCHEMY_API_KEY is not configured' };
+    }
+    if (!this.policyId) {
+      return { ready: false, provider: 'alchemy-gas-manager', reason: 'ALCHEMY_GAS_POLICY_ID is not configured' };
+    }
+    return { ready: true, provider: 'alchemy-gas-manager' };
   }
 
-  /**
-   * Check if a chain supports gas sponsorship
-   */
-  isChainSupported(chainId: number): boolean {
-    const chain = SUPPORTED_CHAINS.find(c => c.chainId === chainId);
-    return !!chain?.sponsorshipEnabled;
+  private async rpc<T>(method: string, params: unknown[], timeoutMs = 15_000): Promise<T> {
+    const readiness = this.getReadiness();
+    if (!readiness.ready) throw new Error(readiness.reason || 'Alchemy Gas Manager is not configured');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${ALCHEMY_WALLET_API_BASE}/${this.apiKey}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`Alchemy Wallet API HTTP ${response.status}`);
+      const envelope = await response.json() as JsonRpcEnvelope<T>;
+      if (envelope.error) {
+        throw new Error(`Alchemy Wallet API ${method} failed: ${envelope.error.message || envelope.error.code || 'unknown error'}`);
+      }
+      if (envelope.result === undefined) throw new Error(`Alchemy Wallet API ${method} returned no result`);
+      return envelope.result;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
-  /**
-   * Estimate gas cost and potential savings for a transaction
-   */
-  async estimateGas(
-    chainId: number,
-    to: string,
-    data: string,
-    value: BigNumber = BigNumber.from(0)
-  ): Promise<GasEstimate> {
-    const chain = SUPPORTED_CHAINS.find(c => c.chainId === chainId);
-    if (!chain) {
-      throw new Error(`Chain ${chainId} not supported`);
+  private async signPreparedItem(wallet: Wallet, item: any, expectedChainId: number): Promise<any> {
+    const request = item?.signatureRequest;
+    if (!request) throw new Error('Alchemy prepared call is missing signatureRequest');
+
+    let signature: string;
+    if (request.type === 'personal_sign') {
+      const raw = request.data?.raw;
+      if (typeof raw !== 'string' || !ethers.utils.isHexString(raw)) {
+        throw new Error('Alchemy personal_sign request is missing a valid raw payload');
+      }
+      signature = await wallet.signMessage(ethers.utils.arrayify(raw));
+    } else if (request.type === 'eth_signTypedData_v4') {
+      const typed = request.data;
+      if (!typed?.domain || !typed?.types || typed?.message === undefined) {
+        throw new Error('Alchemy typed-data signature request is incomplete');
+      }
+      signature = await wallet._signTypedData(typed.domain, stripEip712Domain(typed.types), typed.message);
+    } else if (item?.type === 'authorization' || request.type === 'eth_sign') {
+      if (item?.type === 'authorization') {
+        const delegationAddress = String(item?.data?.address || '').toLowerCase();
+        if (delegationAddress !== ALCHEMY_MODULAR_ACCOUNT_V2.toLowerCase()) {
+          throw new Error(`Refusing unexpected EIP-7702 delegation target: ${delegationAddress || 'missing'}`);
+        }
+        if (item?.chainId !== undefined && Number(BigInt(item.chainId)) !== expectedChainId) {
+          throw new Error('Refusing EIP-7702 authorization for an unexpected chain');
+        }
+      }
+      const raw = request.rawPayload || request.data?.raw;
+      if (typeof raw !== 'string' || !ethers.utils.isHexString(raw, 32)) {
+        throw new Error('Alchemy EIP-7702 authorization is missing a 32-byte raw payload');
+      }
+      signature = ethers.utils.joinSignature(wallet._signingKey().signDigest(raw));
+    } else {
+      throw new Error(`Unsupported Alchemy signature request type: ${String(request.type)}`);
     }
 
-    // Estimate gas limit
-    const { result: gasLimit } = await multiProviderRpcManager.execute(chain.name as any, 'contract_calls', provider => provider.estimateGas({ to, data, value }));
-
-    // Get current gas prices
-    const gasPrice = await getGasPrice(chainId);
-    if (!gasPrice) {
-      throw new Error('Failed to fetch gas prices');
-    }
-
-    const estimatedCostWei = gasLimit.mul(gasPrice.maxFee);
-    
-    // Convert to USD (using rough price estimates)
-    const tokenPrices: Record<string, number> = {
-      ETH: 2000,
-      MATIC: 0.8,
-      AVAX: 35,
-      BNB: 300
-    };
-    
-    const tokenPrice = tokenPrices[chain.nativeToken] || 1;
-    const estimatedCostUSD = parseFloat(ethers.utils.formatEther(estimatedCostWei)) * tokenPrice;
-
+    const { signatureRequest: _signatureRequest, ...unsigned } = item;
     return {
-      gasLimit,
-      maxFeePerGas: gasPrice.maxFee,
-      maxPriorityFeePerGas: gasPrice.priorityFee,
-      estimatedCostWei,
-      estimatedCostUSD,
-      sponsorshipAvailable: this.isEnabled() && this.isChainSupported(chainId)
+      ...unsigned,
+      signature: { type: 'secp256k1', data: signature },
     };
   }
 
-  /**
-   * Request gas sponsorship for a transaction
-   */
-  async requestSponsorship(
-    chainId: number,
-    from: string,
-    to: string,
-    data: string,
-    value: BigNumber = BigNumber.from(0)
-  ): Promise<SponsoredTransaction> {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('Gas sponsorship is unavailable: no production paymaster or UserOperation adapter is configured');
+  private async signPreparedCalls(wallet: Wallet, prepared: any, expectedChainId: number): Promise<any> {
+    if (prepared?.type === 'array') {
+      if (!Array.isArray(prepared.data) || prepared.data.length === 0) {
+        throw new Error('Alchemy prepared call array is empty');
+      }
+      return {
+        type: 'array',
+        data: await Promise.all(prepared.data.map((item: any) => this.signPreparedItem(wallet, item, expectedChainId))),
+      };
     }
-    if (!this.isEnabled()) {
-      throw new Error('Gas sponsorship is not enabled');
-    }
+    return this.signPreparedItem(wallet, prepared, expectedChainId);
+  }
 
-    if (!this.isChainSupported(chainId)) {
-      throw new Error(`Chain ${chainId} does not support gas sponsorship`);
-    }
+  async execute(input: {
+    wallet: Wallet;
+    chainId: number;
+    calls: SponsoredCall[];
+    timeoutMs?: number;
+    pollMs?: number;
+  }): Promise<SponsoredExecutionResult> {
+    if (!Number.isSafeInteger(input.chainId) || input.chainId <= 0) throw new Error('chainId must be a positive integer');
+    if (!Array.isArray(input.calls) || input.calls.length === 0) throw new Error('At least one sponsored call is required');
 
-    // Check daily budget
-    const estimate = await this.estimateGas(chainId, to, data, value);
-    if (this.dailySpent + estimate.estimatedCostUSD > this.dailyBudget) {
-      throw new Error('Daily gas sponsorship budget exceeded');
-    }
+    const from = requireHexAddress('wallet.address', input.wallet.address);
+    const calls = input.calls.map((call, index) => ({
+      to: requireHexAddress(`calls[${index}].to`, call.to),
+      data: ethers.utils.hexlify(call.data || '0x'),
+      value: toHexValue(call.value),
+    }));
 
-    const txId = `gs_${Date.now()}_${randomUUID()}`;
-    
-    const sponsoredTx: SponsoredTransaction = {
-      id: txId,
-      chainId,
+    const prepared = await this.rpc<any>('wallet_prepareCalls', [{
+      calls,
       from,
-      to,
-      data,
-      value,
-      gasLimit: estimate.gasLimit,
-      estimatedGasCost: estimate.estimatedCostWei,
-      sponsorshipStatus: 'pending',
-      timestamp: Date.now()
-    };
+      chainId: ethers.utils.hexValue(input.chainId),
+      capabilities: {
+        paymasterService: { policyId: this.policyId },
+      },
+    }]);
 
-    this.sponsoredTxs.set(txId, sponsoredTx);
+    const signed = await this.signPreparedCalls(input.wallet, prepared, input.chainId);
+    const sendResult = await this.rpc<any>('wallet_sendPreparedCalls', [signed]);
+    const callId = String(sendResult?.id || '');
+    if (!ethers.utils.isHexString(callId)) throw new Error('Alchemy wallet_sendPreparedCalls returned an invalid call id');
 
-    // This remains a non-production simulation until a real paymaster adapter exists.
-    await this.processSponsorship(sponsoredTx, estimate);
-
-    return sponsoredTx;
-  }
-
-  /**
-   * Process sponsorship request (simulation)
-   */
-  private async processSponsorship(
-    tx: SponsoredTransaction,
-    estimate: GasEstimate
-  ): Promise<void> {
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Update transaction status
-    tx.sponsorshipStatus = 'sponsored';
-
-    // Track savings
-    const chain = SUPPORTED_CHAINS.find(c => c.chainId === tx.chainId);
-    if (chain) {
-      this.savingsReport.totalSaved += estimate.estimatedCostUSD;
-      this.savingsReport.sponsoredTxCount++;
-      this.savingsReport.avgSavingsPerTx = 
-        this.savingsReport.totalSaved / this.savingsReport.sponsoredTxCount;
-      
-      this.savingsReport.byChain[chain.name].count++;
-      this.savingsReport.byChain[chain.name].saved += estimate.estimatedCostUSD;
+    const deadline = Date.now() + Math.max(5_000, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const pollMs = Math.max(250, input.pollMs ?? DEFAULT_POLL_MS);
+    while (Date.now() < deadline) {
+      const status = await this.rpc<any>('wallet_getCallsStatus', [callId]);
+      const numericStatus = Number(status?.status);
+      if (numericStatus === 200) {
+        const receipts = Array.isArray(status?.receipts) ? status.receipts : [];
+        const receipt = receipts[0];
+        const transactionHash = String(receipt?.transactionHash || status?.transactionHash || '');
+        if (!/^0x[a-fA-F0-9]{64}$/.test(transactionHash)) {
+          throw new Error('Alchemy confirmed the call but returned no transaction hash');
+        }
+        const receiptStatusHex = receipt?.status;
+        const receiptStatus = receiptStatusHex === undefined ? 1 : Number(BigInt(receiptStatusHex));
+        if (receiptStatus !== 1) throw new Error('Alchemy sponsored transaction reverted');
+        const blockNumber = receipt?.blockNumber !== undefined ? Number(BigInt(receipt.blockNumber)) : undefined;
+        const gasUsed = receipt?.gasUsed !== undefined ? BigInt(receipt.gasUsed) : undefined;
+        return { callId, transactionHash, blockNumber, gasUsed, receiptStatus: 1 };
+      }
+      if (numericStatus === 400) throw new Error('Alchemy sponsored call failed or reverted');
+      await new Promise(resolve => setTimeout(resolve, pollMs));
     }
 
-    this.dailySpent += estimate.estimatedCostUSD;
-    this.sponsoredTxs.set(tx.id, tx);
-
-    console.log(`[GasSponsor] Transaction ${tx.id} sponsored. Saved: $${estimate.estimatedCostUSD.toFixed(4)}`);
-  }
-
-  /**
-   * Get savings report
-   */
-  getSavingsReport(): GasSavingsReport {
-    this.savingsReport.period.end = new Date();
-    return { ...this.savingsReport };
-  }
-
-  /**
-   * Get transaction status
-   */
-  getTransactionStatus(txId: string): SponsoredTransaction | undefined {
-    return this.sponsoredTxs.get(txId);
-  }
-
-  /**
-   * Reset daily budget tracking (call at midnight)
-   */
-  resetDailyBudget(): void {
-    this.dailySpent = 0;
-    console.log('[GasSponsor] Daily budget reset');
+    throw new Error(`Alchemy sponsored call timed out after ${Math.max(5_000, input.timeoutMs ?? DEFAULT_TIMEOUT_MS)}ms`);
   }
 }
 
-// ============================================
-// GAS OPTIMIZATION STRATEGIES
-// ============================================
+let singleton: AlchemyGasSponsorshipManager | null = null;
 
-export interface GasOptimizationStrategy {
-  name: string;
-  description: string;
-  applicableChains: number[];
-  estimatedSavings: number; // percentage
-  execute: (tx: SponsoredTransaction) => Promise<SponsoredTransaction>;
+export function getGasSponsorManager(): AlchemyGasSponsorshipManager {
+  if (!singleton) singleton = new AlchemyGasSponsorshipManager();
+  return singleton;
 }
 
-/**
- * Batch multiple transactions to save gas
- */
-export const batchingStrategy: GasOptimizationStrategy = {
-  name: 'transaction_batching',
-  description: 'Batch multiple operations into a single transaction',
-  applicableChains: [137, 42161, 43114, 56],
-  estimatedSavings: 30,
-  async execute(tx) {
-    // In production, this would batch multiple txs
-    return tx;
-  }
-};
-
-/**
- * Use off-peak gas prices
- */
-export const timingStrategy: GasOptimizationStrategy = {
-  name: 'optimal_timing',
-  description: 'Execute transactions during low gas periods',
-  applicableChains: [137, 42161, 43114, 56],
-  estimatedSavings: 20,
-  async execute(tx) {
-    // In production, this would schedule for optimal gas times
-    return tx;
-  }
-};
-
-/**
- * Use L2 rollups when possible
- */
-export const l2Strategy: GasOptimizationStrategy = {
-  name: 'l2_optimization',
-  description: 'Route through L2 rollups for cheaper execution',
-  applicableChains: [42161], // Arbitrum
-  estimatedSavings: 90,
-  async execute(tx) {
-    // Already on L2, no changes needed
-    return tx;
-  }
-};
-
-/**
- * Optimize calldata encoding
- */
-export const calldataStrategy: GasOptimizationStrategy = {
-  name: 'calldata_optimization',
-  description: 'Compress and optimize transaction calldata',
-  applicableChains: [137, 42161, 43114, 56],
-  estimatedSavings: 15,
-  async execute(tx) {
-    // In production, this would optimize calldata
-    return tx;
-  }
-};
-
-// ============================================
-// SINGLETON INSTANCE
-// ============================================
-
-let gasSponsorManager: GasSponsorshipManager | null = null;
-
-export function getGasSponsorManager(): GasSponsorshipManager {
-  if (!gasSponsorManager) {
-    gasSponsorManager = new GasSponsorshipManager();
-  }
-  return gasSponsorManager;
-}
-
-// ============================================
-// EXPORTS
-// ============================================
-
-export const gasStrategies = [
-  batchingStrategy,
-  timingStrategy,
-  l2Strategy,
-  calldataStrategy
-];
-
-export default GasSponsorshipManager;
+export default AlchemyGasSponsorshipManager;
