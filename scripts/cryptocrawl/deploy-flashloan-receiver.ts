@@ -228,7 +228,8 @@ export async function deployFlashLoanReceiver(
   return deploymentRecord;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isDirectInvocation = /(?:^|\/)deploy-flashloan-receiver\.(?:ts|js)$/.test(process.argv[1] || '');
+if (isDirectInvocation) {
   deployFlashLoanReceiver().catch(error => {
     console.error('[deploy-flashloan-receiver] failed:', error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
