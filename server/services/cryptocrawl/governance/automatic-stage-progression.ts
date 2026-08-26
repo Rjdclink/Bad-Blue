@@ -13,6 +13,11 @@ import { profitLadder } from './profit-ladder.js';
 import { riskGovernor } from './risk-governor.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
+import { ensureTelemetryBootstrap } from '../integration/telemetry-bootstrap.js';
+
+// Start read-only blockchain telemetry as soon as the governed progression module is loaded.
+// The promise is retained and awaited by lifecycle evaluations so startup remains idempotent.
+const telemetryBootstrap = ensureTelemetryBootstrap();
 
 function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>): AutomaticAdvancementEvidence {
   const ranking = getCryptara().getPerformanceRanking();
@@ -65,6 +70,7 @@ function rankingToEvidence(ranking: CryptaraPerformanceRanking): AutomaticAdvanc
 export async function evaluateAutomaticStageProgression(
   gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
 ): Promise<AutomaticAdvancementResult> {
+  await telemetryBootstrap;
   await stageManager.recordProfitLadderState(profitLadder.exportState());
   return stageManager.evaluateAutomaticAdvancement(toAutomaticEvidence(gate));
 }
@@ -73,6 +79,7 @@ export async function recordCryptaraExecutionEvidence(
   feedback: CryptaraExecutionFeedback,
   gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
 ): Promise<AutomaticAdvancementResult> {
+  await telemetryBootstrap;
   if (!feedback.settlement || feedback.settlement.terminal !== true) {
     throw new Error('Execution evidence requires a terminal normalized settlement');
   }
