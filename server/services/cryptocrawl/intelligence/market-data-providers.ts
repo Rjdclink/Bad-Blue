@@ -183,7 +183,7 @@ class MarketDataProviders {
           gasPrice: typeof payload.transaction.gasPrice === 'string' ? payload.transaction.gasPrice : undefined,
         } : undefined,
         quoteKind: executable ? 'quote' : 'price',
-        executable: executable && typeof payload?.transaction?.to === 'string' && typeof payload.transaction?.data === 'string',
+        executable: executable && typeof payload?.transaction?.to === 'string' && typeof payload?.transaction?.data === 'string',
         observedAt: Date.now(),
         source: '0x',
       } : null;
