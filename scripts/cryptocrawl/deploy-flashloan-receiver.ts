@@ -145,27 +145,37 @@ export async function deployFlashLoanReceiver(
     const { difficulty, source } = await resolveEuropaExternalGasDifficulty(provider);
     const maxAttempts = Math.max(1, Number(process.env.ZERO_CAPITAL_EUROPA_DEPLOY_POW_MAX_ATTEMPTS || 1_000_000));
     const workloadId = `deploy:${artifact.contractName}:${wallet.address}:${nonce}`;
+    const deploymentData = utils.arrayify(deployTransaction.data || '0x');
+    let requiredExternalGas = 53_000n;
+    for (const byte of deploymentData) {
+      requiredExternalGas += byte === 0 ? 4n : 16n;
+    }
     let gasPrice: BigNumber | undefined;
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const candidate = deriveSkalePowCandidate(workloadId, 0, 1, attempt);
       const externalGas = calculateSkaleExternalGas(wallet.address, nonce, candidate, difficulty);
-      if (externalGas < BigInt(gasLimit.toString())) continue;
-      gasPrice = BigNumber.from(candidate.toString());
-      break;
+      if (externalGas < requiredExternalGas) continue;
+
+      const candidateGasPrice = BigNumber.from(candidate.toString());
+      try {
+        const verifiedEstimate = await provider.estimateGas({
+          ...deployTransaction,
+          from: wallet.address,
+          gasPrice: candidateGasPrice,
+        });
+        if (verifiedEstimate.gt(gasLimit)) {
+          throw new Error(`Europa deployment estimate ${verifiedEstimate.toString()} exceeds bounded gas limit ${gasLimit.toString()}`);
+        }
+        gasPrice = candidateGasPrice;
+        break;
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('Europa deployment estimate ')) throw error;
+      }
     }
 
     if (!gasPrice) {
       throw new Error(`SKALE external-gas proof not found in ${maxAttempts} attempts for Europa receiver deployment`);
-    }
-
-    const verifiedEstimate = await provider.estimateGas({
-      ...deployTransaction,
-      from: wallet.address,
-      gasPrice,
-    });
-    if (verifiedEstimate.gt(gasLimit)) {
-      throw new Error(`Europa deployment estimate ${verifiedEstimate.toString()} exceeds bounded gas limit ${gasLimit.toString()}`);
     }
 
     const signedTransaction = await wallet.signTransaction({
