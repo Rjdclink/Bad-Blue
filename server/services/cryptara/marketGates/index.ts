@@ -13,12 +13,17 @@ export class CryptaraMarketGateEngine extends BaseCryptaraMarketGateEngine {
     lastGateContext = { ...context };
     lastGateConfig = { ...config, criticalSignals: config.criticalSignals ? [...config.criticalSignals] : undefined };
 
+    // Pair-specific gates must only consume fee evidence for that pair. Generic
+    // market-cycle gates have no pairOrSymbol, so use the freshest measured
+    // cross-venue context across the actively verified universe instead of
+    // leaving feesRebates/crossVenueFees permanently unknown.
     const measuredFeeContext = context.pairOrSymbol
       ? arbitrageVerifier.getBestCrossVenueFeeContext([context.pairOrSymbol])
-      : null;
+      : arbitrageVerifier.getBestCrossVenueFeeContext();
 
     const enrichedContext: CryptaraMarketGateContext = {
       ...context,
+      timeOfDay: context.timeOfDay ?? { utcHour: new Date().getUTCHours() },
       feesRebates: context.feesRebates ?? (measuredFeeContext ? {
         takerFeeBps: measuredFeeContext.buyTakerFeeBps + measuredFeeContext.sellTakerFeeBps,
       } : undefined),
