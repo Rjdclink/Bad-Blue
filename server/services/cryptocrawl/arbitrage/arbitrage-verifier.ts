@@ -53,6 +53,17 @@ export interface LiveQuoteValidation {
   streamStats?: Readonly<CexOrderBookStreamStats>;
 }
 
+export interface CrossVenueFeeContext {
+  symbol: string;
+  observedAt: number;
+  buyVenue: QuoteVenue;
+  sellVenue: QuoteVenue;
+  buyTakerFeeBps: number;
+  sellTakerFeeBps: number;
+  grossSpreadBps: number;
+  netSpreadAfterFeesBps: number;
+}
+
 export interface FeeModel {
   takerFeeBps: number;
 }
@@ -301,6 +312,7 @@ function overrideEvidence(venue: QuoteVenue, symbol: string, takerFeeBps: number
 export class ArbitrageVerifier {
   private lastLiveQuoteValidation: LiveQuoteValidation | null = null;
   private liveQuoteValidations = new Map<string, LiveQuoteValidation>();
+  private crossVenueFeeContexts = new Map<string, CrossVenueFeeContext>();
 
   getLastLiveQuoteValidation(): Readonly<LiveQuoteValidation> | null {
     return this.lastLiveQuoteValidation ? { ...this.lastLiveQuoteValidation } : null;
@@ -308,6 +320,18 @@ export class ArbitrageVerifier {
 
   getLiveQuoteValidations(): ReadonlyArray<Readonly<LiveQuoteValidation>> {
     return [...this.liveQuoteValidations.values()].map(validation => ({ ...validation }));
+  }
+
+  getBestCrossVenueFeeContext(symbols?: readonly string[]): Readonly<CrossVenueFeeContext> | null {
+    const allowed = symbols && symbols.length > 0
+      ? new Set(symbols.map(symbol => symbol.trim().toUpperCase()))
+      : null;
+    const maxAgeMs = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000));
+    const now = Date.now();
+    const contexts = [...this.crossVenueFeeContexts.values()]
+      .filter(context => (!allowed || allowed.has(context.symbol)) && now - context.observedAt <= maxAgeMs)
+      .sort((left, right) => right.netSpreadAfterFeesBps - left.netSpreadAfterFeesBps);
+    return contexts[0] ? { ...contexts[0] } : null;
   }
 
   async evaluateOnce(req: Omit<VerifyRequest, 'minNetProfitUsd'>): Promise<VerifiedArbitragePlan | null> {
@@ -370,6 +394,42 @@ export class ArbitrageVerifier {
             : await resolveCexFeeEvidence(quote.venue, symbol),
         );
       }));
+
+      let bestFeeContext: CrossVenueFeeContext | null = null;
+      for (const buy of freshQuotes) {
+        for (const sell of freshQuotes) {
+          if (buy.venue === sell.venue) continue;
+          const buyEvidence = feeEvidence.get(buy.venue) || null;
+          const sellEvidence = feeEvidence.get(sell.venue) || null;
+          const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? buyEvidence?.takerFeeBps ?? configuredTakerFeeBps(buy.venue);
+          const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? sellEvidence?.takerFeeBps ?? configuredTakerFeeBps(sell.venue);
+          if (buyFeeBps === null || buyFeeBps === undefined || sellFeeBps === null || sellFeeBps === undefined) continue;
+          const grossSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
+          if (!Number.isFinite(grossSpreadBps)) continue;
+          const context: CrossVenueFeeContext = {
+            symbol,
+            observedAt: now,
+            buyVenue: buy.venue,
+            sellVenue: sell.venue,
+            buyTakerFeeBps: buyFeeBps,
+            sellTakerFeeBps: sellFeeBps,
+            grossSpreadBps,
+            netSpreadAfterFeesBps: grossSpreadBps - buyFeeBps - sellFeeBps,
+          };
+          if (!bestFeeContext || context.netSpreadAfterFeesBps > bestFeeContext.netSpreadAfterFeesBps) {
+            bestFeeContext = context;
+          }
+        }
+      }
+      if (bestFeeContext) {
+        this.crossVenueFeeContexts.set(symbol, bestFeeContext);
+        if (this.crossVenueFeeContexts.size > 64) {
+          const oldestSymbol = this.crossVenueFeeContexts.keys().next().value;
+          if (oldestSymbol) this.crossVenueFeeContexts.delete(oldestSymbol);
+        }
+      } else {
+        this.crossVenueFeeContexts.delete(symbol);
+      }
 
       const quantityFractions = [0.1, 0.25, 0.5, 0.75, 1];
       let bestPlan: VerifiedArbitragePlan | null = null;
