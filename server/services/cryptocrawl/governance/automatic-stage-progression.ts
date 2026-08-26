@@ -3,6 +3,7 @@ import {
   type CryptaraExecutionFeedback,
   type CryptaraPerformanceRanking,
 } from '../../cryptara/index.js';
+import { opportunityMlRanker } from '../../cryptara/opportunity-ml-ranker.js';
 import type { GateEvaluation } from '../../cryptara/marketGates/types.js';
 import {
   stageManager,
@@ -87,6 +88,11 @@ export async function recordCryptaraExecutionEvidence(
   const cryptara = getCryptara();
   const prediction = cryptara.getPendingOpportunityPrediction(feedback.opportunityId);
   cryptara.recordExecutionResult(feedback);
+  opportunityMlRanker.observeExecution({
+    symbol: feedback.symbol,
+    success: feedback.success,
+    realizedProfitUsd: feedback.realizedProfitUsd,
+  });
   const settlementCosts = feedback.settlement
     ? [feedback.settlement.realized.exchangeFeeUsd, feedback.settlement.realized.gasUsd]
       .filter((value): value is number => value !== null && Number.isFinite(value))
