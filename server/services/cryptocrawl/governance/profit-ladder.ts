@@ -252,7 +252,6 @@ export class ProfitLadder extends EventEmitter {
     this.currentTier = PROFIT_TIERS[0];
     
     this.initializeTierPerformance(0);
-    this.checkAdvancementCriteria();
     
     log.info('Profit Ladder initialized', {
       tier: this.currentTier.name,
@@ -570,6 +569,7 @@ export class ProfitLadder extends EventEmitter {
     blockers: string[];
     percentToGoal: number;
   } {
+    if (this.currentTier.id === 0) this.checkAdvancementCriteria();
     const performance = this.getCurrentPerformance();
     const targetTierProfit = PROFIT_TIERS[5].maxDailyProfitUSD; // $35K
     const percentToGoal = (this.currentTier.maxDailyProfitUSD / targetTierProfit) * 100;
@@ -655,7 +655,6 @@ export class ProfitLadder extends EventEmitter {
     }
     this.currentCapitalUSD = 0;
     this.capitalVerificationStatus = 'unavailable';
-    if (this.currentTier.id === 0) this.checkAdvancementCriteria();
     
     log.info('State imported', {
       tier: this.currentTier.name,
