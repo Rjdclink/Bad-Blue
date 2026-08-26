@@ -146,7 +146,8 @@ export async function writeSushiV3FlashReceiverArtifact(outputPath?: string): Pr
   return destination;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isDirectInvocation = /(?:^|\/)compile-flashloan-receiver\.(?:ts|js)$/.test(process.argv[1] || '');
+if (isDirectInvocation) {
   writeFlashLoanReceiverArtifact()
     .then(outputPath => {
       console.log(`Compiled ${CONTRACT_NAME} artifact: ${outputPath}`);
