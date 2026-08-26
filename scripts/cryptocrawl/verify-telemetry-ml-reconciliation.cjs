@@ -27,6 +27,8 @@ requireText(telemetry, 'Ankr fallback probe completed', 'Ankr health outcome is 
 requireText(telemetry, 'probeReadOnlyZeroX()', '0x authentication and price path is actively health-probed');
 requireText(telemetry, 'CoinStats credential resolution', 'CoinStats credential-name resolution is observable without logging the key');
 requireText(telemetry, "COIN_STATS_API_KEY", 'CoinStats legacy environment alias is normalized');
+requireText(telemetry, 'Production execution posture', 'non-secret production execution posture is visible for deployment verification');
+requireText(telemetry, "process.env.NO_EXECUTION === 'true'", 'runtime reports the emergency NO_EXECUTION guard without mutating it');
 
 requireText(gates, 'const evaluation = super.evaluate(enrichedContext, config);', 'deterministic gate evaluates before AI/ML evidence');
 requireText(gates, 'signals: [...evaluation.signals, mlAssessment.signal]', 'AI/ML score is appended as evidence only');
