@@ -7,6 +7,7 @@ export interface MonteCarloProfitabilityInput {
   quoteLatencyMs: number;
   confidence: number;
   samples?: number;
+  baselineSlippageAlreadyIncluded?: boolean;
 }
 
 export interface MonteCarloProfitabilityResult {
@@ -71,11 +72,12 @@ export function runProfitabilityMonteCarlo(input: MonteCarloProfitabilityInput):
   const uncertaintyFactor = 1 + (1 - confidence) * 2;
   const slippageSigmaBps = Math.max(0.25, expectedSlippageBps * 0.5 * latencyFactor * uncertaintyFactor);
   const costSigma = Math.max(0.03, Math.min(0.75, 0.08 * latencyFactor * uncertaintyFactor));
+  const baselineSlippageBps = input.baselineSlippageAlreadyIncluded ? 0 : expectedSlippageBps;
 
   const outcomes: number[] = [];
   let profitable = 0;
   for (let index = 0; index < samples; index++) {
-    const adverseSlippageBps = Math.max(0, expectedSlippageBps + Math.abs(normal01(random)) * slippageSigmaBps);
+    const adverseSlippageBps = Math.max(0, baselineSlippageBps + Math.abs(normal01(random)) * slippageSigmaBps);
     const costMultiplier = Math.max(0.5, 1 + normal01(random) * costSigma);
     const sampledExecutionCost = estimatedExecutionCostUsd * costMultiplier;
     const sampledSlippageCost = notionalUsd * adverseSlippageBps / 10_000;
