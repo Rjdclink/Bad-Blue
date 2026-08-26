@@ -13,6 +13,27 @@ import {
 
 type SupportedDeploymentChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'europa';
 
+export interface DeployFlashLoanReceiverOptions {
+  chain?: SupportedDeploymentChain;
+  receiverKind?: 'balancer' | 'sushi-v3';
+}
+
+export interface FlashLoanReceiverDeploymentRecord {
+  contract: string;
+  chain: SupportedDeploymentChain;
+  chainId: number;
+  address: string;
+  owner: string;
+  infrastructure: string;
+  receiverKind: string;
+  deployer: string;
+  transactionHash: string;
+  blockNumber: number;
+  compiler: string;
+  codeHash: string;
+  deployedAt: string;
+}
+
 const DEPLOYMENT_CHAINS: Record<SupportedDeploymentChain, { chainId: number; rpcEnv: string; balancerVault?: string }> = {
   ethereum: {
     chainId: 1,
@@ -61,8 +82,10 @@ function requireAddress(name: string, value: string): string {
   return utils.getAddress(value);
 }
 
-async function main(): Promise<void> {
-  const chain = parseChain(process.env.ZERO_CAPITAL_DEPLOY_CHAIN);
+export async function deployFlashLoanReceiver(
+  options: DeployFlashLoanReceiverOptions = {},
+): Promise<FlashLoanReceiverDeploymentRecord | null> {
+  const chain = options.chain || parseChain(process.env.ZERO_CAPITAL_DEPLOY_CHAIN);
   const chainConfig = DEPLOYMENT_CHAINS[chain];
   const rpcUrl = process.env.ZERO_CAPITAL_DEPLOY_RPC_URL?.trim() ||
     (chain === 'europa' ? EUROPA_NETWORK.rpcUrl : requireEnv(chainConfig.rpcEnv));
@@ -76,7 +99,7 @@ async function main(): Promise<void> {
   }
 
   const owner = requireAddress('ZERO_CAPITAL_DEPLOY_OWNER', process.env.ZERO_CAPITAL_DEPLOY_OWNER?.trim() || wallet.address);
-  const receiverKind = process.env.ZERO_CAPITAL_DEPLOY_RECEIVER?.trim() || 'balancer';
+  const receiverKind = options.receiverKind || process.env.ZERO_CAPITAL_DEPLOY_RECEIVER?.trim() || 'balancer';
   const isSushiV3 = receiverKind === 'sushi-v3';
   if (receiverKind !== 'balancer' && !isSushiV3) {
     throw new Error('ZERO_CAPITAL_DEPLOY_RECEIVER must be balancer or sushi-v3');
@@ -110,7 +133,7 @@ async function main(): Promise<void> {
       compiler: artifact.compiler,
       nextStep: 'Set ZERO_CAPITAL_DEPLOY=true and ZERO_CAPITAL_DEPLOY_CONFIRMATION=DEPLOY_FLASHLOAN_RECEIVER to broadcast.',
     }, null, 2));
-    return;
+    return null;
   }
 
   let contractAddress: string;
@@ -175,7 +198,7 @@ async function main(): Promise<void> {
     throw new Error('Deployment receipt succeeded but no contract bytecode exists at the deployed address');
   }
 
-  const deploymentRecord = {
+  const deploymentRecord: FlashLoanReceiverDeploymentRecord = {
     contract: artifact.contractName,
     chain,
     chainId: network.chainId,
@@ -201,9 +224,13 @@ async function main(): Promise<void> {
       ? `Set ZERO_CAPITAL_EUROPA_RECEIVER=${contractAddress} and ZERO_CAPITAL_EUROPA_RECEIVER_CODE_HASH=${utils.keccak256(code)} only after independent contract review and zero-balance receipt validation.`
       : `Set ZERO_CAPITAL_FLASHLOAN_RECEIVER=${contractAddress} only after independent contract review and testnet validation.`,
   }, null, 2));
+
+  return deploymentRecord;
 }
 
-main().catch(error => {
-  console.error('[deploy-flashloan-receiver] failed:', error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  deployFlashLoanReceiver().catch(error => {
+    console.error('[deploy-flashloan-receiver] failed:', error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
