@@ -40,7 +40,7 @@ FROM node:20-bookworm-slim AS production
 ENV NPM_CONFIG_OPTIONAL=false
 ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
 
-# NOTE: Chromium installation removed - using playwright-core with remote browser connection
+# NOTE: Chromium installation removed - using playwright-core for remote browser connection
 # Install only minimal dependencies for Node.js runtime
 RUN apt-get update && apt-get install -y \
     ca-certificates \
@@ -72,9 +72,10 @@ COPY --from=builder /app/public ./public
 
 # Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
 COPY --from=builder /app/server/services/cryptocrawl/config/chains.json ./config/chains.json
 
-# Expose application port (Railway will use PORT env var at runtime)
+# Expose application port (Railway will use PORT env var)
 EXPOSE 5000
 
 # Create non-root user for security
