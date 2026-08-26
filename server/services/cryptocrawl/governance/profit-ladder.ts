@@ -589,7 +589,7 @@ export class ProfitLadder extends EventEmitter {
   }
   
   /**
-   * Get roadmap to $35K/day
+   * Get roadmap to $35K/day goal
    */
   getRoadmapTo35K(): {
     currentTier: number;
@@ -648,10 +648,19 @@ export class ProfitLadder extends EventEmitter {
    */
   importState(data: any): void {
     if (data.currentTier) {
-      this.currentTier = data.currentTier;
+      const tierId = Number(data.currentTier.id);
+      if (Number.isInteger(tierId) && PROFIT_TIERS[tierId]) {
+        // Persist only tier identity. Runtime policy always comes from the
+        // canonical tier table so stale serialized thresholds cannot override
+        // a production configuration change after deployment.
+        this.currentTier = PROFIT_TIERS[tierId];
+      }
     }
     if (data.tierPerformance) {
       this.tierPerformance = new Map(data.tierPerformance);
+    }
+    if (!this.tierPerformance.has(this.currentTier.id)) {
+      this.initializeTierPerformance(this.currentTier.id);
     }
     this.currentCapitalUSD = 0;
     this.capitalVerificationStatus = 'unavailable';

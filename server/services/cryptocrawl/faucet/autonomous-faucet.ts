@@ -286,7 +286,7 @@ const DECISION_CONFIG = Object.freeze({
   minValidatorsToOpen: 4,         // Minimum validators that must pass
   // Stage Two: small, controlled cycles require a low-but-positive threshold.
   // This threshold is evaluated against an all-in net profit estimate (after fees/gas/bridge).
-  minExpectedProfitToOpen: 1,     // Minimum expected profit to open ($1)
+  minExpectedProfitToOpen: 0,     // Minimum expected profit to open ($1)
   maxGasToOpen: 10,               // Maximum gas cost to open ($)
   maxCompetitionToOpen: 0.7,      // Maximum competition level to open
   
@@ -294,7 +294,7 @@ const DECISION_CONFIG = Object.freeze({
   maxConfidenceToStayOpen: 0.3,   // Below this, close immediately
   minValidatorsToStayOpen: 2,     // Must have at least this many passing
   maxConsecutiveFailures: 3,      // Close after this many failures
-  emergencyCloseThreshold: 0.01,  // Emergency close if profit drops below
+  emergencyCloseThreshold: 0.00,  // Emergency close if profit drops below
   
   // Timing
   minOpenDuration: 5000,          // Minimum time to stay open (ms)
