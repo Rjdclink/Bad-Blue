@@ -1,3 +1,4 @@
+import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
 export interface MarketUniverseAsset {
@@ -65,17 +66,27 @@ const MAX_UNIVERSE_SIZE = Math.min(50, Math.max(3, Number(process.env.CRYPTO_MAR
 
 interface CacheEntry<T> { value: T; expiresAt: number; }
 
-function getCoinStatsApiKey(): string | undefined {
-  const primary = process.env.COINSTATS_API_KEY?.trim();
-  if (primary) return primary;
+function firstConfiguredValue(names: readonly string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
 
-  if (process.env.NODE_ENV === 'production') {
-    return process.env.COINSTATS_API_KEY_PROD?.trim() || undefined;
-  }
-  if (process.env.NODE_ENV === 'staging') {
-    return process.env.COINSTATS_API_KEY_STAGING?.trim() || undefined;
-  }
-  return process.env.COINSTATS_API_KEY_DEV?.trim() || undefined;
+function getCoinStatsApiKey(): string | undefined {
+  const environmentAliases = process.env.NODE_ENV === 'production'
+    ? ['COINSTATS_API_KEY_PROD', 'COINSTATS_API_KEY_PRODUCTION']
+    : process.env.NODE_ENV === 'staging'
+      ? ['COINSTATS_API_KEY_STAGING']
+      : ['COINSTATS_API_KEY_DEV', 'COINSTATS_API_KEY_DEVELOPMENT'];
+
+  return firstConfiguredValue([
+    'COINSTATS_API_KEY',
+    ...environmentAliases,
+    'COINSTATS_KEY',
+    'COIN_STATS_API_KEY',
+  ]);
 }
 
 class MarketDataProviders {
@@ -115,6 +126,7 @@ class MarketDataProviders {
     const [coinGeckoAssets, coinStatsAssets] = await Promise.all([
       this.fetchCoinGeckoUniverse(),
       this.fetchCoinStatsUniverse(),
+      this.probeZeroXReadiness(),
     ]);
     const bySymbol = new Map<string, MarketUniverseAsset>();
     for (const asset of [...coinGeckoAssets, ...coinStatsAssets]) {
@@ -139,6 +151,21 @@ class MarketDataProviders {
     }
 
     return [];
+  }
+
+  private async probeZeroXReadiness(): Promise<void> {
+    if (!process.env.ZEROX_API_KEY?.trim()) {
+      this.setProviderStatus('0x', 'unavailable', 'ZEROX_API_KEY is not configured');
+      return;
+    }
+
+    const polygon = SUPPORTED_CHAINS.polygon;
+    await this.getDexQuote({
+      chainId: polygon.chainId,
+      sellToken: polygon.usdc,
+      buyToken: polygon.usdt,
+      sellAmount: '1000000',
+    });
   }
 
   async getDexQuote(request: { chainId: number; sellToken: string; buyToken: string; sellAmount: string; takerAddress?: string }): Promise<DexQuoteObservation | null> {
@@ -242,7 +269,7 @@ class MarketDataProviders {
   private async fetchCoinStatsUniverse(): Promise<MarketUniverseAsset[]> {
     const apiKey = getCoinStatsApiKey();
     if (!apiKey) {
-      this.setProviderStatus('coinstats', 'unavailable', 'CoinStats API key is not configured (COINSTATS_API_KEY or environment-specific alias)');
+      this.setProviderStatus('coinstats', 'unavailable', 'No recognized CoinStats API-key environment variable is configured');
       return [];
     }
     if (this.coinStatsCache && this.coinStatsCache.expiresAt > Date.now()) {
