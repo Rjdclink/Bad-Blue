@@ -49,7 +49,7 @@ export interface DexQuoteObservation {
 }
 
 export type MarketDataProviderName = 'coingecko' | 'coinstats' | '0x';
-export type MarketDataProviderState = 'live' | 'cached' | 'stale' | 'unavailable' | 'failed';
+export type MarketDataProviderState = 'not_queried' | 'live' | 'cached' | 'stale' | 'unavailable' | 'failed';
 
 export interface MarketDataProviderStatus {
   provider: MarketDataProviderName;
@@ -65,6 +65,19 @@ const MAX_UNIVERSE_SIZE = Math.min(50, Math.max(3, Number(process.env.CRYPTO_MAR
 
 interface CacheEntry<T> { value: T; expiresAt: number; }
 
+function getCoinStatsApiKey(): string | undefined {
+  const primary = process.env.COINSTATS_API_KEY?.trim();
+  if (primary) return primary;
+
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.COINSTATS_API_KEY_PROD?.trim() || undefined;
+  }
+  if (process.env.NODE_ENV === 'staging') {
+    return process.env.COINSTATS_API_KEY_STAGING?.trim() || undefined;
+  }
+  return process.env.COINSTATS_API_KEY_DEV?.trim() || undefined;
+}
+
 class MarketDataProviders {
   private universeCache: CacheEntry<MarketUniverseAsset[]> | null = null;
   private lastUniverse: MarketUniverseAsset[] = [];
@@ -72,9 +85,9 @@ class MarketDataProviders {
   private quoteCache = new Map<string, CacheEntry<DexQuoteObservation | null>>();
   private inFlight = new Map<string, Promise<unknown>>();
   private providerStatuses: Record<MarketDataProviderName, MarketDataProviderStatus> = {
-    coingecko: { provider: 'coingecko', state: 'unavailable', observedAt: null, detail: 'not queried' },
-    coinstats: { provider: 'coinstats', state: 'unavailable', observedAt: null, detail: 'not queried' },
-    '0x': { provider: '0x', state: 'unavailable', observedAt: null, detail: 'not queried' },
+    coingecko: { provider: 'coingecko', state: 'not_queried', observedAt: null, detail: 'not queried' },
+    coinstats: { provider: 'coinstats', state: 'not_queried', observedAt: null, detail: 'not queried' },
+    '0x': { provider: '0x', state: 'not_queried', observedAt: null, detail: 'not queried' },
   };
 
   getProviderStatuses(): MarketDataProviderStatus[] {
@@ -146,7 +159,7 @@ class MarketDataProviders {
 
     const promise = fetchJsonWithRetry<any>(
       `https://api.0x.org/swap/allowance-holder/${executable ? 'quote' : 'price'}?chainId=${request.chainId}&sellToken=${encodeURIComponent(request.sellToken)}&buyToken=${encodeURIComponent(request.buyToken)}&sellAmount=${encodeURIComponent(request.sellAmount)}${executable ? `&taker=${encodeURIComponent(request.takerAddress!)}` : ''}`,
-      { init: { headers: { accept: 'application/json', '0x-api-key': apiKey } }, maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2_000, timeoutMs: 4_000 },
+      { init: { headers: { accept: 'application/json', '0x-api-key': apiKey, '0x-version': 'v2' } }, maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2_000, timeoutMs: 4_000 },
     ).then(payload => {
       const sellAmount = Number(request.sellAmount);
       const buyAmount = Number(payload?.buyAmount);
@@ -227,9 +240,9 @@ class MarketDataProviders {
   }
 
   private async fetchCoinStatsUniverse(): Promise<MarketUniverseAsset[]> {
-    const apiKey = process.env.COINSTATS_API_KEY?.trim();
+    const apiKey = getCoinStatsApiKey();
     if (!apiKey) {
-      this.setProviderStatus('coinstats', 'unavailable', 'COINSTATS_API_KEY is not configured');
+      this.setProviderStatus('coinstats', 'unavailable', 'CoinStats API key is not configured (COINSTATS_API_KEY or environment-specific alias)');
       return [];
     }
     if (this.coinStatsCache && this.coinStatsCache.expiresAt > Date.now()) {
