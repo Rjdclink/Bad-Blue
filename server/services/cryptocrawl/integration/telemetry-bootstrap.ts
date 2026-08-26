@@ -1,6 +1,8 @@
 import logger from '../../../logger.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
+import { marketDataProviders } from '../intelligence/market-data-providers.js';
+import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 
 const TELEMETRY_CHAINS: SupportedChain[] = [
   'ethereum',
@@ -23,6 +25,26 @@ const ANKR_PUBLIC_HTTP: Partial<Record<SupportedChain, string>> = {
 };
 
 let bootstrapPromise: Promise<void> | null = null;
+
+function adoptLegacyProviderAliases(): void {
+  const aliases: Array<{ canonical: string; candidates: string[] }> = [
+    { canonical: 'ALCHEMY_API_KEY', candidates: ['ALCHEMY_KEY'] },
+    { canonical: 'COINSTATS_API_KEY', candidates: ['COIN_STATS_API_KEY', 'COINSTATS_KEY'] },
+    { canonical: 'ZEROX_API_KEY', candidates: ['ZERO_X_API_KEY', 'ZEROX_KEY'] },
+  ];
+
+  for (const { canonical, candidates } of aliases) {
+    if (process.env[canonical]?.trim()) continue;
+    const source = candidates.find(candidate => process.env[candidate]?.trim());
+    if (!source) continue;
+    process.env[canonical] = process.env[source]?.trim();
+    logger.info('[TelemetryBootstrap] Adopted legacy provider environment alias', {
+      component: 'TelemetryBootstrap',
+      canonical,
+      source,
+    });
+  }
+}
 
 async function registerBestEffortAnkrFallbacks(): Promise<void> {
   await Promise.all(TELEMETRY_CHAINS.map(async chain => {
@@ -84,12 +106,39 @@ async function startAlchemyTelemetry(): Promise<void> {
   }
 }
 
+async function probeReadOnlyZeroX(): Promise<void> {
+  if (!process.env.ZEROX_API_KEY?.trim()) return;
+  const polygon = SUPPORTED_CHAINS.polygon;
+  try {
+    const observation = await marketDataProviders.getDexQuote({
+      chainId: polygon.chainId,
+      sellToken: polygon.usdc,
+      buyToken: polygon.usdt,
+      sellAmount: '1000000',
+    });
+    logger.info('[TelemetryBootstrap] 0x read-only quote probe completed', {
+      component: 'TelemetryBootstrap',
+      available: !!observation,
+      chainId: polygon.chainId,
+      executable: observation?.executable ?? false,
+      liquidityAvailable: observation?.liquidityAvailable ?? false,
+    });
+  } catch (error) {
+    logger.warn('[TelemetryBootstrap] 0x read-only quote probe degraded', {
+      component: 'TelemetryBootstrap',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export function ensureTelemetryBootstrap(): Promise<void> {
   if (!bootstrapPromise) {
+    adoptLegacyProviderAliases();
     bootstrapPromise = (async () => {
       await Promise.all([
         registerBestEffortAnkrFallbacks(),
         startAlchemyTelemetry(),
+        probeReadOnlyZeroX(),
       ]);
 
       const healthyProviders = TELEMETRY_CHAINS.flatMap(chain =>
@@ -101,6 +150,11 @@ export function ensureTelemetryBootstrap(): Promise<void> {
       logger.info('[TelemetryBootstrap] Shared blockchain telemetry ready', {
         component: 'TelemetryBootstrap',
         healthyProviders,
+        marketDataProviders: marketDataProviders.getProviderStatuses().map(status => ({
+          provider: status.provider,
+          state: status.state,
+          detail: status.detail,
+        })),
       });
     })().catch(error => {
       logger.warn('[TelemetryBootstrap] Shared telemetry bootstrap failed closed', {
