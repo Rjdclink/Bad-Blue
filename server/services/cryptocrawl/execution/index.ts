@@ -197,7 +197,11 @@ function shouldBlockForDirective(opp: Opportunity): string | null {
     return `Autonomous directive is defensive and does not currently prefer chain ${normalizedChain}`;
   }
 
-  if (opp.profit < directive.minimumNetProfitUsd) {
+  if (!Number.isFinite(opp.profit) || opp.profit <= 0) {
+    return 'Expected net profit must be positive after all verified execution costs';
+  }
+
+  if (directive.minimumNetProfitUsd > 0 && opp.profit < directive.minimumNetProfitUsd) {
     return `Expected profit $${opp.profit.toFixed(2)} is below autonomous minimum net profit $${directive.minimumNetProfitUsd.toFixed(2)}`;
   }
 
@@ -537,7 +541,18 @@ export async function executeVerifiedArbitragePlan(
     };
   }
 
-  if (plan.netProfitUsd < directive.minimumNetProfitUsd) {
+  if (!Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) {
+    return {
+      success: false,
+      status: 'rejected',
+      settlementConfirmed: false,
+      error: 'Verified all-in net profit must be positive after fees, gas, slippage, bridge, and execution costs',
+      latencyMs: 0,
+      netExpectedProfitUsd: plan.netProfitUsd,
+    };
+  }
+
+  if (directive.minimumNetProfitUsd > 0 && plan.netProfitUsd < directive.minimumNetProfitUsd) {
     return {
       success: false,
       status: 'rejected',
