@@ -448,7 +448,7 @@ export class Cryptara extends EventEmitter {
       riskBudget: 'balanced',
       maxSlippageBps: 20,
       notionalMultiplier: 1,
-      minimumNetProfitUsd: 10,
+      minimumNetProfitUsd: 0,
       preferredChains: this.config.supportedChains.slice(0, 3),
       preferredExecutionModes: ['standard', 'zero_capital'],
       feeSensitivity: 'medium',
@@ -560,7 +560,7 @@ export class Cryptara extends EventEmitter {
           ),
         );
 
-    const minimumNetProfitUsd = Math.max(5, Number((8 + liquidityPressure * 18 + (riskBudget === 'defensive' ? 6 : 0)).toFixed(2)));
+    const minimumNetProfitUsd = 0;
 
     const zeroCapitalSamples = recent.filter(entry => entry.usedZeroCapital);
     const zeroCapitalSuccessRate = zeroCapitalSamples.length > 0
