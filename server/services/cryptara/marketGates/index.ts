@@ -1,4 +1,5 @@
 import { arbitrageVerifier } from '../../cryptocrawl/arbitrage/arbitrage-verifier.js';
+import { opportunityMlRanker } from '../opportunity-ml-ranker.js';
 import { CryptaraMarketGateEngine as BaseCryptaraMarketGateEngine } from './engine.js';
 import type { CryptaraMarketGateConfig, CryptaraMarketGateContext, GateEvaluation } from './types.js';
 
@@ -8,7 +9,7 @@ export class CryptaraMarketGateEngine extends BaseCryptaraMarketGateEngine {
       ? arbitrageVerifier.getBestCrossVenueFeeContext([context.pairOrSymbol])
       : null;
 
-    return super.evaluate({
+    const enrichedContext: CryptaraMarketGateContext = {
       ...context,
       feesRebates: context.feesRebates ?? (measuredFeeContext ? {
         takerFeeBps: measuredFeeContext.buyTakerFeeBps + measuredFeeContext.sellTakerFeeBps,
@@ -20,7 +21,18 @@ export class CryptaraMarketGateEngine extends BaseCryptaraMarketGateEngine {
         sellTakerFeeBps: measuredFeeContext.sellTakerFeeBps,
         grossSpreadBps: measuredFeeContext.grossSpreadBps,
       } : undefined),
-    }, config);
+    };
+
+    const evaluation = super.evaluate(enrichedContext, config);
+    const mlAssessment = opportunityMlRanker.assess(enrichedContext);
+
+    // AI/ML is advisory evidence only. It may rank and learn from opportunities, but it
+    // never overrides the deterministic market-gate decision or converts unknown/failed
+    // critical evidence into authorization.
+    return {
+      ...evaluation,
+      signals: [...evaluation.signals, mlAssessment.signal],
+    };
   }
 }
 
