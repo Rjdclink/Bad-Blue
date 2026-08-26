@@ -1,3 +1,4 @@
+import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
 export interface MarketUniverseAsset {
@@ -58,24 +59,45 @@ export interface MarketDataProviderStatus {
   detail?: string;
 }
 
+type CredentialResolution = { value: string; source: string } | null;
+
 const COINGECKO_TTL_MS = Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000));
 const COINSTATS_TTL_MS = Math.max(30_000, Number(process.env.COINSTATS_MARKET_TTL_MS || 300_000));
 const ZEROX_TTL_MS = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
 const MAX_UNIVERSE_SIZE = Math.min(50, Math.max(3, Number(process.env.CRYPTO_MARKET_UNIVERSE_SIZE || 12)));
+const ZEROX_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 
 interface CacheEntry<T> { value: T; expiresAt: number; }
 
-function getCoinStatsApiKey(): string | undefined {
-  const primary = process.env.COINSTATS_API_KEY?.trim();
-  if (primary) return primary;
+function firstConfiguredCredential(candidates: Array<[string, string | undefined]>): CredentialResolution {
+  for (const [source, raw] of candidates) {
+    const value = raw?.trim();
+    if (value) return { value, source };
+  }
+  return null;
+}
 
-  if (process.env.NODE_ENV === 'production') {
-    return process.env.COINSTATS_API_KEY_PROD?.trim() || undefined;
-  }
-  if (process.env.NODE_ENV === 'staging') {
-    return process.env.COINSTATS_API_KEY_STAGING?.trim() || undefined;
-  }
-  return process.env.COINSTATS_API_KEY_DEV?.trim() || undefined;
+function getCoinStatsApiKey(): CredentialResolution {
+  const environmentAlias = process.env.NODE_ENV === 'production'
+    ? [['COINSTATS_API_KEY_PROD', process.env.COINSTATS_API_KEY_PROD], ['COINSTATS_API_KEY_PRODUCTION', process.env.COINSTATS_API_KEY_PRODUCTION]] as Array<[string, string | undefined]>
+    : process.env.NODE_ENV === 'staging'
+      ? [['COINSTATS_API_KEY_STAGING', process.env.COINSTATS_API_KEY_STAGING]] as Array<[string, string | undefined]>
+      : [['COINSTATS_API_KEY_DEV', process.env.COINSTATS_API_KEY_DEV]] as Array<[string, string | undefined]>;
+
+  return firstConfiguredCredential([
+    ['COINSTATS_API_KEY', process.env.COINSTATS_API_KEY],
+    ...environmentAlias,
+    ['COIN_STATS_API_KEY', process.env.COIN_STATS_API_KEY],
+    ['COINSTATS_KEY', process.env.COINSTATS_KEY],
+  ]);
+}
+
+function getZeroXApiKey(): CredentialResolution {
+  return firstConfiguredCredential([
+    ['ZEROX_API_KEY', process.env.ZEROX_API_KEY],
+    ['ZERO_X_API_KEY', process.env.ZERO_X_API_KEY],
+    ['OX_API_KEY', process.env.OX_API_KEY],
+  ]);
 }
 
 class MarketDataProviders {
@@ -103,6 +125,64 @@ class MarketDataProviders {
     };
   }
 
+  /**
+   * Preserve the existing faucet environment handoff while deriving a real 0x
+   * observation context from the configured market when static ZEROX_* quote
+   * parameters are absent. Explicit deployment values always take precedence.
+   *
+   * The automatic path is deliberately limited to native-asset/stablecoin pairs
+   * represented by the repo's canonical chain registry. Unsupported symbols stay
+   * unqueried rather than inventing token addresses or amounts.
+   */
+  private ensureZeroXRuntimeContext(assets: MarketUniverseAsset[]): void {
+    const credential = getZeroXApiKey();
+    if (!credential) return;
+
+    if (
+      process.env.ZEROX_CHAIN_ID?.trim() &&
+      process.env.ZEROX_SELL_TOKEN?.trim() &&
+      process.env.ZEROX_BUY_TOKEN?.trim() &&
+      process.env.ZEROX_SELL_AMOUNT?.trim()
+    ) {
+      return;
+    }
+
+    const configuredSymbol = (process.env.CRYPTO_ARBITRAGE_SYMBOL || 'ETHUSDT').trim().toUpperCase();
+    const quoteSymbol = configuredSymbol.endsWith('USDC') ? 'USDC' : configuredSymbol.endsWith('USDT') ? 'USDT' : null;
+    if (!quoteSymbol) {
+      this.setProviderStatus('0x', 'not_queried', `automatic 0x observation supports USDT/USDC quote symbols; ${configuredSymbol} requires explicit ZEROX_* overrides`);
+      return;
+    }
+
+    const baseSymbol = configuredSymbol.slice(0, -quoteSymbol.length);
+    const normalizedBase = baseSymbol === 'MATIC' ? 'POL' : baseSymbol;
+    const chainEntry = Object.values(SUPPORTED_CHAINS).find(chain => chain.currency.toUpperCase() === normalizedBase);
+    if (!chainEntry) {
+      this.setProviderStatus('0x', 'not_queried', `no canonical native-token chain mapping for ${baseSymbol}; configure ZEROX_* overrides to observe this asset on 0x`);
+      return;
+    }
+
+    const marketAsset = assets.find(asset => asset.symbol.toUpperCase() === configuredSymbol);
+    const priceUsd = marketAsset?.priceUsd;
+    const notionalUsd = Number(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD || 200);
+    if (!Number.isFinite(priceUsd) || !priceUsd || priceUsd <= 0 || !Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+      this.setProviderStatus('0x', 'not_queried', `live ${configuredSymbol} price is required to derive a bounded 0x observation amount`);
+      return;
+    }
+
+    const baseQty = notionalUsd / priceUsd;
+    // Native EVM assets use 18 decimals. Quantize to 9 decimals before scaling
+    // so the intermediate Number remains safely below MAX_SAFE_INTEGER.
+    const sellAmount = (BigInt(Math.max(1, Math.floor(baseQty * 1_000_000_000))) * 1_000_000_000n).toString();
+    const buyToken = quoteSymbol === 'USDC' ? chainEntry.usdc : chainEntry.usdt;
+
+    process.env.ZEROX_CHAIN_ID ||= String(chainEntry.chainId);
+    process.env.ZEROX_SELL_TOKEN ||= ZEROX_NATIVE_TOKEN;
+    process.env.ZEROX_BUY_TOKEN ||= buyToken;
+    process.env.ZEROX_SELL_AMOUNT ||= sellAmount;
+    this.setProviderStatus('0x', 'not_queried', `runtime quote context derived for ${configuredSymbol} on chain ${chainEntry.chainId}; awaiting 0x request`);
+  }
+
   async discoverUniverse(): Promise<MarketUniverseAsset[]> {
     if (this.universeCache && this.universeCache.expiresAt > Date.now()) {
       for (const provider of ['coingecko', 'coinstats'] as const) {
@@ -110,6 +190,7 @@ class MarketDataProviders {
           this.setProviderStatus(provider, 'cached', 'served from the market-universe cache');
         }
       }
+      this.ensureZeroXRuntimeContext(this.universeCache.value);
       return this.universeCache.value;
     }
     const [coinGeckoAssets, coinStatsAssets] = await Promise.all([
@@ -128,6 +209,7 @@ class MarketDataProviders {
     if (enriched.length > 0) {
       this.lastUniverse = enriched;
       this.universeCache = { value: enriched, expiresAt: Date.now() + COINGECKO_TTL_MS };
+      this.ensureZeroXRuntimeContext(enriched);
       return enriched;
     }
 
@@ -135,6 +217,7 @@ class MarketDataProviders {
       this.setProviderStatus('coingecko', 'stale', 'live universe refresh failed; serving the last successful universe');
       this.setProviderStatus('coinstats', 'stale', 'live universe refresh failed; serving the last successful universe');
       this.universeCache = { value: this.lastUniverse, expiresAt: Date.now() + Math.min(COINGECKO_TTL_MS, 30_000) };
+      this.ensureZeroXRuntimeContext(this.lastUniverse);
       return this.lastUniverse;
     }
 
@@ -142,13 +225,17 @@ class MarketDataProviders {
   }
 
   async getDexQuote(request: { chainId: number; sellToken: string; buyToken: string; sellAmount: string; takerAddress?: string }): Promise<DexQuoteObservation | null> {
-    const apiKey = process.env.ZEROX_API_KEY?.trim();
-    if (!apiKey) {
-      this.setProviderStatus('0x', 'unavailable', 'ZEROX_API_KEY is not configured');
+    const credential = getZeroXApiKey();
+    if (!credential) {
+      this.setProviderStatus('0x', 'unavailable', '0x API key is not configured (ZEROX_API_KEY or supported alias)');
       return null;
     }
-    const executable = /^0x[a-fA-F0-9]{40}$/.test(request.takerAddress || '');
-    const key = `${request.chainId}:${request.sellToken.toLowerCase()}:${request.buyToken.toLowerCase()}:${request.sellAmount}:${request.takerAddress || ''}`;
+    const hasTakerAddress = /^0x[a-fA-F0-9]{40}$/.test(request.takerAddress || '');
+    // Observation stages must not turn a monitoring request into an executable
+    // quote simply because a wallet address exists. Firm quotes are reserved for
+    // the explicitly enabled live-execution path.
+    const executable = hasTakerAddress && process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
+    const key = `${request.chainId}:${request.sellToken.toLowerCase()}:${request.buyToken.toLowerCase()}:${request.sellAmount}:${executable ? request.takerAddress || '' : 'price'}`;
     const cached = this.quoteCache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
       this.setProviderStatus('0x', 'cached', 'served from the DEX quote cache');
@@ -159,7 +246,7 @@ class MarketDataProviders {
 
     const promise = fetchJsonWithRetry<any>(
       `https://api.0x.org/swap/allowance-holder/${executable ? 'quote' : 'price'}?chainId=${request.chainId}&sellToken=${encodeURIComponent(request.sellToken)}&buyToken=${encodeURIComponent(request.buyToken)}&sellAmount=${encodeURIComponent(request.sellAmount)}${executable ? `&taker=${encodeURIComponent(request.takerAddress!)}` : ''}`,
-      { init: { headers: { accept: 'application/json', '0x-api-key': apiKey, '0x-version': 'v2' } }, maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2_000, timeoutMs: 4_000 },
+      { init: { headers: { accept: 'application/json', '0x-api-key': credential.value, '0x-version': 'v2' } }, maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2_000, timeoutMs: 4_000 },
     ).then(payload => {
       const sellAmount = Number(request.sellAmount);
       const buyAmount = Number(payload?.buyAmount);
@@ -201,7 +288,7 @@ class MarketDataProviders {
         source: '0x',
       } : null;
       this.quoteCache.set(key, { value: observation, expiresAt: Date.now() + ZEROX_TTL_MS });
-      this.setProviderStatus('0x', observation ? 'live' : 'failed', observation ? undefined : '0x returned no usable buy amount');
+      this.setProviderStatus('0x', observation ? 'live' : 'failed', observation ? `0x ${observation.quoteKind} live via ${credential.source}` : '0x returned no usable buy amount');
       return observation;
     }).catch((error: unknown) => {
       this.quoteCache.set(key, { value: null, expiresAt: Date.now() + ZEROX_TTL_MS });
@@ -240,9 +327,9 @@ class MarketDataProviders {
   }
 
   private async fetchCoinStatsUniverse(): Promise<MarketUniverseAsset[]> {
-    const apiKey = getCoinStatsApiKey();
-    if (!apiKey) {
-      this.setProviderStatus('coinstats', 'unavailable', 'CoinStats API key is not configured (COINSTATS_API_KEY or environment-specific alias)');
+    const credential = getCoinStatsApiKey();
+    if (!credential) {
+      this.setProviderStatus('coinstats', 'unavailable', 'CoinStats API key is not visible under COINSTATS_API_KEY, environment-specific aliases, COIN_STATS_API_KEY, or COINSTATS_KEY');
       return [];
     }
     if (this.coinStatsCache && this.coinStatsCache.expiresAt > Date.now()) {
@@ -250,7 +337,7 @@ class MarketDataProviders {
       return this.coinStatsCache.value;
     }
     try {
-      const rows = await fetchJsonWithRetry<any>(`https://openapiv1.coinstats.app/coins?currency=USD&limit=${MAX_UNIVERSE_SIZE}`, { init: { headers: { accept: 'application/json', 'X-API-KEY': apiKey } }, maxRetries: 2, timeoutMs: 6_000 });
+      const rows = await fetchJsonWithRetry<any>(`https://openapiv1.coinstats.app/coins?currency=USD&limit=${MAX_UNIVERSE_SIZE}`, { init: { headers: { accept: 'application/json', 'X-API-KEY': credential.value } }, maxRetries: 2, timeoutMs: 6_000 });
       const assets = (Array.isArray(rows) ? rows : rows?.result || rows?.coins || []).filter((row: any) => typeof row?.symbol === 'string').map((row: any) => ({
         symbol: `${row.symbol.toUpperCase()}USDT`,
         priceUsd: Number.isFinite(Number(row.price)) ? Number(row.price) : undefined,
@@ -262,7 +349,7 @@ class MarketDataProviders {
         observedAt: Date.now(),
       }));
       this.coinStatsCache = { value: assets, expiresAt: Date.now() + COINSTATS_TTL_MS };
-      this.setProviderStatus('coinstats', 'live');
+      this.setProviderStatus('coinstats', 'live', `CoinStats live via ${credential.source}`);
       return assets;
     } catch (error) {
       this.setProviderStatus('coinstats', this.coinStatsCache ? 'stale' : 'failed', error instanceof Error ? error.message : String(error));
