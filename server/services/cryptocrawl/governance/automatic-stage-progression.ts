@@ -3,6 +3,8 @@ import {
   type CryptaraExecutionFeedback,
   type CryptaraPerformanceRanking,
 } from '../../cryptara/index.js';
+import { opportunityMlRanker } from '../../cryptara/opportunity-ml-ranker.js';
+import { reevaluateLastMarketGate } from '../../cryptara/marketGates/index.js';
 import type { GateEvaluation } from '../../cryptara/marketGates/types.js';
 import {
   stageManager,
@@ -13,6 +15,11 @@ import { profitLadder } from './profit-ladder.js';
 import { riskGovernor } from './risk-governor.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
+import { ensureTelemetryBootstrap } from '../integration/telemetry-bootstrap.js';
+
+// Start read-only blockchain telemetry as soon as the governed progression module is loaded.
+// It intentionally runs independently: governance must never block on external RPC startup.
+void ensureTelemetryBootstrap();
 
 function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>): AutomaticAdvancementEvidence {
   const ranking = getCryptara().getPerformanceRanking();
@@ -62,9 +69,33 @@ function rankingToEvidence(ranking: CryptaraPerformanceRanking): AutomaticAdvanc
   };
 }
 
+function isStageOneFeeBootstrapBlock(gate: Pick<GateEvaluation, 'decision' | 'blockReasons'> | undefined): boolean {
+  if (!gate || gate.decision !== 'BLOCK' || stageManager.getState().currentStage !== 1) return false;
+  return gate.blockReasons.some(reason => reason.includes('feesRebates') || reason.includes('crossVenueFees'));
+}
+
+async function refreshStageOneBootstrapGate(
+  gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
+): Promise<void> {
+  if (!isStageOneFeeBootstrapBlock(gate)) return;
+
+  // Re-run the exact last gate context after provider/fee evidence has had a chance to settle.
+  // This never changes critical-signal policy; it only replaces stale "unknown" evidence with
+  // a fresh measured pass/fail result. The original object is mutated so the faucet observes
+  // the refreshed decision and cannot diverge from StageManager.
+  for (const delayMs of [0, 150, 500]) {
+    if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+    const refreshed = reevaluateLastMarketGate();
+    if (!refreshed) return;
+    Object.assign(gate as GateEvaluation, refreshed);
+    if (!isStageOneFeeBootstrapBlock(refreshed)) return;
+  }
+}
+
 export async function evaluateAutomaticStageProgression(
   gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
 ): Promise<AutomaticAdvancementResult> {
+  await refreshStageOneBootstrapGate(gate);
   await stageManager.recordProfitLadderState(profitLadder.exportState());
   return stageManager.evaluateAutomaticAdvancement(toAutomaticEvidence(gate));
 }
@@ -80,6 +111,11 @@ export async function recordCryptaraExecutionEvidence(
   const cryptara = getCryptara();
   const prediction = cryptara.getPendingOpportunityPrediction(feedback.opportunityId);
   cryptara.recordExecutionResult(feedback);
+  opportunityMlRanker.observeExecution({
+    symbol: feedback.symbol,
+    success: feedback.success,
+    realizedProfitUsd: feedback.realizedProfitUsd,
+  });
   const settlementCosts = feedback.settlement
     ? [feedback.settlement.realized.exchangeFeeUsd, feedback.settlement.realized.gasUsd]
       .filter((value): value is number => value !== null && Number.isFinite(value))

@@ -1,14 +1,23 @@
 import { arbitrageVerifier } from '../../cryptocrawl/arbitrage/arbitrage-verifier.js';
+import { opportunityMlRanker } from '../opportunity-ml-ranker.js';
 import { CryptaraMarketGateEngine as BaseCryptaraMarketGateEngine } from './engine.js';
 import type { CryptaraMarketGateConfig, CryptaraMarketGateContext, GateEvaluation } from './types.js';
 
+let lastGateEngine: CryptaraMarketGateEngine | null = null;
+let lastGateContext: CryptaraMarketGateContext | null = null;
+let lastGateConfig: CryptaraMarketGateConfig | null = null;
+
 export class CryptaraMarketGateEngine extends BaseCryptaraMarketGateEngine {
   evaluate(context: CryptaraMarketGateContext, config: CryptaraMarketGateConfig = {}): GateEvaluation {
+    lastGateEngine = this;
+    lastGateContext = { ...context };
+    lastGateConfig = { ...config, criticalSignals: config.criticalSignals ? [...config.criticalSignals] : undefined };
+
     const measuredFeeContext = context.pairOrSymbol
       ? arbitrageVerifier.getBestCrossVenueFeeContext([context.pairOrSymbol])
       : null;
 
-    return super.evaluate({
+    const enrichedContext: CryptaraMarketGateContext = {
       ...context,
       feesRebates: context.feesRebates ?? (measuredFeeContext ? {
         takerFeeBps: measuredFeeContext.buyTakerFeeBps + measuredFeeContext.sellTakerFeeBps,
@@ -20,8 +29,24 @@ export class CryptaraMarketGateEngine extends BaseCryptaraMarketGateEngine {
         sellTakerFeeBps: measuredFeeContext.sellTakerFeeBps,
         grossSpreadBps: measuredFeeContext.grossSpreadBps,
       } : undefined),
-    }, config);
+    };
+
+    const evaluation = super.evaluate(enrichedContext, config);
+    const mlAssessment = opportunityMlRanker.assess(enrichedContext);
+
+    // AI/ML is advisory evidence only. It may rank and learn from opportunities, but it
+    // never overrides the deterministic market-gate decision or converts unknown/failed
+    // critical evidence into authorization.
+    return {
+      ...evaluation,
+      signals: [...evaluation.signals, mlAssessment.signal],
+    };
   }
+}
+
+export function reevaluateLastMarketGate(): GateEvaluation | null {
+  if (!lastGateEngine || !lastGateContext) return null;
+  return lastGateEngine.evaluate(lastGateContext, lastGateConfig || {});
 }
 
 export type {
