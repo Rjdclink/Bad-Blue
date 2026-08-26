@@ -48,6 +48,11 @@ const SKALE_CONFIG_CONTROLLER_ABI = [
   'function isMTMEnabled() view returns (bool)',
   'function isAddressWhitelisted(address) view returns (bool)',
 ];
+const EUROPA_GENERIC_FACTORY_CANDIDATES = [
+  { name: 'CREATE2Factory', address: '0x4e59b44847b379578588920cA78FbF26c0B4956C' },
+  { name: 'SingletonFactory', address: '0xce0042B868300000d44A59004Da54A005ffdcf9f' },
+  { name: 'CreateX', address: '0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed' },
+] as const;
 
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -107,6 +112,16 @@ export async function deployFlashLoanReceiver(options: DeployFlashLoanReceiverOp
       configController.isMTMEnabled() as Promise<boolean>,
       configController.isAddressWhitelisted(wallet.address) as Promise<boolean>,
     ]);
+
+    const factoryProbe = await Promise.all(EUROPA_GENERIC_FACTORY_CANDIDATES.map(async candidate => {
+      const [code, whitelisted] = await Promise.all([
+        provider.getCode(candidate.address),
+        configController.isAddressWhitelisted(candidate.address) as Promise<boolean>,
+      ]);
+      return { ...candidate, deployed: code !== '0x', whitelisted };
+    }));
+    console.log(`[deploy-flashloan-receiver] Europa generic factory probe: ${JSON.stringify(factoryProbe)}`);
+
     if (!fcdEnabled && !deployerWhitelisted) {
       throw new Error(`EUROPA_DEPLOYMENT_ACCESS_DENIED: FCD is disabled and deployer ${wallet.address} is not whitelisted`);
     }
