@@ -29,7 +29,16 @@ let bootstrapPromise: Promise<void> | null = null;
 function adoptLegacyProviderAliases(): void {
   const aliases: Array<{ canonical: string; candidates: string[] }> = [
     { canonical: 'ALCHEMY_API_KEY', candidates: ['ALCHEMY_KEY'] },
-    { canonical: 'COINSTATS_API_KEY', candidates: ['COIN_STATS_API_KEY', 'COINSTATS_KEY'] },
+    {
+      canonical: 'COINSTATS_API_KEY',
+      candidates: [
+        'COIN_STATS_API_KEY',
+        'COINSTATS_KEY',
+        'COIN_STATS_KEY',
+        'COINSTATS_APIKEY',
+        'COIN_STATS_APIKEY',
+      ],
+    },
     { canonical: 'ZEROX_API_KEY', candidates: ['ZERO_X_API_KEY', 'ZEROX_KEY'] },
   ];
 
@@ -44,17 +53,38 @@ function adoptLegacyProviderAliases(): void {
       source,
     });
   }
+
+  const coinStatsSource = [
+    'COINSTATS_API_KEY',
+    'COINSTATS_API_KEY_PROD',
+    'COINSTATS_API_KEY_STAGING',
+    'COINSTATS_API_KEY_DEV',
+    'COIN_STATS_API_KEY',
+    'COINSTATS_KEY',
+    'COIN_STATS_KEY',
+    'COINSTATS_APIKEY',
+    'COIN_STATS_APIKEY',
+  ].find(name => process.env[name]?.trim());
+
+  logger.info('[TelemetryBootstrap] CoinStats credential resolution', {
+    component: 'TelemetryBootstrap',
+    configured: !!coinStatsSource,
+    source: coinStatsSource || null,
+  });
 }
 
 async function registerBestEffortAnkrFallbacks(): Promise<void> {
-  await Promise.all(TELEMETRY_CHAINS.map(async chain => {
-    const configured = process.env[`${chain.toUpperCase()}_ANKR_RPC_URL`]?.trim();
+  const outcomes = await Promise.all(TELEMETRY_CHAINS.map(async chain => {
+    const configured = process.env[`${chain.toUpperCase()}_ANKR_RPC_URL`]?.trim()
+      || process.env[`ANKR_${chain.toUpperCase()}_RPC_URL`]?.trim()
+      || (chain === 'ethereum' ? process.env.ANKR_RPC_URL?.trim() : undefined);
     const publicUrl = configured || ANKR_PUBLIC_HTTP[chain];
-    if (!publicUrl) return;
+    if (!publicUrl) return { chain, provider: null, healthy: false, detail: 'no endpoint' };
 
+    const provider = configured ? 'AnkrConfigured' : 'AnkrPublic';
     try {
       await multiProviderRpcManager.registerProvider({
-        provider: configured ? 'AnkrConfigured' : 'AnkrPublic',
+        provider,
         chain,
         httpUrl: publicUrl,
         priority: configured ? 8 : 2,
@@ -69,14 +99,33 @@ async function registerBestEffortAnkrFallbacks(): Promise<void> {
           'contract_calls',
         ],
       });
-    } catch (error) {
-      logger.debug('[TelemetryBootstrap] Ankr fallback registration unavailable', {
-        component: 'TelemetryBootstrap',
+      const health = multiProviderRpcManager.getHealth(chain)
+        .find(observation => observation.provider === provider);
+      return {
         chain,
-        error: error instanceof Error ? error.message : String(error),
-      });
+        provider,
+        healthy: health?.http.success === true,
+        detail: health?.http.lastError || health?.http.state || 'registered',
+      };
+    } catch (error) {
+      return {
+        chain,
+        provider,
+        healthy: false,
+        detail: error instanceof Error ? error.message : String(error),
+      };
     }
   }));
+
+  logger.info('[TelemetryBootstrap] Ankr fallback probe completed', {
+    component: 'TelemetryBootstrap',
+    healthyChains: outcomes.filter(outcome => outcome.healthy).map(outcome => outcome.chain),
+    unavailableChains: outcomes.filter(outcome => !outcome.healthy).map(outcome => ({
+      chain: outcome.chain,
+      provider: outcome.provider,
+      detail: outcome.detail,
+    })),
+  });
 }
 
 async function startAlchemyTelemetry(): Promise<void> {
