@@ -45,6 +45,7 @@ const DEPLOYMENT_CHAINS: Record<SupportedDeploymentChain, { chainId: number; rpc
 const SKALE_CONFIG_CONTROLLER = '0xD2002000000000000000000000000000000000d2';
 const SKALE_CONFIG_CONTROLLER_ABI = [
   'function isFCDEnabled() view returns (bool)',
+  'function isMTMEnabled() view returns (bool)',
   'function isAddressWhitelisted(address) view returns (bool)',
 ];
 
@@ -100,18 +101,16 @@ export async function deployFlashLoanReceiver(options: DeployFlashLoanReceiverOp
   let receipt: providers.TransactionReceipt;
 
   if (chain === 'europa') {
-    // SKALE contract creation has a separate access-control layer. A valid external-gas
-    // proof cannot bypass it, so fail before mining/broadcasting when direct deployment
-    // is not permitted for this wallet.
     const configController = new Contract(SKALE_CONFIG_CONTROLLER, SKALE_CONFIG_CONTROLLER_ABI, provider);
-    const [fcdEnabled, deployerWhitelisted] = await Promise.all([
+    const [fcdEnabled, mtmEnabled, deployerWhitelisted] = await Promise.all([
       configController.isFCDEnabled() as Promise<boolean>,
+      configController.isMTMEnabled() as Promise<boolean>,
       configController.isAddressWhitelisted(wallet.address) as Promise<boolean>,
     ]);
     if (!fcdEnabled && !deployerWhitelisted) {
-      throw new Error(`Europa contract deployment is access-controlled: FCD is disabled and deployer ${wallet.address} is not whitelisted`);
+      throw new Error(`EUROPA_DEPLOYMENT_ACCESS_DENIED: FCD is disabled and deployer ${wallet.address} is not whitelisted`);
     }
-    console.log(`[deploy-flashloan-receiver] Europa deployment access accepted (FCD=${fcdEnabled}, whitelisted=${deployerWhitelisted})`);
+    console.log(`[deploy-flashloan-receiver] Europa capabilities: FCD=${fcdEnabled}, MTM=${mtmEnabled}, whitelisted=${deployerWhitelisted}`);
 
     const nonce = await provider.getTransactionCount(wallet.address, 'pending');
     const { difficulty, source } = await resolveEuropaExternalGasDifficulty(provider);
@@ -137,12 +136,29 @@ export async function deployFlashLoanReceiver(options: DeployFlashLoanReceiverOp
       }
     }
 
-    if (!gasPrice) throw new Error(`SKALE external-gas proof not found in ${maxAttempts} attempts for Europa receiver deployment`);
+    if (!gasPrice) throw new Error(`EUROPA_POW_NOT_FOUND: SKALE external-gas proof not found in ${maxAttempts} attempts for Europa receiver deployment`);
 
-    const signedTransaction = await wallet.signTransaction({ ...deployTransaction, chainId: network.chainId, nonce, gasLimit, gasPrice });
+    const finalTransaction = {
+      ...deployTransaction,
+      from: wallet.address,
+      chainId: network.chainId,
+      nonce,
+      gasLimit,
+      gasPrice,
+    };
+
+    try {
+      await provider.call(finalTransaction, 'latest');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`EUROPA_DEPLOYMENT_PREFLIGHT_REVERTED: ${message}`);
+    }
+
+    const { from: _from, ...signableTransaction } = finalTransaction;
+    const signedTransaction = await wallet.signTransaction(signableTransaction);
     const response = await provider.sendTransaction(signedTransaction);
     receipt = await response.wait();
-    if (receipt.status !== 1) throw new Error('Europa receiver deployment transaction reverted');
+    if (receipt.status !== 1) throw new Error(`EUROPA_DEPLOYMENT_RECEIPT_REVERTED: transaction ${response.hash} was mined with status 0`);
     contractAddress = utils.getContractAddress({ from: wallet.address, nonce });
     transactionHash = response.hash;
     console.log(`[deploy-flashloan-receiver] Europa external-gas PoW accepted (${source})`);
@@ -155,7 +171,7 @@ export async function deployFlashLoanReceiver(options: DeployFlashLoanReceiverOp
   }
 
   const code = await provider.getCode(contractAddress);
-  if (code === '0x') throw new Error('Deployment receipt succeeded but no contract bytecode exists at the deployed address');
+  if (code === '0x') throw new Error('DEPLOYMENT_CODE_MISSING: receipt succeeded but no contract bytecode exists at the deployed address');
 
   const deploymentRecord: FlashLoanReceiverDeploymentRecord = { contract: artifact.contractName, chain, chainId: network.chainId, address: contractAddress, owner, infrastructure, receiverKind, deployer: wallet.address, transactionHash, blockNumber: receipt.blockNumber, compiler: artifact.compiler, codeHash: utils.keccak256(code), deployedAt: new Date().toISOString() };
   const outputPath = resolve(process.cwd(), `contracts/cryptocrawl/deployments/${chain}.json`);
