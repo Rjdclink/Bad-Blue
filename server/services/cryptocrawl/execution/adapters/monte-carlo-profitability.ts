@@ -13,9 +13,11 @@ export interface MonteCarloProfitabilityInput {
 export interface MonteCarloProfitabilityResult {
   approved: boolean;
   profitableProbability: number;
+  p05NetProfitUsd: number;
   p10NetProfitUsd: number;
   medianNetProfitUsd: number;
   worstNetProfitUsd: number;
+  expectedShortfallNetProfitUsd: number;
   samples: number;
   reason: string;
 }
@@ -88,18 +90,23 @@ export function runProfitabilityMonteCarlo(input: MonteCarloProfitabilityInput):
 
   outcomes.sort((left, right) => left - right);
   const profitableProbability = profitable / samples;
+  const p05NetProfitUsd = percentile(outcomes, 0.05);
   const p10NetProfitUsd = percentile(outcomes, 0.10);
   const medianNetProfitUsd = percentile(outcomes, 0.50);
   const worstNetProfitUsd = outcomes[0] ?? 0;
+  const tailCount = Math.max(1, Math.ceil(outcomes.length * 0.05));
+  const expectedShortfallNetProfitUsd = outcomes.slice(0, tailCount).reduce((sum, value) => sum + value, 0) / tailCount;
   const minimumProbability = Math.max(0.5, Math.min(0.999, Number(process.env.ZERO_CAPITAL_MONTE_CARLO_MIN_PROFITABLE_PROBABILITY || 0.80)));
   const approved = profitableProbability >= minimumProbability && p10NetProfitUsd > 0;
 
   return {
     approved,
     profitableProbability,
+    p05NetProfitUsd,
     p10NetProfitUsd,
     medianNetProfitUsd,
     worstNetProfitUsd,
+    expectedShortfallNetProfitUsd,
     samples,
     reason: approved
       ? `Monte Carlo approved: ${(profitableProbability * 100).toFixed(1)}% profitable; p10 net $${p10NetProfitUsd.toFixed(4)}`
