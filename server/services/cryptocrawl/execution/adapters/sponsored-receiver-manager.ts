@@ -33,6 +33,8 @@ interface ReceiverArtifact {
   compiler?: string;
 }
 
+export type ReceiverFundingMode = 'sponsored' | 'native';
+
 export interface SponsoredReceiverRecord {
   chain: SupportedExecutionChain;
   chainId: number;
@@ -146,15 +148,13 @@ export class SponsoredReceiverManager {
     chain: SupportedExecutionChain;
     provider: providers.JsonRpcProvider;
     wallet: Wallet;
+    fundingMode: ReceiverFundingMode;
   }): Promise<SponsoredReceiverRecord> {
     const existing = this.records.get(input.chain);
     if (existing) return existing;
 
     const vault = resolveSponsoredReceiverVault(input.chain);
     if (!vault) throw new Error(`${input.chain} has no configured Balancer-compatible flash-loan vault`);
-    const sponsorReadiness = this.sponsor.getReadiness();
-    if (!sponsorReadiness.ready) throw new Error(sponsorReadiness.reason || 'Alchemy Gas Manager is not ready');
-
     const network = await input.provider.getNetwork();
     const owner = requireAddress('receiver owner', input.wallet.address);
     const artifact = await this.loadArtifact();
@@ -180,13 +180,26 @@ export class SponsoredReceiverManager {
 
       const deploymentData = ethers.utils.hexConcat([RECEIVER_SALT, initCode]);
       await input.provider.call({ from: owner, to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: 0 });
-      const sponsored = await this.sponsor.execute({
-        wallet: input.wallet,
-        chainId: network.chainId,
-        calls: [{ to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: BigNumber.from(0) }],
-        timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_DEPLOY_TIMEOUT_MS || 90_000)),
-      });
-      deploymentTransactionHash = sponsored.transactionHash;
+      if (input.fundingMode === 'sponsored') {
+        const sponsorReadiness = this.sponsor.getReadiness();
+        if (!sponsorReadiness.ready) throw new Error(sponsorReadiness.reason || 'Alchemy Gas Manager is not ready');
+        const sponsored = await this.sponsor.execute({
+          wallet: input.wallet,
+          chainId: network.chainId,
+          calls: [{ to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: BigNumber.from(0) }],
+          timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_DEPLOY_TIMEOUT_MS || 90_000)),
+        });
+        deploymentTransactionHash = sponsored.transactionHash;
+      } else {
+        const transaction = await input.wallet.sendTransaction({
+          to: DEFAULT_CREATE2_DEPLOYER,
+          data: deploymentData,
+          value: BigNumber.from(0),
+        });
+        const receipt = await transaction.wait(1);
+        if (!receipt || receipt.status !== 1) throw new Error(`Native receiver deployment reverted on ${input.chain}`);
+        deploymentTransactionHash = transaction.hash;
+      }
     }
 
     await this.verifyReceiver(input.provider, predictedAddress, owner, vault);
