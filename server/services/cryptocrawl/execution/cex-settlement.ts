@@ -308,7 +308,7 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
     const submittedAt = Date.now();
     const { base, quote } = splitSymbol(request.symbol);
     const rows = await this.privateRequest('/api/v5/trade/order', 'POST', {
-      instId: `${base}-${quote}`, tdMode: 'cash', side: request.side, ordType: 'limit',
+      instId: `${base}-${quote}`, tdMode: 'cash', side: request.side, ordType: 'ioc',
       px: toDecimal(request.price), sz: toDecimal(request.quantity), clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
     });
     const order = rows[0];
@@ -497,8 +497,8 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
   const sleep = options.sleep || (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
   const settlementTimeoutMs = Math.max(0, options.settlementTimeoutMs ?? SETTLEMENT_TIMEOUT_MS);
   const pollIntervalMs = Math.max(0, options.pollIntervalMs ?? SETTLEMENT_POLL_INTERVAL_MS);
-  const buyRequest = { symbol: plan.symbol, side: 'buy' as const, quantity: plan.baseQty, price: plan.buyAsk };
-  const sellRequest = { symbol: plan.symbol, side: 'sell' as const, quantity: plan.baseQty, price: plan.sellBid };
+  const buyRequest = { symbol: plan.symbol, side: 'buy' as const, quantity: plan.baseQty, price: plan.buyLimitPrice ?? plan.buyAsk };
+  const sellRequest = { symbol: plan.symbol, side: 'sell' as const, quantity: plan.baseQty, price: plan.sellLimitPrice ?? plan.sellBid };
   const [buyResult, sellResult] = await Promise.allSettled([
     adapters[plan.buyVenue].submit(buyRequest),
     adapters[plan.sellVenue].submit(sellRequest),
