@@ -49,10 +49,17 @@ function featureVector(context: CryptaraMarketGateContext): { values: FeatureVec
   ];
 
   const used = raw.filter(value => value !== undefined).length;
-  return {
-    values: raw.map(value => value ?? 0.5) as FeatureVector,
-    used,
-  };
+  const values: FeatureVector = [
+    raw[0] ?? 0.5,
+    raw[1] ?? 0.5,
+    raw[2] ?? 0.5,
+    raw[3] ?? 0.5,
+    raw[4] ?? 0.5,
+    raw[5] ?? 0.5,
+    raw[6] ?? 0.5,
+    raw[7] ?? 0.5,
+  ];
+  return { values, used };
 }
 
 class OpportunityMlRanker {
@@ -110,9 +117,16 @@ class OpportunityMlRanker {
     const prediction = sigmoid(this.bias + features.reduce((sum, value, index) => sum + value * this.weights[index], 0));
     const error = label - prediction;
 
-    this.weights = this.weights.map((weight, index) =>
-      Math.max(-3, Math.min(3, weight + this.learningRate * error * features[index])),
-    ) as FeatureVector;
+    this.weights = [
+      Math.max(-3, Math.min(3, this.weights[0] + this.learningRate * error * features[0])),
+      Math.max(-3, Math.min(3, this.weights[1] + this.learningRate * error * features[1])),
+      Math.max(-3, Math.min(3, this.weights[2] + this.learningRate * error * features[2])),
+      Math.max(-3, Math.min(3, this.weights[3] + this.learningRate * error * features[3])),
+      Math.max(-3, Math.min(3, this.weights[4] + this.learningRate * error * features[4])),
+      Math.max(-3, Math.min(3, this.weights[5] + this.learningRate * error * features[5])),
+      Math.max(-3, Math.min(3, this.weights[6] + this.learningRate * error * features[6])),
+      Math.max(-3, Math.min(3, this.weights[7] + this.learningRate * error * features[7])),
+    ];
     this.bias = Math.max(-6, Math.min(3, this.bias + this.learningRate * error));
     this.samples += 1;
     this.pendingBySymbol.delete(symbol);
