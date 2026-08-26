@@ -439,7 +439,7 @@ export class ArbitrageVerifier {
         this.crossVenueFeeContexts.delete(symbol);
       }
 
-      const quantityFractions = [0.02, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.85, 1];
+      const quantityFractions = [0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
       let bestPlan: VerifiedArbitragePlan | null = null;
       for (const buy of freshQuotes) {
         for (const sell of freshQuotes) {
