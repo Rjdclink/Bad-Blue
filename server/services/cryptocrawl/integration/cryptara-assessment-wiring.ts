@@ -15,24 +15,32 @@ const WARNING_REPEAT_MS = Math.max(10_000, Number(process.env.CRYPTARA_INCOMPLET
 type CryptaraAssessmentInternals = {
   status: { isRunning: boolean };
   latestOpportunityContext: CryptaraOpportunityContext | null;
-  runMonteCarloSimulation: () => Promise<MonteCarloResult>;
+  latestMonteCarloEvidence: unknown | null;
+  runMonteCarloSimulation: (context?: CryptaraOpportunityContext, signal?: AbortSignal) => Promise<MonteCarloResult>;
   recordOpportunityObservation: (context: CryptaraOpportunityContext) => CryptaraOpportunityAssessment;
   assessOpportunity: (context: CryptaraOpportunityContext) => Promise<CryptaraOpportunityAssessment>;
 };
 
 function missingFromError(error: unknown): string[] {
   const message = error instanceof Error ? error.message : String(error);
-  return message.startsWith('Cryptara Monte Carlo requires measured context: ')
-    ? message.replace('Cryptara Monte Carlo requires measured context: ', '').split(', ').filter(Boolean)
-    : ['monte_carlo_evidence'];
+  if (message.startsWith('EVIDENCE_INCOMPLETE:')) {
+    return message.replace('EVIDENCE_INCOMPLETE:', '').trim().split(',').map(value => value.trim()).filter(Boolean);
+  }
+  if (message.startsWith('Cryptara Monte Carlo requires measured context: ')) {
+    return message.replace('Cryptara Monte Carlo requires measured context: ', '').split(', ').filter(Boolean);
+  }
+  if (message.includes('HYPER_ABORTED') || message.includes('timed out') || message.includes('cancelled')) {
+    return ['monte_carlo_timeout'];
+  }
+  return ['monte_carlo_execution'];
 }
 
-function shouldEmitIncompleteWarning(opportunityId: string, missing: string[]): boolean {
+function shouldEmitIncompleteWarning(opportunityKey: string, missing: string[]): boolean {
   const signature = [...new Set(missing)].sort().join('|');
   const now = Date.now();
-  const previous = warningState.get(opportunityId);
+  const previous = warningState.get(opportunityKey);
   if (!previous || previous.signature !== signature || now - previous.emittedAt >= WARNING_REPEAT_MS) {
-    warningState.set(opportunityId, { signature, emittedAt: now });
+    warningState.set(opportunityKey, { signature, emittedAt: now });
     return true;
   }
   return false;
@@ -45,17 +53,23 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
   const target = instance as unknown as CryptaraAssessmentInternals;
 
   target.assessOpportunity = async (context: CryptaraOpportunityContext): Promise<CryptaraOpportunityAssessment> => {
-    target.latestOpportunityContext = context;
+    // Reset evidence for every observation, even when no verified plan exists. Stable
+    // opportunity IDs are reused across cycles, so stale Monte Carlo evidence must
+    // never survive into the next observation.
+    target.latestMonteCarloEvidence = null;
+    target.latestOpportunityContext = structuredClone(context);
     let monteCarloMissingInformation: string[] = [];
 
     if (context.plan && target.status.isRunning) {
       try {
-        await target.runMonteCarloSimulation();
+        await target.runMonteCarloSimulation(context);
       } catch (error) {
         monteCarloMissingInformation = missingFromError(error);
-        if (shouldEmitIncompleteWarning(context.opportunityId, monteCarloMissingInformation)) {
-          log.warn('Cryptara opportunity Monte Carlo incomplete; retaining explicit evidence state', {
+        const opportunityKey = `${context.opportunityId}:${context.observedAt}`;
+        if (shouldEmitIncompleteWarning(opportunityKey, monteCarloMissingInformation)) {
+          log.warn('Cryptara opportunity Hyper Monte Carlo incomplete; retaining explicit evidence state', {
             opportunityId: context.opportunityId,
+            observedAt: context.observedAt,
             symbol: context.symbol,
             missingInformation: monteCarloMissingInformation,
             repeatWindowMs: WARNING_REPEAT_MS,
@@ -73,7 +87,9 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
   log.info('Cryptara assessment wiring installed', {
     incompleteWarningRepeatMs: WARNING_REPEAT_MS,
     warningTransitionsImmediate: true,
-    monteCarloCompute: 'computational_beam',
+    monteCarloCompute: 'computational_beam_hyper_worker_pool',
+    immutableOpportunityInput: true,
+    staleEvidenceIsolation: true,
   });
   return instance;
 }

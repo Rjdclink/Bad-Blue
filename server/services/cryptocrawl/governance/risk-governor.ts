@@ -82,6 +82,13 @@ export interface CircuitBreaker {
   resetTime?: number;
 }
 
+type RuntimeConfidenceEvidence = {
+  confidenceEnabled?: boolean;
+  confidenceState?: 'bootstrap' | 'calibrated';
+  runtimeSuccessfulTrades?: number;
+  runtimeRequiredSuccessfulTrades?: number;
+};
+
 // ============================================================================
 // RISK GOVERNOR
 // ============================================================================
@@ -116,6 +123,7 @@ export class RiskGovernor extends EventEmitter {
    */
   async assessTradeProposal(proposal: TradeProposal): Promise<RiskAssessment> {
     log.debug('Assessing trade proposal', { proposalId: proposal.id });
+    let confidenceEnabledForRisk = true;
     
     const assessment: RiskAssessment = {
       proposalId: proposal.id,
@@ -226,6 +234,7 @@ export class RiskGovernor extends EventEmitter {
       assessment.recommendedPositionUSD = monteCarloResult.recommendedPositionUSD;
       assessment.kellyFraction = monteCarloResult.kellyFraction;
       assessment.confidenceScore = monteCarloResult.confidenceScore;
+      confidenceEnabledForRisk = monteCarloResult.confidenceEnabled;
       
       if (!monteCarloResult.approved) {
         assessment.reason = `Monte Carlo consensus failed: ${monteCarloResult.reason}`;
@@ -258,7 +267,7 @@ export class RiskGovernor extends EventEmitter {
     // ========================================
     // Calculate Risk Score
     // ========================================
-    assessment.riskScore = this.calculateRiskScore(proposal, assessment);
+    assessment.riskScore = this.calculateRiskScore(proposal, assessment, confidenceEnabledForRisk);
     
     // ========================================
     // FINAL APPROVAL
@@ -275,6 +284,7 @@ export class RiskGovernor extends EventEmitter {
         positionUSD: proposal.positionSizeUSD,
         riskScore: assessment.riskScore,
         confidence: assessment.confidenceScore,
+        confidenceEnabled: confidenceEnabledForRisk,
       });
     } else if (allChecksPass) {
       assessment.reason = `Risk score too high: ${assessment.riskScore.toFixed(2)}`;
@@ -292,8 +302,10 @@ export class RiskGovernor extends EventEmitter {
   // ============================================================================
   
   /**
-   * Run Monte Carlo consensus validation
-   * Requires agreement from multiple simulations
+   * Run Monte Carlo consensus validation.
+   * During runtime bootstrap, the probability/economics requirements remain
+   * active but learned confidence is deliberately non-authoritative until the
+   * required number of successful, settled trades has occurred since restart.
    */
   private async runMonteCarloConsensus(proposal: TradeProposal): Promise<{
     approved: boolean;
@@ -303,8 +315,10 @@ export class RiskGovernor extends EventEmitter {
     recommendedPositionUSD: number;
     kellyFraction: number;
     confidenceScore: number;
+    confidenceEnabled: boolean;
   }> {
     const evidence = getCryptara().getLatestMonteCarloEvidence();
+    const runtimeEvidence = evidence as (NonNullable<typeof evidence> & RuntimeConfidenceEvidence) | null;
     const sourceOpportunityId = proposal.opportunityId || proposal.id;
     const maxAgeMs = Math.max(60_000, Number(process.env.CRYPTARA_MONTE_CARLO_TTL_MS || 900_000));
     const evidenceIsCurrent = evidence !== null &&
@@ -313,13 +327,23 @@ export class RiskGovernor extends EventEmitter {
       Date.now() - evidence.evaluatedAt <= maxAgeMs;
     const consensus = evidenceIsCurrent ? evidence!.probabilityOfProfit : 0;
     const confidenceScore = evidenceIsCurrent ? evidence!.confidence : 0;
+    const confidenceEnabled = evidenceIsCurrent ? runtimeEvidence?.confidenceEnabled !== false : true;
+    const confidencePass = !confidenceEnabled || confidenceScore >= 0.7;
     const approved = evidenceIsCurrent &&
       evidence!.expectedProfit > 0 &&
       consensus >= 0.7 &&
-      confidenceScore >= 0.7;
+      confidencePass;
+    const successfulTrades = runtimeEvidence?.runtimeSuccessfulTrades ?? 0;
+    const requiredSuccessfulTrades = runtimeEvidence?.runtimeRequiredSuccessfulTrades ?? 0;
     const reason = !evidenceIsCurrent
       ? 'Current Cryptara Monte Carlo evidence is unavailable for this opportunity'
-      : approved ? 'Cryptara Monte Carlo evidence validated' : 'Cryptara Monte Carlo evidence is below threshold';
+      : !confidenceEnabled
+        ? approved
+          ? `Cryptara Monte Carlo bootstrap validated; learned confidence is disabled until ${requiredSuccessfulTrades} successful settled trades after restart (${successfulTrades}/${requiredSuccessfulTrades})`
+          : `Cryptara Monte Carlo profitability/consensus is below threshold during confidence bootstrap (${successfulTrades}/${requiredSuccessfulTrades})`
+        : approved
+          ? 'Cryptara Monte Carlo evidence validated'
+          : 'Cryptara Monte Carlo evidence is below threshold';
     
     return {
       approved,
@@ -329,6 +353,7 @@ export class RiskGovernor extends EventEmitter {
       recommendedPositionUSD: approved ? proposal.positionSizeUSD : 0,
       kellyFraction: 0,
       confidenceScore,
+      confidenceEnabled,
     };
   }
   
@@ -393,7 +418,11 @@ export class RiskGovernor extends EventEmitter {
   /**
    * Calculate comprehensive risk score (0-100, higher = riskier)
    */
-  private calculateRiskScore(proposal: TradeProposal, assessment: RiskAssessment): number {
+  private calculateRiskScore(
+    proposal: TradeProposal,
+    assessment: RiskAssessment,
+    confidenceEnabled: boolean = true,
+  ): number {
     let score = 0;
     
     // Position size component (0-25 points)
@@ -404,8 +433,11 @@ export class RiskGovernor extends EventEmitter {
     // Risk percentage component (0-25 points)
     score += proposal.estimatedRiskPercent * 25;
     
-    // Confidence component (0-25 points)
-    score += (1 - assessment.confidenceScore) * 25;
+    // Confidence component (0-25 points). During restart bootstrap, learned
+    // confidence is unavailable rather than bad, so it contributes no score.
+    if (confidenceEnabled) {
+      score += (1 - assessment.confidenceScore) * 25;
+    }
     
     // Monte Carlo component (0-25 points)
     if (assessment.monteCarloConsensus > 0) {
