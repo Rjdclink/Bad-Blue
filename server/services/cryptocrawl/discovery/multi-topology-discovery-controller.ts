@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { discoverMeasuredDexCandidates } from './dex-opportunity-generator.js';
 import { discoverMeasuredCrossChainCandidates } from './cross-chain-opportunity-generator.js';
 import { discoverMeasuredMempoolCandidates } from './mempool-opportunity-generator.js';
+import { discoverMeasuredMakerCandidates } from './maker-opportunity-generator.js';
 import { measuredCandidateRegistry } from './measured-candidate-registry.js';
 
 export interface MultiTopologyDiscoveryCycle {
@@ -11,6 +12,7 @@ export interface MultiTopologyDiscoveryCycle {
   dexCandidates: number;
   crossChainCandidates: number;
   mempoolCandidates: number;
+  makerCandidates: number;
   registry: ReturnType<typeof measuredCandidateRegistry.getMetrics>;
   errors: string[];
 }
@@ -29,8 +31,9 @@ class MultiTopologyDiscoveryController {
     logger.info('[OpportunityGraph] Non-CEX measured topology producers started', {
       component: 'MultiTopologyDiscoveryController',
       intervalMs,
-      topologies: ['DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'ZERO_CAPITAL_ATOMIC'],
+      topologies: ['DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'ZERO_CAPITAL_ATOMIC', 'MAKER_CEX'],
       candidateAuthority: 'measured_candidate_registry',
+      makerOrdersAssumedFilled: false,
       syntheticEvidenceAllowed: false,
     });
   }
@@ -49,15 +52,19 @@ class MultiTopologyDiscoveryController {
       let dexCandidates = 0;
       let crossChainCandidates = 0;
       let mempoolCandidates = 0;
+      let makerCandidates = 0;
 
-      const [dex, cross] = await Promise.allSettled([
+      const [dex, cross, maker] = await Promise.allSettled([
         discoverMeasuredDexCandidates(),
         discoverMeasuredCrossChainCandidates(),
+        discoverMeasuredMakerCandidates(),
       ]);
       if (dex.status === 'fulfilled') dexCandidates = dex.value.length;
       else errors.push(`dex:${dex.reason instanceof Error ? dex.reason.message : String(dex.reason)}`);
       if (cross.status === 'fulfilled') crossChainCandidates = cross.value.length;
       else errors.push(`cross_chain:${cross.reason instanceof Error ? cross.reason.message : String(cross.reason)}`);
+      if (maker.status === 'fulfilled') makerCandidates = maker.value.length;
+      else errors.push(`maker:${maker.reason instanceof Error ? maker.reason.message : String(maker.reason)}`);
 
       try {
         mempoolCandidates = discoverMeasuredMempoolCandidates().length;
@@ -73,6 +80,7 @@ class MultiTopologyDiscoveryController {
         dexCandidates,
         crossChainCandidates,
         mempoolCandidates,
+        makerCandidates,
         registry: measuredCandidateRegistry.getMetrics(60_000),
         errors,
       };
@@ -84,6 +92,7 @@ class MultiTopologyDiscoveryController {
         dexCandidates,
         crossChainCandidates,
         mempoolCandidates,
+        makerCandidates,
         registry: cycle.registry,
         errors: errors.slice(0, 12),
       });
