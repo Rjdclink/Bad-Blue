@@ -209,7 +209,13 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
 
 export function getMeasuredEvolutionMetrics() {
   const stats = measuredStats(state.samples);
-  return { ...stats, updatedAt: state.updatedAt };
+  return {
+    ...stats,
+    mode: stats.sampleCount > 0 ? 'terminal_calibrated' as const : 'bootstrap_no_terminal_samples' as const,
+    terminalEvidenceRequired: true,
+    syntheticSamplesAllowed: false,
+    updatedAt: state.updatedAt,
+  };
 }
 
 export function getMeasuredEvolutionSamples(limit = 100): MeasuredExecutionSample[] {
