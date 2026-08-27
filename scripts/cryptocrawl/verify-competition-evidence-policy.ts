@@ -65,6 +65,10 @@ assert.equal(evaluateCompetitionEvidence(excessive, 0.7).passed, false);
 
 assert.equal(finiteReasoningInput(Number.NaN), null);
 assert.equal(finiteReasoningInput(Number.POSITIVE_INFINITY), null);
+assert.equal(finiteReasoningInput(null), null);
+assert.equal(finiteReasoningInput(undefined), null);
+assert.equal(finiteReasoningInput('0' as unknown), null);
+assert.equal(finiteReasoningInput(0), 0);
 assert.equal(finiteReasoningInput(0.42), 0.42);
 
 console.log('competition-evidence-policy:pass');
