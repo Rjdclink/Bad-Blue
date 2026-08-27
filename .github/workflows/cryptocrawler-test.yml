@@ -62,6 +62,10 @@ jobs:
         run: npm ci --prefer-offline --no-audit
       - name: Verify no-regression opportunity pipeline
         run: node scripts/cryptocrawl/verify-no-regression-opportunity-pipeline.cjs
+      - name: Verify OKX symbol and credential-region authority
+        run: |
+          npx tsx scripts/cryptocrawl/verify-okx-fee-authority.ts us
+          npx tsx scripts/cryptocrawl/verify-okx-fee-authority.ts global
       - name: Build TypeScript
         run: npm run build
       - name: Run TypeScript compilation check
@@ -137,6 +141,10 @@ jobs:
         run: npm ci --prefer-offline --no-audit
       - name: Verify no-regression opportunity pipeline
         run: node scripts/cryptocrawl/verify-no-regression-opportunity-pipeline.cjs
+      - name: Verify OKX symbol and credential-region authority
+        run: |
+          npx tsx scripts/cryptocrawl/verify-okx-fee-authority.ts us
+          npx tsx scripts/cryptocrawl/verify-okx-fee-authority.ts global
       - name: Run Extended Simulation
         timeout-minutes: 45
         run: |
