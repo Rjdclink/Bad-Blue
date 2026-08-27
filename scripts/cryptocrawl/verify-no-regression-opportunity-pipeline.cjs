@@ -27,65 +27,101 @@ function parseTypeScript(relative) {
   });
   const diagnostics = result.diagnostics || [];
   if (diagnostics.length) {
-    failures.push(`${relative}: TypeScript parse diagnostics: ${diagnostics.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n')).join(' | ')}`);
+    failures.push(`${relative}: TypeScript parse diagnostics: ${diagnostics
+      .map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
+      .join(' | ')}`);
   }
 }
 
 const capability = read('server/services/cryptocrawl/discovery/venue-capability-registry.ts');
-requireText(capability, "venue: 'coinbase'", 'capability registry');
-requireText(capability, 'enabled: false', 'Coinbase disabled');
-requireText(capability, 'liveExecution: false', 'Coinbase execution disabled');
-requireText(capability, "supportedCentralizedVenues", 'compatibility sentinel intentionally absent');
-// The previous assertion intentionally should not pass: the registry must not
-// duplicate execution.ts's capability interface. Remove that diagnostic below.
-failures.pop();
-requireText(capability, "return (['kraken', 'okx'] as const)", 'executable quote venues remain Kraken/OKX only');
+requireText(capability, "venue: 'coinbase'", 'venue registry contains Coinbase compatibility entry');
+requireText(capability, 'enabled: false', 'Coinbase remains inactive');
+requireText(capability, 'publicDiscovery: false', 'Coinbase discovery remains inactive');
+requireText(capability, 'liveExecution: false', 'Coinbase live execution remains inactive');
+requireText(capability, 'settlementVerification: false', 'Coinbase settlement authority remains inactive');
+requireText(capability, "return (['kraken', 'okx'] as const)", 'executable quote authority remains Kraken/OKX only');
 
 const verifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
-requireText(verifier, 'getActiveExecutableQuoteVenues()', 'verifier consumes venue authority');
+requireText(verifier, 'getActiveExecutableQuoteVenues()', 'verifier consumes venue capability authority');
 requireText(verifier, 'topSpreadBps <= breakEvenBps', 'break-even topology gate');
-requireText(verifier, 'candidate.netProfitUsd > bestPlan.netProfitUsd', 'best net-profit ranking');
-requireText(verifier, 'plan.netProfitUsd < req.minNetProfitUsd', 'minimum verified net-profit gate');
+requireText(verifier, 'candidate.netProfitUsd > bestPlan.netProfitUsd', 'best candidate ranked by net profit');
+requireText(verifier, 'plan.netProfitUsd < req.minNetProfitUsd', 'verified minimum net-profit gate');
+requireText(verifier, "crossVenueCostModel: bridge", 'cross-venue cost semantics retained');
 forbidText(verifier, "const venues: QuoteVenue[] = ['coinbase', 'kraken', 'okx']", 'no hard-coded Coinbase quote authority');
 
 const executor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
-requireText(executor, "!['kraken', 'okx'].includes(plan.buyVenue)", 'live execution venue allowlist preserved');
+requireText(executor, "!['kraken', 'okx'].includes(plan.buyVenue)", 'live execution buy-venue allowlist preserved');
+requireText(executor, "!['kraken', 'okx'].includes(plan.sellVenue)", 'live execution sell-venue allowlist preserved');
 requireText(executor, 'plan.netProfitUsd <= 0', 'strict positive-net live execution preserved');
-requireText(executor, "CRYPTO_ARBITRAGE_LIVE_CONFIRMATION !== 'I_ACCEPT_LIVE_ORDER_RISK'", 'explicit live confirmation preserved');
+requireText(executor, "CRYPTO_ARBITRAGE_LIVE_CONFIRMATION !== 'I_ACCEPT_LIVE_ORDER_RISK'", 'explicit live execution confirmation preserved');
 
 const marketData = read('server/services/cryptocrawl/intelligence/market-data-providers.ts');
-requireText(marketData, 'orderMeasuredMarketUniverse', 'rotating measured universe wired');
+requireText(marketData, 'rankMeasuredMarketUniverse', 'deterministic measured-universe cache ranking');
+requireText(marketData, 'orderMeasuredMarketUniverse', 'rotating measured-universe consumption');
 requireText(marketData, 'resolveCoinStatsEnvironment', 'CoinStats environment contract wired');
 requireText(marketData, 'adoptResolvedEnvironmentVariable', 'resolved alias adoption wired');
+requireText(marketData, 'optional CoinStats credential', 'CoinStats explicitly classified optional');
+
+const universe = read('server/services/cryptocrawl/discovery/market-universe-controller.ts');
+requireText(universe, 'rankMeasuredMarketUniverse', 'non-rotating ranking function exists');
+requireText(universe, 'const start = rotationCursor % head.length', 'rotation cursor drives scan diversity');
+requireText(universe, 'rotationCursor = (rotationCursor +', 'rotation cursor advances exactly at consumption boundary');
 
 const symbols = read('server/services/cryptocrawl/discovery/symbol-registry.ts');
-requireText(symbols, "base === quote", 'self-pair rejection');
+requireText(symbols, 'base === quote', 'self-pair rejection');
 requireText(symbols, 'STABLE_BASES.has(canonical.base)', 'stable/stable starvation guard');
 
 const progression = read('server/services/cryptocrawl/governance/automatic-stage-progression.ts');
 requireText(progression, 'STAGE_ONE_OPPORTUNITY_ECONOMICS_BLOCK_REASONS', 'Stage 1 economics/readiness split');
-requireText(progression, "stageManager.getState().currentStage !== 1", 'Stage 1-only scope');
+requireText(progression, "stageManager.getState().currentStage !== 1", 'Stage 1-only readiness exception');
 requireText(progression, 'opportunity_rejection_preserved:', 'negative opportunity rejection provenance');
 requireText(progression, "throw new Error('Execution evidence requires a terminal normalized settlement')", 'terminal-only learning preserved');
 
 const stageManager = read('server/services/cryptocrawl/governance/stage-management.ts');
 requireText(stageManager, "if (evidence.marketGate.decision !== 'ALLOW')", 'StageManager market-gate authority preserved');
 requireText(stageManager, 'if (this.state.killSwitchActive)', 'kill-switch advancement blocker preserved');
-requireText(stageManager, "this.state.currentStage >= Stage.STAGE_2_PROOF_OF_SIGNAL && evidence.cryptara.averageSlippageBps === null", 'Stage 2 measured slippage requirement preserved');
+requireText(stageManager, 'averageSlippageBps === null', 'measured slippage requirement preserved for advanced stages');
 
 const attestation = read('server/services/cryptocrawl/runtime/runtime-attestation.ts');
-requireText(attestation, "? 'mismatch'", 'runtime mismatch state');
-requireText(attestation, "attestation.state !== 'mismatch'", 'runtime mismatch unsafe');
+requireText(attestation, "? 'mismatch'", 'runtime identity mismatch state');
+requireText(attestation, "attestation.state !== 'mismatch'", 'runtime mismatch cannot be considered safe');
 forbidText(attestation, 'WALLET_PRIVATE_KEY', 'runtime attestation secret isolation');
 forbidText(attestation, 'API_SECRET', 'runtime attestation secret isolation');
+forbidText(attestation, 'API_KEY', 'runtime attestation credential isolation');
 
 const environment = read('server/services/cryptocrawl/runtime/environment-contract.ts');
-requireText(environment, 'VISIBLE_UNVERIFIED', 'environment visibility must not claim provider live');
-// Environment contract intentionally uses visibility state VISIBLE rather than
-// a provider LIVE claim. Treat absence of VISIBLE_UNVERIFIED as the expected form.
-if (environment.includes('VISIBLE_UNVERIFIED')) failures.push('environment contract must not introduce an unowned provider-live state');
 requireText(environment, "resolution.state !== 'VISIBLE'", 'alias adoption requires visible credential');
-forbidText(environment, 'console.log', 'environment contract must not log secret-bearing values');
+requireText(environment, "providerState: inferred", 'provider state remains distinct from environment visibility');
+forbidText(environment, 'console.log', 'environment contract does not log credentials');
+forbidText(environment, 'return sourceValue', 'environment contract never returns a secret value from adoption');
+
+const observability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
+for (const dimension of ['APP_READY', 'CONFIG_READY', 'DATA_READY', 'DISCOVERY_READY', 'EXECUTION_READY', 'TRADING_READY']) {
+  requireText(observability, `${dimension}:`, `readiness dimension ${dimension}`);
+}
+requireText(observability, 'requiredForCoreCexDiscovery: false', 'optional provider cannot masquerade as core requirement');
+requireText(observability, 'getVenueCapabilities()', 'runtime exposes venue capabilities');
+requireText(observability, 'getCryptoCrawlerRuntimeAttestation()', 'runtime exposes source/deployment identity');
+
+const telemetry = read('server/services/cryptocrawl/integration/telemetry-bootstrap.ts');
+requireText(telemetry, 'resolveCoinStatsEnvironment()', 'telemetry uses CoinStats environment contract');
+requireText(telemetry, 'getCryptoCrawlerRuntimeAttestation()', 'telemetry emits runtime identity');
+forbidText(telemetry, 'process.env[canonical] = process.env[source]', 'CoinStats does not bypass safe alias resolver');
+
+const scaler = read('server/services/cryptocrawl/scaling/dynamic-scale-physics.ts');
+requireText(scaler, 'canonical.observedOpportunities', 'search scaling uses measured observed opportunities');
+requireText(scaler, 'canonical.verifiedPositiveOpportunities', 'execution-quality density remains separately measured');
+requireText(scaler, 'searchOpportunityDensity', 'search density exposed independently');
+requireText(scaler, 'verifiedPositiveDensity', 'verified-positive density exposed independently');
+requireText(scaler, 'Math.max(0, normalized - this.lastRecordedOpportunityTotal)', 'cumulative counters converted to deltas');
+forbidText(scaler, 'Paused non-critical services', 'scaler must not claim unperformed service actions');
+forbidText(scaler, 'Northern Virginia', 'scaler must not invent deployment region');
+forbidText(scaler, 'Frankfurt', 'scaler must not invent deployment region');
+
+const legacyScaler = read('server/services/cryptocrawl/stealth/dynamic-scale-physics.ts');
+requireText(legacyScaler, 'non-authoritative', 'legacy scaler explicitly non-authoritative');
+forbidText(legacyScaler, 'setInterval(', 'legacy scaler must not run an independent background control loop');
+forbidText(legacyScaler, 'Scaling from', 'legacy scaler must not claim external infrastructure scaling');
 
 for (const relative of [
   'server/services/cryptocrawl/runtime/runtime-attestation.ts',
@@ -96,13 +132,11 @@ for (const relative of [
   'server/services/cryptocrawl/intelligence/market-data-providers.ts',
   'server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts',
   'server/services/cryptocrawl/governance/automatic-stage-progression.ts',
+  'server/services/cryptocrawl/integration/runtime-observability.ts',
+  'server/services/cryptocrawl/integration/telemetry-bootstrap.ts',
+  'server/services/cryptocrawl/scaling/dynamic-scale-physics.ts',
+  'server/services/cryptocrawl/stealth/dynamic-scale-physics.ts',
 ]) parseTypeScript(relative);
-
-// Clean up two explicit negative-control probes above. They are kept in the
-// source so the verifier itself documents why those states must not exist.
-for (let i = failures.length - 1; i >= 0; i--) {
-  if (failures[i].includes('environment visibility must not claim provider live')) failures.splice(i, 1);
-}
 
 if (failures.length) {
   console.error('[verify-no-regression-opportunity-pipeline] FAILED');
@@ -111,10 +145,10 @@ if (failures.length) {
 }
 
 console.log('[verify-no-regression-opportunity-pipeline] PASS');
-console.log(' - Coinbase inactive in current executable quote authority');
-console.log(' - Kraken/OKX live execution allowlist unchanged');
-console.log(' - strict positive-net and live-confirmation gates unchanged');
-console.log(' - measured universe rotates without synthesizing market data');
-console.log(' - CoinStats aliases are resolved without exposing secret values');
-console.log(' - Stage 1 readiness may ignore only explicitly enumerated opportunity-economics rejection');
-console.log(' - Stage 2+ market gate, settlement learning, kill switch, and measured-slippage invariants preserved');
+console.log(' - Coinbase remains inactive while Kraken/OKX remain settlement-safe live CEX venues');
+console.log(' - strict positive-net, live-confirmation, StageManager, kill-switch, and terminal-learning gates are preserved');
+console.log(' - measured market universe is ranked deterministically and rotated once per consumption boundary');
+console.log(' - optional CoinStats visibility is diagnosed without exposing credentials or becoming core readiness');
+console.log(' - Stage 1 readiness distinguishes infrastructure health from a correctly rejected fee-negative opportunity');
+console.log(' - discovery scaling uses observed search density separately from verified-positive density');
+console.log(' - legacy scaling no longer launches a competing control loop or claims unperformed infrastructure actions');
