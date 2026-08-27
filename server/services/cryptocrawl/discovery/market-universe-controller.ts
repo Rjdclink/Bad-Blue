@@ -9,6 +9,7 @@ export interface MarketUniverseCandidate {
 }
 
 let rotationCursor = 0;
+let lastOrderedSymbols: string[] = [];
 
 function score(candidate: MarketUniverseCandidate): number {
   const volume = Number.isFinite(candidate.volume24hUsd) && (candidate.volume24hUsd || 0) > 0
@@ -21,6 +22,20 @@ function score(candidate: MarketUniverseCandidate): number {
     ? 1 / Math.sqrt(candidate.marketCapRank || 1)
     : 0;
   return volume * 2 + cap * 0.35 + rank;
+}
+
+function rememberOrderedUniverse<T extends MarketUniverseCandidate>(ordered: T[]): T[] {
+  lastOrderedSymbols = ordered.map(candidate => candidate.symbol);
+  return ordered;
+}
+
+/**
+ * Returns the most recently consumed measured universe order without advancing
+ * the rotation cursor. Downstream scanners use this to share the exact market
+ * cycle selected by the provider boundary rather than consuming/rotating again.
+ */
+export function getLastOrderedMarketUniverseSymbols(): string[] {
+  return [...lastOrderedSymbols];
 }
 
 /**
@@ -48,7 +63,7 @@ export function rankMeasuredMarketUniverse<T extends MarketUniverseCandidate>(as
  */
 export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
   const ranked = rankMeasuredMarketUniverse(assets);
-  if (ranked.length <= 1) return ranked;
+  if (ranked.length <= 1) return rememberOrderedUniverse(ranked);
 
   const configuredWindow = Number(process.env.CRYPTO_MARKET_ROTATION_WINDOW || ranked.length);
   const windowSize = Math.min(
@@ -59,13 +74,14 @@ export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(a
   const start = rotationCursor % head.length;
   rotationCursor = (rotationCursor + Math.max(1, Math.floor(head.length / 3))) % head.length;
 
-  return [
+  return rememberOrderedUniverse([
     ...head.slice(start),
     ...head.slice(0, start),
     ...ranked.slice(windowSize),
-  ];
+  ]);
 }
 
 export function resetMarketUniverseRotationForTest(): void {
   rotationCursor = 0;
+  lastOrderedSymbols = [];
 }
