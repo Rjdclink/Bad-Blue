@@ -55,4 +55,10 @@ run(
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-profit-blocker-wiring.cjs')],
 );
 
-console.log('[deployment-preflight] PASS — CryptoCrawler invariants, topology lifecycle, competition evidence, and expanded profit-blocker wiring are clean; normal production build continues with Vite/esbuild');
+run(
+  'CryptoCrawler truthful admin diagnostics wiring',
+  process.execPath,
+  [path.join(root, 'scripts', 'cryptocrawl', 'verify-truthful-admin-diagnostics.cjs')],
+);
+
+console.log('[deployment-preflight] PASS — CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, and truthful admin diagnostics are clean; normal production build continues with Vite/esbuild');
