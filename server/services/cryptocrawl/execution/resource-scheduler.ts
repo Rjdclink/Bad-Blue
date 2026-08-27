@@ -10,7 +10,7 @@ export interface ExecutionResourceLease {
   acquiredAt: number;
   expiresAt: number;
   resources: string[];
-  release: () => Promise<void>;
+  release: (options?: { retainOpportunityUntilExpiry?: boolean }) => Promise<void>;
 }
 
 interface ResourcePoolSpec {
@@ -214,18 +214,28 @@ class ExecutionResourceScheduler {
       resources: distributedResources.length > 0
         ? distributedResources
         : specs.map(spec => `${spec.prefix}:local`),
-      release: async () => {
+      release: async (options = {}) => {
         if (released) return;
         released = true;
+        const retainOpportunityUntilExpiry = options.retainOpportunityUntilExpiry === true;
         try {
           if (isDatabaseConfigured && distributedResources.length > 0) {
-            await pool.query(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]);
+            if (retainOpportunityUntilExpiry) {
+              await pool.query(
+                `DELETE FROM ${TABLE}
+                 WHERE lease_id = $1 AND owner_id = $2 AND resource_key <> $3`,
+                [leaseId, this.ownerId, `cex:opportunity:${opportunityId}`],
+              );
+            } else {
+              await pool.query(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]);
+            }
           }
         } catch (error) {
           logger.error('[ResourceScheduler] Lease release failed; TTL remains fail-safe', {
             component: 'ExecutionResourceScheduler',
             leaseId,
             opportunityId,
+            retainOpportunityUntilExpiry,
             error: error instanceof Error ? error.message : String(error),
           });
         } finally {
