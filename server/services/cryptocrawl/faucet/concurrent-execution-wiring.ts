@@ -10,11 +10,6 @@ import {
 
 const installed = new WeakSet<object>();
 
-type FaucetReasoning = {
-  action: string;
-  confidence: number;
-} | null;
-
 type FaucetExpectedProfit = {
   status: 'VALID_POSITIVE' | 'VALID_ZERO' | 'VALID_NEGATIVE' | 'INCOMPLETE_DATA';
   grossProfitUsd: number | null;
@@ -59,7 +54,6 @@ type FaucetRuntime = {
     isOpen: boolean;
   };
   hasCurrentMarketData: () => boolean;
-  performDimensionalReasoning: () => Promise<FaucetReasoning>;
   calculateExpectedProfit: () => Promise<FaucetExpectedProfit>;
   calculateThreatIndicator: () => number;
   makeOpenDecision: () => Promise<FaucetOpenDecision>;
@@ -93,37 +87,20 @@ function formatMoney(value: number | null): string {
  * the faucet's compatibility dispatch method; it does not start or stop the
  * scheduler itself.
  *
- * The bridge also prevents legacy NaN sentinels from becoming decision evidence.
- * The faucet's executable plan type is CEX_CEX, so on-chain gas and mempool
- * competition are not applicable opening gates. Missing optional numeric inputs
- * skip advisory Cain reasoning rather than entering the reasoning engine as
- * non-finite values.
+ * The legacy faucet's executable plan is CEX_CEX. On-chain gas, mempool competition,
+ * and Cain's legacy mixed-topology reasoning therefore do not authorize or block
+ * CEX opening. Missing/non-finite legacy sentinels are never converted to synthetic
+ * numeric evidence. Deterministic positive all-in economics remains mandatory.
  */
 export function ensureConcurrentExecutionWiring(): void {
   const target = autonomousFaucet as unknown as FaucetRuntime;
   if (installed.has(target)) return;
   installed.add(target);
 
-  const originalReasoning = target.performDimensionalReasoning.bind(target);
-  target.performDimensionalReasoning = async (): Promise<FaucetReasoning> => {
-    const reasoningInputs = {
-      volatility: finiteOrNull(target.marketConditions.volatility),
-      confidence: finiteOrNull(target.marketConditions.confidence),
-    };
-    const missing = Object.entries(reasoningInputs)
-      .filter(([, value]) => value === null)
-      .map(([name]) => name);
-    if (missing.length > 0) {
-      logger.debug('[FAUCET] Cain reasoning skipped because measured numeric inputs are incomplete', {
-        component: 'ConcurrentExecutionWiring',
-        missing,
-        syntheticFallbackUsed: false,
-      });
-      return null;
-    }
-    return originalReasoning();
-  };
-
+  // Defense in depth: if legacy Cain diagnostics call this helper elsewhere,
+  // topology-inapplicable competition contributes no numeric threat pressure and
+  // the returned value is always finite. Cain itself is not consulted by the
+  // patched CEX opening decision below.
   target.calculateThreatIndicator = (): number => {
     const competition = resolveCompetitionEvidence({
       topology: 'CEX_CEX',
@@ -170,23 +147,6 @@ export function ensureConcurrentExecutionWiring(): void {
       };
     }
 
-    const reasoning = await target.performDimensionalReasoning();
-    if (reasoning && (reasoning.action === 'HIBERNATE' || reasoning.action === 'EVADE')) {
-      const confidence = finiteOrNull(reasoning.confidence) ?? 0;
-      return {
-        shouldOpen: false,
-        shouldClose: true,
-        confidence,
-        reasons: [`Cain reasoning action: ${reasoning.action}`],
-        validators: [{
-          name: 'cain_reasoning',
-          passed: false,
-          weight: 0.30,
-          details: `Dimensional reasoning: ${reasoning.action} (confidence: ${confidence.toFixed(2)})`,
-        }],
-      };
-    }
-
     const expectedProfit = await target.calculateExpectedProfit();
     const netProfit = finiteOrNull(expectedProfit.netProfitUsd);
     const grossProfit = finiteOrNull(expectedProfit.grossProfitUsd);
@@ -201,8 +161,6 @@ export function ensureConcurrentExecutionWiring(): void {
     });
     if (!profitPasses) reasons.push(`Insufficient expected profit: ${netProfit === null ? expectedProfit.status : formatMoney(netProfit)}`);
 
-    // The legacy faucet executes verified Kraken/OKX CEX_CEX plans through the
-    // canonical scheduler. On-chain gas is therefore not an opening criterion.
     validators.push({
       name: 'gas_cost',
       passed: true,
@@ -326,10 +284,11 @@ export function ensureConcurrentExecutionWiring(): void {
     distributedOpportunityIdempotency: true,
     distributedResourceLeases: true,
     settlementSemantics: 'terminal_realized_only',
+    legacyCainCexExecutionAuthority: false,
     competitionEvidenceAuthority: 'topology_aware_no_nan',
     cexGasApplicability: 'not_applicable',
     cexMempoolCompetitionApplicability: 'not_applicable',
-    nonFiniteReasoningPolicy: 'skip_optional_reasoning_no_synthetic_fallback',
+    nonFiniteEvidencePolicy: 'unknown_or_not_applicable_never_synthetic_zero',
     scheduler: canonicalExecutionScheduler.getStats(),
   });
 }
