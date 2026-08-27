@@ -35,6 +35,11 @@ const stageManagement = read('server/services/cryptocrawl/governance/stage-manag
 const masterPipeline = read('server/services/cryptocrawl/integration/master-pipeline.ts');
 const tradingView = read('server/services/cryptocrawl/babel/tradingview-integration.ts');
 const legacy = read('server/cryptaraModule.ts');
+const hyperMonteCarlo = read('server/services/cryptocrawl/validation/monte-carlo-hyper-engine.ts');
+const bootstrapWiring = read('server/services/cryptocrawl/integration/cryptara-bootstrap-wiring.ts');
+const beamWiring = read('server/services/cryptocrawl/integration/cryptara-beam-wiring.ts');
+const assessmentWiring = read('server/services/cryptocrawl/integration/cryptara-assessment-wiring.ts');
+const scheduledTraining = read('server/services/cryptocrawl/training/scheduled-monte-carlo-training.ts');
 
 assertContains(cryptara, 'CryptaraOpportunityContext', 'authoritative Cryptara accepts normalized opportunity context');
 assertContains(cryptara, 'recordOpportunityObservation', 'Cryptara records candidate intelligence');
@@ -67,6 +72,40 @@ assertContains(stageManagement, 'averageSlippageBps: value.cryptara.averageSlipp
 assertContains(masterPipeline, 'generic LuxSwarm execution is not authoritative', 'generic observations cannot reach the execution boundary');
 assertContains(tradingView, "cached.dataProvenance === 'live' ? 'cached' : 'deterministic-fallback'", 'cached TradingView fallback provenance is preserved');
 assertContains(tradingView, 'TradingView payload contains incomplete indicator data', 'incomplete TradingView data cannot be labeled live');
+
+// Hyper Monte Carlo invariants: one immutable opportunity snapshot enters Beam,
+// the CPU-heavy kernel runs on real worker threads, and adaptive sampling stops
+// once confidence is sufficient rather than burning a fixed path count.
+assertContains(hyperMonteCarlo, "from 'node:worker_threads'", 'Hyper Monte Carlo uses CPU worker threads');
+assertContains(hyperMonteCarlo, 'HyperMonteCarloMode', 'Hyper Monte Carlo exposes live/training modes');
+assertContains(hyperMonteCarlo, 'function wilson', 'adaptive stopping is driven by a statistical confidence interval');
+assertContains(hyperMonteCarlo, 'controlVariateBeta', 'control-variate mean reduction is implemented and observable');
+assertContains(hyperMonteCarlo, 'measuredLatenciesMs', 'measured execution latency feeds the stochastic model');
+assertContains(hyperMonteCarlo, 'measuredSlippageBps', 'measured slippage feeds the stochastic model');
+assertContains(hyperMonteCarlo, 'executionDeadlineMs', 'quote lifetime produces an execution deadline');
+assertContains(hyperMonteCarlo, 'probabilityBothLegsFill', 'joint execution/fill probability is measured');
+assertContains(hyperMonteCarlo, 'stoppedEarly', 'adaptive Monte Carlo can stop before the maximum path budget');
+
+assertContains(bootstrapWiring, 'runHyperMonteCarlo', 'Cryptara production opportunity analysis uses the Hyper Engine');
+assertContains(bootstrapWiring, 'sourceObservedAt', 'Monte Carlo evidence is bound to a unique observation, not only a reusable opportunity ID');
+assertContains(bootstrapWiring, 'technicalProvenance:context.tradingView?.dataProvenance', 'technical provenance feeds evidence quality without becoming a binary availability gate');
+assertNotContains(bootstrapWiring, "missingInformation.push('live_technical_analysis')", 'cached TradingView data is not a binary Monte Carlo availability gate');
+assertNotContains(bootstrapWiring, 'createMonteCarloEngine(', 'production Cryptara wiring no longer runs the legacy v3 strategy simulator');
+
+assertContains(beamWiring, 'structuredClone(sourceContext)', 'Beam receives a detached immutable opportunity snapshot');
+assertContains(beamWiring, 'context: immutableContext', 'Beam task input carries the exact opportunity context');
+assertContains(beamWiring, 'originalRun(workloadInput.context, beamContext.signal)', 'Beam executes the exact snapshot and propagates cancellation');
+assertNotContains(beamWiring, 'return originalRun();', 'Beam no longer dereferences shared mutable Cryptara context');
+assertNotContains(beamWiring, 'Computational Beam Monte Carlo workload unavailable', 'evidence/model failures are no longer mislabeled as Beam unavailability');
+
+assertContains(assessmentWiring, 'target.latestMonteCarloEvidence = null', 'every market observation clears stale Monte Carlo evidence first');
+assertContains(assessmentWiring, 'target.runMonteCarloSimulation(context)', 'assessment passes its exact opportunity context into Monte Carlo');
+assertContains(assessmentWiring, 'opportunityId}:${context.observedAt}', 'warning state is isolated per observation');
+
+assertContains(scheduledTraining, "runHyperMonteCarlo(request)", 'scheduled deep validation uses the same Hyper Engine');
+assertContains(scheduledTraining, "'training'", 'scheduled deep validation invokes the training profile');
+assertNotContains(scheduledTraining, 'createMonteCarloEngine(', 'scheduled production training no longer uses the legacy v3 simulator');
+assertNotContains(scheduledTraining, 'ELITE_STRATEGIES', 'scheduled production training no longer fabricates theoretical elite-strategy inputs');
 
 assertContains(legacy, 'compatibility module', 'legacy neural module is explicitly classified');
 assertContains(legacy, 'used as a second execution or progression authority', 'legacy module cannot claim governance authority');

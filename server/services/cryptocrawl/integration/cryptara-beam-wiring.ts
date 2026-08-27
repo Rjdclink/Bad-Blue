@@ -1,5 +1,5 @@
 import type Cryptara from '../../cryptara/index.js';
-import type { MonteCarloResult } from '../../cryptara/index.js';
+import type { CryptaraOpportunityContext, MonteCarloResult } from '../../cryptara/index.js';
 import { createLogger } from '../../../logger.js';
 import { workloadRouter } from '../../computationalBeam/workloadRouter.js';
 import { ComputeLayer, TaskIntensity, TaskPriority, TaskType, type Task } from '../../computationalBeam/types.js';
@@ -21,6 +21,16 @@ function validMonteCarloResult(result: unknown): result is MonteCarloResult {
     Number.isFinite(value.riskMetrics.maxDrawdown);
 }
 
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isEvidenceIncomplete(error: unknown): boolean {
+  const message = messageOf(error);
+  return message.startsWith('EVIDENCE_INCOMPLETE:') ||
+    message.startsWith('Cryptara Monte Carlo requires measured context:');
+}
+
 async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
   return new Promise<MonteCarloResult>((resolve, reject) => {
     let settled = false;
@@ -34,7 +44,7 @@ async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
       cleanup();
       const result = event.result ?? workloadRouter.consumeTaskOutcome(task.id)?.result;
       if (!validMonteCarloResult(result)) {
-        reject(new Error(`Beam returned invalid Monte Carlo result for ${task.id}`));
+        reject(new Error(`HYPER_INVALID_RESULT: Beam returned invalid Monte Carlo result for ${task.id}`));
         return;
       }
       resolve(result);
@@ -43,7 +53,7 @@ async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
       if (event.taskId !== task.id || settled) return;
       settled = true;
       cleanup();
-      reject(new Error(event.error || `Beam task ${task.id} failed`));
+      reject(new Error(event.error || `BEAM_EXECUTION_FAILED: Beam task ${task.id} failed`));
     };
     workloadRouter.on('task-completed', onCompleted);
     workloadRouter.on('task-failed', onFailed);
@@ -60,53 +70,89 @@ export function ensureCryptaraBeamWiring(): Cryptara {
   const instance = ensureCryptaraBootstrapWiring();
   if (installed.has(instance)) return instance;
   installed.add(instance);
-  const target = instance as unknown as { runMonteCarloSimulation: () => Promise<MonteCarloResult> };
+  const target = instance as unknown as {
+    latestOpportunityContext: CryptaraOpportunityContext | null;
+    runMonteCarloSimulation: (context?: CryptaraOpportunityContext, signal?: AbortSignal) => Promise<MonteCarloResult>;
+  };
   const originalRun = target.runMonteCarloSimulation.bind(target);
 
-  target.runMonteCarloSimulation = async (): Promise<MonteCarloResult> => {
+  target.runMonteCarloSimulation = async (contextOverride?: CryptaraOpportunityContext): Promise<MonteCarloResult> => {
+    const sourceContext = contextOverride ?? target.latestOpportunityContext;
+    if (!sourceContext) throw new Error('EVIDENCE_INCOMPLETE: verified_opportunity_context');
+
+    // The Beam owns a detached snapshot. Concurrent ETH/BTC/BNB assessments can no
+    // longer race through Cryptara.latestOpportunityContext while the workload runs.
+    const immutableContext = structuredClone(sourceContext);
     const task = workloadRouter.createTask(TaskType.MONTE_CARLO, {
-      source: 'cryptara_verified_opportunity',
+      source: 'cryptara_hyper_verified_opportunity',
+      opportunityId: immutableContext.opportunityId,
+      observedAt: immutableContext.observedAt,
     }, {
       intensity: TaskIntensity.HEAVY,
       priority: TaskPriority.HIGH,
       requiredLayer: ComputeLayer.BEAM,
     });
     task.workload = {
-      id: `cryptara-monte-carlo:${task.id}`,
-      type: 'cryptara_verified_opportunity_monte_carlo',
-      input: { requestedAt: Date.now() },
+      id: `cryptara-hyper-monte-carlo:${task.id}`,
+      type: 'cryptara_hyper_verified_opportunity_monte_carlo',
+      input: {
+        requestedAt: Date.now(),
+        context: immutableContext,
+      },
       timeoutMs: Math.max(5_000, Number(process.env.CRYPTARA_BEAM_MONTE_CARLO_TIMEOUT_MS || 30_000)),
-      execute: async (_input, context) => {
-        if (context.signal.aborted) throw new Error('Cryptara Monte Carlo Beam workload aborted before execution');
-        return originalRun();
+      execute: async (input, beamContext) => {
+        if (beamContext.signal.aborted) throw new Error('HYPER_ABORTED: Beam workload aborted before execution');
+        const workloadInput = input as { requestedAt: number; context: CryptaraOpportunityContext };
+        return originalRun(workloadInput.context, beamContext.signal);
       },
       validate: result => validMonteCarloResult(result),
     };
 
     try {
       const result = await runThroughBeam(task);
-      log.info('Cryptara Monte Carlo completed through Computational Beam', {
+      log.info('Cryptara Hyper Monte Carlo completed through Computational Beam', {
         component: 'CryptaraBeamWiring',
         taskId: task.id,
+        opportunityId: immutableContext.opportunityId,
+        observedAt: immutableContext.observedAt,
         simulationId: result.simulationId,
         iterations: result.iterations,
       });
       return result;
     } catch (error) {
-      // Do not silently fall back to a second independent model. The caller keeps
-      // explicit incomplete evidence if the Beam workload itself is unavailable.
-      log.warn('Computational Beam Monte Carlo workload unavailable', {
-        component: 'CryptaraBeamWiring',
-        taskId: task.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const message = messageOf(error);
+      if (isEvidenceIncomplete(error)) {
+        log.info('Cryptara Hyper Monte Carlo evidence incomplete', {
+          component: 'CryptaraBeamWiring',
+          taskId: task.id,
+          opportunityId: immutableContext.opportunityId,
+          observedAt: immutableContext.observedAt,
+          error: message,
+        });
+      } else if (message.includes('HYPER_ABORTED') || message.includes('timed out') || message.includes('cancelled')) {
+        log.warn('Cryptara Hyper Monte Carlo Beam workload aborted or timed out', {
+          component: 'CryptaraBeamWiring',
+          taskId: task.id,
+          opportunityId: immutableContext.opportunityId,
+          error: message,
+        });
+      } else {
+        log.warn('Computational Beam Hyper Monte Carlo execution failed', {
+          component: 'CryptaraBeamWiring',
+          taskId: task.id,
+          opportunityId: immutableContext.opportunityId,
+          error: message,
+        });
+      }
       throw error;
     }
   };
 
-  log.info('Cryptara Computational Beam wiring installed', {
+  log.info('Cryptara Computational Beam Hyper Monte Carlo wiring installed', {
     component: 'CryptaraBeamWiring',
-    workload: 'verified_opportunity_monte_carlo',
+    workload: 'cryptara_hyper_verified_opportunity_monte_carlo',
+    immutableTaskInput: true,
+    cpuWorkerPool: true,
     executionAuthority: false,
   });
   return instance;
