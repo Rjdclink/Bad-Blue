@@ -25,6 +25,7 @@ export interface StreamOrderBookQuote {
 
 export interface CexOrderBookStreamStats {
   activeStreams: number;
+  activeConnections: number;
   snapshotsApplied: number;
   deltasApplied: number;
   deltasQueued: number;
@@ -45,11 +46,16 @@ interface ParsedBookMessage {
   observedAt: number;
 }
 
-interface StreamState {
+interface SymbolStreamState {
   venue: CexStreamVenue;
   symbol: string;
-  socket: WebSocket | null;
   book: SequencedOrderBook;
+}
+
+interface VenueConnectionState {
+  venue: CexStreamVenue;
+  socket: WebSocket | null;
+  symbols: Set<string>;
   reconnectTimer: NodeJS.Timeout | null;
   reconnectAttempts: number;
   stopped: boolean;
@@ -63,6 +69,22 @@ const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 function parseSymbol(symbol: string): { base: string; quote: string } | null {
   const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
   return match ? { base: match[1], quote: match[2] } : null;
+}
+
+function normalizeExternalSymbol(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const normalized = raw.trim().toUpperCase().replace(/[\/_:\-]/g, '');
+  return parseSymbol(normalized) ? normalized : null;
+}
+
+function messageSymbol(venue: CexStreamVenue, message: Record<string, unknown>): string | null {
+  if (venue === 'coinbase') return normalizeExternalSymbol(message.product_id);
+  if (venue === 'kraken') {
+    const row = Array.isArray(message.data) ? message.data[0] as Record<string, unknown> | undefined : undefined;
+    return normalizeExternalSymbol(row?.symbol);
+  }
+  const arg = message.arg && typeof message.arg === 'object' ? message.arg as Record<string, unknown> : null;
+  return normalizeExternalSymbol(arg?.instId);
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -244,8 +266,9 @@ export class SequencedOrderBook {
 }
 
 class CexOrderBookStreamManager {
-  private readonly streams = new Map<string, StreamState>();
-  private readonly stats: Omit<CexOrderBookStreamStats, 'activeStreams'> = {
+  private readonly streams = new Map<string, SymbolStreamState>();
+  private readonly connections = new Map<CexStreamVenue, VenueConnectionState>();
+  private readonly stats: Omit<CexOrderBookStreamStats, 'activeStreams' | 'activeConnections'> = {
     snapshotsApplied: 0,
     deltasApplied: 0,
     deltasQueued: 0,
@@ -261,12 +284,11 @@ class CexOrderBookStreamManager {
     if (!this.enabled()) return null;
     const normalizedSymbol = symbol.trim().toUpperCase();
     if (!parseSymbol(normalizedSymbol)) return null;
-    const key = `${venue}:${normalizedSymbol}`;
-    const state = this.ensureStream(venue, normalizedSymbol, key);
+    const state = this.ensureStream(venue, normalizedSymbol);
     if (state.book.isStale(maxAgeMs)) {
       this.stats.staleResets += 1;
       state.book.reset();
-      state.socket?.close();
+      this.refreshSubscription(venue, normalizedSymbol);
       return null;
     }
     if (!state.book.isFresh(maxAgeMs)) return null;
@@ -274,41 +296,80 @@ class CexOrderBookStreamManager {
   }
 
   stop(): void {
-    for (const state of this.streams.values()) {
-      state.stopped = true;
-      if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
-      state.socket?.close();
+    for (const connection of this.connections.values()) {
+      connection.stopped = true;
+      if (connection.reconnectTimer) clearTimeout(connection.reconnectTimer);
+      connection.socket?.close();
     }
+    this.connections.clear();
     this.streams.clear();
   }
 
   getStats(): Readonly<CexOrderBookStreamStats> {
-    return { activeStreams: this.streams.size, ...this.stats };
+    return {
+      activeStreams: this.streams.size,
+      activeConnections: [...this.connections.values()].filter(connection => connection.socket?.readyState === WebSocket.OPEN).length,
+      ...this.stats,
+    };
   }
 
-  private ensureStream(venue: CexStreamVenue, symbol: string, key: string): StreamState {
+  private ensureStream(venue: CexStreamVenue, symbol: string): SymbolStreamState {
+    const key = `${venue}:${symbol}`;
     const existing = this.streams.get(key);
     if (existing) return existing;
-    const state: StreamState = { venue, symbol, socket: null, book: new SequencedOrderBook(), reconnectTimer: null, reconnectAttempts: 0, stopped: false };
+
+    const state: SymbolStreamState = { venue, symbol, book: new SequencedOrderBook() };
     this.streams.set(key, state);
-    this.connect(state);
+    const connection = this.ensureConnection(venue);
+    connection.symbols.add(symbol);
+    if (connection.socket?.readyState === WebSocket.OPEN) {
+      this.send(connection.socket, this.subscription(venue, [symbol]), venue, 'subscribe');
+    }
     return state;
   }
 
-  private connect(state: StreamState): void {
-    if (state.stopped) return;
-    const endpoint = state.venue === 'coinbase' ? 'wss://ws-feed.exchange.coinbase.com' : state.venue === 'kraken' ? 'wss://ws.kraken.com/v2' : 'wss://ws.okx.com:8443/ws/v5/public';
+  private ensureConnection(venue: CexStreamVenue): VenueConnectionState {
+    const existing = this.connections.get(venue);
+    if (existing) return existing;
+    const connection: VenueConnectionState = {
+      venue,
+      socket: null,
+      symbols: new Set<string>(),
+      reconnectTimer: null,
+      reconnectAttempts: 0,
+      stopped: false,
+    };
+    this.connections.set(venue, connection);
+    this.connect(connection);
+    return connection;
+  }
+
+  private connect(connection: VenueConnectionState): void {
+    if (connection.stopped) return;
+    const endpoint = connection.venue === 'coinbase'
+      ? 'wss://ws-feed.exchange.coinbase.com'
+      : connection.venue === 'kraken'
+        ? 'wss://ws.kraken.com/v2'
+        : 'wss://ws.okx.com:8443/ws/v5/public';
     const socket = new WebSocket(endpoint);
-    state.socket = socket;
+    connection.socket = socket;
+
     socket.once('open', () => {
       this.stats.connectionsOpened += 1;
-      if (state.reconnectAttempts > 0) this.stats.reconnects += 1;
-      state.reconnectAttempts = 0;
-      socket.send(JSON.stringify(this.subscription(state.venue, state.symbol)));
+      if (connection.reconnectAttempts > 0) this.stats.reconnects += 1;
+      connection.reconnectAttempts = 0;
+      const symbols = [...connection.symbols];
+      if (symbols.length > 0) this.send(socket, this.subscription(connection.venue, symbols), connection.venue, 'subscribe');
     });
+
     socket.on('message', data => {
       try {
-        const parsed = parseMessage(state.venue, JSON.parse(data.toString()) as Record<string, unknown>);
+        const message = JSON.parse(data.toString()) as Record<string, unknown>;
+        const symbol = messageSymbol(connection.venue, message);
+        if (!symbol) return;
+        const state = this.streams.get(`${connection.venue}:${symbol}`);
+        if (!state) return;
+        const parsed = parseMessage(connection.venue, message);
         if (!parsed) return;
         const result = state.book.apply(parsed);
         if (parsed.kind === 'snapshot') this.stats.snapshotsApplied += 1;
@@ -318,37 +379,77 @@ class CexOrderBookStreamManager {
         if (result === 'gap') {
           this.stats.sequenceGaps += 1;
           state.book.reset();
-          socket.close();
+          this.refreshSubscription(connection.venue, symbol);
         }
       } catch (error) {
-        logger.debug('[CexOrderBookStream] ignored invalid message', { venue: state.venue, symbol: state.symbol, error: error instanceof Error ? error.message : String(error) });
+        logger.debug('[CexOrderBookStream] ignored invalid message', {
+          venue: connection.venue,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     });
+
     socket.once('error', error => {
       this.stats.connectionErrors += 1;
-      logger.debug('[CexOrderBookStream] websocket error', { venue: state.venue, symbol: state.symbol, error: error.message });
+      logger.debug('[CexOrderBookStream] websocket error', { venue: connection.venue, error: error.message });
     });
+
     socket.once('close', () => {
-      if (state.socket === socket) state.socket = null;
-      this.scheduleReconnect(state);
+      if (connection.socket === socket) connection.socket = null;
+      this.scheduleReconnect(connection);
     });
   }
 
-  private scheduleReconnect(state: StreamState): void {
-    if (state.stopped || state.reconnectTimer) return;
-    state.reconnectAttempts += 1;
-    const delay = Math.min(30_000, DEFAULT_RECONNECT_DELAY_MS * 2 ** Math.min(state.reconnectAttempts - 1, 5));
-    state.reconnectTimer = setTimeout(() => {
-      state.reconnectTimer = null;
-      this.connect(state);
+  private refreshSubscription(venue: CexStreamVenue, symbol: string): void {
+    const connection = this.connections.get(venue);
+    const socket = connection?.socket;
+    if (!connection || !socket || socket.readyState !== WebSocket.OPEN) return;
+    this.send(socket, this.unsubscription(venue, [symbol]), venue, 'unsubscribe');
+    this.send(socket, this.subscription(venue, [symbol]), venue, 'subscribe');
+  }
+
+  private scheduleReconnect(connection: VenueConnectionState): void {
+    if (connection.stopped || connection.reconnectTimer) return;
+    connection.reconnectAttempts += 1;
+    const delay = Math.min(30_000, DEFAULT_RECONNECT_DELAY_MS * 2 ** Math.min(connection.reconnectAttempts - 1, 5));
+    connection.reconnectTimer = setTimeout(() => {
+      connection.reconnectTimer = null;
+      this.connect(connection);
     }, delay);
   }
 
-  private subscription(venue: CexStreamVenue, symbol: string): Record<string, unknown> {
-    const pair = parseSymbol(symbol)!;
-    if (venue === 'coinbase') return { type: 'subscribe', product_ids: [`${pair.base}-${pair.quote}`], channels: ['level2'] };
-    if (venue === 'kraken') return { method: 'subscribe', params: { channel: 'book', symbol: [`${pair.base}/${pair.quote}`], depth: 25, snapshot: true } };
-    return { op: 'subscribe', args: [{ channel: 'books', instId: `${pair.base}-${pair.quote}`, sz: '50' }] };
+  private subscription(venue: CexStreamVenue, symbols: string[]): Record<string, unknown> {
+    const pairs = symbols.map(symbol => parseSymbol(symbol)).filter((pair): pair is { base: string; quote: string } => Boolean(pair));
+    if (venue === 'coinbase') {
+      return { type: 'subscribe', product_ids: pairs.map(pair => `${pair.base}-${pair.quote}`), channels: ['level2'] };
+    }
+    if (venue === 'kraken') {
+      return { method: 'subscribe', params: { channel: 'book', symbol: pairs.map(pair => `${pair.base}/${pair.quote}`), depth: 25, snapshot: true } };
+    }
+    return { op: 'subscribe', args: pairs.map(pair => ({ channel: 'books', instId: `${pair.base}-${pair.quote}` })) };
+  }
+
+  private unsubscription(venue: CexStreamVenue, symbols: string[]): Record<string, unknown> {
+    const pairs = symbols.map(symbol => parseSymbol(symbol)).filter((pair): pair is { base: string; quote: string } => Boolean(pair));
+    if (venue === 'coinbase') {
+      return { type: 'unsubscribe', product_ids: pairs.map(pair => `${pair.base}-${pair.quote}`), channels: ['level2'] };
+    }
+    if (venue === 'kraken') {
+      return { method: 'unsubscribe', params: { channel: 'book', symbol: pairs.map(pair => `${pair.base}/${pair.quote}`), depth: 25 } };
+    }
+    return { op: 'unsubscribe', args: pairs.map(pair => ({ channel: 'books', instId: `${pair.base}-${pair.quote}` })) };
+  }
+
+  private send(socket: WebSocket, payload: Record<string, unknown>, venue: CexStreamVenue, operation: string): void {
+    try {
+      socket.send(JSON.stringify(payload));
+    } catch (error) {
+      logger.debug('[CexOrderBookStream] websocket send failed', {
+        venue,
+        operation,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private enabled(): boolean {
