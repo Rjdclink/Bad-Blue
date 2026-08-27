@@ -52,11 +52,13 @@ export class CentralizedExchangeExecutor {
     const captureProbability = Math.max(0, Math.min(1, (1 - competitionLevel) * quoteFreshness));
     const monteCarlo = runProfitabilityMonteCarlo({
       seed: `cex:${plan.buyVenue}:${plan.sellVenue}:${plan.symbol}:${plan.buyAsk}:${plan.sellBid}:${plan.quoteAgeMs}`,
+      topology: 'CEX_CEX',
       notionalUsd: plan.notionalUsd,
       expectedNetProfitUsd: plan.netProfitUsd,
       estimatedExecutionCostUsd: Math.max(0, plan.costs.totalCostsUsd),
       expectedSlippageBps: Math.max(0, plan.expectedSlippageBps ?? 0),
       quoteLatencyMs: Math.max(0, plan.quoteAgeMs),
+      quoteMaxAgeMs: maxQuoteAgeMs,
       confidence: captureProbability,
       baselineSlippageAlreadyIncluded: true,
     });
@@ -66,12 +68,23 @@ export class CentralizedExchangeExecutor {
       symbol: plan.symbol,
       buyVenue: plan.buyVenue,
       sellVenue: plan.sellVenue,
+      topology: 'CEX_CEX',
       verifiedNetProfitUsd: plan.netProfitUsd,
       competitionLevel,
       captureProbability,
       profitableProbability: monteCarlo.profitableProbability,
+      profitableProbabilityInterval: monteCarlo.profitableProbabilityInterval,
       p10NetProfitUsd: monteCarlo.p10NetProfitUsd,
+      p5NetProfitUsd: monteCarlo.p5NetProfitUsd,
+      p1NetProfitUsd: monteCarlo.p1NetProfitUsd,
+      expectedShortfall95Usd: monteCarlo.expectedShortfall95Usd,
+      samples: monteCarlo.samples,
+      stoppedEarly: monteCarlo.stoppedEarly,
+      converged: monteCarlo.converged,
+      distribution: monteCarlo.distribution,
+      policyVersion: monteCarlo.policyVersion,
       approved: monteCarlo.approved,
+      reason: monteCarlo.reason,
     });
 
     if (!monteCarlo.approved) {
