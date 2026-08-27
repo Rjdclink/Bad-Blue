@@ -108,6 +108,13 @@ export interface CanonicalOpportunityMetrics {
   realizedSettlementCount: number;
 }
 
+export interface CanonicalSearchObservation {
+  observationId: string;
+  symbol: string;
+  observedAt: number;
+  source: string;
+}
+
 function clonePlan(plan: VerifiedArbitragePlan | null): VerifiedArbitragePlan | null {
   if (!plan) return null;
   return {
@@ -167,8 +174,22 @@ function governanceSnapshot(): CanonicalGovernanceSnapshot {
 
 class CanonicalOpportunityStateStore {
   private readonly snapshots = new Map<string, CanonicalOpportunitySnapshot>();
+  private readonly searchObservations = new Map<string, CanonicalSearchObservation>();
   private latestOpportunityId: string | null = null;
   private readonly maxEntries = 512;
+  private readonly maxSearchObservations = 4096;
+
+  recordSearchObservation(input: CanonicalSearchObservation): void {
+    const symbol = input.symbol.trim().toUpperCase();
+    if (!input.observationId.trim() || !symbol || !Number.isFinite(input.observedAt) || input.observedAt <= 0) return;
+    this.searchObservations.set(input.observationId, {
+      observationId: input.observationId,
+      symbol,
+      observedAt: input.observedAt,
+      source: input.source || 'unknown',
+    });
+    this.pruneSearchObservations();
+  }
 
   recordAssessment(input: {
     opportunityId: string;
@@ -314,6 +335,7 @@ class CanonicalOpportunityStateStore {
     const boundedWindowMs = Math.max(1_000, Math.min(3_600_000, windowMs));
     const cutoff = Date.now() - boundedWindowMs;
     const recent = [...this.snapshots.values()].filter(snapshot => snapshot.observedAt >= cutoff);
+    const measuredSearch = [...this.searchObservations.values()].filter(observation => observation.observedAt >= cutoff);
     const verifiedPositive = recent.filter(snapshot =>
       !!snapshot.plan && Number.isFinite(snapshot.plan.netProfitUsd) && snapshot.plan.netProfitUsd > 0,
     );
@@ -324,7 +346,7 @@ class CanonicalOpportunityStateStore {
     );
     return {
       windowMs: boundedWindowMs,
-      observedOpportunities: recent.length,
+      observedOpportunities: measuredSearch.length > 0 ? measuredSearch.length : recent.length,
       verifiedPositiveOpportunities: verifiedPositive.length,
       eligibleOpportunities: recent.filter(snapshot => snapshot.status === 'eligible').length,
       expectedNetProfitUsd: verifiedPositive.reduce((sum, snapshot) => sum + (snapshot.plan?.netProfitUsd || 0), 0),
@@ -346,6 +368,14 @@ class CanonicalOpportunityStateStore {
       const oldest = [...this.snapshots.entries()].sort(([, left], [, right]) => left.updatedAt - right.updatedAt)[0];
       if (!oldest) return;
       this.snapshots.delete(oldest[0]);
+    }
+  }
+
+  private pruneSearchObservations(): void {
+    while (this.searchObservations.size > this.maxSearchObservations) {
+      const oldest = [...this.searchObservations.entries()].sort(([, left], [, right]) => left.observedAt - right.observedAt)[0];
+      if (!oldest) return;
+      this.searchObservations.delete(oldest[0]);
     }
   }
 
