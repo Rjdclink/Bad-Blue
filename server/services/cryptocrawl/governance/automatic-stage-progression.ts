@@ -6,6 +6,7 @@ import {
 import { opportunityMlRanker } from '../../cryptara/opportunity-ml-ranker.js';
 import { reevaluateLastMarketGate } from '../../cryptara/marketGates/index.js';
 import type { GateEvaluation } from '../../cryptara/marketGates/types.js';
+import logger from '../../../logger.js';
 import {
   stageManager,
   type AutomaticAdvancementEvidence,
@@ -16,6 +17,31 @@ import { riskGovernor } from './risk-governor.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
 import { ensureTelemetryBootstrap } from '../integration/telemetry-bootstrap.js';
+import { ensureCryptaraAssessmentWiring } from '../integration/cryptara-assessment-wiring.js';
+import { ensureCryptaraMlRankerHydrated, persistCryptaraMlRanker } from '../integration/cryptara-ml-persistence.js';
+import { ensureMasterOrchestratorMeasuredWiring } from '../integration/master-orchestrator-measured-wiring.js';
+import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { ensureMeasuredEvolutionFeedbackHydrated, recordMeasuredEvolutionFeedback } from '../evolution/measured-execution-feedback.js';
+
+ensureCryptaraAssessmentWiring();
+ensureMasterOrchestratorMeasuredWiring();
+
+// Faucet imports this module while it is itself being initialized, so defer the
+// singleton patch by one microtask to avoid a circular-module temporal dead zone.
+queueMicrotask(() => {
+  void import('../faucet/concurrent-execution-wiring.js')
+    .then(module => module.ensureConcurrentExecutionWiring())
+    .catch(error => {
+      logger.error('Concurrent Faucet execution wiring failed to install', {
+        component: 'AutomaticStageProgression',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+});
+
+// These hydrations are advisory/evolution state only and never grant execution authority.
+void ensureCryptaraMlRankerHydrated();
+void ensureMeasuredEvolutionFeedbackHydrated();
 
 // Start read-only blockchain telemetry as soon as the governed progression module is loaded.
 // It intentionally runs independently: governance must never block on external RPC startup.
@@ -79,10 +105,6 @@ async function refreshStageOneBootstrapGate(
 ): Promise<void> {
   if (!isStageOneFeeBootstrapBlock(gate)) return;
 
-  // Re-run the exact last gate context after provider/fee evidence has had a chance to settle.
-  // This never changes critical-signal policy; it only replaces stale "unknown" evidence with
-  // a fresh measured pass/fail result. The original object is mutated so the faucet observes
-  // the refreshed decision and cannot diverge from StageManager.
   for (const delayMs of [0, 150, 500]) {
     if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
     const refreshed = reevaluateLastMarketGate();
@@ -95,9 +117,12 @@ async function refreshStageOneBootstrapGate(
 export async function evaluateAutomaticStageProgression(
   gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
 ): Promise<AutomaticAdvancementResult> {
+  await ensureCryptaraMlRankerHydrated();
   await refreshStageOneBootstrapGate(gate);
   await stageManager.recordProfitLadderState(profitLadder.exportState());
-  return stageManager.evaluateAutomaticAdvancement(toAutomaticEvidence(gate));
+  const result = await stageManager.evaluateAutomaticAdvancement(toAutomaticEvidence(gate));
+  canonicalOpportunityState.refreshGovernance();
+  return result;
 }
 
 export async function recordCryptaraExecutionEvidence(
@@ -108,6 +133,11 @@ export async function recordCryptaraExecutionEvidence(
     throw new Error('Execution evidence requires a terminal normalized settlement');
   }
 
+  await Promise.all([
+    ensureCryptaraMlRankerHydrated(),
+    ensureMeasuredEvolutionFeedbackHydrated(),
+  ]);
+
   const cryptara = getCryptara();
   const prediction = cryptara.getPendingOpportunityPrediction(feedback.opportunityId);
   cryptara.recordExecutionResult(feedback);
@@ -116,6 +146,11 @@ export async function recordCryptaraExecutionEvidence(
     success: feedback.success,
     realizedProfitUsd: feedback.realizedProfitUsd,
   });
+  await Promise.all([
+    persistCryptaraMlRanker(),
+    recordMeasuredEvolutionFeedback(feedback),
+  ]);
+
   const settlementCosts = feedback.settlement
     ? [feedback.settlement.realized.exchangeFeeUsd, feedback.settlement.realized.gasUsd]
       .filter((value): value is number => value !== null && Number.isFinite(value))
@@ -169,10 +204,12 @@ export async function recordCryptaraExecutionEvidence(
   };
   await instantLearningEngine.recordExecutionOutcome(outcome);
   await stageManager.recordProfitLadderState(profitLadder.exportState());
-  return stageManager.recordExecutionEvidence({
+  const result = await stageManager.recordExecutionEvidence({
     success: feedback.success,
     realizedProfitUsd: feedback.realizedProfitUsd,
     automaticEvidence: toAutomaticEvidence(gate),
     cryptaraFeedback: feedback,
   });
+  canonicalOpportunityState.refreshGovernance(feedback.opportunityId);
+  return result;
 }
