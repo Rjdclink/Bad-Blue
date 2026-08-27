@@ -18,6 +18,7 @@ import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibratio
 import { orderBookEvolutionStore } from '../validation/order-book-evolution-store.js';
 import { resolveCoinStatsEnvironment } from '../runtime/environment-contract.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
+import { computeCryptoRuntimeReadiness } from '../runtime/readiness-policy.js';
 
 const CHAINS: SupportedChain[] = [
   'ethereum',
@@ -101,46 +102,31 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const mcCalibration = monteCarloCalibrationStore.getMetrics();
     const bookEvolution = orderBookEvolutionStore.getStatus();
     const mempoolCapabilities = getMempoolCapabilities();
+    const zeroCapitalExecutionEnabled = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
+    const stageCanExecute = stageManager.canExecuteTrades();
 
-    const readiness = {
-      APP_READY: {
-        ready: isRuntimeIdentitySafe(runtime),
-        detail: runtime.state === 'mismatch'
-          ? 'runtime source/deployment identity mismatch detected'
-          : 'process is running and runtime identity has no detected mismatch',
-      },
-      CONFIG_READY: {
-        ready: execution.centralizedExecutionConfigured,
-        detail: execution.centralizedExecutionConfigured
-          ? 'Kraken and OKX execution credentials are visible to this runtime'
-          : 'one or more settlement-safe centralized execution credentials are not visible',
-      },
-      DATA_READY: {
-        ready: coreMarketDataReady && criticalRpcReady,
-        detail: `coreMarketData=${coreMarketDataReady}; rpc=${criticalRpcReady}`,
-      },
-      DISCOVERY_READY: {
-        ready: graphReady && recentMinute.observedOpportunities > 0,
-        detail: `graphFresh=${graphReady}; selectedSymbols=${graph?.selectedSymbols ?? 0}; canonicalObservedLastMinute=${recentMinute.observedOpportunities}; multiTopologyObserved=${candidateMetrics.observed}`,
-      },
-      EXECUTION_READY: {
-        ready: !execution.noExecutionGuardEnabled
-          && execution.liveExecutionEnabled
-          && execution.liveExecutionConfirmed
-          && execution.centralizedExecutionConfigured
-          && scheduler.running,
-        detail: `guard=${execution.noExecutionGuardEnabled}; enabled=${execution.liveExecutionEnabled}; confirmed=${execution.liveExecutionConfirmed}; cexConfigured=${execution.centralizedExecutionConfigured}; schedulerRunning=${scheduler.running}; reconciledInventoryAssets=${inventory.length}`,
-      },
-      TRADING_READY: {
-        ready: stageManager.canExecuteTrades()
-          && !execution.noExecutionGuardEnabled
-          && execution.liveExecutionEnabled
-          && execution.liveExecutionConfirmed
-          && execution.centralizedExecutionConfigured
-          && scheduler.running,
-        detail: `stage=${stage.currentStage}; stageCanExecute=${stageManager.canExecuteTrades()}; schedulerRunning=${scheduler.running}; eligibleCandidates=${recentMinute.eligibleOpportunities}`,
-      },
-    };
+    const readiness = computeCryptoRuntimeReadiness({
+      runtimeIdentitySafe: isRuntimeIdentitySafe(runtime),
+      runtimeIdentityMismatch: runtime.state === 'mismatch',
+      centralizedExecutionConfigured: execution.centralizedExecutionConfigured,
+      coreMarketDataReady,
+      criticalRpcReady,
+      graphReady,
+      observedOpportunities: recentMinute.observedOpportunities,
+      schedulerRunning: scheduler.running,
+      noExecutionGuardEnabled: execution.noExecutionGuardEnabled,
+      liveExecutionEnabled: execution.liveExecutionEnabled,
+      liveExecutionConfirmed: execution.liveExecutionConfirmed,
+      reconciledInventoryAssets: inventory.length,
+      eligibleCandidates: recentMinute.eligibleOpportunities,
+      stageCanExecute,
+      currentStage: stage.currentStage,
+      initialGasReady: stageManager.isInitialGasReady(),
+      zeroCapitalExecutionEnabled,
+    });
+
+    // Preserve the high-value discovery context alongside the pure policy output.
+    readiness.DISCOVERY_READY.detail += `; selectedSymbols=${graph?.selectedSymbols ?? 0}; multiTopologyObserved=${candidateMetrics.observed}`;
 
     logger.info('[CryptoRuntime] Authoritative runtime heartbeat', {
       component: 'CryptoRuntimeObservability',
@@ -150,7 +136,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         stage: stage.currentStage,
         paused: stage.isPaused,
         killSwitchActive: stage.killSwitchActive,
-        canExecuteTrades: stageManager.canExecuteTrades(),
+        canExecuteTrades: stageCanExecute,
         initialGasReady: stageManager.isInitialGasReady(),
         automaticAdvancementBlockers: [...stage.automaticAdvancementBlockers],
       },
@@ -252,7 +238,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       learning: measured,
       executionPosture: {
         ...execution,
-        zeroCapitalExecutionEnabled: process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true',
+        zeroCapitalExecutionEnabled,
       },
     });
   } catch (error) {
@@ -275,7 +261,19 @@ export function ensureCryptoRuntimeObservability(): void {
     component: 'CryptoRuntimeObservability',
     heartbeatMs: intervalMs,
     runtimeAttestation: true,
-    decomposedReadiness: ['APP_READY', 'CONFIG_READY', 'DATA_READY', 'DISCOVERY_READY', 'EXECUTION_READY', 'TRADING_READY'],
+    decomposedReadiness: [
+      'APP_READY',
+      'CONFIG_READY',
+      'DATA_READY',
+      'DISCOVERY_READY',
+      'EXECUTION_CAPABILITY_READY',
+      'INVENTORY_READY',
+      'CANDIDATE_READY',
+      'GOVERNANCE_READY',
+      'EXECUTION_READY',
+      'TRADING_READY',
+    ],
+    executionReadySemantics: 'strict_trade_ready_backward_compatible_alias',
     providerHeartbeat: ['Alchemy', 'Ankr/shared-RPC', 'market-data'],
     measuredOpportunityGraphTelemetry: true,
     multiTopologyCandidateTelemetry: true,
