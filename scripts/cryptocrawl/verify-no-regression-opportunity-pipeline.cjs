@@ -64,25 +64,31 @@ forbidText(verifier, 'marketDataProviders.discoverUniverse()', 'verifier must no
 forbidText(verifier, "const venues: QuoteVenue[] = ['coinbase', 'kraken', 'okx']", 'no hard-coded Coinbase quote authority');
 
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
-requireText(feeResolver, 'serializeKrakenPrivate', 'Kraken private requests are serialized');
-requireText(feeResolver, 'krakenPrivateTail', 'Kraken authenticated transport has one nonce-ordering authority');
-requireText(feeResolver, 'nextKrakenNonce()', 'Kraken nonce remains monotonic');
+const privateCexAuthority = read('server/services/cryptocrawl/intelligence/cex-private-authority.ts');
+requireText(feeResolver, "from './cex-private-authority.js'", 'fee resolver consumes the shared private CEX authority');
+requireText(feeResolver, "krakenPrivateRequest('/0/private/TradeVolume'", 'Kraken fee resolver uses shared private request authority');
+requireText(privateCexAuthority, 'serializeKrakenPrivate', 'Kraken private requests are serialized');
+requireText(privateCexAuthority, 'krakenPrivateTail', 'Kraken authenticated transport has one nonce-ordering authority');
+requireText(privateCexAuthority, 'nextKrakenNonce()', 'Kraken nonce remains monotonic');
 requireText(feeResolver, "source: 'kraken_account_trade_volume'", 'Kraken fee evidence remains account measured');
 requireText(feeResolver, "source: 'okx_account_trade_fee'", 'OKX fee evidence remains account measured');
 requireText(feeResolver, 'getKrakenPairDirectory', 'Kraken batch fees use exchange pair metadata rather than response ordering');
 requireText(feeResolver, 'fetchKrakenFeeEvidenceBatch', 'Kraken authenticated fee discovery supports batched pairs');
 requireText(feeResolver, 'requestPairs.join(', 'Kraken TradeVolume request carries the resolved pair batch');
-requireText(feeResolver, 'serializeOkxPrivate', 'OKX authenticated fee requests share one throttle authority');
-requireText(feeResolver, 'OKX_FEE_MIN_INTERVAL_MS', 'OKX account fee throttle interval is explicit');
-requireText(feeResolver, 'Math.max(425', 'OKX fee throttle retains the conservative documented-rate floor');
+requireText(privateCexAuthority, 'scheduleOkxLane', 'OKX authenticated private requests share one lane scheduler authority');
+requireText(privateCexAuthority, 'OKX_FEE_MIN_INTERVAL_MS', 'OKX account fee throttle interval is explicit');
+requireText(privateCexAuthority, 'Math.max(425', 'OKX fee throttle retains the conservative documented-rate floor');
+requireText(feeResolver, "lane: 'trade_fee'", 'OKX fee resolver explicitly uses the shared trade-fee throttle lane');
 requireText(feeResolver, 'getOkxInstrumentDirectory', 'OKX fee discovery maps current public instruments to fee groups');
 requireText(feeResolver, '/api/v5/public/instruments?instType=SPOT', 'OKX fee groups derive from public instrument metadata');
 requireText(feeResolver, 'groupId', 'OKX 2026 fee-group identifier is used');
 requireText(feeResolver, 'feeGroup', 'OKX 2026 fee-group response shape is parsed');
 requireText(feeResolver, 'fetchOkxFeeEvidenceBatch', 'OKX batch fee discovery shares one request across group members');
-requireText(feeResolver, 'OKX fee batch resolved using instrument fee groups', 'OKX grouped batch telemetry exists');
+requireText(feeResolver, 'OKX fee batch resolved using regional live-instrument groups', 'OKX grouped batch telemetry exists');
 requireText(feeResolver, 'CRYPTO_ARBITRAGE_FEE_CACHE_MS || 300_000', 'account fee evidence uses a bounded five-minute default TTL');
 requireText(feeResolver, 'primeCexFeeEvidence', 'fee evidence can be primed before concurrent economics evaluation');
+forbidText(feeResolver, 'let krakenPrivateTail', 'fee resolver must not own a second Kraken nonce-ordering queue');
+forbidText(feeResolver, 'const OKX_FEE_MIN_INTERVAL_MS', 'fee resolver must not own a second OKX trade-fee throttle');
 
 const stream = read('server/services/cryptocrawl/intelligence/cex-order-book-stream.ts');
 requireText(stream, 'VenueConnectionState', 'CEX streams pool connection state by venue');
@@ -185,9 +191,16 @@ forbidText(environment, 'console.log', 'environment contract does not log creden
 forbidText(environment, 'return sourceValue', 'environment contract never returns a secret value from adoption');
 
 const observability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
+const readinessPolicy = read('server/services/cryptocrawl/runtime/readiness-policy.ts');
+requireText(observability, 'computeCryptoRuntimeReadiness', 'runtime observability consumes the canonical readiness policy');
 for (const dimension of ['APP_READY', 'CONFIG_READY', 'DATA_READY', 'DISCOVERY_READY', 'EXECUTION_READY', 'TRADING_READY']) {
-  requireText(observability, `${dimension}:`, `readiness dimension ${dimension}`);
+  requireText(readinessPolicy, `${dimension}:`, `readiness dimension ${dimension}`);
 }
+requireText(readinessPolicy, 'EXECUTION_CAPABILITY_READY:', 'capability readiness remains distinct from strict execution readiness');
+requireText(readinessPolicy, 'INVENTORY_READY:', 'inventory/resource readiness remains explicit');
+requireText(readinessPolicy, 'CANDIDATE_READY:', 'candidate readiness remains explicit');
+requireText(readinessPolicy, 'GOVERNANCE_READY:', 'governance readiness remains explicit');
+requireText(readinessPolicy, 'ready: tradingReady', 'strict execution/trading readiness cannot be true from config and scheduler alone');
 requireText(observability, 'requiredForCoreCexDiscovery: false', 'optional provider cannot masquerade as core requirement');
 requireText(observability, 'getVenueCapabilities()', 'runtime exposes venue capabilities');
 requireText(observability, 'getCryptoCrawlerRuntimeAttestation()', 'runtime exposes source/deployment identity');
