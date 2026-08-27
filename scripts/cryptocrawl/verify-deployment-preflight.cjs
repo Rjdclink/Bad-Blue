@@ -37,4 +37,10 @@ run(
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-no-regression-opportunity-pipeline.cjs')],
 );
 
-console.log('[deployment-preflight] PASS — CryptoCrawler invariants are clean; normal production build continues with Vite/esbuild');
+run(
+  'Railway strict readiness contract',
+  process.execPath,
+  [path.join(root, 'scripts', 'cryptocrawl', 'verify-railway-readiness-contract.cjs')],
+);
+
+console.log('[deployment-preflight] PASS — CryptoCrawler invariants and Railway readiness contract are clean; normal production build continues with Vite/esbuild');
