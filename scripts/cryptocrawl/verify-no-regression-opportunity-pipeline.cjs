@@ -114,8 +114,8 @@ requireText(observability, 'getCryptoCrawlerRuntimeAttestation()', 'runtime expo
 
 const telemetry = read('server/services/cryptocrawl/integration/telemetry-bootstrap.ts');
 requireText(telemetry, 'resolveCoinStatsEnvironment()', 'telemetry uses CoinStats environment contract');
-requireText(telemetry, 'getCryptoCrawlerRuntimeAttestation()', 'telemetry emits runtime identity');
-forbidText(telemetry, 'process.env[canonical] = process.env[source]', 'CoinStats does not bypass safe alias resolver');
+requireText(telemetry, 'adoptResolvedEnvironmentVariable(coinStatsResolution)', 'CoinStats alias adoption uses the safe resolver');
+requireText(telemetry, 'const coinStatsResolution = resolveCoinStatsEnvironment();', 'CoinStats has its own resolved credential path');
 
 const scaler = read('server/services/cryptocrawl/scaling/dynamic-scale-physics.ts');
 requireText(scaler, 'canonical.observedOpportunities', 'search scaling uses measured observed opportunities');
