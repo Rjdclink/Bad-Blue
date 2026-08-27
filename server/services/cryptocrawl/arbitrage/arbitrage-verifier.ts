@@ -25,6 +25,7 @@ import {
   resolveCexFeeEvidence,
   type CexFeeEvidence,
 } from '../intelligence/cex-fee-resolver.js';
+import { getOkxExecutionRestBaseUrl } from '../intelligence/okx-region-authority.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
 
@@ -224,7 +225,8 @@ function okxInstId(symbol: string): string {
 }
 
 async function fetchOkxTopOfBook(symbol: string): Promise<TopOfBookQuote> {
-  const data = await fetchJson(`https://www.okx.com/api/v5/market/books?instId=${encodeURIComponent(okxInstId(symbol))}&sz=20`, 2500);
+  const baseUrl = await getOkxExecutionRestBaseUrl();
+  const data = await fetchJson(`${baseUrl}/api/v5/market/books?instId=${encodeURIComponent(okxInstId(symbol))}&sz=20`, 2500);
   const row = data?.data?.[0];
   const bids = normalizeBookLevels(row?.bids).sort((left, right) => right.price - left.price);
   const asks = normalizeBookLevels(row?.asks).sort((left, right) => left.price - right.price);
@@ -289,7 +291,9 @@ async function fetchQuotes(symbol: string, maxAgeMs: number): Promise<TopOfBookQ
     if (venue === 'kraken') {
       return fetchStreamQuote('kraken', symbol, maxAgeMs).then(quote => quote || fetchKrakenTopOfBook(symbol));
     }
-    return fetchStreamQuote('okx', symbol, maxAgeMs).then(quote => quote || fetchOkxTopOfBook(symbol));
+    // Until the OKX WebSocket manager is regionalized, executable planning must
+    // use the account-region REST book rather than Global WS market data.
+    return fetchOkxTopOfBook(symbol);
   });
   const settled = await Promise.allSettled(tasks);
   const quotes: TopOfBookQuote[] = [];
@@ -327,6 +331,27 @@ function overrideEvidence(venue: QuoteVenue, symbol: string, takerFeeBps: number
     source: 'configured_override',
     observedAt: Date.now(),
   };
+}
+
+function requestedFeeOverride(req: Omit<VerifyRequest, 'minNetProfitUsd'>, venue: QuoteVenue): number | null {
+  const buyOverride = req.buyFeesBps?.[venue];
+  if (Number.isFinite(buyOverride) && buyOverride! >= 0) return buyOverride!;
+  const sellOverride = req.sellFeesBps?.[venue];
+  return Number.isFinite(sellOverride) && sellOverride! >= 0 ? sellOverride! : null;
+}
+
+function effectiveTakerFeeBps(
+  venue: QuoteVenue,
+  evidence: CexFeeEvidence | null,
+  requestOverride: number | undefined,
+): number | null {
+  // OKX must have resolver-backed evidence before any configured/request override
+  // can participate in executable economics. That resolver is the instrument and
+  // credential-region authority for the venue.
+  if (venue === 'okx' && !evidence) return null;
+  if (Number.isFinite(requestOverride) && requestOverride! >= 0) return requestOverride!;
+  if (evidence && Number.isFinite(evidence.takerFeeBps) && evidence.takerFeeBps >= 0) return evidence.takerFeeBps;
+  return venue === 'okx' ? null : configuredTakerFeeBps(venue);
 }
 
 function scanRequestKey(req: Omit<VerifyRequest, 'minNetProfitUsd'>, symbols: readonly string[]): string {
@@ -593,18 +618,19 @@ export class ArbitrageVerifier {
     const transferFeeUsd = bridge ? 0 : configuredTransferFeeUsd();
     const feeEvidence = new Map<QuoteVenue, CexFeeEvidence | null>();
     await Promise.all(freshQuotes.map(async quote => {
-      const buyOverride = req.buyFeesBps?.[quote.venue];
-      const sellOverride = req.sellFeesBps?.[quote.venue];
-      const explicit = Number.isFinite(buyOverride) && buyOverride! >= 0
-        ? buyOverride!
-        : Number.isFinite(sellOverride) && sellOverride! >= 0
-          ? sellOverride!
-          : configuredTakerFeeBps(quote.venue);
+      const requestOverride = requestedFeeOverride(req, quote.venue);
+      if (quote.venue === 'okx') {
+        const evidence = await resolveCexFeeEvidence('okx', symbol);
+        feeEvidence.set(
+          quote.venue,
+          evidence && requestOverride !== null ? overrideEvidence(quote.venue, symbol, requestOverride) : evidence,
+        );
+        return;
+      }
+      const explicit = requestOverride ?? configuredTakerFeeBps(quote.venue);
       feeEvidence.set(
         quote.venue,
-        explicit !== null && explicit !== undefined
-          ? overrideEvidence(quote.venue, symbol, explicit)
-          : await resolveCexFeeEvidence(quote.venue, symbol),
+        explicit !== null ? overrideEvidence(quote.venue, symbol, explicit) : await resolveCexFeeEvidence(quote.venue, symbol),
       );
     }));
 
@@ -614,9 +640,9 @@ export class ArbitrageVerifier {
         if (buy.venue === sell.venue) continue;
         const buyEvidence = feeEvidence.get(buy.venue) || null;
         const sellEvidence = feeEvidence.get(sell.venue) || null;
-        const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? buyEvidence?.takerFeeBps ?? configuredTakerFeeBps(buy.venue);
-        const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? sellEvidence?.takerFeeBps ?? configuredTakerFeeBps(sell.venue);
-        if (buyFeeBps === null || buyFeeBps === undefined || sellFeeBps === null || sellFeeBps === undefined) continue;
+        const buyFeeBps = effectiveTakerFeeBps(buy.venue, buyEvidence, req.buyFeesBps?.[buy.venue]);
+        const sellFeeBps = effectiveTakerFeeBps(sell.venue, sellEvidence, req.sellFeesBps?.[sell.venue]);
+        if (buyFeeBps === null || sellFeeBps === null) continue;
         const grossSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
         if (!Number.isFinite(grossSpreadBps)) continue;
         const context: CrossVenueFeeContext = {
@@ -651,9 +677,9 @@ export class ArbitrageVerifier {
         if (buy.venue === sell.venue || sell.bid <= buy.ask || !buy.depth || !sell.depth) continue;
         const buyEvidence = feeEvidence.get(buy.venue) || null;
         const sellEvidence = feeEvidence.get(sell.venue) || null;
-        const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? buyEvidence?.takerFeeBps ?? configuredTakerFeeBps(buy.venue);
-        const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? sellEvidence?.takerFeeBps ?? configuredTakerFeeBps(sell.venue);
-        if (buyFeeBps === null || buyFeeBps === undefined || sellFeeBps === null || sellFeeBps === undefined) continue;
+        const buyFeeBps = effectiveTakerFeeBps(buy.venue, buyEvidence, req.buyFeesBps?.[buy.venue]);
+        const sellFeeBps = effectiveTakerFeeBps(sell.venue, sellEvidence, req.sellFeesBps?.[sell.venue]);
+        if (buyFeeBps === null || sellFeeBps === null) continue;
 
         const topSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
         const fixedCostsBpsAtMaxNotional = ((gasUsd + bridgeFeeUsd + transferFeeUsd) / req.notionalUsd) * 10_000;
