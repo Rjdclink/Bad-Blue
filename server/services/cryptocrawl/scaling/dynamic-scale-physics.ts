@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 
 type ComputeProfile = 'low' | 'medium' | 'high' | 'burst';
 type Chain = 'ethereum' | 'polygon' | 'bsc' | 'arbitrum' | 'optimism';
@@ -9,7 +10,9 @@ interface ScaleMetrics {
   marketVolatility: number;
   opportunityDensity: number;
   avgProfitPerHour: number | null;
+  expectedProfitPerHour: number | null;
   profitabilityStatus: ProfitabilityStatus;
+  profitabilitySource: 'realized_settlement' | 'verified_pretrade' | 'unavailable';
   capacityMultiplier: number;
   costMultiplier: number;
 }
@@ -31,7 +34,6 @@ class DynamicScalePhysics {
   private readonly MAX_HISTORY = 60; // Track last 60 minutes
 
   constructor() {
-    // Initialize with some baseline data
     this.priceHistory = Array(60).fill(0);
     this.opportunityHistory = Array(60).fill(0);
     this.profitHistory = Array(60).fill(null);
@@ -43,7 +45,6 @@ class DynamicScalePhysics {
 
     let newProfile: ComputeProfile;
 
-    // BURST: 10x capacity for extreme conditions
     if (volatility > 5 || density > 20) {
       newProfile = 'burst';
       logger.info('Scaling to BURST profile', {
@@ -52,18 +53,14 @@ class DynamicScalePhysics {
         density: `${density} opps/min`,
         capacityMultiplier: '10x'
       });
-    }
-    // HIGH: 5x capacity for high activity
-    else if (density > 10) {
+    } else if (density > 10) {
       newProfile = 'high';
       logger.info('Scaling to HIGH profile', {
         component: 'DynamicScalePhysics',
         density: `${density} opps/min`,
         capacityMultiplier: '5x'
       });
-    }
-    // LOW: 1x capacity for low activity (save 80% cost)
-    else if (density < 3) {
+    } else if (density < 3) {
       newProfile = 'low';
       logger.info('Scaling to LOW profile', {
         component: 'DynamicScalePhysics',
@@ -71,9 +68,7 @@ class DynamicScalePhysics {
         capacityMultiplier: '1x',
         costSaving: '80%'
       });
-    }
-    // MEDIUM: Default 2x capacity
-    else {
+    } else {
       newProfile = 'medium';
     }
 
@@ -91,63 +86,32 @@ class DynamicScalePhysics {
 
   private calculateMarketVolatility(): number {
     if (this.priceHistory.length < 2) return 0;
-
-    // Calculate percentage price change over last hour
     const recent = this.priceHistory.slice(-60);
     const oldest = recent[0] || 1;
     const newest = recent[recent.length - 1] || 1;
-    
-    const change = Math.abs((newest - oldest) / oldest) * 100;
-    
-    return change;
+    return Math.abs((newest - oldest) / oldest) * 100;
   }
 
   getOpportunityDensity(): number {
-    // Opportunities per minute (last 60 minutes)
-    if (this.opportunityHistory.length === 0) return 0;
-    
+    const canonical = canonicalOpportunityState.getMetrics(60_000);
+    const canonicalDensity = canonical.verifiedPositiveOpportunities;
+    if (this.opportunityHistory.length === 0) return canonicalDensity;
     const totalOpps = this.opportunityHistory.reduce((sum, count) => sum + count, 0);
-    const minutes = this.opportunityHistory.length;
-    
-    return totalOpps / minutes;
+    const historicalDensity = totalOpps / this.opportunityHistory.length;
+    // The canonical stream is authoritative for current verified opportunities. Retain
+    // the historical path only as a compatibility fallback for callers not yet migrated.
+    return Math.max(canonicalDensity, historicalDensity);
   }
 
   routeToOptimalRegion(chain: Chain): RegionConfig {
     const regionMap: Record<Chain, RegionConfig> = {
-      ethereum: {
-        chain: 'ethereum',
-        region: 'us-east-1',
-        latency: 12,
-        reason: 'Most validators are on East Coast US'
-      },
-      polygon: {
-        chain: 'polygon',
-        region: 'ap-south-1',
-        latency: 15,
-        reason: 'Polygon network concentrated in Mumbai'
-      },
-      bsc: {
-        chain: 'bsc',
-        region: 'ap-southeast-1',
-        latency: 10,
-        reason: 'Binance infrastructure in Singapore'
-      },
-      arbitrum: {
-        chain: 'arbitrum',
-        region: 'us-east-1',
-        latency: 12,
-        reason: 'L2 sequencer on East Coast US'
-      },
-      optimism: {
-        chain: 'optimism',
-        region: 'us-east-1',
-        latency: 12,
-        reason: 'L2 sequencer on East Coast US'
-      }
+      ethereum: { chain: 'ethereum', region: 'us-east-1', latency: 12, reason: 'Most validators are on East Coast US' },
+      polygon: { chain: 'polygon', region: 'ap-south-1', latency: 15, reason: 'Polygon network concentrated in Mumbai' },
+      bsc: { chain: 'bsc', region: 'ap-southeast-1', latency: 10, reason: 'Binance infrastructure in Singapore' },
+      arbitrum: { chain: 'arbitrum', region: 'us-east-1', latency: 12, reason: 'L2 sequencer on East Coast US' },
+      optimism: { chain: 'optimism', region: 'us-east-1', latency: 12, reason: 'L2 sequencer on East Coast US' }
     };
-
     const config = regionMap[chain];
-    
     logger.debug('Optimal region selected', {
       component: 'DynamicScalePhysics',
       chain,
@@ -155,14 +119,20 @@ class DynamicScalePhysics {
       latency: `${config.latency}ms`,
       reason: config.reason
     });
-
     return config;
   }
 
   optimizeCosts(): void {
-    const avgProfitPerHour = this.getAverageProfitPerHour();
+    const realizedProfitPerHour = this.getAverageProfitPerHour();
+    const expectedProfitPerHour = this.getExpectedProfitPerHour();
+    const profitability = realizedProfitPerHour !== null ? realizedProfitPerHour : expectedProfitPerHour;
+    const source = realizedProfitPerHour !== null
+      ? 'realized_settlement'
+      : expectedProfitPerHour !== null
+        ? 'verified_pretrade'
+        : 'unavailable';
 
-    if (avgProfitPerHour === null) {
+    if (profitability === null) {
       logger.info('Profitability unknown - retaining current compute profile', {
         component: 'DynamicScalePhysics',
         profitabilityStatus: 'PROFITABILITY_UNKNOWN',
@@ -170,34 +140,37 @@ class DynamicScalePhysics {
       return;
     }
 
-    if (avgProfitPerHour < 50) {
-      // Scale down to 20% capacity
-      logger.warn('Low profitability detected - scaling down', {
+    if (profitability < 50) {
+      logger.warn('Low profitability signal detected - scaling down', {
         component: 'DynamicScalePhysics',
-        avgProfitPerHour: `$${avgProfitPerHour.toFixed(2)}`,
+        profitabilityPerHour: `$${profitability.toFixed(2)}`,
+        profitabilitySource: source,
         action: 'Scale to 20% capacity'
       });
-
       this.currentProfile = 'low';
-      
-      // Pause non-critical services
       this.pauseNonCriticalServices();
     } else {
-      logger.debug('Profitability acceptable', {
+      logger.debug('Profitability signal acceptable', {
         component: 'DynamicScalePhysics',
-        avgProfitPerHour: `$${avgProfitPerHour.toFixed(2)}`
+        profitabilityPerHour: `$${profitability.toFixed(2)}`,
+        profitabilitySource: source,
       });
     }
   }
 
   private getAverageProfitPerHour(): number | null {
+    const canonical = canonicalOpportunityState.getMetrics(60 * 60 * 1000);
+    if (canonical.realizedSettlementCount > 0) return canonical.realizedNetProfitUsd;
     const observedProfits = this.profitHistory.filter((profit): profit is number => profit !== null);
     if (observedProfits.length === 0) return null;
-
     const totalProfit = observedProfits.reduce((sum, profit) => sum + profit, 0);
-    const hours = observedProfits.length / 60; // Convert observed minutes to hours
-    
+    const hours = observedProfits.length / 60;
     return totalProfit / Math.max(hours, 1);
+  }
+
+  private getExpectedProfitPerHour(): number | null {
+    const canonical = canonicalOpportunityState.getMetrics(60 * 60 * 1000);
+    return canonical.verifiedPositiveOpportunities > 0 ? canonical.expectedNetProfitUsd : null;
   }
 
   private pauseNonCriticalServices(): void {
@@ -205,7 +178,6 @@ class DynamicScalePhysics {
       component: 'DynamicScalePhysics',
       services: ['historical-analysis', 'extended-monitoring', 'deep-scanning']
     });
-    // Implementation would pause background tasks
   }
 
   getCapacityMultiplier(): number {
@@ -220,7 +192,7 @@ class DynamicScalePhysics {
 
   getCostMultiplier(): number {
     switch (this.currentProfile) {
-      case 'low': return 0.2; // 80% cost savings
+      case 'low': return 0.2;
       case 'medium': return 1.0;
       case 'high': return 2.5;
       case 'burst': return 5.0;
@@ -230,32 +202,36 @@ class DynamicScalePhysics {
 
   recordPrice(price: number): void {
     this.priceHistory.push(price);
-    if (this.priceHistory.length > this.MAX_HISTORY) {
-      this.priceHistory.shift();
-    }
+    if (this.priceHistory.length > this.MAX_HISTORY) this.priceHistory.shift();
   }
 
   recordOpportunityCount(count: number): void {
     this.opportunityHistory.push(count);
-    if (this.opportunityHistory.length > this.MAX_HISTORY) {
-      this.opportunityHistory.shift();
-    }
+    if (this.opportunityHistory.length > this.MAX_HISTORY) this.opportunityHistory.shift();
   }
 
   recordProfit(profit: number | null | undefined): void {
     this.profitHistory.push(typeof profit === 'number' && Number.isFinite(profit) ? profit : null);
-    if (this.profitHistory.length > this.MAX_HISTORY) {
-      this.profitHistory.shift();
-    }
+    if (this.profitHistory.length > this.MAX_HISTORY) this.profitHistory.shift();
   }
 
   getMetrics(): ScaleMetrics {
+    const avgProfitPerHour = this.getAverageProfitPerHour();
+    const expectedProfitPerHour = this.getExpectedProfitPerHour();
     return {
       currentProfile: this.currentProfile,
       marketVolatility: this.calculateMarketVolatility(),
       opportunityDensity: this.getOpportunityDensity(),
-      avgProfitPerHour: this.getAverageProfitPerHour(),
-      profitabilityStatus: this.getProfitabilityStatus(),
+      avgProfitPerHour,
+      expectedProfitPerHour,
+      profitabilityStatus: avgProfitPerHour !== null || expectedProfitPerHour !== null
+        ? ((avgProfitPerHour ?? expectedProfitPerHour) === 0 ? 'PROFITABILITY_KNOWN_ZERO' : 'PROFITABILITY_KNOWN')
+        : 'PROFITABILITY_UNKNOWN',
+      profitabilitySource: avgProfitPerHour !== null
+        ? 'realized_settlement'
+        : expectedProfitPerHour !== null
+          ? 'verified_pretrade'
+          : 'unavailable',
       capacityMultiplier: this.getCapacityMultiplier(),
       costMultiplier: this.getCostMultiplier()
     };
@@ -278,16 +254,17 @@ class DynamicScalePhysics {
 
   private getProfitabilityStatus(): ProfitabilityStatus {
     const average = this.getAverageProfitPerHour();
-    if (average === null) return 'PROFITABILITY_UNKNOWN';
-    return average === 0 ? 'PROFITABILITY_KNOWN_ZERO' : 'PROFITABILITY_KNOWN';
+    const expected = this.getExpectedProfitPerHour();
+    if (average === null && expected === null) return 'PROFITABILITY_UNKNOWN';
+    return (average ?? expected) === 0 ? 'PROFITABILITY_KNOWN_ZERO' : 'PROFITABILITY_KNOWN';
   }
 }
 
-export { 
-  DynamicScalePhysics, 
-  type ComputeProfile, 
-  type Chain, 
-  type Region, 
+export {
+  DynamicScalePhysics,
+  type ComputeProfile,
+  type Chain,
+  type Region,
   type ScaleMetrics,
   type ProfitabilityStatus,
   type RegionConfig
