@@ -24,12 +24,11 @@ function score(candidate: MarketUniverseCandidate): number {
 }
 
 /**
- * Produces a stable-quality but rotating candidate order. The rotation matters
- * because the Faucet intentionally limits expensive per-cycle validation: a
- * fixed top-N prefix otherwise scans BTC/ETH/BNB forever and starves the rest of
- * the already-discovered measured universe.
+ * Canonicalize, deduplicate, and quality-rank measured candidates without
+ * advancing the rotation cursor. Cache/storage paths should use this function so
+ * a refresh cannot accidentally rotate the search window more than once.
  */
-export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
+export function rankMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
   const bySymbol = new Map<string, T>();
   for (const asset of assets) {
     const canonical = canonicalizeCexSymbol(asset.symbol);
@@ -38,12 +37,24 @@ export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(a
     const existing = bySymbol.get(canonical.symbol);
     if (!existing || score(normalized) > score(existing)) bySymbol.set(canonical.symbol, normalized);
   }
+  return [...bySymbol.values()].sort((left, right) => score(right) - score(left));
+}
 
-  const ranked = [...bySymbol.values()].sort((left, right) => score(right) - score(left));
+/**
+ * Produces a stable-quality but rotating candidate order. The rotation matters
+ * because the Faucet intentionally limits expensive per-cycle validation: a
+ * fixed top-N prefix otherwise scans BTC/ETH/BNB forever and starves the rest of
+ * the already-discovered measured universe.
+ */
+export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
+  const ranked = rankMeasuredMarketUniverse(assets);
   if (ranked.length <= 1) return ranked;
 
   const configuredWindow = Number(process.env.CRYPTO_MARKET_ROTATION_WINDOW || ranked.length);
-  const windowSize = Math.min(ranked.length, Math.max(1, Number.isFinite(configuredWindow) ? Math.floor(configuredWindow) : ranked.length));
+  const windowSize = Math.min(
+    ranked.length,
+    Math.max(1, Number.isFinite(configuredWindow) ? Math.floor(configuredWindow) : ranked.length),
+  );
   const head = ranked.slice(0, windowSize);
   const start = rotationCursor % head.length;
   rotationCursor = (rotationCursor + Math.max(1, Math.floor(head.length / 3))) % head.length;
