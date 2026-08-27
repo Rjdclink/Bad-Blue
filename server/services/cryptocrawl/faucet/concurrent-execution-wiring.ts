@@ -20,15 +20,14 @@ type FaucetRuntime = {
  * admission from measured eligible opportunities and obtains distributed resource,
  * venue, nonce, inventory-domain, settlement, and opportunity-idempotency leases.
  *
- * The faucet may continue to expose legacy UI/status fields, but those fields do
- * not authorize or throttle production order submission.
+ * Scheduler lifecycle is owned by CryptoCoreRuntime. This bridge only delegates
+ * the faucet's compatibility dispatch method; it does not start or stop the
+ * scheduler itself.
  */
 export function ensureConcurrentExecutionWiring(): void {
   const target = autonomousFaucet as unknown as FaucetRuntime;
   if (installed.has(target)) return;
   installed.add(target);
-
-  canonicalExecutionScheduler.start();
 
   target.executeWithStealth = async (): Promise<void> => {
     if (target.state.executionMode !== 'live') {
@@ -52,6 +51,7 @@ export function ensureConcurrentExecutionWiring(): void {
   logger.info('[FAUCET] Canonical execution scheduler wiring installed', {
     component: 'ConcurrentExecutionWiring',
     authority: 'canonical_resource_leased_scheduler',
+    lifecycleOwner: 'CryptoCoreRuntime',
     legacyBusinessCapsAuthoritative: false,
     coarseGlobalConcurrencyCapAuthoritative: false,
     distributedOpportunityIdempotency: true,
