@@ -10,9 +10,19 @@ let started = false;
 async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
   if (!lifecyclePromise) {
     lifecyclePromise = Promise.all([
-      import('../discovery/opportunity-graph.js'),
-      import('../execution/canonical-execution-scheduler.js'),
-    ]).then(([discoveryModule, schedulerModule]) => createCryptoCrawlerCoreLifecycle({
+      import('./positive-profit-capture-wiring.js'),
+      import('./expanded-market-universe-wiring.js'),
+    ]).then(([profitPolicy, universePolicy]) => {
+      // Install narrow compatibility policies before graph/scheduler modules are
+      // loaded. This preserves one deterministic startup order and avoids a cycle
+      // through execution -> automatic-stage-progression -> telemetry.
+      profitPolicy.ensurePositiveProfitCaptureWiring();
+      universePolicy.ensureExpandedMarketUniverseWiring();
+      return Promise.all([
+        import('../discovery/opportunity-graph.js'),
+        import('../execution/canonical-execution-scheduler.js'),
+      ]);
+    }).then(([discoveryModule, schedulerModule]) => createCryptoCrawlerCoreLifecycle({
       startDiscovery: () => discoveryModule.measuredOpportunityGraph.start(),
       stopDiscovery: () => discoveryModule.measuredOpportunityGraph.stop(),
       startScheduler: () => schedulerModule.canonicalExecutionScheduler.start(),
@@ -44,6 +54,8 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     executionScheduler: 'canonical_resource_leased_scheduler',
     topology: 'CEX_CEX',
     optionalProviderFailureBlocksCore: false,
+    positiveProfitCapturePolicy: 'strict_all_in_net_gt_zero',
+    expandedMarketUniverse: true,
   });
 }
 
