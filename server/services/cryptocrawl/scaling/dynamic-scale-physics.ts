@@ -3,12 +3,14 @@ import { canonicalOpportunityState } from '../intelligence/canonical-opportunity
 
 type ComputeProfile = 'low' | 'medium' | 'high' | 'burst';
 type Chain = 'ethereum' | 'polygon' | 'bsc' | 'arbitrum' | 'optimism';
-type Region = 'us-east-1' | 'ap-south-1' | 'ap-southeast-1' | 'eu-west-1';
+type Region = string;
 
 interface ScaleMetrics {
   currentProfile: ComputeProfile;
   marketVolatility: number;
   opportunityDensity: number;
+  searchOpportunityDensity: number;
+  verifiedPositiveDensity: number;
   avgProfitPerHour: number | null;
   expectedProfitPerHour: number | null;
   profitabilityStatus: ProfitabilityStatus;
@@ -21,8 +23,8 @@ type ProfitabilityStatus = 'PROFITABILITY_UNKNOWN' | 'PROFITABILITY_KNOWN_ZERO' 
 
 interface RegionConfig {
   chain: Chain;
-  region: Region;
-  latency: number;
+  region: Region | null;
+  latency: number | null;
   reason: string;
 }
 
@@ -31,42 +33,49 @@ class DynamicScalePhysics {
   private priceHistory: number[] = [];
   private opportunityHistory: number[] = [];
   private profitHistory: Array<number | null> = [];
-  private readonly MAX_HISTORY = 60; // Track last 60 minutes
+  private lastRecordedOpportunityTotal: number | null = null;
+  private readonly MAX_HISTORY = 60; // Track recent samples; canonical state remains authoritative.
 
   constructor() {
     this.priceHistory = Array(60).fill(0);
-    this.opportunityHistory = Array(60).fill(0);
+    this.opportunityHistory = [];
     this.profitHistory = Array(60).fill(null);
   }
 
   adjustComputeProfile(): ComputeProfile {
     const volatility = this.calculateMarketVolatility();
-    const density = this.getOpportunityDensity();
+    const searchDensity = this.getSearchOpportunityDensity();
+    const verifiedPositiveDensity = this.getVerifiedPositiveDensity();
 
     let newProfile: ComputeProfile;
 
-    if (volatility > 5 || density > 20) {
+    // Discovery capacity is driven by measured search activity, not only by the
+    // subset that survives deterministic economics. Otherwise a market with many
+    // candidates but zero positive candidates self-throttles its own discovery.
+    if (volatility > 5 || searchDensity > 20) {
       newProfile = 'burst';
-      logger.info('Scaling to BURST profile', {
+      logger.info('Scaling discovery compute profile to BURST', {
         component: 'DynamicScalePhysics',
         volatility: `${volatility.toFixed(2)}%`,
-        density: `${density} opps/min`,
-        capacityMultiplier: '10x'
+        searchDensity: `${searchDensity} observed/min`,
+        verifiedPositiveDensity: `${verifiedPositiveDensity} positive/min`,
+        capacityMultiplier: '10x',
       });
-    } else if (density > 10) {
+    } else if (searchDensity > 10) {
       newProfile = 'high';
-      logger.info('Scaling to HIGH profile', {
+      logger.info('Scaling discovery compute profile to HIGH', {
         component: 'DynamicScalePhysics',
-        density: `${density} opps/min`,
-        capacityMultiplier: '5x'
+        searchDensity: `${searchDensity} observed/min`,
+        verifiedPositiveDensity: `${verifiedPositiveDensity} positive/min`,
+        capacityMultiplier: '5x',
       });
-    } else if (density < 3) {
+    } else if (searchDensity < 3) {
       newProfile = 'low';
-      logger.info('Scaling to LOW profile', {
+      logger.info('Scaling discovery compute profile to LOW', {
         component: 'DynamicScalePhysics',
-        density: `${density} opps/min`,
+        searchDensity: `${searchDensity} observed/min`,
+        verifiedPositiveDensity: `${verifiedPositiveDensity} positive/min`,
         capacityMultiplier: '1x',
-        costSaving: '80%'
       });
     } else {
       newProfile = 'medium';
@@ -76,7 +85,8 @@ class DynamicScalePhysics {
       logger.info('Compute profile changed', {
         component: 'DynamicScalePhysics',
         from: this.currentProfile,
-        to: newProfile
+        to: newProfile,
+        basis: 'measured_search_density',
       });
       this.currentProfile = newProfile;
     }
@@ -85,39 +95,53 @@ class DynamicScalePhysics {
   }
 
   private calculateMarketVolatility(): number {
-    if (this.priceHistory.length < 2) return 0;
-    const recent = this.priceHistory.slice(-60);
-    const oldest = recent[0] || 1;
-    const newest = recent[recent.length - 1] || 1;
+    const nonZero = this.priceHistory.filter(price => Number.isFinite(price) && price > 0);
+    if (nonZero.length < 2) return 0;
+    const recent = nonZero.slice(-60);
+    const oldest = recent[0];
+    const newest = recent[recent.length - 1];
     return Math.abs((newest - oldest) / oldest) * 100;
   }
 
+  /** Current measured discovery density. Kept under the legacy name for callers. */
   getOpportunityDensity(): number {
+    return this.getSearchOpportunityDensity();
+  }
+
+  getSearchOpportunityDensity(): number {
     const canonical = canonicalOpportunityState.getMetrics(60_000);
-    const canonicalDensity = canonical.verifiedPositiveOpportunities;
-    if (this.opportunityHistory.length === 0) return canonicalDensity;
-    const totalOpps = this.opportunityHistory.reduce((sum, count) => sum + count, 0);
-    const historicalDensity = totalOpps / this.opportunityHistory.length;
-    // The canonical stream is authoritative for current verified opportunities. Retain
-    // the historical path only as a compatibility fallback for callers not yet migrated.
-    return Math.max(canonicalDensity, historicalDensity);
+    if (canonical.observedOpportunities > 0) return canonical.observedOpportunities;
+    if (this.opportunityHistory.length === 0) return 0;
+    return this.opportunityHistory.reduce((sum, count) => sum + count, 0) / this.opportunityHistory.length;
+  }
+
+  getVerifiedPositiveDensity(): number {
+    return canonicalOpportunityState.getMetrics(60_000).verifiedPositiveOpportunities;
   }
 
   routeToOptimalRegion(chain: Chain): RegionConfig {
-    const regionMap: Record<Chain, RegionConfig> = {
-      ethereum: { chain: 'ethereum', region: 'us-east-1', latency: 12, reason: 'Most validators are on East Coast US' },
-      polygon: { chain: 'polygon', region: 'ap-south-1', latency: 15, reason: 'Polygon network concentrated in Mumbai' },
-      bsc: { chain: 'bsc', region: 'ap-southeast-1', latency: 10, reason: 'Binance infrastructure in Singapore' },
-      arbitrum: { chain: 'arbitrum', region: 'us-east-1', latency: 12, reason: 'L2 sequencer on East Coast US' },
-      optimism: { chain: 'optimism', region: 'us-east-1', latency: 12, reason: 'L2 sequencer on East Coast US' }
+    const suffix = chain.toUpperCase();
+    const configuredRegion = process.env[`CRYPTO_CHAIN_REGION_${suffix}`]?.trim()
+      || process.env.RAILWAY_REPLICA_REGION?.trim()
+      || null;
+    const configuredLatency = Number(process.env[`CRYPTO_CHAIN_REGION_LATENCY_MS_${suffix}`]);
+    const latency = Number.isFinite(configuredLatency) && configuredLatency >= 0 ? configuredLatency : null;
+    const config: RegionConfig = {
+      chain,
+      region: configuredRegion,
+      latency,
+      reason: configuredRegion
+        ? latency === null
+          ? 'Region is deployment/configuration evidence; latency has not been measured'
+          : 'Region and latency were supplied by deployment/runtime measurement configuration'
+        : 'No measured/configured region evidence is available',
     };
-    const config = regionMap[chain];
-    logger.debug('Optimal region selected', {
+    logger.debug('Region evidence resolved', {
       component: 'DynamicScalePhysics',
       chain,
       region: config.region,
-      latency: `${config.latency}ms`,
-      reason: config.reason
+      latencyMs: config.latency,
+      reason: config.reason,
     });
     return config;
   }
@@ -140,20 +164,24 @@ class DynamicScalePhysics {
       return;
     }
 
-    if (profitability < 50) {
-      logger.warn('Low profitability signal detected - scaling down', {
+    // Profitability can reduce the expensive execution/analysis posture, but it
+    // must not erase discovery evidence. The next adjustComputeProfile() is still
+    // driven by observed search density.
+    if (profitability < 50 && this.getSearchOpportunityDensity() < 3) {
+      logger.info('Low measured profitability and low search density - selecting LOW compute profile', {
         component: 'DynamicScalePhysics',
         profitabilityPerHour: `$${profitability.toFixed(2)}`,
         profitabilitySource: source,
-        action: 'Scale to 20% capacity'
+        searchDensity: this.getSearchOpportunityDensity(),
+        action: 'logical_profile_low',
       });
       this.currentProfile = 'low';
-      this.pauseNonCriticalServices();
     } else {
-      logger.debug('Profitability signal acceptable', {
+      logger.debug('Profitability/search signal does not justify further compute reduction', {
         component: 'DynamicScalePhysics',
         profitabilityPerHour: `$${profitability.toFixed(2)}`,
         profitabilitySource: source,
+        searchDensity: this.getSearchOpportunityDensity(),
       });
     }
   }
@@ -171,13 +199,6 @@ class DynamicScalePhysics {
   private getExpectedProfitPerHour(): number | null {
     const canonical = canonicalOpportunityState.getMetrics(60 * 60 * 1000);
     return canonical.verifiedPositiveOpportunities > 0 ? canonical.expectedNetProfitUsd : null;
-  }
-
-  private pauseNonCriticalServices(): void {
-    logger.info('Pausing non-critical services', {
-      component: 'DynamicScalePhysics',
-      services: ['historical-analysis', 'extended-monitoring', 'deep-scanning']
-    });
   }
 
   getCapacityMultiplier(): number {
@@ -201,12 +222,21 @@ class DynamicScalePhysics {
   }
 
   recordPrice(price: number): void {
+    if (!Number.isFinite(price) || price <= 0) return;
     this.priceHistory.push(price);
     if (this.priceHistory.length > this.MAX_HISTORY) this.priceHistory.shift();
   }
 
   recordOpportunityCount(count: number): void {
-    this.opportunityHistory.push(count);
+    if (!Number.isFinite(count) || count < 0) return;
+    const normalized = Math.floor(count);
+    // MasterPipeline historically passes a cumulative processed counter. Store
+    // its non-negative delta rather than averaging cumulative totals as density.
+    const delta = this.lastRecordedOpportunityTotal === null
+      ? normalized
+      : Math.max(0, normalized - this.lastRecordedOpportunityTotal);
+    this.lastRecordedOpportunityTotal = normalized;
+    this.opportunityHistory.push(delta);
     if (this.opportunityHistory.length > this.MAX_HISTORY) this.opportunityHistory.shift();
   }
 
@@ -218,10 +248,14 @@ class DynamicScalePhysics {
   getMetrics(): ScaleMetrics {
     const avgProfitPerHour = this.getAverageProfitPerHour();
     const expectedProfitPerHour = this.getExpectedProfitPerHour();
+    const searchOpportunityDensity = this.getSearchOpportunityDensity();
+    const verifiedPositiveDensity = this.getVerifiedPositiveDensity();
     return {
       currentProfile: this.currentProfile,
       marketVolatility: this.calculateMarketVolatility(),
-      opportunityDensity: this.getOpportunityDensity(),
+      opportunityDensity: searchOpportunityDensity,
+      searchOpportunityDensity,
+      verifiedPositiveDensity,
       avgProfitPerHour,
       expectedProfitPerHour,
       profitabilityStatus: avgProfitPerHour !== null || expectedProfitPerHour !== null
@@ -233,7 +267,7 @@ class DynamicScalePhysics {
           ? 'verified_pretrade'
           : 'unavailable',
       capacityMultiplier: this.getCapacityMultiplier(),
-      costMultiplier: this.getCostMultiplier()
+      costMultiplier: this.getCostMultiplier(),
     };
   }
 
@@ -243,10 +277,10 @@ class DynamicScalePhysics {
 
   setProfile(profile: ComputeProfile): void {
     if (this.currentProfile !== profile) {
-      logger.info('Manual profile change', {
+      logger.info('Manual logical profile change', {
         component: 'DynamicScalePhysics',
         from: this.currentProfile,
-        to: profile
+        to: profile,
       });
       this.currentProfile = profile;
     }
@@ -267,5 +301,5 @@ export {
   type Region,
   type ScaleMetrics,
   type ProfitabilityStatus,
-  type RegionConfig
+  type RegionConfig,
 };

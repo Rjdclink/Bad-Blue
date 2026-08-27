@@ -1,12 +1,18 @@
 import logger from '../../../logger.js';
 import { MasterOrchestrator, type PerformanceMetrics } from '../core/master-orchestrator.js';
+import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
+import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { getMeasuredEvolutionMetrics } from '../evolution/measured-execution-feedback.js';
+import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
+import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
+import { ensureOrderBookEvolutionWiring } from './order-book-evolution-wiring.js';
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
+import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 
 const installed = new WeakSet<object>();
 
@@ -21,7 +27,13 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
   installed.add(target);
   logZeroCapitalReadinessDiagnostics();
   ensureLearningLifecycleWiring();
+  ensureMonteCarloCalibrationWiring();
   ensureOracleEvidenceWiring();
+  ensureDynamicScalePressureWiring();
+  ensureZeroCapitalResourceWiring();
+  ensureOrderBookEvolutionWiring();
+  measuredOpportunityGraph.start();
+  multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
   ensureCryptoRuntimeObservability();
 
@@ -54,6 +66,11 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
     component: 'MasterOrchestratorMeasuredWiring',
     executionMetrics: 'terminal_settlement_only',
     opportunityMetrics: 'canonical_verified_stream',
+    measuredOpportunityGraph: 'continuous_multi_topology',
+    orderBookEvolution: 'measured_short_horizon_transitions',
+    dynamicScale: 'dual_axis_search_and_profitability_pressure',
+    monteCarloCalibration: 'terminal_normalized_settlement_only',
+    zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
 }

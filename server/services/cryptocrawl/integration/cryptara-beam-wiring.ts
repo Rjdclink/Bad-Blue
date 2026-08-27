@@ -3,8 +3,8 @@ import type { CryptaraOpportunityContext, MonteCarloResult } from '../../cryptar
 import { createLogger } from '../../../logger.js';
 import { workloadRouter } from '../../computationalBeam/workloadRouter.js';
 import { ComputeLayer, TaskIntensity, TaskPriority, TaskType, type Task } from '../../computationalBeam/types.js';
-import { estimateHyperMonteCarloParallelism } from '../validation/monte-carlo-hyper-engine.js';
-import { ensureCryptaraBootstrapWiring } from './cryptara-bootstrap-wiring.js';
+import { getMonteCarloPolicy, type MonteCarloTopology } from '../validation/monte-carlo-policy.js';
+import { ensureAuthoritativeMonteCarloWiring } from './authoritative-monte-carlo-wiring.js';
 
 const log = createLogger('CryptaraBeamWiring');
 const installed = new WeakSet<object>();
@@ -42,6 +42,37 @@ function quoteDeadline(context: CryptaraOpportunityContext): number | undefined 
   return Date.now() + remainingMs;
 }
 
+function topology(context: CryptaraOpportunityContext): MonteCarloTopology {
+  if (context.routeObservation) return 'ZERO_CAPITAL';
+  if (context.plan?.bridge) return 'CROSS_CHAIN';
+  return 'CEX_CEX';
+}
+
+function beamPolicyMetadata(context: CryptaraOpportunityContext) {
+  const plan = context.plan;
+  if (!plan) return null;
+  const quoteMaxAgeMs = Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000));
+  const policy = getMonteCarloPolicy({
+    topology: topology(context),
+    notionalUsd: plan.notionalUsd,
+    deterministicNetProfitUsd: plan.netProfitUsd,
+    confidence: Math.max(0.01, Math.min(0.999, 1 - plan.quoteAgeMs / quoteMaxAgeMs)),
+    quoteAgeMs: plan.quoteAgeMs,
+    quoteMaxAgeMs,
+    calibrationSamples: 0,
+    executionHorizonMs: plan.bridge ? Math.max(quoteMaxAgeMs, plan.bridge.estimatedTimeSec * 1000) : quoteMaxAgeMs,
+  });
+  return {
+    topology: policy.topology,
+    simulationTier: policy.ordinarySamples >= 10_000 ? 'deep' : policy.ordinarySamples >= 2_000 ? 'ordinary' : 'screen',
+    ordinarySampleBudget: policy.ordinarySamples,
+    maximumSampleBudget: policy.maxSamples,
+    expectedOpportunityValueUsd: plan.netProfitUsd,
+    candidateExpiresAt: context.observedAt + quoteMaxAgeMs,
+    policyVersion: policy.policyVersion,
+  };
+}
+
 async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
   return new Promise<MonteCarloResult>((resolve, reject) => {
     let settled = false;
@@ -55,7 +86,7 @@ async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
       cleanup();
       const result = event.result ?? workloadRouter.consumeTaskOutcome(task.id)?.result;
       if (!validMonteCarloResult(result)) {
-        reject(new Error(`HYPER_INVALID_RESULT: Beam returned invalid Monte Carlo result for ${task.id}`));
+        reject(new Error(`MC_INVALID_RESULT: Beam returned invalid Monte Carlo result for ${task.id}`));
         return;
       }
       resolve(result);
@@ -83,7 +114,7 @@ async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
 }
 
 export function ensureCryptaraBeamWiring(): Cryptara {
-  const instance = ensureCryptaraBootstrapWiring();
+  const instance = ensureAuthoritativeMonteCarloWiring();
   if (installed.has(instance)) return instance;
   installed.add(instance);
   const target = instance as unknown as {
@@ -96,34 +127,44 @@ export function ensureCryptaraBeamWiring(): Cryptara {
     const sourceContext = contextOverride ?? target.latestOpportunityContext;
     if (!sourceContext) throw new Error('EVIDENCE_INCOMPLETE: verified_opportunity_context');
 
-    // The Beam owns a detached snapshot. Concurrent ETH/BTC/BNB assessments can no
-    // longer race through Cryptara.latestOpportunityContext while the workload runs.
     const immutableContext = structuredClone(sourceContext);
     const deadlineAt = quoteDeadline(immutableContext);
-    const parallelismHint = estimateHyperMonteCarloParallelism('live');
+    const policyMetadata = beamPolicyMetadata(immutableContext);
     const task = workloadRouter.createTask(TaskType.MONTE_CARLO, {
-      source: 'cryptara_hyper_verified_opportunity',
+      source: 'cryptara_authoritative_adaptive_mc',
       opportunityId: immutableContext.opportunityId,
       observedAt: immutableContext.observedAt,
+      topology: policyMetadata?.topology ?? 'UNKNOWN',
+      simulationTier: policyMetadata?.simulationTier ?? 'screen',
+      sampleBudget: policyMetadata?.ordinarySampleBudget ?? 0,
+      maxSampleBudget: policyMetadata?.maximumSampleBudget ?? 0,
+      expectedOpportunityValueUsd: policyMetadata?.expectedOpportunityValueUsd ?? null,
+      candidateExpiresAt: policyMetadata?.candidateExpiresAt ?? deadlineAt ?? null,
+      policyVersion: policyMetadata?.policyVersion ?? null,
+      convergenceState: 'pending',
       quantiDeadlineAt: deadlineAt,
-      quantiParallelismHint: parallelismHint,
-      quantiUsefulWorkUnits: 1,
+      quantiParallelismHint: 1,
+      quantiUsefulWorkUnits: Math.max(1, policyMetadata?.ordinarySampleBudget ?? 1),
     }, {
       intensity: TaskIntensity.HEAVY,
       priority: TaskPriority.HIGH,
       requiredLayer: ComputeLayer.BEAM,
     });
     task.workload = {
-      id: `cryptara-hyper-monte-carlo:${task.id}`,
-      type: 'cryptara_hyper_verified_opportunity_monte_carlo',
+      id: `cryptara-authoritative-adaptive-mc:${task.id}`,
+      type: 'cryptara_authoritative_adaptive_monte_carlo',
       input: {
         requestedAt: Date.now(),
         context: immutableContext,
       },
       timeoutMs: Math.max(5_000, Number(process.env.CRYPTARA_BEAM_MONTE_CARLO_TIMEOUT_MS || 30_000)),
       execute: async (input, beamContext) => {
-        if (beamContext.signal.aborted) throw new Error('HYPER_ABORTED: Beam workload aborted before execution');
+        if (beamContext.signal.aborted) throw new Error('MC_ABORTED: Beam workload aborted before execution');
         const workloadInput = input as { requestedAt: number; context: CryptaraOpportunityContext };
+        const expiration = policyMetadata?.candidateExpiresAt;
+        if (expiration !== undefined && Date.now() >= expiration) {
+          throw new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote');
+        }
         return originalRun(workloadInput.context, beamContext.signal);
       },
       validate: result => validMonteCarloResult(result),
@@ -131,53 +172,50 @@ export function ensureCryptaraBeamWiring(): Cryptara {
 
     try {
       const result = await runThroughBeam(task);
-      log.info('Cryptara Hyper Monte Carlo completed through Computational Beam', {
+      log.info('Authoritative adaptive Monte Carlo completed through Computational Beam', {
         component: 'CryptaraBeamWiring',
         taskId: task.id,
         opportunityId: immutableContext.opportunityId,
         observedAt: immutableContext.observedAt,
         simulationId: result.simulationId,
         iterations: result.iterations,
-        quantiParallelismHint: parallelismHint,
+        topology: policyMetadata?.topology ?? 'UNKNOWN',
+        simulationTier: policyMetadata?.simulationTier ?? 'screen',
+        sampleBudget: policyMetadata?.ordinarySampleBudget ?? 0,
+        maxSampleBudget: policyMetadata?.maximumSampleBudget ?? 0,
+        expectedOpportunityValueUsd: policyMetadata?.expectedOpportunityValueUsd ?? null,
+        candidateExpiresAt: policyMetadata?.candidateExpiresAt ?? null,
+        policyVersion: policyMetadata?.policyVersion ?? null,
         quantiDeadlineAt: deadlineAt,
       });
       return result;
     } catch (error) {
       const message = messageOf(error);
       if (isEvidenceIncomplete(error)) {
-        log.info('Cryptara Hyper Monte Carlo evidence incomplete', {
-          component: 'CryptaraBeamWiring',
-          taskId: task.id,
-          opportunityId: immutableContext.opportunityId,
-          observedAt: immutableContext.observedAt,
-          error: message,
+        log.info('Authoritative Monte Carlo evidence incomplete', {
+          component: 'CryptaraBeamWiring', taskId: task.id,
+          opportunityId: immutableContext.opportunityId, observedAt: immutableContext.observedAt, error: message,
         });
-      } else if (message.includes('HYPER_ABORTED') || message.includes('timed out') || message.includes('cancelled')) {
-        log.warn('Cryptara Hyper Monte Carlo Beam workload aborted or timed out', {
-          component: 'CryptaraBeamWiring',
-          taskId: task.id,
-          opportunityId: immutableContext.opportunityId,
-          error: message,
+      } else if (message.includes('MC_ABORTED') || message.includes('timed out') || message.includes('cancelled')) {
+        log.warn('Authoritative Monte Carlo Beam workload aborted or timed out', {
+          component: 'CryptaraBeamWiring', taskId: task.id, opportunityId: immutableContext.opportunityId, error: message,
         });
       } else {
-        log.warn('Computational Beam Hyper Monte Carlo execution failed', {
-          component: 'CryptaraBeamWiring',
-          taskId: task.id,
-          opportunityId: immutableContext.opportunityId,
-          error: message,
+        log.warn('Computational Beam authoritative Monte Carlo execution failed', {
+          component: 'CryptaraBeamWiring', taskId: task.id, opportunityId: immutableContext.opportunityId, error: message,
         });
       }
       throw error;
     }
   };
 
-  log.info('Cryptara Computational Beam Hyper Monte Carlo wiring installed', {
+  log.info('Cryptara Computational Beam authoritative Monte Carlo wiring installed', {
     component: 'CryptaraBeamWiring',
-    workload: 'cryptara_hyper_verified_opportunity_monte_carlo',
+    workload: 'cryptara_authoritative_adaptive_monte_carlo',
     immutableTaskInput: true,
-    cpuWorkerPool: true,
-    nestedParallelismGoverned: true,
+    sharedPolicyAuthority: true,
     quoteDeadlineBound: true,
+    expiredCandidateCancellation: true,
     executionAuthority: false,
   });
   return instance;

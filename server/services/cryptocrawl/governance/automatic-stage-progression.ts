@@ -47,23 +47,78 @@ void ensureMeasuredEvolutionFeedbackHydrated();
 // It intentionally runs independently: governance must never block on external RPC startup.
 void ensureTelemetryBootstrap();
 
+const STAGE_ONE_OPPORTUNITY_ECONOMICS_BLOCK_REASONS = new Set([
+  'Cross-venue fee asymmetry: spread does not clear fees',
+  'Maker-only fee/rebate economics unfavorable',
+]);
+const STAGE_ONE_SIGNAL_WINDOW_MS = Math.max(
+  60_000,
+  Number(process.env.CRYPTO_STAGE_ONE_SIGNAL_WINDOW_MS || 5 * 60_000),
+);
+
+/**
+ * Stage 1 proves measured infrastructure and signal readiness; it cannot execute.
+ * Therefore an otherwise-complete market gate must not turn one correctly rejected
+ * fee-negative opportunity into an infrastructure-readiness failure. This does not
+ * authorize the opportunity: the deterministic economics gate remains BLOCK and is
+ * still enforced by the verifier/executor. Unknown critical evidence and every
+ * non-economic gate failure remain blockers.
+ */
+function stageOneReadinessGate(
+  decision: 'ALLOW' | 'BLOCK',
+  reasons: readonly string[],
+): { decision: 'ALLOW' | 'BLOCK'; reasons: string[] } {
+  if (stageManager.getState().currentStage !== 1 || decision !== 'BLOCK' || reasons.length === 0) {
+    return { decision, reasons: [...reasons] };
+  }
+
+  const opportunityEconomicsOnly = reasons.every(reason => STAGE_ONE_OPPORTUNITY_ECONOMICS_BLOCK_REASONS.has(reason));
+  if (!opportunityEconomicsOnly) return { decision, reasons: [...reasons] };
+
+  return {
+    decision: 'ALLOW',
+    reasons: [
+      'Stage 1 readiness accepted: measured market infrastructure is available while the latest opportunity remains correctly rejected on deterministic economics',
+      ...reasons.map(reason => `opportunity_rejection_preserved:${reason}`),
+    ],
+  };
+}
+
 function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>): AutomaticAdvancementEvidence {
   const ranking = getCryptara().getPerformanceRanking();
   const progress = profitLadder.getProgressSummary();
   const trippedCircuitBreakers = riskGovernor.getTrippedCircuitBreakers().map(breaker => breaker.name);
-  const recordedGate = stageManager.getState().automaticAdvancementEvidence?.marketGate;
+  const stageState = stageManager.getState();
+  const recordedGate = stageState.automaticAdvancementEvidence?.marketGate;
   const initialGasReady = stageManager.isInitialGasReady();
   const candidateGateDecision = gate?.decision || recordedGate?.decision || 'BLOCK';
   const candidateGateReasons = gate?.blockReasons || recordedGate?.reasons || ['No Cryptara market-gate authorization was recorded for this lifecycle evaluation'];
+  const readinessGate = stageOneReadinessGate(candidateGateDecision, candidateGateReasons);
+  const recentSignals = canonicalOpportunityState.getMetrics(STAGE_ONE_SIGNAL_WINDOW_MS);
+  const stageOneVerifiedSignalReady = stageState.currentStage !== 1 || recentSignals.verifiedPositiveOpportunities > 0;
+  const advancementMarketGateReady = initialGasReady
+    && readinessGate.decision === 'ALLOW'
+    && stageOneVerifiedSignalReady;
+
+  let advancementReasons: string[];
+  if (!initialGasReady) {
+    advancementReasons = ['Initial native-gas readiness is not verified', ...candidateGateReasons];
+  } else if (!stageOneVerifiedSignalReady) {
+    advancementReasons = [
+      `Stage 1 proof-of-signal requires at least one fresh verified-positive canonical opportunity within ${STAGE_ONE_SIGNAL_WINDOW_MS}ms`,
+      `verifiedPositiveOpportunities=${recentSignals.verifiedPositiveOpportunities}`,
+      ...readinessGate.reasons,
+    ];
+  } else {
+    advancementReasons = readinessGate.reasons;
+  }
 
   return {
     evaluatedAt: Date.now(),
     marketGate: {
-      decision: initialGasReady ? candidateGateDecision : 'BLOCK',
+      decision: advancementMarketGateReady ? 'ALLOW' : 'BLOCK',
       evaluatedAt: gate?.metadata.evaluatedAt || recordedGate?.evaluatedAt || Date.now(),
-      reasons: initialGasReady
-        ? candidateGateReasons
-        : ['Initial native-gas readiness is not verified', ...candidateGateReasons],
+      reasons: advancementReasons,
     },
     cryptara: rankingToEvidence(ranking),
     profitLadder: {
