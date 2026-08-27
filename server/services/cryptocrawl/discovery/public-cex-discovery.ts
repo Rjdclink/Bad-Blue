@@ -24,8 +24,9 @@ export interface PublicCexDiscoveryBatch {
 }
 
 const VENUES: PublicDiscoveryVenue[] = ['binance', 'bybit', 'kucoin', 'gate', 'huobi'];
-const cache = new Map<string, { expiresAt: number; value: PublicCexBboObservation | null }>();
-const inFlight = new Map<string, Promise<PublicCexBboObservation | null>>();
+type VenueSnapshot = Map<string, PublicCexBboObservation>;
+const snapshotCache = new Map<PublicDiscoveryVenue, { expiresAt: number; value: VenueSnapshot }>();
+const snapshotInFlight = new Map<PublicDiscoveryVenue, Promise<VenueSnapshot>>();
 
 function finitePositive(value: unknown): number | null {
   const parsed = Number(value);
@@ -37,104 +38,181 @@ function splitSymbol(symbol: string): { base: string; quote: string } | null {
   return match ? { base: match[1], quote: match[2] } : null;
 }
 
-function assertBbo(venue: PublicDiscoveryVenue, symbol: string, bidValue: unknown, askValue: unknown): PublicCexBboObservation {
+function canonicalExternalSymbol(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const compact = raw.trim().toUpperCase().replace(/[-_/]/g, '');
+  return splitSymbol(compact) ? compact : null;
+}
+
+function assertBbo(
+  venue: PublicDiscoveryVenue,
+  symbol: string,
+  bidValue: unknown,
+  askValue: unknown,
+  observedAt: number,
+): PublicCexBboObservation {
   const bid = finitePositive(bidValue);
   const ask = finitePositive(askValue);
   if (bid === null || ask === null || ask < bid) throw new Error('public BBO response is missing a valid bid/ask');
-  return { venue, symbol, bid, ask, observedAt: Date.now(), source: 'public_rest_bbo', executable: false };
+  return { venue, symbol, bid, ask, observedAt, source: 'public_rest_bbo', executable: false };
 }
 
-async function fetchVenueBbo(venue: PublicDiscoveryVenue, symbol: string): Promise<PublicCexBboObservation> {
-  const pair = splitSymbol(symbol);
-  if (!pair) throw new Error(`unsupported normalized symbol ${symbol}`);
-  const options = { maxRetries: 1, baseDelayMs: 150, maxDelayMs: 500, timeoutMs: 2_500 };
+function snapshotTtlMs(): number {
+  return Math.max(250, Math.min(10_000, Number(process.env.CRYPTOCRAWL_PUBLIC_BBO_CACHE_MS || 1_500)));
+}
+
+function addSnapshotRow(
+  output: VenueSnapshot,
+  venue: PublicDiscoveryVenue,
+  rawSymbol: unknown,
+  bid: unknown,
+  ask: unknown,
+  observedAt: number,
+): void {
+  const symbol = canonicalExternalSymbol(rawSymbol);
+  if (!symbol) return;
+  try {
+    output.set(symbol, assertBbo(venue, symbol, bid, ask, observedAt));
+  } catch {
+    // One malformed/inactive pair must not discard a full-venue snapshot.
+  }
+}
+
+async function fetchVenueSnapshotUncached(venue: PublicDiscoveryVenue): Promise<VenueSnapshot> {
+  const options = { maxRetries: 1, baseDelayMs: 150, maxDelayMs: 750, timeoutMs: 3_500 };
+  const observedAt = Date.now();
+  const output: VenueSnapshot = new Map();
 
   if (venue === 'binance') {
-    const row = await fetchJsonWithRetry<any>(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${encodeURIComponent(symbol)}`, options);
-    return assertBbo(venue, symbol, row?.bidPrice, row?.askPrice);
-  }
-  if (venue === 'bybit') {
-    const payload = await fetchJsonWithRetry<any>(`https://api.bybit.com/v5/market/tickers?category=spot&symbol=${encodeURIComponent(symbol)}`, options);
-    const row = payload?.result?.list?.[0];
-    return assertBbo(venue, symbol, row?.bid1Price, row?.ask1Price);
-  }
-  if (venue === 'kucoin') {
-    const external = `${pair.base}-${pair.quote}`;
-    const payload = await fetchJsonWithRetry<any>(`https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=${encodeURIComponent(external)}`, options);
-    return assertBbo(venue, symbol, payload?.data?.bestBid, payload?.data?.bestAsk);
-  }
-  if (venue === 'gate') {
-    const external = `${pair.base}_${pair.quote}`;
-    const payload = await fetchJsonWithRetry<any>(`https://api.gateio.ws/api/v4/spot/order_book?currency_pair=${encodeURIComponent(external)}&limit=1`, options);
-    return assertBbo(venue, symbol, payload?.bids?.[0]?.[0], payload?.asks?.[0]?.[0]);
+    const rows = await fetchJsonWithRetry<any[]>('https://api.binance.com/api/v3/ticker/bookTicker', options);
+    for (const row of Array.isArray(rows) ? rows : []) addSnapshotRow(output, venue, row?.symbol, row?.bidPrice, row?.askPrice, observedAt);
+    return output;
   }
 
-  const external = `${pair.base}${pair.quote}`.toLowerCase();
-  const payload = await fetchJsonWithRetry<any>(`https://api.huobi.pro/market/detail/merged?symbol=${encodeURIComponent(external)}`, options);
-  return assertBbo(venue, symbol, payload?.tick?.bid?.[0], payload?.tick?.ask?.[0]);
+  if (venue === 'bybit') {
+    const payload = await fetchJsonWithRetry<any>('https://api.bybit.com/v5/market/tickers?category=spot', options);
+    for (const row of Array.isArray(payload?.result?.list) ? payload.result.list : []) {
+      addSnapshotRow(output, venue, row?.symbol, row?.bid1Price, row?.ask1Price, observedAt);
+    }
+    return output;
+  }
+
+  if (venue === 'kucoin') {
+    const payload = await fetchJsonWithRetry<any>('https://api.kucoin.com/api/v1/market/allTickers', options);
+    for (const row of Array.isArray(payload?.data?.ticker) ? payload.data.ticker : []) {
+      addSnapshotRow(output, venue, row?.symbol, row?.buy ?? row?.bestBid, row?.sell ?? row?.bestAsk, observedAt);
+    }
+    return output;
+  }
+
+  if (venue === 'gate') {
+    const rows = await fetchJsonWithRetry<any[]>('https://api.gateio.ws/api/v4/spot/tickers', options);
+    for (const row of Array.isArray(rows) ? rows : []) {
+      addSnapshotRow(output, venue, row?.currency_pair, row?.highest_bid, row?.lowest_ask, observedAt);
+    }
+    return output;
+  }
+
+  const payload = await fetchJsonWithRetry<any>('https://api.huobi.pro/market/tickers', options);
+  for (const row of Array.isArray(payload?.data) ? payload.data : []) {
+    addSnapshotRow(output, venue, row?.symbol, row?.bid, row?.ask, observedAt);
+  }
+  return output;
 }
 
-export async function discoverPublicCexBbo(venue: PublicDiscoveryVenue, symbolInput: string): Promise<PublicCexBboObservation | null> {
-  const symbol = symbolInput.trim().toUpperCase();
+async function getVenueSnapshot(venue: PublicDiscoveryVenue): Promise<VenueSnapshot> {
   const capability = getVenueCapability(venue as CryptoCrawlerCexVenue);
-  if (!capability.enabled || !capability.publicDiscovery || capability.liveExecution) {
-    return null;
-  }
-  const ttlMs = Math.max(250, Number(process.env.CRYPTOCRAWL_PUBLIC_BBO_CACHE_MS || 1_500));
-  const key = `${venue}:${symbol}`;
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.value ? { ...cached.value } : null;
-  const existing = inFlight.get(key);
+  if (!capability.enabled || !capability.publicDiscovery || capability.liveExecution) return new Map();
+
+  const cached = snapshotCache.get(venue);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const existing = snapshotInFlight.get(venue);
   if (existing) return existing;
 
-  const promise = fetchVenueBbo(venue, symbol)
+  const promise = fetchVenueSnapshotUncached(venue)
     .then(value => {
-      cache.set(key, { value, expiresAt: Date.now() + ttlMs });
-      canonicalOpportunityState.recordSearchObservation({
-        observationId: `public-cex:${venue}:${symbol}:${value.observedAt}`,
-        symbol,
-        observedAt: value.observedAt,
-        source: `public_cex_${venue}`,
-      });
-      return { ...value };
+      snapshotCache.set(venue, { value, expiresAt: Date.now() + snapshotTtlMs() });
+      return value;
     })
-    .catch(error => {
-      cache.set(key, { value: null, expiresAt: Date.now() + Math.min(ttlMs, 1_000) });
-      logger.debug('[PublicCexDiscovery] Public BBO unavailable', {
-        component: 'PublicCexDiscovery', venue, symbol,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    })
-    .finally(() => inFlight.delete(key));
-  inFlight.set(key, promise);
+    .finally(() => snapshotInFlight.delete(venue));
+  snapshotInFlight.set(venue, promise);
   return promise;
 }
 
+function recordSearchObservation(observation: PublicCexBboObservation): void {
+  canonicalOpportunityState.recordSearchObservation({
+    observationId: `public-cex:${observation.venue}:${observation.symbol}:${observation.observedAt}`,
+    symbol: observation.symbol,
+    observedAt: observation.observedAt,
+    source: `public_cex_${observation.venue}`,
+  });
+}
+
+/**
+ * Compatibility single-symbol lookup backed by one all-ticker venue snapshot.
+ * This avoids one HTTP request per symbol while preserving the existing API.
+ */
+export async function discoverPublicCexBbo(
+  venue: PublicDiscoveryVenue,
+  symbolInput: string,
+): Promise<PublicCexBboObservation | null> {
+  const symbol = symbolInput.trim().toUpperCase();
+  if (!splitSymbol(symbol)) return null;
+  try {
+    const observation = (await getVenueSnapshot(venue)).get(symbol) || null;
+    if (observation) recordSearchObservation(observation);
+    return observation ? { ...observation } : null;
+  } catch (error) {
+    logger.debug('[PublicCexDiscovery] Public venue snapshot unavailable', {
+      component: 'PublicCexDiscovery',
+      venue,
+      symbol,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Broad discovery now costs approximately one public request per venue per cache
+ * window rather than venues x symbols requests. This makes 50+ pair discovery
+ * practical without adding API keys or multiplying provider load linearly.
+ */
 export async function scanPublicCexUniverse(symbolsInput: readonly string[]): Promise<PublicCexDiscoveryBatch> {
   const startedAt = Date.now();
-  const maxSymbols = Math.max(1, Math.min(50, Number(process.env.CRYPTOCRAWL_PUBLIC_DISCOVERY_SYMBOLS || 32)));
-  const symbols = [...new Set(symbolsInput.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))].slice(0, maxSymbols);
-  const concurrency = Math.max(1, Math.min(12, Number(process.env.CRYPTOCRAWL_PUBLIC_DISCOVERY_CONCURRENCY || 8)));
-  const tasks: Array<{ venue: PublicDiscoveryVenue; symbol: string }> = [];
-  for (const symbol of symbols) for (const venue of VENUES) tasks.push({ venue, symbol });
-
+  const maxSymbols = Math.max(64, Math.min(128, Number(process.env.CRYPTOCRAWL_PUBLIC_DISCOVERY_SYMBOLS || 96)));
+  const symbols = [...new Set(symbolsInput.map(symbol => symbol.trim().toUpperCase()).filter(symbol => !!splitSymbol(symbol)))].slice(0, maxSymbols);
+  const requested = new Set(symbols);
   const observations: PublicCexBboObservation[] = [];
   const failures: PublicCexDiscoveryBatch['failures'] = [];
-  let cursor = 0;
-  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, tasks.length)) }, async () => {
-    while (true) {
-      const index = cursor++;
-      if (index >= tasks.length) return;
-      const task = tasks[index];
-      try {
-        const observation = await discoverPublicCexBbo(task.venue, task.symbol);
-        if (observation) observations.push(observation);
-      } catch (error) {
-        failures.push({ venue: task.venue, symbol: task.symbol, error: error instanceof Error ? error.message : String(error) });
-      }
+
+  const settled = await Promise.allSettled(VENUES.map(async venue => ({ venue, snapshot: await getVenueSnapshot(venue) })));
+  for (let index = 0; index < settled.length; index++) {
+    const result = settled[index];
+    const venue = VENUES[index];
+    if (result.status === 'rejected') {
+      failures.push({
+        venue,
+        symbol: '*',
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      });
+      continue;
     }
-  }));
+    for (const [symbol, observation] of result.value.snapshot.entries()) {
+      if (!requested.has(symbol)) continue;
+      observations.push({ ...observation });
+      recordSearchObservation(observation);
+    }
+  }
+
+  logger.debug('[PublicCexDiscovery] Batched public BBO scan completed', {
+    component: 'PublicCexDiscovery',
+    requestedSymbols: symbols.length,
+    venues: VENUES.length,
+    publicHttpRequestsUpperBound: VENUES.length,
+    observations: observations.length,
+    failures: failures.length,
+  });
 
   return { startedAt, completedAt: Date.now(), symbols: symbols.length, observations, failures };
 }
