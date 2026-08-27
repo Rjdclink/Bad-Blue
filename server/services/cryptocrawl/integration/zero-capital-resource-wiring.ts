@@ -9,6 +9,7 @@ import {
   buildDynamicZeroCapitalRouteTemplates,
   discoverDynamicZeroCapitalQuotes,
 } from '../discovery/dynamic-zero-capital-routes.js';
+import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import type { ConfiguredZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import {
   supportsSponsoredReceiverChain,
@@ -89,6 +90,12 @@ function activeChainCount(target: ZeroCapitalRuntime, chain: SupportedChain): nu
   return target.activeExecutionsByChain.get(chain) || 0;
 }
 
+function baseUnitsToUsd(value: bigint, decimals: number): number {
+  const divisor = 10 ** Math.max(0, Math.min(18, decimals));
+  const result = Number(value) / divisor;
+  return Number.isFinite(result) ? result : 0;
+}
+
 export function ensureZeroCapitalResourceWiring(): void {
   const target = zeroCapitalEngine as unknown as ZeroCapitalRuntime;
   if (installed.has(target)) return;
@@ -116,6 +123,47 @@ export function ensureZeroCapitalResourceWiring(): void {
     const dynamic: ZeroCapitalOpportunity[] = [];
     for (const quote of dynamicQuotes) {
       const opportunity = target.fromQuotedRoute(quote, block.timestamp);
+      const observedAt = opportunity.timestamp;
+      measuredCandidateRegistry.record({
+        opportunityId: opportunity.id,
+        topology: 'ZERO_CAPITAL_ATOMIC',
+        observedAt,
+        expiresAt: opportunity.expiresAt,
+        status: 'deterministic_positive',
+        assets: [opportunity.inputAssetSymbol],
+        venues: [...new Set(opportunity.route.map(step => step.protocol))],
+        chains: [chain],
+        rawQuotes: opportunity.route.map(step => ({
+          source: step.protocol,
+          venue: step.protocol,
+          chain,
+          observedAt,
+          amountIn: step.amountIn.toString(),
+          amountOut: step.expectedAmountOut.toString(),
+          executable: receiverReady,
+          provenance: ['direct_contract_quote'],
+        })),
+        depth: {
+          status: 'measured',
+          detail: 'Each route leg was accepted only after a live contract/router quote returned a positive output amount',
+        },
+        economics: {
+          grossProfitUsd: baseUnitsToUsd(opportunity.grossProfit || 0n, opportunity.inputTokenDecimals),
+          deterministicNetProfitUsd: baseUnitsToUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+          feeUsd: baseUnitsToUsd(opportunity.flashLoanFeeInInputToken || 0n, opportunity.inputTokenDecimals),
+          gasUsd: baseUnitsToUsd(opportunity.estimatedGasCostInInputToken || 0n, opportunity.inputTokenDecimals),
+          bridgeUsd: 0,
+          expectedSlippageBps: opportunity.expectedSlippageBps,
+          expectedPriceImpactBps: null,
+        },
+        quoteAgeMs: opportunity.quoteLatencyMs,
+        executableCapability: receiverReady,
+        executionCapabilityReason: receiverReady
+          ? 'Measured direct-protocol route has a verified funded receiver; Cryptara/Monte Carlo/governance remain required before execution'
+          : 'Measured deterministic route is positive, but no verified funded receiver is currently registered on the chain',
+        missingInformation: receiverReady ? [] : ['verified_funded_receiver'],
+        provenance: ['dynamic_zero_capital_route', 'direct_contract_quotes', 'measured_gas_cost', 'deterministic_positive_net', 'synthetic_evidence:false'],
+      });
       if (target.executionEligible && !receiverReady) continue;
       if (target.executionEnabled && !await target.isAllowedByCryptara(opportunity)) continue;
       dynamic.push(opportunity);
