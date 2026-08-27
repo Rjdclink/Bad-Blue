@@ -198,17 +198,42 @@ async function probeReadOnlyZeroX(): Promise<void> {
   }
 }
 
+async function probeMarketUniverseProviders(): Promise<void> {
+  try {
+    const universe = await marketDataProviders.discoverUniverse();
+    logger.info('[TelemetryBootstrap] Market-universe provider probe completed', {
+      component: 'TelemetryBootstrap',
+      assets: universe.length,
+      providers: marketDataProviders.getProviderStatuses().map(status => ({
+        provider: status.provider,
+        state: status.state,
+        observedAt: status.observedAt,
+        detail: status.detail,
+      })),
+    });
+  } catch (error) {
+    logger.warn('[TelemetryBootstrap] Market-universe provider probe degraded', {
+      component: 'TelemetryBootstrap',
+      error: error instanceof Error ? error.message : String(error),
+      providers: marketDataProviders.getProviderStatuses().map(status => ({
+        provider: status.provider,
+        state: status.state,
+        detail: status.detail,
+      })),
+    });
+  }
+}
+
 export function ensureTelemetryBootstrap(): Promise<void> {
   if (!bootstrapPromise) {
     adoptLegacyProviderAliases();
     logExecutionPosture();
     bootstrapPromise = (async () => {
-      // Establish the shared manager once, then add optional providers serially so
-      // health/provenance state cannot race during startup.
       await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);
       await registerBestEffortAnkrFallbacks();
       await startAlchemyTelemetry();
       await probeReadOnlyZeroX();
+      await probeMarketUniverseProviders();
 
       const healthyProviders = TELEMETRY_CHAINS.flatMap(chain =>
         multiProviderRpcManager.getHealth(chain)
