@@ -235,10 +235,7 @@ async function probeMarketUniverseProviders(): Promise<void> {
 }
 
 export function ensureTelemetryBootstrap(): Promise<void> {
-  // Core CEX discovery/execution admission is topology-independent. Start it
-  // synchronously before any optional blockchain-provider probes so RPC/Alchemy/
-  // 0x degradation cannot prevent Kraken/OKX opportunity discovery.
-  ensureCryptoCrawlerCoreRuntime();
+  const coreStart = ensureCryptoCrawlerCoreRuntime();
 
   if (!bootstrapPromise) {
     adoptLegacyProviderAliases();
@@ -248,6 +245,10 @@ export function ensureTelemetryBootstrap(): Promise<void> {
       ...getCryptoCrawlerRuntimeAttestation(),
     });
     bootstrapPromise = (async () => {
+      // Canonical CEX discovery and scheduler admission are established before
+      // optional blockchain-provider probes. Their failure is therefore
+      // topology-local rather than a global CryptoCrawler startup blocker.
+      await coreStart;
       await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);
       await registerBestEffortAnkrFallbacks();
       await startAlchemyTelemetry();
