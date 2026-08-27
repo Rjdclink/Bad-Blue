@@ -12,12 +12,14 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
     lifecyclePromise = Promise.all([
       import('./positive-profit-capture-wiring.js'),
       import('./expanded-market-universe-wiring.js'),
-    ]).then(([profitPolicy, universePolicy]) => {
-      // Install narrow compatibility policies before graph/scheduler modules are
-      // loaded. This preserves one deterministic startup order and avoids a cycle
-      // through execution -> automatic-stage-progression -> telemetry.
+      import('./alchemy-filtered-mempool-wiring.js'),
+    ]).then(([profitPolicy, universePolicy, mempoolPolicy]) => {
+      // Install narrow compatibility policies before graph/scheduler/provider
+      // modules are started. This preserves one deterministic startup order and
+      // avoids a cycle through execution -> automatic-stage-progression -> telemetry.
       profitPolicy.ensurePositiveProfitCaptureWiring();
       universePolicy.ensureExpandedMarketUniverseWiring();
+      mempoolPolicy.ensureAlchemyFilteredMempoolWiring();
       return Promise.all([
         import('../discovery/opportunity-graph.js'),
         import('../execution/canonical-execution-scheduler.js'),
@@ -56,6 +58,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     optionalProviderFailureBlocksCore: false,
     positiveProfitCapturePolicy: 'strict_all_in_net_gt_zero',
     expandedMarketUniverse: true,
+    filteredMempoolPolicyInstalled: true,
   });
 }
 
