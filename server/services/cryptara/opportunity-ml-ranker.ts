@@ -8,8 +8,17 @@ export interface OpportunityMlAssessment {
   signal: GateSignal;
 }
 
+export interface OpportunityMlRankerState {
+  version: 1;
+  sampleCount: number;
+  weights: number[];
+  bias: number;
+}
+
 type FeatureVector = [number, number, number, number, number, number, number, number];
 
+const DEFAULT_WEIGHTS: FeatureVector = [0.9, 1.2, 0.8, 0.65, 0.5, 0.55, 0.8, 0.9];
+const DEFAULT_BIAS = -3.1;
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 const sigmoid = (value: number): number => 1 / (1 + Math.exp(-value));
 
@@ -63,10 +72,8 @@ function featureVector(context: CryptaraMarketGateContext): { values: FeatureVec
 }
 
 class OpportunityMlRanker {
-  // Conservative initial weights: economics and liquidity dominate; competition,
-  // congestion, latency, slippage and drawdown reduce the score when adverse.
-  private weights: FeatureVector = [0.9, 1.2, 0.8, 0.65, 0.5, 0.55, 0.8, 0.9];
-  private bias = -3.1;
+  private weights: FeatureVector = [...DEFAULT_WEIGHTS];
+  private bias = DEFAULT_BIAS;
   private samples = 0;
   private readonly learningRate = 0.035;
   private readonly pendingBySymbol = new Map<string, FeatureVector>();
@@ -132,8 +139,38 @@ class OpportunityMlRanker {
     this.pendingBySymbol.delete(symbol);
   }
 
+  exportState(): OpportunityMlRankerState {
+    return {
+      version: 1,
+      sampleCount: this.samples,
+      weights: [...this.weights],
+      bias: this.bias,
+    };
+  }
+
+  importState(state: OpportunityMlRankerState): boolean {
+    if (
+      state?.version !== 1 ||
+      !Number.isInteger(state.sampleCount) ||
+      state.sampleCount < 0 ||
+      !Array.isArray(state.weights) ||
+      state.weights.length !== DEFAULT_WEIGHTS.length ||
+      !state.weights.every(weight => Number.isFinite(weight) && weight >= -3 && weight <= 3) ||
+      !Number.isFinite(state.bias) ||
+      state.bias < -6 ||
+      state.bias > 3
+    ) return false;
+
+    this.samples = state.sampleCount;
+    this.weights = state.weights.map(Number) as FeatureVector;
+    this.bias = state.bias;
+    this.pendingBySymbol.clear();
+    return true;
+  }
+
   getState(): { sampleCount: number; weights: number[]; bias: number } {
-    return { sampleCount: this.samples, weights: [...this.weights], bias: this.bias };
+    const state = this.exportState();
+    return { sampleCount: state.sampleCount, weights: state.weights, bias: state.bias };
   }
 }
 
