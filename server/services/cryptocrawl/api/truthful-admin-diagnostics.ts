@@ -1,10 +1,11 @@
 import express from 'express';
 import { promises as fs } from 'fs';
-import path from 'path';
+import * as path from 'path';
 import { sql } from 'drizzle-orm';
 import { db } from '../../../db.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { getVenueCapabilities } from '../discovery/venue-capability-registry.js';
+import type { CanonicalExecutionSchedulerStats } from '../execution/canonical-execution-scheduler.js';
 import { loadDynamicChainRegistry } from '../core/dynamic-chain-registry.js';
 import { stageManager } from '../governance/stage-management.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
@@ -85,7 +86,7 @@ async function canonicalCoreEvidence(): Promise<{
     deterministicPositive: number;
     eligibleCandidates: number;
   };
-  scheduler: ReturnType<(typeof import('../execution/canonical-execution-scheduler.js'))['canonicalExecutionScheduler']['getStats']>;
+  scheduler: CanonicalExecutionSchedulerStats;
 }> {
   const [discoveryModule, schedulerModule] = await Promise.all([
     import('../discovery/opportunity-graph.js'),
