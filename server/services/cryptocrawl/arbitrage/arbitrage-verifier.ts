@@ -14,6 +14,7 @@ import { gasOracle } from '../bridge/gas-oracle.js';
 import { routeOptimizer } from '../bridge/route-optimizer.js';
 import type { ChainId as BridgeChainId } from '../bridge/types';
 import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
+import { getLastOrderedMarketUniverseSymbols } from '../discovery/market-universe-controller.js';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
@@ -24,7 +25,6 @@ import {
   type CexFeeEvidence,
 } from '../intelligence/cex-fee-resolver.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
-import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
 
 // Coinbase remains in the compatibility union because persisted/legacy data can
@@ -381,7 +381,7 @@ export class ArbitrageVerifier {
 
     try {
       if (process.env.CRYPTO_ARBITRAGE_BATCH_SCAN_ENABLED?.trim().toLowerCase() !== 'false') {
-        const symbols = await this.resolveScanSymbols(symbol);
+        const symbols = this.resolveScanSymbols(symbol);
         const allowedSymbols: string[] = [];
         for (const candidateSymbol of symbols) {
           try {
@@ -412,22 +412,13 @@ export class ArbitrageVerifier {
     }
   }
 
-  private async resolveScanSymbols(seedSymbol: string): Promise<string[]> {
+  private resolveScanSymbols(seedSymbol: string): string[] {
     const maxSymbols = Math.min(8, positiveInteger(process.env.CRYPTO_ARBITRAGE_MAX_SYMBOLS, 4, 8));
-    try {
-      const discovered = await marketDataProviders.discoverUniverse();
-      return [...new Set([
-        seedSymbol,
-        ...discovered.map(asset => asset.symbol.trim().toUpperCase()).filter(Boolean),
-      ])].slice(0, maxSymbols);
-    } catch (error) {
-      logger.debug('[ArbVerifier] Market-universe batch expansion unavailable; evaluating requested symbol only', {
-        component: 'ArbitrageVerifier',
-        symbol: seedSymbol,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [seedSymbol];
-    }
+    const consumedSymbols = getLastOrderedMarketUniverseSymbols();
+    return [...new Set([
+      seedSymbol,
+      ...consumedSymbols.map(symbol => symbol.trim().toUpperCase()).filter(Boolean),
+    ])].slice(0, maxSymbols);
   }
 
   private async evaluateBatch(
