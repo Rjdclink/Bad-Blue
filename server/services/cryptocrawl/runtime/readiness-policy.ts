@@ -33,6 +33,7 @@ export type CryptoRuntimeReadiness = {
   INVENTORY_READY: RuntimeReadinessCheck;
   CANDIDATE_READY: RuntimeReadinessCheck;
   GOVERNANCE_READY: RuntimeReadinessCheck;
+  EXECUTION_READY: RuntimeReadinessCheck;
   TRADING_READY: RuntimeReadinessCheck;
 };
 
@@ -53,6 +54,8 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
   const resourceReady = inventoryReady || zeroCapitalResourceReady;
   const candidateReady = input.eligibleCandidates > 0;
   const governanceReady = input.stageCanExecute;
+  const tradingReady = executionCapabilityReady && governanceReady && candidateReady && resourceReady;
+  const tradingDetail = `capability=${executionCapabilityReady}; governance=${governanceReady}; candidate=${candidateReady}; resource=${resourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`;
 
   return {
     APP_READY: {
@@ -99,10 +102,17 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
       scope: 'governance',
       detail: `stage=${input.currentStage}; stageCanExecute=${input.stageCanExecute}`,
     },
-    TRADING_READY: {
-      ready: executionCapabilityReady && governanceReady && candidateReady && resourceReady,
+    // Backward-compatible strict alias. Historically this label meant only
+    // config/scheduler capability and could be true with no inventory/candidate.
+    EXECUTION_READY: {
+      ready: tradingReady,
       scope: 'trade',
-      detail: `capability=${executionCapabilityReady}; governance=${governanceReady}; candidate=${candidateReady}; resource=${resourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`,
+      detail: `strict execution readiness alias; ${tradingDetail}`,
+    },
+    TRADING_READY: {
+      ready: tradingReady,
+      scope: 'trade',
+      detail: tradingDetail,
     },
   };
 }
