@@ -39,6 +39,13 @@ requireText(verifier, 'topSpreadBps <= breakEvenBps', 'break-even topology gate'
 requireText(verifier, 'candidate.netProfitUsd > bestPlan.netProfitUsd', 'best candidate ranked by net profit');
 requireText(verifier, 'plan.netProfitUsd < req.minNetProfitUsd', 'verified minimum net-profit gate');
 requireText(verifier, "crossVenueCostModel: bridge", 'cross-venue cost semantics retained');
+requireText(verifier, 'token: route.token', 'bridge plan preserves optimizer-authoritative route token');
+requireText(verifier, 'primeCexFeeEvidence(symbols)', 'bounded scanner primes shared fee evidence once per symbol batch');
+requireText(verifier, 'CRYPTO_ARBITRAGE_SCAN_CONCURRENCY', 'bounded scan concurrency remains configurable');
+requireText(verifier, 'positiveInteger(process.env.CRYPTO_ARBITRAGE_SCAN_CONCURRENCY, 4, 8)', 'bounded scan concurrency remains capped at eight workers');
+requireText(verifier, "governance.requireAllowed('ADVISE', { chain: req.gas?.chain, pair: candidateSymbol })", 'each batch symbol remains subject to advisory governance');
+requireText(verifier, 'canonicalOpportunityState.recordSearchObservation', 'scanner records measured search observations before profitability outcome');
+requireText(verifier, 'symbols: [...symbols].sort()', 'batch reuse key is independent of symbol call order');
 forbidText(verifier, "const venues: QuoteVenue[] = ['coinbase', 'kraken', 'okx']", 'no hard-coded Coinbase quote authority');
 
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
@@ -47,6 +54,13 @@ requireText(feeResolver, 'krakenPrivateTail', 'Kraken authenticated transport ha
 requireText(feeResolver, 'nextKrakenNonce()', 'Kraken nonce remains monotonic');
 requireText(feeResolver, "source: 'kraken_account_trade_volume'", 'Kraken fee evidence remains account measured');
 requireText(feeResolver, "source: 'okx_account_trade_fee'", 'OKX fee evidence remains account measured');
+requireText(feeResolver, 'getKrakenPairDirectory', 'Kraken batch fees use exchange pair metadata rather than response ordering');
+requireText(feeResolver, 'fetchKrakenFeeEvidenceBatch', 'Kraken authenticated fee discovery supports batched pairs');
+requireText(feeResolver, 'requestPairs.join(', 'Kraken TradeVolume request carries the resolved pair batch');
+requireText(feeResolver, 'serializeOkxPrivate', 'OKX authenticated fee requests share one throttle authority');
+requireText(feeResolver, 'OKX_FEE_MIN_INTERVAL_MS', 'OKX account fee throttle interval is explicit');
+requireText(feeResolver, 'Math.max(425', 'OKX fee throttle retains the conservative documented-rate floor');
+requireText(feeResolver, 'primeCexFeeEvidence', 'fee evidence can be primed before concurrent economics evaluation');
 
 const stream = read('server/services/cryptocrawl/intelligence/cex-order-book-stream.ts');
 requireText(stream, 'VenueConnectionState', 'CEX streams pool connection state by venue');
@@ -67,6 +81,13 @@ requireText(marketData, 'orderMeasuredMarketUniverse', 'rotating measured-univer
 requireText(marketData, 'resolveCoinStatsEnvironment', 'CoinStats environment contract wired');
 requireText(marketData, 'adoptResolvedEnvironmentVariable', 'resolved alias adoption wired');
 requireText(marketData, 'optional CoinStats credential', 'CoinStats explicitly classified optional');
+
+const canonical = read('server/services/cryptocrawl/intelligence/canonical-opportunity-state.ts');
+requireText(canonical, 'recordSearchObservation', 'canonical state has a measured search-observation ledger');
+requireText(canonical, 'measuredSearch.length > 0 ? measuredSearch.length : recent.length', 'observed density uses measured search activity when available');
+requireText(canonical, 'snapshot.plan.netProfitUsd > 0', 'verified-positive density still requires a positive verified plan');
+requireText(canonical, "snapshot.status === 'eligible'", 'eligibility remains assessment-derived rather than search-derived');
+requireText(canonical, 'realized.settlementConfirmed === true', 'realized profitability still requires confirmed settlement evidence');
 
 const universe = read('server/services/cryptocrawl/discovery/market-universe-controller.ts');
 requireText(universe, 'rankMeasuredMarketUniverse', 'non-rotating ranking function exists');
@@ -142,7 +163,9 @@ console.log('[verify-no-regression-opportunity-pipeline] PASS');
 console.log(' - deployment prebuild validates critical CryptoCrawler invariants with Node built-ins only');
 console.log(' - normal Vite/esbuild production bundling remains the syntax/import gate immediately afterward');
 console.log(' - Coinbase remains inactive while Kraken/OKX remain settlement-safe live CEX venues');
-console.log(' - Kraken authenticated fee calls preserve nonce ordering; market streams pool subscriptions by venue');
+console.log(' - Kraken fee batching and OKX authenticated throttling preserve measured account-specific fee evidence');
+console.log(' - bounded concurrent scanning remains governance-gated and capped at eight workers');
+console.log(' - measured search observations remain separate from verified-positive and settlement evidence');
 console.log(' - strict positive-net, live-confirmation, StageManager, kill-switch, and terminal-learning gates are preserved');
 console.log(' - measured market universe is ranked deterministically and rotated once per consumption boundary');
 console.log(' - Stage 1 cannot advance without a fresh verified-positive canonical signal');
