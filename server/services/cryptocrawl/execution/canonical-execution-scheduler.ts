@@ -4,6 +4,14 @@ import { stageManager } from '../governance/stage-management.js';
 import { executeVerifiedArbitragePlan } from './index.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
 
+export type CanonicalSchedulerIdleReason =
+  | 'not_started'
+  | 'live_execution_posture_disabled'
+  | 'governance_stage_blocked'
+  | 'no_eligible_candidates'
+  | 'candidate_retry_window'
+  | 'no_resource_qualified_candidates';
+
 export interface CanonicalExecutionSchedulerStats {
   running: boolean;
   ownerId: string;
@@ -13,6 +21,10 @@ export interface CanonicalExecutionSchedulerStats {
   pending: number;
   failed: number;
   lastDispatchAt: number | null;
+  lastIdleReason: CanonicalSchedulerIdleReason | null;
+  lastEligibleCandidateCount: number;
+  lastDispatchCandidateCount: number;
+  lastResourceQualifiedCount: number;
   resourceUsage: Record<string, number>;
 }
 
@@ -60,6 +72,10 @@ class CanonicalExecutionScheduler {
   private pending = 0;
   private failed = 0;
   private lastDispatchAt: number | null = null;
+  private lastIdleReason: CanonicalSchedulerIdleReason | null = 'not_started';
+  private lastEligibleCandidateCount = 0;
+  private lastDispatchCandidateCount = 0;
+  private lastResourceQualifiedCount = 0;
 
   start(): void {
     if (this.timer) return;
@@ -81,6 +97,7 @@ class CanonicalExecutionScheduler {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.lastIdleReason = 'not_started';
   }
 
   async dispatchOnce(): Promise<void> {
@@ -101,21 +118,49 @@ class CanonicalExecutionScheduler {
       pending: this.pending,
       failed: this.failed,
       lastDispatchAt: this.lastDispatchAt,
+      lastIdleReason: this.lastIdleReason,
+      lastEligibleCandidateCount: this.lastEligibleCandidateCount,
+      lastDispatchCandidateCount: this.lastDispatchCandidateCount,
+      lastResourceQualifiedCount: this.lastResourceQualifiedCount,
       resourceUsage: executionResourceScheduler.getLocalUsage(),
     };
   }
 
+  private setIdle(reason: CanonicalSchedulerIdleReason, eligible = 0, dispatchable = 0, resourceQualified = 0): void {
+    this.lastIdleReason = reason;
+    this.lastEligibleCandidateCount = eligible;
+    this.lastDispatchCandidateCount = dispatchable;
+    this.lastResourceQualifiedCount = resourceQualified;
+  }
+
   private async runDispatch(): Promise<void> {
-    if (!isLiveExecutionPosture()) return;
-    if (!stageManager.canExecuteTrades()) return;
+    if (!isLiveExecutionPosture()) {
+      this.setIdle('live_execution_posture_disabled');
+      return;
+    }
+    if (!stageManager.canExecuteTrades()) {
+      this.setIdle('governance_stage_blocked');
+      return;
+    }
 
     const retryWindowMs = Math.max(1_000, Number(process.env.CRYPTOCRAWL_EXECUTION_RETRY_WINDOW_MS || 10_000));
     const now = Date.now();
-    const candidates = currentCandidates().filter(candidate =>
+    const eligibleCandidates = currentCandidates();
+    this.lastEligibleCandidateCount = eligibleCandidates.length;
+    if (eligibleCandidates.length === 0) {
+      this.setIdle('no_eligible_candidates');
+      return;
+    }
+
+    const candidates = eligibleCandidates.filter(candidate =>
       !this.activeOpportunityIds.has(candidate.opportunityId)
       && now - (this.lastAttemptAt.get(candidate.opportunityId) || 0) >= retryWindowMs,
     );
-    if (candidates.length === 0) return;
+    this.lastDispatchCandidateCount = candidates.length;
+    if (candidates.length === 0) {
+      this.setIdle('candidate_retry_window', eligibleCandidates.length, 0, 0);
+      return;
+    }
 
     const selected: Array<{ candidate: Candidate; lease: ExecutionResourceLease }> = [];
     for (const candidate of candidates) {
@@ -123,8 +168,13 @@ class CanonicalExecutionScheduler {
       if (!lease) continue;
       selected.push({ candidate, lease });
     }
-    if (selected.length === 0) return;
+    this.lastResourceQualifiedCount = selected.length;
+    if (selected.length === 0) {
+      this.setIdle('no_resource_qualified_candidates', eligibleCandidates.length, candidates.length, 0);
+      return;
+    }
 
+    this.lastIdleReason = null;
     this.lastDispatchAt = Date.now();
     logger.info('[ExecutionScheduler] Resource-qualified canonical batch selected', {
       component: 'CanonicalExecutionScheduler',
