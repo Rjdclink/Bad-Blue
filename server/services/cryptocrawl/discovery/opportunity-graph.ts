@@ -1,19 +1,13 @@
 import logger from '../../../logger.js';
 import { getCryptara } from '../../cryptara/index.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
-import { TradingViewEngine, type TechnicalAnalysis } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
+import { getBoundTechnicalEvidence } from '../integration/technical-evidence-synchronizer.js';
 import { marketDataProviders, type MarketUniverseAsset } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { measuredCandidateRegistry } from './measured-candidate-registry.js';
 import { scanPublicCexUniverse } from './public-cex-discovery.js';
 import { getCexScanCapacity, type ScanCapacityDecision } from './scan-capacity-policy.js';
-
-export type MeasuredOpportunityTopology =
-  | 'CEX_CEX'
-  | 'DEX_ATOMIC'
-  | 'ZERO_CAPITAL_ATOMIC'
-  | 'CROSS_CHAIN'
-  | 'MEMPOOL_BACKRUN';
 
 export interface MeasuredOpportunityGraphCycle {
   cycleId: string;
@@ -60,6 +54,41 @@ function planKey(plan: VerifiedArbitragePlan): string {
 
 function opportunityId(plan: VerifiedArbitragePlan): string {
   return `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`;
+}
+
+function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observedAt: number, maxQuoteAgeMs: number): void {
+  measuredCandidateRegistry.record({
+    opportunityId: opportunityId(plan),
+    topology: 'CEX_CEX',
+    observedAt,
+    expiresAt: observedAt + Math.max(1, maxQuoteAgeMs - Math.min(maxQuoteAgeMs, plan.quoteAgeMs)),
+    status: 'deterministic_positive',
+    assets: [plan.symbol],
+    venues: [plan.buyVenue, plan.sellVenue],
+    chains: ['cex'],
+    rawQuotes: [
+      { source: 'direct_exchange_quotes', venue: plan.buyVenue, symbol: plan.symbol, observedAt: observedAt - plan.quoteAgeMs, ask: plan.buyAsk, executable: true },
+      { source: 'direct_exchange_quotes', venue: plan.sellVenue, symbol: plan.symbol, observedAt: observedAt - plan.quoteAgeMs, bid: plan.sellBid, executable: true },
+    ],
+    depth: {
+      status: plan.liquidity.status === 'measured' ? 'measured' : 'unavailable',
+      detail: plan.liquidity.status === 'measured' ? plan.liquidity.source.join(',') : 'Measured executable depth unavailable',
+    },
+    economics: {
+      grossProfitUsd: plan.grossProfitUsd,
+      deterministicNetProfitUsd: plan.netProfitUsd,
+      feeUsd: plan.costs.buyFeeUsd + plan.costs.sellFeeUsd,
+      gasUsd: plan.costs.gasUsd,
+      bridgeUsd: plan.costs.bridgeFeeUsd,
+      expectedSlippageBps: plan.expectedSlippageBps ?? null,
+      expectedPriceImpactBps: plan.expectedPriceImpactBps ?? null,
+    },
+    quoteAgeMs: plan.quoteAgeMs,
+    executableCapability: true,
+    executionCapabilityReason: 'Kraken/OKX verified plan uses the settlement-safe centralized executor; MC, governance, inventory and resource locks still control admission',
+    missingInformation: [],
+    provenance: ['measured_opportunity_graph', 'direct_exchange_quotes', 'authenticated_fee_evidence', 'depth_aware_notional_search', 'deterministic_positive_net'],
+  });
 }
 
 async function runBounded<T, R>(items: readonly T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
@@ -113,6 +142,7 @@ class MeasuredOpportunityGraph {
       component: 'MeasuredOpportunityGraph',
       intervalMs,
       topology: 'CEX_CEX',
+      candidateAuthority: 'measured_candidate_registry',
       syntheticEvidenceAllowed: false,
     });
   }
@@ -145,16 +175,11 @@ class MeasuredOpportunityGraph {
     const capacity = getCexScanCapacity(symbols.length);
     const selected = symbols.slice(0, capacity.symbolBudget);
 
-    // Discovery-only venues broaden measured search without being promoted to
-    // executable plans. Their public BBOs are explicitly non-executable evidence.
     const publicDiscoveryPromise = scanPublicCexUniverse(selected).catch(error => {
       errors.push(`public_cex_discovery:${error instanceof Error ? error.message : String(error)}`);
       return { startedAt, completedAt: Date.now(), symbols: selected.length, observations: [], failures: [] };
     });
 
-    // CEX inventory arbitrage is evaluated as pre-positioned inventory. It does
-    // not silently add on-chain gas/bridge cost to the instantaneous CEX trade.
-    // Rebalancing/bridge economics belong to their own candidate topology.
     const evaluated = await runBounded(selected, capacity.workerConcurrency, async symbol => {
       try {
         return await arbitrageVerifier.evaluateOnce({
@@ -179,9 +204,8 @@ class MeasuredOpportunityGraph {
       if (!previous || plan.netProfitUsd > previous.netProfitUsd) byRoute.set(key, plan);
     }
     const positivePlans = [...byRoute.values()].sort((left, right) => right.netProfitUsd - left.netProfitUsd);
+    for (const plan of positivePlans) registerDeterministicCexCandidate(plan, Date.now(), maxQuoteAgeMs);
 
-    // Cheap deterministic economics already ran inside ArbitrageVerifier. Only a
-    // bounded high-value subset receives TradingView + Cryptara + Hyper MC work.
     const maxAssessments = Math.max(1, Math.min(
       positivePlans.length || 1,
       Number(process.env.CRYPTOCRAWL_DEEP_ASSESSMENT_CANDIDATES || 12),
@@ -204,26 +228,27 @@ class MeasuredOpportunityGraph {
         const providerStatuses = marketDataProviders.getProviderStatuses();
         await runBounded(assessmentCandidates, Math.min(4, assessmentCandidates.length), async plan => {
           const observedAt = Date.now();
-          let technical: TechnicalAnalysis | null = null;
-          try {
-            technical = await TradingViewEngine.getAnalysis(plan.symbol, '1h');
-          } catch (error) {
-            errors.push(`technical:${plan.symbol}:${error instanceof Error ? error.message : String(error)}`);
-          }
+          const id = opportunityId(plan);
+          const technicalEvidence = await getBoundTechnicalEvidence({
+            opportunityId: id,
+            symbol: plan.symbol,
+            observedAt,
+            maxAgeMs: Math.max(30_000, Number(process.env.TRADINGVIEW_DATA_TTL_MS || 300_000)),
+          });
 
           try {
             const assessment = await cryptara.assessOpportunity({
-              opportunityId: opportunityId(plan),
+              opportunityId: id,
               observedAt,
               chain: 'cex',
               symbol: plan.symbol,
               plan,
-              tradingView: technical,
+              tradingView: technicalEvidence.analysis,
               mempool: alchemyIntegration.getMempoolAnalysis(),
               marketUniverse: universe,
               dexObservation: null,
               missingInformation: [
-                ...(technical ? [] : ['live_technical_analysis']),
+                ...technicalEvidence.missingInformation,
                 ...providerStatuses
                   .filter(status => status.state === 'failed' || status.state === 'stale' || status.state === 'unavailable')
                   .map(status => `provider_${status.provider}_${status.state}`),
@@ -231,12 +256,22 @@ class MeasuredOpportunityGraph {
               provenance: [
                 'measured_opportunity_graph',
                 'direct_exchange_quotes',
-                ...(technical?.dataProvenance === 'live' ? ['TradingView'] : []),
+                ...technicalEvidence.provenance,
                 ...[...new Set(universe.flatMap(asset => asset.sources || [asset.source]))],
                 ...providerStatuses.map(status => `provider:${status.provider}:${status.state}`),
               ],
             });
-            if (assessment.recommendation === 'consider' && plan.netProfitUsd > 0) eligibleCandidates++;
+            if (assessment.recommendation === 'consider' && plan.netProfitUsd > 0) {
+              eligibleCandidates++;
+              measuredCandidateRegistry.updateStatus(id, 'eligible', {
+                provenance: [...technicalEvidence.provenance, 'Cryptara:consider', 'monte_carlo:approved_or_complete'],
+              });
+            } else {
+              measuredCandidateRegistry.updateStatus(id, 'blocked', {
+                missingInformation: assessment.missingInformation,
+                provenance: [...technicalEvidence.provenance, `Cryptara:${assessment.recommendation}`],
+              });
+            }
           } catch (error) {
             errors.push(`assessment:${plan.symbol}:${error instanceof Error ? error.message : String(error)}`);
           }
@@ -286,6 +321,7 @@ class MeasuredOpportunityGraph {
       deterministicPositive: cycle.deterministicPositive,
       assessedCandidates: cycle.assessedCandidates,
       eligibleCandidates: cycle.eligibleCandidates,
+      candidateRegistry: measuredCandidateRegistry.getMetrics(60_000),
       canonicalObservedPerMinute: canonical.observedOpportunities,
       canonicalVerifiedPositivePerMinute: canonical.verifiedPositiveOpportunities,
       canonicalEligiblePerMinute: canonical.eligibleOpportunities,
