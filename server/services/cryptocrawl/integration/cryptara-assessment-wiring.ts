@@ -5,6 +5,7 @@ import type {
   MonteCarloResult,
 } from '../../cryptara/index.js';
 import { createLogger } from '../../../logger.js';
+import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { ensureCryptaraBeamWiring } from './cryptara-beam-wiring.js';
 
 const log = createLogger('CryptaraAssessmentWiring');
@@ -44,6 +45,57 @@ function shouldEmitIncompleteWarning(opportunityKey: string, missing: string[]):
     return true;
   }
   return false;
+}
+
+function enforceDeterministicRejection(
+  context: CryptaraOpportunityContext,
+  assessment: CryptaraOpportunityAssessment,
+): CryptaraOpportunityAssessment {
+  const plan = context.plan;
+  if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd > 0) return assessment;
+
+  const missingInformation = assessment.missingInformation.filter(item => item !== 'monte_carlo_evidence');
+  const provenance = [...new Set([...assessment.provenance, 'deterministic_all_in_economics'])];
+  const corrected: CryptaraOpportunityAssessment = {
+    ...assessment,
+    recommendation: 'reject',
+    rankScore: 0,
+    probabilityOfProfitableExecution: 0,
+    monteCarlo: null,
+    missingInformation,
+    provenance,
+  };
+
+  // Cryptara's base recorder historically treated any plan without Monte Carlo as
+  // incomplete. For deterministic non-positive economics MC is intentionally not
+  // required, so overwrite the canonical snapshot with the authoritative rejection.
+  // This records no synthetic evidence: P(profitable execution)=0 follows directly
+  // from the already-measured all-in net economics being <= 0.
+  canonicalOpportunityState.recordAssessment({
+    opportunityId: context.opportunityId,
+    observedAt: context.observedAt,
+    chain: context.chain,
+    symbol: context.symbol,
+    plan,
+    technical: context.tradingView,
+    mempool: context.mempool,
+    assessment: {
+      opportunityId: corrected.opportunityId,
+      evaluatedAt: corrected.evaluatedAt,
+      recommendation: corrected.recommendation,
+      rankScore: corrected.rankScore,
+      executionConfidence: corrected.executionConfidence,
+      probabilityOfProfitableExecution: corrected.probabilityOfProfitableExecution,
+      riskLevel: corrected.riskLevel,
+      dataCompleteness: corrected.dataCompleteness,
+      marketData: { ...corrected.marketData },
+      missingInformation: [...corrected.missingInformation],
+      provenance: [...corrected.provenance],
+      monteCarlo: null,
+    },
+  });
+
+  return corrected;
 }
 
 export function ensureCryptaraAssessmentWiring(): Cryptara {
@@ -93,10 +145,11 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
       });
     }
 
-    return target.recordOpportunityObservation({
+    const assessment = target.recordOpportunityObservation({
       ...context,
       missingInformation: [...new Set([...context.missingInformation, ...monteCarloMissingInformation])],
     });
+    return enforceDeterministicRejection(context, assessment);
   };
 
   log.info('Cryptara assessment wiring installed', {
@@ -104,6 +157,7 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
     warningTransitionsImmediate: true,
     monteCarloCompute: 'computational_beam_hyper_worker_pool',
     deterministicPositiveGateBeforeMonteCarlo: true,
+    deterministicNonPositiveRecommendation: 'reject',
     immutableOpportunityInput: true,
     staleEvidenceIsolation: true,
   });
