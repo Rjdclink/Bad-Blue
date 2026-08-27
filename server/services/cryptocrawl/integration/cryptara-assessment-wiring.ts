@@ -22,6 +22,11 @@ type CryptaraAssessmentInternals = {
   assessOpportunity: (context: CryptaraOpportunityContext) => Promise<CryptaraOpportunityAssessment>;
 };
 
+type MissingInformationClassification = {
+  critical: string[];
+  optional: string[];
+};
+
 function missingFromError(error: unknown): string[] {
   const message = error instanceof Error ? error.message : String(error);
   if (message.startsWith('EVIDENCE_INCOMPLETE:')) {
@@ -36,6 +41,16 @@ function missingFromError(error: unknown): string[] {
   return ['monte_carlo_execution'];
 }
 
+function classifyMissingInformation(items: readonly string[]): MissingInformationClassification {
+  const critical: string[] = [];
+  const optional: string[] = [];
+  for (const item of [...new Set(items)]) {
+    if (item.startsWith('provider_coinstats_')) optional.push(item);
+    else critical.push(item);
+  }
+  return { critical, optional };
+}
+
 function shouldEmitIncompleteWarning(opportunityKey: string, missing: string[]): boolean {
   const signature = [...new Set(missing)].sort().join('|');
   const now = Date.now();
@@ -45,6 +60,28 @@ function shouldEmitIncompleteWarning(opportunityKey: string, missing: string[]):
     return true;
   }
   return false;
+}
+
+function decorateOptionalEvidence(
+  assessment: CryptaraOpportunityAssessment,
+  optionalMissing: readonly string[],
+): CryptaraOpportunityAssessment {
+  if (optionalMissing.length === 0) return assessment;
+  return {
+    ...assessment,
+    // Optional enrichment is surfaced for operators without being counted as a
+    // critical completeness defect by Cryptara's authoritative rank calculation.
+    missingInformation: [
+      ...assessment.missingInformation,
+      ...optionalMissing.map(item => `optional:${item}`),
+    ],
+    provenance: [
+      ...new Set([
+        ...assessment.provenance,
+        ...optionalMissing.map(item => `optional_missing:${item}`),
+      ]),
+    ],
+  };
 }
 
 function enforceDeterministicRejection(
@@ -111,6 +148,7 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
     target.latestMonteCarloEvidence = null;
     target.latestOpportunityContext = structuredClone(context);
     let monteCarloMissingInformation: string[] = [];
+    const missing = classifyMissingInformation(context.missingInformation);
 
     // Deterministic all-in economics are authoritative and must run before stochastic
     // execution-uncertainty analysis. Monte Carlo may estimate realization probability
@@ -122,7 +160,14 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
 
     if (deterministicPositivePlan && target.status.isRunning) {
       try {
-        await target.runMonteCarloSimulation(context);
+        await target.runMonteCarloSimulation({
+          ...context,
+          missingInformation: missing.critical,
+          provenance: [
+            ...context.provenance,
+            ...missing.optional.map(item => `optional_missing:${item}`),
+          ],
+        });
       } catch (error) {
         monteCarloMissingInformation = missingFromError(error);
         const opportunityKey = `${context.opportunityId}:${context.observedAt}`;
@@ -147,9 +192,14 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
 
     const assessment = target.recordOpportunityObservation({
       ...context,
-      missingInformation: [...new Set([...context.missingInformation, ...monteCarloMissingInformation])],
+      missingInformation: [...new Set([...missing.critical, ...monteCarloMissingInformation])],
+      provenance: [
+        ...context.provenance,
+        ...missing.optional.map(item => `optional_missing:${item}`),
+      ],
     });
-    return enforceDeterministicRejection(context, assessment);
+    const decorated = decorateOptionalEvidence(assessment, missing.optional);
+    return enforceDeterministicRejection(context, decorated);
   };
 
   log.info('Cryptara assessment wiring installed', {
@@ -158,6 +208,7 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
     monteCarloCompute: 'computational_beam_hyper_worker_pool',
     deterministicPositiveGateBeforeMonteCarlo: true,
     deterministicNonPositiveRecommendation: 'reject',
+    optionalProviderMissingDoesNotReduceRank: ['coinstats'],
     immutableOpportunityInput: true,
     staleEvidenceIsolation: true,
   });
