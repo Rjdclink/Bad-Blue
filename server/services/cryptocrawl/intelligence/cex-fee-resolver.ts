@@ -13,12 +13,33 @@ export interface CexFeeEvidence {
   observedAt: number;
 }
 
+export interface CexFeePrimeResult {
+  requestedSymbols: number;
+  krakenResolved: number;
+  okxResolved: number;
+  unresolved: Array<{ venue: 'kraken' | 'okx'; symbol: string }>;
+}
+
+interface KrakenPairIdentity {
+  canonicalSymbol: string;
+  requestPair: string;
+  responseKey: string;
+}
+
 const FEE_CACHE_TTL_MS = Math.max(5_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_CACHE_MS || 60_000));
 const REQUEST_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_TIMEOUT_MS || 8_000));
+const KRAKEN_PAIR_DIRECTORY_TTL_MS = Math.max(60_000, Number(process.env.CRYPTO_KRAKEN_PAIR_DIRECTORY_TTL_MS || 3_600_000));
+// OKX documents 5 account trade-fee requests per 2 seconds per User ID. A
+// 425ms minimum start interval stays conservatively below that ceiling.
+const OKX_FEE_MIN_INTERVAL_MS = Math.max(425, Number(process.env.CRYPTO_OKX_FEE_MIN_INTERVAL_MS || 450));
 const feeCache = new Map<string, CexFeeEvidence>();
 const feeInFlight = new Map<string, Promise<CexFeeEvidence | null>>();
 let krakenNonce = 0;
 let krakenPrivateTail: Promise<void> = Promise.resolve();
+let okxPrivateTail: Promise<void> = Promise.resolve();
+let okxLastRequestStartedAt = 0;
+let krakenPairDirectory: { expiresAt: number; byCanonical: Map<string, KrakenPairIdentity> } | null = null;
+let krakenPairDirectoryInFlight: Promise<Map<string, KrakenPairIdentity>> | null = null;
 
 function finiteNumber(value: unknown): number | null {
   const parsed = Number(value);
@@ -37,6 +58,24 @@ function credential(name: string): string | null {
   return value || null;
 }
 
+function normalizeSymbolInput(symbol: string): string {
+  return symbol.trim().toUpperCase();
+}
+
+function canonicalKrakenPairSymbol(value: string): string | null {
+  const compact = value.trim().toUpperCase().replace(/[\/_-]/g, '');
+  if (!compact) return null;
+  const quotes = ['USDT', 'USDC', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'BTC', 'ETH'];
+  const quote = quotes.find(candidate => compact.endsWith(candidate));
+  if (!quote) return compact;
+  let base = compact.slice(0, -quote.length);
+  if (!base) return null;
+  if (base === 'XBT') base = 'BTC';
+  if (base === 'XDG') base = 'DOGE';
+  const canonicalQuote = quote === 'XBT' ? 'BTC' : quote;
+  return `${base}${canonicalQuote}`;
+}
+
 function configuredFee(venue: CexFeeVenue, symbol: string): CexFeeEvidence | null {
   const taker = finiteNumber(process.env[`CRYPTO_ARBITRAGE_${venue.toUpperCase()}_TAKER_FEE_BPS`]);
   if (taker === null || taker < 0) return null;
@@ -51,6 +90,36 @@ function configuredFee(venue: CexFeeVenue, symbol: string): CexFeeEvidence | nul
     source: 'configured_override',
     observedAt: Date.now(),
   };
+}
+
+function cacheKey(venue: CexFeeVenue, symbol: string): string {
+  return `${venue}:${normalizeSymbolInput(symbol)}`;
+}
+
+function readFreshCache(venue: CexFeeVenue, symbol: string): CexFeeEvidence | null {
+  const key = cacheKey(venue, symbol);
+  const cached = feeCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.observedAt > FEE_CACHE_TTL_MS) {
+    feeCache.delete(key);
+    return null;
+  }
+  return { ...cached };
+}
+
+function storeFeeEvidence(evidence: CexFeeEvidence): void {
+  feeCache.set(cacheKey(evidence.venue, evidence.symbol), evidence);
+  if (feeCache.size > 512) {
+    const now = Date.now();
+    for (const [key, value] of feeCache.entries()) {
+      if (now - value.observedAt > FEE_CACHE_TTL_MS) feeCache.delete(key);
+    }
+  }
+}
+
+export function getCachedCexFeeEvidence(venue: CexFeeVenue, symbolInput: string): CexFeeEvidence | null {
+  const symbol = normalizeSymbolInput(symbolInput);
+  return readFreshCache(venue, symbol) || configuredFee(venue, symbol);
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -102,42 +171,153 @@ function serializeKrakenPrivate<T>(operation: () => Promise<T>): Promise<T> {
   return run;
 }
 
-async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
+function serializeOkxPrivate<T>(operation: () => Promise<T>): Promise<T> {
+  const run = okxPrivateTail.catch(() => undefined).then(async () => {
+    const waitMs = Math.max(0, okxLastRequestStartedAt + OKX_FEE_MIN_INTERVAL_MS - Date.now());
+    if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
+    okxLastRequestStartedAt = Date.now();
+    return operation();
+  });
+  okxPrivateTail = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function getKrakenPairDirectory(): Promise<Map<string, KrakenPairIdentity>> {
+  if (krakenPairDirectory && krakenPairDirectory.expiresAt > Date.now()) {
+    return krakenPairDirectory.byCanonical;
+  }
+  if (krakenPairDirectoryInFlight) return krakenPairDirectoryInFlight;
+
+  krakenPairDirectoryInFlight = (async () => {
+    const response = await fetchWithTimeout('https://api.kraken.com/0/public/AssetPairs', {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+    });
+    const payload = await readJson(response);
+    if (Array.isArray(payload?.error) && payload.error.length > 0) {
+      throw new Error(`Kraken AssetPairs request failed: ${payload.error.join(', ')}`);
+    }
+
+    const byCanonical = new Map<string, KrakenPairIdentity>();
+    const ambiguous = new Set<string>();
+    const result = payload?.result && typeof payload.result === 'object' ? payload.result : {};
+    for (const [responseKey, raw] of Object.entries(result)) {
+      const row = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+      if (!row) continue;
+      const requestPair = typeof row.altname === 'string' && row.altname.trim()
+        ? row.altname.trim().toUpperCase()
+        : typeof row.wsname === 'string' && row.wsname.trim()
+          ? row.wsname.trim().toUpperCase()
+          : responseKey;
+      const variants = [row.altname, row.wsname]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map(canonicalKrakenPairSymbol)
+        .filter((value): value is string => Boolean(value));
+
+      for (const canonicalSymbol of new Set(variants)) {
+        if (ambiguous.has(canonicalSymbol)) continue;
+        const existing = byCanonical.get(canonicalSymbol);
+        if (existing && existing.responseKey !== responseKey) {
+          byCanonical.delete(canonicalSymbol);
+          ambiguous.add(canonicalSymbol);
+          continue;
+        }
+        byCanonical.set(canonicalSymbol, { canonicalSymbol, requestPair, responseKey });
+      }
+    }
+
+    krakenPairDirectory = {
+      expiresAt: Date.now() + KRAKEN_PAIR_DIRECTORY_TTL_MS,
+      byCanonical,
+    };
+    logger.info('[CEX Fees] Kraken AssetPairs translation directory refreshed', {
+      component: 'CexFeeResolver',
+      pairs: byCanonical.size,
+      ambiguousPairs: ambiguous.size,
+    });
+    return byCanonical;
+  })().finally(() => {
+    krakenPairDirectoryInFlight = null;
+  });
+
+  return krakenPairDirectoryInFlight;
+}
+
+async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Promise<Map<string, CexFeeEvidence>> {
+  const symbols = [...new Set(symbolInputs.map(normalizeSymbolInput).filter(Boolean))];
+  const output = new Map<string, CexFeeEvidence>();
+  if (symbols.length === 0) return output;
+
   const apiKey = credential('KRAKEN_API_KEY');
   const apiSecret = credential('KRAKEN_API_SECRET');
   if (!apiKey || !apiSecret) {
-    logger.warn('[CEX Fees] Kraken unavailable: credentials incomplete', { component: 'CexFeeResolver', venue: 'kraken', symbol, apiKeyPresent: Boolean(apiKey), apiSecretPresent: Boolean(apiSecret) });
-    return null;
+    logger.warn('[CEX Fees] Kraken batch unavailable: credentials incomplete', {
+      component: 'CexFeeResolver',
+      apiKeyPresent: Boolean(apiKey),
+      apiSecretPresent: Boolean(apiSecret),
+      symbols: symbols.length,
+    });
+    return output;
   }
 
   const decodedSecret = Buffer.from(apiSecret, 'base64');
   if (decodedSecret.length === 0) throw new Error('Kraken API secret is not valid base64');
+  const directory = await getKrakenPairDirectory();
+  const resolved = symbols.map(symbol => {
+    const canonical = canonicalKrakenPairSymbol(symbol);
+    const identity = canonical ? directory.get(canonical) : undefined;
+    return identity ? { symbol, identity } : null;
+  }).filter((value): value is { symbol: string; identity: KrakenPairIdentity } => Boolean(value));
+  if (resolved.length === 0) return output;
 
   return serializeKrakenPrivate(async () => {
     const path = '/0/private/TradeVolume';
     const nonce = nextKrakenNonce();
-    const body = new URLSearchParams({ nonce, pair: symbol, 'fee-info': 'true' }).toString();
+    const requestPairs = [...new Set(resolved.map(entry => entry.identity.requestPair))];
+    const body = new URLSearchParams({ nonce, pair: requestPairs.join(','), 'fee-info': 'true' }).toString();
     const response = await fetchWithTimeout(`https://api.kraken.com${path}`, {
       method: 'POST',
       headers: { 'API-Key': apiKey, 'API-Sign': signKraken(path, body, nonce, decodedSecret), 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
     });
     const payload = await readJson(response);
-    if (payload.error?.length) throw new Error(`Kraken fee request failed: ${payload.error.join(', ')}`);
+    if (payload.error?.length) throw new Error(`Kraken fee batch request failed: ${payload.error.join(', ')}`);
     const result = payload.result || {};
-    const takerRow = Object.values(result.fees || {})[0] as Record<string, unknown> | undefined;
-    const makerRow = Object.values(result.fees_maker || {})[0] as Record<string, unknown> | undefined;
-    const takerPct = finiteNumber(takerRow?.fee);
-    if (takerPct === null) throw new Error('Kraken TradeVolume response did not contain taker fee evidence for the requested pair');
-    const makerPct = finiteNumber(makerRow?.fee);
-    return {
-      venue: 'kraken', symbol,
-      takerFeeBps: Math.max(0, takerPct * 100),
-      makerFeeBps: makerPct !== null && makerPct >= 0 ? makerPct * 100 : null,
-      makerRebateBps: makerPct !== null && makerPct < 0 ? Math.abs(makerPct) * 100 : null,
-      source: 'kraken_account_trade_volume' as const, observedAt: Date.now(),
-    };
+    const fees = result.fees && typeof result.fees === 'object' ? result.fees : {};
+    const makerFees = result.fees_maker && typeof result.fees_maker === 'object' ? result.fees_maker : {};
+    const observedAt = Date.now();
+
+    for (const { symbol, identity } of resolved) {
+      const takerRow = fees[identity.responseKey] as Record<string, unknown> | undefined;
+      if (!takerRow) continue;
+      const takerPct = finiteNumber(takerRow.fee);
+      if (takerPct === null) continue;
+      const makerRow = makerFees[identity.responseKey] as Record<string, unknown> | undefined;
+      const makerPct = finiteNumber(makerRow?.fee);
+      output.set(symbol, {
+        venue: 'kraken',
+        symbol,
+        takerFeeBps: Math.max(0, takerPct * 100),
+        makerFeeBps: makerPct !== null && makerPct >= 0 ? makerPct * 100 : null,
+        makerRebateBps: makerPct !== null && makerPct < 0 ? Math.abs(makerPct) * 100 : null,
+        source: 'kraken_account_trade_volume',
+        observedAt,
+      });
+    }
+
+    logger.info('[CEX Fees] Kraken batch fee evidence resolved', {
+      component: 'CexFeeResolver',
+      requestedSymbols: symbols.length,
+      translatedSymbols: resolved.length,
+      resolvedSymbols: output.size,
+    });
+    return output;
   });
+}
+
+async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
+  const batched = await fetchKrakenFeeEvidenceBatch([symbol]);
+  return batched.get(normalizeSymbolInput(symbol)) || null;
 }
 
 function okxInstrumentId(symbol: string): string {
@@ -160,33 +340,35 @@ function okxBaseUrls(): string[] {
 }
 
 async function fetchOkxFeeEvidenceFromBase(symbol: string, baseUrl: string): Promise<CexFeeEvidence> {
-  const apiKey = credential('OKX_API_KEY')!;
-  const apiSecret = credential('OKX_API_SECRET')!;
-  const passphrase = credential('OKX_API_PASSPHRASE')!;
-  const query = new URLSearchParams({ instType: 'SPOT', instId: okxInstrumentId(symbol) }).toString();
-  const path = `/api/v5/account/trade-fee?${query}`;
-  const timestamp = new Date().toISOString();
-  const signature = createHmac('sha256', apiSecret).update(`${timestamp}GET${path}`).digest('base64');
-  const response = await fetchWithTimeout(`${baseUrl}${path}`, {
-    method: 'GET',
-    headers: {
-      'OK-ACCESS-KEY': apiKey, 'OK-ACCESS-SIGN': signature, 'OK-ACCESS-TIMESTAMP': timestamp,
-      'OK-ACCESS-PASSPHRASE': passphrase, 'Content-Type': 'application/json',
-    },
+  return serializeOkxPrivate(async () => {
+    const apiKey = credential('OKX_API_KEY')!;
+    const apiSecret = credential('OKX_API_SECRET')!;
+    const passphrase = credential('OKX_API_PASSPHRASE')!;
+    const query = new URLSearchParams({ instType: 'SPOT', instId: okxInstrumentId(symbol) }).toString();
+    const path = `/api/v5/account/trade-fee?${query}`;
+    const timestamp = new Date().toISOString();
+    const signature = createHmac('sha256', apiSecret).update(`${timestamp}GET${path}`).digest('base64');
+    const response = await fetchWithTimeout(`${baseUrl}${path}`, {
+      method: 'GET',
+      headers: {
+        'OK-ACCESS-KEY': apiKey, 'OK-ACCESS-SIGN': signature, 'OK-ACCESS-TIMESTAMP': timestamp,
+        'OK-ACCESS-PASSPHRASE': passphrase, 'Content-Type': 'application/json',
+      },
+    });
+    const payload = await readJson(response);
+    if (payload.code !== '0') throw new Error(`OKX fee request failed: ${payload.code}${payload.msg ? ` ${payload.msg}` : ''}`);
+    const row = payload.data?.[0];
+    const takerRate = finiteNumber(row?.taker);
+    if (takerRate === null) throw new Error('OKX trade-fee response did not contain taker fee evidence for the requested pair');
+    const makerRate = finiteNumber(row?.maker);
+    return {
+      venue: 'okx', symbol,
+      takerFeeBps: Math.max(0, -takerRate * 10_000),
+      makerFeeBps: makerRate !== null && makerRate < 0 ? -makerRate * 10_000 : null,
+      makerRebateBps: makerRate !== null && makerRate > 0 ? makerRate * 10_000 : null,
+      source: 'okx_account_trade_fee', observedAt: Date.now(),
+    };
   });
-  const payload = await readJson(response);
-  if (payload.code !== '0') throw new Error(`OKX fee request failed: ${payload.code}${payload.msg ? ` ${payload.msg}` : ''}`);
-  const row = payload.data?.[0];
-  const takerRate = finiteNumber(row?.taker);
-  if (takerRate === null) throw new Error('OKX trade-fee response did not contain taker fee evidence for the requested pair');
-  const makerRate = finiteNumber(row?.maker);
-  return {
-    venue: 'okx', symbol,
-    takerFeeBps: Math.max(0, -takerRate * 10_000),
-    makerFeeBps: makerRate !== null && makerRate < 0 ? -makerRate * 10_000 : null,
-    makerRebateBps: makerRate !== null && makerRate > 0 ? makerRate * 10_000 : null,
-    source: 'okx_account_trade_fee', observedAt: Date.now(),
-  };
 }
 
 async function fetchOkxFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
@@ -214,14 +396,14 @@ async function fetchOkxFeeEvidence(symbol: string): Promise<CexFeeEvidence | nul
 async function fetchLiveFeeEvidence(venue: CexFeeVenue, symbol: string): Promise<CexFeeEvidence | null> {
   if (venue === 'kraken') return fetchKrakenFeeEvidence(symbol);
   if (venue === 'okx') return fetchOkxFeeEvidence(symbol);
-  return null; // Coinbase remains market-data-only until execution credentials are supported.
+  return null; // Coinbase remains inactive until a settlement-safe execution path is implemented.
 }
 
 export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: string): Promise<CexFeeEvidence | null> {
-  const symbol = symbolInput.trim().toUpperCase();
-  const key = `${venue}:${symbol}`;
-  const cached = feeCache.get(key);
-  if (cached && Date.now() - cached.observedAt <= FEE_CACHE_TTL_MS) return { ...cached };
+  const symbol = normalizeSymbolInput(symbolInput);
+  const cached = readFreshCache(venue, symbol);
+  if (cached) return cached;
+  const key = cacheKey(venue, symbol);
   const inFlight = feeInFlight.get(key);
   if (inFlight) return inFlight;
 
@@ -230,7 +412,7 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
       const live = await fetchLiveFeeEvidence(venue, symbol);
       const evidence = live || configuredFee(venue, symbol);
       if (evidence) {
-        feeCache.set(key, evidence);
+        storeFeeEvidence(evidence);
         logger.info('[CEX Fees] Fee evidence resolved', { component: 'CexFeeResolver', venue, symbol, source: evidence.source, takerFeeBps: evidence.takerFeeBps, makerFeeBps: evidence.makerFeeBps, makerRebateBps: evidence.makerRebateBps });
       } else if (venue !== 'coinbase') {
         logger.warn('[CEX Fees] Venue excluded from executable routing: no fee evidence', { component: 'CexFeeResolver', venue, symbol });
@@ -240,7 +422,7 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
       logger.warn('[CEX Fees] Authenticated fee discovery failed; venue will fail over to configured evidence or be excluded', { component: 'CexFeeResolver', venue, symbol, error: error instanceof Error ? error.message : String(error) });
       const fallback = configuredFee(venue, symbol);
       if (fallback) {
-        feeCache.set(key, fallback);
+        storeFeeEvidence(fallback);
         logger.info('[CEX Fees] Configured fee fallback resolved', { component: 'CexFeeResolver', venue, symbol, takerFeeBps: fallback.takerFeeBps });
       }
       return fallback ? { ...fallback } : null;
@@ -249,4 +431,47 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
 
   feeInFlight.set(key, promise);
   return promise;
+}
+
+/**
+ * Prime measured fee evidence for a scan batch before parallel quote/economics
+ * evaluation. Kraken is resolved in one authenticated TradeVolume call wherever
+ * AssetPairs provides an unambiguous mapping. OKX remains per-instrument because
+ * account-specific fee programs can differ by instrument, but calls share the
+ * documented account rate-limit throttle and existing cache/in-flight dedupe.
+ */
+export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Promise<CexFeePrimeResult> {
+  const symbols = [...new Set(symbolInputs.map(normalizeSymbolInput).filter(Boolean))];
+  const unresolved: CexFeePrimeResult['unresolved'] = [];
+
+  const missingKraken = symbols.filter(symbol => !getCachedCexFeeEvidence('kraken', symbol));
+  if (missingKraken.length > 0) {
+    try {
+      const batch = await fetchKrakenFeeEvidenceBatch(missingKraken);
+      for (const evidence of batch.values()) storeFeeEvidence(evidence);
+    } catch (error) {
+      logger.warn('[CEX Fees] Kraken batch prefetch degraded; final per-symbol verification remains available', {
+        component: 'CexFeeResolver',
+        symbols: missingKraken.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const missingOkx = symbols.filter(symbol => !getCachedCexFeeEvidence('okx', symbol));
+  if (missingOkx.length > 0) {
+    await Promise.all(missingOkx.map(symbol => resolveCexFeeEvidence('okx', symbol)));
+  }
+
+  for (const symbol of symbols) {
+    if (!getCachedCexFeeEvidence('kraken', symbol)) unresolved.push({ venue: 'kraken', symbol });
+    if (!getCachedCexFeeEvidence('okx', symbol)) unresolved.push({ venue: 'okx', symbol });
+  }
+
+  return {
+    requestedSymbols: symbols.length,
+    krakenResolved: symbols.filter(symbol => Boolean(getCachedCexFeeEvidence('kraken', symbol))).length,
+    okxResolved: symbols.filter(symbol => Boolean(getCachedCexFeeEvidence('okx', symbol))).length,
+    unresolved,
+  };
 }
