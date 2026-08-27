@@ -2,6 +2,8 @@ import logger from '../../../logger.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { getVenueCapabilities } from '../discovery/venue-capability-registry.js';
+import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
+import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
@@ -70,6 +72,8 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const recentMinute = canonicalOpportunityState.getMetrics(60_000);
     const recentHour = canonicalOpportunityState.getMetrics(60 * 60_000);
     const latest = canonicalOpportunityState.getLatest();
+    const graph = measuredOpportunityGraph.getLatestCycle();
+    const scheduler = canonicalExecutionScheduler.getStats();
     const stage = stageManager.getState();
     const measured = getMeasuredEvolutionMetrics();
     const runtime = getCryptoCrawlerRuntimeAttestation();
@@ -82,6 +86,8 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const criticalRpcReady = blockchainProviderSnapshot().some(chain =>
       chain.providers.some(provider => provider.http === 'healthy'),
     );
+    const graphFreshMs = Math.max(15_000, Number(process.env.CRYPTOCRAWL_OPPORTUNITY_GRAPH_FRESH_MS || 30_000));
+    const graphReady = !!graph && graph.completedAt >= Date.now() - graphFreshMs && graph.evaluatedSymbols > 0;
 
     const readiness = {
       APP_READY: {
@@ -101,23 +107,25 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         detail: `coreMarketData=${coreMarketDataReady}; rpc=${criticalRpcReady}`,
       },
       DISCOVERY_READY: {
-        ready: recentMinute.observedOpportunities > 0,
-        detail: `observedOpportunitiesLastMinute=${recentMinute.observedOpportunities}`,
+        ready: graphReady && recentMinute.observedOpportunities > 0,
+        detail: `graphFresh=${graphReady}; selectedSymbols=${graph?.selectedSymbols ?? 0}; observedOpportunitiesLastMinute=${recentMinute.observedOpportunities}`,
       },
       EXECUTION_READY: {
         ready: !execution.noExecutionGuardEnabled
           && execution.liveExecutionEnabled
           && execution.liveExecutionConfirmed
-          && execution.centralizedExecutionConfigured,
-        detail: `guard=${execution.noExecutionGuardEnabled}; enabled=${execution.liveExecutionEnabled}; confirmed=${execution.liveExecutionConfirmed}; cexConfigured=${execution.centralizedExecutionConfigured}`,
+          && execution.centralizedExecutionConfigured
+          && scheduler.running,
+        detail: `guard=${execution.noExecutionGuardEnabled}; enabled=${execution.liveExecutionEnabled}; confirmed=${execution.liveExecutionConfirmed}; cexConfigured=${execution.centralizedExecutionConfigured}; schedulerRunning=${scheduler.running}`,
       },
       TRADING_READY: {
         ready: stageManager.canExecuteTrades()
           && !execution.noExecutionGuardEnabled
           && execution.liveExecutionEnabled
           && execution.liveExecutionConfirmed
-          && execution.centralizedExecutionConfigured,
-        detail: `stage=${stage.currentStage}; stageCanExecute=${stageManager.canExecuteTrades()}`,
+          && execution.centralizedExecutionConfigured
+          && scheduler.running,
+        detail: `stage=${stage.currentStage}; stageCanExecute=${stageManager.canExecuteTrades()}; schedulerRunning=${scheduler.running}`,
       },
     };
 
@@ -133,6 +141,20 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         initialGasReady: stageManager.isInitialGasReady(),
         automaticAdvancementBlockers: [...stage.automaticAdvancementBlockers],
       },
+      discovery: graph ? {
+        cycleId: graph.cycleId,
+        topology: graph.topology,
+        startedAt: graph.startedAt,
+        completedAt: graph.completedAt,
+        universeAssets: graph.universeAssets,
+        selectedSymbols: graph.selectedSymbols,
+        evaluatedSymbols: graph.evaluatedSymbols,
+        deterministicPositive: graph.deterministicPositive,
+        assessedCandidates: graph.assessedCandidates,
+        eligibleCandidates: graph.eligibleCandidates,
+        capacity: graph.capacity,
+        errors: graph.errors,
+      } : null,
       opportunities: {
         observedPerMinute: recentMinute.observedOpportunities,
         verifiedPositivePerMinute: recentMinute.verifiedPositiveOpportunities,
@@ -202,6 +224,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         },
         activeRetries: beam.activeRetries,
       },
+      executionScheduler: scheduler,
       learning: measured,
       executionPosture: {
         ...execution,
@@ -230,7 +253,9 @@ export function ensureCryptoRuntimeObservability(): void {
     runtimeAttestation: true,
     decomposedReadiness: ['APP_READY', 'CONFIG_READY', 'DATA_READY', 'DISCOVERY_READY', 'EXECUTION_READY', 'TRADING_READY'],
     providerHeartbeat: ['Alchemy', 'Ankr/shared-RPC', 'market-data'],
+    measuredOpportunityGraphTelemetry: true,
     canonicalDecisionTelemetry: true,
+    canonicalExecutionSchedulerTelemetry: true,
     directionalBeamTelemetry: true,
     legacyAntennaAuthoritative: false,
     settlementLearningTelemetry: true,
