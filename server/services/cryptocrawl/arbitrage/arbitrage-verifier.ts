@@ -18,7 +18,13 @@ import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { cexOrderBookStreams, type CexOrderBookStreamStats, type CexStreamVenue } from '../intelligence/cex-order-book-stream.js';
-import { resolveCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
+import {
+  primeCexFeeEvidence,
+  resolveCexFeeEvidence,
+  type CexFeeEvidence,
+} from '../intelligence/cex-fee-resolver.js';
+import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
 
 // Coinbase remains in the compatibility union because persisted/legacy data can
@@ -322,10 +328,29 @@ function overrideEvidence(venue: QuoteVenue, symbol: string, takerFeeBps: number
   };
 }
 
+function positiveInteger(value: unknown, fallback: number, max: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.min(max, Math.floor(parsed)) : fallback;
+}
+
+function scanRequestKey(req: Omit<VerifyRequest, 'minNetProfitUsd'>, symbols: readonly string[]): string {
+  return JSON.stringify({
+    symbols,
+    notionalUsd: req.notionalUsd,
+    maxQuoteAgeMs: req.maxQuoteAgeMs,
+    buyFeesBps: req.buyFeesBps || null,
+    sellFeesBps: req.sellFeesBps || null,
+    gas: req.gas || null,
+    bridge: req.bridge || null,
+  });
+}
+
 export class ArbitrageVerifier {
   private lastLiveQuoteValidation: LiveQuoteValidation | null = null;
   private liveQuoteValidations = new Map<string, LiveQuoteValidation>();
   private crossVenueFeeContexts = new Map<string, CrossVenueFeeContext>();
+  private scanBatchCache = new Map<string, { expiresAt: number; plans: Map<string, VerifiedArbitragePlan | null> }>();
+  private scanBatchInFlight = new Map<string, Promise<Map<string, VerifiedArbitragePlan | null>>>();
 
   getLastLiveQuoteValidation(): Readonly<LiveQuoteValidation> | null {
     return this.lastLiveQuoteValidation ? { ...this.lastLiveQuoteValidation } : null;
@@ -355,199 +380,322 @@ export class ArbitrageVerifier {
     governance.requireAllowed('ADVISE', { chain: req.gas?.chain, pair: symbol });
 
     try {
-      const quotes = await fetchQuotes(symbol, req.maxQuoteAgeMs);
-      const now = Date.now();
-      const freshQuotes = quotes.filter(quote => Number.isFinite(quote.timestamp) && quote.timestamp <= now && now - quote.timestamp <= req.maxQuoteAgeMs);
-      const validation: LiveQuoteValidation = {
+      if (process.env.CRYPTO_ARBITRAGE_BATCH_SCAN_ENABLED?.trim().toLowerCase() !== 'false') {
+        const symbols = await this.resolveScanSymbols(symbol);
+        const allowedSymbols: string[] = [];
+        for (const candidateSymbol of symbols) {
+          try {
+            governance.requireAllowed('ADVISE', { chain: req.gas?.chain, pair: candidateSymbol });
+            allowedSymbols.push(candidateSymbol);
+          } catch (error) {
+            logger.debug('[ArbVerifier] Scan symbol excluded by governance envelope', {
+              component: 'ArbitrageVerifier',
+              symbol: candidateSymbol,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        if (!allowedSymbols.includes(symbol)) allowedSymbols.unshift(symbol);
+        const plans = await this.evaluateBatch(req, allowedSymbols);
+        return plans.get(symbol) ?? null;
+      }
+
+      canonicalOpportunityState.recordSearchObservation({
+        observationId: `cex-single:${Date.now()}:${symbol}`,
         symbol,
-        validatedAt: now,
-        quoteCount: quotes.length,
-        freshQuoteCount: freshQuotes.length,
-        valid: freshQuotes.length >= 2,
-        streamStats: cexOrderBookStreams.getStats(),
-      };
-      this.lastLiveQuoteValidation = validation;
-      this.liveQuoteValidations.set(symbol, validation);
-      if (this.liveQuoteValidations.size > 64) {
-        const oldestSymbol = this.liveQuoteValidations.keys().next().value;
-        if (oldestSymbol) this.liveQuoteValidations.delete(oldestSymbol);
-      }
-      if (freshQuotes.length < 2) return null;
-
-      let gasUsd = 0;
-      if (req.gas?.enabled) {
-        const gas = await gasOracle.getGasPrice(req.gas.chain);
-        if (!Number.isFinite(gas.usdCost) || gas.usdCost < 0) return null;
-        gasUsd = gas.usdCost;
-      }
-
-      let bridgeFeeUsd = 0;
-      let bridge: VerifiedArbitragePlan['bridge'] | undefined;
-      if (req.bridge?.enabled) {
-        const route = routeOptimizer.getBestRoute(req.bridge.fromChain, req.bridge.toChain, req.bridge.token, req.notionalUsd);
-        if (!route || !Number.isFinite(route.feeUsd) || route.feeUsd < 0) return null;
-        bridgeFeeUsd = route.feeUsd;
-        bridge = { from: route.fromChain, to: route.toChain, token: route.token, feeUsd: route.feeUsd, estimatedTimeSec: route.estimatedTime };
-      }
-
-      const transferFeeUsd = bridge ? 0 : configuredTransferFeeUsd();
-      const feeEvidence = new Map<QuoteVenue, CexFeeEvidence | null>();
-      await Promise.all(freshQuotes.map(async quote => {
-        const buyOverride = req.buyFeesBps?.[quote.venue];
-        const sellOverride = req.sellFeesBps?.[quote.venue];
-        const explicit = Number.isFinite(buyOverride) && buyOverride! >= 0
-          ? buyOverride!
-          : Number.isFinite(sellOverride) && sellOverride! >= 0
-            ? sellOverride!
-            : configuredTakerFeeBps(quote.venue);
-        feeEvidence.set(
-          quote.venue,
-          explicit !== null && explicit !== undefined
-            ? overrideEvidence(quote.venue, symbol, explicit)
-            : await resolveCexFeeEvidence(quote.venue, symbol),
-        );
-      }));
-
-      let bestFeeContext: CrossVenueFeeContext | null = null;
-      for (const buy of freshQuotes) {
-        for (const sell of freshQuotes) {
-          if (buy.venue === sell.venue) continue;
-          const buyEvidence = feeEvidence.get(buy.venue) || null;
-          const sellEvidence = feeEvidence.get(sell.venue) || null;
-          const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? buyEvidence?.takerFeeBps ?? configuredTakerFeeBps(buy.venue);
-          const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? sellEvidence?.takerFeeBps ?? configuredTakerFeeBps(sell.venue);
-          if (buyFeeBps === null || buyFeeBps === undefined || sellFeeBps === null || sellFeeBps === undefined) continue;
-          const grossSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
-          if (!Number.isFinite(grossSpreadBps)) continue;
-          const context: CrossVenueFeeContext = {
-            symbol,
-            observedAt: now,
-            buyVenue: buy.venue,
-            sellVenue: sell.venue,
-            buyTakerFeeBps: buyFeeBps,
-            sellTakerFeeBps: sellFeeBps,
-            grossSpreadBps,
-            netSpreadAfterFeesBps: grossSpreadBps - buyFeeBps - sellFeeBps,
-          };
-          if (!bestFeeContext || context.netSpreadAfterFeesBps > bestFeeContext.netSpreadAfterFeesBps) {
-            bestFeeContext = context;
-          }
-        }
-      }
-      if (bestFeeContext) {
-        this.crossVenueFeeContexts.set(symbol, bestFeeContext);
-        if (this.crossVenueFeeContexts.size > 64) {
-          const oldestSymbol = this.crossVenueFeeContexts.keys().next().value;
-          if (oldestSymbol) this.crossVenueFeeContexts.delete(oldestSymbol);
-        }
-      } else {
-        this.crossVenueFeeContexts.delete(symbol);
-      }
-
-      const quantityFractions = [0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
-      let bestPlan: VerifiedArbitragePlan | null = null;
-      for (const buy of freshQuotes) {
-        for (const sell of freshQuotes) {
-          if (buy.venue === sell.venue || sell.bid <= buy.ask || !buy.depth || !sell.depth) continue;
-          const buyEvidence = feeEvidence.get(buy.venue) || null;
-          const sellEvidence = feeEvidence.get(sell.venue) || null;
-          const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? buyEvidence?.takerFeeBps ?? configuredTakerFeeBps(buy.venue);
-          const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? sellEvidence?.takerFeeBps ?? configuredTakerFeeBps(sell.venue);
-          if (buyFeeBps === null || buyFeeBps === undefined || sellFeeBps === null || sellFeeBps === undefined) continue;
-
-          // If the top-of-book spread cannot clear percentage fees plus fixed
-          // costs even at the largest permitted notional, no smaller slice can
-          // become profitable (depth can only worsen execution). Reject before
-          // expensive depth sweeps/Monte Carlo without weakening the >0 net gate.
-          const topSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
-          const fixedCostsBpsAtMaxNotional = ((gasUsd + bridgeFeeUsd + transferFeeUsd) / req.notionalUsd) * 10_000;
-          const breakEvenBps = buyFeeBps + sellFeeBps + fixedCostsBpsAtMaxNotional;
-          if (!Number.isFinite(topSpreadBps) || topSpreadBps <= breakEvenBps) continue;
-
-          for (const fraction of quantityFractions) {
-            const requestedNotionalUsd = req.notionalUsd * fraction;
-            const buyFill = consumeBuyAsks(buy.depth.asks, requestedNotionalUsd);
-            if (!buyFill) continue;
-            const sellFill = consumeSellBids(sell.depth.bids, buyFill.quantity);
-            if (!sellFill) continue;
-            const buyFeeUsd = feeUsd(buyFill.spentUsd, buyFeeBps);
-            const sellFeeUsd = feeUsd(sellFill.proceedsUsd, sellFeeBps);
-            const grossProfitUsd = sellFill.proceedsUsd - buyFill.spentUsd;
-            const totalCostsUsd = buyFeeUsd + sellFeeUsd + gasUsd + bridgeFeeUsd + transferFeeUsd;
-            const netProfitUsd = grossProfitUsd - totalCostsUsd;
-            const spreadPct = ((sellFill.averagePrice - buyFill.averagePrice) / buyFill.averagePrice) * 100;
-            const expectedPriceImpactBps = ((buyFill.averagePrice - buy.ask) / buy.ask + (sell.bid - sellFill.averagePrice) / sell.bid) * 10_000;
-            const quoteAgeMs = Math.max(now - buy.timestamp, now - sell.timestamp);
-            const candidate: VerifiedArbitragePlan = {
-              symbol,
-              notionalUsd: buyFill.spentUsd,
-              requestedNotionalUsd,
-              executableNotionalUsd: buyFill.spentUsd,
-              buyVenue: buy.venue,
-              sellVenue: sell.venue,
-              buyAsk: buyFill.averagePrice,
-              sellBid: sellFill.averagePrice,
-              buyLimitPrice: buyFill.limitPrice,
-              sellLimitPrice: sellFill.limitPrice,
-              baseQty: buyFill.quantity,
-              grossProfitUsd,
-              netProfitUsd,
-              spreadPct,
-              costs: { buyFeeUsd, sellFeeUsd, gasUsd, bridgeFeeUsd, transferFeeUsd, totalCostsUsd },
-              quoteAgeMs,
-              expectedSlippageBps: Number.isFinite(expectedPriceImpactBps) ? Math.max(0, expectedPriceImpactBps) : null,
-              expectedPriceImpactBps: Number.isFinite(expectedPriceImpactBps) ? Math.max(0, expectedPriceImpactBps) : null,
-              liquidity: {
-                status: 'measured',
-                buyAvailableBaseQty: buy.depth.asks.reduce((sum, level) => sum + level.quantity, 0),
-                sellAvailableBaseQty: sell.depth.bids.reduce((sum, level) => sum + level.quantity, 0),
-                source: [`${buy.venue}:order_book:${buy.transport}`, `${sell.venue}:order_book:${sell.transport}`],
-              },
-              feeEvidence: {
-                buy: buyEvidence || overrideEvidence(buy.venue, symbol, buyFeeBps),
-                sell: sellEvidence || overrideEvidence(sell.venue, symbol, sellFeeBps),
-              },
-              crossVenueCostModel: bridge
-                ? 'bridge'
-                : transferFeeUsd > 0
-                  ? 'configured_transfer_cost'
-                  : 'prepositioned_inventory',
-              bridge,
-            };
-            if (!bestPlan || candidate.netProfitUsd > bestPlan.netProfitUsd) bestPlan = candidate;
-          }
-        }
-      }
-
-      if (bestPlan) {
-        recordProfitEstimate({
-          opportunityId: `cex:${bestPlan.buyVenue}:${bestPlan.sellVenue}:${bestPlan.symbol}`,
-          chain: req.gas?.chain || 'cross_venue_cex',
-          grossProfitUsd: bestPlan.grossProfitUsd,
-          estimatedCostsUsd: bestPlan.costs.totalCostsUsd,
-          estimatedNetProfitUsd: bestPlan.netProfitUsd,
-          netProfitBps: bestPlan.netProfitUsd / Math.max(bestPlan.notionalUsd, 1e-12) * 10_000,
-          confidence: Math.max(0, Math.min(1, 1 - bestPlan.quoteAgeMs / Math.max(req.maxQuoteAgeMs, 1))),
-          observedAt: now,
-        });
-        return bestPlan;
-      }
-
-      const missingFeeVenues = freshQuotes
-        .filter(quote => !feeEvidence.get(quote.venue))
-        .map(quote => quote.venue);
-      if (missingFeeVenues.length > 0) {
-        logger.warn('[ArbVerifier] Complete cross-venue economics unavailable because live fee evidence is missing', {
-          component: 'ArbitrageVerifier',
-          symbol,
-          venues: [...new Set(missingFeeVenues)],
-          executionCredentialSources: ['KRAKEN_API_KEY/KRAKEN_API_SECRET', 'OKX_API_KEY/OKX_API_SECRET/OKX_API_PASSPHRASE'],
-        });
-      }
-      return null;
+        observedAt: Date.now(),
+        source: 'arbitrage_verifier_single',
+      });
+      return this.evaluateSymbolOnce({ ...req, symbol });
     } finally {
       governance.completeAdvisoryCycle('system', 'arb_verifier_cycle_complete');
     }
+  }
+
+  private async resolveScanSymbols(seedSymbol: string): Promise<string[]> {
+    const maxSymbols = Math.min(8, positiveInteger(process.env.CRYPTO_ARBITRAGE_MAX_SYMBOLS, 4, 8));
+    try {
+      const discovered = await marketDataProviders.discoverUniverse();
+      return [...new Set([
+        seedSymbol,
+        ...discovered.map(asset => asset.symbol.trim().toUpperCase()).filter(Boolean),
+      ])].slice(0, maxSymbols);
+    } catch (error) {
+      logger.debug('[ArbVerifier] Market-universe batch expansion unavailable; evaluating requested symbol only', {
+        component: 'ArbitrageVerifier',
+        symbol: seedSymbol,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [seedSymbol];
+    }
+  }
+
+  private async evaluateBatch(
+    req: Omit<VerifyRequest, 'minNetProfitUsd'>,
+    symbolsInput: readonly string[],
+  ): Promise<Map<string, VerifiedArbitragePlan | null>> {
+    const symbols = [...new Set(symbolsInput.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))];
+    const key = scanRequestKey(req, symbols);
+    const now = Date.now();
+    const cached = this.scanBatchCache.get(key);
+    if (cached && cached.expiresAt > now) return new Map(cached.plans);
+    if (cached) this.scanBatchCache.delete(key);
+    const inFlight = this.scanBatchInFlight.get(key);
+    if (inFlight) return new Map(await inFlight);
+
+    const promise = (async () => {
+      const startedAt = Date.now();
+      const feePrime = await primeCexFeeEvidence(symbols);
+      const plans = new Map<string, VerifiedArbitragePlan | null>();
+      const concurrency = Math.min(symbols.length || 1, positiveInteger(process.env.CRYPTO_ARBITRAGE_SCAN_CONCURRENCY, 4, 8));
+      let cursor = 0;
+
+      const workers = Array.from({ length: concurrency }, async () => {
+        while (true) {
+          const index = cursor++;
+          if (index >= symbols.length) return;
+          const symbol = symbols[index];
+          const observedAt = Date.now();
+          canonicalOpportunityState.recordSearchObservation({
+            observationId: `cex-batch:${startedAt}:${symbol}`,
+            symbol,
+            observedAt,
+            source: 'arbitrage_verifier_batch',
+          });
+          try {
+            plans.set(symbol, await this.evaluateSymbolOnce({ ...req, symbol }));
+          } catch (error) {
+            plans.set(symbol, null);
+            logger.debug('[ArbVerifier] Bounded scan symbol failed closed', {
+              component: 'ArbitrageVerifier',
+              symbol,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      });
+      await Promise.all(workers);
+
+      const configuredCacheMs = Number(process.env.CRYPTO_ARBITRAGE_SCAN_BATCH_CACHE_MS || 1500);
+      const cacheMs = Math.max(250, Math.min(
+        Number.isFinite(configuredCacheMs) ? configuredCacheMs : 1500,
+        Math.max(250, req.maxQuoteAgeMs),
+      ));
+      this.scanBatchCache.set(key, { expiresAt: Date.now() + cacheMs, plans: new Map(plans) });
+      if (this.scanBatchCache.size > 32) {
+        const cutoff = Date.now();
+        for (const [cacheKey, entry] of this.scanBatchCache.entries()) {
+          if (entry.expiresAt <= cutoff) this.scanBatchCache.delete(cacheKey);
+        }
+      }
+
+      logger.info('[ArbVerifier] Bounded concurrent CEX scan completed', {
+        component: 'ArbitrageVerifier',
+        symbols: symbols.length,
+        concurrency,
+        durationMs: Date.now() - startedAt,
+        positivePlans: [...plans.values()].filter(plan => plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0).length,
+        feePrime,
+      });
+      return plans;
+    })().finally(() => this.scanBatchInFlight.delete(key));
+
+    this.scanBatchInFlight.set(key, promise);
+    return new Map(await promise);
+  }
+
+  private async evaluateSymbolOnce(req: Omit<VerifyRequest, 'minNetProfitUsd'>): Promise<VerifiedArbitragePlan | null> {
+    const symbol = req.symbol.trim().toUpperCase();
+    const quotes = await fetchQuotes(symbol, req.maxQuoteAgeMs);
+    const now = Date.now();
+    const freshQuotes = quotes.filter(quote => Number.isFinite(quote.timestamp) && quote.timestamp <= now && now - quote.timestamp <= req.maxQuoteAgeMs);
+    const validation: LiveQuoteValidation = {
+      symbol,
+      validatedAt: now,
+      quoteCount: quotes.length,
+      freshQuoteCount: freshQuotes.length,
+      valid: freshQuotes.length >= 2,
+      streamStats: cexOrderBookStreams.getStats(),
+    };
+    this.lastLiveQuoteValidation = validation;
+    this.liveQuoteValidations.set(symbol, validation);
+    if (this.liveQuoteValidations.size > 64) {
+      const oldestSymbol = this.liveQuoteValidations.keys().next().value;
+      if (oldestSymbol) this.liveQuoteValidations.delete(oldestSymbol);
+    }
+    if (freshQuotes.length < 2) return null;
+
+    let gasUsd = 0;
+    if (req.gas?.enabled) {
+      const gas = await gasOracle.getGasPrice(req.gas.chain);
+      if (!Number.isFinite(gas.usdCost) || gas.usdCost < 0) return null;
+      gasUsd = gas.usdCost;
+    }
+
+    let bridgeFeeUsd = 0;
+    let bridge: VerifiedArbitragePlan['bridge'] | undefined;
+    if (req.bridge?.enabled) {
+      const route = routeOptimizer.getBestRoute(req.bridge.fromChain, req.bridge.toChain, req.bridge.token, req.notionalUsd);
+      if (!route || !Number.isFinite(route.feeUsd) || route.feeUsd < 0) return null;
+      bridgeFeeUsd = route.feeUsd;
+      bridge = { from: route.fromChain, to: route.toChain, token: route.token, feeUsd: route.feeUsd, estimatedTimeSec: route.estimatedTime };
+    }
+
+    const transferFeeUsd = bridge ? 0 : configuredTransferFeeUsd();
+    const feeEvidence = new Map<QuoteVenue, CexFeeEvidence | null>();
+    await Promise.all(freshQuotes.map(async quote => {
+      const buyOverride = req.buyFeesBps?.[quote.venue];
+      const sellOverride = req.sellFeesBps?.[quote.venue];
+      const explicit = Number.isFinite(buyOverride) && buyOverride! >= 0
+        ? buyOverride!
+        : Number.isFinite(sellOverride) && sellOverride! >= 0
+          ? sellOverride!
+          : configuredTakerFeeBps(quote.venue);
+      feeEvidence.set(
+        quote.venue,
+        explicit !== null && explicit !== undefined
+          ? overrideEvidence(quote.venue, symbol, explicit)
+          : await resolveCexFeeEvidence(quote.venue, symbol),
+      );
+    }));
+
+    let bestFeeContext: CrossVenueFeeContext | null = null;
+    for (const buy of freshQuotes) {
+      for (const sell of freshQuotes) {
+        if (buy.venue === sell.venue) continue;
+        const buyEvidence = feeEvidence.get(buy.venue) || null;
+        const sellEvidence = feeEvidence.get(sell.venue) || null;
+        const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? buyEvidence?.takerFeeBps ?? configuredTakerFeeBps(buy.venue);
+        const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? sellEvidence?.takerFeeBps ?? configuredTakerFeeBps(sell.venue);
+        if (buyFeeBps === null || buyFeeBps === undefined || sellFeeBps === null || sellFeeBps === undefined) continue;
+        const grossSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
+        if (!Number.isFinite(grossSpreadBps)) continue;
+        const context: CrossVenueFeeContext = {
+          symbol,
+          observedAt: now,
+          buyVenue: buy.venue,
+          sellVenue: sell.venue,
+          buyTakerFeeBps: buyFeeBps,
+          sellTakerFeeBps: sellFeeBps,
+          grossSpreadBps,
+          netSpreadAfterFeesBps: grossSpreadBps - buyFeeBps - sellFeeBps,
+        };
+        if (!bestFeeContext || context.netSpreadAfterFeesBps > bestFeeContext.netSpreadAfterFeesBps) {
+          bestFeeContext = context;
+        }
+      }
+    }
+    if (bestFeeContext) {
+      this.crossVenueFeeContexts.set(symbol, bestFeeContext);
+      if (this.crossVenueFeeContexts.size > 64) {
+        const oldestSymbol = this.crossVenueFeeContexts.keys().next().value;
+        if (oldestSymbol) this.crossVenueFeeContexts.delete(oldestSymbol);
+      }
+    } else {
+      this.crossVenueFeeContexts.delete(symbol);
+    }
+
+    const quantityFractions = [0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
+    let bestPlan: VerifiedArbitragePlan | null = null;
+    for (const buy of freshQuotes) {
+      for (const sell of freshQuotes) {
+        if (buy.venue === sell.venue || sell.bid <= buy.ask || !buy.depth || !sell.depth) continue;
+        const buyEvidence = feeEvidence.get(buy.venue) || null;
+        const sellEvidence = feeEvidence.get(sell.venue) || null;
+        const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? buyEvidence?.takerFeeBps ?? configuredTakerFeeBps(buy.venue);
+        const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? sellEvidence?.takerFeeBps ?? configuredTakerFeeBps(sell.venue);
+        if (buyFeeBps === null || buyFeeBps === undefined || sellFeeBps === null || sellFeeBps === undefined) continue;
+
+        // If the top-of-book spread cannot clear percentage fees plus fixed
+        // costs even at the largest permitted notional, no smaller slice can
+        // become profitable (depth can only worsen execution). Reject before
+        // expensive depth sweeps/Monte Carlo without weakening the >0 net gate.
+        const topSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
+        const fixedCostsBpsAtMaxNotional = ((gasUsd + bridgeFeeUsd + transferFeeUsd) / req.notionalUsd) * 10_000;
+        const breakEvenBps = buyFeeBps + sellFeeBps + fixedCostsBpsAtMaxNotional;
+        if (!Number.isFinite(topSpreadBps) || topSpreadBps <= breakEvenBps) continue;
+
+        for (const fraction of quantityFractions) {
+          const requestedNotionalUsd = req.notionalUsd * fraction;
+          const buyFill = consumeBuyAsks(buy.depth.asks, requestedNotionalUsd);
+          if (!buyFill) continue;
+          const sellFill = consumeSellBids(sell.depth.bids, buyFill.quantity);
+          if (!sellFill) continue;
+          const buyFeeUsd = feeUsd(buyFill.spentUsd, buyFeeBps);
+          const sellFeeUsd = feeUsd(sellFill.proceedsUsd, sellFeeBps);
+          const grossProfitUsd = sellFill.proceedsUsd - buyFill.spentUsd;
+          const totalCostsUsd = buyFeeUsd + sellFeeUsd + gasUsd + bridgeFeeUsd + transferFeeUsd;
+          const netProfitUsd = grossProfitUsd - totalCostsUsd;
+          const spreadPct = ((sellFill.averagePrice - buyFill.averagePrice) / buyFill.averagePrice) * 100;
+          const expectedPriceImpactBps = ((buyFill.averagePrice - buy.ask) / buy.ask + (sell.bid - sellFill.averagePrice) / sell.bid) * 10_000;
+          const quoteAgeMs = Math.max(now - buy.timestamp, now - sell.timestamp);
+          const candidate: VerifiedArbitragePlan = {
+            symbol,
+            notionalUsd: buyFill.spentUsd,
+            requestedNotionalUsd,
+            executableNotionalUsd: buyFill.spentUsd,
+            buyVenue: buy.venue,
+            sellVenue: sell.venue,
+            buyAsk: buyFill.averagePrice,
+            sellBid: sellFill.averagePrice,
+            buyLimitPrice: buyFill.limitPrice,
+            sellLimitPrice: sellFill.limitPrice,
+            baseQty: buyFill.quantity,
+            grossProfitUsd,
+            netProfitUsd,
+            spreadPct,
+            costs: { buyFeeUsd, sellFeeUsd, gasUsd, bridgeFeeUsd, transferFeeUsd, totalCostsUsd },
+            quoteAgeMs,
+            expectedSlippageBps: Number.isFinite(expectedPriceImpactBps) ? Math.max(0, expectedPriceImpactBps) : null,
+            expectedPriceImpactBps: Number.isFinite(expectedPriceImpactBps) ? Math.max(0, expectedPriceImpactBps) : null,
+            liquidity: {
+              status: 'measured',
+              buyAvailableBaseQty: buy.depth.asks.reduce((sum, level) => sum + level.quantity, 0),
+              sellAvailableBaseQty: sell.depth.bids.reduce((sum, level) => sum + level.quantity, 0),
+              source: [`${buy.venue}:order_book:${buy.transport}`, `${sell.venue}:order_book:${sell.transport}`],
+            },
+            feeEvidence: {
+              buy: buyEvidence || overrideEvidence(buy.venue, symbol, buyFeeBps),
+              sell: sellEvidence || overrideEvidence(sell.venue, symbol, sellFeeBps),
+            },
+            crossVenueCostModel: bridge
+              ? 'bridge'
+              : transferFeeUsd > 0
+                ? 'configured_transfer_cost'
+                : 'prepositioned_inventory',
+            bridge,
+          };
+          if (!bestPlan || candidate.netProfitUsd > bestPlan.netProfitUsd) bestPlan = candidate;
+        }
+      }
+    }
+
+    if (bestPlan) {
+      recordProfitEstimate({
+        opportunityId: `cex:${bestPlan.buyVenue}:${bestPlan.sellVenue}:${bestPlan.symbol}`,
+        chain: req.gas?.chain || 'cross_venue_cex',
+        grossProfitUsd: bestPlan.grossProfitUsd,
+        estimatedCostsUsd: bestPlan.costs.totalCostsUsd,
+        estimatedNetProfitUsd: bestPlan.netProfitUsd,
+        netProfitBps: bestPlan.netProfitUsd / Math.max(bestPlan.notionalUsd, 1e-12) * 10_000,
+        confidence: Math.max(0, Math.min(1, 1 - bestPlan.quoteAgeMs / Math.max(req.maxQuoteAgeMs, 1))),
+        observedAt: now,
+      });
+      return bestPlan;
+    }
+
+    const missingFeeVenues = freshQuotes
+      .filter(quote => !feeEvidence.get(quote.venue))
+      .map(quote => quote.venue);
+    if (missingFeeVenues.length > 0) {
+      logger.warn('[ArbVerifier] Complete cross-venue economics unavailable because live fee evidence is missing', {
+        component: 'ArbitrageVerifier',
+        symbol,
+        venues: [...new Set(missingFeeVenues)],
+        executionCredentialSources: ['KRAKEN_API_KEY/KRAKEN_API_SECRET', 'OKX_API_KEY/OKX_API_SECRET/OKX_API_PASSPHRASE'],
+      });
+    }
+    return null;
   }
 
   async verifyOnce(req: VerifyRequest): Promise<VerifiedArbitragePlan | null> {
