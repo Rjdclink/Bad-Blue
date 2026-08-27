@@ -33,6 +33,11 @@ function boundedFraction(value: unknown, fallback: number): number {
  * more measured symbols through the same worker pool rather than multiplying
  * sockets/private-account operations without limit.
  *
+ * Public CEX discovery is now batched per venue, so the breadth ceiling can be
+ * widened substantially without linearly multiplying public HTTP requests. The
+ * executable Kraken/OKX worker pool remains capped at eight to protect account,
+ * nonce, order-book and authenticated fee authorities.
+ *
  * Once a fresh authenticated taker-fee barrier is repeatedly observed across a
  * meaningful fraction of the configured universe, the scanner retains base
  * discovery breadth instead of spending maximum compute rediscovering the same
@@ -46,9 +51,9 @@ export function getCexScanCapacity(universeSizeInput: number): ScanCapacityDecis
     return { ...heldDecision.decision, reason: `${heldDecision.decision.reason}; held to prevent intra-cycle capacity oscillation` };
   }
 
-  const configuredMinimum = boundedInt(process.env.CRYPTO_ARBITRAGE_MIN_SYMBOLS, 8, 1, 50);
-  const configuredBase = boundedInt(process.env.CRYPTO_ARBITRAGE_BASE_SYMBOLS, 16, configuredMinimum, 50);
-  const configuredMaximum = boundedInt(process.env.CRYPTO_ARBITRAGE_MAX_SYMBOLS, 32, configuredBase, 50);
+  const configuredMinimum = boundedInt(process.env.CRYPTO_ARBITRAGE_MIN_SYMBOLS, 12, 1, 128);
+  const configuredBase = boundedInt(process.env.CRYPTO_ARBITRAGE_BASE_SYMBOLS, 24, configuredMinimum, 128);
+  const configuredMaximum = boundedInt(process.env.CRYPTO_ARBITRAGE_MAX_SYMBOLS, 96, configuredBase, 128);
   const workerMaximum = boundedInt(process.env.CRYPTO_ARBITRAGE_SCAN_CONCURRENCY, 6, 1, 8);
   const feeBarrierCoverageRequired = boundedFraction(process.env.CRYPTO_ARBITRAGE_FEE_BARRIER_COVERAGE, 0.25);
   const metrics = canonicalOpportunityState.getMetrics(60_000);
