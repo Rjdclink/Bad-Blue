@@ -18,6 +18,7 @@ const REQUEST_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_ARBITRAGE_F
 const feeCache = new Map<string, CexFeeEvidence>();
 const feeInFlight = new Map<string, Promise<CexFeeEvidence | null>>();
 let krakenNonce = 0;
+let krakenPrivateTail: Promise<void> = Promise.resolve();
 
 function finiteNumber(value: unknown): number | null {
   const parsed = Number(value);
@@ -89,6 +90,18 @@ function signKraken(path: string, body: string, nonce: string, decodedSecret: Bu
   return createHmac('sha512', decodedSecret).update(Buffer.concat([Buffer.from(path), hash])).digest('base64');
 }
 
+/**
+ * Kraken private endpoints require monotonically increasing nonces. Generating
+ * monotonic values is insufficient when concurrent requests can arrive at the
+ * exchange out of order, so authenticated Kraken fee discovery is serialized at
+ * the transport boundary. Public quote discovery remains independently parallel.
+ */
+function serializeKrakenPrivate<T>(operation: () => Promise<T>): Promise<T> {
+  const run = krakenPrivateTail.catch(() => undefined).then(operation);
+  krakenPrivateTail = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
   const apiKey = credential('KRAKEN_API_KEY');
   const apiSecret = credential('KRAKEN_API_SECRET');
@@ -100,29 +113,31 @@ async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | 
   const decodedSecret = Buffer.from(apiSecret, 'base64');
   if (decodedSecret.length === 0) throw new Error('Kraken API secret is not valid base64');
 
-  const path = '/0/private/TradeVolume';
-  const nonce = nextKrakenNonce();
-  const body = new URLSearchParams({ nonce, pair: symbol, 'fee-info': 'true' }).toString();
-  const response = await fetchWithTimeout(`https://api.kraken.com${path}`, {
-    method: 'POST',
-    headers: { 'API-Key': apiKey, 'API-Sign': signKraken(path, body, nonce, decodedSecret), 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
+  return serializeKrakenPrivate(async () => {
+    const path = '/0/private/TradeVolume';
+    const nonce = nextKrakenNonce();
+    const body = new URLSearchParams({ nonce, pair: symbol, 'fee-info': 'true' }).toString();
+    const response = await fetchWithTimeout(`https://api.kraken.com${path}`, {
+      method: 'POST',
+      headers: { 'API-Key': apiKey, 'API-Sign': signKraken(path, body, nonce, decodedSecret), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    const payload = await readJson(response);
+    if (payload.error?.length) throw new Error(`Kraken fee request failed: ${payload.error.join(', ')}`);
+    const result = payload.result || {};
+    const takerRow = Object.values(result.fees || {})[0] as Record<string, unknown> | undefined;
+    const makerRow = Object.values(result.fees_maker || {})[0] as Record<string, unknown> | undefined;
+    const takerPct = finiteNumber(takerRow?.fee);
+    if (takerPct === null) throw new Error('Kraken TradeVolume response did not contain taker fee evidence for the requested pair');
+    const makerPct = finiteNumber(makerRow?.fee);
+    return {
+      venue: 'kraken', symbol,
+      takerFeeBps: Math.max(0, takerPct * 100),
+      makerFeeBps: makerPct !== null && makerPct >= 0 ? makerPct * 100 : null,
+      makerRebateBps: makerPct !== null && makerPct < 0 ? Math.abs(makerPct) * 100 : null,
+      source: 'kraken_account_trade_volume' as const, observedAt: Date.now(),
+    };
   });
-  const payload = await readJson(response);
-  if (payload.error?.length) throw new Error(`Kraken fee request failed: ${payload.error.join(', ')}`);
-  const result = payload.result || {};
-  const takerRow = Object.values(result.fees || {})[0] as Record<string, unknown> | undefined;
-  const makerRow = Object.values(result.fees_maker || {})[0] as Record<string, unknown> | undefined;
-  const takerPct = finiteNumber(takerRow?.fee);
-  if (takerPct === null) throw new Error('Kraken TradeVolume response did not contain taker fee evidence for the requested pair');
-  const makerPct = finiteNumber(makerRow?.fee);
-  return {
-    venue: 'kraken', symbol,
-    takerFeeBps: Math.max(0, takerPct * 100),
-    makerFeeBps: makerPct !== null && makerPct >= 0 ? makerPct * 100 : null,
-    makerRebateBps: makerPct !== null && makerPct < 0 ? Math.abs(makerPct) * 100 : null,
-    source: 'kraken_account_trade_volume', observedAt: Date.now(),
-  };
 }
 
 function okxInstrumentId(symbol: string): string {
