@@ -1,7 +1,7 @@
-import { createHmac, createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
-import { getOkxExecutionRestBaseUrl } from '../intelligence/okx-region-authority.js';
+import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import type {
   ExecutionFill,
   ExecutionStatus,
@@ -60,12 +60,6 @@ const ORDER_SUBMIT_TIMEOUT_MS = Math.max(3000, Number(process.env.CRYPTO_ARBITRA
 const SETTLEMENT_TIMEOUT_MS = Math.max(1000, Number(process.env.CRYPTO_ARBITRAGE_SETTLEMENT_TIMEOUT_MS || 30000));
 const SETTLEMENT_POLL_INTERVAL_MS = Math.max(100, Number(process.env.CRYPTO_ARBITRAGE_SETTLEMENT_POLL_INTERVAL_MS || 1000));
 
-function requireEnvironment(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is required for live exchange execution`);
-  return value;
-}
-
 function toDecimal(value: number): string {
   if (!Number.isFinite(value) || value <= 0) throw new Error('Order values must be finite and positive');
   return value.toFixed(12).replace(/\.?0+$/, '');
@@ -83,8 +77,7 @@ function nullableNumber(value: unknown): number | null {
 }
 
 function signedFeeAmount(value: unknown): number | null {
-  const parsed = nullableNumber(value);
-  return parsed;
+  return nullableNumber(value);
 }
 
 function positiveNumber(value: unknown): number | null {
@@ -108,28 +101,6 @@ function feeAssetFromValues(values: Array<string | null>): string | null {
   if (known.length === 0) return null;
   const first = known[0].toUpperCase();
   return known.every(value => value.toUpperCase() === first) ? first : null;
-}
-
-async function readJson(response: Response): Promise<any> {
-  const body = await response.text();
-  let json: any;
-  try {
-    json = body ? JSON.parse(body) : {};
-  } catch {
-    throw new Error(`Exchange returned a non-JSON response (${response.status})`);
-  }
-  if (!response.ok) throw new Error(`Exchange request failed (${response.status}): ${JSON.stringify(json)}`);
-  return json;
-}
-
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function classifyOrderStatus(rawStatus: string, filledQuantity: number, requestedQuantity: number): { status: ExecutionStatus; terminal: boolean } {
@@ -167,30 +138,8 @@ function unknownSettlement(order: CexOrderReceipt, error: string): NormalizedOrd
 }
 
 class KrakenSettlementAdapter implements CexSettlementAdapter {
-  private lastNonce = 0;
-
   private async privateRequest(path: string, parameters: Record<string, string> = {}): Promise<any> {
-    const apiKey = requireEnvironment('KRAKEN_API_KEY');
-    const apiSecret = requireEnvironment('KRAKEN_API_SECRET');
-    const nonce = String(Math.max(Date.now(), this.lastNonce + 1));
-    this.lastNonce = Number(nonce);
-    const body = new URLSearchParams({ nonce, ...parameters }).toString();
-    const hash = createHash('sha256').update(nonce + body).digest();
-    const signature = createHmac('sha512', Buffer.from(apiSecret, 'base64'))
-      .update(Buffer.concat([Buffer.from(path), hash]))
-      .digest('base64');
-    const response = await fetchWithTimeout(`https://api.kraken.com${path}`, {
-      method: 'POST',
-      headers: {
-        'API-Key': apiKey,
-        'API-Sign': signature,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body,
-    }, ORDER_SUBMIT_TIMEOUT_MS);
-    const payload = await readJson(response);
-    if (payload.error?.length) throw new Error(`Kraken request failed: ${payload.error.join(', ')}`);
-    return payload.result || {};
+    return krakenPrivateRequest(path, parameters, { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS });
   }
 
   async submit(request: OrderRequest): Promise<CexOrderReceipt> {
@@ -236,7 +185,8 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
         }).filter(fill => fill.quantity > 0 && fill.price > 0);
       } catch (error) {
         logger.warn('[CEX Executor] Kraken trade details unavailable; retaining aggregate order fee', {
-          component: 'CentralizedExchangeExecutor', orderId: order.orderId,
+          component: 'CentralizedExchangeExecutor',
+          orderId: order.orderId,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -245,7 +195,13 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
       const feeAsset = typeof row.feeCurrency === 'string'
         ? row.feeCurrency
         : typeof row.fee_currency === 'string' ? row.fee_currency : null;
-      fills = [{ quantity: filledQuantity, price: averageFillPrice, feeAmount: signedFeeAmount(row.fee), feeAsset, timestamp: timestampMilliseconds(row.closetm || row.time || row.opentm) }];
+      fills = [{
+        quantity: filledQuantity,
+        price: averageFillPrice,
+        feeAmount: signedFeeAmount(row.fee),
+        feeAsset,
+        timestamp: timestampMilliseconds(row.closetm || row.time || row.opentm),
+      }];
       tradeFees = [signedFeeAmount(row.fee)];
       tradeFeeAssets = [feeAsset];
     }
@@ -257,18 +213,30 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
         finalBalances = await this.getBalances();
       } catch (error) {
         logger.warn('[CEX Executor] Kraken final balance query unavailable', {
-          component: 'CentralizedExchangeExecutor', orderId: order.orderId,
+          component: 'CentralizedExchangeExecutor',
+          orderId: order.orderId,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
     return {
-      venue: 'kraken', orderId: order.orderId, symbol: order.symbol, side: order.side,
-      status: classification.status, terminal: classification.terminal, requestedQuantity,
-      filledQuantity, remainingQuantity: Math.max(0, requestedQuantity - filledQuantity), averageFillPrice,
-      fills, feeAmount, feeAsset: feeAssetFromValues(tradeFeeAssets), submittedAt: order.submittedAt,
+      venue: 'kraken',
+      orderId: order.orderId,
+      symbol: order.symbol,
+      side: order.side,
+      status: classification.status,
+      terminal: classification.terminal,
+      requestedQuantity,
+      filledQuantity,
+      remainingQuantity: Math.max(0, requestedQuantity - filledQuantity),
+      averageFillPrice,
+      fills,
+      feeAmount,
+      feeAsset: feeAssetFromValues(tradeFeeAssets),
+      submittedAt: order.submittedAt,
       terminalAt: classification.terminal ? timestampMilliseconds(row.closetm || row.time || row.opentm) || Date.now() : null,
-      finalBalances, error: row.reason ? String(row.reason) : undefined,
+      finalBalances,
+      error: row.reason ? String(row.reason) : undefined,
     };
   }
 
@@ -283,35 +251,22 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
 }
 
 class OkxSettlementAdapter implements CexSettlementAdapter {
-  private async privateRequest(path: string, method: 'GET' | 'POST', parameters: Record<string, string> = {}): Promise<any> {
-    const apiKey = requireEnvironment('OKX_API_KEY');
-    const apiSecret = requireEnvironment('OKX_API_SECRET');
-    const passphrase = requireEnvironment('OKX_API_PASSPHRASE');
-    const baseUrl = await getOkxExecutionRestBaseUrl();
-    const query = new URLSearchParams(parameters).toString();
-    const requestPath = method === 'GET' && query ? `${path}?${query}` : path;
-    const body = method === 'POST' ? JSON.stringify(parameters) : '';
-    const timestamp = new Date().toISOString();
-    const signature = createHmac('sha256', apiSecret).update(`${timestamp}${method}${requestPath}${body}`).digest('base64');
-    const response = await fetchWithTimeout(`${baseUrl}${requestPath}`, {
-      method,
-      headers: {
-        'OK-ACCESS-KEY': apiKey, 'OK-ACCESS-SIGN': signature, 'OK-ACCESS-TIMESTAMP': timestamp,
-        'OK-ACCESS-PASSPHRASE': passphrase, 'Content-Type': 'application/json',
-      },
-      body: method === 'POST' ? body : undefined,
-    }, ORDER_SUBMIT_TIMEOUT_MS);
-    const payload = await readJson(response);
-    if (payload.code !== '0') throw new Error(`OKX request failed: ${payload.msg || payload.code}`);
-    return payload.data || [];
+  private async privateRequest(path: string, method: 'GET' | 'POST', parameters: Record<string, string> = {}): Promise<any[]> {
+    const { data } = await okxPrivateRequest(path, method, parameters, { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS });
+    return data;
   }
 
   async submit(request: OrderRequest): Promise<CexOrderReceipt> {
     const submittedAt = Date.now();
     const { base, quote } = splitSymbol(request.symbol);
     const rows = await this.privateRequest('/api/v5/trade/order', 'POST', {
-      instId: `${base}-${quote}`, tdMode: 'cash', side: request.side, ordType: 'ioc',
-      px: toDecimal(request.price), sz: toDecimal(request.quantity), clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
+      instId: `${base}-${quote}`,
+      tdMode: 'cash',
+      side: request.side,
+      ordType: 'ioc',
+      px: toDecimal(request.price),
+      sz: toDecimal(request.quantity),
+      clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
     });
     const order = rows[0];
     if (!order || order.sCode !== '0' || !order.ordId) throw new Error(`OKX rejected order: ${order?.sMsg || 'unknown error'}`);
@@ -328,15 +283,23 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
     const averageFillPrice = positiveNumber(row.avgPx);
     let fills: ExecutionFill[] = [];
     try {
-      const fillRows = await this.privateRequest('/api/v5/trade/fills', 'GET', { instId: `${base}-${quote}`, ordId: order.orderId, limit: '100' });
+      const fillRows = await this.privateRequest('/api/v5/trade/fills', 'GET', {
+        instId: `${base}-${quote}`,
+        ordId: order.orderId,
+        limit: '100',
+      });
       fills = fillRows.map((fill: Record<string, unknown>) => ({
-        quantity: positiveNumber(fill.fillSz) || 0, price: positiveNumber(fill.fillPx) || 0,
-        feeAmount: signedFeeAmount(fill.fee), feeAsset: typeof fill.feeCcy === 'string' ? fill.feeCcy : null,
-        timestamp: timestampMilliseconds(fill.ts), tradeId: typeof fill.tradeId === 'string' ? fill.tradeId : undefined,
+        quantity: positiveNumber(fill.fillSz) || 0,
+        price: positiveNumber(fill.fillPx) || 0,
+        feeAmount: signedFeeAmount(fill.fee),
+        feeAsset: typeof fill.feeCcy === 'string' ? fill.feeCcy : null,
+        timestamp: timestampMilliseconds(fill.ts),
+        tradeId: typeof fill.tradeId === 'string' ? fill.tradeId : undefined,
       })).filter((fill: ExecutionFill) => fill.quantity > 0 && fill.price > 0);
     } catch (error) {
       logger.warn('[CEX Executor] OKX fill details unavailable; retaining aggregate order fee', {
-        component: 'CentralizedExchangeExecutor', orderId: order.orderId,
+        component: 'CentralizedExchangeExecutor',
+        orderId: order.orderId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -349,18 +312,30 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
         finalBalances = await this.getBalances();
       } catch (error) {
         logger.warn('[CEX Executor] OKX final balance query unavailable', {
-          component: 'CentralizedExchangeExecutor', orderId: order.orderId,
+          component: 'CentralizedExchangeExecutor',
+          orderId: order.orderId,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
     return {
-      venue: 'okx', orderId: order.orderId, symbol: order.symbol, side: order.side,
-      status: classification.status, terminal: classification.terminal, requestedQuantity,
-      filledQuantity, remainingQuantity: Math.max(0, requestedQuantity - filledQuantity), averageFillPrice,
-      fills, feeAmount: sumNumbers(feeValues), feeAsset: feeAssetFromValues(feeAssets), submittedAt: order.submittedAt,
+      venue: 'okx',
+      orderId: order.orderId,
+      symbol: order.symbol,
+      side: order.side,
+      status: classification.status,
+      terminal: classification.terminal,
+      requestedQuantity,
+      filledQuantity,
+      remainingQuantity: Math.max(0, requestedQuantity - filledQuantity),
+      averageFillPrice,
+      fills,
+      feeAmount: sumNumbers(feeValues),
+      feeAsset: feeAssetFromValues(feeAssets),
+      submittedAt: order.submittedAt,
       terminalAt: classification.terminal ? timestampMilliseconds(row.uTime || row.fillTime || row.cTime) || Date.now() : null,
-      finalBalances, error: row.cancelSource ? `cancel_source:${row.cancelSource}` : undefined,
+      finalBalances,
+      error: row.cancelSource ? `cancel_source:${row.cancelSource}` : undefined,
     };
   }
 
@@ -372,7 +347,8 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
   private async getBalances(): Promise<Record<string, string>> {
     const rows = await this.privateRequest('/api/v5/account/balance', 'GET');
     const details = Array.isArray(rows[0]?.details) ? rows[0].details : [];
-    return Object.fromEntries(details.filter((detail: Record<string, unknown>) => typeof detail.ccy === 'string')
+    return Object.fromEntries(details
+      .filter((detail: Record<string, unknown>) => typeof detail.ccy === 'string')
       .map((detail: Record<string, unknown>) => [detail.ccy as string, String(detail.eq ?? detail.cashBal ?? detail.availBal ?? '')]));
   }
 }
@@ -388,17 +364,14 @@ function knownFeeUsd(order: NormalizedOrderSettlement, baseAsset: string, quoteA
   return null;
 }
 
-function quoteAssetFromSymbol(symbol: string): string {
-  return splitSymbol(symbol).quote;
-}
-
 function calculateRealizedEconomics(plan: VerifiedArbitragePlan, buy: NormalizedOrderSettlement, sell: NormalizedOrderSettlement): { economics: RealizedExecutionEconomics; complete: boolean } {
   const buyQuantity = buy.filledQuantity;
   const sellQuantity = sell.filledQuantity;
   const buyPrice = buy.averageFillPrice;
   const sellPrice = sell.averageFillPrice;
   const matchingQuantity = buyQuantity !== null && sellQuantity !== null ? Math.min(buyQuantity, sellQuantity) : null;
-  const quantitiesMatch = matchingQuantity !== null && matchingQuantity > 0 && Math.abs(buyQuantity! - sellQuantity!) <= Math.max(1e-10, Math.max(buyQuantity!, sellQuantity!) * 1e-8);
+  const quantitiesMatch = matchingQuantity !== null && matchingQuantity > 0
+    && Math.abs(buyQuantity! - sellQuantity!) <= Math.max(1e-10, Math.max(buyQuantity!, sellQuantity!) * 1e-8);
   const acquisitionCostUsd = quantitiesMatch && buyPrice !== null ? matchingQuantity! * buyPrice : null;
   const proceedsUsd = quantitiesMatch && sellPrice !== null ? matchingQuantity! * sellPrice : null;
   const { base, quote } = splitSymbol(plan.symbol);
@@ -408,9 +381,20 @@ function calculateRealizedEconomics(plan: VerifiedArbitragePlan, buy: Normalized
   const slippageBps = buyPrice !== null && sellPrice !== null && plan.buyAsk > 0 && plan.sellBid > 0
     ? Math.max(0, ((buyPrice - plan.buyAsk) / plan.buyAsk + (plan.sellBid - sellPrice) / plan.sellBid) * 10000)
     : null;
-  const netProfitUsd = acquisitionCostUsd !== null && proceedsUsd !== null && exchangeFeeUsd !== null ? proceedsUsd - acquisitionCostUsd - exchangeFeeUsd : null;
+  const netProfitUsd = acquisitionCostUsd !== null && proceedsUsd !== null && exchangeFeeUsd !== null
+    ? proceedsUsd - acquisitionCostUsd - exchangeFeeUsd
+    : null;
   return {
-    economics: { acquisitionCostUsd, proceedsUsd, exchangeFeeUsd, gasUsd: null, gasUsed: null, effectiveGasPriceWei: null, slippageBps, netProfitUsd },
+    economics: {
+      acquisitionCostUsd,
+      proceedsUsd,
+      exchangeFeeUsd,
+      gasUsd: null,
+      gasUsed: null,
+      effectiveGasPriceWei: null,
+      slippageBps,
+      netProfitUsd,
+    },
     complete: netProfitUsd !== null && slippageBps !== null && Number.isFinite(netProfitUsd) && Number.isFinite(slippageBps),
   };
 }
@@ -430,7 +414,11 @@ function incompletePairSettlement(
     settledAt: null,
     venueOrRoute: `${plan.buyVenue}->${plan.sellVenue}`,
     chain: 'cex',
-    predicted: { profitUsd: plan.netProfitUsd, feeUsd: plan.costs.totalCostsUsd, slippageBps: plan.expectedSlippageBps },
+    predicted: {
+      profitUsd: plan.netProfitUsd,
+      feeUsd: plan.costs.totalCostsUsd,
+      slippageBps: plan.expectedSlippageBps,
+    },
     realized: {
       acquisitionCostUsd: null,
       proceedsUsd: null,
@@ -458,7 +446,11 @@ function pairLifecycleStatus(buy: NormalizedOrderSettlement, sell: NormalizedOrd
   return 'cancelled';
 }
 
-async function settleOrder(order: CexOrderReceipt, adapter: CexSettlementAdapter, options: Required<Pick<CexExecutorOptions, 'now' | 'sleep'>> & { settlementTimeoutMs: number; pollIntervalMs: number }): Promise<NormalizedOrderSettlement> {
+async function settleOrder(
+  order: CexOrderReceipt,
+  adapter: CexSettlementAdapter,
+  options: Required<Pick<CexExecutorOptions, 'now' | 'sleep'>> & { settlementTimeoutMs: number; pollIntervalMs: number },
+): Promise<NormalizedOrderSettlement> {
   const deadline = options.now() + options.settlementTimeoutMs;
   let last: NormalizedOrderSettlement | null = null;
   let lastError = 'settlement query did not return a terminal state';
@@ -486,7 +478,9 @@ async function settleOrder(order: CexOrderReceipt, adapter: CexSettlementAdapter
       lastError = `final settlement query failed: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
-  return last ? { ...last, status: 'settlement_unknown', terminal: false, error: lastError } : unknownSettlement(order, lastError);
+  return last
+    ? { ...last, status: 'settlement_unknown', terminal: false, error: lastError }
+    : unknownSettlement(order, lastError);
 }
 
 export function createProductionCexSettlementAdapters(): Record<ExecutableCexVenue, CexSettlementAdapter> {
@@ -499,8 +493,18 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
   const sleep = options.sleep || (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
   const settlementTimeoutMs = Math.max(0, options.settlementTimeoutMs ?? SETTLEMENT_TIMEOUT_MS);
   const pollIntervalMs = Math.max(0, options.pollIntervalMs ?? SETTLEMENT_POLL_INTERVAL_MS);
-  const buyRequest = { symbol: plan.symbol, side: 'buy' as const, quantity: plan.baseQty, price: plan.buyLimitPrice ?? plan.buyAsk };
-  const sellRequest = { symbol: plan.symbol, side: 'sell' as const, quantity: plan.baseQty, price: plan.sellLimitPrice ?? plan.sellBid };
+  const buyRequest = {
+    symbol: plan.symbol,
+    side: 'buy' as const,
+    quantity: plan.baseQty,
+    price: plan.buyLimitPrice ?? plan.buyAsk,
+  };
+  const sellRequest = {
+    symbol: plan.symbol,
+    side: 'sell' as const,
+    quantity: plan.baseQty,
+    price: plan.sellLimitPrice ?? plan.sellBid,
+  };
   const [buyResult, sellResult] = await Promise.allSettled([
     adapters[plan.buyVenue].submit(buyRequest),
     adapters[plan.sellVenue].submit(sellRequest),
@@ -508,18 +512,29 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
   const buyOrder = buyResult.status === 'fulfilled' ? buyResult.value : undefined;
   const sellOrder = sellResult.status === 'fulfilled' ? sellResult.value : undefined;
   const [buySettlement, sellSettlement] = await Promise.all([
-    buyOrder ? settleOrder(buyOrder, adapters[buyOrder.venue], { now, sleep, settlementTimeoutMs, pollIntervalMs }) : Promise.resolve(null),
-    sellOrder ? settleOrder(sellOrder, adapters[sellOrder.venue], { now, sleep, settlementTimeoutMs, pollIntervalMs }) : Promise.resolve(null),
+    buyOrder
+      ? settleOrder(buyOrder, adapters[buyOrder.venue], { now, sleep, settlementTimeoutMs, pollIntervalMs })
+      : Promise.resolve(null),
+    sellOrder
+      ? settleOrder(sellOrder, adapters[sellOrder.venue], { now, sleep, settlementTimeoutMs, pollIntervalMs })
+      : Promise.resolve(null),
   ]);
   const submissionError = [buyResult, sellResult]
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     .map(result => result.reason instanceof Error ? result.reason.message : String(result.reason));
+
   if (!buySettlement || !sellSettlement) {
     const orders = [buySettlement, sellSettlement].filter((value): value is NormalizedOrderSettlement => value !== null);
     const status: ExecutionStatus = buyOrder || sellOrder
       ? 'settlement_unknown'
       : submissionError.length > 0 ? 'rejected' : 'failed';
-    const normalized = incompletePairSettlement(plan, orders, status, now, `Order pair was not fully submitted: ${submissionError.join('; ')}`);
+    const normalized = incompletePairSettlement(
+      plan,
+      orders,
+      status,
+      now,
+      `Order pair was not fully submitted: ${submissionError.join('; ')}`,
+    );
     return {
       success: false,
       status,
@@ -534,6 +549,7 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
       error: normalized.error,
     };
   }
+
   const lifecycleStatus = pairLifecycleStatus(buySettlement, sellSettlement);
   const { economics, complete } = calculateRealizedEconomics(plan, buySettlement, sellSettlement);
   const status = lifecycleStatus;
@@ -546,10 +562,15 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
     settledAt: Math.max(buySettlement.terminalAt || 0, sellSettlement.terminalAt || 0) || null,
     venueOrRoute: `${plan.buyVenue}->${plan.sellVenue}`,
     chain: 'cex',
-    predicted: { profitUsd: plan.netProfitUsd, feeUsd: plan.costs.totalCostsUsd, slippageBps: plan.expectedSlippageBps },
+    predicted: {
+      profitUsd: plan.netProfitUsd,
+      feeUsd: plan.costs.totalCostsUsd,
+      slippageBps: plan.expectedSlippageBps,
+    },
     realized: economics,
     provenance: [
-      `${plan.buyVenue}:authenticated_order_query`, `${plan.sellVenue}:authenticated_order_query`,
+      `${plan.buyVenue}:authenticated_order_query`,
+      `${plan.sellVenue}:authenticated_order_query`,
       ...(buySettlement.fills.length > 0 ? [`${plan.buyVenue}:fills`] : []),
       ...(sellSettlement.fills.length > 0 ? [`${plan.sellVenue}:fills`] : []),
       ...(buySettlement.finalBalances || sellSettlement.finalBalances ? ['authenticated_final_balances'] : []),
@@ -557,10 +578,16 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
     orders: [buySettlement, sellSettlement],
     error: submissionError.length > 0 ? submissionError.join('; ') : undefined,
   };
+
   logger.info('[CEX Executor] Normalized exchange settlement', {
-    component: 'CentralizedExchangeExecutor', symbol: plan.symbol, status, settlementConfirmed,
-    realizedProfitUsd: economics.netProfitUsd, realizedFeeUsd: economics.exchangeFeeUsd,
+    component: 'CentralizedExchangeExecutor',
+    symbol: plan.symbol,
+    status,
+    settlementConfirmed,
+    realizedProfitUsd: economics.netProfitUsd,
+    realizedFeeUsd: economics.exchangeFeeUsd,
   });
+
   return {
     success: status === 'filled' && settlementConfirmed && complete,
     status,
