@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
+import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import {
   adoptResolvedEnvironmentVariable,
@@ -227,6 +228,11 @@ export function ensureTelemetryBootstrap(): Promise<void> {
       await probeReadOnlyZeroX();
       await probeMarketUniverseProviders();
 
+      // Search remains active independently of current profitability/execution
+      // posture. The graph performs broad measured discovery and deterministic
+      // pruning before bounded Cryptara/Monte-Carlo enrichment.
+      measuredOpportunityGraph.start();
+
       const healthyProviders = TELEMETRY_CHAINS.flatMap(chain =>
         multiProviderRpcManager.getHealth(chain)
           .filter(observation => observation.http.success)
@@ -236,6 +242,7 @@ export function ensureTelemetryBootstrap(): Promise<void> {
       logger.info('[TelemetryBootstrap] Shared blockchain telemetry ready', {
         component: 'TelemetryBootstrap',
         healthyProviders,
+        measuredOpportunityGraph: measuredOpportunityGraph.getLatestCycle(),
         marketDataProviders: marketDataProviders.getProviderStatuses().map(status => ({
           provider: status.provider,
           state: status.state,
