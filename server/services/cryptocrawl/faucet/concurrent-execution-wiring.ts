@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
+import { ensureCryptaraCexEvidenceWiring } from '../integration/cryptara-cex-evidence-wiring.js';
 import { autonomousFaucet } from './autonomous-faucet.js';
 import {
   competitionThreatContribution,
@@ -96,6 +97,7 @@ export function ensureConcurrentExecutionWiring(): void {
   const target = autonomousFaucet as unknown as FaucetRuntime;
   if (installed.has(target)) return;
   installed.add(target);
+  ensureCryptaraCexEvidenceWiring();
 
   // Defense in depth: if legacy Cain diagnostics call this helper elsewhere,
   // topology-inapplicable competition contributes no numeric threat pressure and
@@ -286,6 +288,7 @@ export function ensureConcurrentExecutionWiring(): void {
     settlementSemantics: 'terminal_realized_only',
     legacyCainCexExecutionAuthority: false,
     competitionEvidenceAuthority: 'topology_aware_no_nan',
+    cryptaraCexMempoolPenalty: 'removed_as_not_applicable',
     cexGasApplicability: 'not_applicable',
     cexMempoolCompetitionApplicability: 'not_applicable',
     nonFiniteEvidencePolicy: 'unknown_or_not_applicable_never_synthetic_zero',
