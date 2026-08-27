@@ -1,11 +1,14 @@
 import logger from '../../../logger.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
+import { getVenueCapabilities } from '../discovery/venue-capability-registry.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
 import { workloadRouter } from '../../computationalBeam/workloadRouter.js';
 import { getMeasuredEvolutionMetrics } from '../evolution/measured-execution-feedback.js';
+import { resolveCoinStatsEnvironment } from '../runtime/environment-contract.js';
+import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 
 const CHAINS: SupportedChain[] = [
   'ethereum',
@@ -31,6 +34,26 @@ function blockchainProviderSnapshot() {
   }));
 }
 
+function executionConfiguration() {
+  const krakenConfigured = !!(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim());
+  const okxConfigured = !!(
+    process.env.OKX_API_KEY?.trim()
+    && process.env.OKX_API_SECRET?.trim()
+    && process.env.OKX_API_PASSPHRASE?.trim()
+  );
+  const noExecutionGuardEnabled = process.env.NO_EXECUTION === 'true';
+  const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
+  const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
+  return {
+    krakenConfigured,
+    okxConfigured,
+    noExecutionGuardEnabled,
+    liveExecutionEnabled,
+    liveExecutionConfirmed,
+    centralizedExecutionConfigured: krakenConfigured && okxConfigured,
+  };
+}
+
 export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
   if (heartbeatRunning) return;
   heartbeatRunning = true;
@@ -49,9 +72,59 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const latest = canonicalOpportunityState.getLatest();
     const stage = stageManager.getState();
     const measured = getMeasuredEvolutionMetrics();
+    const runtime = getCryptoCrawlerRuntimeAttestation();
+    const execution = executionConfiguration();
+    const providerStatuses = marketDataProviders.getProviderStatuses();
+    const coreMarketDataReady = providerStatuses.some(status =>
+      status.provider === 'coingecko' && ['live', 'cached', 'stale'].includes(status.state),
+    );
+    const coinStatsEnvironment = resolveCoinStatsEnvironment();
+    const criticalRpcReady = blockchainProviderSnapshot().some(chain =>
+      chain.providers.some(provider => provider.http === 'healthy'),
+    );
+
+    const readiness = {
+      APP_READY: {
+        ready: isRuntimeIdentitySafe(runtime),
+        detail: runtime.state === 'mismatch'
+          ? 'runtime source/deployment identity mismatch detected'
+          : 'process is running and runtime identity has no detected mismatch',
+      },
+      CONFIG_READY: {
+        ready: execution.centralizedExecutionConfigured,
+        detail: execution.centralizedExecutionConfigured
+          ? 'Kraken and OKX execution credentials are visible to this runtime'
+          : 'one or more settlement-safe centralized execution credentials are not visible',
+      },
+      DATA_READY: {
+        ready: coreMarketDataReady && criticalRpcReady,
+        detail: `coreMarketData=${coreMarketDataReady}; rpc=${criticalRpcReady}`,
+      },
+      DISCOVERY_READY: {
+        ready: recentMinute.observedOpportunities > 0,
+        detail: `observedOpportunitiesLastMinute=${recentMinute.observedOpportunities}`,
+      },
+      EXECUTION_READY: {
+        ready: !execution.noExecutionGuardEnabled
+          && execution.liveExecutionEnabled
+          && execution.liveExecutionConfirmed
+          && execution.centralizedExecutionConfigured,
+        detail: `guard=${execution.noExecutionGuardEnabled}; enabled=${execution.liveExecutionEnabled}; confirmed=${execution.liveExecutionConfirmed}; cexConfigured=${execution.centralizedExecutionConfigured}`,
+      },
+      TRADING_READY: {
+        ready: stageManager.canExecuteTrades()
+          && !execution.noExecutionGuardEnabled
+          && execution.liveExecutionEnabled
+          && execution.liveExecutionConfirmed
+          && execution.centralizedExecutionConfigured,
+        detail: `stage=${stage.currentStage}; stageCanExecute=${stageManager.canExecuteTrades()}`,
+      },
+    };
 
     logger.info('[CryptoRuntime] Authoritative runtime heartbeat', {
       component: 'CryptoRuntimeObservability',
+      runtime,
+      readiness,
       governance: {
         stage: stage.currentStage,
         paused: stage.isPaused,
@@ -99,13 +172,22 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       providers: {
         alchemy,
         rpc: blockchainProviderSnapshot(),
-        marketData: marketDataProviders.getProviderStatuses().map(status => ({
+        marketData: providerStatuses.map(status => ({
           provider: status.provider,
           state: status.state,
           observedAt: status.observedAt,
           detail: status.detail,
+          requiredForCoreCexDiscovery: status.provider === 'coingecko',
         })),
+        optional: {
+          coinStats: {
+            requiredForCoreCexDiscovery: false,
+            environmentState: coinStatsEnvironment.state,
+            sourceName: coinStatsEnvironment.sourceName,
+          },
+        },
       },
+      venues: getVenueCapabilities(),
       beam: {
         routed: beam.router,
         directional: {
@@ -122,9 +204,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       },
       learning: measured,
       executionPosture: {
-        noExecutionGuardEnabled: process.env.NO_EXECUTION === 'true',
-        liveExecutionEnabled: process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true',
-        liveExecutionConfirmed: process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK',
+        ...execution,
         zeroCapitalExecutionEnabled: process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true',
       },
     });
@@ -147,6 +227,8 @@ export function ensureCryptoRuntimeObservability(): void {
   logger.info('[CryptoRuntime] Runtime observability installed', {
     component: 'CryptoRuntimeObservability',
     heartbeatMs: intervalMs,
+    runtimeAttestation: true,
+    decomposedReadiness: ['APP_READY', 'CONFIG_READY', 'DATA_READY', 'DISCOVERY_READY', 'EXECUTION_READY', 'TRADING_READY'],
     providerHeartbeat: ['Alchemy', 'Ankr/shared-RPC', 'market-data'],
     canonicalDecisionTelemetry: true,
     directionalBeamTelemetry: true,
