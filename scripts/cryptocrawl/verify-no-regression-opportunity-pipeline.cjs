@@ -77,6 +77,12 @@ requireText(executor, "!['kraken', 'okx'].includes(plan.sellVenue)", 'live execu
 requireText(executor, 'plan.netProfitUsd <= 0', 'strict positive-net live execution preserved');
 requireText(executor, "CRYPTO_ARBITRAGE_LIVE_CONFIRMATION !== 'I_ACCEPT_LIVE_ORDER_RISK'", 'explicit live execution confirmation preserved');
 
+const assessmentWiring = read('server/services/cryptocrawl/integration/cryptara-assessment-wiring.ts');
+requireText(assessmentWiring, 'context.plan.netProfitUsd > 0', 'Monte Carlo requires deterministic positive all-in economics');
+requireText(assessmentWiring, 'deterministicPositivePlan && target.status.isRunning', 'Monte Carlo runs only for deterministic-positive plans while Cryptara is active');
+requireText(assessmentWiring, 'Cryptara Monte Carlo skipped for deterministic non-positive economics', 'negative/zero deterministic candidates are explicitly rejected before stochastic compute');
+requireText(assessmentWiring, 'target.latestMonteCarloEvidence = null', 'stale Monte Carlo evidence is cleared for every new observation');
+
 const marketData = read('server/services/cryptocrawl/intelligence/market-data-providers.ts');
 requireText(marketData, 'rankMeasuredMarketUniverse', 'deterministic measured-universe cache ranking');
 requireText(marketData, 'orderMeasuredMarketUniverse', 'rotating measured-universe consumption');
@@ -172,6 +178,7 @@ console.log(' - Kraken fee batching and OKX authenticated throttling preserve me
 console.log(' - bounded concurrent scanning remains governance-gated and capped at eight workers');
 console.log(' - the verifier reuses the faucet-consumed measured universe without advancing rotation twice');
 console.log(' - measured search observations remain separate from verified-positive and settlement evidence');
+console.log(' - deterministic non-positive opportunities are rejected before Monte Carlo/Beam compute');
 console.log(' - strict positive-net, live-confirmation, StageManager, kill-switch, and terminal-learning gates are preserved');
 console.log(' - measured market universe is ranked deterministically and rotated once per consumption boundary');
 console.log(' - Stage 1 cannot advance without a fresh verified-positive canonical signal');
