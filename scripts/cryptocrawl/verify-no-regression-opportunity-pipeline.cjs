@@ -14,11 +14,7 @@ function forbidText(source, needle, label) {
 }
 
 const packageJson = read('package.json');
-requireText(
-  packageJson,
-  '"prebuild": "node scripts/cryptocrawl/verify-deployment-preflight.cjs"',
-  'deployment build must invoke the fail-closed CryptoCrawler preflight',
-);
+requireText(packageJson, '"prebuild": "node scripts/cryptocrawl/verify-deployment-preflight.cjs"', 'deployment build must invoke the fail-closed CryptoCrawler preflight');
 
 const deploymentPreflight = read('scripts/cryptocrawl/verify-deployment-preflight.cjs');
 requireText(deploymentPreflight, 'verify-no-regression-opportunity-pipeline.cjs', 'deployment preflight runs invariant suite');
@@ -62,6 +58,13 @@ requireText(feeResolver, 'requestPairs.join(', 'Kraken TradeVolume request carri
 requireText(feeResolver, 'serializeOkxPrivate', 'OKX authenticated fee requests share one throttle authority');
 requireText(feeResolver, 'OKX_FEE_MIN_INTERVAL_MS', 'OKX account fee throttle interval is explicit');
 requireText(feeResolver, 'Math.max(425', 'OKX fee throttle retains the conservative documented-rate floor');
+requireText(feeResolver, 'getOkxInstrumentDirectory', 'OKX fee discovery maps current public instruments to fee groups');
+requireText(feeResolver, '/api/v5/public/instruments?instType=SPOT', 'OKX fee groups derive from public instrument metadata');
+requireText(feeResolver, 'groupId', 'OKX 2026 fee-group identifier is used');
+requireText(feeResolver, 'feeGroup', 'OKX 2026 fee-group response shape is parsed');
+requireText(feeResolver, 'fetchOkxFeeEvidenceBatch', 'OKX batch fee discovery shares one request across group members');
+requireText(feeResolver, 'OKX fee batch resolved using instrument fee groups', 'OKX grouped batch telemetry exists');
+requireText(feeResolver, 'CRYPTO_ARBITRAGE_FEE_CACHE_MS || 300_000', 'account fee evidence uses a bounded five-minute default TTL');
 requireText(feeResolver, 'primeCexFeeEvidence', 'fee evidence can be primed before concurrent economics evaluation');
 
 const stream = read('server/services/cryptocrawl/intelligence/cex-order-book-stream.ts');
@@ -76,12 +79,40 @@ requireText(executor, "!['kraken', 'okx'].includes(plan.buyVenue)", 'live execut
 requireText(executor, "!['kraken', 'okx'].includes(plan.sellVenue)", 'live execution sell-venue allowlist preserved');
 requireText(executor, 'plan.netProfitUsd <= 0', 'strict positive-net live execution preserved');
 requireText(executor, "CRYPTO_ARBITRAGE_LIVE_CONFIRMATION !== 'I_ACCEPT_LIVE_ORDER_RISK'", 'explicit live execution confirmation preserved');
+requireText(executor, "topology: 'CEX_CEX'", 'execution Monte Carlo declares CEX topology');
+requireText(executor, 'profitableProbabilityInterval', 'execution logs Monte Carlo confidence interval');
+requireText(executor, 'p5NetProfitUsd', 'execution logs p5 tail result');
+requireText(executor, 'p1NetProfitUsd', 'execution logs p1 tail result');
+requireText(executor, 'expectedShortfall95Usd', 'execution logs expected shortfall');
+requireText(executor, 'policyVersion', 'execution logs Monte Carlo policy version');
 
 const assessmentWiring = read('server/services/cryptocrawl/integration/cryptara-assessment-wiring.ts');
 requireText(assessmentWiring, 'context.plan.netProfitUsd > 0', 'Monte Carlo requires deterministic positive all-in economics');
 requireText(assessmentWiring, 'deterministicPositivePlan && target.status.isRunning', 'Monte Carlo runs only for deterministic-positive plans while Cryptara is active');
 requireText(assessmentWiring, 'Cryptara Monte Carlo skipped for deterministic non-positive economics', 'negative/zero deterministic candidates are explicitly rejected before stochastic compute');
 requireText(assessmentWiring, 'target.latestMonteCarloEvidence = null', 'stale Monte Carlo evidence is cleared for every new observation');
+requireText(assessmentWiring, "recommendation: 'reject'", 'deterministic non-positive candidates remain explicit rejects when MC is skipped');
+requireText(assessmentWiring, 'probabilityOfProfitableExecution: 0', 'deterministic non-positive candidates cannot inherit stochastic profitability');
+requireText(assessmentWiring, "item.startsWith('provider_coinstats_')", 'CoinStats gaps are explicitly classified optional');
+requireText(assessmentWiring, 'optionalProviderMissingDoesNotReduceRank', 'optional provider absence does not reduce authoritative rank completeness');
+
+const mcPolicy = read('server/services/cryptocrawl/validation/monte-carlo-policy.ts');
+requireText(mcPolicy, 'MONTE_CARLO_POLICY_VERSION', 'shared Monte Carlo policy is versioned');
+requireText(mcPolicy, 'wilsonInterval', 'shared Monte Carlo policy exposes probability confidence intervals');
+requireText(mcPolicy, 'shouldEscalateMonteCarlo', 'shared Monte Carlo policy supports near-boundary escalation');
+requireText(mcPolicy, "'empirical_bootstrap'", 'shared Monte Carlo policy supports empirical calibration');
+requireText(mcPolicy, "'student_t'", 'shared Monte Carlo policy uses heavy-tail fallback');
+requireText(mcPolicy, 'CRYPTOCRAWL_MC_MAX_SAMPLES', 'shared Monte Carlo policy has bounded adaptive maximum');
+
+const executionMc = read('server/services/cryptocrawl/execution/adapters/monte-carlo-profitability.ts');
+requireText(executionMc, "from '../../validation/monte-carlo-policy.js'", 'execution MC consumes the shared policy');
+requireText(executionMc, 'expectedNetProfitUsd > 0', 'execution MC cannot admit deterministic non-positive economics');
+requireText(executionMc, 'wilsonInterval(profitable, outcomes.length)', 'execution MC evaluates probability uncertainty sequentially');
+requireText(executionMc, 'studentT(', 'execution MC has heavy-tail sampling');
+requireText(executionMc, 'empiricalDraw(', 'execution MC can bootstrap measured residuals');
+requireText(executionMc, 'p1NetProfitUsd', 'execution MC exposes p1');
+requireText(executionMc, 'expectedShortfall95Usd', 'execution MC exposes ES95');
+forbidText(executionMc, 'Math.abs(normal01(random)) * slippageSigmaBps', 'legacy one-sided Gaussian-only slippage authority removed');
 
 const marketData = read('server/services/cryptocrawl/intelligence/market-data-providers.ts');
 requireText(marketData, 'rankMeasuredMarketUniverse', 'deterministic measured-universe cache ranking');
@@ -174,11 +205,13 @@ console.log('[verify-no-regression-opportunity-pipeline] PASS');
 console.log(' - deployment prebuild validates critical CryptoCrawler invariants with Node built-ins only');
 console.log(' - normal Vite/esbuild production bundling remains the syntax/import gate immediately afterward');
 console.log(' - Coinbase remains inactive while Kraken/OKX remain settlement-safe live CEX venues');
-console.log(' - Kraken fee batching and OKX authenticated throttling preserve measured account-specific fee evidence');
+console.log(' - Kraken batching and OKX fee-group batching preserve measured account-specific fee evidence under documented throttling');
 console.log(' - bounded concurrent scanning remains governance-gated and capped at eight workers');
 console.log(' - the verifier reuses the faucet-consumed measured universe without advancing rotation twice');
 console.log(' - measured search observations remain separate from verified-positive and settlement evidence');
-console.log(' - deterministic non-positive opportunities are rejected before Monte Carlo/Beam compute');
+console.log(' - deterministic non-positive opportunities are rejected before Monte Carlo/Beam compute and stay explicit rejects');
+console.log(' - optional CoinStats absence remains visible without reducing critical opportunity completeness');
+console.log(' - execution Monte Carlo consumes the shared adaptive heavy-tail policy with Wilson confidence bounds and tail outputs');
 console.log(' - strict positive-net, live-confirmation, StageManager, kill-switch, and terminal-learning gates are preserved');
 console.log(' - measured market universe is ranked deterministically and rotated once per consumption boundary');
 console.log(' - Stage 1 cannot advance without a fresh verified-positive canonical signal');
