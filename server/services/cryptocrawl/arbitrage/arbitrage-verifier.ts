@@ -13,6 +13,7 @@
 import { gasOracle } from '../bridge/gas-oracle.js';
 import { routeOptimizer } from '../bridge/route-optimizer.js';
 import type { ChainId as BridgeChainId } from '../bridge/types';
+import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
@@ -20,6 +21,9 @@ import { cexOrderBookStreams, type CexOrderBookStreamStats, type CexStreamVenue 
 import { resolveCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
 
+// Coinbase remains in the compatibility union because persisted/legacy data can
+// contain it. The authoritative capability registry determines whether it can be
+// queried or executed now; currently it is intentionally inactive.
 export type QuoteVenue = 'coinbase' | 'kraken' | 'okx';
 
 export interface OrderBookLevel {
@@ -273,15 +277,16 @@ function consumeSellBids(bids: OrderBookLevel[], requestedQuantity: number): { q
 }
 
 async function fetchQuotes(symbol: string, maxAgeMs: number): Promise<TopOfBookQuote[]> {
-  const tasks = [
-    fetchStreamQuote('coinbase', symbol, maxAgeMs).then(quote => quote || fetchCoinbaseTopOfBook(symbol)),
-    fetchStreamQuote('kraken', symbol, maxAgeMs).then(quote => quote || fetchKrakenTopOfBook(symbol)),
-    fetchStreamQuote('okx', symbol, maxAgeMs).then(quote => quote || fetchOkxTopOfBook(symbol)),
-  ];
+  const venues = getActiveExecutableQuoteVenues();
+  const tasks = venues.map(venue => {
+    if (venue === 'kraken') {
+      return fetchStreamQuote('kraken', symbol, maxAgeMs).then(quote => quote || fetchKrakenTopOfBook(symbol));
+    }
+    return fetchStreamQuote('okx', symbol, maxAgeMs).then(quote => quote || fetchOkxTopOfBook(symbol));
+  });
   const settled = await Promise.allSettled(tasks);
   const quotes: TopOfBookQuote[] = [];
   const errors: Array<{ venue: QuoteVenue; error: string }> = [];
-  const venues: QuoteVenue[] = ['coinbase', 'kraken', 'okx'];
   for (let i = 0; i < settled.length; i++) {
     const result = settled[i];
     if (result.status === 'fulfilled') quotes.push(result.value);
@@ -449,6 +454,15 @@ export class ArbitrageVerifier {
           const buyFeeBps = req.buyFeesBps?.[buy.venue] ?? buyEvidence?.takerFeeBps ?? configuredTakerFeeBps(buy.venue);
           const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? sellEvidence?.takerFeeBps ?? configuredTakerFeeBps(sell.venue);
           if (buyFeeBps === null || buyFeeBps === undefined || sellFeeBps === null || sellFeeBps === undefined) continue;
+
+          // If the top-of-book spread cannot clear percentage fees plus fixed
+          // costs even at the largest permitted notional, no smaller slice can
+          // become profitable (depth can only worsen execution). Reject before
+          // expensive depth sweeps/Monte Carlo without weakening the >0 net gate.
+          const topSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
+          const fixedCostsBpsAtMaxNotional = ((gasUsd + bridgeFeeUsd + transferFeeUsd) / req.notionalUsd) * 10_000;
+          const breakEvenBps = buyFeeBps + sellFeeBps + fixedCostsBpsAtMaxNotional;
+          if (!Number.isFinite(topSpreadBps) || topSpreadBps <= breakEvenBps) continue;
 
           for (const fraction of quantityFractions) {
             const requestedNotionalUsd = req.notionalUsd * fraction;
