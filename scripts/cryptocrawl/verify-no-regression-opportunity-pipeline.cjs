@@ -33,6 +33,17 @@ function parseTypeScript(relative) {
   }
 }
 
+const packageJson = read('package.json');
+requireText(
+  packageJson,
+  '"prebuild": "node scripts/cryptocrawl/verify-deployment-preflight.cjs"',
+  'deployment build must invoke the fail-closed CryptoCrawler preflight',
+);
+const deploymentPreflight = read('scripts/cryptocrawl/verify-deployment-preflight.cjs');
+requireText(deploymentPreflight, 'verify-no-regression-opportunity-pipeline.cjs', 'deployment preflight runs invariant suite');
+requireText(deploymentPreflight, "'typescript', 'bin', 'tsc'", 'deployment preflight runs repository TypeScript check');
+requireText(deploymentPreflight, "NO_EXECUTION: 'true'", 'deployment preflight is execution-safe');
+
 const capability = read('server/services/cryptocrawl/discovery/venue-capability-registry.ts');
 requireText(capability, "venue: 'coinbase'", 'venue registry contains Coinbase compatibility entry');
 requireText(capability, 'enabled: false', 'Coinbase remains inactive');
@@ -75,6 +86,9 @@ const progression = read('server/services/cryptocrawl/governance/automatic-stage
 requireText(progression, 'STAGE_ONE_OPPORTUNITY_ECONOMICS_BLOCK_REASONS', 'Stage 1 economics/readiness split');
 requireText(progression, "stageManager.getState().currentStage !== 1", 'Stage 1-only readiness exception');
 requireText(progression, 'opportunity_rejection_preserved:', 'negative opportunity rejection provenance');
+requireText(progression, 'STAGE_ONE_SIGNAL_WINDOW_MS', 'Stage 1 proof-of-signal freshness window');
+requireText(progression, 'recentSignals.verifiedPositiveOpportunities > 0', 'Stage 1 requires a fresh verified-positive canonical signal');
+requireText(progression, "decision: advancementMarketGateReady ? 'ALLOW' : 'BLOCK'", 'Stage 1 signal evidence is handed to StageManager market-gate authority');
 requireText(progression, "throw new Error('Execution evidence requires a terminal normalized settlement')", 'terminal-only learning preserved');
 
 const stageManager = read('server/services/cryptocrawl/governance/stage-management.ts');
@@ -91,7 +105,7 @@ forbidText(attestation, 'API_KEY', 'runtime attestation credential isolation');
 
 const environment = read('server/services/cryptocrawl/runtime/environment-contract.ts');
 requireText(environment, "resolution.state !== 'VISIBLE'", 'alias adoption requires visible credential');
-requireText(environment, "providerState: inferred", 'provider state remains distinct from environment visibility');
+requireText(environment, 'providerState: inferred', 'provider state remains distinct from environment visibility');
 forbidText(environment, 'console.log', 'environment contract does not log credentials');
 forbidText(environment, 'return sourceValue', 'environment contract never returns a secret value from adoption');
 
@@ -145,10 +159,11 @@ if (failures.length) {
 }
 
 console.log('[verify-no-regression-opportunity-pipeline] PASS');
+console.log(' - deployment builds fail closed on invariant or TypeScript errors');
 console.log(' - Coinbase remains inactive while Kraken/OKX remain settlement-safe live CEX venues');
 console.log(' - strict positive-net, live-confirmation, StageManager, kill-switch, and terminal-learning gates are preserved');
 console.log(' - measured market universe is ranked deterministically and rotated once per consumption boundary');
 console.log(' - optional CoinStats visibility is diagnosed without exposing credentials or becoming core readiness');
-console.log(' - Stage 1 readiness distinguishes infrastructure health from a correctly rejected fee-negative opportunity');
+console.log(' - Stage 1 ignores one losing candidate as a system-health failure but cannot advance without a fresh verified-positive canonical signal');
 console.log(' - discovery scaling uses observed search density separately from verified-positive density');
 console.log(' - legacy scaling no longer launches a competing control loop or claims unperformed infrastructure actions');
