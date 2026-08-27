@@ -127,14 +127,16 @@ try {
   );
 
   const expectedBaseUrl = scenario === 'us' ? 'https://us.okx.com' : 'https://openapi.okx.com';
-  const { getOkxExecutionRestBaseUrl } = await import(
-    '../../server/services/cryptocrawl/intelligence/okx-region-authority.js'
-  );
+  const {
+    getOkxExecutionRestBaseUrl,
+    getOkxPrivateAuthoritySnapshot,
+  } = await import('../../server/services/cryptocrawl/intelligence/cex-private-authority.js');
   assert.equal(
     await getOkxExecutionRestBaseUrl(),
     expectedBaseUrl,
     'shared execution authority must select the credential-compatible OKX region',
   );
+  assert.equal(getOkxPrivateAuthoritySnapshot().baseUrl, expectedBaseUrl);
 
   const { createProductionCexSettlementAdapters } = await import(
     '../../server/services/cryptocrawl/execution/cex-settlement.js'
@@ -153,6 +155,7 @@ try {
     orderSubmit.url.startsWith(expectedBaseUrl),
     `OKX order submission must stay on selected region ${expectedBaseUrl}`,
   );
+  assert.ok(getOkxPrivateAuthoritySnapshot().lanes.order_write.requestCount >= 1);
 
   const usDirectoryCalls = calls.filter(call =>
     call.url.startsWith('https://us.okx.com') && call.url.includes('/api/v5/public/instruments?instType=SPOT'),
@@ -200,10 +203,20 @@ try {
     new URL('../../server/services/cryptocrawl/execution/cex-settlement.ts', import.meta.url),
     'utf8',
   );
-  assert.match(settlementSource, /getOkxExecutionRestBaseUrl/);
-  assert.doesNotMatch(settlementSource, /https:\/\/www\.okx\.com\$\{requestPath\}/);
+  assert.match(settlementSource, /cex-private-authority/);
+  assert.match(settlementSource, /okxPrivateRequest/);
+  assert.match(settlementSource, /krakenPrivateRequest/);
+  assert.doesNotMatch(settlementSource, /createHmac/);
+  assert.doesNotMatch(settlementSource, /lastNonce/);
 
-  console.log(`OKX fee, symbol and execution-region authority verification passed (${scenario})`);
+  const regionFacadeSource = readFileSync(
+    new URL('../../server/services/cryptocrawl/intelligence/okx-region-authority.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(regionFacadeSource, /cex-private-authority/);
+  assert.doesNotMatch(regionFacadeSource, /createHmac/);
+
+  console.log(`OKX fee, symbol and single private-region authority verification passed (${scenario})`);
 } finally {
   globalThis.fetch = originalFetch;
 }
