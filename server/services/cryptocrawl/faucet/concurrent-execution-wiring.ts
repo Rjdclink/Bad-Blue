@@ -70,7 +70,6 @@ const OPENING_POLICY = Object.freeze({
   minConfidenceToOpen: 0.7,
   minValidatorsToOpen: 4,
   minExpectedProfitToOpen: 0,
-  maxGasToOpen: 10,
   maxCompetitionToOpen: 0.7,
 });
 
@@ -95,9 +94,10 @@ function formatMoney(value: number | null): string {
  * scheduler itself.
  *
  * The bridge also prevents legacy NaN sentinels from becoming decision evidence.
- * The faucet's executable plan type is CEX_CEX, so on-chain mempool competition is
- * not an applicable opening gate. Missing optional numeric inputs skip advisory
- * Cain reasoning rather than entering the reasoning engine as non-finite values.
+ * The faucet's executable plan type is CEX_CEX, so on-chain gas and mempool
+ * competition are not applicable opening gates. Missing optional numeric inputs
+ * skip advisory Cain reasoning rather than entering the reasoning engine as
+ * non-finite values.
  */
 export function ensureConcurrentExecutionWiring(): void {
   const target = autonomousFaucet as unknown as FaucetRuntime;
@@ -108,7 +108,6 @@ export function ensureConcurrentExecutionWiring(): void {
   target.performDimensionalReasoning = async (): Promise<FaucetReasoning> => {
     const reasoningInputs = {
       volatility: finiteOrNull(target.marketConditions.volatility),
-      gasEfficiency: finiteOrNull(target.marketConditions.gasEfficiency),
       confidence: finiteOrNull(target.marketConditions.confidence),
     };
     const missing = Object.entries(reasoningInputs)
@@ -202,17 +201,14 @@ export function ensureConcurrentExecutionWiring(): void {
     });
     if (!profitPasses) reasons.push(`Insufficient expected profit: ${netProfit === null ? expectedProfit.status : formatMoney(netProfit)}`);
 
-    const gas = finiteOrNull(target.marketConditions.gasEfficiency);
-    const gasPasses = gas !== null && gas <= OPENING_POLICY.maxGasToOpen;
+    // The legacy faucet executes verified Kraken/OKX CEX_CEX plans through the
+    // canonical scheduler. On-chain gas is therefore not an opening criterion.
     validators.push({
       name: 'gas_cost',
-      passed: gasPasses,
+      passed: true,
       weight: 0.20,
-      details: gas === null
-        ? `Gas cost: unknown (max: $${OPENING_POLICY.maxGasToOpen})`
-        : `Gas cost: $${gas.toFixed(2)} (max: $${OPENING_POLICY.maxGasToOpen})`,
+      details: 'Gas cost: N/A for CEX_CEX (no on-chain transaction is submitted by this route)',
     });
-    if (!gasPasses) reasons.push(gas === null ? 'Gas-cost evidence unavailable' : `Gas too expensive: $${gas.toFixed(2)}`);
 
     const competitionEvidence = resolveCompetitionEvidence({
       topology: 'CEX_CEX',
@@ -259,10 +255,8 @@ export function ensureConcurrentExecutionWiring(): void {
     });
     if (!circuitPasses) reasons.push('Circuit breaker is open');
 
-    // Competition is explicitly not applicable to CEX_CEX, so confidence is
-    // normalized over applicable validator weights instead of awarding/removing
-    // an artificial 20% score for an unrelated on-chain signal.
-    const applicableValidators = validators.filter(validator => validator.name !== 'competition');
+    const notApplicableNames = new Set(['gas_cost', 'competition']);
+    const applicableValidators = validators.filter(validator => !notApplicableNames.has(validator.name));
     const applicableWeight = applicableValidators.reduce((sum, validator) => sum + validator.weight, 0);
     const passedWeight = applicableValidators.reduce(
       (sum, validator) => sum + (validator.passed ? validator.weight : 0),
@@ -277,7 +271,7 @@ export function ensureConcurrentExecutionWiring(): void {
       passed: passedCount,
       applicable: applicableValidators.length,
       total: validators.length,
-      notApplicable: ['competition'],
+      notApplicable: ['gas_cost', 'competition'],
       confidence,
       validators: validators.map(validator => ({
         name: validator.name,
@@ -333,6 +327,7 @@ export function ensureConcurrentExecutionWiring(): void {
     distributedResourceLeases: true,
     settlementSemantics: 'terminal_realized_only',
     competitionEvidenceAuthority: 'topology_aware_no_nan',
+    cexGasApplicability: 'not_applicable',
     cexMempoolCompetitionApplicability: 'not_applicable',
     nonFiniteReasoningPolicy: 'skip_optional_reasoning_no_synthetic_fallback',
     scheduler: canonicalExecutionScheduler.getStats(),
