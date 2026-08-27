@@ -16,6 +16,8 @@ export interface QuantiExecutionPolicy {
   timeoutMs: number;
   deadlineAt?: number;
   deterministic?: boolean;
+  sideEffectFree?: boolean;
+  backendEligible?: boolean;
   allowDeduplication?: boolean;
   dedupeKey?: string;
   usefulWorkUnits?: number;
