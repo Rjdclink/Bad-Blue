@@ -3,6 +3,11 @@ import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
+import {
+  adoptResolvedEnvironmentVariable,
+  resolveCoinStatsEnvironment,
+} from '../runtime/environment-contract.js';
+import { getCryptoCrawlerRuntimeAttestation } from '../runtime/runtime-attestation.js';
 
 const TELEMETRY_CHAINS: SupportedChain[] = [
   'ethereum',
@@ -47,16 +52,6 @@ function logExecutionPosture(): void {
 function adoptLegacyProviderAliases(): void {
   const aliases: Array<{ canonical: string; candidates: string[] }> = [
     { canonical: 'ALCHEMY_API_KEY', candidates: ['ALCHEMY_KEY'] },
-    {
-      canonical: 'COINSTATS_API_KEY',
-      candidates: [
-        'COIN_STATS_API_KEY',
-        'COINSTATS_KEY',
-        'COIN_STATS_KEY',
-        'COINSTATS_APIKEY',
-        'COIN_STATS_APIKEY',
-      ],
-    },
     { canonical: 'ZEROX_API_KEY', candidates: ['ZERO_X_API_KEY', 'ZEROX_KEY'] },
   ];
 
@@ -72,22 +67,15 @@ function adoptLegacyProviderAliases(): void {
     });
   }
 
-  const coinStatsSource = [
-    'COINSTATS_API_KEY',
-    'COINSTATS_API_KEY_PROD',
-    'COINSTATS_API_KEY_STAGING',
-    'COINSTATS_API_KEY_DEV',
-    'COIN_STATS_API_KEY',
-    'COINSTATS_KEY',
-    'COIN_STATS_KEY',
-    'COINSTATS_APIKEY',
-    'COIN_STATS_APIKEY',
-  ].find(name => process.env[name]?.trim());
-
+  const coinStatsResolution = resolveCoinStatsEnvironment();
+  const adopted = adoptResolvedEnvironmentVariable(coinStatsResolution);
   logger.info('[TelemetryBootstrap] CoinStats credential resolution', {
     component: 'TelemetryBootstrap',
-    configured: !!coinStatsSource,
-    source: coinStatsSource || null,
+    state: coinStatsResolution.state,
+    configured: coinStatsResolution.state === 'VISIBLE',
+    source: coinStatsResolution.sourceName,
+    adoptedCanonical: adopted,
+    aliasesChecked: coinStatsResolution.aliasesChecked,
   });
 }
 
@@ -228,6 +216,10 @@ export function ensureTelemetryBootstrap(): Promise<void> {
   if (!bootstrapPromise) {
     adoptLegacyProviderAliases();
     logExecutionPosture();
+    logger.info('[TelemetryBootstrap] Runtime identity', {
+      component: 'TelemetryBootstrap',
+      ...getCryptoCrawlerRuntimeAttestation(),
+    });
     bootstrapPromise = (async () => {
       await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);
       await registerBestEffortAnkrFallbacks();
