@@ -37,4 +37,10 @@ run(
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-no-regression-opportunity-pipeline.cjs')],
 );
 
-console.log('[deployment-preflight] PASS — CryptoCrawler invariants are clean; normal production build continues with Vite/esbuild');
+run(
+  'CryptoCrawler core topology lifecycle wiring',
+  process.execPath,
+  [path.join(root, 'scripts', 'cryptocrawl', 'verify-core-topology-wiring.cjs')],
+);
+
+console.log('[deployment-preflight] PASS — CryptoCrawler invariants and topology lifecycle wiring are clean; normal production build continues with Vite/esbuild');
