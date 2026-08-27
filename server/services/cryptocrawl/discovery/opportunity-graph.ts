@@ -1,10 +1,11 @@
 import logger from '../../../logger.js';
 import { getCryptara } from '../../cryptara/index.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
-import { TradingViewEngine } from '../babel/tradingview-integration.js';
+import { TradingViewEngine, type TechnicalAnalysis } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { marketDataProviders, type MarketUniverseAsset } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { scanPublicCexUniverse } from './public-cex-discovery.js';
 import { getCexScanCapacity, type ScanCapacityDecision } from './scan-capacity-policy.js';
 
 export type MeasuredOpportunityTopology =
@@ -22,6 +23,9 @@ export interface MeasuredOpportunityGraphCycle {
   universeAssets: number;
   selectedSymbols: number;
   evaluatedSymbols: number;
+  publicDiscoveryObservations: number;
+  publicDiscoveryVenues: number;
+  publicDiscoveryFailures: number;
   deterministicPositive: number;
   assessedCandidates: number;
   eligibleCandidates: number;
@@ -141,6 +145,13 @@ class MeasuredOpportunityGraph {
     const capacity = getCexScanCapacity(symbols.length);
     const selected = symbols.slice(0, capacity.symbolBudget);
 
+    // Discovery-only venues broaden measured search without being promoted to
+    // executable plans. Their public BBOs are explicitly non-executable evidence.
+    const publicDiscoveryPromise = scanPublicCexUniverse(selected).catch(error => {
+      errors.push(`public_cex_discovery:${error instanceof Error ? error.message : String(error)}`);
+      return { startedAt, completedAt: Date.now(), symbols: selected.length, observations: [], failures: [] };
+    });
+
     // CEX inventory arbitrage is evaluated as pre-positioned inventory. It does
     // not silently add on-chain gas/bridge cost to the instantaneous CEX trade.
     // Rebalancing/bridge economics belong to their own candidate topology.
@@ -158,6 +169,7 @@ class MeasuredOpportunityGraph {
         return null;
       }
     });
+    const publicDiscovery = await publicDiscoveryPromise;
 
     const byRoute = new Map<string, VerifiedArbitragePlan>();
     for (const plan of evaluated) {
@@ -192,7 +204,7 @@ class MeasuredOpportunityGraph {
         const providerStatuses = marketDataProviders.getProviderStatuses();
         await runBounded(assessmentCandidates, Math.min(4, assessmentCandidates.length), async plan => {
           const observedAt = Date.now();
-          let technical = null;
+          let technical: TechnicalAnalysis | null = null;
           try {
             technical = await TradingViewEngine.getAnalysis(plan.symbol, '1h');
           } catch (error) {
@@ -241,6 +253,9 @@ class MeasuredOpportunityGraph {
       universeAssets: universe.length,
       selectedSymbols: selected.length,
       evaluatedSymbols: evaluated.length,
+      publicDiscoveryObservations: publicDiscovery.observations.length,
+      publicDiscoveryVenues: new Set(publicDiscovery.observations.map(observation => observation.venue)).size,
+      publicDiscoveryFailures: publicDiscovery.failures.length,
       deterministicPositive: positivePlans.length,
       assessedCandidates: assessmentCandidates.length,
       eligibleCandidates,
@@ -265,6 +280,9 @@ class MeasuredOpportunityGraph {
       durationMs: completedAt - startedAt,
       universeAssets: cycle.universeAssets,
       selectedSymbols: cycle.selectedSymbols,
+      publicDiscoveryObservations: cycle.publicDiscoveryObservations,
+      publicDiscoveryVenues: cycle.publicDiscoveryVenues,
+      publicDiscoveryFailures: cycle.publicDiscoveryFailures,
       deterministicPositive: cycle.deterministicPositive,
       assessedCandidates: cycle.assessedCandidates,
       eligibleCandidates: cycle.eligibleCandidates,
