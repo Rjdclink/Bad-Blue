@@ -10,6 +10,7 @@ import type {
 } from './types.js';
 import { GovernanceError } from './types.js';
 import { Stage as ManagedStage, stageManager } from './stage-management.js';
+import { getVenueCapabilities } from '../discovery/venue-capability-registry.js';
 
 const DEFAULT_STAGE: CryptocrawlStage = 1;
 
@@ -648,8 +649,21 @@ export class CryptocrawlGovernance {
       throw new GovernanceError('ACTION_NOT_ALLOWED', 'Evolution lock remains active for this stage', { stage: state.currentStage });
     }
     if (action === 'EXECUTE_OPPORTUNITY' || action === 'SUBMIT_TX') {
+      if (context?.venue) {
+        const capability = getVenueCapabilities().find(candidate => candidate.venue === context.venue);
+        if (!capability || !capability.enabled || !capability.liveExecution || !capability.settlementVerification) {
+          throw new GovernanceError('CONSTRAINT_VIOLATION', 'Venue is outside settlement-safe automatic execution scope', {
+            venue: context.venue,
+            stage: state.currentStage,
+          });
+        }
+        return;
+      }
       if (!context?.chain) {
-        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Automatic execution requires an explicit chain context', { stage: state.currentStage, action });
+        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Automatic execution requires an explicit supported chain or settlement-safe CEX venue context', {
+          stage: state.currentStage,
+          action,
+        });
       }
       if (!config.allowedChains.includes(context.chain)) {
         throw new GovernanceError('CONSTRAINT_VIOLATION', 'Chain is outside automatic stage scope', {
@@ -668,4 +682,3 @@ export function getCryptocrawlGovernance(): CryptocrawlGovernance {
   if (!singleton) singleton = new CryptocrawlGovernance();
   return singleton;
 }
-
