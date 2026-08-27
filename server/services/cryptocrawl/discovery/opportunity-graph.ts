@@ -6,6 +6,7 @@ import { getBoundTechnicalEvidence } from '../integration/technical-evidence-syn
 import { marketDataProviders, type MarketUniverseAsset } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { buildObservedCexCandidates } from './cex-observation-candidates.js';
+import { recordCexEconomicBarrier } from './cex-economic-barrier.js';
 import { measuredCandidateRegistry } from './measured-candidate-registry.js';
 import { scanPublicCexUniverse } from './public-cex-discovery.js';
 import { getCexScanCapacity, type ScanCapacityDecision } from './scan-capacity-policy.js';
@@ -198,6 +199,11 @@ class MeasuredOpportunityGraph {
     });
     const publicDiscovery = await publicDiscoveryPromise;
 
+    const economicBarrier = recordCexEconomicBarrier(
+      arbitrageVerifier.getBestCrossVenueFeeContext(selected),
+      selected.length / Math.max(1, symbols.length),
+    );
+
     // Raw public BBOs are measured search evidence. Register only symbols with
     // two or more independently observed venues, and keep them explicitly
     // non-executable with unknown economics. This makes the CEX_CEX discovery
@@ -336,6 +342,7 @@ class MeasuredOpportunityGraph {
       deterministicPositive: cycle.deterministicPositive,
       assessedCandidates: cycle.assessedCandidates,
       eligibleCandidates: cycle.eligibleCandidates,
+      economicBarrier,
       candidateRegistry: measuredCandidateRegistry.getMetrics(60_000),
       canonicalObservedPerMinute: canonical.observedOpportunities,
       canonicalVerifiedPositivePerMinute: canonical.verifiedPositiveOpportunities,
