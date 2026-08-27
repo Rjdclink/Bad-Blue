@@ -1,4 +1,4 @@
-import { orderMeasuredMarketUniverse } from '../discovery/market-universe-controller.js';
+import { orderMeasuredMarketUniverse, rankMeasuredMarketUniverse } from '../discovery/market-universe-controller.js';
 import {
   adoptResolvedEnvironmentVariable,
   resolveCoinStatsEnvironment,
@@ -111,6 +111,7 @@ class MarketDataProviders {
       }
       return orderMeasuredMarketUniverse(this.universeCache.value);
     }
+
     const [coinGeckoAssets, coinStatsAssets] = await Promise.all([
       this.fetchCoinGeckoUniverse(),
       this.fetchCoinStatsUniverse(),
@@ -123,11 +124,15 @@ class MarketDataProviders {
         sources: [...new Set([...(existing.sources || [existing.source]), asset.source])],
       } : { ...asset, sources: [asset.source] });
     }
-    const enriched = orderMeasuredMarketUniverse([...bySymbol.values()]).slice(0, MAX_UNIVERSE_SIZE);
-    if (enriched.length > 0) {
-      this.lastUniverse = enriched;
-      this.universeCache = { value: enriched, expiresAt: Date.now() + COINGECKO_TTL_MS };
-      return orderMeasuredMarketUniverse(enriched);
+
+    // Cache a deterministic quality-ranked universe. Rotation is applied exactly
+    // once at the consumption boundary below, preventing a refresh from advancing
+    // the scan cursor twice and skipping candidates.
+    const ranked = rankMeasuredMarketUniverse([...bySymbol.values()]).slice(0, MAX_UNIVERSE_SIZE);
+    if (ranked.length > 0) {
+      this.lastUniverse = ranked;
+      this.universeCache = { value: ranked, expiresAt: Date.now() + COINGECKO_TTL_MS };
+      return orderMeasuredMarketUniverse(ranked);
     }
 
     if (this.lastUniverse.length > 0) {
