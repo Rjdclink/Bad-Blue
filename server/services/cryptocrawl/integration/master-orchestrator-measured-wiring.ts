@@ -4,6 +4,7 @@ import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { getMeasuredEvolutionMetrics } from '../evolution/measured-execution-feedback.js';
+import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
@@ -25,6 +26,7 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
   logZeroCapitalReadinessDiagnostics();
   ensureLearningLifecycleWiring();
   ensureOracleEvidenceWiring();
+  ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
@@ -61,6 +63,7 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
     executionMetrics: 'terminal_settlement_only',
     opportunityMetrics: 'canonical_verified_stream',
     measuredOpportunityGraph: 'continuous_multi_topology',
+    dynamicScale: 'dual_axis_search_and_profitability_pressure',
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
