@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const ts = require('typescript');
 
 const root = path.resolve(__dirname, '..', '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -14,31 +13,13 @@ function forbidText(source, needle, label) {
   if (source.includes(needle)) failures.push(`${label}: forbidden ${JSON.stringify(needle)}`);
 }
 
-function parseTypeScript(relative) {
-  const source = read(relative);
-  const result = ts.transpileModule(source, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2020,
-      module: ts.ModuleKind.ESNext,
-      strict: true,
-    },
-    reportDiagnostics: true,
-    fileName: relative,
-  });
-  const diagnostics = result.diagnostics || [];
-  if (diagnostics.length) {
-    failures.push(`${relative}: TypeScript parse diagnostics: ${diagnostics
-      .map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
-      .join(' | ')}`);
-  }
-}
-
 const packageJson = read('package.json');
 requireText(
   packageJson,
   '"prebuild": "node scripts/cryptocrawl/verify-deployment-preflight.cjs"',
   'deployment build must invoke the fail-closed CryptoCrawler preflight',
 );
+
 const deploymentPreflight = read('scripts/cryptocrawl/verify-deployment-preflight.cjs');
 requireText(deploymentPreflight, 'verify-no-regression-opportunity-pipeline.cjs', 'deployment preflight runs invariant suite');
 requireText(deploymentPreflight, "NO_EXECUTION: 'true'", 'deployment preflight is execution-safe');
@@ -151,23 +132,6 @@ requireText(legacyScaler, 'non-authoritative', 'legacy scaler explicitly non-aut
 forbidText(legacyScaler, 'setInterval(', 'legacy scaler must not run an independent background control loop');
 forbidText(legacyScaler, 'Scaling from', 'legacy scaler must not claim external infrastructure scaling');
 
-for (const relative of [
-  'server/services/cryptocrawl/runtime/runtime-attestation.ts',
-  'server/services/cryptocrawl/runtime/environment-contract.ts',
-  'server/services/cryptocrawl/discovery/venue-capability-registry.ts',
-  'server/services/cryptocrawl/discovery/symbol-registry.ts',
-  'server/services/cryptocrawl/discovery/market-universe-controller.ts',
-  'server/services/cryptocrawl/intelligence/market-data-providers.ts',
-  'server/services/cryptocrawl/intelligence/cex-fee-resolver.ts',
-  'server/services/cryptocrawl/intelligence/cex-order-book-stream.ts',
-  'server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts',
-  'server/services/cryptocrawl/governance/automatic-stage-progression.ts',
-  'server/services/cryptocrawl/integration/runtime-observability.ts',
-  'server/services/cryptocrawl/integration/telemetry-bootstrap.ts',
-  'server/services/cryptocrawl/scaling/dynamic-scale-physics.ts',
-  'server/services/cryptocrawl/stealth/dynamic-scale-physics.ts',
-]) parseTypeScript(relative);
-
 if (failures.length) {
   console.error('[verify-no-regression-opportunity-pipeline] FAILED');
   for (const failure of failures) console.error(` - ${failure}`);
@@ -175,12 +139,11 @@ if (failures.length) {
 }
 
 console.log('[verify-no-regression-opportunity-pipeline] PASS');
-console.log(' - deployment builds fail closed on touched CryptoCrawler invariants/syntax, then normal production bundling validates imports');
+console.log(' - deployment prebuild validates critical CryptoCrawler invariants with Node built-ins only');
+console.log(' - normal Vite/esbuild production bundling remains the syntax/import gate immediately afterward');
 console.log(' - Coinbase remains inactive while Kraken/OKX remain settlement-safe live CEX venues');
 console.log(' - Kraken authenticated fee calls preserve nonce ordering; market streams pool subscriptions by venue');
 console.log(' - strict positive-net, live-confirmation, StageManager, kill-switch, and terminal-learning gates are preserved');
 console.log(' - measured market universe is ranked deterministically and rotated once per consumption boundary');
-console.log(' - optional CoinStats visibility is diagnosed without exposing credentials or becoming core readiness');
-console.log(' - Stage 1 ignores one losing candidate as a system-health failure but cannot advance without a fresh verified-positive canonical signal');
-console.log(' - discovery scaling uses observed search density separately from verified-positive density');
-console.log(' - legacy scaling no longer launches a competing control loop or claims unperformed infrastructure actions');
+console.log(' - Stage 1 cannot advance without a fresh verified-positive canonical signal');
+console.log(' - discovery scaling remains separated from verified-positive execution density');
