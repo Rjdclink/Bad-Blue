@@ -53,7 +53,7 @@ export class RuntimeConfidenceBootstrapCounter {
   private readonly successfulTradeKeys = new Set<string>();
   private successfulTrades = 0;
 
-  constructor(requiredSuccessfulTrades = Number(process.env.CRYPTARA_CONFIDENCE_SUCCESS_THRESHOLD || DEFAULT_RUNTIME_CONFIDENCE_SUCCESS_THRESHOLD)) {
+  constructor(requiredSuccessfulTrades = DEFAULT_RUNTIME_CONFIDENCE_SUCCESS_THRESHOLD) {
     this.requiredSuccessfulTrades = normalizeThreshold(requiredSuccessfulTrades);
   }
 
