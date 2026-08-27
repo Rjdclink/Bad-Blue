@@ -1,6 +1,7 @@
 import { createHmac, createHash, randomUUID } from 'crypto';
 import logger from '../../../logger.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { getOkxExecutionRestBaseUrl } from '../intelligence/okx-region-authority.js';
 import type {
   ExecutionFill,
   ExecutionStatus,
@@ -286,12 +287,13 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
     const apiKey = requireEnvironment('OKX_API_KEY');
     const apiSecret = requireEnvironment('OKX_API_SECRET');
     const passphrase = requireEnvironment('OKX_API_PASSPHRASE');
+    const baseUrl = await getOkxExecutionRestBaseUrl();
     const query = new URLSearchParams(parameters).toString();
     const requestPath = method === 'GET' && query ? `${path}?${query}` : path;
     const body = method === 'POST' ? JSON.stringify(parameters) : '';
     const timestamp = new Date().toISOString();
     const signature = createHmac('sha256', apiSecret).update(`${timestamp}${method}${requestPath}${body}`).digest('base64');
-    const response = await fetchWithTimeout(`https://www.okx.com${requestPath}`, {
+    const response = await fetchWithTimeout(`${baseUrl}${requestPath}`, {
       method,
       headers: {
         'OK-ACCESS-KEY': apiKey, 'OK-ACCESS-SIGN': signature, 'OK-ACCESS-TIMESTAMP': timestamp,
