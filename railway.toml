@@ -1,6 +1,7 @@
 
 # Railway Configuration for BadBlue
 # Platform-independent deployment configuration
+# Redeploy trigger: refresh production from the current develop head.
 
 [build]
 builder = "DOCKERFILE"
