@@ -60,7 +60,15 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
     target.latestOpportunityContext = structuredClone(context);
     let monteCarloMissingInformation: string[] = [];
 
-    if (context.plan && target.status.isRunning) {
+    // Deterministic all-in economics are authoritative and must run before stochastic
+    // execution-uncertainty analysis. Monte Carlo may estimate realization probability
+    // for an already-positive plan; it must never spend Beam capacity on, or transform,
+    // a deterministic zero/negative candidate into a tradeable opportunity.
+    const deterministicPositivePlan = !!context.plan &&
+      Number.isFinite(context.plan.netProfitUsd) &&
+      context.plan.netProfitUsd > 0;
+
+    if (deterministicPositivePlan && target.status.isRunning) {
       try {
         await target.runMonteCarloSimulation(context);
       } catch (error) {
@@ -76,6 +84,13 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
           });
         }
       }
+    } else if (context.plan && !deterministicPositivePlan) {
+      log.debug('Cryptara Monte Carlo skipped for deterministic non-positive economics', {
+        opportunityId: context.opportunityId,
+        observedAt: context.observedAt,
+        symbol: context.symbol,
+        netProfitUsd: context.plan.netProfitUsd,
+      });
     }
 
     return target.recordOpportunityObservation({
@@ -88,6 +103,7 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
     incompleteWarningRepeatMs: WARNING_REPEAT_MS,
     warningTransitionsImmediate: true,
     monteCarloCompute: 'computational_beam_hyper_worker_pool',
+    deterministicPositiveGateBeforeMonteCarlo: true,
     immutableOpportunityInput: true,
     staleEvidenceIsolation: true,
   });
