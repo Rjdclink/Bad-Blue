@@ -121,9 +121,6 @@ class MeasuredCandidateRegistry {
       economics: { ...input.economics },
       missingInformation: [...new Set(input.missingInformation)],
       provenance: [...new Set(input.provenance)],
-      // Never let a later weaker observation erase measured positive/eligible
-      // status for the exact same observation identity, but expiration/blocked is
-      // still allowed to close it explicitly.
       status: previous && previous.observedAt === input.observedAt &&
         previous.status === 'eligible' && !['blocked', 'expired'].includes(input.status)
         ? 'eligible'
@@ -142,8 +139,8 @@ class MeasuredCandidateRegistry {
     next.status = status;
     next.updatedAt = Date.now();
     if (patch?.economics) next.economics = { ...patch.economics };
-    if (patch?.missingInformation) next.missingInformation = [...new Set(patch.missingInformation)];
-    if (patch?.provenance) next.provenance = [...new Set(patch.provenance)];
+    if (patch?.missingInformation) next.missingInformation = [...new Set([...previous.missingInformation, ...patch.missingInformation])];
+    if (patch?.provenance) next.provenance = [...new Set([...previous.provenance, ...patch.provenance])];
     if (patch?.executableCapability !== undefined) next.executableCapability = patch.executableCapability;
     if (patch?.executionCapabilityReason !== undefined) next.executionCapabilityReason = patch.executionCapabilityReason;
     if (patch?.quoteAgeMs !== undefined) next.quoteAgeMs = patch.quoteAgeMs;
