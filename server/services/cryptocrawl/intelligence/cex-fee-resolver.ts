@@ -32,6 +32,26 @@ interface OkxInstrumentIdentity {
   groupId: string | null;
 }
 
+interface OkxInstrumentDirectorySnapshot {
+  expiresAt: number;
+  baseUrl: string;
+  byCanonical: Map<string, OkxInstrumentIdentity>;
+}
+
+class OkxApiError extends Error {
+  constructor(readonly code: string | null, message: string) {
+    super(message);
+    this.name = 'OkxApiError';
+  }
+}
+
+class OkxUnsupportedInstrumentError extends Error {
+  constructor(readonly symbol: string, readonly baseUrl: string) {
+    super(`OKX symbol ${symbol} is not a live SPOT instrument on ${baseUrl}`);
+    this.name = 'OkxUnsupportedInstrumentError';
+  }
+}
+
 const FEE_CACHE_TTL_MS = Math.max(5_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_CACHE_MS || 300_000));
 const REQUEST_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_TIMEOUT_MS || 8_000));
 const KRAKEN_PAIR_DIRECTORY_TTL_MS = Math.max(60_000, Number(process.env.CRYPTO_KRAKEN_PAIR_DIRECTORY_TTL_MS || 3_600_000));
@@ -47,8 +67,10 @@ let okxPrivateTail: Promise<void> = Promise.resolve();
 let okxLastRequestStartedAt = 0;
 let krakenPairDirectory: { expiresAt: number; byCanonical: Map<string, KrakenPairIdentity> } | null = null;
 let krakenPairDirectoryInFlight: Promise<Map<string, KrakenPairIdentity>> | null = null;
-let okxInstrumentDirectory: { expiresAt: number; byCanonical: Map<string, OkxInstrumentIdentity> } | null = null;
-let okxInstrumentDirectoryInFlight: Promise<Map<string, OkxInstrumentIdentity>> | null = null;
+let okxAuthenticatedBaseUrl: string | null = null;
+let okxAuthenticatedBaseUrlInFlight: Promise<string> | null = null;
+let okxInstrumentDirectory: OkxInstrumentDirectorySnapshot | null = null;
+let okxInstrumentDirectoryInFlight: Promise<OkxInstrumentDirectorySnapshot> | null = null;
 
 function finiteNumber(value: unknown): number | null {
   const parsed = Number(value);
@@ -116,6 +138,19 @@ function readFreshCache(venue: CexFeeVenue, symbol: string): CexFeeEvidence | nu
   return { ...cached };
 }
 
+function freshOkxInstrumentDirectory(): OkxInstrumentDirectorySnapshot | null {
+  if (!okxInstrumentDirectory) return null;
+  if (okxInstrumentDirectory.expiresAt <= Date.now()) {
+    okxInstrumentDirectory = null;
+    return null;
+  }
+  if (okxAuthenticatedBaseUrl && okxInstrumentDirectory.baseUrl !== okxAuthenticatedBaseUrl) {
+    okxInstrumentDirectory = null;
+    return null;
+  }
+  return okxInstrumentDirectory;
+}
+
 function storeFeeEvidence(evidence: CexFeeEvidence): void {
   feeCache.set(cacheKey(evidence.venue, evidence.symbol), evidence);
   if (feeCache.size > 1024) {
@@ -128,6 +163,10 @@ function storeFeeEvidence(evidence: CexFeeEvidence): void {
 
 export function getCachedCexFeeEvidence(venue: CexFeeVenue, symbolInput: string): CexFeeEvidence | null {
   const symbol = normalizeSymbolInput(symbolInput);
+  if (venue === 'okx') {
+    const directory = freshOkxInstrumentDirectory();
+    if (directory && !directory.byCanonical.has(symbol)) return null;
+  }
   return readFreshCache(venue, symbol) || configuredFee(venue, symbol);
 }
 
@@ -324,46 +363,102 @@ function normalizeOkxBaseUrl(value: string): string {
   return trimmed;
 }
 
-function okxBaseUrls(): string[] {
+function okxBaseUrlCandidates(): string[] {
   const configured = credential('OKX_API_BASE_URL');
   if (configured) return [normalizeOkxBaseUrl(configured)];
-  // US/AU accounts created at app.okx.com require us.okx.com. Global remains a
-  // secondary probe so one regional endpoint failure does not disable OKX.
+  // OKX credentials are region-scoped. Probe authentication once, cache the
+  // working origin, then use that same origin for instruments and private fees.
   return ['https://us.okx.com', 'https://openapi.okx.com'];
 }
 
-async function getOkxInstrumentDirectory(): Promise<Map<string, OkxInstrumentIdentity>> {
-  if (okxInstrumentDirectory && okxInstrumentDirectory.expiresAt > Date.now()) return okxInstrumentDirectory.byCanonical;
-  if (okxInstrumentDirectoryInFlight) return okxInstrumentDirectoryInFlight;
+async function fetchOkxTradeFeePayloadFromBase(
+  baseUrl: string,
+  queryParameters: Record<string, string>,
+): Promise<any> {
+  return serializeOkxPrivate(async () => {
+    const apiKey = credential('OKX_API_KEY')!;
+    const apiSecret = credential('OKX_API_SECRET')!;
+    const passphrase = credential('OKX_API_PASSPHRASE')!;
+    const query = new URLSearchParams({ instType: 'SPOT', ...queryParameters }).toString();
+    const path = `/api/v5/account/trade-fee?${query}`;
+    const timestamp = new Date().toISOString();
+    const signature = createHmac('sha256', apiSecret).update(`${timestamp}GET${path}`).digest('base64');
+    const response = await fetchWithTimeout(`${baseUrl}${path}`, {
+      method: 'GET',
+      headers: {
+        'OK-ACCESS-KEY': apiKey, 'OK-ACCESS-SIGN': signature, 'OK-ACCESS-TIMESTAMP': timestamp,
+        'OK-ACCESS-PASSPHRASE': passphrase, 'Content-Type': 'application/json',
+      },
+    });
+    const payload = await readJson(response);
+    if (payload.code !== '0') {
+      const code = payload.code === undefined || payload.code === null ? null : String(payload.code);
+      throw new OkxApiError(code, `OKX fee request failed: ${code || 'unknown'}${payload.msg ? ` ${payload.msg}` : ''}`);
+    }
+    return payload;
+  });
+}
 
-  okxInstrumentDirectoryInFlight = (async () => {
+async function getOkxAuthenticatedBaseUrl(): Promise<string> {
+  if (okxAuthenticatedBaseUrl) return okxAuthenticatedBaseUrl;
+  if (okxAuthenticatedBaseUrlInFlight) return okxAuthenticatedBaseUrlInFlight;
+
+  okxAuthenticatedBaseUrlInFlight = (async () => {
     const failures: string[] = [];
-    for (const baseUrl of okxBaseUrls()) {
+    const configured = Boolean(credential('OKX_API_BASE_URL'));
+    for (const baseUrl of okxBaseUrlCandidates()) {
       try {
-        const response = await fetchWithTimeout(`${baseUrl}/api/v5/public/instruments?instType=SPOT`, {
-          method: 'GET', headers: { accept: 'application/json' },
+        await fetchOkxTradeFeePayloadFromBase(baseUrl, {});
+        okxAuthenticatedBaseUrl = baseUrl;
+        if (okxInstrumentDirectory && okxInstrumentDirectory.baseUrl !== baseUrl) okxInstrumentDirectory = null;
+        logger.info('[CEX Fees] OKX credential region selected', {
+          component: 'CexFeeResolver', venue: 'okx', baseUrl,
+          selection: configured ? 'configured_and_authenticated' : 'authenticated_probe',
         });
-        const payload = await readJson(response);
-        if (payload.code !== '0') throw new Error(`code=${payload.code}${payload.msg ? ` ${payload.msg}` : ''}`);
-        const byCanonical = new Map<string, OkxInstrumentIdentity>();
-        for (const raw of Array.isArray(payload.data) ? payload.data : []) {
-          const instId = typeof raw?.instId === 'string' ? raw.instId.trim().toUpperCase() : '';
-          const canonicalSymbol = canonicalOkxSymbol(instId);
-          if (!canonicalSymbol) continue;
-          const groupId = typeof raw?.groupId === 'string' && raw.groupId.trim() ? raw.groupId.trim() : null;
-          byCanonical.set(canonicalSymbol, { canonicalSymbol, instId, groupId });
-        }
-        okxInstrumentDirectory = { expiresAt: Date.now() + OKX_INSTRUMENT_DIRECTORY_TTL_MS, byCanonical };
-        logger.info('[CEX Fees] OKX instrument fee-group directory refreshed', {
-          component: 'CexFeeResolver', baseUrl, instruments: byCanonical.size,
-          feeGroups: new Set([...byCanonical.values()].map(item => item.groupId).filter(Boolean)).size,
-        });
-        return byCanonical;
+        return baseUrl;
       } catch (error) {
         failures.push(`${baseUrl}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    throw new Error(`OKX instrument directory failed across regional endpoints: ${failures.join(' | ')}`);
+    throw new Error(`OKX credential-region selection failed: ${failures.join(' | ')}`);
+  })().finally(() => { okxAuthenticatedBaseUrlInFlight = null; });
+
+  return okxAuthenticatedBaseUrlInFlight;
+}
+
+async function getOkxInstrumentDirectory(): Promise<OkxInstrumentDirectorySnapshot> {
+  const cached = freshOkxInstrumentDirectory();
+  if (cached) return cached;
+  if (okxInstrumentDirectoryInFlight) return okxInstrumentDirectoryInFlight;
+
+  okxInstrumentDirectoryInFlight = (async () => {
+    const baseUrl = await getOkxAuthenticatedBaseUrl();
+    const response = await fetchWithTimeout(`${baseUrl}/api/v5/public/instruments?instType=SPOT`, {
+      method: 'GET', headers: { accept: 'application/json' },
+    });
+    const payload = await readJson(response);
+    if (payload.code !== '0') throw new Error(`code=${payload.code}${payload.msg ? ` ${payload.msg}` : ''}`);
+    const byCanonical = new Map<string, OkxInstrumentIdentity>();
+    for (const raw of Array.isArray(payload.data) ? payload.data : []) {
+      const instId = typeof raw?.instId === 'string' ? raw.instId.trim().toUpperCase() : '';
+      const canonicalSymbol = canonicalOkxSymbol(instId);
+      if (!canonicalSymbol) continue;
+      const state = typeof raw?.state === 'string' ? raw.state.trim().toLowerCase() : '';
+      if (state && state !== 'live') continue;
+      const groupId = typeof raw?.groupId === 'string' && raw.groupId.trim() ? raw.groupId.trim() : null;
+      byCanonical.set(canonicalSymbol, { canonicalSymbol, instId, groupId });
+    }
+    const snapshot: OkxInstrumentDirectorySnapshot = {
+      expiresAt: Date.now() + OKX_INSTRUMENT_DIRECTORY_TTL_MS,
+      baseUrl,
+      byCanonical,
+    };
+    okxInstrumentDirectory = snapshot;
+    logger.info('[CEX Fees] OKX instrument fee-group directory refreshed', {
+      component: 'CexFeeResolver', baseUrl, instruments: byCanonical.size,
+      feeGroups: new Set([...byCanonical.values()].map(item => item.groupId).filter(Boolean)).size,
+    });
+    return snapshot;
   })().finally(() => { okxInstrumentDirectoryInFlight = null; });
 
   return okxInstrumentDirectoryInFlight;
@@ -394,28 +489,11 @@ async function fetchOkxFeeRatesFromBase(
   queryParameters: Record<string, string>,
   expectedGroupId: string | null,
 ): Promise<{ rates: { taker: number; maker: number | null }; observedAt: number }> {
-  return serializeOkxPrivate(async () => {
-    const apiKey = credential('OKX_API_KEY')!;
-    const apiSecret = credential('OKX_API_SECRET')!;
-    const passphrase = credential('OKX_API_PASSPHRASE')!;
-    const query = new URLSearchParams({ instType: 'SPOT', ...queryParameters }).toString();
-    const path = `/api/v5/account/trade-fee?${query}`;
-    const timestamp = new Date().toISOString();
-    const signature = createHmac('sha256', apiSecret).update(`${timestamp}GET${path}`).digest('base64');
-    const response = await fetchWithTimeout(`${baseUrl}${path}`, {
-      method: 'GET',
-      headers: {
-        'OK-ACCESS-KEY': apiKey, 'OK-ACCESS-SIGN': signature, 'OK-ACCESS-TIMESTAMP': timestamp,
-        'OK-ACCESS-PASSPHRASE': passphrase, 'Content-Type': 'application/json',
-      },
-    });
-    const payload = await readJson(response);
-    if (payload.code !== '0') throw new Error(`OKX fee request failed: ${payload.code}${payload.msg ? ` ${payload.msg}` : ''}`);
-    const row = payload.data?.[0];
-    const rates = selectOkxFeeRates(row, expectedGroupId);
-    if (!rates) throw new Error('OKX trade-fee response did not contain applicable fee-group evidence');
-    return { rates, observedAt: Date.now() };
-  });
+  const payload = await fetchOkxTradeFeePayloadFromBase(baseUrl, queryParameters);
+  const row = payload.data?.[0];
+  const rates = selectOkxFeeRates(row, expectedGroupId);
+  if (!rates) throw new Error('OKX trade-fee response did not contain applicable fee-group evidence');
+  return { rates, observedAt: Date.now() };
 }
 
 async function fetchOkxFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
@@ -430,33 +508,37 @@ async function fetchOkxFeeEvidence(symbol: string): Promise<CexFeeEvidence | nul
     return null;
   }
 
+  const normalizedSymbol = normalizeSymbolInput(symbol);
+  const baseUrl = await getOkxAuthenticatedBaseUrl();
   let identity: OkxInstrumentIdentity | undefined;
   try {
-    identity = (await getOkxInstrumentDirectory()).get(normalizeSymbolInput(symbol));
+    const directory = await getOkxInstrumentDirectory();
+    identity = directory.byCanonical.get(normalizedSymbol);
+    if (!identity) throw new OkxUnsupportedInstrumentError(normalizedSymbol, directory.baseUrl);
   } catch (error) {
-    logger.debug('[CEX Fees] OKX fee-group metadata unavailable; falling back to instrument-specific fee request', {
-      component: 'CexFeeResolver', symbol,
+    if (error instanceof OkxUnsupportedInstrumentError) throw error;
+    logger.debug('[CEX Fees] OKX instrument directory unavailable; falling back to authenticated instrument-specific fee request', {
+      component: 'CexFeeResolver', symbol: normalizedSymbol, baseUrl,
       error: error instanceof Error ? error.message : String(error),
     });
   }
 
-  const failures: string[] = [];
-  for (const baseUrl of okxBaseUrls()) {
-    try {
-      const groupId = identity?.groupId || null;
-      const query = groupId ? { groupId } : { instId: identity?.instId || okxInstrumentId(symbol) };
-      const result = await fetchOkxFeeRatesFromBase(baseUrl, query, groupId);
-      const evidence = okxEvidence(symbol, result.rates, result.observedAt);
-      logger.info('[CEX Fees] OKX authenticated endpoint selected', {
-        component: 'CexFeeResolver', venue: 'okx', symbol, baseUrl,
-        feeLookup: groupId ? 'group' : 'instrument', groupId,
-      });
-      return evidence;
-    } catch (error) {
-      failures.push(`${baseUrl}: ${error instanceof Error ? error.message : String(error)}`);
+  const groupId = identity?.groupId || null;
+  const query = groupId ? { groupId } : { instId: identity?.instId || okxInstrumentId(normalizedSymbol) };
+  try {
+    const result = await fetchOkxFeeRatesFromBase(baseUrl, query, groupId);
+    const evidence = okxEvidence(normalizedSymbol, result.rates, result.observedAt);
+    logger.info('[CEX Fees] OKX authenticated fee evidence resolved', {
+      component: 'CexFeeResolver', venue: 'okx', symbol: normalizedSymbol, baseUrl,
+      feeLookup: groupId ? 'group' : 'instrument', groupId,
+    });
+    return evidence;
+  } catch (error) {
+    if (!identity && error instanceof OkxApiError && error.code === '51001') {
+      throw new OkxUnsupportedInstrumentError(normalizedSymbol, baseUrl);
     }
+    throw error;
   }
-  throw new Error(`OKX authenticated fee discovery failed across regional endpoints: ${failures.join(' | ')}`);
 }
 
 async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promise<Map<string, CexFeeEvidence>> {
@@ -469,11 +551,11 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
   const passphrase = credential('OKX_API_PASSPHRASE');
   if (!apiKey || !apiSecret || !passphrase) return output;
 
-  let directory: Map<string, OkxInstrumentIdentity> | null = null;
+  let directory: OkxInstrumentDirectorySnapshot | null = null;
   try {
     directory = await getOkxInstrumentDirectory();
   } catch (error) {
-    logger.debug('[CEX Fees] OKX group batch unavailable; per-instrument fallback remains enabled', {
+    logger.debug('[CEX Fees] OKX group batch unavailable; authenticated per-instrument fallback remains enabled', {
       component: 'CexFeeResolver', symbols: symbols.length,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -481,8 +563,14 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
 
   const byGroup = new Map<string, string[]>();
   const ungrouped: string[] = [];
+  const unsupportedSymbols: string[] = [];
   for (const symbol of symbols) {
-    const groupId = directory?.get(symbol)?.groupId;
+    const identity = directory?.byCanonical.get(symbol);
+    if (directory && !identity) {
+      unsupportedSymbols.push(symbol);
+      continue;
+    }
+    const groupId = identity?.groupId;
     if (!groupId) {
       ungrouped.push(symbol);
       continue;
@@ -492,20 +580,15 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
     byGroup.set(groupId, current);
   }
 
+  const baseUrl = directory?.baseUrl || await getOkxAuthenticatedBaseUrl();
   for (const [groupId, groupSymbols] of byGroup.entries()) {
-    const failures: string[] = [];
-    for (const baseUrl of okxBaseUrls()) {
-      try {
-        const result = await fetchOkxFeeRatesFromBase(baseUrl, { groupId }, groupId);
-        for (const symbol of groupSymbols) output.set(symbol, okxEvidence(symbol, result.rates, result.observedAt));
-        break;
-      } catch (error) {
-        failures.push(`${baseUrl}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    if (!groupSymbols.every(symbol => output.has(symbol))) {
-      logger.debug('[CEX Fees] OKX fee-group batch degraded; affected symbols will use per-instrument fallback', {
-        component: 'CexFeeResolver', groupId, symbols: groupSymbols.length, failures,
+    try {
+      const result = await fetchOkxFeeRatesFromBase(baseUrl, { groupId }, groupId);
+      for (const symbol of groupSymbols) output.set(symbol, okxEvidence(symbol, result.rates, result.observedAt));
+    } catch (error) {
+      logger.debug('[CEX Fees] OKX fee-group batch degraded; affected symbols will use supported per-symbol verification', {
+        component: 'CexFeeResolver', groupId, symbols: groupSymbols.length,
+        error: error instanceof Error ? error.message : String(error),
       });
       ungrouped.push(...groupSymbols);
     }
@@ -520,7 +603,11 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
 
   logger.info('[CEX Fees] OKX fee batch resolved using instrument fee groups', {
     component: 'CexFeeResolver', requestedSymbols: symbols.length,
-    groupRequests: byGroup.size, perInstrumentFallbacks: ungrouped.length, resolvedSymbols: output.size,
+    groupRequests: byGroup.size, perInstrumentFallbacks: ungrouped.length,
+    unsupportedSymbols: unsupportedSymbols.length,
+    unsupportedSample: unsupportedSymbols.slice(0, 5),
+    resolvedSymbols: output.size,
+    baseUrl,
   });
   return output;
 }
@@ -554,6 +641,13 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
       }
       return evidence ? { ...evidence } : null;
     } catch (error) {
+      if (venue === 'okx' && error instanceof OkxUnsupportedInstrumentError) {
+        logger.info('[CEX Fees] OKX symbol excluded before authenticated fee routing', {
+          component: 'CexFeeResolver', venue, symbol, baseUrl: error.baseUrl,
+          reason: 'not_in_live_spot_instrument_directory',
+        });
+        return null;
+      }
       logger.warn('[CEX Fees] Authenticated fee discovery failed; venue will fail over to configured evidence or be excluded', {
         component: 'CexFeeResolver', venue, symbol, error: error instanceof Error ? error.message : String(error),
       });
@@ -573,10 +667,9 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
 /**
  * Prime measured fee evidence for a scan batch before parallel economics evaluation.
  * Kraken resolves many pairs through one authenticated TradeVolume request. OKX
- * resolves current instrument->fee-group metadata publicly, then queries the private
- * account fee endpoint once per distinct fee group; only unmapped/degraded symbols
- * fall back to per-instrument requests. This preserves account-specific fee truth
- * while avoiding one private OKX fee request per symbol.
+ * authenticates/selects its regional origin once, resolves the live SPOT instrument
+ * directory on that origin, then queries private account fees only for supported
+ * instruments. Unsupported symbols are excluded before private fee calls.
  */
 export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Promise<CexFeePrimeResult> {
   const symbols = [...new Set(symbolInputs.map(normalizeSymbolInput).filter(Boolean))];
@@ -595,7 +688,9 @@ export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Prom
     }
   }
 
-  const missingOkx = symbols.filter(symbol => !getCachedCexFeeEvidence('okx', symbol));
+  // Do not let a configured fee override bypass OKX instrument/region validation.
+  // A fee number is not evidence that the symbol exists on the selected account region.
+  const missingOkx = symbols.filter(symbol => !readFreshCache('okx', symbol));
   if (missingOkx.length > 0) {
     try {
       const batch = await fetchOkxFeeEvidenceBatch(missingOkx);
