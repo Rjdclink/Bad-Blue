@@ -46,6 +46,8 @@ requireText(verifier, 'positiveInteger(process.env.CRYPTO_ARBITRAGE_SCAN_CONCURR
 requireText(verifier, "governance.requireAllowed('ADVISE', { chain: req.gas?.chain, pair: candidateSymbol })", 'each batch symbol remains subject to advisory governance');
 requireText(verifier, 'canonicalOpportunityState.recordSearchObservation', 'scanner records measured search observations before profitability outcome');
 requireText(verifier, 'symbols: [...symbols].sort()', 'batch reuse key is independent of symbol call order');
+requireText(verifier, 'getLastOrderedMarketUniverseSymbols()', 'scanner reuses the already-consumed measured market universe');
+forbidText(verifier, 'marketDataProviders.discoverUniverse()', 'verifier must not independently consume and re-rotate the market universe');
 forbidText(verifier, "const venues: QuoteVenue[] = ['coinbase', 'kraken', 'okx']", 'no hard-coded Coinbase quote authority');
 
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
@@ -93,6 +95,9 @@ const universe = read('server/services/cryptocrawl/discovery/market-universe-con
 requireText(universe, 'rankMeasuredMarketUniverse', 'non-rotating ranking function exists');
 requireText(universe, 'const start = rotationCursor % head.length', 'rotation cursor drives scan diversity');
 requireText(universe, 'rotationCursor = (rotationCursor +', 'rotation cursor advances exactly at consumption boundary');
+requireText(universe, 'lastOrderedSymbols', 'last consumed measured universe order is retained without another rotation');
+requireText(universe, 'rememberOrderedUniverse', 'every rotated consumption publishes the selected order');
+requireText(universe, 'getLastOrderedMarketUniverseSymbols', 'downstream scanners can read the consumed order without advancing the cursor');
 
 const symbols = read('server/services/cryptocrawl/discovery/symbol-registry.ts');
 requireText(symbols, 'base === quote', 'self-pair rejection');
@@ -165,6 +170,7 @@ console.log(' - normal Vite/esbuild production bundling remains the syntax/impor
 console.log(' - Coinbase remains inactive while Kraken/OKX remain settlement-safe live CEX venues');
 console.log(' - Kraken fee batching and OKX authenticated throttling preserve measured account-specific fee evidence');
 console.log(' - bounded concurrent scanning remains governance-gated and capped at eight workers');
+console.log(' - the verifier reuses the faucet-consumed measured universe without advancing rotation twice');
 console.log(' - measured search observations remain separate from verified-positive and settlement evidence');
 console.log(' - strict positive-net, live-confirmation, StageManager, kill-switch, and terminal-learning gates are preserved');
 console.log(' - measured market universe is ranked deterministically and rotated once per consumption boundary');
