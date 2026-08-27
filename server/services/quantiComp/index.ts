@@ -1,8 +1,11 @@
 import { quantiAdaptiveOptimizer } from './adaptiveOptimizer.js';
 import { installQuantiAdaptiveScheduling } from './adaptiveRuntime.js';
+import { quantiBackendRegistry } from './backendRegistry.js';
+import { installQuantiBackendRouting } from './backendRuntime.js';
 import { quantiComp } from './runtime.js';
 
 installQuantiAdaptiveScheduling(quantiComp, quantiAdaptiveOptimizer);
+installQuantiBackendRouting(quantiComp, quantiBackendRegistry);
 
 export * from './types.js';
 export { QuantiResourceProfiler } from './resourceProfiler.js';
@@ -22,6 +25,19 @@ export {
   adaptivePlanFeatureVector,
   effectiveQuantiPower,
 } from './adaptiveRuntime.js';
+export {
+  QuantiBackendRegistry,
+  quantiBackendRegistry,
+  type QuantiBackendExecutor,
+  type QuantiBackendRegistryOptions,
+  type QuantiBackendPlan,
+  type QuantiBackendRouteState,
+  type QuantiBackendSummary,
+  type QuantiBackendKindStatus,
+  type QuantiBackendCapability,
+  type QuantiBackendRegistryStatus,
+} from './backendRegistry.js';
+export { installQuantiBackendRouting } from './backendRuntime.js';
 export {
   QuantiDataFabric,
   quantiDataFabric,
