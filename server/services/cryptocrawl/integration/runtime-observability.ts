@@ -6,6 +6,7 @@ import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { getMempoolCapabilities } from '../discovery/mempool-capability-registry.js';
+import { getLatestCexEconomicBarrier } from '../discovery/cex-economic-barrier.js';
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
 import { cexInventoryLedger } from '../execution/cex-inventory-ledger.js';
 import { inventoryRebalancer } from '../execution/inventory-rebalancer.js';
@@ -83,6 +84,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const graph = measuredOpportunityGraph.getLatestCycle();
     const multiTopology = multiTopologyDiscoveryController.getLatestCycle();
     const candidateMetrics = measuredCandidateRegistry.getMetrics(60_000);
+    const economicBarrier = getLatestCexEconomicBarrier();
     const scheduler = canonicalExecutionScheduler.getStats();
     const stage = stageManager.getState();
     const measured = getMeasuredEvolutionMetrics();
@@ -118,14 +120,15 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       liveExecutionEnabled: execution.liveExecutionEnabled,
       liveExecutionConfirmed: execution.liveExecutionConfirmed,
       reconciledInventoryAssets: inventory.length,
-      eligibleCandidates: recentMinute.eligibleOpportunities,
+      eligibleCandidates: candidateMetrics.eligible,
+      eligibleCexCandidates: candidateMetrics.byTopology.CEX_CEX.eligible,
+      eligibleZeroCapitalCandidates: candidateMetrics.byTopology.ZERO_CAPITAL_ATOMIC.eligible,
       stageCanExecute,
       currentStage: stage.currentStage,
       initialGasReady: stageManager.isInitialGasReady(),
       zeroCapitalExecutionEnabled,
     });
 
-    // Preserve the high-value discovery context alongside the pure policy output.
     readiness.DISCOVERY_READY.detail += `; selectedSymbols=${graph?.selectedSymbols ?? 0}; multiTopologyObserved=${candidateMetrics.observed}`;
 
     logger.info('[CryptoRuntime] Authoritative runtime heartbeat', {
@@ -153,6 +156,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
           assessedCandidates: graph.assessedCandidates,
           eligibleCandidates: graph.eligibleCandidates,
           capacity: graph.capacity,
+          economicBarrier,
           errors: graph.errors,
         } : null,
         multiTopology,
@@ -165,6 +169,15 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         expectedNetProfitLastHourUsd: recentHour.expectedNetProfitUsd,
         realizedNetProfitLastHourUsd: recentHour.realizedNetProfitUsd,
         realizedSettlementsLastHour: recentHour.realizedSettlementCount,
+        profitBlockers: {
+          authenticatedCexFeeBarrier: economicBarrier,
+          stageOneBlockedByFeeEconomics: stage.currentStage === 1
+            && recentMinute.verifiedPositiveOpportunities === 0
+            && economicBarrier?.status === 'fee_blocked',
+          coinStatsRequiredForCoreCexAdvancement: false,
+          coinStatsEnvironmentState: coinStatsEnvironment.state,
+          coinStatsEnvironmentSourceName: coinStatsEnvironment.sourceName,
+        },
       },
       latestDecision: latest ? {
         opportunityId: latest.opportunityId,
@@ -208,6 +221,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         optional: {
           coinStats: {
             requiredForCoreCexDiscovery: false,
+            requiredForCoreCexAdvancement: false,
             environmentState: coinStatsEnvironment.state,
             sourceName: coinStatsEnvironment.sourceName,
           },
@@ -217,6 +231,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       inventory: {
         reconciled: inventory,
         rebalance,
+        zeroCapitalResourcesAreCexInventory: false,
       },
       monteCarloCalibration: mcCalibration,
       orderBookEvolution: bookEvolution,
@@ -273,9 +288,10 @@ export function ensureCryptoRuntimeObservability(): void {
       'EXECUTION_READY',
       'TRADING_READY',
     ],
-    executionReadySemantics: 'strict_trade_ready_backward_compatible_alias',
+    executionReadySemantics: 'strict_topology_specific_canonical_cex_trade_ready',
     providerHeartbeat: ['Alchemy', 'Ankr/shared-RPC', 'market-data'],
     measuredOpportunityGraphTelemetry: true,
+    cexEconomicBarrierTelemetry: true,
     multiTopologyCandidateTelemetry: true,
     inventoryTelemetry: true,
     monteCarloCalibrationTelemetry: true,
