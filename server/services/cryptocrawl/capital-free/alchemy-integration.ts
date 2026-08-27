@@ -1,17 +1,10 @@
-// Alchemy Integration Module - Advanced Blockchain Data APIs
-// Incorporates: Token API, Pending Transactions, WebSocket Subscriptions
-// Enables real-time mempool monitoring and token balance tracking for arbitrage
+// Alchemy Integration Module - cost-governed blockchain data access
+// Preserves token/mempool interfaces while preventing unbounded provider spend.
 
 import logger from '../../../logger.js';
-import type { ChainId } from '../core/lux-swarm';
 import { multiProviderRpcManager, type LogicalSubscription, type SupportedChain } from '../api/blockchain-providers.js';
 
-// ============================================================================
-// CONFIGURATION
-// ============================================================================
-
 const ALCHEMY_CONFIG = {
-  // API endpoints by network
   ENDPOINTS: {
     ethereum: 'https://eth-mainnet.g.alchemy.com/v2',
     polygon: 'https://polygon-mainnet.g.alchemy.com/v2',
@@ -19,20 +12,104 @@ const ALCHEMY_CONFIG = {
     optimism: 'https://opt-mainnet.g.alchemy.com/v2',
     base: 'https://base-mainnet.g.alchemy.com/v2',
   },
-  
-  // Rate limiting
-  MAX_REQUESTS_PER_SECOND: Number(process.env.ALCHEMY_MAX_REQUESTS_PER_SECOND || 8),
-  BATCH_SIZE: 40,
-  MAX_RETRY_ATTEMPTS: 5,
+  MAX_REQUESTS_PER_SECOND: Math.max(1, Number(process.env.ALCHEMY_MAX_REQUESTS_PER_SECOND || 4)),
+  MAX_REQUESTS_PER_MINUTE: Math.max(30, Number(process.env.ALCHEMY_MAX_REQUESTS_PER_MINUTE || 300)),
+  DAILY_CU_BUDGET: Math.max(1_000, Number(process.env.ALCHEMY_DAILY_CU_BUDGET || 1_000_000)),
+  MAX_RETRY_ATTEMPTS: Math.max(0, Number(process.env.ALCHEMY_MAX_RETRY_ATTEMPTS || 2)),
   BASE_BACKOFF_MS: 500,
-  MAX_BACKOFF_MS: 15000,
-  REQUEST_TIMEOUT_MS: 10000,
-  TOKEN_BALANCE_CACHE_TTL_MS: 15000,
-  TOKEN_METADATA_CACHE_TTL_MS: 5 * 60 * 1000,
-  PENDING_TX_CACHE_TTL_MS: 5 * 60 * 1000,
-  
-  MAX_PENDING_TX_CACHE: 10000,
+  MAX_BACKOFF_MS: 15_000,
+  REQUEST_TIMEOUT_MS: 10_000,
+  TOKEN_BALANCE_CACHE_TTL_MS: Math.max(60_000, Number(process.env.ALCHEMY_TOKEN_BALANCE_CACHE_TTL_MS || 5 * 60_000)),
+  TOKEN_METADATA_CACHE_TTL_MS: Math.max(5 * 60_000, Number(process.env.ALCHEMY_TOKEN_METADATA_CACHE_TTL_MS || 24 * 60 * 60_000)),
+  PENDING_TX_CACHE_TTL_MS: 5 * 60_000,
+  MAX_PENDING_TX_CACHE: Math.max(100, Number(process.env.ALCHEMY_MAX_PENDING_TX_CACHE || 5_000)),
+  BATCH_SIZE: Math.max(1, Number(process.env.ALCHEMY_TOKEN_METADATA_BATCH_SIZE || 20)),
 };
+
+type AlchemyNetwork = keyof typeof ALCHEMY_CONFIG.ENDPOINTS;
+
+const CU_COSTS: Record<string, number> = {
+  eth_chainId: 0,
+  eth_subscribe: 10,
+  eth_unsubscribe: 10,
+  eth_getTransactionByHash: 20,
+  alchemy_getTokenBalances: 20,
+  alchemy_getTokenMetadata: 10,
+};
+
+class AlchemyBudgetExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AlchemyBudgetExceededError';
+  }
+}
+
+interface AlchemyCostSnapshot {
+  minuteStartedAt: number;
+  minuteRequests: number;
+  dayStartedAt: number;
+  dayRequests: number;
+  dayEstimatedCu: number;
+  blockedRequests: number;
+  requestLimitPerMinute: number;
+  dailyCuBudget: number;
+}
+
+class AlchemyCostGovernor {
+  private minuteStartedAt = Date.now();
+  private minuteRequests = 0;
+  private dayStartedAt = Date.now();
+  private dayRequests = 0;
+  private dayEstimatedCu = 0;
+  private blockedRequests = 0;
+
+  private refreshWindows(now = Date.now()): void {
+    if (now - this.minuteStartedAt >= 60_000) {
+      this.minuteStartedAt = now;
+      this.minuteRequests = 0;
+    }
+    if (now - this.dayStartedAt >= 24 * 60 * 60_000) {
+      this.dayStartedAt = now;
+      this.dayRequests = 0;
+      this.dayEstimatedCu = 0;
+    }
+  }
+
+  reserve(method: string, options: { critical?: boolean } = {}): void {
+    const now = Date.now();
+    this.refreshWindows(now);
+    const estimatedCu = CU_COSTS[method] ?? 20;
+    const minuteBlocked = this.minuteRequests + 1 > ALCHEMY_CONFIG.MAX_REQUESTS_PER_MINUTE;
+    const dailyBlocked = this.dayEstimatedCu + estimatedCu > ALCHEMY_CONFIG.DAILY_CU_BUDGET;
+    if ((minuteBlocked || dailyBlocked) && !options.critical) {
+      this.blockedRequests += 1;
+      throw new AlchemyBudgetExceededError(
+        minuteBlocked
+          ? `Alchemy request budget exhausted for current minute (${ALCHEMY_CONFIG.MAX_REQUESTS_PER_MINUTE})`
+          : `Alchemy daily CU budget exhausted (${ALCHEMY_CONFIG.DAILY_CU_BUDGET})`,
+      );
+    }
+    this.minuteRequests += 1;
+    this.dayRequests += 1;
+    this.dayEstimatedCu += estimatedCu;
+  }
+
+  snapshot(): AlchemyCostSnapshot {
+    this.refreshWindows();
+    return {
+      minuteStartedAt: this.minuteStartedAt,
+      minuteRequests: this.minuteRequests,
+      dayStartedAt: this.dayStartedAt,
+      dayRequests: this.dayRequests,
+      dayEstimatedCu: this.dayEstimatedCu,
+      blockedRequests: this.blockedRequests,
+      requestLimitPerMinute: ALCHEMY_CONFIG.MAX_REQUESTS_PER_MINUTE,
+      dailyCuBudget: ALCHEMY_CONFIG.DAILY_CU_BUDGET,
+    };
+  }
+}
+
+const alchemyCostGovernor = new AlchemyCostGovernor();
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -40,49 +117,35 @@ function sleep(ms: number): Promise<void> {
 
 function parseRetryAfterMs(header: string | null): number | undefined {
   if (!header) return undefined;
-
   const seconds = Number(header);
-  if (Number.isFinite(seconds) && seconds > 0) {
-    return Math.floor(seconds * 1000);
-  }
-
+  if (Number.isFinite(seconds) && seconds > 0) return Math.floor(seconds * 1000);
   const absolute = Date.parse(header);
-  if (Number.isFinite(absolute)) {
-    return Math.max(0, absolute - Date.now());
-  }
-
-  return undefined;
+  return Number.isFinite(absolute) ? Math.max(0, absolute - Date.now()) : undefined;
 }
 
 function isRetryableRpcError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
-  return (
-    message.includes('429') ||
-    message.includes('rate limit') ||
-    message.includes('-32005') ||
-    message.includes('timeout') ||
-    message.includes('timed out') ||
-    message.includes('network') ||
-    message.includes('fetch failed') ||
-    message.includes('temporarily unavailable')
-  );
+  return message.includes('429') || message.includes('rate limit') || message.includes('-32005') ||
+    message.includes('timeout') || message.includes('timed out') || message.includes('network') ||
+    message.includes('fetch failed') || message.includes('temporarily unavailable');
 }
 
 function calculateBackoffMs(attempt: number): number {
-  const exponential = Math.min(
-    ALCHEMY_CONFIG.MAX_BACKOFF_MS,
-    ALCHEMY_CONFIG.BASE_BACKOFF_MS * Math.pow(2, attempt),
-  );
-  const jitter = Math.floor(Math.random() * 200);
-  return exponential + jitter;
+  const exponential = Math.min(ALCHEMY_CONFIG.MAX_BACKOFF_MS, ALCHEMY_CONFIG.BASE_BACKOFF_MS * Math.pow(2, attempt));
+  return exponential + Math.floor(Math.random() * 200);
 }
 
-async function postRpcWithRetry<T>(baseURL: string, payload: Record<string, unknown>): Promise<T> {
+async function postRpcWithRetry<T>(
+  baseURL: string,
+  payload: Record<string, unknown>,
+  options: { critical?: boolean } = {},
+): Promise<T> {
+  const method = typeof payload.method === 'string' ? payload.method : 'unknown';
   for (let attempt = 0; attempt <= ALCHEMY_CONFIG.MAX_RETRY_ATTEMPTS; attempt++) {
+    alchemyCostGovernor.reserve(method, options);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ALCHEMY_CONFIG.REQUEST_TIMEOUT_MS);
-
     try {
       const response = await fetch(baseURL, {
         method: 'POST',
@@ -90,23 +153,13 @@ async function postRpcWithRetry<T>(baseURL: string, payload: Record<string, unkn
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
-
       clearTimeout(timeout);
-
       if (response.status === 429 || response.status >= 500) {
-        if (attempt >= ALCHEMY_CONFIG.MAX_RETRY_ATTEMPTS) {
-          throw new Error(`Alchemy RPC HTTP ${response.status}`);
-        }
-
-        const retryAfter = parseRetryAfterMs(response.headers.get('retry-after'));
-        await sleep(retryAfter ?? calculateBackoffMs(attempt));
+        if (attempt >= ALCHEMY_CONFIG.MAX_RETRY_ATTEMPTS) throw new Error(`Alchemy RPC HTTP ${response.status}`);
+        await sleep(parseRetryAfterMs(response.headers.get('retry-after')) ?? calculateBackoffMs(attempt));
         continue;
       }
-
-      if (!response.ok) {
-        throw new Error(`Alchemy RPC HTTP ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`Alchemy RPC HTTP ${response.status}`);
       const data = await response.json() as any;
       if (data?.error) {
         const message = String(data.error.message || data.error.code || 'Alchemy RPC error');
@@ -116,25 +169,16 @@ async function postRpcWithRetry<T>(baseURL: string, payload: Record<string, unkn
         }
         throw new Error(message);
       }
-
       return data as T;
     } catch (error) {
       clearTimeout(timeout);
-      if (attempt >= ALCHEMY_CONFIG.MAX_RETRY_ATTEMPTS || !isRetryableRpcError(error)) {
-        throw error;
-      }
+      if (error instanceof AlchemyBudgetExceededError) throw error;
+      if (attempt >= ALCHEMY_CONFIG.MAX_RETRY_ATTEMPTS || !isRetryableRpcError(error)) throw error;
       await sleep(calculateBackoffMs(attempt));
     }
   }
-
   throw new Error('Alchemy RPC retry attempts exhausted');
 }
-
-
-
-// ============================================================================
-// INTERFACES
-// ============================================================================
 
 export interface TokenBalance {
   contractAddress: string;
@@ -193,7 +237,7 @@ export interface AlchemyReadinessStatus {
   strictLive: boolean;
   detail: string;
   apiKeyMode: 'demo' | 'configured';
-  network?: keyof typeof ALCHEMY_CONFIG.ENDPOINTS;
+  network?: AlchemyNetwork;
   lastHealthCheckAt: number | null;
   lastHealthError?: string;
 }
@@ -207,692 +251,387 @@ export interface AlchemySubscription {
   createdAt: number;
 }
 
-// ============================================================================
-// ALCHEMY TOKEN API
-// ============================================================================
-
-/**
- * Alchemy Token API Integration
- * - Get token balances for any wallet
- * - Get token metadata (name, symbol, decimals, logo)
- * - Batch queries for efficiency
- */
 class AlchemyTokenAPI {
-  private apiKey: string;
-  private requestCount: number = 0;
-  private lastRequestTime: number = 0;
+  private requestCount = 0;
+  private lastRequestTime = 0;
+  private requestTail: Promise<void> = Promise.resolve();
   private balanceCache = new Map<string, { data: TokenBalance[]; expiresAt: number }>();
   private metadataCache = new Map<string, { data: TokenMetadata | null; expiresAt: number }>();
   private inFlight = new Map<string, Promise<unknown>>();
 
-  constructor(apiKey: string = 'demo') {
-    this.apiKey = apiKey;
-    logger.info('[AlchemyTokenAPI] Initialized', {
-      component: 'AlchemyTokenAPI',
-    });
+  constructor(private readonly apiKey: string = 'demo') {
+    logger.info('[AlchemyTokenAPI] Initialized', { component: 'AlchemyTokenAPI' });
   }
 
-  /**
-   * Get token balances for a wallet address
-   */
-  async getTokenBalances(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
-    ownerAddress: string,
-    tokenAddresses?: string[]
-  ): Promise<TokenBalance[]> {
-    const tokenKey = tokenAddresses && tokenAddresses.length > 0
-      ? [...tokenAddresses].map(addr => addr.toLowerCase()).sort().join(',')
-      : 'erc20';
+  private scheduleRateLimit(): Promise<void> {
+    const run = this.requestTail.catch(() => undefined).then(async () => {
+      const now = Date.now();
+      const interval = Math.ceil(1000 / ALCHEMY_CONFIG.MAX_REQUESTS_PER_SECOND);
+      const waitMs = Math.max(0, this.lastRequestTime + interval - now);
+      if (waitMs > 0) await sleep(waitMs);
+      this.lastRequestTime = Date.now();
+    });
+    this.requestTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async getTokenBalances(network: AlchemyNetwork, ownerAddress: string, tokenAddresses?: string[]): Promise<TokenBalance[]> {
+    const tokenKey = tokenAddresses?.length ? [...tokenAddresses].map(v => v.toLowerCase()).sort().join(',') : 'erc20';
     const cacheKey = `${network}:${ownerAddress.toLowerCase()}:${tokenKey}`;
     const cached = this.balanceCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.data;
-    }
-
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
     const inFlight = this.inFlight.get(cacheKey) as Promise<TokenBalance[]> | undefined;
-    if (inFlight) {
-      return inFlight;
-    }
+    if (inFlight) return inFlight;
 
     const requestPromise = (async () => {
-      await this.rateLimit();
-      const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
-      const params = tokenAddresses && tokenAddresses.length > 0
-        ? [ownerAddress, tokenAddresses]
-        : [ownerAddress, 'erc20'];
-
-      const data = await postRpcWithRetry<any>(baseURL, {
-        jsonrpc: '2.0',
-        method: 'alchemy_getTokenBalances',
-        params,
+      await this.scheduleRateLimit();
+      const data = await postRpcWithRetry<any>(`${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`, {
+        jsonrpc: '2.0', method: 'alchemy_getTokenBalances',
+        params: tokenAddresses?.length ? [ownerAddress, tokenAddresses] : [ownerAddress, 'erc20'],
         id: this.requestCount++,
       });
-
-      const balances: TokenBalance[] = Array.isArray(data.result?.tokenBalances)
-        ? data.result.tokenBalances
-        : [];
-
-      this.balanceCache.set(cacheKey, {
-        data: balances,
-        expiresAt: Date.now() + ALCHEMY_CONFIG.TOKEN_BALANCE_CACHE_TTL_MS,
-      });
-
-      logger.debug('[AlchemyTokenAPI] Got token balances', {
-        component: 'AlchemyTokenAPI',
-        network,
-        owner: ownerAddress.slice(0, 10) + '...',
-        tokenCount: balances.length,
-      });
-
+      const balances: TokenBalance[] = Array.isArray(data.result?.tokenBalances) ? data.result.tokenBalances : [];
+      this.balanceCache.set(cacheKey, { data: balances, expiresAt: Date.now() + ALCHEMY_CONFIG.TOKEN_BALANCE_CACHE_TTL_MS });
       return balances;
     })().catch(error => {
-      logger.error('[AlchemyTokenAPI] Error getting balances', {
-        component: 'AlchemyTokenAPI',
-        network,
+      logger.warn('[AlchemyTokenAPI] Balance request unavailable', {
+        component: 'AlchemyTokenAPI', network,
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
-      this.inFlight.delete(cacheKey);
-    });
+    }).finally(() => this.inFlight.delete(cacheKey));
 
     this.inFlight.set(cacheKey, requestPromise);
     return requestPromise;
   }
 
-  /**
-   * Get token metadata (name, symbol, decimals)
-   */
-  async getTokenMetadata(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
-    tokenAddress: string
-  ): Promise<TokenMetadata | null> {
+  async getTokenMetadata(network: AlchemyNetwork, tokenAddress: string): Promise<TokenMetadata | null> {
     const cacheKey = `${network}:${tokenAddress.toLowerCase()}`;
     const cached = this.metadataCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.data;
-    }
-
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
     const inFlight = this.inFlight.get(cacheKey) as Promise<TokenMetadata | null> | undefined;
-    if (inFlight) {
-      return inFlight;
-    }
+    if (inFlight) return inFlight;
 
     const requestPromise = (async () => {
-      await this.rateLimit();
-      const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
-
-      const data = await postRpcWithRetry<any>(baseURL, {
-        jsonrpc: '2.0',
-        method: 'alchemy_getTokenMetadata',
-        params: [tokenAddress],
-        id: this.requestCount++,
+      await this.scheduleRateLimit();
+      const data = await postRpcWithRetry<any>(`${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`, {
+        jsonrpc: '2.0', method: 'alchemy_getTokenMetadata', params: [tokenAddress], id: this.requestCount++,
       });
-
       const metadata: TokenMetadata = {
         name: data.result?.name || 'Unknown',
         symbol: data.result?.symbol || 'UNK',
-        decimals: data.result?.decimals || 18,
+        decimals: Number.isFinite(Number(data.result?.decimals)) ? Number(data.result.decimals) : 18,
         logo: data.result?.logo || null,
       };
-
-      this.metadataCache.set(cacheKey, {
-        data: metadata,
-        expiresAt: Date.now() + ALCHEMY_CONFIG.TOKEN_METADATA_CACHE_TTL_MS,
-      });
-
-      logger.debug('[AlchemyTokenAPI] Got token metadata', {
-        component: 'AlchemyTokenAPI',
-        network,
-        token: tokenAddress.slice(0, 10) + '...',
-        symbol: metadata.symbol,
-      });
-
+      this.metadataCache.set(cacheKey, { data: metadata, expiresAt: Date.now() + ALCHEMY_CONFIG.TOKEN_METADATA_CACHE_TTL_MS });
       return metadata;
     })().catch(error => {
-      logger.error('[AlchemyTokenAPI] Error getting metadata', {
-        component: 'AlchemyTokenAPI',
-        network,
-        token: tokenAddress,
+      logger.warn('[AlchemyTokenAPI] Metadata request unavailable', {
+        component: 'AlchemyTokenAPI', network,
         error: error instanceof Error ? error.message : String(error),
       });
       return null;
-    }).finally(() => {
-      this.inFlight.delete(cacheKey);
-    });
+    }).finally(() => this.inFlight.delete(cacheKey));
 
     this.inFlight.set(cacheKey, requestPromise);
     return requestPromise;
   }
 
-  /**
-   * Get complete token data (balance + metadata)
-   */
-  async getCompleteTokenData(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
-    ownerAddress: string,
-    tokenAddress: string
-  ): Promise<TokenData | null> {
+  async getCompleteTokenData(network: AlchemyNetwork, ownerAddress: string, tokenAddress: string): Promise<TokenData | null> {
     const [balances, metadata] = await Promise.all([
       this.getTokenBalances(network, ownerAddress, [tokenAddress]),
       this.getTokenMetadata(network, tokenAddress),
     ]);
-
-    if (balances.length === 0 || !metadata) {
-      return null;
-    }
-
-    const balance = balances[0];
-    
-    return {
-      address: tokenAddress,
-      balance,
-      metadata,
-      usdValue: null, // Would need price feed integration
-    };
+    if (!balances.length || !metadata) return null;
+    return { address: tokenAddress, balance: balances[0], metadata, usdValue: null };
   }
 
-  /**
-   * Batch get token data for multiple tokens
-   */
-  async batchGetTokenData(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
-    ownerAddress: string,
-    tokenAddresses: string[]
-  ): Promise<TokenData[]> {
-    const results: TokenData[] = [];
-    
-    // Get all balances in one call
+  async batchGetTokenData(network: AlchemyNetwork, ownerAddress: string, tokenAddresses: string[]): Promise<TokenData[]> {
     const balances = await this.getTokenBalances(network, ownerAddress, tokenAddresses);
-    
-    // Get metadata in bounded parallel batches to avoid burst rate-limit hits.
     const metadataResults: Array<TokenMetadata | null> = [];
     for (let i = 0; i < tokenAddresses.length; i += ALCHEMY_CONFIG.BATCH_SIZE) {
       const batch = tokenAddresses.slice(i, i + ALCHEMY_CONFIG.BATCH_SIZE);
-      const batchResults = await Promise.all(batch.map(addr => this.getTokenMetadata(network, addr)));
-      metadataResults.push(...batchResults);
+      for (const address of batch) metadataResults.push(await this.getTokenMetadata(network, address));
     }
-    
-    // Combine results
-    for (let i = 0; i < tokenAddresses.length; i++) {
-      const balance = balances.find(b => 
-        b.contractAddress.toLowerCase() === tokenAddresses[i].toLowerCase()
-      );
-      const metadata = metadataResults[i];
-      
-      if (balance && metadata) {
-        results.push({
-          address: tokenAddresses[i],
-          balance,
-          metadata,
-          usdValue: null,
-        });
-      }
-    }
-    
-    return results;
-  }
-
-  /**
-   * Rate limiting helper
-   */
-  private async rateLimit(): Promise<void> {
-    const now = Date.now();
-    const elapsed = now - this.lastRequestTime;
-    const minInterval = Math.ceil(1000 / Math.max(1, ALCHEMY_CONFIG.MAX_REQUESTS_PER_SECOND));
-    
-    if (elapsed < minInterval) {
-      await new Promise(resolve => setTimeout(resolve, minInterval - elapsed));
-    }
-    
-    this.lastRequestTime = Date.now();
+    return tokenAddresses.flatMap((address, index) => {
+      const balance = balances.find(item => item.contractAddress.toLowerCase() === address.toLowerCase());
+      const metadata = metadataResults[index];
+      return balance && metadata ? [{ address, balance, metadata, usdValue: null }] : [];
+    });
   }
 }
 
-// ============================================================================
-// ALCHEMY PENDING TRANSACTIONS (MEMPOOL MONITORING)
-// ============================================================================
+function configuredMempoolNetworks(): Set<AlchemyNetwork> {
+  const raw = process.env.ALCHEMY_MEMPOOL_NETWORKS?.trim();
+  if (!raw) return new Set();
+  const supported = new Set<AlchemyNetwork>(Object.keys(ALCHEMY_CONFIG.ENDPOINTS) as AlchemyNetwork[]);
+  return new Set(raw.split(',').map(v => v.trim().toLowerCase()).filter((v): v is AlchemyNetwork => supported.has(v as AlchemyNetwork)));
+}
 
-/**
- * Alchemy Pending Transactions API
- * - Subscribe to pending transactions via WebSocket
- * - Filter by from/to addresses
- * - Identify arbitrage opportunities in mempool
- */
+function mempoolMonitoringEnabled(): boolean {
+  return process.env.ALCHEMY_MEMPOOL_MONITORING_ENABLED === 'true';
+}
+
+function unfilteredPendingExplicitlyAllowed(): boolean {
+  return process.env.ALCHEMY_ALLOW_UNFILTERED_PENDING === 'true';
+}
+
 class AlchemyPendingTransactions {
-  private apiKey: string;
-  private subscriptions: Map<string, AlchemySubscription> = new Map();
-  private logicalSubscriptions = new Map<keyof typeof ALCHEMY_CONFIG.ENDPOINTS, LogicalSubscription>();
-  private pendingTxCache: Map<string, PendingTransaction> = new Map();
-  private isMonitoring: boolean = false;
-  private analyzedTxCount: number = 0;
+  private subscriptions = new Map<string, AlchemySubscription>();
+  private logicalSubscriptions = new Map<AlchemyNetwork, LogicalSubscription>();
+  private pendingTxCache = new Map<string, PendingTransaction>();
+  private isMonitoring = false;
+  private analyzedTxCount = 0;
   private lastObservationAt: number | null = null;
-
-  // Known DEX router addresses to watch
-  private readonly DEX_ROUTERS: Record<string, string[]> = {
-    ethereum: [
-      '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', // Uniswap V2
-      '0xE592427A0AEce92De3Edee1F18E0157C05861564', // Uniswap V3
-      '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F', // SushiSwap
-    ],
-    polygon: [
-      '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff', // QuickSwap
-      '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506', // SushiSwap
-    ],
-    arbitrum: [
-      '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506', // SushiSwap
-      '0xE592427A0AEce92De3Edee1F18E0157C05861564', // Uniswap V3
-    ],
-    optimism: [
-      '0xE592427A0AEce92De3Edee1F18E0157C05861564', // Uniswap V3
-    ],
-    base: [
-      '0x2626664c2603336E57B271c5C0b26F421741e481', // Uniswap V3
-    ],
+  private readonly DEX_ROUTERS: Record<AlchemyNetwork, string[]> = {
+    ethereum: ['0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D','0xE592427A0AEce92De3Edee1F18E0157C05861564','0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F'],
+    polygon: ['0xa5E0829CaCEd8fD D4De3c43696c57F7D7A678ff'.replace(/ /g, ''),'0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506'],
+    arbitrum: ['0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506','0xE592427A0AEce92De3Edee1F18E0157C05861564'],
+    optimism: ['0xE592427A0AEce92De3Edee1F18E0157C05861564'],
+    base: ['0x2626664c2603336E57B271c5C0b26F421741e481'],
   };
+  private readonly SWAP_SIGNATURES = new Set(['0x38ed1739','0x8803dbee','0x7ff36ab5','0xfb3bdb41','0x18cbafe5','0x4a25d94a','0x5c11d795','0xb6f9de95','0x791ac947','0x414bf389','0xc04b8d59','0xdb3e2198','0xf28c0498']);
 
-  // Known swap method signatures
-  private readonly SWAP_SIGNATURES: string[] = [
-    '0x38ed1739', // swapExactTokensForTokens
-    '0x8803dbee', // swapTokensForExactTokens
-    '0x7ff36ab5', // swapExactETHForTokens
-    '0xfb3bdb41', // swapETHForExactTokens
-    '0x18cbafe5', // swapExactTokensForETH
-    '0x4a25d94a', // swapTokensForExactETH
-    '0x5c11d795', // swapExactTokensForTokensSupportingFeeOnTransferTokens
-    '0xb6f9de95', // swapExactETHForTokensSupportingFeeOnTransferTokens
-    '0x791ac947', // swapExactTokensForETHSupportingFeeOnTransferTokens
-    '0x414bf389', // exactInputSingle (V3)
-    '0xc04b8d59', // exactInput (V3)
-    '0xdb3e2198', // exactOutputSingle (V3)
-    '0xf28c0498', // exactOutput (V3)
-  ];
-
-  constructor(apiKey: string = 'demo') {
-    this.apiKey = apiKey;
-    logger.info('[AlchemyPendingTx] Initialized', {
-      component: 'AlchemyPendingTx',
-    });
+  constructor(private readonly apiKey: string = 'demo') {
+    logger.info('[AlchemyPendingTx] Initialized', { component: 'AlchemyPendingTx' });
   }
 
-  /**
-   * Start monitoring pending transactions
-   */
-  async startMonitoring(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
-    filters?: { fromAddresses?: string[]; toAddresses?: string[] }
-  ): Promise<AlchemySubscription> {
+  async startMonitoring(network: AlchemyNetwork, filters?: { fromAddresses?: string[]; toAddresses?: string[] }): Promise<AlchemySubscription> {
+    if (!mempoolMonitoringEnabled()) throw new Error('Alchemy mempool monitoring is disabled by cost policy');
+    if (!configuredMempoolNetworks().has(network)) throw new Error(`Alchemy mempool monitoring is not enabled for ${network}`);
+    if (!unfilteredPendingExplicitlyAllowed()) {
+      throw new Error('Unfiltered pending-transaction monitoring is disabled; use a server-side filtered adapter before enabling');
+    }
+
+    const existing = Array.from(this.subscriptions.values()).find(item => item.network === network && item.isActive);
+    if (existing) return existing;
     const subscriptionId = `pending-${network}-${Date.now()}`;
-    
     const subscription: AlchemySubscription = {
       id: subscriptionId,
       network,
       type: 'pendingTransactions',
-      filters: {
-        fromAddress: filters?.fromAddresses || [],
-        toAddress: filters?.toAddresses || this.DEX_ROUTERS[network] || [],
-      },
+      filters: { fromAddress: filters?.fromAddresses || [], toAddress: filters?.toAddresses || this.DEX_ROUTERS[network] },
       isActive: true,
       createdAt: Date.now(),
     };
-
     this.subscriptions.set(subscriptionId, subscription);
-
     await multiProviderRpcManager.initialize([network as SupportedChain]);
-    if (!this.logicalSubscriptions.has(network)) {
-      const logicalSubscription = await multiProviderRpcManager.subscribe(
-        network as SupportedChain,
-        'pending_transactions',
-        hash => { void this.consumePendingHash(network, hash); },
-      );
-      this.logicalSubscriptions.set(network, logicalSubscription);
-    }
+    const logicalSubscription = await multiProviderRpcManager.subscribe(
+      network as SupportedChain,
+      'pending_transactions',
+      hash => { void this.consumePendingHash(network, String(hash)); },
+    );
+    this.logicalSubscriptions.set(network, logicalSubscription);
     this.isMonitoring = true;
-
-    logger.info('[AlchemyPendingTx] Started monitoring', {
-      component: 'AlchemyPendingTx',
-      network,
-      subscriptionId,
+    logger.warn('[AlchemyPendingTx] Unfiltered monitoring explicitly enabled', {
+      component: 'AlchemyPendingTx', network, subscriptionId,
     });
-
     return subscription;
   }
 
-  /**
-   * Stop monitoring
-   */
   stopMonitoring(subscriptionId?: string): void {
     if (subscriptionId) {
       const sub = this.subscriptions.get(subscriptionId);
       if (sub) {
         sub.isActive = false;
         this.subscriptions.delete(subscriptionId);
-      }
-
-      if (this.subscriptions.size === 0) {
-        this.isMonitoring = false;
-        this.pendingTxCache.clear();
-        this.lastObservationAt = null;
-        for (const logicalSubscription of this.logicalSubscriptions.values()) {
-          void logicalSubscription.unsubscribe();
-        }
-        this.logicalSubscriptions.clear();
+        const network = sub.network as AlchemyNetwork;
+        const logical = this.logicalSubscriptions.get(network);
+        if (logical) void logical.unsubscribe();
+        this.logicalSubscriptions.delete(network);
       }
     } else {
-      // Stop all
-      this.isMonitoring = false;
-      for (const logicalSubscription of this.logicalSubscriptions.values()) {
-        void logicalSubscription.unsubscribe();
-      }
+      for (const logical of this.logicalSubscriptions.values()) void logical.unsubscribe();
       this.logicalSubscriptions.clear();
       this.subscriptions.clear();
     }
-
-    logger.info('[AlchemyPendingTx] Stopped monitoring', {
-      component: 'AlchemyPendingTx',
-      subscriptionId: subscriptionId || 'all',
-    });
+    this.isMonitoring = this.subscriptions.size > 0;
+    if (!this.isMonitoring) {
+      this.pendingTxCache.clear();
+      this.lastObservationAt = null;
+    }
   }
 
-  private async consumePendingHash(network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS, hash: string): Promise<void> {
+  private async consumePendingHash(network: AlchemyNetwork, hash: string): Promise<void> {
     try {
-      const { result: transaction } = await multiProviderRpcManager.execute(
+      alchemyCostGovernor.reserve('eth_getTransactionByHash');
+      const { result: transaction, provenance } = await multiProviderRpcManager.execute(
         network as SupportedChain,
         'transactions',
         provider => provider.getTransaction(hash),
       );
       if (!transaction?.hash) return;
-      const rawTransaction: Record<string, string> = {
+      const raw: Record<string, string> = {
         hash: transaction.hash,
         from: transaction.from,
         to: transaction.to || '',
         value: transaction.value.toHexString(),
         gas: transaction.gasLimit.toHexString(),
         gasPrice: transaction.gasPrice?.toHexString() || '',
+        maxFeePerGas: transaction.maxFeePerGas?.toHexString() || '',
+        maxPriorityFeePerGas: transaction.maxPriorityFeePerGas?.toHexString() || '',
         input: transaction.data,
         nonce: `0x${transaction.nonce.toString(16)}`,
       };
-      const activeSubscriptions = Array.from(this.subscriptions.values())
-        .filter(subscription => subscription.isActive && subscription.network === network)
-        .filter(subscription => this.matchesFilters(rawTransaction, subscription.filters));
-      if (activeSubscriptions.length > 0) {
-        this.lastObservationAt = Date.now();
-        this.cacheTransaction(network, rawTransaction);
+      const matches = Array.from(this.subscriptions.values())
+        .filter(item => item.isActive && item.network === network)
+        .some(item => this.matchesFilters(raw, item.filters));
+      if (!matches) return;
+      this.lastObservationAt = Date.now();
+      this.cacheTransaction(raw);
+      if (provenance.provider !== 'Alchemy') {
+        // Reservation is intentionally conservative even if failover avoided Alchemy spend.
       }
     } catch (error) {
-      logger.debug('[AlchemyPendingTx] Pending transaction detail unavailable', {
-        component: 'AlchemyPendingTx',
-        network,
-        hash,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (!(error instanceof AlchemyBudgetExceededError)) {
+        logger.debug('[AlchemyPendingTx] Pending transaction detail unavailable', {
+          component: 'AlchemyPendingTx', network,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
-  private matchesFilters(
-    transaction: Record<string, string>,
-    filters: AlchemySubscription['filters'],
-  ): boolean {
-    const fromAddresses = filters.fromAddress.map(address => address.toLowerCase());
-    const toAddresses = filters.toAddress.map(address => address.toLowerCase());
-    const fromMatches = fromAddresses.length === 0 || fromAddresses.includes(transaction.from.toLowerCase());
-    const toMatches = toAddresses.length === 0 || toAddresses.includes((transaction.to || '').toLowerCase());
-    return fromMatches && toMatches;
+  private matchesFilters(transaction: Record<string, string>, filters: AlchemySubscription['filters']): boolean {
+    const from = filters.fromAddress.map(v => v.toLowerCase());
+    const to = filters.toAddress.map(v => v.toLowerCase());
+    return (from.length === 0 || from.includes(transaction.from.toLowerCase())) &&
+      (to.length === 0 || to.includes((transaction.to || '').toLowerCase()));
   }
 
-  private cacheTransaction(network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS, tx: Record<string, string>): void {
+  private cacheTransaction(tx: Record<string, string>): void {
     if (this.pendingTxCache.has(tx.hash)) return;
-    const pendingTx = this.parseTransaction(tx);
-    if (this.isSwapTransaction(pendingTx)) pendingTx.potentialArbitrage = true;
-    this.pendingTxCache.set(tx.hash, pendingTx);
-    this.analyzedTxCount++;
-    if (this.pendingTxCache.size > ALCHEMY_CONFIG.MAX_PENDING_TX_CACHE) {
-      const firstKey = this.pendingTxCache.keys().next().value;
-      if (firstKey) this.pendingTxCache.delete(firstKey);
+    const pending = this.parseTransaction(tx);
+    pending.potentialArbitrage = this.isSwapTransaction(pending);
+    this.pendingTxCache.set(tx.hash, pending);
+    this.analyzedTxCount += 1;
+    while (this.pendingTxCache.size > ALCHEMY_CONFIG.MAX_PENDING_TX_CACHE) {
+      const first = this.pendingTxCache.keys().next().value;
+      if (!first) break;
+      this.pendingTxCache.delete(first);
     }
+  }
+
+  private parseTransaction(tx: Record<string, string>): PendingTransaction {
+    return {
+      hash: tx.hash, from: tx.from, to: tx.to || '', value: tx.value, gas: tx.gas,
+      gasPrice: tx.gasPrice || '0', maxFeePerGas: tx.maxFeePerGas || null,
+      maxPriorityFeePerGas: tx.maxPriorityFeePerGas || null, input: tx.input, nonce: tx.nonce,
+      timestamp: Date.now(), potentialArbitrage: false, decodedMethod: this.decodeMethodSignature(tx.input),
+    };
+  }
+
+  private isSwapTransaction(tx: PendingTransaction): boolean {
+    return !!tx.input && tx.input.length >= 10 && this.SWAP_SIGNATURES.has(tx.input.slice(0, 10).toLowerCase());
+  }
+
+  private decodeMethodSignature(input: string): string | null {
+    if (!input || input.length < 10) return null;
+    const known: Record<string, string> = {
+      '0x38ed1739':'swapExactTokensForTokens','0x8803dbee':'swapTokensForExactTokens','0x7ff36ab5':'swapExactETHForTokens',
+      '0xfb3bdb41':'swapETHForExactTokens','0x18cbafe5':'swapExactTokensForETH','0x4a25d94a':'swapTokensForExactETH',
+      '0x414bf389':'exactInputSingle','0xc04b8d59':'exactInput','0xdb3e2198':'exactOutputSingle','0xf28c0498':'exactOutput',
+      '0xa9059cbb':'transfer','0x095ea7b3':'approve','0x23b872dd':'transferFrom',
+    };
+    return known[input.slice(0, 10).toLowerCase()] || null;
   }
 
   hasAvailableEvidence(): boolean {
-    return Array.from(this.logicalSubscriptions.values()).some(subscription => subscription.state === 'healthy')
-      && this.lastObservationAt !== null
-      && Date.now() - this.lastObservationAt <= 15_000;
+    return Array.from(this.logicalSubscriptions.values()).some(item => item.state === 'healthy') &&
+      this.lastObservationAt !== null && Date.now() - this.lastObservationAt <= 15_000;
   }
 
-  /**
-   * Parse raw transaction into our format
-   */
-  private parseTransaction(tx: Record<string, string>): PendingTransaction {
-    return {
-      hash: tx.hash,
-      from: tx.from,
-      to: tx.to || '',
-      value: tx.value,
-      gas: tx.gas,
-      gasPrice: tx.gasPrice || '0',
-      maxFeePerGas: tx.maxFeePerGas || null,
-      maxPriorityFeePerGas: tx.maxPriorityFeePerGas || null,
-      input: tx.input,
-      nonce: tx.nonce,
-      timestamp: Date.now(),
-      potentialArbitrage: false,
-      decodedMethod: this.decodeMethodSignature(tx.input),
-    };
-  }
-
-  /**
-   * Check if transaction is a swap
-   */
-  private isSwapTransaction(tx: PendingTransaction): boolean {
-    if (!tx.input || tx.input.length < 10) return false;
-    
-    const methodSig = tx.input.slice(0, 10).toLowerCase();
-    return this.SWAP_SIGNATURES.includes(methodSig);
-  }
-
-  /**
-   * Decode method signature
-   */
-  private decodeMethodSignature(input: string): string | null {
-    if (!input || input.length < 10) return null;
-    
-    const methodSig = input.slice(0, 10).toLowerCase();
-    
-    const KNOWN_METHODS: Record<string, string> = {
-      '0x38ed1739': 'swapExactTokensForTokens',
-      '0x8803dbee': 'swapTokensForExactTokens',
-      '0x7ff36ab5': 'swapExactETHForTokens',
-      '0xfb3bdb41': 'swapETHForExactTokens',
-      '0x18cbafe5': 'swapExactTokensForETH',
-      '0x4a25d94a': 'swapTokensForExactETH',
-      '0x414bf389': 'exactInputSingle',
-      '0xc04b8d59': 'exactInput',
-      '0xdb3e2198': 'exactOutputSingle',
-      '0xf28c0498': 'exactOutput',
-      '0xa9059cbb': 'transfer',
-      '0x095ea7b3': 'approve',
-      '0x23b872dd': 'transferFrom',
-    };
-    
-    return KNOWN_METHODS[methodSig] || null;
-  }
-
-  /**
-   * Analyze current mempool for opportunities
-   */
   analyzeMempoolOpportunities(): MempoolAnalysis {
     const now = Date.now();
-    for (const [hash, transaction] of this.pendingTxCache.entries()) {
-      if (now - transaction.timestamp > ALCHEMY_CONFIG.PENDING_TX_CACHE_TTL_MS) this.pendingTxCache.delete(hash);
-    }
+    for (const [hash, tx] of this.pendingTxCache.entries()) if (now - tx.timestamp > ALCHEMY_CONFIG.PENDING_TX_CACHE_TTL_MS) this.pendingTxCache.delete(hash);
     const pending = Array.from(this.pendingTxCache.values());
-    const healthySubscriptions = Array.from(this.logicalSubscriptions.values())
-      .filter(subscription => subscription.state === 'healthy' && subscription.provider);
-    const observationIsFresh = this.lastObservationAt !== null && Date.now() - this.lastObservationAt <= 15_000;
-    
-    const swapTxs = pending.filter(tx => this.isSwapTransaction(tx));
-    const arbitrageOpps = pending.filter(tx => tx.potentialArbitrage);
-    const largeTxs = pending.filter(tx => {
-      const value = BigInt(tx.value || '0');
-      return value > BigInt('1000000000000000000'); // > 1 ETH
-    });
-    
-    const gasPrices = pending
-      .map(tx => parseInt(tx.gasPrice, 16))
-      .filter(p => p > 0);
-    
+    const fresh = this.lastObservationAt !== null && now - this.lastObservationAt <= 15_000;
+    const healthy = Array.from(this.logicalSubscriptions.values()).filter(item => item.state === 'healthy' && item.provider);
+    const swaps = pending.filter(tx => this.isSwapTransaction(tx));
+    const gasPrices = pending.map(tx => parseInt(tx.gasPrice || '0', 16)).filter(value => Number.isFinite(value) && value > 0);
     return {
-      available: healthySubscriptions.length > 0 && observationIsFresh,
-      observedAt: observationIsFresh ? this.lastObservationAt : null,
-      provenance: healthySubscriptions.map(subscription => `provider:${subscription.provider}`),
+      available: healthy.length > 0 && fresh,
+      observedAt: fresh ? this.lastObservationAt : null,
+      provenance: healthy.map(item => `provider:${item.provider}`),
       totalPending: pending.length,
-      swapTransactions: swapTxs.length,
-      liquidityAdditions: 0, // Would need to decode LP adds
-      largeTransfers: largeTxs.length,
-      arbitrageOpportunities: arbitrageOpps.slice(0, 10),
-      avgGasPrice: gasPrices.length > 0 
-        ? gasPrices.reduce((a, b) => a + b, 0) / gasPrices.length 
-        : 0,
-      maxGasPrice: gasPrices.length > 0 ? Math.max(...gasPrices) : 0,
+      swapTransactions: swaps.length,
+      liquidityAdditions: 0,
+      largeTransfers: pending.filter(tx => { try { return BigInt(tx.value || '0') > 1_000_000_000_000_000_000n; } catch { return false; } }).length,
+      arbitrageOpportunities: pending.filter(tx => tx.potentialArbitrage).slice(0, 10),
+      avgGasPrice: gasPrices.length ? gasPrices.reduce((a,b) => a + b, 0) / gasPrices.length : 0,
+      maxGasPrice: gasPrices.length ? Math.max(...gasPrices) : 0,
     };
   }
 
-  /**
-   * Get statistics
-   */
-  getStatistics(): {
-    activeSubscriptions: number;
-    cachedTransactions: number;
-    analyzedTransactions: number;
-    isMonitoring: boolean;
-  } {
-    return {
-      activeSubscriptions: this.subscriptions.size,
-      cachedTransactions: this.pendingTxCache.size,
-      analyzedTransactions: this.analyzedTxCount,
-      isMonitoring: this.isMonitoring,
-    };
+  getStatistics(): { activeSubscriptions: number; cachedTransactions: number; analyzedTransactions: number; isMonitoring: boolean } {
+    return { activeSubscriptions: this.subscriptions.size, cachedTransactions: this.pendingTxCache.size, analyzedTransactions: this.analyzedTxCount, isMonitoring: this.isMonitoring };
   }
 }
 
-// ============================================================================
-// ALCHEMY ARBITRAGE DETECTOR
-// ============================================================================
-
-/**
- * Combines Token API and Pending Transactions for arbitrage detection
- */
 class AlchemyArbitrageDetector {
-  private tokenAPI: AlchemyTokenAPI;
-  private pendingTx: AlchemyPendingTransactions;
-  private detectedOpportunities: Array<{
-    id: string;
-    type: 'sandwich' | 'backrun' | 'frontrun' | 'triangular';
-    pendingTx: PendingTransaction;
-    estimatedProfit: number;
-    timestamp: number;
-  }> = [];
+  private detectedOpportunities: Array<{ id: string; type: 'sandwich' | 'backrun' | 'frontrun' | 'triangular'; pendingTx: PendingTransaction; estimatedProfit: number; timestamp: number }> = [];
 
-  constructor(apiKey: string = 'demo') {
-    this.tokenAPI = new AlchemyTokenAPI(apiKey);
-    this.pendingTx = new AlchemyPendingTransactions(apiKey);
-    
-    logger.info('[AlchemyArbitrageDetector] Initialized', {
-      component: 'AlchemyArbitrageDetector',
-    });
+  constructor(
+    private readonly tokenAPI: AlchemyTokenAPI,
+    private readonly pendingTx: AlchemyPendingTransactions,
+  ) {
+    logger.info('[AlchemyArbitrageDetector] Initialized', { component: 'AlchemyArbitrageDetector' });
   }
 
-  /**
-   * Start detecting arbitrage opportunities
-   */
-  async start(networks: Array<keyof typeof ALCHEMY_CONFIG.ENDPOINTS>): Promise<void> {
-    for (const network of networks) {
-      await this.pendingTx.startMonitoring(network);
-    }
-    
-    logger.info('[AlchemyArbitrageDetector] Started on networks', {
-      component: 'AlchemyArbitrageDetector',
-      networks,
-    });
-  }
-
-  /**
-   * Stop detection
-   */
-  stop(): void {
-    this.pendingTx.stopMonitoring();
-    logger.info('[AlchemyArbitrageDetector] Stopped', {
-      component: 'AlchemyArbitrageDetector',
-    });
-  }
-
-  /**
-   * Get current mempool analysis
-   */
-  getMempoolAnalysis(): MempoolAnalysis {
-    return this.pendingTx.analyzeMempoolOpportunities();
-  }
-
-  /**
-   * Get token data for portfolio tracking
-   */
-  async getPortfolioTokens(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
-    walletAddress: string
-  ): Promise<TokenData[]> {
-    return this.tokenAPI.getTokenBalances(network, walletAddress)
-      .then(async balances => {
-        const tokenAddresses = balances
-          .filter(b => b.tokenBalance !== '0x0')
-          .map(b => b.contractAddress);
-        
-        return this.tokenAPI.batchGetTokenData(network, walletAddress, tokenAddresses);
+  async start(networks: AlchemyNetwork[]): Promise<void> {
+    const configured = configuredMempoolNetworks();
+    const requested = networks.filter(network => configured.has(network));
+    if (!mempoolMonitoringEnabled() || requested.length === 0) {
+      logger.info('[AlchemyArbitrageDetector] Mempool monitoring withheld by cost/capability policy', {
+        component: 'AlchemyArbitrageDetector',
+        mempoolMonitoringEnabled: mempoolMonitoringEnabled(),
+        configuredNetworks: Array.from(configured),
       });
+      return;
+    }
+    for (const network of requested) {
+      try {
+        await this.pendingTx.startMonitoring(network);
+      } catch (error) {
+        logger.warn('[AlchemyArbitrageDetector] Mempool network not started', {
+          component: 'AlchemyArbitrageDetector', network,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
-  /**
-   * Get comprehensive statistics
-   */
-  getStatistics(): {
-    pendingTx: ReturnType<AlchemyPendingTransactions['getStatistics']>;
-    detectedOpportunities: number;
-    mempoolAnalysis: MempoolAnalysis;
-  } {
-    const analysis = this.pendingTx.analyzeMempoolOpportunities();
-    return {
-      pendingTx: this.pendingTx.getStatistics(),
-      detectedOpportunities: this.detectedOpportunities.length,
-      mempoolAnalysis: analysis,
-    };
+  stop(): void { this.pendingTx.stopMonitoring(); }
+  getMempoolAnalysis(): MempoolAnalysis { return this.pendingTx.analyzeMempoolOpportunities(); }
+
+  async getPortfolioTokens(network: AlchemyNetwork, walletAddress: string): Promise<TokenData[]> {
+    const balances = await this.tokenAPI.getTokenBalances(network, walletAddress);
+    const addresses = balances.filter(item => item.tokenBalance !== '0x0').map(item => item.contractAddress);
+    return this.tokenAPI.batchGetTokenData(network, walletAddress, addresses);
+  }
+
+  getStatistics(): { pendingTx: ReturnType<AlchemyPendingTransactions['getStatistics']>; detectedOpportunities: number; mempoolAnalysis: MempoolAnalysis } {
+    return { pendingTx: this.pendingTx.getStatistics(), detectedOpportunities: this.detectedOpportunities.length, mempoolAnalysis: this.pendingTx.analyzeMempoolOpportunities() };
   }
 }
 
-// ============================================================================
-// MAIN ALCHEMY INTEGRATION CLASS
-// ============================================================================
-
-/**
- * Unified Alchemy Integration
- * Provides token data, mempool monitoring, and arbitrage detection
- */
 export class AlchemyIntegration {
   public tokenAPI: AlchemyTokenAPI;
   public pendingTransactions: AlchemyPendingTransactions;
   public arbitrageDetector: AlchemyArbitrageDetector;
-  private apiKey: string;
-  private isActive: boolean = false;
-  private isDegraded: boolean = false;
-  private activeNetworks: Array<keyof typeof ALCHEMY_CONFIG.ENDPOINTS> = [];
+  private isActive = false;
+  private isDegraded = false;
+  private activeNetworks: AlchemyNetwork[] = [];
   private lastHealthCheckAt: number | null = null;
   private lastHealthError: string | undefined;
 
-  constructor(apiKey: string = 'demo') {
-    this.apiKey = apiKey;
+  constructor(private readonly apiKey: string = 'demo') {
     this.tokenAPI = new AlchemyTokenAPI(apiKey);
     this.pendingTransactions = new AlchemyPendingTransactions(apiKey);
-    this.arbitrageDetector = new AlchemyArbitrageDetector(apiKey);
-
+    this.arbitrageDetector = new AlchemyArbitrageDetector(this.tokenAPI, this.pendingTransactions);
     logger.info('[AlchemyIntegration] Fully initialized', {
-      component: 'AlchemyIntegration',
-      networks: Object.keys(ALCHEMY_CONFIG.ENDPOINTS).length,
+      component: 'AlchemyIntegration', networks: Object.keys(ALCHEMY_CONFIG.ENDPOINTS).length,
+      costGovernor: true, mempoolDefault: 'disabled',
     });
   }
 
@@ -902,208 +641,110 @@ export class AlchemyIntegration {
   }
 
   private emptyMempoolAnalysis(): MempoolAnalysis {
-    return {
-      available: false,
-      observedAt: null,
-      provenance: [],
-      totalPending: 0,
-      swapTransactions: 0,
-      liquidityAdditions: 0,
-      largeTransfers: 0,
-      arbitrageOpportunities: [],
-      avgGasPrice: 0,
-      maxGasPrice: 0,
-    };
+    return { available: false, observedAt: null, provenance: [], totalPending: 0, swapTransactions: 0, liquidityAdditions: 0, largeTransfers: 0, arbitrageOpportunities: [], avgGasPrice: 0, maxGasPrice: 0 };
   }
 
-  private async probeNetwork(network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS): Promise<void> {
-    const baseURL = `${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`;
-    await postRpcWithRetry<any>(baseURL, {
-      jsonrpc: '2.0',
-      method: 'eth_chainId',
-      params: [],
-      id: Date.now(),
-    });
+  private async probeNetwork(network: AlchemyNetwork): Promise<void> {
+    await postRpcWithRetry<any>(`${ALCHEMY_CONFIG.ENDPOINTS[network]}/${this.apiKey}`, {
+      jsonrpc: '2.0', method: 'eth_chainId', params: [], id: Date.now(),
+    }, { critical: true });
   }
 
-  async readinessCheck(options?: {
-    strictLive?: boolean;
-    network?: keyof typeof ALCHEMY_CONFIG.ENDPOINTS;
-  }): Promise<AlchemyReadinessStatus> {
+  async readinessCheck(options?: { strictLive?: boolean; network?: AlchemyNetwork }): Promise<AlchemyReadinessStatus> {
     const strictLive = options?.strictLive === true;
     const network = options?.network || 'ethereum';
     const configured = this.isConfiguredApiKey();
     this.lastHealthCheckAt = Date.now();
-
     if (!configured) {
       this.lastHealthError = 'ALCHEMY_API_KEY is not configured (demo key active)';
       return {
-        ready: !strictLive,
-        configured: false,
-        active: this.isActive,
-        degraded: true,
-        strictLive,
-        detail: strictLive
-          ? 'Alchemy live mode requires a configured ALCHEMY_API_KEY'
-          : 'Alchemy running in demo/degraded mode; live telemetry disabled',
-        apiKeyMode: 'demo',
-        network,
-        lastHealthCheckAt: this.lastHealthCheckAt,
-        lastHealthError: this.lastHealthError,
+        ready: !strictLive, configured: false, active: this.isActive, degraded: true, strictLive,
+        detail: strictLive ? 'Alchemy live mode requires a configured ALCHEMY_API_KEY' : 'Alchemy running in demo/degraded mode; paid telemetry withheld',
+        apiKeyMode: 'demo', network, lastHealthCheckAt: this.lastHealthCheckAt, lastHealthError: this.lastHealthError,
       };
     }
-
     try {
       await this.probeNetwork(network);
       this.lastHealthError = undefined;
       return {
-        ready: true,
-        configured: true,
-        active: this.isActive,
-        degraded: this.isDegraded,
-        strictLive,
-        detail: `Alchemy probe succeeded on ${network}`,
-        apiKeyMode: 'configured',
-        network,
-        lastHealthCheckAt: this.lastHealthCheckAt,
+        ready: true, configured: true, active: this.isActive, degraded: this.isDegraded, strictLive,
+        detail: `Alchemy probe succeeded on ${network}; mempool=${mempoolMonitoringEnabled() ? 'opt-in' : 'disabled_by_cost_policy'}`,
+        apiKeyMode: 'configured', network, lastHealthCheckAt: this.lastHealthCheckAt,
       };
     } catch (error) {
       this.lastHealthError = error instanceof Error ? error.message : String(error);
       return {
-        ready: !strictLive,
-        configured: true,
-        active: this.isActive,
-        degraded: true,
-        strictLive,
+        ready: !strictLive, configured: true, active: this.isActive, degraded: true, strictLive,
         detail: `Alchemy probe failed on ${network}: ${this.lastHealthError}`,
-        apiKeyMode: 'configured',
-        network,
-        lastHealthCheckAt: this.lastHealthCheckAt,
-        lastHealthError: this.lastHealthError,
+        apiKeyMode: 'configured', network, lastHealthCheckAt: this.lastHealthCheckAt, lastHealthError: this.lastHealthError,
       };
     }
   }
 
-  /**
-   * Start all Alchemy services
-   */
-  async start(networks?: Array<keyof typeof ALCHEMY_CONFIG.ENDPOINTS>): Promise<void> {
+  async start(networks?: AlchemyNetwork[]): Promise<void> {
     if (this.isActive) return;
-
-    const networksToMonitor = networks || ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base'];
+    const requested = networks || ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base'];
     const strictLive = process.env.ALCHEMY_REQUIRE_LIVE === 'true';
-    const readiness = await this.readinessCheck({
-      strictLive,
-      network: networksToMonitor[0],
-    });
-
-    if (!readiness.ready && strictLive) {
-      throw new Error(readiness.detail);
-    }
-
-    if (!readiness.configured) {
-      this.isDegraded = true;
-      await this.arbitrageDetector.start(networksToMonitor);
-      this.isActive = true;
-      this.activeNetworks = [...networksToMonitor];
-      logger.warn('[AlchemyIntegration] Live telemetry not started (degraded mode)', {
-        component: 'AlchemyIntegration',
-        detail: readiness.detail,
-      });
-      return;
-    }
-
-    await this.arbitrageDetector.start(networksToMonitor);
+    const readiness = await this.readinessCheck({ strictLive, network: requested[0] });
+    if (!readiness.ready && strictLive) throw new Error(readiness.detail);
     this.isActive = true;
-    this.isDegraded = !readiness.ready;
-    this.activeNetworks = [...networksToMonitor];
+    this.isDegraded = !readiness.configured || !readiness.ready;
+    this.activeNetworks = [...requested];
 
-    logger.info('[AlchemyIntegration] All services started', {
-      component: 'AlchemyIntegration',
-      networks: networksToMonitor,
+    if (readiness.configured) await this.arbitrageDetector.start(requested);
+    logger.info('[AlchemyIntegration] Services started with provider-cost policy', {
+      component: 'AlchemyIntegration', networks: requested,
       degraded: this.isDegraded,
+      mempoolMonitoringEnabled: mempoolMonitoringEnabled(),
+      configuredMempoolNetworks: Array.from(configuredMempoolNetworks()),
+      unfilteredPendingAllowed: unfilteredPendingExplicitlyAllowed(),
+      cost: alchemyCostGovernor.snapshot(),
     });
   }
 
-  /**
-   * Stop all Alchemy services
-   */
   stop(): void {
     this.arbitrageDetector.stop();
     this.isActive = false;
     this.activeNetworks = [];
-
-    logger.info('[AlchemyIntegration] All services stopped', {
-      component: 'AlchemyIntegration',
-    });
   }
 
-  /**
-   * Get token balances for a wallet
-   */
-  async getTokenBalances(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
-    walletAddress: string,
-    tokenAddresses?: string[]
-  ): Promise<TokenBalance[]> {
+  async getTokenBalances(network: AlchemyNetwork, walletAddress: string, tokenAddresses?: string[]): Promise<TokenBalance[]> {
     return this.tokenAPI.getTokenBalances(network, walletAddress, tokenAddresses);
   }
 
-  /**
-   * Get token metadata
-   */
-  async getTokenMetadata(
-    network: keyof typeof ALCHEMY_CONFIG.ENDPOINTS,
-    tokenAddress: string
-  ): Promise<TokenMetadata | null> {
+  async getTokenMetadata(network: AlchemyNetwork, tokenAddress: string): Promise<TokenMetadata | null> {
     return this.tokenAPI.getTokenMetadata(network, tokenAddress);
   }
 
-  /**
-   * Analyze mempool for arbitrage opportunities
-   */
   getMempoolAnalysis(): MempoolAnalysis {
-    if (!this.isActive) {
-      return this.emptyMempoolAnalysis();
-    }
-    return this.arbitrageDetector.getMempoolAnalysis();
+    return this.isActive ? this.arbitrageDetector.getMempoolAnalysis() : this.emptyMempoolAnalysis();
   }
 
-  isReady(): boolean {
-    return this.isActive && !this.isDegraded;
-  }
+  isReady(): boolean { return this.isActive && !this.isDegraded; }
 
-  /**
-   * Get comprehensive statistics
-   */
   getStatistics(): {
     arbitrage: ReturnType<AlchemyArbitrageDetector['getStatistics']>;
     isActive: boolean;
     apiKey: string;
-    readiness: {
-      configured: boolean;
-      ready: boolean;
-      degraded: boolean;
-      activeNetworks: Array<keyof typeof ALCHEMY_CONFIG.ENDPOINTS>;
-      lastHealthCheckAt: number | null;
-      lastHealthError?: string;
-    };
+    readiness: { configured: boolean; ready: boolean; degraded: boolean; activeNetworks: AlchemyNetwork[]; lastHealthCheckAt: number | null; lastHealthError?: string };
+    cost: AlchemyCostSnapshot;
+    mempoolPolicy: { enabled: boolean; networks: AlchemyNetwork[]; unfilteredPendingAllowed: boolean };
   } {
     return {
       arbitrage: this.arbitrageDetector.getStatistics(),
       isActive: this.isActive,
       apiKey: this.apiKey === 'demo' ? 'demo' : '***configured***',
       readiness: {
-        configured: this.isConfiguredApiKey(),
-        ready: this.isReady(),
-        degraded: this.isDegraded,
-        activeNetworks: [...this.activeNetworks],
-        lastHealthCheckAt: this.lastHealthCheckAt,
-        lastHealthError: this.lastHealthError,
+        configured: this.isConfiguredApiKey(), ready: this.isReady(), degraded: this.isDegraded,
+        activeNetworks: [...this.activeNetworks], lastHealthCheckAt: this.lastHealthCheckAt, lastHealthError: this.lastHealthError,
+      },
+      cost: alchemyCostGovernor.snapshot(),
+      mempoolPolicy: {
+        enabled: mempoolMonitoringEnabled(), networks: Array.from(configuredMempoolNetworks()),
+        unfilteredPendingAllowed: unfilteredPendingExplicitlyAllowed(),
       },
     };
   }
 }
 
-// Export singleton instance
 export const alchemyIntegration = new AlchemyIntegration(process.env.ALCHEMY_API_KEY || 'demo');
