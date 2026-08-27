@@ -2,7 +2,9 @@ import os from 'node:os';
 import { Worker } from 'node:worker_threads';
 import {
   QuantiParallelismError,
+  quantiDataFabric,
   quantiParallelismGovernor,
+  type QuantiSharedFloat64Lease,
 } from '../../quantiComp/index.js';
 
 export const HYPER_MONTE_CARLO_MODEL_VERSION = 'cryptara-hyper-mc-1.1.0';
@@ -34,8 +36,8 @@ export interface HyperMonteCarloResult {
 }
 
 type WReq = Pick<HyperMonteCarloRequest, 'notionalUsd'|'netProfitUsd'|'totalCostsUsd'|'gasUsd'|'expectedSlippageBps'|'expectedPriceImpactBps'|'quoteAgeMs'|'quoteMaxAgeMs'|'liquidityScore'|'annualizedVolatility'|'gasVolatility'|'successPrior'|'measuredLatenciesMs'|'measuredSlippageBps'|'onchainTelemetryRequired'> & { stressScale: number };
-type Batch = { pnl:number[]; control:number[]; fills:number[]; slip:number[]; latency:number[] };
-type Job = { id:number; req:WReq; n:number; seed:number; resolve:(b:Batch)=>void; reject:(e:Error)=>void; cancelled:boolean };
+type Batch = { view: Float64Array; samples:number; release:()=>void };
+type Job = { id:number; req:WReq; n:number; seed:number; resolve:(b:Batch)=>void; reject:(e:Error)=>void; cancelled:boolean; started:boolean; settled:boolean; shared:QuantiSharedFloat64Lease };
 type Slot = { worker:Worker; busy:boolean; job:Job|null };
 
 const WORKER_SOURCE = String.raw`
@@ -57,7 +59,7 @@ function sim(x,d){
  const pnl=fill&&fresh>0?x.netProfitUsd-extra-Math.max(0,gas):-(Math.abs(shock)+extra+x.totalCostsUsd+Math.max(0,gas));
  return[pnl,control,fill&&fresh>0?1:0,slip,latency];
 }
-parentPort.on('message',m=>{const r=rng(m.seed),out=new Float64Array(m.n*5);let base=null;for(let i=0;i<m.n;i++){const d=i%2===0||!base?draw(r):anti(base);if(i%2===0)base=d;const q=sim(m.req,d),o=i*5;for(let k=0;k<5;k++)out[o+k]=q[k]}parentPort.postMessage({id:m.id,buffer:out.buffer},[out.buffer])});
+parentPort.on('message',m=>{const r=rng(m.seed),out=new Float64Array(m.buffer,0,m.n*5);let base=null;for(let i=0;i<m.n;i++){const d=i%2===0||!base?draw(r):anti(base);if(i%2===0)base=d;const q=sim(m.req,d),o=i*5;for(let k=0;k<5;k++)out[o+k]=q[k]}parentPort.postMessage({id:m.id})});
 `;
 
 const clamp=(v:number,a:number,b:number)=>Math.max(a,Math.min(b,v));
@@ -72,12 +74,13 @@ function wilson(k:number,n:number):[number,number]{if(!n)return[0,1];const z=1.9
 class Pool {
   readonly size:number; private slots:Slot[]=[]; private queue:Job[]=[]; private id=1;
   constructor(){const a=Math.max(1,os.availableParallelism?.()||os.cpus().length),c=Math.max(1,num(process.env.CRYPTARA_HYPER_MC_WORKERS,a));this.size=Math.min(a,c,8)}
-  private slot():Slot{const worker=new Worker(WORKER_SOURCE,{eval:true}),s:Slot={worker,busy:false,job:null};worker.unref();worker.on('message',(m:{id:number;buffer:ArrayBuffer})=>{const j=s.job;if(!j||j.id!==m.id)return;const x=new Float64Array(m.buffer),b:Batch={pnl:[],control:[],fills:[],slip:[],latency:[]};for(let i=0;i<x.length;i+=5){b.pnl.push(x[i]);b.control.push(x[i+1]);b.fills.push(x[i+2]);b.slip.push(x[i+3]);b.latency.push(x[i+4])}s.busy=false;s.job=null;worker.unref();if(!j.cancelled)j.resolve(b);this.pump()});worker.on('error',e=>{const j=s.job;s.busy=false;s.job=null;if(j&&!j.cancelled)j.reject(e);this.slots=this.slots.filter(v=>v!==s);this.pump()});return s}
+  private finishJob(s:Slot,j:Job,batch?:Batch,error?:Error){s.busy=false;s.job=null;s.worker.unref();if(!j.settled){j.settled=true;if(error)j.reject(error);else if(batch)j.resolve(batch)}this.pump()}
+  private slot():Slot{const worker=new Worker(WORKER_SOURCE,{eval:true}),s:Slot={worker,busy:false,job:null};worker.unref();worker.on('message',(m:{id:number})=>{const j=s.job;if(!j||j.id!==m.id)return;if(j.cancelled){j.shared.release();this.finishJob(s,j);return}const batch:Batch={view:j.shared.view.subarray(0,j.n*5),samples:j.n,release:()=>j.shared.release()};this.finishJob(s,j,batch)});worker.on('error',e=>{const j=s.job;if(j){j.shared.release();this.finishJob(s,j,undefined,e)}this.slots=this.slots.filter(v=>v!==s);this.pump()});return s}
   private ensure(){while(this.slots.length<this.size)this.slots.push(this.slot())}
-  private pump(){this.ensure();for(const s of this.slots){if(s.busy)continue;let j:Job|undefined;while((j=this.queue.shift())?.cancelled){}if(!j)return;s.busy=true;s.job=j;s.worker.ref();s.worker.postMessage({id:j.id,req:j.req,n:j.n,seed:j.seed})}}
-  private dispatch(req:WReq,n:number,seed:number,signal?:AbortSignal){return new Promise<Batch>((resolve,reject)=>{const j:Job={id:this.id++,req,n,seed,resolve,reject,cancelled:false};const abort=()=>{j.cancelled=true;reject(new Error('HYPER_ABORTED: Monte Carlo batch aborted'))};signal?.addEventListener('abort',abort,{once:true});const done=j.resolve,fail=j.reject;j.resolve=v=>{signal?.removeEventListener('abort',abort);done(v)};j.reject=e=>{signal?.removeEventListener('abort',abort);fail(e)};this.queue.push(j);this.pump()})}
+  private pump(){this.ensure();for(const s of this.slots){if(s.busy)continue;let j:Job|undefined;while((j=this.queue.shift())?.cancelled){j.shared.release()}if(!j)return;s.busy=true;s.job=j;j.started=true;s.worker.ref();s.worker.postMessage({id:j.id,req:j.req,n:j.n,seed:j.seed,buffer:j.shared.buffer})}}
+  private dispatch(req:WReq,n:number,seed:number,signal?:AbortSignal){return new Promise<Batch>((resolve,reject)=>{const shared=quantiDataFabric.acquireFloat64(n*5,{zero:false});const j:Job={id:this.id++,req,n,seed,resolve,reject,cancelled:false,started:false,settled:false,shared};const abort=()=>{if(j.settled)return;j.cancelled=true;j.settled=true;reject(new Error('HYPER_ABORTED: Monte Carlo batch aborted'));if(!j.started){const index=this.queue.indexOf(j);if(index>=0){this.queue.splice(index,1);j.shared.release()}}};signal?.addEventListener('abort',abort,{once:true});const done=j.resolve,fail=j.reject;j.resolve=v=>{signal?.removeEventListener('abort',abort);done(v)};j.reject=e=>{signal?.removeEventListener('abort',abort);fail(e)};this.queue.push(j);this.pump()})}
   run(req:WReq,n:number,seed:number,signal?:AbortSignal,maxParallelism=this.size){this.ensure();const parts=Math.max(1,Math.min(this.size,Math.max(1,Math.floor(maxParallelism)),Math.ceil(n/64))),base=Math.floor(n/parts),rem=n%parts;return Promise.all(Array.from({length:parts},(_,i)=>this.dispatch(req,base+(i<rem?1:0),hash32(`${seed}:${i}`),signal)))}
-  async close():Promise<void>{const slots=[...this.slots];this.slots=[];for(const j of this.queue.splice(0))if(!j.cancelled)j.reject(new Error('HYPER_ABORTED: worker pool shutdown'));await Promise.allSettled(slots.map(s=>s.worker.terminate()))}
+  async close():Promise<void>{const slots=[...this.slots];this.slots=[];for(const j of this.queue.splice(0)){j.cancelled=true;j.shared.release();if(!j.settled){j.settled=true;j.reject(new Error('HYPER_ABORTED: worker pool shutdown'))}}for(const s of slots){const j=s.job;if(j){j.cancelled=true;if(!j.settled){j.settled=true;j.reject(new Error('HYPER_ABORTED: worker pool shutdown'))}}}await Promise.allSettled(slots.map(s=>s.worker.terminate()));for(const s of slots)s.job?.shared.release()}
 }
 const pool=new Pool();
 export async function shutdownHyperMonteCarloWorkers():Promise<void>{await pool.close()}
@@ -131,7 +134,16 @@ export async function runHyperMonteCarlo(r:HyperMonteCarloRequest,signal?:AbortS
   if(admittedQuoteAge>r.quoteMaxAgeMs)throw new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote');
   const seed=hash32(`${HYPER_MONTE_CARLO_MODEL_VERSION}:${r.opportunityId}:${r.observedAt}:${r.mode}`),qual=quality(r),req:WReq={notionalUsd:r.notionalUsd,netProfitUsd:r.netProfitUsd,totalCostsUsd:Math.max(0,r.totalCostsUsd),gasUsd:Math.max(0,r.gasUsd),expectedSlippageBps:Math.max(0,r.expectedSlippageBps),expectedPriceImpactBps:Math.max(0,r.expectedPriceImpactBps),quoteAgeMs:admittedQuoteAge,quoteMaxAgeMs:r.quoteMaxAgeMs,liquidityScore:clamp(r.liquidityScore,0,1),annualizedVolatility:r.annualizedVolatility,gasVolatility:clamp(r.gasVolatility,0,3),successPrior:clamp(r.successPrior,.01,.995),measuredLatenciesMs:r.measuredLatenciesMs.filter(v=>Number.isFinite(v)&&v>0).slice(-256),measuredSlippageBps:r.measuredSlippageBps.filter(v=>Number.isFinite(v)&&v>=0).slice(-256),onchainTelemetryRequired:r.onchainTelemetryRequired,stressScale:live?1:1.35};
   const pnl:number[]=[],control:number[]=[],fills:number[]=[],slip:number[]=[],latency:number[]=[];let ci:[number,number]=[0,1],stopped=false,bi=0;
-  while(pnl.length<max){if(signal?.aborted)throw new Error('HYPER_ABORTED: Monte Carlo aborted during execution');const n=Math.min(batch,max-pnl.length),parts=await pool.run(req,n,hash32(`${seed}:batch:${bi++}`),signal,lease.units);for(const p of parts){pnl.push(...p.pnl);control.push(...p.control);fills.push(...p.fills);slip.push(...p.slip);latency.push(...p.latency)}ci=wilson(pnl.filter(v=>v>0).length,pnl.length);const half=(ci[1]-ci[0])/2;if(pnl.length>=min&&(half<=target||(live&&(ci[1]<rejectAt||ci[0]>acceptAt)))){stopped=pnl.length<max;break}}
+  while(pnl.length<max){
+   if(signal?.aborted)throw new Error('HYPER_ABORTED: Monte Carlo aborted during execution');
+   const n=Math.min(batch,max-pnl.length),parts=await pool.run(req,n,hash32(`${seed}:batch:${bi++}`),signal,lease.units);
+   try{
+    for(const p of parts){for(let i=0;i<p.samples;i++){const o=i*5;pnl.push(p.view[o]);control.push(p.view[o+1]);fills.push(p.view[o+2]);slip.push(p.view[o+3]);latency.push(p.view[o+4])}}
+   }finally{
+    for(const p of parts)p.release();
+   }
+   ci=wilson(pnl.filter(v=>v>0).length,pnl.length);const half=(ci[1]-ci[0])/2;if(pnl.length>=min&&(half<=target||(live&&(ci[1]<rejectAt||ci[0]>acceptAt)))){stopped=pnl.length<max;break}
+  }
   const raw=avg(pnl),cm=avg(control),cv=vari(control,cm),beta=cv>0?cov(pnl,control,raw,cm)/cv:0,expected=raw-beta*cm,sd=Math.sqrt(Math.max(0,vari(pnl,raw))),sorted=[...pnl].sort((a,b)=>a-b),p5=q(sorted,.05),p50=q(sorted,.5),p95=q(sorted,.95),tail=sorted.slice(0,Math.max(1,Math.ceil(sorted.length*.05))),pProfit=pnl.filter(v=>v>0).length/Math.max(1,pnl.length),pFill=avg(fills),sampling=clamp(1-(ci[1]-ci[0]),0,1),cal=r.calibrationSamples>=3?Math.min(1,.82+Math.log10(r.calibrationSamples+1)*.08):.75,confidence=clamp(sampling*qual.score*cal,0,1),elapsed=Date.now()-started,avgSlip=avg(slip),avgLatency=avg(latency),deadline=Math.max(0,r.quoteMaxAgeMs-currentQuoteAgeMs(r)-avgLatency),slipScale=r.expectedSlippageBps>0?clamp(r.expectedSlippageBps/Math.max(r.expectedSlippageBps,avgSlip),.25,1):1,maxSafe=Math.max(0,Math.min(r.executableNotionalUsd,r.requestedNotionalUsd)*slipScale),sizeScale=clamp((pProfit-.5)/.35,0,1)*clamp(pFill,0,1),recommended=expected>0?Math.min(r.notionalUsd,maxSafe*sizeScale):0;
   return{modelVersion:HYPER_MONTE_CARLO_MODEL_VERSION,mode:r.mode,seed,iterations:pnl.length,elapsedMs:elapsed,workersUsed:Math.min(pool.size,lease.units,Math.max(1,Math.ceil(Math.min(batch,pnl.length)/64))),stoppedEarly:stopped,convergence:clamp((ci[1]-ci[0])/2,0,1),expectedProfitUsd:expected,rawExpectedProfitUsd:raw,probabilityOfProfit:pProfit,probabilityBothLegsFill:pFill,confidence,confidenceInterval:ci,valueAtRisk95Usd:Math.max(0,-p5),expectedShortfall95Usd:Math.max(0,-avg(tail)),maxDrawdown:r.notionalUsd>0?clamp(Math.max(0,-sorted[0])/r.notionalUsd,0,1):0,standardDeviationUsd:sd,sharpeLikeRatio:sd>0?expected/sd:0,p5Usd:p5,p50Usd:p50,p95Usd:p95,averageSampledSlippageBps:avgSlip,averageSampledLatencyMs:avgLatency,executionDeadlineMs:deadline,recommendedNotionalUsd:recommended,maxSafeNotionalUsd:maxSafe,marketRegime:regime(r.annualizedVolatility),evidenceQuality:qual.score,controlVariateBeta:beta,missingInformation:qual.missing};
  }finally{
