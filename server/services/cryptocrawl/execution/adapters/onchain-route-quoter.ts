@@ -45,6 +45,8 @@ export interface ConfiguredZeroCapitalRoute {
   estimatedGasCostInInputToken: string;
   relayFeeInInputToken: string;
   flashLoanFeeBps?: number;
+  // Deprecated compatibility field. It is retained for configuration parsing and
+  // telemetry only; executable eligibility is strict all-in netProfit > 0.
   minNetProfitBps?: number;
   legs: ConfiguredRouteLeg[];
 }
@@ -163,9 +165,9 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
   toBigInt(`Route ${index} relayFeeInInputToken`, relayFeeInInputToken);
 
   const flashLoanFeeBps = candidate.flashLoanFeeBps === undefined ? 0 : Number(candidate.flashLoanFeeBps);
-  const minNetProfitBps = candidate.minNetProfitBps === undefined ? 50 : Number(candidate.minNetProfitBps);
+  const minNetProfitBps = candidate.minNetProfitBps === undefined ? 0 : Number(candidate.minNetProfitBps);
   if (!Number.isFinite(flashLoanFeeBps) || flashLoanFeeBps < 0 || flashLoanFeeBps > 1000) throw new Error(`Route ${index} flashLoanFeeBps must be between 0 and 1000`);
-  if (!Number.isFinite(minNetProfitBps) || minNetProfitBps < 1 || minNetProfitBps > 5000) throw new Error(`Route ${index} minNetProfitBps must be between 1 and 5000`);
+  if (!Number.isFinite(minNetProfitBps) || minNetProfitBps < 0 || minNetProfitBps > 5000) throw new Error(`Route ${index} minNetProfitBps must be between 0 and 5000`);
   if (chain === 'europa' && (toBigInt(`Route ${index} estimatedGasCostInInputToken`, estimatedGasCostInInputToken) !== 0n || toBigInt(`Route ${index} relayFeeInInputToken`, relayFeeInInputToken) !== 0n)) {
     throw new Error(`Route ${index} for Europa must not include estimated gas or relay fees; native-balance proof is enforced after receipt`);
   }
@@ -321,7 +323,6 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
   if (netProfit <= 0n) return null;
 
   const netProfitBps = Number((netProfit * 10000n) / initial);
-  if (netProfitBps < (route.minNetProfitBps || 50)) return null;
 
   return {
     id: route.id,
