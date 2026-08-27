@@ -2,6 +2,9 @@ import { BigNumber, Contract, providers } from 'ethers';
 import type { RoutePlanningSwapStep } from './autonomous-route-planner.js';
 import type { SupportedExecutionChain, SupportedSwapProtocol } from './onchain-payload-builder.js';
 import { EUROPA_SUSHI } from './europa-sushi-registry.js';
+import { buildAtomicNotionalCandidates, selectHighestNetProfit } from './atomic-size-optimizer.js';
+import { calculateProgressivePositionSize } from '../../risk/progressive-position-sizing.js';
+import { stageManager } from '../../governance/stage-management.js';
 
 const UNISWAP_V3_QUOTER_ABI = [
   'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
@@ -342,13 +345,93 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
   };
 }
 
+function baseUnitsFromUsd(usd: number): string {
+  return BigInt(Math.max(1, Math.round(usd * 1_000_000))).toString();
+}
+
+function usdFromBaseUnits(value: bigint): number {
+  const usd = Number(value) / 1_000_000;
+  return Number.isFinite(usd) ? usd : 0;
+}
+
+function quoteExpectedSlippageBps(route: ConfiguredZeroCapitalRoute): number {
+  const minOutputBps = Math.max(9_000, Math.min(10_000, Number(process.env.ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS || 9_990)));
+  return Math.max(0, route.legs.length * (10_000 - minOutputBps));
+}
+
+function quoteLiquidityConfidence(quote: QuotedZeroCapitalRoute): number {
+  return Math.min(0.99, 0.55 + Math.min(0.44, Math.max(0, quote.netProfitBps) / 1_000));
+}
+
+function routeNotionalCandidates(route: ConfiguredZeroCapitalRoute): number[] {
+  const seedUsd = Math.max(0.000001, Number(route.amountIn) / 1_000_000);
+  const stage = stageManager.getStageConfig();
+  const stageCanExecute = stageManager.canExecuteTrades();
+  const discoveryCeiling = Math.max(seedUsd, Math.min(10_000, Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000)));
+  const maximum = stageCanExecute && stage.maxPositionSizeUSD > 0
+    ? stage.maxPositionSizeUSD
+    : seedUsd;
+  return buildAtomicNotionalCandidates({
+    seedNotionalUsd: seedUsd,
+    maximumNotionalUsd: Math.min(stageCanExecute ? maximum : seedUsd, discoveryCeiling),
+    minimumNotionalUsd: 0.01,
+    maxCandidates: Math.max(3, Math.min(12, Number(process.env.ZERO_CAPITAL_SIZE_CANDIDATES || 9))),
+  });
+}
+
+function executionSizeApproved(route: ConfiguredZeroCapitalRoute, quote: QuotedZeroCapitalRoute): boolean {
+  if (!stageManager.canExecuteTrades()) return true;
+  const expectedCostUsd = usdFromBaseUnits(
+    quote.estimatedGasCostInInputToken + quote.flashLoanFeeInInputToken + quote.relayFeeInInputToken,
+  );
+  const expectedSlippageBps = quoteExpectedSlippageBps(route);
+  const decision = calculateProgressivePositionSize({
+    requestedNotionalUsd: usdFromBaseUnits(quote.amountIn),
+    availableCapitalUsd: 0,
+    expectedNetProfitUsd: usdFromBaseUnits(quote.netProfit),
+    expectedCostUsd,
+    expectedSlippageBps,
+    liquidityScore: quoteLiquidityConfidence(quote),
+    volatilityScore: Math.min(1, expectedSlippageBps / 100),
+    providerHealthy: true,
+    zeroCapitalAvailable: true,
+  });
+  return decision.approved;
+}
+
+async function quoteBestRouteSize(
+  route: ConfiguredZeroCapitalRoute,
+  provider: providers.Provider,
+): Promise<QuotedZeroCapitalRoute | null> {
+  const sizes = routeNotionalCandidates(route);
+  const settled = await Promise.allSettled(sizes.map(notionalUsd =>
+    quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(notionalUsd) }, provider),
+  ));
+  const positive = settled
+    .filter((result): result is PromiseFulfilledResult<QuotedZeroCapitalRoute | null> => result.status === 'fulfilled')
+    .map(result => result.value)
+    .filter((quote): quote is QuotedZeroCapitalRoute => !!quote && quote.netProfit > 0n);
+  const admissible = stageManager.canExecuteTrades()
+    ? positive.filter(quote => executionSizeApproved(route, quote))
+    : positive;
+  return selectHighestNetProfit(admissible, quote => quote.netProfit);
+}
+
+/**
+ * Each configured atomic route is independently quoted across a bounded notional
+ * curve and selected by the largest measured all-in net profit. Profit is never
+ * extrapolated linearly from a smaller quote. When governance can execute, only
+ * sizes that also pass canonical progressive position sizing participate in the
+ * winner selection, preventing a profitable-but-oversized quote from hiding a
+ * smaller executable one.
+ */
 export async function quoteConfiguredZeroCapitalRoutesForChain(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
   routes: ConfiguredZeroCapitalRoute[] = loadConfiguredZeroCapitalRoutes(),
 ): Promise<QuotedZeroCapitalRoute[]> {
   const candidates = routes.filter(route => route.chain === chain);
-  const settled = await Promise.allSettled(candidates.map(route => quoteConfiguredZeroCapitalRoute(route, provider)));
+  const settled = await Promise.allSettled(candidates.map(route => quoteBestRouteSize(route, provider)));
   const quoted: QuotedZeroCapitalRoute[] = [];
 
   for (const result of settled) {
