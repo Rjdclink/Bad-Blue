@@ -5,11 +5,13 @@ on:
     branches: [main, develop]
     paths:
       - 'server/services/cryptocrawl/**'
+      - 'scripts/cryptocrawl/**'
       - '.github/workflows/cryptocrawler-test.yml'
   pull_request:
     branches: [main, develop]
     paths:
       - 'server/services/cryptocrawl/**'
+      - 'scripts/cryptocrawl/**'
       - '.github/workflows/cryptocrawler-test.yml'
   workflow_dispatch:
     inputs:
@@ -58,8 +60,12 @@ jobs:
           cache: 'npm'
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit
+      - name: Verify no-regression opportunity pipeline
+        run: node scripts/cryptocrawl/verify-no-regression-opportunity-pipeline.cjs
       - name: Build TypeScript
         run: npm run build
+      - name: Run TypeScript compilation check
+        run: npm run check
       - name: Run Cryptocrawler Test Suite
         id: test
         timeout-minutes: 10
@@ -129,6 +135,8 @@ jobs:
           cache: 'npm'
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit
+      - name: Verify no-regression opportunity pipeline
+        run: node scripts/cryptocrawl/verify-no-regression-opportunity-pipeline.cjs
       - name: Run Extended Simulation
         timeout-minutes: 45
         run: |
