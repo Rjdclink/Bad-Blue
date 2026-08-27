@@ -4,6 +4,10 @@ import { measuredCandidateRegistry } from '../discovery/measured-candidate-regis
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { DynamicScalePhysics, type ComputeProfile } from './dynamic-scale-physics.js';
+import {
+  profileForDiscoveryPressure,
+  reconcileDiscoveryProfile,
+} from './dynamic-scale-profile-policy.js';
 
 export interface DynamicScalePressureSnapshot {
   observedAt: number;
@@ -88,16 +92,6 @@ export function getDynamicScalePressureSnapshot(): DynamicScalePressureSnapshot 
   return { ...latest };
 }
 
-function profileForPressure(snapshot: DynamicScalePressureSnapshot, fallback: ComputeProfile): ComputeProfile {
-  // Discovery pressure is the profile's primary demand axis. Profitability is
-  // intentionally not allowed to drive search to low when unexplored work exists.
-  if (snapshot.resourceSaturation >= 0.95) return fallback === 'burst' ? 'high' : fallback;
-  if (snapshot.searchPressure >= 0.75) return 'burst';
-  if (snapshot.searchPressure >= 0.50) return 'high';
-  if (snapshot.searchPressure >= 0.20 || snapshot.candidateBacklog > 0) return 'medium';
-  return 'low';
-}
-
 export function ensureDynamicScalePressureWiring(): void {
   const prototype = DynamicScalePhysics.prototype as unknown as {
     adjustComputeProfile: () => ComputeProfile;
@@ -111,14 +105,22 @@ export function ensureDynamicScalePressureWiring(): void {
 
   const originalAdjust = prototype.adjustComputeProfile;
   prototype.adjustComputeProfile = function(): ComputeProfile {
-    const fallback = originalAdjust.call(this);
+    const measuredDensityProfile = originalAdjust.call(this);
     const pressure = getDynamicScalePressureSnapshot();
-    const desired = profileForPressure(pressure, fallback);
+    const pressureProfile = profileForDiscoveryPressure(pressure, measuredDensityProfile);
+    const desired = reconcileDiscoveryProfile(
+      measuredDensityProfile,
+      pressureProfile,
+      pressure.resourceSaturation,
+    );
     if (desired !== this.getCurrentProfile()) this.setProfile(desired);
-    logger.debug('[DynamicScale] Dual-axis pressure evaluated', {
+    logger.debug('[DynamicScale] Discovery authorities reconciled', {
       component: 'DynamicScalePressure',
       ...pressure,
+      measuredDensityProfile,
+      pressureProfile,
       discoveryProfile: this.getCurrentProfile(),
+      saturationDowngrade: pressure.resourceSaturation >= 0.95 && desired !== measuredDensityProfile,
     });
     return this.getCurrentProfile();
   };
@@ -126,9 +128,14 @@ export function ensureDynamicScalePressureWiring(): void {
   const originalOptimize = prototype.optimizeCosts;
   prototype.optimizeCosts = function(): void {
     originalOptimize.call(this);
+    const current = this.getCurrentProfile();
     const pressure = getDynamicScalePressureSnapshot();
-    const desired = profileForPressure(pressure, this.getCurrentProfile());
-    if (pressure.searchPressure >= 0.20 && desired !== this.getCurrentProfile()) this.setProfile(desired);
+    const pressureProfile = profileForDiscoveryPressure(pressure, current);
+    const desired = reconcileDiscoveryProfile(current, pressureProfile, pressure.resourceSaturation);
+    const pressureIsActionable = pressure.searchPressure >= 0.20 ||
+      pressure.candidateBacklog > 0 ||
+      pressure.resourceSaturation >= 0.95;
+    if (pressureIsActionable && desired !== current) this.setProfile(desired);
   };
 
   const originalMetrics = prototype.getMetrics;
@@ -142,5 +149,6 @@ export function ensureDynamicScalePressureWiring(): void {
     backlogSignals: ['candidateBacklog', 'mcBacklog'],
     resourceSaturation: true,
     zeroPositiveDoesNotSuppressDiscovery: true,
+    profileReconciliation: 'monotonic_demand_except_explicit_saturation_protection',
   });
 }
