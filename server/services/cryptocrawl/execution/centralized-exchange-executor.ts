@@ -1,7 +1,7 @@
 import type { QuoteVenue, VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
-import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import logger from '../../../logger.js';
+import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { runProfitabilityMonteCarlo } from './adapters/monte-carlo-profitability.js';
 import {
   createProductionCexSettlementAdapters,
@@ -20,6 +20,16 @@ function rejectPlan(error: string): ArbitrageExecutionResult {
     settlementConfirmed: false,
     error,
   };
+}
+
+function measuredLiquidityCoverage(plan: VerifiedArbitragePlan): number {
+  if (plan.liquidity.status !== 'measured' ||
+      plan.liquidity.buyAvailableBaseQty === null ||
+      plan.liquidity.sellAvailableBaseQty === null ||
+      !(plan.baseQty > 0)) return 0;
+  return Math.max(0, Math.min(1,
+    Math.min(plan.liquidity.buyAvailableBaseQty, plan.liquidity.sellAvailableBaseQty) / plan.baseQty,
+  ));
 }
 
 export class CentralizedExchangeExecutor {
@@ -41,15 +51,26 @@ export class CentralizedExchangeExecutor {
       return rejectPlan('Verified all-in net profit must be positive before live CEX submission');
     }
 
-    const mempool = alchemyIntegration.getMempoolAnalysis();
-    if (!mempool.available || mempool.observedAt === null || mempool.totalPending <= 0) {
-      return rejectPlan('Live competition evidence is unavailable for competition-adjusted profitability forecasting');
-    }
-
-    const competitionLevel = Math.max(0, Math.min(1, mempool.arbitrageOpportunities.length / mempool.totalPending));
+    // CEX inventory arbitrage is not an on-chain mempool strategy. Requiring
+    // Alchemy pending-transaction telemetry here previously rejected otherwise
+    // valid CEX plans for evidence unrelated to the topology. Capture confidence
+    // now comes from measured quote freshness/liquidity and terminal CEX fills.
     const maxQuoteAgeMs = Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000));
     const quoteFreshness = Math.max(0, Math.min(1, 1 - plan.quoteAgeMs / maxQuoteAgeMs));
-    const captureProbability = Math.max(0, Math.min(1, (1 - competitionLevel) * quoteFreshness));
+    const liquidityCoverage = measuredLiquidityCoverage(plan);
+    const calibration = monteCarloCalibrationStore.getSamples({
+      topology: 'CEX_CEX',
+      venuePair: `${plan.buyVenue}->${plan.sellVenue}`,
+      symbol: plan.symbol,
+      chain: 'cex',
+      strategy: 'verified_cex_arbitrage',
+      limit: 1024,
+    });
+    const empiricalFill = calibration.bothLegsFillRate;
+    const evidenceConfidence = empiricalFill !== null
+      ? Math.max(0, Math.min(1, empiricalFill * 0.70 + quoteFreshness * 0.20 + liquidityCoverage * 0.10))
+      : Math.max(0, Math.min(1, quoteFreshness * liquidityCoverage));
+
     const monteCarlo = runProfitabilityMonteCarlo({
       seed: `cex:${plan.buyVenue}:${plan.sellVenue}:${plan.symbol}:${plan.buyAsk}:${plan.sellBid}:${plan.quoteAgeMs}`,
       topology: 'CEX_CEX',
@@ -59,36 +80,68 @@ export class CentralizedExchangeExecutor {
       expectedSlippageBps: Math.max(0, plan.expectedSlippageBps ?? 0),
       quoteLatencyMs: Math.max(0, plan.quoteAgeMs),
       quoteMaxAgeMs: maxQuoteAgeMs,
-      confidence: captureProbability,
+      executionHorizonMs: maxQuoteAgeMs,
+      confidence: evidenceConfidence,
       baselineSlippageAlreadyIncluded: true,
+      calibrationSamples: calibration.samples,
+      measuredProfitResidualsUsd: calibration.profitResidualsUsd,
+      measuredCostMultipliers: calibration.costMultipliers,
+      measuredSlippageResidualsBps: calibration.slippageResidualsBps,
+      measuredLatenciesMs: calibration.latenciesMs,
+      measuredJointResiduals: calibration.observations.map(observation => ({
+        profitResidualUsd: observation.profitResidualUsd,
+        costMultiplier: observation.costMultiplier,
+        slippageResidualBps: observation.slippageResidualBps,
+        latencyMs: observation.latencyMs,
+        bothLegsFilled: observation.bothLegsFilled,
+        partialFill: observation.partialFill,
+        providerFailure: observation.providerFailure,
+      })),
     });
 
-    logger.info('Competition-adjusted CEX profitability forecast evaluated', {
+    logger.info('Measured CEX profitability forecast evaluated', {
       component: 'CentralizedExchangeExecutor',
       symbol: plan.symbol,
       buyVenue: plan.buyVenue,
       sellVenue: plan.sellVenue,
       topology: 'CEX_CEX',
       verifiedNetProfitUsd: plan.netProfitUsd,
-      competitionLevel,
-      captureProbability,
+      quoteFreshness,
+      liquidityCoverage,
+      evidenceConfidence,
+      calibrationSamples: calibration.samples,
+      empiricalBothLegsFillRate: calibration.bothLegsFillRate,
+      empiricalPartialFillRate: calibration.partialFillRate,
+      empiricalProviderFailureRate: calibration.providerFailureRate,
       profitableProbability: monteCarlo.profitableProbability,
       profitableProbabilityInterval: monteCarlo.profitableProbabilityInterval,
+      probabilityBothLegsFill: monteCarlo.probabilityBothLegsFill,
+      probabilityLossExceedsThreshold: monteCarlo.probabilityLossExceedsThreshold,
+      probabilityPartialFillLoss: monteCarlo.probabilityPartialFillLoss,
+      p50NetProfitUsd: monteCarlo.p50NetProfitUsd,
+      p25NetProfitUsd: monteCarlo.p25NetProfitUsd,
       p10NetProfitUsd: monteCarlo.p10NetProfitUsd,
       p5NetProfitUsd: monteCarlo.p5NetProfitUsd,
       p1NetProfitUsd: monteCarlo.p1NetProfitUsd,
+      worstNetProfitUsd: monteCarlo.worstNetProfitUsd,
+      valueAtRisk95Usd: monteCarlo.valueAtRisk95Usd,
+      valueAtRisk99Usd: monteCarlo.valueAtRisk99Usd,
       expectedShortfall95Usd: monteCarlo.expectedShortfall95Usd,
+      expectedShortfall975Usd: monteCarlo.expectedShortfall975Usd,
+      expectedShortfall99Usd: monteCarlo.expectedShortfall99Usd,
+      executionHorizonMs: monteCarlo.executionHorizonMs,
       samples: monteCarlo.samples,
       stoppedEarly: monteCarlo.stoppedEarly,
       converged: monteCarlo.converged,
       distribution: monteCarlo.distribution,
+      distributionProvenance: monteCarlo.distributionProvenance,
       policyVersion: monteCarlo.policyVersion,
       approved: monteCarlo.approved,
       reason: monteCarlo.reason,
     });
 
     if (!monteCarlo.approved) {
-      return rejectPlan(`Competition-adjusted profitability forecast rejected execution: ${monteCarlo.reason}`);
+      return rejectPlan(`Measured profitability forecast rejected execution: ${monteCarlo.reason}`);
     }
 
     return executeCexPlan(plan, this.options);
