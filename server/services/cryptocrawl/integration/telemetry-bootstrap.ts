@@ -9,6 +9,7 @@ import {
   resolveCoinStatsEnvironment,
 } from '../runtime/environment-contract.js';
 import { getCryptoCrawlerRuntimeAttestation } from '../runtime/runtime-attestation.js';
+import { resolveRpcFallbackAdmission } from '../runtime/rpc-fallback-policy.js';
 
 const TELEMETRY_CHAINS: SupportedChain[] = [
   'ethereum',
@@ -81,20 +82,35 @@ function adoptLegacyProviderAliases(): void {
 }
 
 async function registerBestEffortAnkrFallbacks(): Promise<void> {
+  const allowPublicFallback = process.env.CRYPTOCRAWL_ALLOW_PUBLIC_ANKR_FALLBACK === 'true';
   const outcomes = await Promise.all(TELEMETRY_CHAINS.map(async chain => {
     const configured = process.env[`${chain.toUpperCase()}_ANKR_RPC_URL`]?.trim()
       || process.env[`ANKR_${chain.toUpperCase()}_RPC_URL`]?.trim()
       || (chain === 'ethereum' ? process.env.ANKR_RPC_URL?.trim() : undefined);
-    const publicUrl = configured || ANKR_PUBLIC_HTTP[chain];
-    if (!publicUrl) return { chain, provider: null, healthy: false, detail: 'no endpoint' };
+    const decision = resolveRpcFallbackAdmission({
+      configuredUrl: configured,
+      publicUrl: ANKR_PUBLIC_HTTP[chain],
+      allowPublicFallback,
+    });
 
-    const provider = configured ? 'AnkrConfigured' : 'AnkrPublic';
+    if (!decision.endpoint || decision.priority === null) {
+      return {
+        chain,
+        provider: null,
+        healthy: false,
+        admitted: false,
+        source: decision.source,
+        detail: decision.detail,
+      };
+    }
+
+    const provider = decision.source === 'configured' ? 'AnkrConfigured' : 'AnkrPublic';
     try {
       await multiProviderRpcManager.registerProvider({
         provider,
         chain,
-        httpUrl: publicUrl,
-        priority: configured ? 8 : 2,
+        httpUrl: decision.endpoint,
+        priority: decision.priority,
         capabilities: [
           'json_rpc',
           'network',
@@ -112,24 +128,35 @@ async function registerBestEffortAnkrFallbacks(): Promise<void> {
         chain,
         provider,
         healthy: health?.http.success === true,
-        detail: health?.http.lastError || health?.http.state || 'registered',
+        admitted: true,
+        source: decision.source,
+        detail: health?.http.lastError || health?.http.state || decision.detail,
       };
     } catch (error) {
       return {
         chain,
         provider,
         healthy: false,
+        admitted: true,
+        source: decision.source,
         detail: error instanceof Error ? error.message : String(error),
       };
     }
   }));
 
-  logger.info('[TelemetryBootstrap] Ankr fallback probe completed', {
+  logger.info('[TelemetryBootstrap] Ankr fallback admission completed', {
     component: 'TelemetryBootstrap',
+    publicFallbackOptIn: allowPublicFallback,
     healthyChains: outcomes.filter(outcome => outcome.healthy).map(outcome => outcome.chain),
-    unavailableChains: outcomes.filter(outcome => !outcome.healthy).map(outcome => ({
+    admittedDegraded: outcomes.filter(outcome => outcome.admitted && !outcome.healthy).map(outcome => ({
       chain: outcome.chain,
       provider: outcome.provider,
+      source: outcome.source,
+      detail: outcome.detail,
+    })),
+    notAdmitted: outcomes.filter(outcome => !outcome.admitted).map(outcome => ({
+      chain: outcome.chain,
+      source: outcome.source,
       detail: outcome.detail,
     })),
   });
