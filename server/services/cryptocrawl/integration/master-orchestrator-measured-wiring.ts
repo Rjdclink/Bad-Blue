@@ -8,6 +8,7 @@ import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-press
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
+import { ensureOrderBookEvolutionWiring } from './order-book-evolution-wiring.js';
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
@@ -30,6 +31,7 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
   ensureOracleEvidenceWiring();
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
+  ensureOrderBookEvolutionWiring();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
@@ -65,6 +67,7 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
     executionMetrics: 'terminal_settlement_only',
     opportunityMetrics: 'canonical_verified_stream',
     measuredOpportunityGraph: 'continuous_multi_topology',
+    orderBookEvolution: 'measured_short_horizon_transitions',
     dynamicScale: 'dual_axis_search_and_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
     zeroCapitalExecutionAdmission: 'resource_leases',
