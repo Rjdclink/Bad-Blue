@@ -28,16 +28,18 @@ function cloneEvidence(evidence: CanonicalOracleEvidence | null | undefined): Ca
     : null;
 }
 
+/**
+ * Backward-compatible latest evidence accessor. Chain-scoped validations are no
+ * longer exposed through this unscoped API because a caller without a candidate
+ * chain cannot prove compatibility. Existing unscoped consumers therefore fail
+ * closed instead of attaching Polygon evidence to Avalanche/Arbitrum/etc.
+ */
 export function getLatestOracleEvidence(): CanonicalOracleEvidence | null {
+  if (!latest || latest.chain !== 'global_reference') return null;
   return cloneEvidence(latest);
 }
 
-/**
- * Return only chain-compatible oracle evidence. A Polygon validation can never be
- * reused as Avalanche/Arbitrum/etc decision evidence merely because the base asset
- * matches. Global/reference prices must be modeled explicitly by a separate scope
- * rather than masquerading as chain-specific validation.
- */
+/** Exact chain-aware decision evidence accessor. */
 export function getOracleEvidence(asset: string, chain: string): CanonicalOracleEvidence | null {
   return cloneEvidence(byAssetChain.get(key(asset, chain)));
 }
@@ -80,6 +82,7 @@ export function ensureOracleEvidenceWiring(): void {
   logger.info('MultiOracle canonical evidence wiring installed', {
     component: 'OracleEvidenceWiring',
     correlationKey: 'asset+chain',
+    unscopedChainEvidenceFailsClosed: true,
     crossChainReuseAllowed: false,
   });
 }
