@@ -5,6 +5,7 @@ import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { getBoundTechnicalEvidence } from '../integration/technical-evidence-synchronizer.js';
 import { marketDataProviders, type MarketUniverseAsset } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { buildObservedCexCandidates } from './cex-observation-candidates.js';
 import { measuredCandidateRegistry } from './measured-candidate-registry.js';
 import { scanPublicCexUniverse } from './public-cex-discovery.js';
 import { getCexScanCapacity, type ScanCapacityDecision } from './scan-capacity-policy.js';
@@ -20,6 +21,7 @@ export interface MeasuredOpportunityGraphCycle {
   publicDiscoveryObservations: number;
   publicDiscoveryVenues: number;
   publicDiscoveryFailures: number;
+  observedCandidatesRegistered: number;
   deterministicPositive: number;
   assessedCandidates: number;
   eligibleCandidates: number;
@@ -196,6 +198,17 @@ class MeasuredOpportunityGraph {
     });
     const publicDiscovery = await publicDiscoveryPromise;
 
+    // Raw public BBOs are measured search evidence. Register only symbols with
+    // two or more independently observed venues, and keep them explicitly
+    // non-executable with unknown economics. This makes the CEX_CEX discovery
+    // funnel truthful without allowing discovery-only venues into execution.
+    const observedCandidateTtlMs = Math.max(
+      500,
+      Number(process.env.CRYPTOCRAWL_PUBLIC_BBO_CACHE_MS || 1_500),
+    );
+    const observedCandidates = buildObservedCexCandidates(publicDiscovery.observations, observedCandidateTtlMs);
+    for (const candidate of observedCandidates) measuredCandidateRegistry.record(candidate);
+
     const byRoute = new Map<string, VerifiedArbitragePlan>();
     for (const plan of evaluated) {
       if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) continue;
@@ -291,6 +304,7 @@ class MeasuredOpportunityGraph {
       publicDiscoveryObservations: publicDiscovery.observations.length,
       publicDiscoveryVenues: new Set(publicDiscovery.observations.map(observation => observation.venue)).size,
       publicDiscoveryFailures: publicDiscovery.failures.length,
+      observedCandidatesRegistered: observedCandidates.length,
       deterministicPositive: positivePlans.length,
       assessedCandidates: assessmentCandidates.length,
       eligibleCandidates,
@@ -318,6 +332,7 @@ class MeasuredOpportunityGraph {
       publicDiscoveryObservations: cycle.publicDiscoveryObservations,
       publicDiscoveryVenues: cycle.publicDiscoveryVenues,
       publicDiscoveryFailures: cycle.publicDiscoveryFailures,
+      observedCandidatesRegistered: cycle.observedCandidatesRegistered,
       deterministicPositive: cycle.deterministicPositive,
       assessedCandidates: cycle.assessedCandidates,
       eligibleCandidates: cycle.eligibleCandidates,
