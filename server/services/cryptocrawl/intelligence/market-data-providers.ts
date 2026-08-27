@@ -1,3 +1,8 @@
+import { orderMeasuredMarketUniverse } from '../discovery/market-universe-controller.js';
+import {
+  adoptResolvedEnvironmentVariable,
+  resolveCoinStatsEnvironment,
+} from '../runtime/environment-contract.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
 export interface MarketUniverseAsset {
@@ -65,17 +70,11 @@ const MAX_UNIVERSE_SIZE = Math.min(50, Math.max(3, Number(process.env.CRYPTO_MAR
 
 interface CacheEntry<T> { value: T; expiresAt: number; }
 
-function getCoinStatsApiKey(): string | undefined {
-  const primary = process.env.COINSTATS_API_KEY?.trim();
-  if (primary) return primary;
-
-  if (process.env.NODE_ENV === 'production') {
-    return process.env.COINSTATS_API_KEY_PROD?.trim() || undefined;
-  }
-  if (process.env.NODE_ENV === 'staging') {
-    return process.env.COINSTATS_API_KEY_STAGING?.trim() || undefined;
-  }
-  return process.env.COINSTATS_API_KEY_DEV?.trim() || undefined;
+function getCoinStatsApiKey(): { apiKey: string | undefined; sourceName: string | null; state: string } {
+  const resolution = resolveCoinStatsEnvironment();
+  adoptResolvedEnvironmentVariable(resolution);
+  const apiKey = process.env.COINSTATS_API_KEY?.trim() || undefined;
+  return { apiKey, sourceName: resolution.sourceName, state: resolution.state };
 }
 
 class MarketDataProviders {
@@ -110,7 +109,7 @@ class MarketDataProviders {
           this.setProviderStatus(provider, 'cached', 'served from the market-universe cache');
         }
       }
-      return this.universeCache.value;
+      return orderMeasuredMarketUniverse(this.universeCache.value);
     }
     const [coinGeckoAssets, coinStatsAssets] = await Promise.all([
       this.fetchCoinGeckoUniverse(),
@@ -124,18 +123,20 @@ class MarketDataProviders {
         sources: [...new Set([...(existing.sources || [existing.source]), asset.source])],
       } : { ...asset, sources: [asset.source] });
     }
-    const enriched = [...bySymbol.values()].slice(0, MAX_UNIVERSE_SIZE);
+    const enriched = orderMeasuredMarketUniverse([...bySymbol.values()]).slice(0, MAX_UNIVERSE_SIZE);
     if (enriched.length > 0) {
       this.lastUniverse = enriched;
       this.universeCache = { value: enriched, expiresAt: Date.now() + COINGECKO_TTL_MS };
-      return enriched;
+      return orderMeasuredMarketUniverse(enriched);
     }
 
     if (this.lastUniverse.length > 0) {
       this.setProviderStatus('coingecko', 'stale', 'live universe refresh failed; serving the last successful universe');
-      this.setProviderStatus('coinstats', 'stale', 'live universe refresh failed; serving the last successful universe');
+      if (this.providerStatuses.coinstats.state !== 'unavailable') {
+        this.setProviderStatus('coinstats', 'stale', 'live universe refresh failed; serving the last successful universe');
+      }
       this.universeCache = { value: this.lastUniverse, expiresAt: Date.now() + Math.min(COINGECKO_TTL_MS, 30_000) };
-      return this.lastUniverse;
+      return orderMeasuredMarketUniverse(this.lastUniverse);
     }
 
     return [];
@@ -240,17 +241,21 @@ class MarketDataProviders {
   }
 
   private async fetchCoinStatsUniverse(): Promise<MarketUniverseAsset[]> {
-    const apiKey = getCoinStatsApiKey();
-    if (!apiKey) {
-      this.setProviderStatus('coinstats', 'unavailable', 'CoinStats API key is not configured (COINSTATS_API_KEY or environment-specific alias)');
+    const credential = getCoinStatsApiKey();
+    if (!credential.apiKey) {
+      this.setProviderStatus(
+        'coinstats',
+        'unavailable',
+        `optional CoinStats credential ${credential.state.toLowerCase()} after checking canonical and supported aliases`,
+      );
       return [];
     }
     if (this.coinStatsCache && this.coinStatsCache.expiresAt > Date.now()) {
-      this.setProviderStatus('coinstats', 'cached', 'served from the CoinStats cache');
+      this.setProviderStatus('coinstats', 'cached', `served from the CoinStats cache; credential source=${credential.sourceName || 'canonical'}`);
       return this.coinStatsCache.value;
     }
     try {
-      const rows = await fetchJsonWithRetry<any>(`https://openapiv1.coinstats.app/coins?currency=USD&limit=${MAX_UNIVERSE_SIZE}`, { init: { headers: { accept: 'application/json', 'X-API-KEY': apiKey } }, maxRetries: 2, timeoutMs: 6_000 });
+      const rows = await fetchJsonWithRetry<any>(`https://openapiv1.coinstats.app/coins?currency=USD&limit=${MAX_UNIVERSE_SIZE}`, { init: { headers: { accept: 'application/json', 'X-API-KEY': credential.apiKey } }, maxRetries: 2, timeoutMs: 6_000 });
       const assets = (Array.isArray(rows) ? rows : rows?.result || rows?.coins || []).filter((row: any) => typeof row?.symbol === 'string').map((row: any) => ({
         symbol: `${row.symbol.toUpperCase()}USDT`,
         priceUsd: Number.isFinite(Number(row.price)) ? Number(row.price) : undefined,
@@ -262,7 +267,7 @@ class MarketDataProviders {
         observedAt: Date.now(),
       }));
       this.coinStatsCache = { value: assets, expiresAt: Date.now() + COINSTATS_TTL_MS };
-      this.setProviderStatus('coinstats', 'live');
+      this.setProviderStatus('coinstats', 'live', `authenticated via ${credential.sourceName || 'COINSTATS_API_KEY'}`);
       return assets;
     } catch (error) {
       this.setProviderStatus('coinstats', this.coinStatsCache ? 'stale' : 'failed', error instanceof Error ? error.message : String(error));
