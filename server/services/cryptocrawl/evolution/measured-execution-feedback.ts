@@ -36,6 +36,10 @@ function finiteOrNull(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function sampleKey(sample: Pick<MeasuredExecutionSample, 'opportunityId' | 'chain' | 'symbol' | 'strategy' | 'timestamp'>): string {
+  return `${sample.opportunityId || `${sample.chain}:${sample.symbol}:${sample.strategy}`}:${sample.timestamp}`;
+}
+
 function normalizeSample(feedback: CryptaraExecutionFeedback): MeasuredExecutionSample {
   return {
     opportunityId: feedback.opportunityId,
@@ -66,6 +70,17 @@ function validSnapshot(input: MeasuredEvolutionSnapshot | null): input is Measur
   return !!input && input.version === 1 && Array.isArray(input.samples);
 }
 
+function mergeSamples(...groups: MeasuredExecutionSample[][]): MeasuredExecutionSample[] {
+  const merged = new Map<string, MeasuredExecutionSample>();
+  for (const group of groups) {
+    for (const sample of group) {
+      if (!validSample(sample)) continue;
+      merged.set(sampleKey(sample), { ...sample, provenance: [...sample.provenance] });
+    }
+  }
+  return [...merged.values()].sort((left, right) => left.timestamp - right.timestamp).slice(-MAX_SAMPLES);
+}
+
 export function ensureMeasuredEvolutionFeedbackHydrated(): Promise<void> {
   if (hydrated) return Promise.resolve();
   if (!getCryptocrawlGovernance().isLongTermMemoryAllowed()) return Promise.resolve();
@@ -76,9 +91,10 @@ export function ensureMeasuredEvolutionFeedbackHydrated(): Promise<void> {
       if (validSnapshot(persisted)) {
         state = {
           version: 1,
-          samples: persisted.samples.filter(validSample).slice(-MAX_SAMPLES).map(sample => ({ ...sample, provenance: [...sample.provenance] })),
-          updatedAt: Number.isFinite(persisted.updatedAt) ? persisted.updatedAt : Date.now(),
+          samples: mergeSamples(persisted.samples, state.samples),
+          updatedAt: Math.max(Number.isFinite(persisted.updatedAt) ? persisted.updatedAt : 0, state.updatedAt, Date.now()),
         };
+        await store.save(state);
       } else {
         await store.save(state);
       }
@@ -152,8 +168,15 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
   if (!feedback.settlement || feedback.settlement.terminal !== true) return;
   await ensureMeasuredEvolutionFeedbackHydrated();
   const sample = normalizeSample(feedback);
-  state.samples.push(sample);
-  if (state.samples.length > MAX_SAMPLES) state.samples = state.samples.slice(-MAX_SAMPLES);
+  const key = sampleKey(sample);
+  if (state.samples.some(existing => sampleKey(existing) === key)) {
+    logger.debug('Duplicate measured terminal execution ignored by evolution bridge', {
+      component: 'MeasuredEvolutionFeedback',
+      key,
+    });
+    return;
+  }
+  state.samples = mergeSamples(state.samples, [sample]);
   state.updatedAt = Date.now();
 
   const genomeId = genomeIdFromProvenance(sample.provenance);

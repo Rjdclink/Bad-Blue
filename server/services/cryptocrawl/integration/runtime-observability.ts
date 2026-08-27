@@ -108,16 +108,15 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       },
       beam: {
         routed: beam.router,
-        antenna: {
-          activeNodes: beam.antenna.activeNodes,
-          queuedTasks: beam.antenna.queuedTasks,
-          activeTasks: beam.antenna.activeTasks,
-        },
         directional: {
           activeNodes: beam.beam.activeNodes,
           queuedTasks: beam.beam.queuedTasks,
           executingTasks: beam.beam.executingTasks,
           nodes: beam.beam.nodes,
+        },
+        legacyAntenna: {
+          authoritative: false,
+          reason: 'legacy antenna health uses simulated probes and is excluded from trading evidence',
         },
         activeRetries: beam.activeRetries,
       },
@@ -150,7 +149,8 @@ export function ensureCryptoRuntimeObservability(): void {
     heartbeatMs: intervalMs,
     providerHeartbeat: ['Alchemy', 'Ankr/shared-RPC', 'market-data'],
     canonicalDecisionTelemetry: true,
-    beamTelemetry: true,
+    directionalBeamTelemetry: true,
+    legacyAntennaAuthoritative: false,
     settlementLearningTelemetry: true,
   });
 }
