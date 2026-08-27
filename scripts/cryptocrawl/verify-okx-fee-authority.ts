@@ -42,9 +42,6 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   const isAuthProbe = isTradeFee && !url.includes('groupId=') && !url.includes('instId=');
   const isTradeOrder = url.includes('/api/v5/trade/order');
 
-  // A Global credential presented to the US origin produces the region/domain
-  // mismatch observed in production. Region selection may probe this candidate,
-  // but no non-probe request may remain on the wrong origin afterward.
   if (scenario === 'global' && isUs && isAuthProbe) {
     return json({ code: '50119', msg: "API key doesn't exist" }, 401);
   }
@@ -139,8 +136,6 @@ try {
     'shared execution authority must select the credential-compatible OKX region',
   );
 
-  // Prove that the production settlement adapter—not just the fee resolver—uses
-  // the selected regional authority for authenticated order submission.
   const { createProductionCexSettlementAdapters } = await import(
     '../../server/services/cryptocrawl/execution/cex-settlement.js'
   );
@@ -192,8 +187,6 @@ try {
     'all non-probe OKX fee/execution requests must remain on the selected account region',
   );
 
-  // Source-level guards cover the executable quote path without booting the whole
-  // application graph: the planner must not regress to Global REST or Global WS.
   const arbitrageSource = readFileSync(
     new URL('../../server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts', import.meta.url),
     'utf8',
