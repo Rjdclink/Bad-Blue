@@ -22,6 +22,10 @@ type QueueItem<Input = unknown, Result = unknown> = {
   activeAtSubmit: number;
   resolve: (value: QuantiExecutionResult<Result>) => void;
   reject: (error: Error) => void;
+  cancelled: boolean;
+  externalSignal?: AbortSignal;
+  executionController?: AbortController;
+  cleanupExternalAbort?: () => void;
 };
 
 type ProfileState = {
@@ -116,6 +120,10 @@ export interface QuantiCompRuntimeOptions {
   workerId?: string;
 }
 
+export interface QuantiSubmitOptions {
+  signal?: AbortSignal;
+}
+
 export class QuantiCompRuntime extends EventEmitter {
   private readonly queue = new MaxHeap();
   private readonly profiler = new QuantiResourceProfiler();
@@ -138,10 +146,17 @@ export class QuantiCompRuntime extends EventEmitter {
     this.workerId = options.workerId || `quanti-local-${process.pid}`;
   }
 
-  submit<Input, Result>(workload: QuantiWorkload<Input, Result>): Promise<QuantiExecutionResult<Result>> {
+  submit<Input, Result>(
+    workload: QuantiWorkload<Input, Result>,
+    options: QuantiSubmitOptions = {},
+  ): Promise<QuantiExecutionResult<Result>> {
     this.assertWorkload(workload);
     if (!this.initialized) {
       return Promise.reject(new QuantiCompError('Quanti Comp runtime is shut down', 'SHUTDOWN', { workloadId: workload.id }));
+    }
+
+    if (options.signal?.aborted) {
+      return Promise.reject(new QuantiCompError('Workload aborted before submission', 'ABORTED', { workloadId: workload.id }));
     }
 
     const dedupeKey = workload.policy.allowDeduplication ? workload.policy.dedupeKey : undefined;
@@ -149,20 +164,32 @@ export class QuantiCompRuntime extends EventEmitter {
       const existing = this.inFlightByKey.get(dedupeKey);
       if (existing) {
         this.emit('workload-deduplicated', { workloadId: workload.id, dedupeKey });
-        return existing as Promise<QuantiExecutionResult<Result>>;
+        return this.followSharedExecution(existing, options.signal, workload.id) as Promise<QuantiExecutionResult<Result>>;
       }
     }
 
     const promise = new Promise<QuantiExecutionResult<Result>>((resolve, reject) => {
       const queuedAt = Date.now();
-      this.queue.push({
+      const item: QueueItem<Input, Result> = {
         workload,
         queuedAt,
         queueDepthAtSubmit: this.queue.size,
         activeAtSubmit: this.activeExecutions,
         resolve,
         reject,
-      });
+        cancelled: false,
+        externalSignal: options.signal,
+      };
+      if (options.signal) {
+        const onAbort = () => {
+          item.cancelled = true;
+          item.executionController?.abort();
+          this.schedulePump();
+        };
+        options.signal.addEventListener('abort', onAbort, { once: true });
+        item.cleanupExternalAbort = () => options.signal?.removeEventListener('abort', onAbort);
+      }
+      this.queue.push(item);
       this.emit('workload-queued', {
         workloadId: workload.id,
         kind: workload.kind,
@@ -222,6 +249,8 @@ export class QuantiCompRuntime extends EventEmitter {
     if (!this.initialized) return;
     this.initialized = false;
     for (const item of this.queue.drain()) {
+      item.cancelled = true;
+      item.cleanupExternalAbort?.();
       item.reject(new QuantiCompError('Quanti Comp runtime shut down before execution', 'SHUTDOWN', {
         workloadId: item.workload.id,
       }));
@@ -256,6 +285,13 @@ export class QuantiCompRuntime extends EventEmitter {
     while (this.initialized && this.activeExecutions < this.maxConcurrency && this.queue.size > 0) {
       const item = this.queue.pop();
       if (!item) break;
+      if (item.cancelled || item.externalSignal?.aborted) {
+        item.cleanupExternalAbort?.();
+        this.recordFailure(item.workload.kind);
+        this.failedExecutions += 1;
+        item.reject(new QuantiCompError('Workload aborted before execution', 'ABORTED', { workloadId: item.workload.id }));
+        continue;
+      }
       const deadline = item.workload.policy.deadlineAt;
       if (deadline !== undefined && Date.now() > deadline) {
         this.recordFailure(item.workload.kind);
@@ -283,6 +319,8 @@ export class QuantiCompRuntime extends EventEmitter {
     const beforeCpu = process.cpuUsage();
     const beforeMemory = process.memoryUsage();
     const controller = new AbortController();
+    item.executionController = controller;
+    if (item.externalSignal?.aborted) controller.abort();
     const timeoutMs = Math.max(1, workload.policy.timeoutMs);
     const deadlineRemaining = workload.policy.deadlineAt === undefined
       ? timeoutMs
@@ -301,13 +339,18 @@ export class QuantiCompRuntime extends EventEmitter {
     try {
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
-          controller.abort();
           reject(new QuantiCompError('Workload execution timed out', 'TIMEOUT', {
             workloadId: workload.id,
             timeoutMs: effectiveTimeout,
           }));
+          controller.abort();
         }, effectiveTimeout);
         timeout.unref?.();
+      });
+      const abortPromise = new Promise<never>((_, reject) => {
+        const rejectAbort = () => reject(new QuantiCompError('Workload aborted', 'ABORTED', { workloadId: workload.id }));
+        if (controller.signal.aborted) rejectAbort();
+        else controller.signal.addEventListener('abort', rejectAbort, { once: true });
       });
 
       const executionStart = performance.now();
@@ -321,6 +364,7 @@ export class QuantiCompRuntime extends EventEmitter {
           startedAt: startedAtEpoch,
         })),
         timeoutPromise,
+        abortPromise,
       ]);
       const executionMs = performance.now() - executionStart;
 
@@ -404,7 +448,30 @@ export class QuantiCompRuntime extends EventEmitter {
       });
     } finally {
       if (timeout) clearTimeout(timeout);
+      item.cleanupExternalAbort?.();
+      item.executionController = undefined;
     }
+  }
+
+  private followSharedExecution<Result>(
+    shared: Promise<QuantiExecutionResult<unknown>>,
+    signal: AbortSignal | undefined,
+    workloadId: string,
+  ): Promise<QuantiExecutionResult<Result>> {
+    if (!signal) return shared as Promise<QuantiExecutionResult<Result>>;
+    if (signal.aborted) return Promise.reject(new QuantiCompError('Deduplicated waiter aborted', 'ABORTED', { workloadId }));
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        cleanup();
+        reject(new QuantiCompError('Deduplicated waiter aborted', 'ABORTED', { workloadId }));
+      };
+      const cleanup = () => signal.removeEventListener('abort', onAbort);
+      signal.addEventListener('abort', onAbort, { once: true });
+      shared.then(
+        value => { cleanup(); resolve(value as QuantiExecutionResult<Result>); },
+        error => { cleanup(); reject(error); },
+      );
+    });
   }
 
   private recordSuccess(kind: string, metrics: QuantiExecutionMetrics): void {

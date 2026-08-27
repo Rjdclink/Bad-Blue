@@ -1,29 +1,44 @@
 /**
  * Directional Beam Compute Layer
- * 
- * Heavy compute layer for CPU-intensive tasks like Monte Carlo tests,
- * ML-driven prediction, cross-chain arbitrage scanning, and multi-market aggregation.
- * Uses multi-threading, concurrency primitives, and monitors CPU temperature.
+ *
+ * Compatibility facade for heavy compute. Quanti Comp now owns measured local
+ * scheduling, deadline/timeout enforcement, validation, and execution telemetry
+ * while existing Beam callers and events remain stable during migration.
  */
 
-import { 
-  Task, 
-  TaskType, 
-  TaskIntensity, 
-  ComputeNode, 
-  ComputeProvider, 
+import {
+  Task,
+  TaskType,
+  TaskIntensity,
+  ComputeNode,
+  ComputeProvider,
   ComputeLayer,
   TaskExecution,
-  RoutingDecision 
-} from './types';
-import { EventEmitter } from 'events';
-import os from 'os';
+  RoutingDecision,
+} from './types.js';
+import { EventEmitter } from 'node:events';
+import os from 'node:os';
+import { quantiComp, type QuantiLane } from '../quantiComp/index.js';
 
-// Constants
 const MAX_LOCAL_CONCURRENCY = Math.max(1, Math.min(
-  os.cpus().length,
-  Number(process.env.COMPUTATIONAL_BEAM_MAX_CONCURRENCY || os.cpus().length) || 1,
+  os.availableParallelism?.() || os.cpus().length,
+  Number(process.env.COMPUTATIONAL_BEAM_MAX_CONCURRENCY || os.availableParallelism?.() || os.cpus().length) || 1,
 ));
+
+const intensityFeature: Record<TaskIntensity, number> = {
+  [TaskIntensity.LIGHTWEIGHT]: 1,
+  [TaskIntensity.MODERATE]: 2,
+  [TaskIntensity.HEAVY]: 3,
+  [TaskIntensity.EXTREME]: 4,
+};
+
+function toQuantiLane(task: Task): QuantiLane {
+  if (task.metadata.priority >= 100) return 'ultra_hot';
+  if (task.type === TaskType.MONTE_CARLO || task.type === TaskType.ARBITRAGE_SCAN) return 'hot';
+  if (task.intensity === TaskIntensity.EXTREME) return 'hot';
+  if (task.intensity === TaskIntensity.HEAVY) return 'warm';
+  return 'warm';
+}
 
 export class DirectionalBeamLayer extends EventEmitter {
   private beamNodes: Map<string, ComputeNode> = new Map();
@@ -39,9 +54,6 @@ export class DirectionalBeamLayer extends EventEmitter {
     this.startMonitoring();
   }
 
-  /**
-   * Initialize heavy compute beam nodes
-   */
   private initializeBeamNodes(): void {
     this.beamNodes.set('local-beam-1', {
       id: 'local-beam-1',
@@ -50,7 +62,7 @@ export class DirectionalBeamLayer extends EventEmitter {
       status: 'active',
       capabilities: {
         maxConcurrentTasks: this.maxConcurrency,
-        cpuCores: os.cpus().length,
+        cpuCores: os.availableParallelism?.() || os.cpus().length,
         memoryMB: Math.floor(os.totalmem() / (1024 * 1024)),
         supportedTaskTypes: Object.values(TaskType),
       },
@@ -68,90 +80,62 @@ export class DirectionalBeamLayer extends EventEmitter {
     });
   }
 
-  /**
-   * Accept heavy compute task
-   */
   public async acceptTask(task: Task): Promise<string> {
-    // Validate task is suitable for beam layer
     if (!this.isHeavyTask(task)) {
       throw new Error(`Task ${task.id} is too lightweight for beam layer`);
     }
-
-    // Add to execution queue
     this.executionQueue.push(task);
     this.emit('task-queued', task);
-
-    // Process queue
     await this.processQueue();
-
     return task.id;
   }
 
-  /**
-   * Check if task requires heavy compute
-   */
   private isHeavyTask(task: Task): boolean {
     return task.intensity === TaskIntensity.HEAVY ||
-           task.intensity === TaskIntensity.EXTREME ||
-           [
-             TaskType.MONTE_CARLO,
-             TaskType.ML_PREDICTION,
-             TaskType.ARBITRAGE_SCAN,
-             TaskType.MARKET_AGGREGATION,
-           ].includes(task.type);
+      task.intensity === TaskIntensity.EXTREME ||
+      [
+        TaskType.MONTE_CARLO,
+        TaskType.ML_PREDICTION,
+        TaskType.ARBITRAGE_SCAN,
+        TaskType.MARKET_AGGREGATION,
+      ].includes(task.type);
   }
 
-  /**
-   * Process execution queue
-   */
   private async processQueue(): Promise<void> {
     while (this.executionQueue.length > 0) {
       const task = this.executionQueue[0];
-      
       const node = this.selectOptimalNode(task);
       if (node) {
         this.executionQueue.shift();
         void this.executeOnNode(task, node).finally(() => void this.processQueue());
       } else {
-        // No available nodes with capacity
         break;
       }
     }
   }
 
-  /**
-   * Select optimal node based on load, capabilities, and health
-   */
   private selectOptimalNode(task: Task): ComputeNode | null {
     const availableNodes = Array.from(this.beamNodes.values())
-      .filter(node => 
+      .filter(node =>
         node.status === 'active' &&
         node.capabilities.supportedTaskTypes.includes(task.type) &&
         node.metrics.currentLoad < node.capabilities.maxConcurrentTasks &&
-        !this.activeControllers.has(task.id)
+        !this.activeControllers.has(task.id),
       );
 
-    if (availableNodes.length === 0) {
-      return null;
-    }
+    if (availableNodes.length === 0) return null;
 
-    // Sort by least loaded with best health
     availableNodes.sort((a, b) => {
-      const aScore = (a.metrics.currentLoad / a.capabilities.maxConcurrentTasks) * 0.6 +
-                     ((a.health.temperature ?? 50) / 100) * 0.2 +
-                     ((100 - a.metrics.successRate) / 100) * 0.2;
-      const bScore = (b.metrics.currentLoad / b.capabilities.maxConcurrentTasks) * 0.6 +
-                     ((b.health.temperature ?? 50) / 100) * 0.2 +
-                     ((100 - b.metrics.successRate) / 100) * 0.2;
+      const aLoad = a.metrics.currentLoad / Math.max(1, a.capabilities.maxConcurrentTasks);
+      const bLoad = b.metrics.currentLoad / Math.max(1, b.capabilities.maxConcurrentTasks);
+      const aScore = aLoad * 0.6 + (a.health.cpuUsage / 100) * 0.25 + (a.health.memoryUsage / 100) * 0.15;
+      const bScore = bLoad * 0.6 + (b.health.cpuUsage / 100) * 0.25 + (b.health.memoryUsage / 100) * 0.15;
       return aScore - bScore;
     });
 
     return availableNodes[0];
   }
 
-  /**
-   * Execute task on selected node
-   */
   private async executeOnNode(task: Task, node: ComputeNode): Promise<void> {
     const execution: TaskExecution = {
       taskId: task.id,
@@ -167,70 +151,85 @@ export class DirectionalBeamLayer extends EventEmitter {
     };
 
     this.activeExecutions.set(task.id, execution);
-    node.metrics.currentLoad++;
+    node.metrics.currentLoad += 1;
+    this.emit('task-started', { taskId: task.id, nodeId: node.id, provider: node.provider });
 
-    this.emit('task-started', {
-      taskId: task.id,
-      nodeId: node.id,
-      provider: node.provider,
-    });
-
-    const startCpu = process.cpuUsage();
-    const startMem = process.memoryUsage();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), task.workload?.timeoutMs || 0);
     this.activeControllers.set(task.id, controller);
 
     try {
-      if (!task.workload) {
-        throw new Error(`Task ${task.id} has no executable workload`);
-      }
+      if (!task.workload) throw new Error(`Task ${task.id} has no executable workload`);
 
-      const result = await task.workload.execute(task.workload.input, {
-        signal: controller.signal,
-        workerId: node.id,
-        startedAt: execution.startTime,
-      });
-      if (controller.signal.aborted) {
-        throw new Error(`Task ${task.id} timed out or was cancelled`);
-      }
-      if (!await task.workload.validate(result, task.workload.input)) {
-        throw new Error(`Task ${task.id} produced an invalid workload result`);
-      }
+      const workload = task.workload;
+      const quantiResult = await quantiComp.submit({
+        id: task.id,
+        kind: workload.type || task.type,
+        lane: toQuantiLane(task),
+        priority: task.metadata.priority,
+        createdAt: task.metadata.created.getTime(),
+        input: workload.input,
+        features: {
+          beamPriority: task.metadata.priority,
+          beamIntensity: intensityFeature[task.intensity] || 0,
+          cpuIntensive: task.routing?.cpuIntensive ? 1 : 0,
+          memoryIntensive: task.routing?.memoryIntensive ? 1 : 0,
+          ioIntensive: task.routing?.ioIntensive ? 1 : 0,
+        },
+        resourceHints: {
+          cpuWeight: task.routing?.cpuIntensive ? 1 : 0.5,
+          ioWeight: task.routing?.ioIntensive ? 1 : 0,
+          preferredBackend: 'inline',
+        },
+        policy: {
+          timeoutMs: workload.timeoutMs,
+          usefulWorkUnits: 1,
+          strictValidation: true,
+        },
+        execute: (input, context) => workload.execute(input, {
+          signal: context.signal,
+          workerId: node.id,
+          startedAt: new Date(context.startedAt),
+        }),
+        validate: (result, input) => workload.validate(result, input),
+      }, { signal: controller.signal });
 
-      const cpuUsed = process.cpuUsage(startCpu);
-      execution.metrics.cpuTimeMs = (cpuUsed.user + cpuUsed.system) / 1000;
-      execution.metrics.memoryPeakMB = Math.max(0, Math.floor((process.memoryUsage().heapUsed - startMem.heapUsed) / (1024 * 1024)));
-
+      execution.metrics.cpuTimeMs = quantiResult.metrics.cpuTotalMs;
+      execution.metrics.memoryPeakMB = Math.max(
+        0,
+        Math.ceil(Math.max(quantiResult.metrics.rssDeltaBytes, quantiResult.metrics.heapDeltaBytes) / (1024 * 1024)),
+      );
       execution.status = 'completed';
       execution.endTime = new Date();
-      execution.result = result;
+      execution.result = quantiResult.result;
 
-      node.metrics.totalTasksCompleted++;
-      node.metrics.avgResponseTime = ((node.metrics.avgResponseTime * (node.metrics.totalTasksCompleted - 1)) +
-        (execution.endTime.getTime() - execution.startTime.getTime())) / node.metrics.totalTasksCompleted;
-      
+      node.metrics.totalTasksCompleted += 1;
+      node.metrics.avgResponseTime = (
+        node.metrics.avgResponseTime * (node.metrics.totalTasksCompleted - 1) +
+        (execution.endTime.getTime() - execution.startTime.getTime())
+      ) / node.metrics.totalTasksCompleted;
+
       this.emit('task-completed', {
         taskId: task.id,
         nodeId: node.id,
         duration: execution.endTime.getTime() - execution.startTime.getTime(),
-        result,
+        result: quantiResult.result,
         metrics: execution.metrics,
+        quantiMetrics: quantiResult.metrics,
+        computeAuthority: 'quanti-comp',
       });
     } catch (error) {
       execution.status = 'failed';
       execution.error = error instanceof Error ? error.message : 'Unknown error';
       execution.endTime = new Date();
-
       this.emit('task-failed', {
         taskId: task.id,
         nodeId: node.id,
         error: execution.error,
+        computeAuthority: 'quanti-comp',
       });
     } finally {
-      clearTimeout(timeout);
       this.activeControllers.delete(task.id);
-      node.metrics.currentLoad--;
+      node.metrics.currentLoad = Math.max(0, node.metrics.currentLoad - 1);
       this.activeExecutions.delete(task.id);
     }
   }
@@ -242,30 +241,22 @@ export class DirectionalBeamLayer extends EventEmitter {
     return true;
   }
 
-  /**
-   * Start monitoring CPU and memory
-   */
   private startMonitoring(): void {
     this.monitoringInterval = setInterval(() => {
       this.updateNodeHealth();
-    }, 5000); // Update every 5 seconds
+    }, 5000);
     this.monitoringInterval.unref();
   }
 
-  /**
-   * Update health metrics for all nodes
-   */
   private updateNodeHealth(): void {
+    const resource = quantiComp.getStatus().resource;
     for (const node of this.beamNodes.values()) {
-      node.health.lastHealthCheck = new Date();
-      
-      const cpus = os.cpus();
-      const totalIdle = cpus.reduce((sum, cpu) => sum + cpu.times.idle, 0);
-      const totalTick = cpus.reduce((sum, cpu) => sum + Object.values(cpu.times).reduce((part, value) => part + value, 0), 0);
-      node.health.cpuUsage = totalTick === 0 ? 0 : 100 - (totalIdle / totalTick) * 100;
-      node.health.memoryUsage = ((os.totalmem() - os.freemem()) / os.totalmem()) * 100;
+      node.health.lastHealthCheck = new Date(resource.timestamp);
+      if (resource.cpuUtilizationPercent !== null) node.health.cpuUsage = resource.cpuUtilizationPercent;
+      node.health.memoryUsage = resource.totalMemoryBytes > 0
+        ? (1 - resource.freeMemoryBytes / resource.totalMemoryBytes) * 100
+        : 0;
 
-      // Log overuse warnings
       if (node.health.cpuUsage > 90) {
         this.emit('cpu-overuse', {
           nodeId: node.id,
@@ -276,40 +267,40 @@ export class DirectionalBeamLayer extends EventEmitter {
     }
   }
 
-  /**
-   * Get routing decision
-   */
   public getRoutingDecision(task: Task): RoutingDecision | null {
     const selectedNode = this.selectOptimalNode(task);
-    if (!selectedNode) {
-      return null;
-    }
+    if (!selectedNode) return null;
 
     const alternativeNodes = Array.from(this.beamNodes.values())
-      .filter(node => 
+      .filter(node =>
         node.id !== selectedNode.id &&
         node.status === 'active' &&
-        node.capabilities.supportedTaskTypes.includes(task.type)
+        node.capabilities.supportedTaskTypes.includes(task.type),
       );
+
+    const loadHeadroom = 1 - selectedNode.metrics.currentLoad / Math.max(1, selectedNode.capabilities.maxConcurrentTasks);
+    const cpuHeadroom = 1 - selectedNode.health.cpuUsage / 100;
+    const memoryHeadroom = 1 - selectedNode.health.memoryUsage / 100;
+    const confidence = Math.max(0, Math.min(1, loadHeadroom * 0.5 + cpuHeadroom * 0.3 + memoryHeadroom * 0.2));
 
     return {
       taskId: task.id,
       selectedNode,
-      reason: `Selected local measured capacity with load ${selectedNode.metrics.currentLoad}/${selectedNode.capabilities.maxConcurrentTasks}`,
+      reason: `Selected measured Quanti Comp local capacity with load ${selectedNode.metrics.currentLoad}/${selectedNode.capabilities.maxConcurrentTasks}`,
       alternativeNodes,
-      confidence: 0.92,
+      confidence,
     };
   }
 
-  /**
-   * Get current status
-   */
   public getStatus() {
+    const quantiStatus = quantiComp.getStatus();
     return {
       totalNodes: this.beamNodes.size,
       activeNodes: Array.from(this.beamNodes.values()).filter(n => n.status === 'active').length,
       queuedTasks: this.executionQueue.length,
       executingTasks: this.activeExecutions.size,
+      computeAuthority: 'quanti-comp',
+      quantiComp: quantiStatus,
       nodes: Array.from(this.beamNodes.values()).map(node => ({
         id: node.id,
         provider: node.provider,
@@ -324,20 +315,13 @@ export class DirectionalBeamLayer extends EventEmitter {
     };
   }
 
-  /**
-   * Get all beam nodes
-   */
   public getNodes(): ComputeNode[] {
     return Array.from(this.beamNodes.values());
   }
 
-  /**
-   * Get execution history
-   */
   public getActiveExecutions(): TaskExecution[] {
     return Array.from(this.activeExecutions.values());
   }
 }
 
-// Export singleton instance
 export const directionalBeamLayer = new DirectionalBeamLayer();
