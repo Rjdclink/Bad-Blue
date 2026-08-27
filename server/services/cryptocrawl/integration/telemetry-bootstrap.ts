@@ -2,13 +2,17 @@ import logger from '../../../logger.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
-import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import {
   adoptResolvedEnvironmentVariable,
   resolveCoinStatsEnvironment,
 } from '../runtime/environment-contract.js';
 import { getCryptoCrawlerRuntimeAttestation } from '../runtime/runtime-attestation.js';
+import {
+  ensureCryptoCrawlerCoreRuntime,
+  getCryptoCrawlerCoreRuntimeStatus,
+} from '../runtime/core-runtime.js';
+import { admitAnkrFallback } from '../runtime/rpc-fallback-admission-policy.js';
 
 const TELEMETRY_CHAINS: SupportedChain[] = [
   'ethereum',
@@ -81,20 +85,32 @@ function adoptLegacyProviderAliases(): void {
 }
 
 async function registerBestEffortAnkrFallbacks(): Promise<void> {
+  const allowAnonymousPublicFallback = process.env.CRYPTOCRAWL_ALLOW_PUBLIC_ANKR_FALLBACK === 'true';
   const outcomes = await Promise.all(TELEMETRY_CHAINS.map(async chain => {
     const configured = process.env[`${chain.toUpperCase()}_ANKR_RPC_URL`]?.trim()
       || process.env[`ANKR_${chain.toUpperCase()}_RPC_URL`]?.trim()
       || (chain === 'ethereum' ? process.env.ANKR_RPC_URL?.trim() : undefined);
-    const publicUrl = configured || ANKR_PUBLIC_HTTP[chain];
-    if (!publicUrl) return { chain, provider: null, healthy: false, detail: 'no endpoint' };
+    const admission = admitAnkrFallback({
+      configuredUrl: configured,
+      publicUrl: ANKR_PUBLIC_HTTP[chain],
+      allowAnonymousPublicFallback,
+    });
+    if (!admission) {
+      return {
+        chain,
+        provider: null,
+        healthy: false,
+        skipped: true,
+        detail: 'anonymous public Ankr fallback is disabled by policy',
+      };
+    }
 
-    const provider = configured ? 'AnkrConfigured' : 'AnkrPublic';
     try {
       await multiProviderRpcManager.registerProvider({
-        provider,
+        provider: admission.provider,
         chain,
-        httpUrl: publicUrl,
-        priority: configured ? 8 : 2,
+        httpUrl: admission.httpUrl,
+        priority: admission.priority,
         capabilities: [
           'json_rpc',
           'network',
@@ -107,27 +123,31 @@ async function registerBestEffortAnkrFallbacks(): Promise<void> {
         ],
       });
       const health = multiProviderRpcManager.getHealth(chain)
-        .find(observation => observation.provider === provider);
+        .find(observation => observation.provider === admission.provider);
       return {
         chain,
-        provider,
+        provider: admission.provider,
         healthy: health?.http.success === true,
+        skipped: false,
         detail: health?.http.lastError || health?.http.state || 'registered',
       };
     } catch (error) {
       return {
         chain,
-        provider,
+        provider: admission.provider,
         healthy: false,
+        skipped: false,
         detail: error instanceof Error ? error.message : String(error),
       };
     }
   }));
 
-  logger.info('[TelemetryBootstrap] Ankr fallback probe completed', {
+  logger.info('[TelemetryBootstrap] Ankr fallback admission completed', {
     component: 'TelemetryBootstrap',
+    anonymousPublicFallbackEnabled: allowAnonymousPublicFallback,
     healthyChains: outcomes.filter(outcome => outcome.healthy).map(outcome => outcome.chain),
-    unavailableChains: outcomes.filter(outcome => !outcome.healthy).map(outcome => ({
+    skippedChains: outcomes.filter(outcome => outcome.skipped).map(outcome => outcome.chain),
+    unavailableChains: outcomes.filter(outcome => !outcome.healthy && !outcome.skipped).map(outcome => ({
       chain: outcome.chain,
       provider: outcome.provider,
       detail: outcome.detail,
@@ -172,15 +192,16 @@ async function probeReadOnlyZeroX(): Promise<void> {
       buyToken: polygon.usdt,
       sellAmount: '1000000',
     });
-    logger.info('[TelemetryBootstrap] 0x read-only quote probe completed', {
+    logger.info('[TelemetryBootstrap] 0x read-only price probe completed', {
       component: 'TelemetryBootstrap',
       available: !!observation,
       chainId: polygon.chainId,
+      quoteKind: observation?.quoteKind ?? null,
       executable: observation?.executable ?? false,
       liquidityAvailable: observation?.liquidityAvailable ?? false,
     });
   } catch (error) {
-    logger.warn('[TelemetryBootstrap] 0x read-only quote probe degraded', {
+    logger.warn('[TelemetryBootstrap] 0x read-only price probe degraded', {
       component: 'TelemetryBootstrap',
       error: error instanceof Error ? error.message : String(error),
     });
@@ -214,6 +235,11 @@ async function probeMarketUniverseProviders(): Promise<void> {
 }
 
 export function ensureTelemetryBootstrap(): Promise<void> {
+  // Core CEX discovery/execution admission is topology-independent. Start it
+  // synchronously before any optional blockchain-provider probes so RPC/Alchemy/
+  // 0x degradation cannot prevent Kraken/OKX opportunity discovery.
+  ensureCryptoCrawlerCoreRuntime();
+
   if (!bootstrapPromise) {
     adoptLegacyProviderAliases();
     logExecutionPosture();
@@ -228,21 +254,16 @@ export function ensureTelemetryBootstrap(): Promise<void> {
       await probeReadOnlyZeroX();
       await probeMarketUniverseProviders();
 
-      // Search remains active independently of current profitability/execution
-      // posture. The graph performs broad measured discovery and deterministic
-      // pruning before bounded Cryptara/Monte-Carlo enrichment.
-      measuredOpportunityGraph.start();
-
       const healthyProviders = TELEMETRY_CHAINS.flatMap(chain =>
         multiProviderRpcManager.getHealth(chain)
           .filter(observation => observation.http.success)
           .map(observation => `${chain}:${observation.provider}`),
       );
 
-      logger.info('[TelemetryBootstrap] Shared blockchain telemetry ready', {
+      logger.info('[TelemetryBootstrap] Optional blockchain telemetry ready', {
         component: 'TelemetryBootstrap',
         healthyProviders,
-        measuredOpportunityGraph: measuredOpportunityGraph.getLatestCycle(),
+        core: getCryptoCrawlerCoreRuntimeStatus(),
         marketDataProviders: marketDataProviders.getProviderStatuses().map(status => ({
           provider: status.provider,
           state: status.state,
@@ -250,8 +271,9 @@ export function ensureTelemetryBootstrap(): Promise<void> {
         })),
       });
     })().catch(error => {
-      logger.warn('[TelemetryBootstrap] Shared telemetry bootstrap failed closed', {
+      logger.warn('[TelemetryBootstrap] Optional blockchain telemetry bootstrap degraded; canonical CEX core remains independent', {
         component: 'TelemetryBootstrap',
+        coreStarted: getCryptoCrawlerCoreRuntimeStatus().started,
         error: error instanceof Error ? error.message : String(error),
       });
     });
