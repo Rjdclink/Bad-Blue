@@ -137,6 +137,5 @@ export function competitionThreatContribution(evidence: CompetitionEvidence): nu
 }
 
 export function finiteReasoningInput(value: unknown): number | null {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
