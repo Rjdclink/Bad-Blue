@@ -15,6 +15,7 @@ import { routeOptimizer } from '../bridge/route-optimizer.js';
 import type { ChainId as BridgeChainId } from '../bridge/types';
 import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
 import { getLastOrderedMarketUniverseSymbols } from '../discovery/market-universe-controller.js';
+import { getCexScanCapacity, type ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
@@ -161,7 +162,7 @@ function getCachedQuoteRequest(url: string): any | null {
 
 function cacheQuoteRequest(url: string, payload: any): void {
   quoteRequestCache.set(url, { payload, expiresAt: Date.now() + QUOTE_REQUEST_CACHE_TTL_MS });
-  if (quoteRequestCache.size > 256) {
+  if (quoteRequestCache.size > 512) {
     for (const [key, value] of quoteRequestCache.entries()) {
       if (value.expiresAt <= Date.now()) quoteRequestCache.delete(key);
     }
@@ -328,11 +329,6 @@ function overrideEvidence(venue: QuoteVenue, symbol: string, takerFeeBps: number
   };
 }
 
-function positiveInteger(value: unknown, fallback: number, max: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 1 ? Math.min(max, Math.floor(parsed)) : fallback;
-}
-
 function scanRequestKey(req: Omit<VerifyRequest, 'minNetProfitUsd'>, symbols: readonly string[]): string {
   return JSON.stringify({
     symbols: [...symbols].sort(),
@@ -343,6 +339,19 @@ function scanRequestKey(req: Omit<VerifyRequest, 'minNetProfitUsd'>, symbols: re
     gas: req.gas || null,
     bridge: req.bridge || null,
   });
+}
+
+function currentFreshQuotes(quotes: readonly TopOfBookQuote[], maxQuoteAgeMs: number, now = Date.now()): TopOfBookQuote[] {
+  return quotes.filter(quote => Number.isFinite(quote.timestamp) && quote.timestamp <= now && now - quote.timestamp <= maxQuoteAgeMs);
+}
+
+function hasPositiveRawCrossVenueEdge(quotes: readonly TopOfBookQuote[]): boolean {
+  for (const buy of quotes) {
+    for (const sell of quotes) {
+      if (buy.venue !== sell.venue && Number.isFinite(buy.ask) && Number.isFinite(sell.bid) && sell.bid > buy.ask) return true;
+    }
+  }
+  return false;
 }
 
 export class ArbitrageVerifier {
@@ -381,9 +390,9 @@ export class ArbitrageVerifier {
 
     try {
       if (process.env.CRYPTO_ARBITRAGE_BATCH_SCAN_ENABLED?.trim().toLowerCase() !== 'false') {
-        const symbols = this.resolveScanSymbols(symbol);
+        const scan = this.resolveScanSymbols(symbol);
         const allowedSymbols: string[] = [];
-        for (const candidateSymbol of symbols) {
+        for (const candidateSymbol of scan.symbols) {
           try {
             governance.requireAllowed('ADVISE', { chain: req.gas?.chain, pair: candidateSymbol });
             allowedSymbols.push(candidateSymbol);
@@ -396,7 +405,7 @@ export class ArbitrageVerifier {
           }
         }
         if (!allowedSymbols.includes(symbol)) allowedSymbols.unshift(symbol);
-        const plans = await this.evaluateBatch(req, allowedSymbols);
+        const plans = await this.evaluateBatch(req, allowedSymbols, scan.capacity);
         return plans.get(symbol) ?? null;
       }
 
@@ -412,18 +421,40 @@ export class ArbitrageVerifier {
     }
   }
 
-  private resolveScanSymbols(seedSymbol: string): string[] {
-    const maxSymbols = Math.min(8, positiveInteger(process.env.CRYPTO_ARBITRAGE_MAX_SYMBOLS, 4, 8));
+  private resolveScanSymbols(seedSymbol: string): { symbols: string[]; capacity: ScanCapacityDecision } {
     const consumedSymbols = getLastOrderedMarketUniverseSymbols();
-    return [...new Set([
+    const universe = [...new Set([
       seedSymbol,
       ...consumedSymbols.map(symbol => symbol.trim().toUpperCase()).filter(Boolean),
-    ])].slice(0, maxSymbols);
+    ])];
+    const capacity = getCexScanCapacity(universe.length);
+    return { symbols: universe.slice(0, capacity.symbolBudget), capacity };
+  }
+
+  private recordQuoteValidation(symbol: string, quotes: readonly TopOfBookQuote[], maxQuoteAgeMs: number): TopOfBookQuote[] {
+    const now = Date.now();
+    const freshQuotes = currentFreshQuotes(quotes, maxQuoteAgeMs, now);
+    const validation: LiveQuoteValidation = {
+      symbol,
+      validatedAt: now,
+      quoteCount: quotes.length,
+      freshQuoteCount: freshQuotes.length,
+      valid: freshQuotes.length >= 2,
+      streamStats: cexOrderBookStreams.getStats(),
+    };
+    this.lastLiveQuoteValidation = validation;
+    this.liveQuoteValidations.set(symbol, validation);
+    if (this.liveQuoteValidations.size > 128) {
+      const oldestSymbol = this.liveQuoteValidations.keys().next().value;
+      if (oldestSymbol) this.liveQuoteValidations.delete(oldestSymbol);
+    }
+    return freshQuotes;
   }
 
   private async evaluateBatch(
     req: Omit<VerifyRequest, 'minNetProfitUsd'>,
     symbolsInput: readonly string[],
+    capacity: ScanCapacityDecision,
   ): Promise<Map<string, VerifiedArbitragePlan | null>> {
     const symbols = [...new Set(symbolsInput.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))];
     const key = scanRequestKey(req, symbols);
@@ -436,12 +467,16 @@ export class ArbitrageVerifier {
 
     const promise = (async () => {
       const startedAt = Date.now();
-      const feePrime = await primeCexFeeEvidence(symbols);
       const plans = new Map<string, VerifiedArbitragePlan | null>();
-      const concurrency = Math.min(symbols.length || 1, positiveInteger(process.env.CRYPTO_ARBITRAGE_SCAN_CONCURRENCY, 4, 8));
+      const prefetchedQuotes = new Map<string, TopOfBookQuote[]>();
+      const rawEdgeSurvivors = new Set<string>();
+      const concurrency = Math.max(1, Math.min(symbols.length || 1, capacity.workerConcurrency, 8));
       let cursor = 0;
 
-      const workers = Array.from({ length: concurrency }, async () => {
+      // L0/L1: fetch public/executable books broadly first. A taker/taker CEX route
+      // with no positive raw cross-venue bid/ask edge cannot become profitable after
+      // adding non-negative account fees, so reject it before private fee traffic.
+      const quoteWorkers = Array.from({ length: concurrency }, async () => {
         while (true) {
           const index = cursor++;
           if (index >= symbols.length) return;
@@ -454,18 +489,45 @@ export class ArbitrageVerifier {
             source: 'arbitrage_verifier_batch',
           });
           try {
-            plans.set(symbol, await this.evaluateSymbolOnce({ ...req, symbol }));
+            const quotes = await fetchQuotes(symbol, req.maxQuoteAgeMs);
+            prefetchedQuotes.set(symbol, quotes);
+            const freshQuotes = this.recordQuoteValidation(symbol, quotes, req.maxQuoteAgeMs);
+            if (freshQuotes.length >= 2 && hasPositiveRawCrossVenueEdge(freshQuotes)) rawEdgeSurvivors.add(symbol);
+            else plans.set(symbol, null);
           } catch (error) {
+            prefetchedQuotes.set(symbol, []);
             plans.set(symbol, null);
-            logger.debug('[ArbVerifier] Bounded scan symbol failed closed', {
-              component: 'ArbitrageVerifier',
-              symbol,
+            logger.debug('[ArbVerifier] Broad quote screen failed closed', {
+              component: 'ArbitrageVerifier', symbol,
               error: error instanceof Error ? error.message : String(error),
             });
           }
         }
       });
-      await Promise.all(workers);
+      await Promise.all(quoteWorkers);
+
+      // L3 account fee enrichment is reserved for raw-spread survivors. Kraken can
+      // resolve multiple pairs in one TradeVolume request; OKX reuses fee groups.
+      const feePrime = await primeCexFeeEvidence([...rawEdgeSurvivors]);
+      const survivorSymbols = symbols.filter(symbol => rawEdgeSurvivors.has(symbol));
+      cursor = 0;
+      const economicsWorkers = Array.from({ length: Math.min(concurrency, Math.max(1, survivorSymbols.length)) }, async () => {
+        while (true) {
+          const index = cursor++;
+          if (index >= survivorSymbols.length) return;
+          const symbol = survivorSymbols[index];
+          try {
+            plans.set(symbol, await this.evaluateSymbolOnce({ ...req, symbol }, prefetchedQuotes.get(symbol) || []));
+          } catch (error) {
+            plans.set(symbol, null);
+            logger.debug('[ArbVerifier] Bounded scan economics failed closed', {
+              component: 'ArbitrageVerifier', symbol,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      });
+      await Promise.all(economicsWorkers);
 
       const configuredCacheMs = Number(process.env.CRYPTO_ARBITRAGE_SCAN_BATCH_CACHE_MS || 1500);
       const cacheMs = Math.max(250, Math.min(
@@ -480,12 +542,19 @@ export class ArbitrageVerifier {
         }
       }
 
-      logger.info('[ArbVerifier] Bounded concurrent CEX scan completed', {
+      logger.info('[ArbVerifier] Dynamic two-phase concurrent CEX scan completed', {
         component: 'ArbitrageVerifier',
+        universeSize: capacity.universeSize,
         symbols: symbols.length,
+        unexploredFraction: capacity.unexploredFraction,
         concurrency,
         durationMs: Date.now() - startedAt,
+        rawEdgeSurvivors: survivorSymbols.length,
+        cheapPrefilterRejected: symbols.length - survivorSymbols.length,
         positivePlans: [...plans.values()].filter(plan => plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0).length,
+        searchDensityPerMinute: capacity.searchDensityPerMinute,
+        verifiedPositivePerMinute: capacity.verifiedPositivePerMinute,
+        capacityReason: capacity.reason,
         feePrime,
       });
       return plans;
@@ -495,26 +564,15 @@ export class ArbitrageVerifier {
     return new Map(await promise);
   }
 
-  private async evaluateSymbolOnce(req: Omit<VerifyRequest, 'minNetProfitUsd'>): Promise<VerifiedArbitragePlan | null> {
+  private async evaluateSymbolOnce(
+    req: Omit<VerifyRequest, 'minNetProfitUsd'>,
+    prefetchedQuotes?: readonly TopOfBookQuote[],
+  ): Promise<VerifiedArbitragePlan | null> {
     const symbol = req.symbol.trim().toUpperCase();
-    const quotes = await fetchQuotes(symbol, req.maxQuoteAgeMs);
+    const quotes = prefetchedQuotes ? [...prefetchedQuotes] : await fetchQuotes(symbol, req.maxQuoteAgeMs);
+    const freshQuotes = this.recordQuoteValidation(symbol, quotes, req.maxQuoteAgeMs);
     const now = Date.now();
-    const freshQuotes = quotes.filter(quote => Number.isFinite(quote.timestamp) && quote.timestamp <= now && now - quote.timestamp <= req.maxQuoteAgeMs);
-    const validation: LiveQuoteValidation = {
-      symbol,
-      validatedAt: now,
-      quoteCount: quotes.length,
-      freshQuoteCount: freshQuotes.length,
-      valid: freshQuotes.length >= 2,
-      streamStats: cexOrderBookStreams.getStats(),
-    };
-    this.lastLiveQuoteValidation = validation;
-    this.liveQuoteValidations.set(symbol, validation);
-    if (this.liveQuoteValidations.size > 64) {
-      const oldestSymbol = this.liveQuoteValidations.keys().next().value;
-      if (oldestSymbol) this.liveQuoteValidations.delete(oldestSymbol);
-    }
-    if (freshQuotes.length < 2) return null;
+    if (freshQuotes.length < 2 || !hasPositiveRawCrossVenueEdge(freshQuotes)) return null;
 
     let gasUsd = 0;
     if (req.gas?.enabled) {
@@ -571,14 +629,12 @@ export class ArbitrageVerifier {
           grossSpreadBps,
           netSpreadAfterFeesBps: grossSpreadBps - buyFeeBps - sellFeeBps,
         };
-        if (!bestFeeContext || context.netSpreadAfterFeesBps > bestFeeContext.netSpreadAfterFeesBps) {
-          bestFeeContext = context;
-        }
+        if (!bestFeeContext || context.netSpreadAfterFeesBps > bestFeeContext.netSpreadAfterFeesBps) bestFeeContext = context;
       }
     }
     if (bestFeeContext) {
       this.crossVenueFeeContexts.set(symbol, bestFeeContext);
-      if (this.crossVenueFeeContexts.size > 64) {
+      if (this.crossVenueFeeContexts.size > 128) {
         const oldestSymbol = this.crossVenueFeeContexts.keys().next().value;
         if (oldestSymbol) this.crossVenueFeeContexts.delete(oldestSymbol);
       }
@@ -586,7 +642,9 @@ export class ArbitrageVerifier {
       this.crossVenueFeeContexts.delete(symbol);
     }
 
-    const quantityFractions = [0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
+    // Depth-aware dynamic notional curve. The configured request is a maximum
+    // search bound, not a fixed authoritative trade size.
+    const quantityFractions = [0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
     let bestPlan: VerifiedArbitragePlan | null = null;
     for (const buy of freshQuotes) {
       for (const sell of freshQuotes) {
@@ -597,10 +655,6 @@ export class ArbitrageVerifier {
         const sellFeeBps = req.sellFeesBps?.[sell.venue] ?? sellEvidence?.takerFeeBps ?? configuredTakerFeeBps(sell.venue);
         if (buyFeeBps === null || buyFeeBps === undefined || sellFeeBps === null || sellFeeBps === undefined) continue;
 
-        // If the top-of-book spread cannot clear percentage fees plus fixed
-        // costs even at the largest permitted notional, no smaller slice can
-        // become profitable (depth can only worsen execution). Reject before
-        // expensive depth sweeps/Monte Carlo without weakening the >0 net gate.
         const topSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
         const fixedCostsBpsAtMaxNotional = ((gasUsd + bridgeFeeUsd + transferFeeUsd) / req.notionalUsd) * 10_000;
         const breakEvenBps = buyFeeBps + sellFeeBps + fixedCostsBpsAtMaxNotional;
@@ -675,9 +729,7 @@ export class ArbitrageVerifier {
       return bestPlan;
     }
 
-    const missingFeeVenues = freshQuotes
-      .filter(quote => !feeEvidence.get(quote.venue))
-      .map(quote => quote.venue);
+    const missingFeeVenues = freshQuotes.filter(quote => !feeEvidence.get(quote.venue)).map(quote => quote.venue);
     if (missingFeeVenues.length > 0) {
       logger.warn('[ArbVerifier] Complete cross-venue economics unavailable because live fee evidence is missing', {
         component: 'ArbitrageVerifier',
