@@ -4,6 +4,7 @@ import { getCryptocrawlGovernance } from '../governance/index.js';
 import logger from '../../../logger.js';
 import { runProfitabilityMonteCarlo } from './adapters/monte-carlo-profitability.js';
 import {
+  createProductionCexSettlementAdapters,
   executeCexPlan,
   type CexExecutorOptions,
   type CexExecutionResult,
@@ -81,4 +82,9 @@ export class CentralizedExchangeExecutor {
   }
 }
 
-export const centralizedExchangeExecutor = new CentralizedExchangeExecutor();
+// Keep one authenticated adapter set for the process lifetime. In particular,
+// Kraken's private API nonce is monotonic per API key, so independently creating
+// an adapter for each concurrently evaluated plan can generate duplicate nonces
+// when two requests begin in the same millisecond.
+const productionCexAdapters = createProductionCexSettlementAdapters();
+export const centralizedExchangeExecutor = new CentralizedExchangeExecutor({ adapters: productionCexAdapters });
