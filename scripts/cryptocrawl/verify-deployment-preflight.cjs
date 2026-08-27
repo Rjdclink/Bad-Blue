@@ -37,4 +37,10 @@ run(
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-no-regression-opportunity-pipeline.cjs')],
 );
 
-console.log('[deployment-preflight] PASS — CryptoCrawler invariants are clean; normal production build continues with Vite/esbuild');
+run(
+  'CryptoCrawler truthful admin diagnostics',
+  process.execPath,
+  [path.join(root, 'scripts', 'cryptocrawl', 'verify-truthful-admin-diagnostics.cjs')],
+);
+
+console.log('[deployment-preflight] PASS — CryptoCrawler invariants and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
