@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import { MasterOrchestrator, type PerformanceMetrics } from '../core/master-orchestrator.js';
+import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { getMeasuredEvolutionMetrics } from '../evolution/measured-execution-feedback.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
@@ -7,6 +8,7 @@ import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
+import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 
 const installed = new WeakSet<object>();
 
@@ -22,6 +24,8 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
   logZeroCapitalReadinessDiagnostics();
   ensureLearningLifecycleWiring();
   ensureOracleEvidenceWiring();
+  ensureZeroCapitalResourceWiring();
+  measuredOpportunityGraph.start();
   logLegacyIntelligenceQuarantine();
   ensureCryptoRuntimeObservability();
 
@@ -54,6 +58,8 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
     component: 'MasterOrchestratorMeasuredWiring',
     executionMetrics: 'terminal_settlement_only',
     opportunityMetrics: 'canonical_verified_stream',
+    measuredOpportunityGraph: 'continuous',
+    zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
 }
