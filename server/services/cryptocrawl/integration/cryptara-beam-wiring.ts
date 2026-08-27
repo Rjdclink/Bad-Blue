@@ -3,6 +3,7 @@ import type { CryptaraOpportunityContext, MonteCarloResult } from '../../cryptar
 import { createLogger } from '../../../logger.js';
 import { workloadRouter } from '../../computationalBeam/workloadRouter.js';
 import { ComputeLayer, TaskIntensity, TaskPriority, TaskType, type Task } from '../../computationalBeam/types.js';
+import { estimateHyperMonteCarloParallelism } from '../validation/monte-carlo-hyper-engine.js';
 import { ensureCryptaraBootstrapWiring } from './cryptara-bootstrap-wiring.js';
 
 const log = createLogger('CryptaraBeamWiring');
@@ -31,6 +32,16 @@ function isEvidenceIncomplete(error: unknown): boolean {
     message.startsWith('Cryptara Monte Carlo requires measured context:');
 }
 
+function quoteDeadline(context: CryptaraOpportunityContext): number | undefined {
+  if (!context.plan) return undefined;
+  const quoteMaxAgeMs = Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000));
+  const elapsedSinceObservationMs = Math.max(0, Date.now() - context.observedAt);
+  const currentQuoteAgeMs = Math.max(0, context.plan.quoteAgeMs + elapsedSinceObservationMs);
+  const remainingMs = quoteMaxAgeMs - currentQuoteAgeMs;
+  if (remainingMs <= 0) throw new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote');
+  return Date.now() + remainingMs;
+}
+
 async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
   return new Promise<MonteCarloResult>((resolve, reject) => {
     let settled = false;
@@ -53,7 +64,12 @@ async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
       if (event.taskId !== task.id || settled) return;
       settled = true;
       cleanup();
-      reject(new Error(event.error || `BEAM_EXECUTION_FAILED: Beam task ${task.id} failed`));
+      const error = event.error || `BEAM_EXECUTION_FAILED: Beam task ${task.id} failed`;
+      if (/deadline expired/i.test(error)) {
+        reject(new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote'));
+        return;
+      }
+      reject(new Error(error));
     };
     workloadRouter.on('task-completed', onCompleted);
     workloadRouter.on('task-failed', onFailed);
@@ -83,10 +99,15 @@ export function ensureCryptaraBeamWiring(): Cryptara {
     // The Beam owns a detached snapshot. Concurrent ETH/BTC/BNB assessments can no
     // longer race through Cryptara.latestOpportunityContext while the workload runs.
     const immutableContext = structuredClone(sourceContext);
+    const deadlineAt = quoteDeadline(immutableContext);
+    const parallelismHint = estimateHyperMonteCarloParallelism('live');
     const task = workloadRouter.createTask(TaskType.MONTE_CARLO, {
       source: 'cryptara_hyper_verified_opportunity',
       opportunityId: immutableContext.opportunityId,
       observedAt: immutableContext.observedAt,
+      quantiDeadlineAt: deadlineAt,
+      quantiParallelismHint: parallelismHint,
+      quantiUsefulWorkUnits: 1,
     }, {
       intensity: TaskIntensity.HEAVY,
       priority: TaskPriority.HIGH,
@@ -117,6 +138,8 @@ export function ensureCryptaraBeamWiring(): Cryptara {
         observedAt: immutableContext.observedAt,
         simulationId: result.simulationId,
         iterations: result.iterations,
+        quantiParallelismHint: parallelismHint,
+        quantiDeadlineAt: deadlineAt,
       });
       return result;
     } catch (error) {
@@ -153,6 +176,8 @@ export function ensureCryptaraBeamWiring(): Cryptara {
     workload: 'cryptara_hyper_verified_opportunity_monte_carlo',
     immutableTaskInput: true,
     cpuWorkerPool: true,
+    nestedParallelismGoverned: true,
+    quoteDeadlineBound: true,
     executionAuthority: false,
   });
   return instance;

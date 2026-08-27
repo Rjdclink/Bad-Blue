@@ -18,7 +18,7 @@ import {
 } from './types.js';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
-import { quantiComp, type QuantiLane } from '../quantiComp/index.js';
+import { quantiComp, quantiParallelismGovernor, type QuantiLane } from '../quantiComp/index.js';
 
 const MAX_LOCAL_CONCURRENCY = Math.max(1, Math.min(
   os.availableParallelism?.() || os.cpus().length,
@@ -38,6 +38,12 @@ function toQuantiLane(task: Task): QuantiLane {
   if (task.intensity === TaskIntensity.EXTREME) return 'hot';
   if (task.intensity === TaskIntensity.HEAVY) return 'warm';
   return 'warm';
+}
+
+function numericPayloadHint(task: Task, key: string): number | undefined {
+  if (!task.payload || typeof task.payload !== 'object') return undefined;
+  const value = Number((task.payload as Record<string, unknown>)[key]);
+  return Number.isFinite(value) ? value : undefined;
 }
 
 export class DirectionalBeamLayer extends EventEmitter {
@@ -161,6 +167,9 @@ export class DirectionalBeamLayer extends EventEmitter {
       if (!task.workload) throw new Error(`Task ${task.id} has no executable workload`);
 
       const workload = task.workload;
+      const parallelismHint = Math.max(1, Math.floor(numericPayloadHint(task, 'quantiParallelismHint') ?? 1));
+      const deadlineAt = numericPayloadHint(task, 'quantiDeadlineAt');
+      const usefulWorkUnits = Math.max(1, numericPayloadHint(task, 'quantiUsefulWorkUnits') ?? 1);
       const quantiResult = await quantiComp.submit({
         id: task.id,
         kind: workload.type || task.type,
@@ -174,15 +183,18 @@ export class DirectionalBeamLayer extends EventEmitter {
           cpuIntensive: task.routing?.cpuIntensive ? 1 : 0,
           memoryIntensive: task.routing?.memoryIntensive ? 1 : 0,
           ioIntensive: task.routing?.ioIntensive ? 1 : 0,
+          nestedParallelismHint: parallelismHint,
         },
         resourceHints: {
           cpuWeight: task.routing?.cpuIntensive ? 1 : 0.5,
           ioWeight: task.routing?.ioIntensive ? 1 : 0,
           preferredBackend: 'inline',
+          parallelismHint,
         },
         policy: {
           timeoutMs: workload.timeoutMs,
-          usefulWorkUnits: 1,
+          deadlineAt,
+          usefulWorkUnits,
           strictValidation: true,
         },
         execute: (input, context) => workload.execute(input, {
@@ -281,12 +293,17 @@ export class DirectionalBeamLayer extends EventEmitter {
     const loadHeadroom = 1 - selectedNode.metrics.currentLoad / Math.max(1, selectedNode.capabilities.maxConcurrentTasks);
     const cpuHeadroom = 1 - selectedNode.health.cpuUsage / 100;
     const memoryHeadroom = 1 - selectedNode.health.memoryUsage / 100;
-    const confidence = Math.max(0, Math.min(1, loadHeadroom * 0.5 + cpuHeadroom * 0.3 + memoryHeadroom * 0.2));
+    const parallelism = quantiParallelismGovernor.getStatus();
+    const parallelismHeadroom = 1 - parallelism.utilization;
+    const confidence = Math.max(0, Math.min(
+      1,
+      loadHeadroom * 0.4 + cpuHeadroom * 0.25 + memoryHeadroom * 0.15 + parallelismHeadroom * 0.2,
+    ));
 
     return {
       taskId: task.id,
       selectedNode,
-      reason: `Selected measured Quanti Comp local capacity with load ${selectedNode.metrics.currentLoad}/${selectedNode.capabilities.maxConcurrentTasks}`,
+      reason: `Selected measured Quanti Comp local capacity with load ${selectedNode.metrics.currentLoad}/${selectedNode.capabilities.maxConcurrentTasks} and nested parallel utilization ${(parallelism.utilization * 100).toFixed(1)}%`,
       alternativeNodes,
       confidence,
     };
@@ -301,6 +318,7 @@ export class DirectionalBeamLayer extends EventEmitter {
       executingTasks: this.activeExecutions.size,
       computeAuthority: 'quanti-comp',
       quantiComp: quantiStatus,
+      quantiParallelism: quantiParallelismGovernor.getStatus(),
       nodes: Array.from(this.beamNodes.values()).map(node => ({
         id: node.id,
         provider: node.provider,

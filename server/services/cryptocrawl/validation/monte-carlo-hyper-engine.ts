@@ -1,7 +1,11 @@
 import os from 'node:os';
 import { Worker } from 'node:worker_threads';
+import {
+  QuantiParallelismError,
+  quantiParallelismGovernor,
+} from '../../quantiComp/index.js';
 
-export const HYPER_MONTE_CARLO_MODEL_VERSION = 'cryptara-hyper-mc-1.0.0';
+export const HYPER_MONTE_CARLO_MODEL_VERSION = 'cryptara-hyper-mc-1.1.0';
 export type HyperMonteCarloMode = 'live' | 'training';
 
 export interface HyperMonteCarloRequest {
@@ -72,21 +76,65 @@ class Pool {
   private ensure(){while(this.slots.length<this.size)this.slots.push(this.slot())}
   private pump(){this.ensure();for(const s of this.slots){if(s.busy)continue;let j:Job|undefined;while((j=this.queue.shift())?.cancelled){}if(!j)return;s.busy=true;s.job=j;s.worker.ref();s.worker.postMessage({id:j.id,req:j.req,n:j.n,seed:j.seed})}}
   private dispatch(req:WReq,n:number,seed:number,signal?:AbortSignal){return new Promise<Batch>((resolve,reject)=>{const j:Job={id:this.id++,req,n,seed,resolve,reject,cancelled:false};const abort=()=>{j.cancelled=true;reject(new Error('HYPER_ABORTED: Monte Carlo batch aborted'))};signal?.addEventListener('abort',abort,{once:true});const done=j.resolve,fail=j.reject;j.resolve=v=>{signal?.removeEventListener('abort',abort);done(v)};j.reject=e=>{signal?.removeEventListener('abort',abort);fail(e)};this.queue.push(j);this.pump()})}
-  run(req:WReq,n:number,seed:number,signal?:AbortSignal){this.ensure();const parts=Math.max(1,Math.ceil(n/64)),base=Math.floor(n/parts),rem=n%parts;return Promise.all(Array.from({length:parts},(_,i)=>this.dispatch(req,base+(i<rem?1:0),hash32(`${seed}:${i}`),signal)))}
+  run(req:WReq,n:number,seed:number,signal?:AbortSignal,maxParallelism=this.size){this.ensure();const parts=Math.max(1,Math.min(this.size,Math.max(1,Math.floor(maxParallelism)),Math.ceil(n/64))),base=Math.floor(n/parts),rem=n%parts;return Promise.all(Array.from({length:parts},(_,i)=>this.dispatch(req,base+(i<rem?1:0),hash32(`${seed}:${i}`),signal)))}
   async close():Promise<void>{const slots=[...this.slots];this.slots=[];for(const j of this.queue.splice(0))if(!j.cancelled)j.reject(new Error('HYPER_ABORTED: worker pool shutdown'));await Promise.allSettled(slots.map(s=>s.worker.terminate()))}
 }
 const pool=new Pool();
 export async function shutdownHyperMonteCarloWorkers():Promise<void>{await pool.close()}
 
+function configuredBatch(mode:HyperMonteCarloMode):number{
+ return mode==='live'
+  ?Math.max(64,num(process.env.CRYPTARA_HYPER_MC_BATCH_SIZE,128))
+  :Math.max(256,num(process.env.CRYPTARA_HYPER_MC_TRAINING_BATCH_SIZE,512));
+}
+
+export function estimateHyperMonteCarloParallelism(mode:HyperMonteCarloMode):number{
+ return Math.min(pool.size,Math.max(1,Math.ceil(configuredBatch(mode)/64)));
+}
+
+function currentQuoteAgeMs(r:HyperMonteCarloRequest):number{
+ return Math.max(0,r.quoteAgeMs+Math.max(0,Date.now()-r.observedAt));
+}
+
 function quality(r:HyperMonteCarloRequest){let score=1;const missing:string[]=[];if(!r.feeEvidenceMeasured){score-=.18;missing.push('authenticated_fee_evidence')}if(!r.liquidityMeasured){score-=.20;missing.push('measured_liquidity')}if(!r.priceHistoryMeasured||r.annualizedVolatility===null){score-=.18;missing.push('price_history')}if(r.onchainTelemetryRequired&&!r.onchainTelemetryMeasured){score-=.18;missing.push('gas_observations')}if(!r.technicalProvenance){score-=.08;missing.push('technical_analysis')}else if(r.technicalProvenance!=='live')score-=r.technicalAgeMs!==null&&r.technicalAgeMs<=r.technicalMaxAgeMs?.04:.10;if(r.calibrationSamples<3){score-=.12;missing.push('posttrade_calibration_pending')}else score+=Math.min(.08,Math.log10(r.calibrationSamples+1)*.04);return{score:clamp(score,.2,1),missing:[...new Set(missing)]}}
 function regime(v:number|null){return v===null||!Number.isFinite(v)?'unknown':v>=1.5?'crisis':v>=.8?'volatile':v<=.25?'calm':'normal'}
 
 export async function runHyperMonteCarlo(r:HyperMonteCarloRequest,signal?:AbortSignal):Promise<HyperMonteCarloResult>{
- const started=Date.now();if(!Number.isFinite(r.notionalUsd)||r.notionalUsd<=0||!Number.isFinite(r.netProfitUsd))throw new Error('EVIDENCE_INCOMPLETE: verified_opportunity_economics');if(!Number.isFinite(r.quoteAgeMs)||r.quoteAgeMs<0||r.quoteAgeMs>r.quoteMaxAgeMs)throw new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote');if(signal?.aborted)throw new Error('HYPER_ABORTED: Monte Carlo aborted before execution');
- const live=r.mode==='live',min=live?Math.max(64,num(process.env.CRYPTARA_HYPER_MC_MIN_SAMPLES,128)):Math.max(512,num(process.env.CRYPTARA_HYPER_MC_TRAINING_MIN_SAMPLES,1024)),max=live?Math.max(min,num(process.env.CRYPTARA_HYPER_MC_MAX_SAMPLES,2048)):Math.max(min,num(process.env.CRYPTARA_HYPER_MC_TRAINING_MAX_SAMPLES,10000)),batch=live?Math.max(64,num(process.env.CRYPTARA_HYPER_MC_BATCH_SIZE,128)):Math.max(256,num(process.env.CRYPTARA_HYPER_MC_TRAINING_BATCH_SIZE,512)),target=live?clamp(num(process.env.CRYPTARA_HYPER_MC_TARGET_HALF_WIDTH,.035),.005,.2):clamp(num(process.env.CRYPTARA_HYPER_MC_TRAINING_TARGET_HALF_WIDTH,.015),.003,.1),rejectAt=clamp(num(process.env.CRYPTARA_HYPER_MC_EARLY_REJECT_UPPER,.55),.05,.95),acceptAt=clamp(num(process.env.CRYPTARA_HYPER_MC_EARLY_ACCEPT_LOWER,.80),.05,.99);
- const seed=hash32(`${HYPER_MONTE_CARLO_MODEL_VERSION}:${r.opportunityId}:${r.observedAt}:${r.mode}`),qual=quality(r),req:WReq={notionalUsd:r.notionalUsd,netProfitUsd:r.netProfitUsd,totalCostsUsd:Math.max(0,r.totalCostsUsd),gasUsd:Math.max(0,r.gasUsd),expectedSlippageBps:Math.max(0,r.expectedSlippageBps),expectedPriceImpactBps:Math.max(0,r.expectedPriceImpactBps),quoteAgeMs:r.quoteAgeMs,quoteMaxAgeMs:r.quoteMaxAgeMs,liquidityScore:clamp(r.liquidityScore,0,1),annualizedVolatility:r.annualizedVolatility,gasVolatility:clamp(r.gasVolatility,0,3),successPrior:clamp(r.successPrior,.01,.995),measuredLatenciesMs:r.measuredLatenciesMs.filter(v=>Number.isFinite(v)&&v>0).slice(-256),measuredSlippageBps:r.measuredSlippageBps.filter(v=>Number.isFinite(v)&&v>=0).slice(-256),onchainTelemetryRequired:r.onchainTelemetryRequired,stressScale:live?1:1.35};
- const pnl:number[]=[],control:number[]=[],fills:number[]=[],slip:number[]=[],latency:number[]=[];let ci:[number,number]=[0,1],stopped=false,bi=0;
- while(pnl.length<max){if(signal?.aborted)throw new Error('HYPER_ABORTED: Monte Carlo aborted during execution');const n=Math.min(batch,max-pnl.length),parts=await pool.run(req,n,hash32(`${seed}:batch:${bi++}`),signal);for(const p of parts){pnl.push(...p.pnl);control.push(...p.control);fills.push(...p.fills);slip.push(...p.slip);latency.push(...p.latency)}ci=wilson(pnl.filter(v=>v>0).length,pnl.length);const half=(ci[1]-ci[0])/2;if(pnl.length>=min&&(half<=target||(live&&(ci[1]<rejectAt||ci[0]>acceptAt)))){stopped=pnl.length<max;break}}
- const raw=avg(pnl),cm=avg(control),cv=vari(control,cm),beta=cv>0?cov(pnl,control,raw,cm)/cv:0,expected=raw-beta*cm,sd=Math.sqrt(Math.max(0,vari(pnl,raw))),sorted=[...pnl].sort((a,b)=>a-b),p5=q(sorted,.05),p50=q(sorted,.5),p95=q(sorted,.95),tail=sorted.slice(0,Math.max(1,Math.ceil(sorted.length*.05))),pProfit=pnl.filter(v=>v>0).length/Math.max(1,pnl.length),pFill=avg(fills),sampling=clamp(1-(ci[1]-ci[0]),0,1),cal=r.calibrationSamples>=3?Math.min(1,.82+Math.log10(r.calibrationSamples+1)*.08):.75,confidence=clamp(sampling*qual.score*cal,0,1),elapsed=Date.now()-started,avgSlip=avg(slip),avgLatency=avg(latency),deadline=Math.max(0,r.quoteMaxAgeMs-r.quoteAgeMs-avgLatency-elapsed),slipScale=r.expectedSlippageBps>0?clamp(r.expectedSlippageBps/Math.max(r.expectedSlippageBps,avgSlip),.25,1):1,maxSafe=Math.max(0,Math.min(r.executableNotionalUsd,r.requestedNotionalUsd)*slipScale),sizeScale=clamp((pProfit-.5)/.35,0,1)*clamp(pFill,0,1),recommended=expected>0?Math.min(r.notionalUsd,maxSafe*sizeScale):0;
- return{modelVersion:HYPER_MONTE_CARLO_MODEL_VERSION,mode:r.mode,seed,iterations:pnl.length,elapsedMs:elapsed,workersUsed:Math.min(pool.size,Math.max(1,Math.ceil(Math.min(batch,pnl.length)/64))),stoppedEarly:stopped,convergence:clamp((ci[1]-ci[0])/2,0,1),expectedProfitUsd:expected,rawExpectedProfitUsd:raw,probabilityOfProfit:pProfit,probabilityBothLegsFill:pFill,confidence,confidenceInterval:ci,valueAtRisk95Usd:Math.max(0,-p5),expectedShortfall95Usd:Math.max(0,-avg(tail)),maxDrawdown:r.notionalUsd>0?clamp(Math.max(0,-sorted[0])/r.notionalUsd,0,1):0,standardDeviationUsd:sd,sharpeLikeRatio:sd>0?expected/sd:0,p5Usd:p5,p50Usd:p50,p95Usd:p95,averageSampledSlippageBps:avgSlip,averageSampledLatencyMs:avgLatency,executionDeadlineMs:deadline,recommendedNotionalUsd:recommended,maxSafeNotionalUsd:maxSafe,marketRegime:regime(r.annualizedVolatility),evidenceQuality:qual.score,controlVariateBeta:beta,missingInformation:qual.missing};
+ const started=Date.now();
+ if(!Number.isFinite(r.notionalUsd)||r.notionalUsd<=0||!Number.isFinite(r.netProfitUsd))throw new Error('EVIDENCE_INCOMPLETE: verified_opportunity_economics');
+ const ageBeforeAdmission=currentQuoteAgeMs(r);
+ if(!Number.isFinite(r.quoteAgeMs)||r.quoteAgeMs<0||!Number.isFinite(ageBeforeAdmission)||ageBeforeAdmission>r.quoteMaxAgeMs)throw new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote');
+ if(signal?.aborted)throw new Error('HYPER_ABORTED: Monte Carlo aborted before execution');
+
+ const live=r.mode==='live',min=live?Math.max(64,num(process.env.CRYPTARA_HYPER_MC_MIN_SAMPLES,128)):Math.max(512,num(process.env.CRYPTARA_HYPER_MC_TRAINING_MIN_SAMPLES,1024)),max=live?Math.max(min,num(process.env.CRYPTARA_HYPER_MC_MAX_SAMPLES,2048)):Math.max(min,num(process.env.CRYPTARA_HYPER_MC_TRAINING_MAX_SAMPLES,10000)),batch=configuredBatch(r.mode),target=live?clamp(num(process.env.CRYPTARA_HYPER_MC_TARGET_HALF_WIDTH,.035),.005,.2):clamp(num(process.env.CRYPTARA_HYPER_MC_TRAINING_TARGET_HALF_WIDTH,.015),.003,.1),rejectAt=clamp(num(process.env.CRYPTARA_HYPER_MC_EARLY_REJECT_UPPER,.55),.05,.95),acceptAt=clamp(num(process.env.CRYPTARA_HYPER_MC_EARLY_ACCEPT_LOWER,.80),.05,.99);
+ const requestedParallelism=Math.min(pool.size,Math.max(1,Math.ceil(batch/64)));
+ const quoteDeadlineAt=live?Date.now()+Math.max(1,r.quoteMaxAgeMs-ageBeforeAdmission):undefined;
+ let lease;
+ try{
+  lease=await quantiParallelismGovernor.acquire({
+   id:`hyper-mc:${r.opportunityId}:${r.observedAt}:${r.mode}`,
+   units:requestedParallelism,
+   lane:live?'hot':'batch',
+   priority:live?80:40,
+   deadlineAt:quoteDeadlineAt,
+   signal,
+   metadata:{model:HYPER_MONTE_CARLO_MODEL_VERSION,mode:r.mode,symbol:r.symbol},
+  });
+ }catch(error){
+  if(error instanceof QuantiParallelismError&&error.code==='DEADLINE_EXPIRED')throw new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote');
+  if(error instanceof QuantiParallelismError&&error.code==='ABORTED')throw new Error('HYPER_ABORTED: Monte Carlo admission aborted');
+  throw error;
+ }
+
+ try{
+  const admittedQuoteAge=currentQuoteAgeMs(r);
+  if(admittedQuoteAge>r.quoteMaxAgeMs)throw new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote');
+  const seed=hash32(`${HYPER_MONTE_CARLO_MODEL_VERSION}:${r.opportunityId}:${r.observedAt}:${r.mode}`),qual=quality(r),req:WReq={notionalUsd:r.notionalUsd,netProfitUsd:r.netProfitUsd,totalCostsUsd:Math.max(0,r.totalCostsUsd),gasUsd:Math.max(0,r.gasUsd),expectedSlippageBps:Math.max(0,r.expectedSlippageBps),expectedPriceImpactBps:Math.max(0,r.expectedPriceImpactBps),quoteAgeMs:admittedQuoteAge,quoteMaxAgeMs:r.quoteMaxAgeMs,liquidityScore:clamp(r.liquidityScore,0,1),annualizedVolatility:r.annualizedVolatility,gasVolatility:clamp(r.gasVolatility,0,3),successPrior:clamp(r.successPrior,.01,.995),measuredLatenciesMs:r.measuredLatenciesMs.filter(v=>Number.isFinite(v)&&v>0).slice(-256),measuredSlippageBps:r.measuredSlippageBps.filter(v=>Number.isFinite(v)&&v>=0).slice(-256),onchainTelemetryRequired:r.onchainTelemetryRequired,stressScale:live?1:1.35};
+  const pnl:number[]=[],control:number[]=[],fills:number[]=[],slip:number[]=[],latency:number[]=[];let ci:[number,number]=[0,1],stopped=false,bi=0;
+  while(pnl.length<max){if(signal?.aborted)throw new Error('HYPER_ABORTED: Monte Carlo aborted during execution');const n=Math.min(batch,max-pnl.length),parts=await pool.run(req,n,hash32(`${seed}:batch:${bi++}`),signal,lease.units);for(const p of parts){pnl.push(...p.pnl);control.push(...p.control);fills.push(...p.fills);slip.push(...p.slip);latency.push(...p.latency)}ci=wilson(pnl.filter(v=>v>0).length,pnl.length);const half=(ci[1]-ci[0])/2;if(pnl.length>=min&&(half<=target||(live&&(ci[1]<rejectAt||ci[0]>acceptAt)))){stopped=pnl.length<max;break}}
+  const raw=avg(pnl),cm=avg(control),cv=vari(control,cm),beta=cv>0?cov(pnl,control,raw,cm)/cv:0,expected=raw-beta*cm,sd=Math.sqrt(Math.max(0,vari(pnl,raw))),sorted=[...pnl].sort((a,b)=>a-b),p5=q(sorted,.05),p50=q(sorted,.5),p95=q(sorted,.95),tail=sorted.slice(0,Math.max(1,Math.ceil(sorted.length*.05))),pProfit=pnl.filter(v=>v>0).length/Math.max(1,pnl.length),pFill=avg(fills),sampling=clamp(1-(ci[1]-ci[0]),0,1),cal=r.calibrationSamples>=3?Math.min(1,.82+Math.log10(r.calibrationSamples+1)*.08):.75,confidence=clamp(sampling*qual.score*cal,0,1),elapsed=Date.now()-started,avgSlip=avg(slip),avgLatency=avg(latency),deadline=Math.max(0,r.quoteMaxAgeMs-currentQuoteAgeMs(r)-avgLatency),slipScale=r.expectedSlippageBps>0?clamp(r.expectedSlippageBps/Math.max(r.expectedSlippageBps,avgSlip),.25,1):1,maxSafe=Math.max(0,Math.min(r.executableNotionalUsd,r.requestedNotionalUsd)*slipScale),sizeScale=clamp((pProfit-.5)/.35,0,1)*clamp(pFill,0,1),recommended=expected>0?Math.min(r.notionalUsd,maxSafe*sizeScale):0;
+  return{modelVersion:HYPER_MONTE_CARLO_MODEL_VERSION,mode:r.mode,seed,iterations:pnl.length,elapsedMs:elapsed,workersUsed:Math.min(pool.size,lease.units,Math.max(1,Math.ceil(Math.min(batch,pnl.length)/64))),stoppedEarly:stopped,convergence:clamp((ci[1]-ci[0])/2,0,1),expectedProfitUsd:expected,rawExpectedProfitUsd:raw,probabilityOfProfit:pProfit,probabilityBothLegsFill:pFill,confidence,confidenceInterval:ci,valueAtRisk95Usd:Math.max(0,-p5),expectedShortfall95Usd:Math.max(0,-avg(tail)),maxDrawdown:r.notionalUsd>0?clamp(Math.max(0,-sorted[0])/r.notionalUsd,0,1):0,standardDeviationUsd:sd,sharpeLikeRatio:sd>0?expected/sd:0,p5Usd:p5,p50Usd:p50,p95Usd:p95,averageSampledSlippageBps:avgSlip,averageSampledLatencyMs:avgLatency,executionDeadlineMs:deadline,recommendedNotionalUsd:recommended,maxSafeNotionalUsd:maxSafe,marketRegime:regime(r.annualizedVolatility),evidenceQuality:qual.score,controlVariateBeta:beta,missingInformation:qual.missing};
+ }finally{
+  lease.release();
+ }
 }
