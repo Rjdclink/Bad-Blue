@@ -36,7 +36,7 @@ requireText(scanCapacity, '32, configuredBase, 50', 'dynamic scan breadth defaul
 requireText(scanCapacity, 'CRYPTO_ARBITRAGE_SCAN_CONCURRENCY', 'scan worker concurrency remains configurable');
 requireText(scanCapacity, '6, 1, 8', 'scan worker concurrency remains absolutely capped at eight workers');
 requireText(scanCapacity, 'positiveDensity === 0', 'zero-positive markets expand discovery instead of starving it');
-requireText(scanCapacity, 'searchDensity < configuredBase', 'search pressure uses measured search coverage');
+requireText(scanCapacity, 'searchDensity < configuredMinimum', 'search pressure uses measured search coverage');
 requireText(scanCapacity, 'symbolBudget = Math.max(1, Math.min(universeSize, desired))', 'symbol budget cannot exceed measured universe or configured desired capacity');
 requireText(scanCapacity, 'workerConcurrency = Math.max(1, Math.min(workerMaximum, symbolBudget))', 'worker capacity remains bounded by symbol budget and worker ceiling');
 
