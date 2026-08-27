@@ -47,6 +47,39 @@ void ensureMeasuredEvolutionFeedbackHydrated();
 // It intentionally runs independently: governance must never block on external RPC startup.
 void ensureTelemetryBootstrap();
 
+const STAGE_ONE_OPPORTUNITY_ECONOMICS_BLOCK_REASONS = new Set([
+  'Cross-venue fee asymmetry: spread does not clear fees',
+  'Maker-only fee/rebate economics unfavorable',
+]);
+
+/**
+ * Stage 1 proves measured infrastructure and signal readiness; it cannot execute.
+ * Therefore an otherwise-complete market gate must not turn one correctly rejected
+ * fee-negative opportunity into an infrastructure-readiness failure. This does not
+ * authorize the opportunity: the deterministic economics gate remains BLOCK and is
+ * still enforced by the verifier/executor. Unknown critical evidence and every
+ * non-economic gate failure remain blockers.
+ */
+function stageOneReadinessGate(
+  decision: 'ALLOW' | 'BLOCK',
+  reasons: readonly string[],
+): { decision: 'ALLOW' | 'BLOCK'; reasons: string[] } {
+  if (stageManager.getState().currentStage !== 1 || decision !== 'BLOCK' || reasons.length === 0) {
+    return { decision, reasons: [...reasons] };
+  }
+
+  const opportunityEconomicsOnly = reasons.every(reason => STAGE_ONE_OPPORTUNITY_ECONOMICS_BLOCK_REASONS.has(reason));
+  if (!opportunityEconomicsOnly) return { decision, reasons: [...reasons] };
+
+  return {
+    decision: 'ALLOW',
+    reasons: [
+      'Stage 1 readiness accepted: measured market infrastructure is available while the latest opportunity remains correctly rejected on deterministic economics',
+      ...reasons.map(reason => `opportunity_rejection_preserved:${reason}`),
+    ],
+  };
+}
+
 function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>): AutomaticAdvancementEvidence {
   const ranking = getCryptara().getPerformanceRanking();
   const progress = profitLadder.getProgressSummary();
@@ -55,14 +88,15 @@ function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReas
   const initialGasReady = stageManager.isInitialGasReady();
   const candidateGateDecision = gate?.decision || recordedGate?.decision || 'BLOCK';
   const candidateGateReasons = gate?.blockReasons || recordedGate?.reasons || ['No Cryptara market-gate authorization was recorded for this lifecycle evaluation'];
+  const readinessGate = stageOneReadinessGate(candidateGateDecision, candidateGateReasons);
 
   return {
     evaluatedAt: Date.now(),
     marketGate: {
-      decision: initialGasReady ? candidateGateDecision : 'BLOCK',
+      decision: initialGasReady ? readinessGate.decision : 'BLOCK',
       evaluatedAt: gate?.metadata.evaluatedAt || recordedGate?.evaluatedAt || Date.now(),
       reasons: initialGasReady
-        ? candidateGateReasons
+        ? readinessGate.reasons
         : ['Initial native-gas readiness is not verified', ...candidateGateReasons],
     },
     cryptara: rankingToEvidence(ranking),
