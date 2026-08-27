@@ -27,6 +27,13 @@ export {
 } from './monte-carlo-hyper-engine';
 
 export {
+  DEFAULT_RUNTIME_CONFIDENCE_SUCCESS_THRESHOLD,
+  RuntimeConfidenceBootstrapCounter,
+  type RuntimeConfidenceBootstrapState,
+  type RuntimeConfidenceBootstrapStatus,
+} from './runtime-confidence-bootstrap';
+
+export {
   MultiOraclePriceValidator,
   type OracleConfig,
   type OracleType,
