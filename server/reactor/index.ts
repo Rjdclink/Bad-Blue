@@ -1,16 +1,15 @@
 /**
  * Reactor Module - Index
- * 
- * This module is the central Computational Reactor (OPIF) powering Lexara, crawlers, 
- * Monte Carlo optimization, and maintenance.
- * 
- * Exports the Computational Reactor for job scheduling and optimization
+ *
+ * Compatibility exports for the Quanti-backed Computational Reactor.
  */
 
 export {
   computationalReactor,
   initializeReactor,
   submitJob,
+  registerReactorExecutor,
+  unregisterReactorExecutor,
   getReactorStatus,
   getHeatMonitor,
   shutdownReactor,
@@ -19,7 +18,10 @@ export {
   type ReactorMetrics,
   type ReactorConfig,
   type HeatMonitor,
-  type MonteCarloConfig
+  type MonteCarloConfig,
+  type ReactorJobExecutionResult,
+  type ReactorJobExecutorContext,
+  type ReactorJobExecutor,
 } from './computationalReactor';
 
 import computationalReactorDefault from './computationalReactor';
