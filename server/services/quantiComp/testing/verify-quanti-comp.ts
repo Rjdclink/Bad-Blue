@@ -109,8 +109,33 @@ async function verifyFifthOrderObservationIsNonAuthoritative(): Promise<void> {
   runtime.shutdown();
 }
 
+async function verifyExternalCancellation(): Promise<void> {
+  const runtime = new QuantiCompRuntime({ maxConcurrency: 1, workerId: 'verify' });
+  const controller = new AbortController();
+  const pending = runtime.submit({
+    id: 'qc-external-cancel',
+    kind: 'verification.cancel',
+    lane: 'hot',
+    priority: 100,
+    input: null,
+    policy: { timeoutMs: 1_000 },
+    async execute(_value, context) {
+      while (!context.signal.aborted) await new Promise(resolve => setImmediate(resolve));
+      throw new Error('cancelled');
+    },
+    validate: () => false,
+  }, { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(
+    pending,
+    (error: unknown) => error instanceof QuantiCompError && error.code === 'ABORTED',
+  );
+  runtime.shutdown();
+}
+
 await verifyExecutionAndValidation();
 await verifyPriorityAndDeadline();
 await verifyInFlightDeduplication();
 await verifyFifthOrderObservationIsNonAuthoritative();
+await verifyExternalCancellation();
 console.log('Quanti Comp foundation verification passed');
