@@ -335,7 +335,7 @@ function positiveInteger(value: unknown, fallback: number, max: number): number 
 
 function scanRequestKey(req: Omit<VerifyRequest, 'minNetProfitUsd'>, symbols: readonly string[]): string {
   return JSON.stringify({
-    symbols,
+    symbols: [...symbols].sort(),
     notionalUsd: req.notionalUsd,
     maxQuoteAgeMs: req.maxQuoteAgeMs,
     buyFeesBps: req.buyFeesBps || null,
@@ -538,7 +538,7 @@ export class ArbitrageVerifier {
       const route = routeOptimizer.getBestRoute(req.bridge.fromChain, req.bridge.toChain, req.bridge.token, req.notionalUsd);
       if (!route || !Number.isFinite(route.feeUsd) || route.feeUsd < 0) return null;
       bridgeFeeUsd = route.feeUsd;
-      bridge = { from: route.fromChain, to: route.toChain, token: route.token, feeUsd: route.feeUsd, estimatedTimeSec: route.estimatedTime };
+      bridge = { from: route.fromChain, to: route.toChain, token: req.bridge.token, feeUsd: route.feeUsd, estimatedTimeSec: route.estimatedTime };
     }
 
     const transferFeeUsd = bridge ? 0 : configuredTransferFeeUsd();
