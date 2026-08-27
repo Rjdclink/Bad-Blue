@@ -35,6 +35,10 @@ function correctCexMempoolApplicability(
   if (!isCexCexPlan(context)) return assessment;
   if (!assessment.missingInformation.includes('mempool_evidence')) return assessment;
 
+  const priorCanonical = canonicalOpportunityState.get(context.opportunityId);
+  const priorCanonicalMonteCarlo = priorCanonical?.assessment?.monteCarlo
+    ? { ...priorCanonical.assessment.monteCarlo }
+    : null;
   const missingInformation = assessment.missingInformation
     .filter(item => item !== 'mempool_evidence');
   const dataCompleteness = correctedCompleteness(missingInformation);
@@ -87,7 +91,7 @@ function correctCexMempoolApplicability(
       marketData: { ...corrected.marketData },
       missingInformation: [...corrected.missingInformation],
       provenance: [...corrected.provenance],
-      monteCarlo: corrected.monteCarlo ? { ...corrected.monteCarlo } : null,
+      monteCarlo: priorCanonicalMonteCarlo,
     },
   });
 
@@ -117,6 +121,7 @@ export function ensureCryptaraCexEvidenceWiring(): Cryptara {
     cexVenues: [...CEX_EXECUTION_VENUES],
     mempoolEvidenceApplicability: 'not_applicable_for_CEX_CEX',
     syntheticMempoolEvidenceCreated: false,
+    canonicalMonteCarloPreserved: true,
     monteCarloChanged: false,
     economicsChanged: false,
   });
