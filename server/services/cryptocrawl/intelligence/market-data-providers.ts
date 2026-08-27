@@ -4,6 +4,7 @@ import {
   resolveCoinStatsEnvironment,
 } from '../runtime/environment-contract.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
+import { resolveZeroXRequestPolicy, type ZeroXRequestPurpose } from './zerox-request-policy.js';
 
 export interface MarketUniverseAsset {
   symbol: string;
@@ -147,24 +148,40 @@ class MarketDataProviders {
     return [];
   }
 
-  async getDexQuote(request: { chainId: number; sellToken: string; buyToken: string; sellAmount: string; takerAddress?: string }): Promise<DexQuoteObservation | null> {
+  async getDexQuote(request: {
+    chainId: number;
+    sellToken: string;
+    buyToken: string;
+    sellAmount: string;
+    takerAddress?: string;
+    purpose?: ZeroXRequestPurpose;
+  }): Promise<DexQuoteObservation | null> {
     const apiKey = process.env.ZEROX_API_KEY?.trim();
     if (!apiKey) {
       this.setProviderStatus('0x', 'unavailable', 'ZEROX_API_KEY is not configured');
       return null;
     }
-    const executable = /^0x[a-fA-F0-9]{40}$/.test(request.takerAddress || '');
-    const key = `${request.chainId}:${request.sellToken.toLowerCase()}:${request.buyToken.toLowerCase()}:${request.sellAmount}:${request.takerAddress || ''}`;
+
+    const policy = resolveZeroXRequestPolicy({
+      purpose: request.purpose,
+      takerAddress: request.takerAddress,
+    });
+    if (!policy.allowed) {
+      this.setProviderStatus('0x', 'failed', policy.reason);
+      return null;
+    }
+
+    const key = `${request.chainId}:${request.sellToken.toLowerCase()}:${request.buyToken.toLowerCase()}:${request.sellAmount}:${policy.purpose}:${policy.takerAddress || ''}`;
     const cached = this.quoteCache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
-      this.setProviderStatus('0x', 'cached', 'served from the DEX quote cache');
+      this.setProviderStatus('0x', 'cached', `served from the DEX ${policy.endpoint} cache`);
       return cached.value;
     }
     const existing = this.inFlight.get(key) as Promise<DexQuoteObservation | null> | undefined;
     if (existing) return existing;
 
     const promise = fetchJsonWithRetry<any>(
-      `https://api.0x.org/swap/allowance-holder/${executable ? 'quote' : 'price'}?chainId=${request.chainId}&sellToken=${encodeURIComponent(request.sellToken)}&buyToken=${encodeURIComponent(request.buyToken)}&sellAmount=${encodeURIComponent(request.sellAmount)}${executable ? `&taker=${encodeURIComponent(request.takerAddress!)}` : ''}`,
+      `https://api.0x.org/swap/allowance-holder/${policy.endpoint}?chainId=${request.chainId}&sellToken=${encodeURIComponent(request.sellToken)}&buyToken=${encodeURIComponent(request.buyToken)}&sellAmount=${encodeURIComponent(request.sellAmount)}${policy.includeTaker ? `&taker=${encodeURIComponent(policy.takerAddress!)}` : ''}`,
       { init: { headers: { accept: 'application/json', '0x-api-key': apiKey, '0x-version': 'v2' } }, maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2_000, timeoutMs: 4_000 },
     ).then(payload => {
       const sellAmount = Number(request.sellAmount);
@@ -194,20 +211,20 @@ class MarketDataProviders {
         fees: payload?.fees && typeof payload.fees === 'object' ? payload.fees : undefined,
         allowanceTarget: typeof payload?.allowanceTarget === 'string' ? payload.allowanceTarget : undefined,
         requiresAllowance: payload?.issues?.allowance !== undefined ? Boolean(payload.issues.allowance) : undefined,
-        transaction: executable && payload?.transaction && typeof payload.transaction === 'object' ? {
+        transaction: policy.endpoint === 'quote' && payload?.transaction && typeof payload.transaction === 'object' ? {
           to: typeof payload.transaction.to === 'string' ? payload.transaction.to : undefined,
           data: typeof payload.transaction.data === 'string' ? payload.transaction.data : undefined,
           value: typeof payload.transaction.value === 'string' ? payload.transaction.value : undefined,
           gas: typeof payload.transaction.gas === 'string' ? payload.transaction.gas : undefined,
           gasPrice: typeof payload.transaction.gasPrice === 'string' ? payload.transaction.gasPrice : undefined,
         } : undefined,
-        quoteKind: executable ? 'quote' : 'price',
-        executable: executable && typeof payload?.transaction?.to === 'string' && typeof payload?.transaction?.data === 'string',
+        quoteKind: policy.endpoint,
+        executable: policy.endpoint === 'quote' && typeof payload?.transaction?.to === 'string' && typeof payload?.transaction?.data === 'string',
         observedAt: Date.now(),
         source: '0x',
       } : null;
       this.quoteCache.set(key, { value: observation, expiresAt: Date.now() + ZEROX_TTL_MS });
-      this.setProviderStatus('0x', observation ? 'live' : 'failed', observation ? undefined : '0x returned no usable buy amount');
+      this.setProviderStatus('0x', observation ? 'live' : 'failed', observation ? policy.reason : '0x returned no usable buy amount');
       return observation;
     }).catch((error: unknown) => {
       this.quoteCache.set(key, { value: null, expiresAt: Date.now() + ZEROX_TTL_MS });
