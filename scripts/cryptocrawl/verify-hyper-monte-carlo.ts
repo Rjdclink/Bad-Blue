@@ -5,6 +5,8 @@ import {
   shutdownHyperMonteCarloWorkers,
   type HyperMonteCarloRequest,
 } from '../../server/services/cryptocrawl/validation/monte-carlo-hyper-engine.js';
+import { RuntimeConfidenceBootstrapCounter } from '../../server/services/cryptocrawl/validation/runtime-confidence-bootstrap.js';
+import type { CryptaraExecutionFeedback } from '../../server/services/cryptara/index.js';
 
 const base: HyperMonteCarloRequest = {
   opportunityId: 'verify-ETHUSDT',
@@ -39,7 +41,83 @@ const base: HyperMonteCarloRequest = {
   onchainTelemetryMeasured: false,
 };
 
+function feedback(
+  index: number,
+  options: { success?: boolean; realizedProfitUsd?: number; settlementConfirmed?: boolean } = {},
+): CryptaraExecutionFeedback {
+  const success = options.success ?? true;
+  const realizedProfitUsd = options.realizedProfitUsd ?? 0.25;
+  const settlementConfirmed = options.settlementConfirmed ?? true;
+  return {
+    source: 'master_pipeline',
+    opportunityId: `confidence-${index}`,
+    chain: 'ethereum',
+    symbol: 'ETHUSDT',
+    strategy: 'verified-arbitrage-hyper-bootstrap',
+    success,
+    expectedProfitUsd: 0.3,
+    realizedProfitUsd,
+    feeUsd: 0.01,
+    slippageBps: 1,
+    latencyMs: 25 + index,
+    usedZeroCapital: false,
+    timestamp: 1_787_800_000_000 + index,
+    settlementStatus: 'filled',
+    settlementConfirmed,
+    settlement: {
+      status: 'filled',
+      terminal: true,
+      settlementConfirmed,
+      submittedAt: 1_787_799_999_000 + index,
+      settledAt: 1_787_800_000_000 + index,
+      venueOrRoute: 'kraken-okx',
+      chain: 'ethereum',
+      predicted: { profitUsd: 0.3, feeUsd: 0.01, slippageBps: 1 },
+      realized: {
+        acquisitionCostUsd: 100,
+        proceedsUsd: 100 + realizedProfitUsd,
+        exchangeFeeUsd: 0.01,
+        gasUsd: 0,
+        gasUsed: null,
+        effectiveGasPriceWei: null,
+        slippageBps: 1,
+        netProfitUsd: realizedProfitUsd,
+      },
+      provenance: ['verification'],
+      transactionHash: `0x${index.toString(16).padStart(64, '0')}`,
+    },
+  };
+}
+
+function verifyRuntimeConfidenceBootstrap(): void {
+  const counter = new RuntimeConfidenceBootstrapCounter(10);
+  for (let index = 1; index <= 9; index += 1) counter.record(feedback(index));
+
+  assert.equal(counter.getStatus().successfulTrades, 9);
+  assert.equal(counter.getStatus().confidenceEnabled, false, 'confidence must remain disabled through nine successful settled trades');
+  assert.equal(counter.getStatus().state, 'bootstrap');
+
+  counter.record(feedback(1));
+  counter.record(feedback(40, { success: false, realizedProfitUsd: -0.2 }));
+  counter.record(feedback(41, { success: true, realizedProfitUsd: -0.1 }));
+  counter.record(feedback(42, { success: true, settlementConfirmed: false }));
+  assert.equal(counter.getStatus().successfulTrades, 9, 'duplicates, losses and unconfirmed settlements must not advance confidence');
+
+  counter.record(feedback(10));
+  const calibrated = counter.getStatus();
+  assert.equal(calibrated.successfulTrades, 10);
+  assert.equal(calibrated.confidenceEnabled, true, 'confidence must become authoritative at the tenth successful settled trade');
+  assert.equal(calibrated.remainingSuccessfulTrades, 0);
+  assert.equal(calibrated.state, 'calibrated');
+
+  const restarted = new RuntimeConfidenceBootstrapCounter(10);
+  assert.equal(restarted.getStatus().successfulTrades, 0, 'restart bootstrap counter must not be hydrated from historical execution data');
+  assert.equal(restarted.getStatus().confidenceEnabled, false, 'confidence must restart disabled');
+}
+
 async function main(): Promise<void> {
+  verifyRuntimeConfidenceBootstrap();
+
   const first = await runHyperMonteCarlo(base);
   const replay = await runHyperMonteCarlo(base);
 
@@ -92,6 +170,8 @@ async function main(): Promise<void> {
     staleQuoteRejected: true,
     deterministicReplay: true,
     concurrentIsolation: true,
+    runtimeConfidenceThreshold: 10,
+    restartConfidenceReset: true,
   });
 }
 
