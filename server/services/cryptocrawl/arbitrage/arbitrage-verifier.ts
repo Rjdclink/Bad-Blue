@@ -538,7 +538,7 @@ export class ArbitrageVerifier {
       const route = routeOptimizer.getBestRoute(req.bridge.fromChain, req.bridge.toChain, req.bridge.token, req.notionalUsd);
       if (!route || !Number.isFinite(route.feeUsd) || route.feeUsd < 0) return null;
       bridgeFeeUsd = route.feeUsd;
-      bridge = { from: route.fromChain, to: route.toChain, token: req.bridge.token, feeUsd: route.feeUsd, estimatedTimeSec: route.estimatedTime };
+      bridge = { from: route.fromChain, to: route.toChain, token: route.token, feeUsd: route.feeUsd, estimatedTimeSec: route.estimatedTime };
     }
 
     const transferFeeUsd = bridge ? 0 : configuredTransferFeeUsd();
