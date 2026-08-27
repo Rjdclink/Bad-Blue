@@ -14,6 +14,7 @@ const forbidText = (source, text, message) => {
   if (source.includes(text)) fail(message);
 };
 
+const barrierPolicy = read('server/services/cryptocrawl/discovery/cex-economic-barrier-policy.ts');
 const barrier = read('server/services/cryptocrawl/discovery/cex-economic-barrier.ts');
 const graph = read('server/services/cryptocrawl/discovery/opportunity-graph.ts');
 const scan = read('server/services/cryptocrawl/discovery/scan-capacity-policy.ts');
@@ -25,11 +26,13 @@ const env = read('server/services/cryptocrawl/runtime/environment-contract.ts');
 const cryptaraWiring = read('server/services/cryptocrawl/integration/cryptara-assessment-wiring.ts');
 const cexEvidenceWiring = read('server/services/cryptocrawl/integration/cryptara-cex-evidence-wiring.ts');
 
-requireText(barrier, "executionFeeMode: 'taker_ioc'", 'CEX economic barrier must identify the actual IOC/taker execution mode');
-requireText(barrier, 'feeReductionNeededBps', 'CEX economic barrier must expose the measured fee reduction needed to reach fee-only break-even');
-requireText(barrier, 'maxCombinedTakerFeeForFeeOnlyBreakEvenBps', 'CEX economic barrier must expose the fee-only ceiling without pretending other costs disappear');
-requireText(barrier, 'makerObservation', 'maker economics must remain separately observed');
-requireText(barrier, 'executable: false', 'maker observation must not be promoted to executable evidence');
+requireText(barrierPolicy, "executionFeeMode: 'taker_ioc'", 'CEX economic barrier must identify the actual IOC/taker execution mode');
+requireText(barrierPolicy, 'feeReductionNeededBps', 'CEX economic barrier must expose the measured fee reduction needed to reach fee-only break-even');
+requireText(barrierPolicy, 'maxCombinedTakerFeeForFeeOnlyBreakEvenBps', 'CEX economic barrier must expose the fee-only ceiling without pretending other costs disappear');
+requireText(barrierPolicy, 'makerObservation', 'maker economics must remain separately observed');
+requireText(barrierPolicy, 'executable: false', 'maker observation must not be promoted to executable evidence');
+requireText(barrier, 'computeCexEconomicBarrier({', 'live fee barrier adapter must delegate arithmetic to the pure policy');
+requireText(barrier, 'getCachedCexFeeEvidence', 'maker observation must come from cached authenticated fee evidence');
 requireText(graph, 'recordCexEconomicBarrier(', 'measured CEX scan must record the authenticated economic barrier');
 requireText(graph, 'arbitrageVerifier.getBestCrossVenueFeeContext(selected)', 'economic barrier must derive from the verifier fee/spread authority');
 
