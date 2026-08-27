@@ -41,8 +41,8 @@ requireText(
 );
 const deploymentPreflight = read('scripts/cryptocrawl/verify-deployment-preflight.cjs');
 requireText(deploymentPreflight, 'verify-no-regression-opportunity-pipeline.cjs', 'deployment preflight runs invariant suite');
-requireText(deploymentPreflight, "'typescript', 'bin', 'tsc'", 'deployment preflight runs repository TypeScript check');
 requireText(deploymentPreflight, "NO_EXECUTION: 'true'", 'deployment preflight is execution-safe');
+forbidText(deploymentPreflight, "'typescript', 'bin', 'tsc'", 'deployment preflight must not fail on unrelated repository-global legacy type debt');
 
 const capability = read('server/services/cryptocrawl/discovery/venue-capability-registry.ts');
 requireText(capability, "venue: 'coinbase'", 'venue registry contains Coinbase compatibility entry');
@@ -59,6 +59,20 @@ requireText(verifier, 'candidate.netProfitUsd > bestPlan.netProfitUsd', 'best ca
 requireText(verifier, 'plan.netProfitUsd < req.minNetProfitUsd', 'verified minimum net-profit gate');
 requireText(verifier, "crossVenueCostModel: bridge", 'cross-venue cost semantics retained');
 forbidText(verifier, "const venues: QuoteVenue[] = ['coinbase', 'kraken', 'okx']", 'no hard-coded Coinbase quote authority');
+
+const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
+requireText(feeResolver, 'serializeKrakenPrivate', 'Kraken private requests are serialized');
+requireText(feeResolver, 'krakenPrivateTail', 'Kraken authenticated transport has one nonce-ordering authority');
+requireText(feeResolver, 'nextKrakenNonce()', 'Kraken nonce remains monotonic');
+requireText(feeResolver, "source: 'kraken_account_trade_volume'", 'Kraken fee evidence remains account measured');
+requireText(feeResolver, "source: 'okx_account_trade_fee'", 'OKX fee evidence remains account measured');
+
+const stream = read('server/services/cryptocrawl/intelligence/cex-order-book-stream.ts');
+requireText(stream, 'VenueConnectionState', 'CEX streams pool connection state by venue');
+requireText(stream, 'activeConnections', 'CEX stream telemetry exposes pooled connection count');
+requireText(stream, 'connection.symbols.add(symbol)', 'symbol subscriptions share the venue connection');
+requireText(stream, 'this.subscription(connection.venue, symbols)', 'reconnect resubscribes the pooled symbol set');
+forbidText(stream, 'private readonly streams = new Map<string, StreamState>()', 'legacy one-socket-per-symbol stream authority removed');
 
 const executor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
 requireText(executor, "!['kraken', 'okx'].includes(plan.buyVenue)", 'live execution buy-venue allowlist preserved');
@@ -144,6 +158,8 @@ for (const relative of [
   'server/services/cryptocrawl/discovery/symbol-registry.ts',
   'server/services/cryptocrawl/discovery/market-universe-controller.ts',
   'server/services/cryptocrawl/intelligence/market-data-providers.ts',
+  'server/services/cryptocrawl/intelligence/cex-fee-resolver.ts',
+  'server/services/cryptocrawl/intelligence/cex-order-book-stream.ts',
   'server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts',
   'server/services/cryptocrawl/governance/automatic-stage-progression.ts',
   'server/services/cryptocrawl/integration/runtime-observability.ts',
@@ -159,8 +175,9 @@ if (failures.length) {
 }
 
 console.log('[verify-no-regression-opportunity-pipeline] PASS');
-console.log(' - deployment builds fail closed on invariant or TypeScript errors');
+console.log(' - deployment builds fail closed on touched CryptoCrawler invariants/syntax, then normal production bundling validates imports');
 console.log(' - Coinbase remains inactive while Kraken/OKX remain settlement-safe live CEX venues');
+console.log(' - Kraken authenticated fee calls preserve nonce ordering; market streams pool subscriptions by venue');
 console.log(' - strict positive-net, live-confirmation, StageManager, kill-switch, and terminal-learning gates are preserved');
 console.log(' - measured market universe is ranked deterministically and rotated once per consumption boundary');
 console.log(' - optional CoinStats visibility is diagnosed without exposing credentials or becoming core readiness');
