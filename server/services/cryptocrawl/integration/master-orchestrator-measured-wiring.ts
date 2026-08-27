@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { MasterOrchestrator, type PerformanceMetrics } from '../core/master-orchestrator.js';
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
+import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { getMeasuredEvolutionMetrics } from '../evolution/measured-execution-feedback.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
@@ -26,6 +27,7 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
   ensureOracleEvidenceWiring();
   ensureZeroCapitalResourceWiring();
   measuredOpportunityGraph.start();
+  multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
   ensureCryptoRuntimeObservability();
 
@@ -58,7 +60,7 @@ export function ensureMasterOrchestratorMeasuredWiring(): void {
     component: 'MasterOrchestratorMeasuredWiring',
     executionMetrics: 'terminal_settlement_only',
     opportunityMetrics: 'canonical_verified_stream',
-    measuredOpportunityGraph: 'continuous',
+    measuredOpportunityGraph: 'continuous_multi_topology',
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
