@@ -115,7 +115,24 @@ class GasOracle {
 
   async updateAllGasPrices(): Promise<void> {
     const chains: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];
-    await Promise.all(chains.map(chain => this.getGasPrice(chain)));
+    const results = await Promise.allSettled(chains.map(chain => this.getGasPrice(chain)));
+    const unavailable = results.flatMap((result, index) => result.status === 'rejected'
+      ? [{
+          chain: chains[index],
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }]
+      : []);
+
+    if (unavailable.length > 0) {
+      console.warn('[GasOracle] Chain-local gas telemetry unavailable; healthy chains remain active', {
+        unavailable,
+        availableChains: chains.filter(chain => this.gasPrices.has(chain)),
+      });
+    }
+
+    if (this.gasPrices.size === 0) {
+      throw new Error('GasOracle has no live gas evidence from any supported chain');
+    }
   }
 
   async getCheapestChain(): Promise<ChainId | null> {
@@ -147,7 +164,8 @@ class GasOracle {
     // Initialize providers
     await this.initializeProviders();
     
-    // Do initial update
+    // Do initial update. Individual chain failures are topology-local; at least one
+    // chain must still provide live gas evidence before the oracle is considered running.
     await this.updateAllGasPrices();
 
     // If stop() was called while we were awaiting the initial update, abort cleanly.
