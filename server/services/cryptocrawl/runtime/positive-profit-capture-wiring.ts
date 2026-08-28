@@ -3,7 +3,11 @@ import { getCryptara } from '../../cryptara/index.js';
 import type { CryptaraOpportunityAssessment, CryptaraOpportunityContext } from '../../cryptara/index.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { normalizeCexExecutablePlan } from '../execution/cex-spot-product-policy.js';
-import { evaluateStablecoinMakerCandidate, isStablecoinMakerPlan } from '../execution/stablecoin-maker-strategy.js';
+import {
+  evaluateMakerRecoveryCandidate,
+  getDynamicMakerCanaryStatus,
+  isMakerRecoveryPlan,
+} from '../execution/stablecoin-maker-strategy.js';
 import { stageManager } from '../governance/stage-management.js';
 import { ensureCoinCapEnvironmentWiring } from './coincap-environment-wiring.js';
 import { ensureDynamicRpcProviderWiring } from './dynamic-rpc-provider-wiring.js';
@@ -61,7 +65,7 @@ function normalizePositiveAssessment(
   const plan = context.plan;
   if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) return assessment;
 
-  const makerCanary = isStablecoinMakerPlan(plan);
+  const makerCanary = isMakerRecoveryPlan(plan);
   const criticalMissing = criticalMissingInformation(assessment.missingInformation, makerCanary);
   if (criticalMissing.length > 0 || !assessment.monteCarlo) {
     assessment.recommendation = 'observe';
@@ -88,7 +92,7 @@ function normalizePositiveAssessment(
   assessment.provenance = [...new Set([
     ...assessment.provenance,
     makerCanary
-      ? 'positive_profit_capture:stablecoin_maker_canary_hyper_mc_qualified'
+      ? `positive_profit_capture:${plan.makerExecution.strategy}:hyper_mc_qualified`
       : 'positive_profit_capture:any_verified_net_gt_zero',
     ...(makerCanary ? ['maker_canary_bootstrap:post_only_cancel_only'] : []),
     'rank_diagnostic_only',
@@ -114,7 +118,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
     const takerPlan = await originalEvaluateOnce(request);
     if (takerPlan) return normalizeCexExecutablePlan(takerPlan);
 
-    return evaluateStablecoinMakerCandidate({
+    return evaluateMakerRecoveryCandidate({
       symbol: String(request?.symbol || ''),
       notionalUsd: Number(request?.notionalUsd || 0),
       maxQuoteAgeMs: Math.max(1, Number(request?.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000)),
@@ -145,7 +149,8 @@ export function ensurePositiveProfitCaptureWiring(): void {
     return normalizePositiveAssessment(context, assessment);
   };
 
-  logger.info('[PositiveProfitCapture] Positive-edge routing installed with stablecoin maker recovery', {
+  const makerCanary = getDynamicMakerCanaryStatus();
+  logger.info('[PositiveProfitCapture] Positive-edge routing installed with dynamic maker recovery', {
     component: 'PositiveProfitCapture',
     deterministicNetProfitRule: 'strictly_greater_than_zero',
     arbitraryMinimumProfitUsd: false,
@@ -154,12 +159,19 @@ export function ensurePositiveProfitCaptureWiring(): void {
     authenticatedKrakenFeeAuthority: Boolean(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()),
     paidCoinCapEnvironmentResolution: true,
     dynamicRpcProviderAdmission: true,
-    stablecoinMakerRecovery: {
+    makerRecovery: {
       enabled: true,
       venues: ['kraken', 'okx'],
+      pairClasses: ['stablecoin', 'volatile_high_spread'],
       postOnly: true,
       takerFallback: false,
-      canaryMaxUsd: 5_000,
+      bootstrapCanaryUsd: 10,
+      currentCanaryCeilingUsd: makerCanary.ceilingUsd,
+      makerProofSamples: makerCanary.samples,
+      makerProofWins: makerCanary.wins,
+      makerProofWinRate: makerCanary.winRate,
+      hardMaxCanaryUsd: Math.max(10, Math.min(5_000, Number(process.env.CRYPTO_ARBITRAGE_MAKER_CANARY_MAX_USD || 5_000))),
+      volatileMinGrossSpreadBps: Math.max(10, Math.min(2_000, Number(process.env.CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS || 70))),
       maxTtlMs: 30_000,
       cryptaraHyperMonteCarloRequired: true,
       coldStartCanaryMinimumProbability: makerCanaryMinimumProbability(),
@@ -167,6 +179,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedAuthorities: [
       'deterministic_all_in_economics',
+      'authenticated_maker_fee_evidence',
       'measured_product_constraints',
       'cryptara_parallel_hyper_monte_carlo',
       'governance_stage',
