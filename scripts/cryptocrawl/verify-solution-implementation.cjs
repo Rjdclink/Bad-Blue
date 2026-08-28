@@ -12,6 +12,7 @@ const forbidText = (source, needle, label) => {
 };
 
 const monitor = read('server/services/cryptocrawl/runtime/runtime-invariant-monitor.ts');
+const latency = read('server/services/cryptocrawl/runtime/end-to-end-latency-harness.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const observability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
 const repository = read('server/services/cryptocrawl/intelligence/canonical-intelligence-repository.ts');
@@ -94,6 +95,35 @@ requireText(repository, 'querySimilarPatternsAdvisory', 'similarity retrieval is
 requireText(repository, 'advisoryOnly: true', 'similarity results are marked non-authoritative');
 requireText(repository, 'embedding is not null and revoked_at is null', 'similarity ignores absent/revoked embeddings');
 
+// S-80 — measured monotonic end-to-end latency harness; mock latency is never authority.
+requireText(latency, 'process.hrtime.bigint()', 'latency harness uses monotonic high-resolution time');
+for (const stage of [
+  'ingest', 'normalize', 'candidate', 'deterministic_economics', 'ml_advisory', 'mc_cache',
+  'governance_risk', 'resource_lease', 'submit', 'exchange_rpc_ack', 'terminal_settlement', 'learning_enqueue',
+]) {
+  requireText(latency, `'${stage}'`, `latency harness exposes ${stage} stage`);
+}
+for (const kind of ['queue', 'compute', 'network']) requireText(latency, `'${kind}'`, `latency harness separates ${kind} time`);
+requireText(latency, 'p50Ms', 'latency harness reports p50');
+requireText(latency, 'p95Ms', 'latency harness reports p95');
+requireText(latency, 'p99Ms', 'latency harness reports p99');
+requireText(latency, 'maxMs', 'latency harness reports max');
+requireText(latency, 'timeouts', 'latency harness counts timeouts');
+requireText(latency, 'cancels', 'latency harness counts cancels');
+requireText(latency, 'retries', 'latency harness counts retries');
+requireText(latency, 'monitorEventLoopDelay', 'latency harness measures event-loop pressure');
+requireText(latency, 'PerformanceObserver', 'latency harness observes GC pressure');
+requireText(latency, 'process.memoryUsage()', 'latency harness records memory pressure');
+requireText(latency, "authority: 'telemetry_only'", 'latency harness cannot become execution authority');
+requireText(latency, 'executionAuthority: false', 'latency harness declares no execution authority');
+requireText(latency, "status: enough ? 'measured_baseline' : 'insufficient_samples'", 'SLOs require real sample history');
+requireText(latency, 'syntheticBenchmarkAuthority: false', 'synthetic benchmark numbers cannot become production evidence');
+forbidText(latency, 'Math.random', 'latency harness cannot fabricate latency samples');
+requireText(scheduler, "'governance_risk'", 'scheduler records governance/risk latency');
+requireText(scheduler, "'resource_lease'", 'scheduler records resource queue latency');
+requireText(scheduler, "'terminal_settlement'", 'scheduler records terminal execution/settlement latency');
+requireText(evolution, "startSpan('learning_enqueue'", 'terminal learning records enqueue latency');
+
 // S-92 — runtime invariant monitors and drift quarantine.
 requireText(monitor, "'ELIGIBLE_WITHOUT_POSITIVE_NET'", 'runtime monitor checks deterministic-positive eligibility');
 requireText(monitor, "'INVALID_DETERMINISTIC_COSTS'", 'runtime monitor checks finite/nonnegative required costs');
@@ -120,4 +150,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[solution-implementation] PASS — S-60..S-64 private durable intelligence and S-92 runtime invariant quarantine preserve canonical execution/governance/resource authority');
+console.log('[solution-implementation] PASS — S-60..S-64 private durable intelligence, S-80 measured latency telemetry, and S-92 runtime invariant quarantine preserve canonical execution/governance/resource authority');
