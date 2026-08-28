@@ -22,6 +22,12 @@ const coingecko = read('server/services/cryptocrawl/bridge/coingecko-client.ts')
 const alchemy = read('server/services/cryptocrawl/capital-free/alchemy-integration.ts');
 const environment = read('.env.example');
 
+assertContains(providers, 'process.env.COINCAP_API_KEY', 'CoinCap credential is environment-sourced');
+assertContains(providers, "'coincap' | 'coingecko' | 'coinstats'", 'CoinCap has first-class market provenance');
+assertContains(providers, "'https://rest.coincap.io/v3'", 'CoinCap uses the current v3 REST origin');
+assertContains(providers, 'Authorization: `Bearer ${apiKey}`', 'CoinCap uses bearer-token authentication');
+assertContains(providers, "this.fetchCoinCapUniverse(),\n      this.fetchCoinGeckoUniverse(),", 'CoinCap is queried as the primary canonical market feed');
+assertContains(providers, "coincap: { provider: 'coincap'", 'CoinCap provider health is observable');
 assertContains(providers, 'process.env.COINGECKO_API_KEY', 'CoinGecko credential is environment-sourced');
 assertContains(providers, 'process.env.COINSTATS_API_KEY', 'CoinStats credential is environment-sourced');
 assertContains(providers, 'process.env.ZEROX_API_KEY', '0x credential is environment-sourced');
