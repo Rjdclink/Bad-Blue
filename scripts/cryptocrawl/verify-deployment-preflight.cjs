@@ -56,9 +56,15 @@ run(
 );
 
 run(
+  'CryptoCrawler Coinbase Advanced Trade integration wiring',
+  process.execPath,
+  [path.join(root, 'scripts', 'cryptocrawl', 'verify-coinbase-integration-wiring.cjs')],
+);
+
+run(
   'CryptoCrawler truthful admin diagnostics wiring',
   process.execPath,
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-truthful-admin-diagnostics.cjs')],
 );
 
-console.log('[deployment-preflight] PASS — CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, and truthful admin diagnostics are clean; normal production build continues with Vite/esbuild');
+console.log('[deployment-preflight] PASS — CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade integration boundaries, and truthful admin diagnostics are clean; normal production build continues with Vite/esbuild');
