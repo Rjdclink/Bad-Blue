@@ -19,6 +19,7 @@ import { getMeasuredEvolutionMetrics } from '../evolution/measured-execution-fee
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { orderBookEvolutionStore } from '../validation/order-book-evolution-store.js';
 import { resolveCoinStatsEnvironment } from '../runtime/environment-contract.js';
+import { getPerformanceEvidenceContract } from '../runtime/performance-evidence-contract.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { computeCryptoRuntimeReadiness } from '../runtime/readiness-policy.js';
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
@@ -103,6 +104,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const scheduler = canonicalExecutionScheduler.getStats();
     const stage = stageManager.getState();
     const measured = getMeasuredEvolutionMetrics();
+    const performanceTruth = getPerformanceEvidenceContract();
     const runtime = getCryptoCrawlerRuntimeAttestation();
     const execution = executionConfiguration();
     const providerStatuses = marketDataProviders.getProviderStatuses();
@@ -150,6 +152,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       component: 'CryptoRuntimeObservability',
       runtime,
       runtimeInvariants: invariantMonitor,
+      performanceTruth,
       readiness,
       governance: {
         stage: stage.currentStage,
@@ -297,6 +300,7 @@ export function ensureCryptoRuntimeObservability(): void {
     runtimeAttestation: true,
     runtimeInvariantMonitor: true,
     durableLearningOutboxTelemetry: true,
+    performanceTruthContractTelemetry: true,
     decomposedReadiness: [
       'APP_READY',
       'CONFIG_READY',
