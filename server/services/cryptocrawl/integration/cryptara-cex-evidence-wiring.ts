@@ -9,7 +9,7 @@ import { canonicalOpportunityState } from '../intelligence/canonical-opportunity
 
 const log = createLogger('CryptaraCexEvidenceWiring');
 const installed = new WeakSet<object>();
-const CEX_EXECUTION_VENUES = new Set(['kraken', 'okx']);
+const CEX_EXECUTION_VENUES = new Set(['coinbase', 'kraken', 'okx']);
 
 type CryptaraAssessmentTarget = {
   assessOpportunity: (context: CryptaraOpportunityContext) => Promise<CryptaraOpportunityAssessment>;
@@ -101,7 +101,7 @@ function correctCexMempoolApplicability(
 /**
  * Topology adapter layered after the existing Cryptara assessment authority.
  * It changes no economics, Monte Carlo output, or execution thresholds. It only
- * removes the on-chain mempool completeness penalty from Kraken/OKX CEX_CEX plans.
+ * removes the on-chain mempool completeness penalty from implemented CEX_CEX plans.
  */
 export function ensureCryptaraCexEvidenceWiring(): Cryptara {
   const instance = getCryptara();
