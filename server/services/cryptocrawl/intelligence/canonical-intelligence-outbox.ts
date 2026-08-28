@@ -143,7 +143,21 @@ class CanonicalIntelligenceOutbox {
         JSON.stringify(payload),
       ],
     );
-    return (result.rowCount || 0) > 0;
+    if ((result.rowCount || 0) > 0) return true;
+
+    // A duplicate enqueue is also durable success when the exact immutable event
+    // is already present. Do not mistake idempotency for a failed handoff.
+    const existing = await pool.query(
+      `select 1
+         from private.cryptara_outbox
+        where dedupe_key = $1
+          and source_event_id = $2
+          and job_kind = $3
+          and schema_version = $4
+        limit 1`,
+      [outboxId, outcome.eventId, TERMINAL_JOB_KIND, OUTBOX_SCHEMA_VERSION],
+    );
+    return (existing.rowCount || 0) > 0;
   }
 
   getMetrics(): IntelligenceOutboxMetrics {
