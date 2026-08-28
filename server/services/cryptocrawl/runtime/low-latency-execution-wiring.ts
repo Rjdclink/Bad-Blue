@@ -3,13 +3,15 @@ import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { MultiRelaySubmitter } from '../execution/multi-relay-submitter.js';
 import { UltraLowLatencyExecutor } from '../execution/ultra-low-latency-executor.js';
+import {
+  firstSuccessful,
+  isSignedRawTransaction,
+  nextNonceAfterReservation,
+  normalizePendingNonce,
+} from '../execution/low-latency-execution-policy.js';
 
 const installed = new WeakSet<object>();
 const nonceStates = new WeakMap<object, { tail: Promise<void>; nextNonce: number | null }>();
-
-function isSignedRawTransaction(value: unknown): value is string {
-  return typeof value === 'string' && /^0x[0-9a-fA-F]+$/.test(value) && value.length > 132;
-}
 
 async function reservePendingNonce(instance: any): Promise<number> {
   let state = nonceStates.get(instance);
@@ -23,9 +25,8 @@ async function reservePendingNonce(instance: any): Promise<number> {
   await previous.catch(() => undefined);
   try {
     const pending = await instance.wallet.getTransactionCount('pending');
-    if (state.nextNonce === null || state.nextNonce < pending) state.nextNonce = pending;
-    const nonce = state.nextNonce;
-    state.nextNonce += 1;
+    const nonce = normalizePendingNonce(pending, state.nextNonce);
+    state.nextNonce = nextNonceAfterReservation(nonce);
     return nonce;
   } finally {
     release();
@@ -39,9 +40,10 @@ function resetNonceAuthority(instance: object): void {
 
 /**
  * Installs two narrow execution corrections:
- * 1) multipath broadcast uses one fully populated signed transaction and
- *    Promise.any(), so a fast relay failure cannot beat a slower successful
- *    submission and competing paths cannot sign different payloads for one nonce;
+ * 1) multipath broadcast uses one fully populated signed transaction and the
+ *    first successful submission, so a fast relay failure cannot beat a slower
+ *    successful submission and competing paths cannot sign different payloads
+ *    for one nonce;
  * 2) Flashbots bundle validation uses relay simulation and refuses transaction
  *    hashes masquerading as signed raw transactions.
  */
@@ -144,7 +146,7 @@ export function ensureLowLatencyExecutionWiring(): void {
           txHash: response.hash || expectedHash,
           path: name,
         })));
-        const result = await Promise.any(submissions);
+        const result = await firstSuccessful(submissions);
         const latency = Date.now() - startTime;
         logger.info('[UltraLowLatencyExecutor] Identical signed payload accepted by at least one broadcast path', {
           component: 'UltraLowLatencyExecutor',
@@ -152,7 +154,7 @@ export function ensureLowLatencyExecutionWiring(): void {
           winner: result.path,
           latencyMs: latency,
           nonce,
-          promiseAny: true,
+          firstSuccessSemantics: true,
         });
         return { success: true, txHash: result.txHash, latency, method: 'multipath' as const, signedTransaction };
       } catch (error) {
