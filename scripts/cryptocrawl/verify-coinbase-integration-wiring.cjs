@@ -39,7 +39,7 @@ assert(fees.includes('/api/v3/brokerage/transaction_summary'), 'Coinbase authent
 assert(fees.includes("product_type: 'SPOT'"), 'Coinbase fee evidence must be scoped to SPOT');
 assert(feeResolver.includes("source: 'coinbase_transaction_summary'"), 'canonical fee authority must preserve Coinbase authenticated fee provenance');
 assert(feeResolver.includes("if (venue === 'coinbase') return fetchCoinbaseFeeEvidence(symbol)"), 'canonical CEX fee resolver must own Coinbase fee lookup');
-assert(feeResolver.includes("if (venue === 'coinbase') return null"), 'configured Coinbase fee guesses must not substitute for authenticated evidence');
+assert(feeResolver.includes("if (venue === 'okx' || venue === 'coinbase') return null"), 'configured Coinbase/OKX fee guesses must not substitute for authenticated/live instrument evidence');
 
 assert(productPolicy.includes('floorToIncrement'), 'Coinbase product policy must provide deterministic downward size normalization');
 assert(productPolicy.includes('isIncrementAligned'), 'Coinbase product policy must reject off-increment values');
