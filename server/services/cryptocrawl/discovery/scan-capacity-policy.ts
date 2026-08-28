@@ -15,6 +15,18 @@ export interface ScanCapacityDecision {
   reason: string;
 }
 
+export interface CexScanCadenceInput {
+  positiveDensity: number;
+  eligibleDensity: number;
+  searchDensity: number;
+  feeBlockedWithCoverage: boolean;
+  configuredMinimum: number;
+  configuredMaximum: number;
+  minimumIntervalMs?: number;
+  baseIntervalMs?: number;
+  maximumIntervalMs?: number;
+}
+
 let heldDecision: { observedAt: number; decision: ScanCapacityDecision } | null = null;
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
@@ -28,17 +40,30 @@ function boundedFraction(value: unknown, fallback: number): number {
   return Math.max(0.1, Math.min(1, Number.isFinite(parsed) ? parsed : fallback));
 }
 
-function recommendedScanInterval(input: {
-  positiveDensity: number;
-  eligibleDensity: number;
-  searchDensity: number;
-  feeBlockedWithCoverage: boolean;
-  configuredMinimum: number;
-  configuredMaximum: number;
-}): number {
-  const minimumMs = boundedInt(process.env.CRYPTOCRAWL_SCAN_INTERVAL_MIN_MS, 2_000, 1_000, 10_000);
-  const baseMs = boundedInt(process.env.CRYPTOCRAWL_SCAN_INTERVAL_BASE_MS, 5_000, minimumMs, 30_000);
-  const maximumMs = boundedInt(process.env.CRYPTOCRAWL_SCAN_INTERVAL_MAX_MS, 15_000, baseMs, 60_000);
+/**
+ * Pure cadence decision used by the live capacity policy and regression tests.
+ * Execution is deliberately absent from the output: this function can only tune
+ * how soon discovery runs again, never pause an eligible profitable trade.
+ */
+export function recommendedCexScanIntervalMs(input: CexScanCadenceInput): number {
+  const minimumMs = boundedInt(
+    input.minimumIntervalMs ?? process.env.CRYPTOCRAWL_SCAN_INTERVAL_MIN_MS,
+    2_000,
+    1_000,
+    10_000,
+  );
+  const baseMs = boundedInt(
+    input.baseIntervalMs ?? process.env.CRYPTOCRAWL_SCAN_INTERVAL_BASE_MS,
+    5_000,
+    minimumMs,
+    30_000,
+  );
+  const maximumMs = boundedInt(
+    input.maximumIntervalMs ?? process.env.CRYPTOCRAWL_SCAN_INTERVAL_MAX_MS,
+    15_000,
+    baseMs,
+    60_000,
+  );
 
   // Activity is measured from real candidate flow rather than fixed wall-clock
   // "high volume" hours. Crypto is global and regime changes do not respect a
@@ -114,7 +139,7 @@ export function getCexScanCapacity(universeSizeInput: number): ScanCapacityDecis
   const symbolBudget = Math.max(1, Math.min(universeSize, desired));
   const workerConcurrency = Math.max(1, Math.min(workerMaximum, symbolBudget));
   const unexploredFraction = universeSize <= symbolBudget ? 0 : (universeSize - symbolBudget) / universeSize;
-  const recommendedIntervalMs = recommendedScanInterval({
+  const recommendedIntervalMs = recommendedCexScanIntervalMs({
     positiveDensity,
     eligibleDensity,
     searchDensity,
