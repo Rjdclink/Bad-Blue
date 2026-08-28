@@ -5,7 +5,12 @@
 // valid CryptoCrawler execution authority. Canonical zero-capital execution is owned by
 // core/zero-capital-engine.ts plus governed receiver/payload/settlement adapters.
 
-import type { OpportunityScore } from '../orchestrator/execution-orchestrator';
+export interface LegacyOpportunityScore {
+  opportunity?: unknown;
+  successProbability?: number;
+  expectedValue?: number;
+  tier?: unknown;
+}
 
 export interface FlashLoanProvider {
   name: string;
@@ -47,7 +52,7 @@ export class FlashLoanAtomicEngine {
     return amount * (1 + fee);
   }
 
-  async buildAtomicBundle(_opportunity: OpportunityScore, _loanSize: number): Promise<AtomicBundle> {
+  async buildAtomicBundle(_opportunity: LegacyOpportunityScore, _loanSize: number): Promise<AtomicBundle> {
     throw new Error('Legacy synthetic FlashLoanAtomicEngine is retired; use canonical governed zero-capital execution');
   }
 
@@ -55,7 +60,7 @@ export class FlashLoanAtomicEngine {
     return { valid: false, reason: 'Legacy synthetic FlashLoanAtomicEngine is retired' };
   }
 
-  async execute(_opportunity: OpportunityScore, _loanSize: number): Promise<{ success: boolean; profit: number }> {
+  async execute(_opportunity: LegacyOpportunityScore, _loanSize: number): Promise<{ success: boolean; profit: number }> {
     return { success: false, profit: 0 };
   }
 }
