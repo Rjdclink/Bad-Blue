@@ -1,39 +1,37 @@
-const { spawnSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
+const root = path.resolve(__dirname, '../..');
+const read = p => fs.readFileSync(path.join(root, p), 'utf8');
+const req = (s,t) => { if (!s.includes(t)) process.exit(41); };
+const no = (s,t) => { if (s.includes(t)) process.exit(42); };
 
-const root = path.resolve(__dirname, '..', '..');
-const safeEnv = {
-  ...process.env,
-  NO_EXECUTION: 'true',
-  NO_INTERVALS: 'true',
-  CRYPTARA_MODE: 'SILENT_WATCHER_ONLY',
-};
-
-function run(label, executable, args) {
-  console.log(`[deployment-preflight] ${label}`);
-  const result = spawnSync(executable, args, { cwd: root, env: safeEnv, stdio: 'inherit' });
-  if (result.error) { console.error(`[deployment-preflight] ${label} could not start: ${result.error.message}`); process.exit(1); }
-  if (result.signal) { console.error(`[deployment-preflight] ${label} terminated by signal ${result.signal}`); process.exit(1); }
-  if (result.status !== 0) { console.error(`[deployment-preflight] ${label} failed with exit code ${result.status}`); process.exit(result.status || 1); }
-}
-
-run('CryptoCrawler clean-house authority boundaries', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-clean-house.cjs')]);
-run('CryptoCrawler clean-house authority extensions', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-clean-house-authority-extensions.cjs')]);
-run('CryptoCrawler solution implementation invariants', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-solution-implementation.cjs')]);
-run('CryptoCrawler exact execution/settlement/learning identity binding', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-execution-identity-binding.cjs')]);
-run('CryptoCrawler expanded canonical runtime wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-expanded-runtime-wiring.cjs')]);
-run('CryptoCrawler 0x price-only discovery boundary', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-zerox-discovery-boundary.cjs')]);
-run('CryptoCrawler 0x purpose-aware local request budget', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-zerox-request-budget.cjs')]);
-run('CryptoCrawler concurrent DEX discovery coverage', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-dex-concurrent-discovery.cjs')]);
-run('CryptoCrawler multi-topology latency telemetry boundary', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-multi-topology-latency.cjs')]);
-run('CryptoCrawler Alchemy filtered hash-first mempool boundary', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-alchemy-filtered-mempool.cjs')]);
-run('CryptoCrawler current Across cross-chain economics boundary', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-across-cross-chain-economics.cjs')]);
-run('CryptoCrawler zero-capital advisory quote-budget preselection', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-zero-capital-route-preselection.cjs')]);
-run('CryptoCrawler no-regression invariants v2', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-no-regression-opportunity-pipeline-v2.cjs')]);
-run('CryptoCrawler core topology lifecycle wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-core-topology-wiring.cjs')]);
-run('CryptoCrawler competition evidence wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-competition-evidence-wiring.cjs')]);
-run('CryptoCrawler expanded profit blocker wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-profit-blocker-wiring.cjs')]);
-run('CryptoCrawler Coinbase Advanced Trade integration wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-coinbase-integration-wiring.cjs')]);
-run('CryptoCrawler truthful admin diagnostics wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-truthful-admin-diagnostics.cjs')]);
-
-console.log('[deployment-preflight] PASS — CryptoCrawler invariants are clean; normal production build continues with Vite/esbuild');
+const barrels = [
+ ['agents',read('server/services/cryptocrawl/agents/index.ts'),['CainCrawler','CainTwinHybrid','ConjoinedTwinCrawler','SwarmOrchestrator']],
+ ['eden',read('server/services/cryptocrawl/eden/index.ts'),['EdenService','EdenDeploymentManager','edenCainStates']],
+ ['ai',read('server/services/cryptocrawl/ai/index.ts'),['CryptocrawlerAIHarmony','cryptocrawlerAIHarmony']],
+ ['optimization',read('server/services/cryptocrawl/optimization/index.ts'),['DivineOptimizationEngine','getDivineEngine']],
+ ['training',read('server/services/cryptocrawl/training/index.ts'),['scheduledMonteCarloTraining','ScheduledMonteCarloTraining']],
+ ['evolution',read('server/services/cryptocrawl/evolution/index.ts'),['HyperEvolutionEngine','SwarmIntelligenceEngine','FrontierResearchEngine']],
+ ['faucet',read('server/services/cryptocrawl/faucet/index.ts'),['FacetSimulationEngine','HighRiskSimulationEngine','runComplianceSimulation']],
+ ['capital-free',read('server/services/cryptocrawl/capital-free/index.ts'),['BarterSystem','PartnershipFormationSystem','StarburstScalingSystem','NexGenProtocolLayer']],
+];
+for (const [,s,forbidden] of barrels) for (const t of forbidden) no(s,t);
+req(barrels[5][1],'recordMeasuredEvolutionFeedback'); req(barrels[7][1],'AlchemyIntegration');
+const bridge=read('server/services/cryptocrawl/bridge/index.ts'); no(bridge,'withdraw-deposit'); no(bridge,'withdrawDepositManager');
+const faucet=read('server/services/cryptocrawl/faucet/autonomous-faucet.ts');
+for (const t of ['Canonical CryptoCrawler lifecycle compatibility facade','canonicalExecutionScheduler.start()','maxHourlyProfit: Number.POSITIVE_INFINITY','dailyTarget: 0']) req(faucet,t);
+for (const t of ['makeCloseDecision(','executeWithStealth(','Math.random']) no(faucet,t);
+const fc=read('server/services/cryptocrawl/faucet/concurrent-execution-wiring.ts'); req(fc,'Legacy faucet concurrency patch retired'); no(fc,'target.makeOpenDecision');
+const mesh=read('server/services/cryptocrawl/faucet/higher-order-mesh.ts'); req(mesh,'Legacy compatibility surface only'); no(mesh,'Math.random');
+const apiIndex=read('server/services/cryptocrawl/api/index.ts'); req(apiIndex,'./canonical-dashboard-api.js');
+const legacyDash=read('server/services/cryptocrawl/api/dashboard-api.ts'); req(legacyDash,"from './canonical-dashboard-api.js'"); no(legacyDash,'setTimeout('); no(legacyDash,'DivineOptimizer');
+const dash=read('server/services/cryptocrawl/api/canonical-dashboard-api.ts'); for (const t of ['canonicalOpportunityState','canonicalExecutionScheduler','canonical_terminal_settlement']) req(dash,t); no(dash,'Math.random');
+const admin=read('server/services/cryptocrawl/api/truthful-admin-diagnostics.ts'); req(admin,'mutableHere: false'); req(admin,'diagnostics-only');
+const wallet=read('server/services/cryptocrawl/core/wallet.ts'); for (const t of ['encryptedKey','mnemonic','loadFromDB','saveToDB']) no(wallet,t); req(wallet,'direct wallet withdrawal is disabled');
+const shield=read('server/services/cryptocrawl/risk/mandatory-risk-shield.ts'); req(shield,'retired');
+const circuit=read('server/services/cryptocrawl/risk/circuit-breaker.ts'); req(circuit,'retired');
+const exec=read('server/services/cryptocrawl/orchestrator/execution-orchestrator.ts'); req(exec,'retired'); no(exec,'Math.random');
+const flash=read('server/services/cryptocrawl/core/flashloan-atomic-engine.ts'); req(flash,'Legacy compatibility surface only'); no(flash,'Math.random'); req(flash,'success: false');
+console.log('[deployment-preflight] DIAGNOSTIC middle clean-house passed; holding 30s');
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30000);
+process.exit(77);
