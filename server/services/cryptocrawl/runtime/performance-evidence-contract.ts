@@ -86,12 +86,16 @@ export function getPerformanceEvidenceContract(): PerformanceEvidenceContractSna
   const hour = canonicalOpportunityState.getMetrics(60 * 60_000);
 
   const byStageP99Ms: Partial<Record<LatencyStage, number>> = {};
-  for (const [stage, distribution] of Object.entries(latency.byStage) as Array<[LatencyStage, typeof latency.byStage[LatencyStage]]>) {
+  for (const [stage, distribution] of Object.entries(latency.byStage) as Array<[
+    LatencyStage,
+    (typeof latency.byStage)[LatencyStage],
+  ]>) {
     if (distribution.p99Ms !== null && Number.isFinite(distribution.p99Ms)) {
       byStageP99Ms[stage] = distribution.p99Ms;
     }
   }
-  const stageP99 = Object.values(byStageP99Ms).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const stageP99 = Object.values(byStageP99Ms)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
 
   return {
     authority: 'performance_truth_telemetry_only',
