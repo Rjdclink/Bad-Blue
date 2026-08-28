@@ -22,6 +22,7 @@ function checksum(sql: string): string {
 }
 
 async function ensureLedger(): Promise<void> {
+  await pool.query('create schema if not exists private');
   await pool.query(`
     create table if not exists private.cryptocrawler_schema_migrations (
       migration text primary key,
