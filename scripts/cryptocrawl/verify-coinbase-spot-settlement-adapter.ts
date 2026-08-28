@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   CoinbaseSpotSettlementAdapter,
+  coinbaseDecimalString,
   coinbaseProductId,
   type CoinbasePrivateRequester,
 } from '../../server/services/cryptocrawl/execution/coinbase-spot-settlement-adapter.js';
@@ -64,6 +65,10 @@ const requester: CoinbasePrivateRequester = async (path, method, options = {}) =
 assert.equal(coinbaseProductId('BTCUSD'), 'BTC-USD');
 assert.equal(coinbaseProductId('ETHUSDC'), 'ETH-USDC');
 assert.throws(() => coinbaseProductId('BTC-EUR'), /Unsupported Coinbase spot symbol/);
+assert.equal(coinbaseDecimalString(100.01), '100.01');
+assert.equal(coinbaseDecimalString(1e-13), '0.0000000000001');
+assert.equal(coinbaseDecimalString(1.25e6), '1250000');
+assert.throws(() => coinbaseDecimalString(0), /finite and positive/);
 
 const adapter = new CoinbaseSpotSettlementAdapter(requester);
 const receipt = await adapter.submit({ symbol: 'BTCUSD', side: 'buy', quantity: 0.01, price: 100 });
