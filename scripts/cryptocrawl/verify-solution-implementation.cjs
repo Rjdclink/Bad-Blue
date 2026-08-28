@@ -16,11 +16,13 @@ const latency = read('server/services/cryptocrawl/runtime/end-to-end-latency-har
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const observability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
 const repository = read('server/services/cryptocrawl/intelligence/canonical-intelligence-repository.ts');
+const outbox = read('server/services/cryptocrawl/intelligence/canonical-intelligence-outbox.ts');
 const evolution = read('server/services/cryptocrawl/evolution/measured-execution-feedback.ts');
 const runtime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 const relay = read('server/services/cryptocrawl/execution/multi-relay-submitter.ts');
 const relayIdentity = read('server/services/cryptocrawl/execution/adapters/flashbots-auth-identity.ts');
 const privateMemoryMigration = read('server/migrations/013_cryptocrawler_private_intelligence_memory.sql');
+const privateOutboxMigration = read('server/migrations/014_cryptocrawler_private_outbox.sql');
 
 // S-60 — Supabase/private trust boundary and secret handling.
 requireText(privateMemoryMigration, 'create schema if not exists private', 'durable intelligence lives in a private schema');
@@ -140,9 +142,45 @@ requireText(scheduler, 'runtimeInvariantMonitor.evaluate(snapshot).allowed', 'ca
 requireText(scheduler, 'executionResourceScheduler.acquireCexPlan', 'resource lease admission remains authoritative after invariant check');
 requireText(scheduler, 'stageManager.canExecuteTrades()', 'governance stage authority remains intact');
 requireText(scheduler, 'snapshot.plan.netProfitUsd > 0', 'strict positive-net scheduler gate remains intact');
-
 requireText(observability, 'runtimeInvariantMonitor.scan(recentSnapshots)', 'heartbeat scans canonical state for invariant drift');
 requireText(observability, 'runtimeInvariants: invariantMonitor', 'heartbeat exposes typed quarantine state');
+
+// S-93 — private durable outbox, restart recovery, retry/dedupe, observable backlog.
+requireText(privateOutboxMigration, 'private.cryptara_outbox', 'durable outbox lives in private server-only schema');
+for (const field of ['source_event_id text not null', 'schema_version text not null', 'dedupe_key text not null unique',
+  "status text not null default 'pending'", 'attempt_count integer not null default 0',
+  'visible_at timestamptz not null default now()', 'locked_at timestamptz']) {
+  requireText(privateOutboxMigration, field, `durable outbox schema preserves ${field}`);
+}
+requireText(privateOutboxMigration, 'cryptara_outbox_ready_idx', 'durable outbox has a ready/retry scan index');
+requireText(privateOutboxMigration, "rolname = 'anon'", 'durable outbox denies anonymous API role');
+requireText(privateOutboxMigration, "rolname = 'authenticated'", 'durable outbox denies authenticated API role');
+requireText(privateOutboxMigration, "rolname = 'service_role'", 'durable outbox denies Supabase API service role');
+forbidText(privateOutboxMigration, 'public.cryptara_outbox', 'durable outbox cannot be exposed through public schema');
+
+requireText(outbox, 'on conflict (dedupe_key) do nothing', 'durable enqueue is idempotent by deterministic dedupe key');
+requireText(outbox, 'for update skip locked', 'durable worker claims jobs safely across concurrent processes');
+requireText(outbox, "status = 'processing'", 'durable worker explicitly leases work before processing');
+requireText(outbox, 'attempt_count = outbox.attempt_count + 1', 'durable worker records every processing attempt');
+requireText(outbox, "status = 'processing'", 'stale processing jobs remain reclaimable');
+requireText(outbox, 'locked_at <= now() -', 'stale worker leases are recovered after restart/failure');
+requireText(outbox, 'Math.pow(2', 'durable retry uses bounded exponential backoff');
+requireText(outbox, 'CRYPTARA_OUTBOX_MAX_ATTEMPTS', 'durable retry has a bounded attempt ceiling');
+requireText(outbox, 'on conflict (event_id) do nothing', 'terminal outcome handler remains exactly-once/idempotent at durable sink');
+requireText(outbox, "authority: 'background_persistence_only'", 'durable outbox is background persistence authority only');
+requireText(outbox, 'executionDependency: false', 'durable outbox cannot become an execution dependency');
+requireText(outbox, 'executionBlocked: false', 'outbox degradation explicitly leaves execution unblocked');
+forbidText(outbox, 'canonicalExecutionScheduler', 'durable outbox cannot invoke or control execution scheduler');
+forbidText(outbox, 'executeVerifiedArbitragePlan', 'durable outbox cannot execute trades');
+forbidText(outbox, 'stageManager', 'durable outbox cannot become governance authority');
+forbidText(outbox, 'Math.random', 'durable outbox cannot fabricate job/evidence identity');
+
+requireText(evolution, "from '../intelligence/canonical-intelligence-outbox.js'", 'terminal learning feeds durable outbox additively');
+requireText(evolution, 'canonicalIntelligenceOutbox.enqueueTerminalOutcome(durableOutcome, feedback)', 'terminal outcome enqueue preserves exact measured evidence');
+requireText(evolution, 'void canonicalIntelligenceOutbox.enqueueTerminalOutcome', 'durable DB enqueue cannot block execution/settlement hot path');
+requireText(runtime, 'ensureCanonicalIntelligenceOutbox()', 'canonical runtime starts restart-recovery worker');
+requireText(observability, 'canonicalIntelligenceOutbox.refreshMetrics()', 'runtime heartbeat measures durable outbox backlog');
+requireText(observability, 'durableOutbox: intelligenceOutbox', 'runtime heartbeat exposes durable outbox state');
 
 if (failures.length > 0) {
   console.error('[solution-implementation] FAIL');
@@ -150,4 +188,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[solution-implementation] PASS — S-60..S-64 private durable intelligence, S-80 measured latency telemetry, and S-92 runtime invariant quarantine preserve canonical execution/governance/resource authority');
+console.log('[solution-implementation] PASS — S-60..S-64 private durable intelligence, S-80 measured latency telemetry, S-92 runtime invariant quarantine, and S-93 restart-safe durable learning outbox preserve canonical execution/governance/resource authority');
