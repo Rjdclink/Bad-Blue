@@ -32,7 +32,7 @@ requireText(profitCapture, 'settlement', 'settlement authority remains');
 const verifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
 requireText(verifier, 'getActiveExecutableQuoteVenues()', 'verifier consumes venue capability authority');
 requireText(verifier, 'hasPositiveRawCrossVenueEdge', 'raw cross-venue positive-edge screen remains');
-requireText(verifier, 'primeCexFeeEvidence([...rawEdgeSurvivors])', 'authenticated fees are enriched only for raw-edge survivors');
+requireText(verifier, 'primeCexFeeEvidence([...rawEdgeSurvivors])', 'authenticated Kraken/OKX fees are enriched only for raw-edge survivors');
 requireText(verifier, 'topSpreadBps <= breakEvenBps', 'fee/fixed-cost break-even screen remains');
 requireText(verifier, 'netProfitUsd = grossProfitUsd - totalCostsUsd', 'all-in net calculation remains explicit');
 requireText(verifier, 'candidate.netProfitUsd > bestPlan.netProfitUsd', 'depth-aware sizing chooses the highest measured net profit');
@@ -41,7 +41,8 @@ requireText(verifier, 'canonicalOpportunityState.recordSearchObservation', 'sear
 forbidText(verifier, "const venues: QuoteVenue[] = ['coinbase', 'kraken', 'okx']", 'no hard-coded executable venue bypass');
 
 // ---------------------------------------------------------------------------
-// Venue capability: Coinbase is incorporated, but credentials never auto-promote
+// Venue capability: Coinbase is end-to-end implemented, but account evidence
+// (permission + authenticated fees + inventory) still fails closed per plan.
 // ---------------------------------------------------------------------------
 const capability = read('server/services/cryptocrawl/discovery/venue-capability-registry.ts');
 const coinbase = capability.match(/coinbase:\s*Object\.freeze\(\{[\s\S]*?\n\s*\}\),/);
@@ -49,17 +50,26 @@ if (!coinbase) failures.push('Coinbase capability declaration missing');
 else {
   requireText(coinbase[0], 'enabled: true', 'Coinbase integration is visible');
   requireText(coinbase[0], 'publicDiscovery: true', 'Coinbase contributes measured public discovery');
+  requireText(coinbase[0], 'executableQuotes: true', 'Coinbase has executable-quality Advanced Trade market data');
   requireText(coinbase[0], 'measuredOrderBook: true', 'Coinbase measured book capability is represented');
-  requireText(coinbase[0], 'liveExecution: false', 'Coinbase remains fail-closed before canonical promotion');
-  requireText(coinbase[0], 'settlementVerification: false', 'Coinbase settlement is not falsely promoted');
+  requireText(coinbase[0], 'authenticatedFeeEvidence: true', 'Coinbase authenticated fee authority is represented');
+  requireText(coinbase[0], 'liveExecution: true', 'Coinbase settlement-safe IOC execution implementation is represented');
+  requireText(coinbase[0], 'settlementVerification: true', 'Coinbase terminal settlement implementation is represented');
 }
-requireText(capability, "return (['kraken', 'okx'] as const)", 'current canonical executable venue set remains Kraken/OKX until Coinbase promotion is complete');
+requireText(capability, "return (['coinbase', 'kraken', 'okx'] as const)", 'canonical executable venue set includes Coinbase/Kraken/OKX');
+requireText(verifier, 'getCoinbaseAdvancedProductBook(symbol)', 'Coinbase executable book comes from Advanced Trade v3');
+requireText(verifier, 'await assertCoinbaseSpotTradeReady()', 'Coinbase fee economics require authenticated trade permission');
+requireText(verifier, 'await getCoinbaseSpotFeeEvidence()', 'Coinbase fee economics require authenticated account fee evidence');
+requireText(verifier, "(venue === 'okx' || venue === 'coinbase') && !evidence", 'Coinbase/OKX configured fee guesses cannot replace authenticated evidence');
+forbidText(verifier, 'api.exchange.coinbase.com', 'canonical verifier cannot use legacy Coinbase Exchange endpoints');
 
 // ---------------------------------------------------------------------------
 // Private account authority / real fee evidence
 // ---------------------------------------------------------------------------
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
 const privateCex = read('server/services/cryptocrawl/intelligence/cex-private-authority.ts');
+const coinbasePrivate = read('server/services/cryptocrawl/intelligence/coinbase-advanced-trade-authority.ts');
+const coinbaseFees = read('server/services/cryptocrawl/intelligence/coinbase-fee-evidence.ts');
 requireText(feeResolver, "from './cex-private-authority.js'", 'fee resolver uses shared private authority');
 requireText(privateCex, 'serializeKrakenPrivate', 'Kraken private calls are serialized');
 requireText(privateCex, 'nextKrakenNonce()', 'Kraken nonce is monotonic within the serialized lane');
@@ -70,6 +80,8 @@ requireText(feeResolver, "source: 'okx_account_trade_fee'", 'OKX fees are accoun
 requireText(feeResolver, 'getOkxInstrumentDirectory', 'OKX live regional instrument directory remains authoritative');
 forbidText(feeResolver, 'let krakenPrivateTail', 'fee resolver cannot own a second Kraken nonce queue');
 forbidText(feeResolver, 'const OKX_FEE_MIN_INTERVAL_MS', 'fee resolver cannot own a second OKX throttle');
+requireText(coinbasePrivate, '/api/v3/brokerage/key_permissions', 'Coinbase permissions are authenticated');
+requireText(coinbaseFees, '/api/v3/brokerage/transaction_summary', 'Coinbase fee tier is authenticated');
 
 // ---------------------------------------------------------------------------
 // Broad but bounded market search / adaptive compute
@@ -113,15 +125,21 @@ const executor = read('server/services/cryptocrawl/execution/centralized-exchang
 requireText(executor, 'plan.netProfitUsd <= 0', 'live CEX executor rejects non-positive deterministic economics');
 requireText(executor, "CRYPTO_ARBITRAGE_LIVE_CONFIRMATION !== 'I_ACCEPT_LIVE_ORDER_RISK'", 'explicit live confirmation remains');
 requireText(executor, 'acquireMeasuredInventory', 'CEX execution requires reconciled inventory');
+requireText(executor, "new Set<ExecutableCexVenue>(['coinbase', 'kraken', 'okx'])", 'centralized executor admits only implemented venues');
 requireText(executor, "topology: 'CEX_CEX'", 'execution Monte Carlo is topology-specific');
 requireText(executor, 'if (!monteCarlo.approved)', 'execution MC remains a live admission gate');
 
+const inventory = read('server/services/cryptocrawl/execution/cex-inventory-ledger.ts');
+requireText(inventory, "export type InventoryVenue = 'coinbase' | 'kraken' | 'okx'", 'inventory authority covers all executable CEX venues');
 const settlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 requireText(settlement, "timeinforce: 'IOC'", 'Kraken taker execution stays IOC');
 requireText(settlement, "ordType: 'ioc'", 'OKX taker execution stays IOC');
+requireText(settlement, 'CoinbaseSettlementBridge', 'Coinbase uses canonical settlement orchestration');
+requireText(settlement, "sor_limit_ioc", 'Coinbase taker execution stays IOC');
 requireText(settlement, 'calculateRealizedEconomics', 'terminal economics are derived from actual fills/fees');
 requireText(settlement, 'settlementConfirmed', 'pair settlement confirmation remains explicit');
 requireText(settlement, 'authenticated_final_balances', 'terminal balances remain settlement evidence');
+requireText(settlement, 'USD, USDT and USDC are distinct inventory assets', 'realized accounting cannot silently assume stable quote parity');
 
 // ---------------------------------------------------------------------------
 // Monte Carlo / terminal learning / governance progression
