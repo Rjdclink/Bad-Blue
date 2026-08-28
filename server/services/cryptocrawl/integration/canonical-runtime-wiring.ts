@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
+import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
@@ -38,6 +39,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   // Durable learning memory rehydrates independently of market discovery and
   // execution. A database outage therefore degrades historical intelligence only.
   void canonicalIntelligenceRepository.hydrate();
+  // Durable retry/restart recovery is also isolated from the trading hot path.
+  ensureCanonicalIntelligenceOutbox();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
@@ -57,6 +60,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     monteCarloCalibration: 'terminal_normalized_settlement_only',
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
     intelligenceMemoryExecutionDependency: false,
+    durableLearningOutbox: 'private_postgres_deduped_retry_recovery',
+    durableLearningOutboxExecutionDependency: false,
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
