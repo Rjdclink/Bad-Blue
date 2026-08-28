@@ -3,6 +3,7 @@ import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
+import { endToEndLatencyHarness } from '../runtime/end-to-end-latency-harness.js';
 import { RuntimeJsonStateStore } from '../integration/runtime-json-state-store.js';
 
 export interface MeasuredExecutionSample {
@@ -203,10 +204,23 @@ function measuredStats(samples: MeasuredExecutionSample[]) {
 export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutionFeedback): Promise<void> {
   if (!feedback.settlement || feedback.settlement.terminal !== true) return;
   const eventId = terminalFeedbackIdentity(feedback);
-  // Canonical durable memory is deliberately asynchronous. This call updates the
-  // bounded hot layer immediately and queues private-Postgres persistence without
-  // making database latency or availability part of execution/settlement safety.
-  canonicalIntelligenceRepository.observeTerminalOutcome(feedback, eventId);
+  const enqueueSpan = endToEndLatencyHarness.startSpan('learning_enqueue', 'queue', {
+    traceId: eventId,
+    backend: 'canonical_private_intelligence_memory',
+    chain: feedback.chain,
+    symbol: feedback.symbol,
+    strategy: feedback.strategy,
+  });
+  try {
+    // Canonical durable memory is deliberately asynchronous. This call updates the
+    // bounded hot layer immediately and queues private-Postgres persistence without
+    // making database latency or availability part of execution/settlement safety.
+    canonicalIntelligenceRepository.observeTerminalOutcome(feedback, eventId);
+    enqueueSpan.end('ok');
+  } catch (error) {
+    enqueueSpan.end('error');
+    throw error;
+  }
 
   await ensureMeasuredEvolutionFeedbackHydrated();
   const sample = normalizeSample(feedback);
