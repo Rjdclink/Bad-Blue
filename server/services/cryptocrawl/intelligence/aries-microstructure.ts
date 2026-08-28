@@ -186,6 +186,9 @@ export function observeAriesQueueEcho(
     const current = side === 'buy' ? samples[index].bidQty : samples[index].askQty;
     const dt = samples[index].observedAt - samples[index - 1].observedAt;
     if (dt <= 0) continue;
+    // This is a conservative queue-depletion proxy from top-level depth changes;
+    // exchange trade-by-trade order-arrival feeds can replace it later without
+    // changing the public Queue-Echo interface.
     consumedQty += Math.max(0, previous - current);
     elapsedMs += dt;
   }
@@ -261,6 +264,13 @@ export function estimateAriesVenueLeadLag(symbol: string, firstVenue: string, se
   };
 }
 
+/**
+ * Deterministic empirical stress ensemble. Execution gating must not depend on
+ * Math.random(): identical history and inputs produce identical outcomes. The
+ * paths rotate through observed spread changes with co-prime strides so recent
+ * market behavior is sampled from many orderings without pretending to be a
+ * trained generative model.
+ */
 export function stressTestAriesSpread(
   currentSpreadBps: number,
   firstVenue: string,
@@ -281,22 +291,26 @@ export function stressTestAriesSpread(
   if (spreadChanges.length < 4) {
     return { persistenceProbability: 0.5, downsideQuantileBps: currentSpreadBps * 0.5, expectedTerminalSpreadBps: currentSpreadBps, paths: 0 };
   }
+  const pathCount = Math.max(8, Math.min(256, Math.floor(paths)));
+  const tickCount = Math.max(1, Math.min(128, Math.floor(ticks)));
   const outcomes: number[] = [];
   let positive = 0;
-  for (let path = 0; path < paths; path += 1) {
+  for (let path = 0; path < pathCount; path += 1) {
     let spread = currentSpreadBps;
-    for (let tick = 0; tick < ticks; tick += 1) {
-      const index = Math.floor(Math.random() * spreadChanges.length);
+    const offset = (path * 17) % spreadChanges.length;
+    const stride = 31;
+    for (let tick = 0; tick < tickCount; tick += 1) {
+      const index = (offset + tick * stride + path * tick) % spreadChanges.length;
       spread += spreadChanges[index];
     }
     outcomes.push(spread);
     if (spread > 0) positive += 1;
   }
   return {
-    persistenceProbability: positive / paths,
+    persistenceProbability: positive / pathCount,
     downsideQuantileBps: quantile(outcomes, 0.10),
     expectedTerminalSpreadBps: outcomes.reduce((sum, value) => sum + value, 0) / outcomes.length,
-    paths,
+    paths: pathCount,
   };
 }
 
