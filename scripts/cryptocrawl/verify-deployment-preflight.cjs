@@ -7,4 +7,6 @@ const result = spawnSync(process.execPath, [path.join(root, 'scripts', 'cryptocr
   stdio: 'inherit',
 });
 if (result.error || result.signal || result.status !== 0) process.exit(result.status || 1);
-console.log('[deployment-preflight] DIAGNOSTIC PASS — clean-house only');
+console.log('[deployment-preflight] DIAGNOSTIC clean-house passed; holding 30s before intentional preview-only failure');
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000);
+process.exit(77);
