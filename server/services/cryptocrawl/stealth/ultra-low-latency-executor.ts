@@ -7,15 +7,13 @@ const DISABLED_REASON = 'Legacy stealth executor is quarantined: placeholder cal
 /**
  * Historical compatibility shell only.
  *
- * This implementation previously mixed real wallet submission with placeholder
- * contract/calldata and fabricated relay successes. Keeping its exported shape
- * avoids import breakage while making every execution-adjacent entry point fail
- * closed. Canonical execution lives under ../execution and is the sole live
- * transaction authority.
+ * Initialization is deliberately observation-safe so legacy monitoring/readiness
+ * surfaces can still start without acquiring transaction authority. Every method
+ * that could execute or synthesize an execution remains fail-closed.
  */
 export class UltraLowLatencyExecutor {
   async initialize(_wallet: Wallet, _providers: Map<string, providers.JsonRpcProvider>): Promise<void> {
-    throw new Error(DISABLED_REASON);
+    // No signer/provider state is retained. Canonical execution owns transaction authority.
   }
 
   async executeInstant(_opportunity: Opportunity): Promise<ExecutionResult> {
