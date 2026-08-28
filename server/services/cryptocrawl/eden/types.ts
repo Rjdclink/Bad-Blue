@@ -42,12 +42,10 @@ export interface CainState {
   currentMission?: string;
   replicas: string[];
   knowledge: Record<string, any>;
-  // Conjoined-Twin specific
   learningRate?: number;
   adaptationScore?: number;
   coordinationEfficiency?: number;
   validationAccuracy?: number;
-  // Dual-Purpose Cataclysm specific
   gravityCrawlersOrchestrated?: number;
   botPatternsDetected?: number;
 }
@@ -55,7 +53,7 @@ export interface CainState {
 export interface MicroCrawlerState {
   id: string;
   parentCainId: string;
-  mode: 'micro' | 'full';
+  mode: 'micro' | 'prewarm' | 'full';
   priority: number;
   target?: string;
   chain?: ChainId;
@@ -96,8 +94,8 @@ export interface EthicalGuard {
 
 export interface ProfitabilityObjective {
   expectedProfit: number;
-  lambdaRisk: number; // Risk regularization coefficient
-  muCost: number; // Cost regularization coefficient
+  lambdaRisk: number;
+  muCost: number;
   opportunityWaste: number;
   score: number;
 }
