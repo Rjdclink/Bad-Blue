@@ -111,10 +111,11 @@ export function rankMeasuredMarketUniverse<T extends MarketUniverseCandidate>(as
 }
 
 /**
- * Produces a stable-quality but rotating candidate order. The rotation matters
- * because the Faucet intentionally limits expensive per-cycle validation: a
- * fixed top-N prefix otherwise scans BTC/ETH/BNB forever and starves the rest of
- * the already-discovered measured universe.
+ * Produces a performance-focused but still rotating candidate order. When there
+ * is terminal pair history, a bounded prefix of the highest measured performers
+ * remains anchored so limited scan budgets revisit proven markets more often.
+ * The rest of the measured universe continues to rotate, preventing historical
+ * winners from starving new pairs or regime-change detection.
  */
 export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
   const ranked = rankMeasuredMarketUniverse(assets);
@@ -125,13 +126,23 @@ export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(a
     ranked.length,
     Math.max(1, Number.isFinite(configuredWindow) ? Math.floor(configuredWindow) : ranked.length),
   );
-  const head = ranked.slice(0, windowSize);
-  const start = rotationCursor % head.length;
-  rotationCursor = (rotationCursor + Math.max(1, Math.floor(head.length / 3))) % head.length;
+  const performance = performanceProvider?.() || new Map<string, MarketUniversePerformanceHint>();
+  const configuredFocusFraction = Number(process.env.CRYPTO_MARKET_PERFORMANCE_FOCUS_FRACTION || 0.25);
+  const focusFraction = clamp(Number.isFinite(configuredFocusFraction) ? configuredFocusFraction : 0.25, 0, 0.5);
+  const focusCount = performance.size > 0 && windowSize > 1
+    ? Math.min(windowSize - 1, Math.max(1, Math.floor(windowSize * focusFraction)))
+    : 0;
+  const focus = ranked.slice(0, focusCount);
+  const rotationPool = ranked.slice(focusCount, windowSize);
+
+  if (rotationPool.length === 0) return rememberOrderedUniverse(ranked);
+  const start = rotationCursor % rotationPool.length;
+  rotationCursor = (rotationCursor + Math.max(1, Math.floor(rotationPool.length / 3))) % rotationPool.length;
 
   return rememberOrderedUniverse([
-    ...head.slice(start),
-    ...head.slice(0, start),
+    ...focus,
+    ...rotationPool.slice(start),
+    ...rotationPool.slice(0, start),
     ...ranked.slice(windowSize),
   ]);
 }
