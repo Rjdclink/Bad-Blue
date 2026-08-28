@@ -17,6 +17,7 @@ export function ensureConcurrentExecutionWiring(): void {
   logger.info('[CryptoCrawler] Legacy faucet concurrency patch retired', {
     component: 'ConcurrentExecutionWiring',
     executionAuthority: 'canonical_execution_scheduler',
+    lifecycleOwner: 'CryptoCoreRuntime',
     legacyFaucetMonkeyPatch: false,
     scheduler: canonicalExecutionScheduler.getStats(),
   });
