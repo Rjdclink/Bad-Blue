@@ -31,70 +31,19 @@ function run(label, executable, args) {
   }
 }
 
-run(
-  'CryptoCrawler clean-house authority boundaries',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-clean-house.cjs')],
-);
+run('CryptoCrawler clean-house authority boundaries', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-clean-house.cjs')]);
+run('CryptoCrawler clean-house authority extensions', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-clean-house-authority-extensions.cjs')]);
+run('CryptoCrawler solution implementation invariants', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-solution-implementation.cjs')]);
+run('CryptoCrawler canonical CEX L2 integrity', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-s72-l2-integrity.cjs')]);
+run('CryptoCrawler S-65 through S-94 semantic completion', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-s65-s94-completion.cjs')]);
+run('CryptoCrawler 247-issue source reconciliation', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-source-completion-reconciliation.cjs')]);
+run('CryptoCrawler S-80 measured latency wiring', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-s80-latency-wiring.cjs')]);
+run('CryptoCrawler S-94 performance truth contract', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-performance-truth-contract.cjs')]);
+run('CryptoCrawler no-regression invariants v2', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-no-regression-opportunity-pipeline-v2.cjs')]);
+run('CryptoCrawler core topology lifecycle wiring', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-core-topology-wiring.cjs')]);
+run('CryptoCrawler competition evidence wiring', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-competition-evidence-wiring.cjs')]);
+run('CryptoCrawler expanded profit blocker wiring', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-profit-blocker-wiring.cjs')]);
+run('CryptoCrawler Coinbase Advanced Trade integration wiring', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-coinbase-integration-wiring.cjs')]);
+run('CryptoCrawler truthful admin diagnostics wiring', process.execPath, [path.join(root, 'scripts', 'cryptocrawl', 'verify-truthful-admin-diagnostics.cjs')]);
 
-run(
-  'CryptoCrawler clean-house authority extensions',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-clean-house-authority-extensions.cjs')],
-);
-
-run(
-  'CryptoCrawler solution implementation invariants',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-solution-implementation.cjs')],
-);
-
-run(
-  'CryptoCrawler S-80 measured latency wiring',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-s80-latency-wiring.cjs')],
-);
-
-run(
-  'CryptoCrawler S-94 performance truth contract',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-performance-truth-contract.cjs')],
-);
-
-run(
-  'CryptoCrawler no-regression invariants v2',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-no-regression-opportunity-pipeline-v2.cjs')],
-);
-
-run(
-  'CryptoCrawler core topology lifecycle wiring',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-core-topology-wiring.cjs')],
-);
-
-run(
-  'CryptoCrawler competition evidence wiring',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-competition-evidence-wiring.cjs')],
-);
-
-run(
-  'CryptoCrawler expanded profit blocker wiring',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-profit-blocker-wiring.cjs')],
-);
-
-run(
-  'CryptoCrawler Coinbase Advanced Trade integration wiring',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-coinbase-integration-wiring.cjs')],
-);
-
-run(
-  'CryptoCrawler truthful admin diagnostics wiring',
-  process.execPath,
-  [path.join(root, 'scripts', 'cryptocrawl', 'verify-truthful-admin-diagnostics.cjs')],
-);
-
-console.log('[deployment-preflight] PASS — clean-house boundaries/extensions, solution implementation invariants, complete S-80 measured latency wiring, S-94 measured-performance truth contract, current CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade boundaries, and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
+console.log('[deployment-preflight] PASS — S-01..S-94, all 247 source issues, clean-house/no-regression boundaries, measured latency/performance truth, topology, competition, profit blockers, Coinbase Advanced Trade, and diagnostics are source-complete; Railway deployment remains a separate gated stage');
