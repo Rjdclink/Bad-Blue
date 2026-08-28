@@ -29,6 +29,7 @@ export const LEGACY_NON_AUTHORITATIVE_COMPONENTS = [
   'intelligence/gravity-reaper.ts',
   'ai/index.ts (legacy namespace only)',
   'evolution/index.ts (legacy namespace only)',
+  'evolution/frontier-research-integration.ts (research-only; performance/profit claims are non-transferable)',
   'parallel-intelligence/parallel-lanes.ts',
   'parallel-intelligence/six-cane-system.ts',
   'validation/monte-carlo-engine.ts (base/research fallback; not live authority)',
@@ -47,7 +48,7 @@ export function logLegacyIntelligenceQuarantine(): void {
     component: 'LegacyIntelligenceQuarantine',
     disconnectedFromAuthoritativeTrading: LEGACY_NON_AUTHORITATIVE_COMPONENTS,
     legacyPublicEntryPoint: 'server/services/cryptocrawl/legacy/index.ts',
-    reason: 'Historical components contain simulated, placeholder, duplicate, or superseded authority and must not be represented as measured live trading evidence',
+    reason: 'Historical components contain simulated, placeholder, duplicate, superseded, or non-transferable research evidence and must not be represented as measured live trading evidence',
     authoritativeReplacement: [
       'canonical_measured_runtime',
       'canonical_opportunity_state',
@@ -62,6 +63,7 @@ export function logLegacyIntelligenceQuarantine(): void {
       'governed_execution',
       'normalized_terminal_settlement',
       'terminal_settlement_feedback',
+      'measured_latency_slos',
     ],
   });
 }
