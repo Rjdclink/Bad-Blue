@@ -2,14 +2,6 @@ import logger from '../../../logger.js';
 import { getDynamicMakerCanaryStatus } from '../execution/stablecoin-maker-strategy.js';
 import { stageManager } from '../governance/stage-management.js';
 
-const RESERVE_KEYS = [
-  'CRYPTOCRAWL_INVENTORY_MIN_RESERVE_OKX_USDT',
-  'CRYPTOCRAWL_INVENTORY_MIN_RESERVE_OKX_USDC',
-  'CRYPTOCRAWL_INVENTORY_MIN_RESERVE_KRAKEN_USDT',
-  'CRYPTOCRAWL_INVENTORY_MIN_RESERVE_KRAKEN_USDC',
-] as const;
-
-const operatorBaselines = new Map<string, number>();
 let installed = false;
 let listener: (() => void) | null = null;
 let lastApplied = -1;
@@ -18,14 +10,6 @@ function finiteBoundedEnv(name: string, fallback: number, min: number, max: numb
   const parsed = Number(process.env[name]);
   const value = Number.isFinite(parsed) ? parsed : fallback;
   return Math.max(min, Math.min(max, value));
-}
-
-function rememberOperatorBaselines(): void {
-  for (const key of RESERVE_KEYS) {
-    if (operatorBaselines.has(key)) continue;
-    const parsed = Number(process.env[key]);
-    operatorBaselines.set(key, Number.isFinite(parsed) && parsed >= 0 ? parsed : 0);
-  }
 }
 
 export interface RainbowMakerFuelStatus {
@@ -55,17 +39,18 @@ export function getRainbowMakerFuelStatus(): RainbowMakerFuelStatus {
   };
 }
 
-function applyDynamicReserve(): void {
-  rememberOperatorBaselines();
+function publishDynamicReserve(): void {
   const status = getRainbowMakerFuelStatus();
-  for (const key of RESERVE_KEYS) {
-    const baseline = operatorBaselines.get(key) || 0;
-    process.env[key] = String(Math.max(baseline, status.dynamicReserveUsd));
-  }
+
+  // This value is payout-policy telemetry only. Do NOT write it into
+  // CRYPTOCRAWL_INVENTORY_MIN_RESERVE_*: that inventory field is intentionally
+  // unavailable to the trading executor, so using it for maker fuel would make
+  // the money we are trying to preserve impossible for maker orders to consume.
+  process.env.CRYPTO_RAINBOW_MAKER_FUEL_RESERVE_USD = String(status.dynamicReserveUsd);
 
   if (Math.abs(status.dynamicReserveUsd - lastApplied) < 1e-9) return;
   lastApplied = status.dynamicReserveUsd;
-  logger.info('[RainbowBridge] Dynamic maker-fuel reserve updated', {
+  logger.info('[RainbowBridge] Dynamic maker-fuel payout reserve updated', {
     component: 'RainbowMakerFuelReserve',
     makerCanaryCeilingUsd: status.makerCanaryCeilingUsd,
     makerProofSamples: status.proofSamples,
@@ -74,18 +59,17 @@ function applyDynamicReserve(): void {
     bufferedCanaries: status.bufferedCanaries,
     feeBufferBps: status.feeBufferBps,
     dynamicReserveUsd: status.dynamicReserveUsd,
-    venues: ['okx', 'kraken'],
-    assets: ['USDT', 'USDC'],
-    operatorMinimumsPreserved: true,
-    payoutRule: 'rainbow_sweeps_only_inventory_above_protected_reserve',
+    inventorySpendabilityPreserved: true,
+    inventoryMinimumReserveMutated: false,
+    payoutProtectionSignal: 'CRYPTO_RAINBOW_MAKER_FUEL_RESERVE_USD',
   });
 }
 
 export function ensureRainbowMakerFuelReserve(): void {
   if (installed) return;
   installed = true;
-  applyDynamicReserve();
-  listener = () => applyDynamicReserve();
+  publishDynamicReserve();
+  listener = () => publishDynamicReserve();
   stageManager.on('execution-evidence-recorded', listener);
 }
 
