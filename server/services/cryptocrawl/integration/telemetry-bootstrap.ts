@@ -37,6 +37,10 @@ const ANKR_PUBLIC_HTTP: Partial<Record<SupportedChain, string>> = {
 let bootstrapPromise: Promise<void> | null = null;
 
 function logExecutionPosture(): void {
+  const coinbaseConfigured = !!(
+    (process.env.COINBASE_API_KEY?.trim() || process.env.COINBASE_KEY_NAME?.trim() || process.env.CDP_API_KEY_NAME?.trim())
+    && (process.env.COINBASE_API_SECRET?.trim() || process.env.COINBASE_KEY_SECRET?.trim() || process.env.CDP_API_KEY_SECRET?.trim())
+  );
   logger.info('[TelemetryBootstrap] Production execution posture', {
     component: 'TelemetryBootstrap',
     noExecutionGuardEnabled: process.env.NO_EXECUTION === 'true',
@@ -45,6 +49,7 @@ function logExecutionPosture(): void {
     zeroCapitalExecutionEnabled: process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true',
     zeroCapitalExecutionConfirmed: process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK',
     walletConfigured: !!process.env.WALLET_PRIVATE_KEY?.trim(),
+    coinbaseConfigured,
     krakenConfigured: !!(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()),
     okxConfigured: !!(
       process.env.OKX_API_KEY?.trim()
