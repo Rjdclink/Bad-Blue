@@ -5,16 +5,16 @@ import { alchemyIntegration, type MempoolAnalysis } from '../capital-free/alchem
 let installed = false;
 
 function shouldStartFilteredMempool(): boolean {
-  return process.env.ALCHEMY_MEMPOOL_MONITORING_ENABLED === 'true'
-    && !!process.env.ALCHEMY_API_KEY?.trim()
-    && !!process.env.ALCHEMY_MEMPOOL_NETWORKS?.trim();
+  return process.env.ALCHEMY_FILTERED_MEMPOOL_ENABLED?.trim().toLowerCase() !== 'false'
+    && !!process.env.ALCHEMY_API_KEY?.trim();
 }
 
 /**
  * Replaces the expensive broad-hash->detail-RPC evidence path with Alchemy's
- * server-side filtered full-transaction subscription when mempool monitoring is
- * requested. The legacy unfiltered path remains separately fail-closed unless its
- * explicit emergency flag is enabled.
+ * server-side filtered full-transaction subscription. The filtered path is an
+ * independent low-cost capability and therefore does not require enabling the
+ * legacy broad pending-transaction firehose. Set ALCHEMY_FILTERED_MEMPOOL_ENABLED=false
+ * to opt out explicitly; the legacy unfiltered path remains separately fail-closed.
  */
 export function ensureAlchemyFilteredMempoolWiring(): void {
   if (installed) return;
@@ -56,6 +56,7 @@ export function ensureAlchemyFilteredMempoolWiring(): void {
 
   logger.info('[AlchemyFilteredMempool] Filtered mempool compatibility wiring installed', {
     component: 'AlchemyFilteredMempool',
+    enabledByDefaultWhenConfigured: true,
     serverSideToAddressFiltering: true,
     fullTransactionPayload: true,
     perHashDetailRpcRequired: false,
