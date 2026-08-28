@@ -1,10 +1,11 @@
 /**
- * @deprecated CryptoCrawler diagnostics compatibility facade.
+ * @deprecated CryptoCrawler lifecycle/diagnostics compatibility facade.
  *
  * Historical versions of MasterPipeline owned LuxSwarm/Stealth/TripleDip/RL
- * execution paths. Those paths are retired. This class is intentionally limited
- * to readiness/status compatibility for existing admin and wire-check callers.
- * It grants no discovery, execution, settlement, learning, or scaling authority.
+ * execution paths. Those paths are retired. Existing lifecycle callers are
+ * delegated to the canonical measured runtime and canonical execution scheduler.
+ * This class grants no independent discovery, execution, settlement, learning,
+ * or scaling authority.
  */
 
 import logger from '../../../logger.js';
@@ -16,6 +17,8 @@ import {
   assessSharedExecutionEnvironment,
   getSharedExecutionCapabilities,
 } from '../execution/index.js';
+import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
+import { ensureCanonicalCryptoCrawlerRuntimeWiring } from './canonical-runtime-wiring.js';
 import { ensureCryptaraAssessmentWiring } from './cryptara-assessment-wiring.js';
 
 type ReadinessIssue = {
@@ -47,12 +50,10 @@ class MasterPipeline {
     return process.env.CRYPTO_REQUIRE_LIVE_CONNECTORS === 'true' || process.env.NODE_ENV === 'production';
   }
 
-  /**
-   * Compatibility initialization installs canonical Cryptara assessment wiring
-   * and probes live signal readiness. It does not start a trading pipeline.
-   */
+  /** Compatibility initialization installs current canonical wiring only. */
   async initialize(): Promise<void> {
     ensureCryptaraAssessmentWiring();
+    ensureCanonicalCryptoCrawlerRuntimeWiring();
     const cryptara = getCryptara({
       enabled: true,
       surveillanceMode: 'scheduled',
@@ -61,9 +62,9 @@ class MasterPipeline {
     });
     await cryptara.initialize();
     this.initialized = true;
-    logger.info('MasterPipeline compatibility diagnostics initialized', {
+    logger.info('MasterPipeline compatibility facade initialized', {
       component: 'MasterPipeline',
-      authority: 'diagnostics_only',
+      authority: 'canonical_lifecycle_delegate',
       legacyExecutionAuthority: false,
     });
   }
@@ -220,30 +221,38 @@ class MasterPipeline {
   }
 
   /**
-   * Historical execution entry point is intentionally retired.
+   * Historical lifecycle entry point. Delegates only to canonical authorities.
    */
   async run(): Promise<void> {
-    throw new Error('MasterPipeline execution authority is retired; use canonical measured discovery and CanonicalExecutionScheduler');
+    await this.initialize();
+    canonicalExecutionScheduler.start();
+    logger.info('MasterPipeline compatibility run delegated to canonical scheduler', {
+      component: 'MasterPipeline',
+      authority: 'canonical_lifecycle_delegate',
+      legacyExecutionAuthority: false,
+    });
   }
 
   isRunning(): boolean {
-    return false;
+    return canonicalExecutionScheduler.getStats().running;
   }
 
   async stop(): Promise<void> {
-    // Diagnostics facade owns no runtime loop.
+    canonicalExecutionScheduler.stop();
   }
 
   getMetrics() {
+    const scheduler = canonicalExecutionScheduler.getStats();
     return {
-      running: false,
-      authority: 'diagnostics_only' as const,
+      running: scheduler.running,
+      authority: 'canonical_lifecycle_delegate' as const,
       legacyExecutionAuthority: false,
       initialized: this.initialized,
       lastReadinessCheckAt: this.lastReadinessCheckAt,
       lastFinalStatus: this.lastFinalStatus,
-      opportunitiesProcessed: 0,
-      totalProfit: 0,
+      canonicalScheduler: scheduler,
+      opportunitiesProcessed: scheduler.attempts,
+      totalProfit: null,
     };
   }
 }
