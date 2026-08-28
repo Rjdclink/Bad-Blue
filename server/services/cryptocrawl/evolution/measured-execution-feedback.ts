@@ -205,6 +205,7 @@ function measuredStats(samples: MeasuredExecutionSample[]) {
 export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutionFeedback): Promise<void> {
   if (!feedback.settlement || feedback.settlement.terminal !== true) return;
   const eventId = terminalFeedbackIdentity(feedback);
+  let durableOutboxConfirmed = false;
   const enqueueSpan = endToEndLatencyHarness.startSpan('learning_enqueue', 'queue', {
     traceId: eventId,
     backend: 'canonical_private_intelligence_memory',
@@ -213,24 +214,32 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     strategy: feedback.strategy,
   });
   try {
-    // Canonical hot memory is updated immediately. Existing direct persistence is
-    // preserved, while the durable outbox adds restart-safe retry without making
-    // database availability part of execution/settlement safety.
+    // Canonical hot memory is updated immediately. The outbox handoff is then
+    // confirmed durably before this post-settlement learning step returns. A DB
+    // failure degrades memory only; it never invalidates terminal settlement.
     canonicalIntelligenceRepository.observeTerminalOutcome(feedback, eventId);
     const durableOutcome = canonicalIntelligenceRepository
       .getRecentTerminalOutcomes(512)
       .find(outcome => outcome.eventId === eventId);
     if (durableOutcome) {
-      void canonicalIntelligenceOutbox.enqueueTerminalOutcome(durableOutcome, feedback).catch(error => {
+      try {
+        durableOutboxConfirmed = await canonicalIntelligenceOutbox.enqueueTerminalOutcome(durableOutcome, feedback);
+      } catch (error) {
         logger.warn('Durable intelligence outbox enqueue degraded; existing hot/direct persistence remains active', {
           component: 'MeasuredEvolutionFeedback',
           eventId,
           error: error instanceof Error ? error.message : String(error),
           executionBlocked: false,
         });
+      }
+    } else {
+      logger.warn('Terminal outcome was not available for durable outbox handoff', {
+        component: 'MeasuredEvolutionFeedback',
+        eventId,
+        executionBlocked: false,
       });
     }
-    enqueueSpan.end('ok');
+    enqueueSpan.end(durableOutboxConfirmed ? 'ok' : 'retry');
   } catch (error) {
     enqueueSpan.end('error');
     throw error;
@@ -264,7 +273,7 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     averageSlippageBps: stats.averageSlippageBps,
     persistentMemoryAllowed: getCryptocrawlGovernance().isLongTermMemoryAllowed(),
     canonicalPrivateMemoryQueued: true,
-    durableOutboxQueued: true,
+    durableOutboxConfirmed,
     legacyHyperEvolutionAuthority: false,
   });
 }
