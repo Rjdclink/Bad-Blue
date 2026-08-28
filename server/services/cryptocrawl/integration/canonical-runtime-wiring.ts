@@ -15,6 +15,7 @@ import { ensureMonteCarloPrecomputeWiring } from './monte-carlo-precompute-wirin
 import { ensureOrderBookEvolutionWiring } from './order-book-evolution-wiring.js';
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
+import { ensurePredictiveCainWiring } from './predictive-cain-wiring.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 
@@ -38,6 +39,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDiscoveryLatencyInstrumentation();
   ensureExecutionLatencyInstrumentation();
   ensureLatencyObservability();
+  ensurePredictiveCainWiring();
   void canonicalIntelligenceRepository.hydrate();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
@@ -58,6 +60,10 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     monteCarloCalibration: 'terminal_normalized_settlement_only',
     monteCarloPrecompute: 'quanti_comp_background_advisory_exact_key_ttl',
     monteCarloPrecomputeExecutionAuthority: false,
+    predictiveCain: 'predicted_lux_preparation_stream',
+    predictiveCainActions: ['warm_market_data', 'warm_cex_l2', 'warm_validated_rpc'],
+    predictiveCainExecutionAuthority: false,
+    predictiveCainDeterministicPositiveAuthority: false,
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
     intelligenceMemoryExecutionDependency: false,
     cryptaraLatencyInstrumentation: ['mc_cache', 'ml_advisory'],
