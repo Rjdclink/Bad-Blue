@@ -11,6 +11,12 @@ import { ensureStablecoinMakerExecutionWiring } from './stablecoin-maker-executi
 
 let installed = false;
 
+function makerCanaryMinimumProbability(): number {
+  const configured = Number(process.env.CRYPTO_ARBITRAGE_MAKER_CANARY_MIN_PROBABILITY || 0.80);
+  const value = Number.isFinite(configured) ? configured : 0.80;
+  return Math.max(0.75, Math.min(0.95, value));
+}
+
 function criticalMissingInformation(items: readonly string[], makerCanary = false): string[] {
   return [...new Set(items)].filter(item =>
     !item.startsWith('optional:')
@@ -55,13 +61,7 @@ function normalizePositiveAssessment(
     return assessment;
   }
 
-  // Cold-start maker canaries are the mechanism that creates empirical maker
-  // fill/cancel evidence, so they may pass before the historical-confidence
-  // counter is populated — but only under a stronger Hyper MC threshold and the
-  // hard canary/post-only/no-taker-fallback limits carried by the plan.
-  const minimumProbability = makerCanary
-    ? Math.max(0.75, Math.min(0.95, Number(process.env.CRYPTO_ARBITRAGE_MAKER_CANARY_MIN_PROBABILITY || 0.80)))
-    : 0.60;
+  const minimumProbability = makerCanary ? makerCanaryMinimumProbability() : 0.60;
   if (!Number.isFinite(assessment.monteCarlo.probabilityOfProfit) || assessment.monteCarlo.probabilityOfProfit < minimumProbability) {
     assessment.recommendation = 'reject';
     assessment.provenance = [...new Set([
@@ -84,12 +84,6 @@ function normalizePositiveAssessment(
   return assessment;
 }
 
-/**
- * Installs a narrow compatibility policy over legacy profit/ranking surfaces.
- * Canonical all-in deterministic economics, measured venue product constraints,
- * Monte Carlo risk, governance, inventory/resource leases, quote freshness,
- * settlement and circuit breakers remain authoritative.
- */
 export function ensurePositiveProfitCaptureWiring(): void {
   if (installed) return;
   installed = true;
@@ -107,12 +101,11 @@ export function ensurePositiveProfitCaptureWiring(): void {
     const takerPlan = await originalEvaluateOnce(request);
     if (takerPlan) return normalizeCexExecutablePlan(takerPlan);
 
-    const makerPlan = await evaluateStablecoinMakerCandidate({
+    return evaluateStablecoinMakerCandidate({
       symbol: String(request?.symbol || ''),
       notionalUsd: Number(request?.notionalUsd || 0),
       maxQuoteAgeMs: Math.max(1, Number(request?.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000)),
     });
-    return makerPlan;
   };
   verifier.verifyOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
     const plan = await verifier.evaluateOnce(request);
@@ -156,7 +149,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
       canaryMaxUsd: 5_000,
       maxTtlMs: 30_000,
       cryptaraHyperMonteCarloRequired: true,
-      coldStartCanaryMinimumProbability: Math.max(0.75, Math.min(0.95, Number(process.env.CRYPTO_ARBITRAGE_MAKER_CANARY_MIN_PROBABILITY || 0.80))),
+      coldStartCanaryMinimumProbability: makerCanaryMinimumProbability(),
     },
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedAuthorities: [
