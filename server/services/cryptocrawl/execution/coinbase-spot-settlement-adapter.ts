@@ -161,10 +161,10 @@ async function readCoinbaseBalances(requester: CoinbasePrivateRequester): Promis
 }
 
 /**
- * Settlement-safe Coinbase Advanced Trade spot adapter. It is deliberately kept
- * separate from the canonical CEX executor until its mocked lifecycle regression
- * and runtime key/fee evidence both pass; merely adding credentials must never
- * promote a venue into live execution.
+ * Settlement-safe Coinbase Advanced Trade spot adapter. Authenticated permission
+ * checks happen before live submission, every terminal order is queried through
+ * Advanced Trade, and balances are exposed to the canonical inventory ledger so
+ * Coinbase can participate only when real spendable inventory is reconciled.
  */
 export class CoinbaseSpotSettlementAdapter {
   constructor(private readonly requester: CoinbasePrivateRequester = coinbasePrivateRequest) {}
@@ -218,7 +218,7 @@ export class CoinbaseSpotSettlementAdapter {
     if (!provisional.terminal) return provisional;
     let finalBalances: Record<string, string> | undefined;
     try {
-      finalBalances = await readCoinbaseBalances(this.requester);
+      finalBalances = await this.getBalances();
     } catch (error) {
       logger.warn('[Coinbase] Final balance snapshot unavailable after terminal order', {
         component: 'CoinbaseSpotSettlementAdapter',
@@ -237,5 +237,9 @@ export class CoinbaseSpotSettlementAdapter {
     if (result && result.success === false) {
       throw new Error(`Coinbase cancel rejected: ${result.failure_reason || 'unknown failure'}`);
     }
+  }
+
+  async getBalances(): Promise<Record<string, string>> {
+    return readCoinbaseBalances(this.requester);
   }
 }
