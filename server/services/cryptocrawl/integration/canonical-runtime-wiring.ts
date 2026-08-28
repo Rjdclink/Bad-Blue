@@ -11,6 +11,7 @@ import { ensureLatencyObservability } from './latency-observability.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
+import { ensureMonteCarloPrecomputeWiring } from './monte-carlo-precompute-wiring.js';
 import { ensureOrderBookEvolutionWiring } from './order-book-evolution-wiring.js';
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
@@ -19,14 +20,7 @@ import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.
 
 let installed = false;
 
-/**
- * Canonical CryptoCrawler runtime lifecycle wiring.
- *
- * This module is intentionally independent of the historical MasterOrchestrator.
- * It starts only measured/current runtime services and does not grant execution
- * authority. Execution remains governed by the existing stage, economics, risk,
- * resource, settlement, and NO_EXECUTION boundaries.
- */
+/** Canonical lifecycle wiring. No service started here grants execution authority. */
 export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   if (installed) return;
   installed = true;
@@ -35,6 +29,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   logZeroCapitalReadinessDiagnostics();
   ensureLearningLifecycleWiring();
   ensureMonteCarloCalibrationWiring();
+  ensureMonteCarloPrecomputeWiring();
   ensureOracleEvidenceWiring();
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
@@ -43,8 +38,6 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDiscoveryLatencyInstrumentation();
   ensureExecutionLatencyInstrumentation();
   ensureLatencyObservability();
-  // Durable learning memory rehydrates independently of market discovery and
-  // execution. A database outage therefore degrades historical intelligence only.
   void canonicalIntelligenceRepository.hydrate();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
@@ -63,6 +56,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     orderBookEvolution: 'measured_short_horizon_transitions',
     dynamicScale: 'dual_axis_search_and_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
+    monteCarloPrecompute: 'quanti_comp_background_advisory_exact_key_ttl',
+    monteCarloPrecomputeExecutionAuthority: false,
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
     intelligenceMemoryExecutionDependency: false,
     cryptaraLatencyInstrumentation: ['mc_cache', 'ml_advisory'],
