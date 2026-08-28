@@ -59,11 +59,13 @@ forbidText(canonicalIndex, 'assessSharedExecutionEnvironment', 'root barrel must
 forbidText(canonicalIndex, 'getSharedExecutionCapabilities', 'root barrel must not expose stale shared capability naming');
 for (const forbidden of [
   'SixCaneSystem', 'sixCaneSystem', 'DivineOptimizationEngine', 'StarburstEngine',
-  'MasterOrchestrator', 'LuxSwarm', 'EdenStorage', 'ELITE_STRATEGIES',
-  'MARKET_CONDITIONS', 'swarmIntelligence', 'CryptocrawlerAIHarmony',
+  'EdenStorage', 'ELITE_STRATEGIES', 'MARKET_CONDITIONS', 'swarmIntelligence',
+  'CryptocrawlerAIHarmony',
 ]) {
   forbidText(canonicalIndex, forbidden, `root barrel must not export legacy authority ${forbidden}`);
 }
+forbidText(canonicalIndex, "from './core/lux-swarm", 'root barrel must not import/export LuxSwarm authority');
+forbidText(canonicalIndex, "from './core/master-orchestrator", 'root barrel must not import/export historical MasterOrchestrator authority');
 
 // Canonical lifecycle must not load historical orchestrator/swarm architecture.
 forbidText(canonicalRuntime, 'master-orchestrator', 'canonical runtime must not import historical MasterOrchestrator');
@@ -73,7 +75,7 @@ forbidText(canonicalRuntime, 'starburst', 'canonical runtime must not start Star
 requireText(canonicalRuntime, 'executionAuthorityGranted: false', 'runtime lifecycle does not grant execution authority');
 requireText(masterShim, 'ensureCanonicalCryptoCrawlerRuntimeWiring()', 'historical master wiring is a compatibility shim');
 forbidText(masterShim, '../core/master-orchestrator', 'master compatibility shim must not load old orchestrator');
-forbidText(masterPipeline, 'LuxSwarm', 'MasterPipeline compatibility facade must not retain LuxSwarm authority');
+forbidText(masterPipeline, "from '../core/lux-swarm", 'MasterPipeline compatibility facade must not import LuxSwarm authority');
 forbidText(masterPipeline, 'StealthSuperiority', 'MasterPipeline compatibility facade must not retain Stealth execution');
 forbidText(masterPipeline, 'TripleDipExtractor', 'MasterPipeline compatibility facade must not retain TripleDip execution');
 forbidText(masterPipeline, 'ReinforcementLearningBidder', 'MasterPipeline compatibility facade must not retain RL execution authority');
