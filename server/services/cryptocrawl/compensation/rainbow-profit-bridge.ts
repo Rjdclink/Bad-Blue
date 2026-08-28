@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { cexInventoryLedger } from '../execution/cex-inventory-ledger.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 import { okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 
@@ -11,6 +12,7 @@ const { isAddress } = ethers.utils;
 const MIN_PAYOUT_USD = finiteEnv('CRYPTO_RAINBOW_MIN_PAYOUT_USD', 5, 0.01, 1_000_000);
 const MAX_PAYOUT_USD = finiteEnv('CRYPTO_RAINBOW_MAX_PAYOUT_USD', 5_000, 1, 10_000_000);
 const OPERATING_RESERVE_USD = finiteEnv('CRYPTO_RAINBOW_OPERATING_RESERVE_USD', 1_000, 0, 100_000_000);
+const INVENTORY_MAX_AGE_MS = finiteEnv('CRYPTO_RAINBOW_INVENTORY_MAX_AGE_MS', 60_000, 5_000, 600_000);
 const MAX_FEE_FRACTION = finiteEnv('CRYPTO_RAINBOW_MAX_FEE_FRACTION', 0.01, 0.0001, 0.25);
 const RECONCILE_INTERVAL_MS = finiteEnv('CRYPTO_RAINBOW_RECONCILE_INTERVAL_MS', 60_000, 10_000, 3_600_000);
 const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
@@ -148,6 +150,29 @@ class RainbowProfitBridge {
     return this.ready;
   }
 
+  private inventoryAwarePayoutCapacity(route: OkxWithdrawalRoute): { capacity: number; authority: 'live_inventory' | 'configured_fallback' } {
+    const fallback = Math.max(0, Math.min(MAX_PAYOUT_USD, route.maxWithdrawal - OPERATING_RESERVE_USD));
+    const snapshot = cexInventoryLedger.getSnapshots().find(item => item.venue === 'okx' && item.asset === route.asset);
+    if (!snapshot || Date.now() - snapshot.lastReconciliationAt > INVENTORY_MAX_AGE_MS) {
+      return { capacity: fallback, authority: 'configured_fallback' };
+    }
+
+    const protectedTarget = Math.max(
+      OPERATING_RESERVE_USD,
+      snapshot.minimumReserve,
+      snapshot.target ?? 0,
+    );
+    const spendable = snapshot.available
+      - snapshot.reserved
+      - snapshot.pendingOrder
+      - snapshot.pendingTransfer
+      - protectedTarget;
+    return {
+      capacity: Math.max(0, Math.min(MAX_PAYOUT_USD, route.maxWithdrawal, spendable)),
+      authority: 'live_inventory',
+    };
+  }
+
   private async flushOnce(): Promise<void> {
     if (!this.destinationReady() || !isDatabaseConfigured) return;
     await this.ensureStore();
@@ -169,7 +194,8 @@ class RainbowProfitBridge {
     const routes = await this.discoverOkxRoutes();
     if (routes.length === 0) return;
     const route = routes[0];
-    const payoutCapacity = Math.max(0, Math.min(MAX_PAYOUT_USD, route.maxWithdrawal - OPERATING_RESERVE_USD));
+    const payoutCapacityState = this.inventoryAwarePayoutCapacity(route);
+    const payoutCapacity = payoutCapacityState.capacity;
     if (payoutCapacity < Math.max(MIN_PAYOUT_USD, route.minWithdrawal + route.fee)) return;
 
     const selected: PendingEvent[] = [];
@@ -195,6 +221,7 @@ class RainbowProfitBridge {
           withdrawalFee: route.fee,
           feeFraction,
           maxFeeFraction: MAX_FEE_FRACTION,
+          inventoryAuthority: payoutCapacityState.authority,
           action: 'accumulate_more_profit',
         });
       }
@@ -231,12 +258,9 @@ class RainbowProfitBridge {
       const withdrawalId = String(response.data[0]?.wdId || '');
       if (!withdrawalId) throw new Error('OKX withdrawal accepted without wdId');
       await this.bindWithdrawal(batchId, withdrawalId);
-      this.logSubmitted(batchId, withdrawalId, route, amount, ids.length);
+      this.logSubmitted(batchId, withdrawalId, route, amount, ids.length, payoutCapacityState.authority);
     } catch (error) {
-      // A timeout can occur after OKX accepted the withdrawal. Resolve by the
-      // client-supplied id before releasing the ledger claim; otherwise a retry
-      // could create a duplicate irreversible withdrawal.
-      const recovered = await this.recoverAmbiguousSubmission(clientId, batchId, route, amount, ids.length);
+      const recovered = await this.recoverAmbiguousSubmission(clientId, batchId, route, amount, ids.length, payoutCapacityState.authority);
       if (recovered) return;
       await releaseUnsentBatch(batchId, error instanceof Error ? error.message : String(error));
       logger.warn('[RainbowBridge] Payout route unavailable; realized profit remains queued', {
@@ -255,7 +279,14 @@ class RainbowProfitBridge {
     );
   }
 
-  private logSubmitted(batchId: string, withdrawalId: string, route: OkxWithdrawalRoute, amount: number, eventCount: number): void {
+  private logSubmitted(
+    batchId: string,
+    withdrawalId: string,
+    route: OkxWithdrawalRoute,
+    amount: number,
+    eventCount: number,
+    inventoryAuthority: 'live_inventory' | 'configured_fallback',
+  ): void {
     logger.info('[RainbowBridge] Realized-profit payout submitted', {
       component: 'RainbowProfitBridge',
       batchId,
@@ -265,6 +296,7 @@ class RainbowProfitBridge {
       fee: route.fee,
       feeFraction: amount > 0 ? route.fee / amount : null,
       eventCount,
+      inventoryAuthority,
       destination: addressFingerprint(DESTINATION),
       withdrawalId,
     });
@@ -276,6 +308,7 @@ class RainbowProfitBridge {
     route: OkxWithdrawalRoute,
     amount: number,
     eventCount: number,
+    inventoryAuthority: 'live_inventory' | 'configured_fallback',
   ): Promise<boolean> {
     try {
       const history = await okxPrivateRequest('/api/v5/asset/withdrawal-history', 'GET', { clientId }, { lane: 'account_read' });
@@ -283,11 +316,9 @@ class RainbowProfitBridge {
       const withdrawalId = String(record?.wdId || '');
       if (!withdrawalId) return false;
       await this.bindWithdrawal(batchId, withdrawalId);
-      this.logSubmitted(batchId, withdrawalId, route, amount, eventCount);
+      this.logSubmitted(batchId, withdrawalId, route, amount, eventCount, inventoryAuthority);
       return true;
     } catch {
-      // Unknown is not equivalent to unsent. Keep the claim submitted without a
-      // withdrawal id so a later reconciliation can resolve clientId first.
       await pool.query(
         `UPDATE private.cryptocrawler_rainbow_profit_events
          SET last_error='Ambiguous OKX withdrawal response; awaiting clientId reconciliation', updated_at=now()
