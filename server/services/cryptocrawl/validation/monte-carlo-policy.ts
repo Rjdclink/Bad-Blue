@@ -39,7 +39,7 @@ export interface MonteCarloPolicyDecision {
   lossThresholdUsd: number;
 }
 
-export const MONTE_CARLO_POLICY_VERSION = 'cryptocrawl-mc-policy-1.1.0';
+export const MONTE_CARLO_POLICY_VERSION = 'cryptocrawl-mc-policy-1.2.0';
 
 function finite(value: unknown, fallback: number): number {
   const parsed = Number(value);
@@ -92,11 +92,6 @@ function minimumBothLegsFill(topology: MonteCarloTopology): number {
   return bounded(process.env.CRYPTOCRAWL_MC_MIN_BOTH_LEGS_FILL, fallback, 0.50, 0.999);
 }
 
-/**
- * The stochastic horizon follows the execution plan/topology rather than a
- * universal one-day window. Callers may supply a more precise measured plan
- * horizon; otherwise these bounded defaults reflect the actual settlement mode.
- */
 export function topologyExecutionHorizonMs(
   topology: MonteCarloTopology,
   quoteMaxAgeMs: number,
@@ -121,9 +116,42 @@ export function selectMonteCarloDistribution(calibrationSamples: number): MonteC
   const heavyTailMinimum = boundedInt(process.env.CRYPTOCRAWL_MC_HEAVY_TAIL_MIN_SAMPLES, 3, 0, empiricalMinimum);
   if (calibrationSamples >= empiricalMinimum) return 'empirical_bootstrap';
   if (calibrationSamples >= heavyTailMinimum) return 'student_t';
-  // Gaussian remains compatibility-only. Production cold start defaults to the
-  // symmetric Student-t fallback so the model does not manufacture upside tails.
   return process.env.CRYPTOCRAWL_MC_GAUSSIAN_COLD_START === 'true' ? 'gaussian_cold_start' : 'student_t';
+}
+
+function adaptiveSimulationDepth(input: MonteCarloPolicyInput, risk: number, marginBps: number, freshness: number, uncertainty: number) {
+  const absoluteMin = boundedInt(process.env.CRYPTOCRAWL_MC_ABSOLUTE_MIN_SAMPLES, 64, 32, 5_000);
+  const absoluteMax = boundedInt(process.env.CRYPTOCRAWL_MC_ABSOLUTE_MAX_SAMPLES, 50_000, absoluteMin, 250_000);
+  const nearBoundaryBps = bounded(process.env.CRYPTOCRAWL_MC_NEAR_BOUNDARY_BPS, 25, 1, 500);
+  const boundaryPressure = Math.max(0, Math.min(1, 1 - Math.abs(marginBps) / nearBoundaryBps));
+  const capitalPressure = Math.max(0, Math.min(1, Math.log10(Math.max(1, input.notionalUsd)) / 6));
+  const calibrationDeficit = Math.max(0, Math.min(1, 1 - input.calibrationSamples / 64));
+  const ttlPressure = 1 - freshness;
+  const effort = Math.max(0, Math.min(1,
+    0.27 * uncertainty +
+    0.20 * boundaryPressure +
+    0.17 * capitalPressure +
+    0.14 * calibrationDeficit +
+    0.12 * ttlPressure +
+    0.10 * Math.max(0, Math.min(1, risk - 1)),
+  ));
+
+  const requested = input.requestedSamples === undefined
+    ? null
+    : boundedInt(input.requestedSamples, absoluteMin, absoluteMin, absoluteMax);
+  const dynamicMin = Math.max(absoluteMin, Math.round(absoluteMin * (1 + effort * 3)));
+  const dynamicTarget = requested ?? Math.round(dynamicMin + (absoluteMax - dynamicMin) * Math.pow(effort, 1.6));
+  const dynamicMax = requested ?? Math.max(dynamicTarget, Math.round(dynamicMin + (absoluteMax - dynamicMin) * Math.min(1, effort + 0.18)));
+
+  // Fast, obvious opportunities use smaller batches so the confidence boundary
+  // can stop immediately; ambiguous/high-capital opportunities use wider batches.
+  const dynamicBatch = Math.max(32, Math.min(2_048, Math.round(32 * Math.pow(2, 1 + effort * 5))));
+  return {
+    minSamples: Math.min(dynamicMin, dynamicMax),
+    ordinarySamples: Math.min(dynamicTarget, dynamicMax),
+    maxSamples: Math.min(absoluteMax, dynamicMax),
+    batchSize: dynamicBatch,
+  };
 }
 
 export function getMonteCarloPolicy(input: MonteCarloPolicyInput): MonteCarloPolicyDecision {
@@ -135,25 +163,7 @@ export function getMonteCarloPolicy(input: MonteCarloPolicyInput): MonteCarloPol
     ? Math.max(0, Math.min(1, 1 - input.quoteAgeMs / input.quoteMaxAgeMs))
     : 0;
   const uncertainty = Math.max(0, Math.min(1, 1 - input.confidence));
-
-  const configuredMin = boundedInt(process.env.CRYPTOCRAWL_MC_MIN_SAMPLES, 256, 128, 25_000);
-  const configuredOrdinary = boundedInt(process.env.CRYPTOCRAWL_MC_ORDINARY_SAMPLES, 2048, configuredMin, 25_000);
-  const configuredMax = boundedInt(process.env.CRYPTOCRAWL_MC_MAX_SAMPLES, 20_000, configuredOrdinary, 50_000);
-  const requested = input.requestedSamples === undefined
-    ? null
-    : boundedInt(input.requestedSamples, configuredOrdinary, configuredMin, configuredMax);
-
-  const nearBoundary = Math.abs(marginBps) <= bounded(process.env.CRYPTOCRAWL_MC_NEAR_BOUNDARY_BPS, 25, 1, 500);
-  const escalation = Math.max(
-    nearBoundary ? 1 : 0,
-    uncertainty,
-    1 - freshness,
-    Math.max(0, risk - 1),
-  );
-  const ordinarySamples = requested ?? Math.min(
-    configuredMax,
-    Math.max(configuredMin, Math.round(configuredOrdinary * (1 + escalation * risk))),
-  );
+  const depth = adaptiveSimulationDepth(input, risk, marginBps, freshness, uncertainty);
   const configuredLossThreshold = finite(process.env.CRYPTOCRAWL_MC_LOSS_THRESHOLD_USD, NaN);
   const lossThresholdUsd = Number.isFinite(configuredLossThreshold) && configuredLossThreshold >= 0
     ? configuredLossThreshold
@@ -162,10 +172,10 @@ export function getMonteCarloPolicy(input: MonteCarloPolicyInput): MonteCarloPol
   return {
     policyVersion: MONTE_CARLO_POLICY_VERSION,
     topology: input.topology,
-    minSamples: configuredMin,
-    ordinarySamples,
-    maxSamples: configuredMax,
-    batchSize: boundedInt(process.env.CRYPTOCRAWL_MC_BATCH_SIZE, 256, 64, 4096),
+    minSamples: depth.minSamples,
+    ordinarySamples: depth.ordinarySamples,
+    maxSamples: depth.maxSamples,
+    batchSize: depth.batchSize,
     executionHorizonMs: topologyExecutionHorizonMs(input.topology, input.quoteMaxAgeMs, input.executionHorizonMs),
     targetProbabilityHalfWidth: bounded(process.env.CRYPTOCRAWL_MC_TARGET_HALF_WIDTH, 0.025, 0.003, 0.15),
     targetTailRelativeTolerance: bounded(process.env.CRYPTOCRAWL_MC_TAIL_RELATIVE_TOLERANCE, 0.08, 0.01, 0.50),
