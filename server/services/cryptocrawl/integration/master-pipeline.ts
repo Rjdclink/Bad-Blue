@@ -14,9 +14,9 @@ import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 import { TradingViewEngine } from '../babel/tradingview-integration.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import {
-  assessSharedExecutionEnvironment,
-  getSharedExecutionCapabilities,
-} from '../execution/index.js';
+  assessCanonicalExecutionEnvironment,
+  getCanonicalExecutionCapabilities,
+} from '../execution/execution-readiness.js';
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
 import { ensureCanonicalCryptoCrawlerRuntimeWiring } from './canonical-runtime-wiring.js';
 import { ensureCryptaraAssessmentWiring } from './cryptara-assessment-wiring.js';
@@ -38,7 +38,7 @@ type DeploymentReadinessPass = {
     alchemy: { ready: boolean; mode: string; detail: string };
     rpc: { ready: boolean; mode: string; detail: string };
   };
-  execution: ReturnType<typeof assessSharedExecutionEnvironment> & ReturnType<typeof getSharedExecutionCapabilities>;
+  execution: ReturnType<typeof assessCanonicalExecutionEnvironment> & ReturnType<typeof getCanonicalExecutionCapabilities>;
 };
 
 class MasterPipeline {
@@ -145,8 +145,8 @@ class MasterPipeline {
         });
       }
 
-      const environment = assessSharedExecutionEnvironment();
-      const capabilities = getSharedExecutionCapabilities();
+      const environment = assessCanonicalExecutionEnvironment();
+      const capabilities = getCanonicalExecutionCapabilities();
       if (environment.noExecutionGuardEnabled && environment.liveExecutionEnabled) {
         issues.push({
           id: 'execution-guard-conflict',
