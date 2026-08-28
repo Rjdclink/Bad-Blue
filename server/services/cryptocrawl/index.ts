@@ -25,11 +25,13 @@ export { measuredCandidateRegistry } from './discovery/measured-candidate-regist
 
 // Economics / execution / settlement
 export * from './arbitrage/arbitrage-verifier.js';
+export { executeVerifiedArbitragePlan } from './execution/index.js';
 export {
-  assessSharedExecutionEnvironment,
-  executeVerifiedArbitragePlan,
-  getSharedExecutionCapabilities,
-} from './execution/index.js';
+  assessCanonicalExecutionEnvironment,
+  getCanonicalExecutionCapabilities,
+  type CanonicalExecutionCapabilities,
+  type CanonicalExecutionEnvironmentReadiness,
+} from './execution/execution-readiness.js';
 export { canonicalExecutionScheduler } from './execution/canonical-execution-scheduler.js';
 export { executionResourceScheduler } from './execution/resource-scheduler.js';
 export * from './execution/settlement-types.js';
