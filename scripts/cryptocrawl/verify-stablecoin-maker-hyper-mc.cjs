@@ -36,6 +36,8 @@ must(executionWiring, 'settlementTimeoutMs: ttlMs', 'cancel-only TTL delegated t
 must(profitWiring, 'const takerPlan = await originalEvaluateOnce(request);', 'taker path remains first');
 must(profitWiring, 'evaluateStablecoinMakerCandidate', 'maker recovery path wired');
 must(profitWiring, 'ensureStablecoinMakerExecutionWiring();', 'maker executor installed');
+must(profitWiring, 'makerCanaryMinimumProbability', 'maker canary threshold helper');
+must(profitWiring, 'Number.isFinite(configured) ? configured : 0.80', 'malformed threshold fails to 80 percent');
 must(profitWiring, 'cryptara_parallel_hyper_monte_carlo', 'Cryptara Hyper MC retained authority');
 
 must(graph, 'await cryptara.assessOpportunity({', 'opportunity graph Cryptara assessment');
