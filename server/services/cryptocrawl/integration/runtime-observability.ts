@@ -10,6 +10,7 @@ import { getLatestCexEconomicBarrier } from '../discovery/cex-economic-barrier.j
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
 import { cexInventoryLedger } from '../execution/cex-inventory-ledger.js';
 import { inventoryRebalancer } from '../execution/inventory-rebalancer.js';
+import { canonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
@@ -80,7 +81,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
   if (heartbeatRunning) return;
   heartbeatRunning = true;
   try {
-    const [alchemy, beam] = await Promise.all([
+    const [alchemy, beam, intelligenceOutbox] = await Promise.all([
       alchemyIntegration.readinessCheck({ strictLive: false }).catch(error => ({
         ready: false,
         active: false,
@@ -88,6 +89,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         detail: error instanceof Error ? error.message : String(error),
       })),
       Promise.resolve(workloadRouter.getSystemStatus()),
+      canonicalIntelligenceOutbox.refreshMetrics(),
     ]);
     const recentMinute = canonicalOpportunityState.getMetrics(60_000);
     const recentHour = canonicalOpportunityState.getMetrics(60 * 60_000);
@@ -264,7 +266,10 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         activeRetries: beam.activeRetries,
       },
       executionScheduler: scheduler,
-      learning: measured,
+      learning: {
+        ...measured,
+        durableOutbox: intelligenceOutbox,
+      },
       executionPosture: {
         ...execution,
         zeroCapitalExecutionEnabled,
@@ -291,6 +296,7 @@ export function ensureCryptoRuntimeObservability(): void {
     heartbeatMs: intervalMs,
     runtimeAttestation: true,
     runtimeInvariantMonitor: true,
+    durableLearningOutboxTelemetry: true,
     decomposedReadiness: [
       'APP_READY',
       'CONFIG_READY',
