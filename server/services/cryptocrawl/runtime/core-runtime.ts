@@ -7,6 +7,7 @@ import {
 let lifecyclePromise: Promise<CryptoCrawlerCoreLifecycle> | null = null;
 let fundingMonitorPromise: Promise<typeof import('../discovery/funding-rate-monitor.js')> | null = null;
 let zeroCapitalProfitWiringScheduled = false;
+let coinbaseReadinessScheduled = false;
 let started = false;
 
 async function getFundingMonitor() {
@@ -35,6 +36,22 @@ function scheduleZeroCapitalProfitWiring(): void {
           error: error instanceof Error ? error.message : String(error),
         });
       });
+  });
+}
+
+function scheduleCoinbaseReadinessProbe(): void {
+  if (coinbaseReadinessScheduled) return;
+  coinbaseReadinessScheduled = true;
+  queueMicrotask(() => {
+    void import('./coinbase-readiness-wiring.js')
+      .then(module => module.ensureCoinbaseReadinessProbe())
+      .catch(error => {
+        logger.warn('[CryptoCoreRuntime] Coinbase readiness probe unavailable; Coinbase remains discovery-only', {
+          component: 'CryptoCoreRuntime',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => { coinbaseReadinessScheduled = false; });
   });
 }
 
@@ -87,6 +104,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   const changed = lifecycle.start();
   started = lifecycle.isStarted();
   scheduleZeroCapitalProfitWiring();
+  scheduleCoinbaseReadinessProbe();
 
   if (process.env.NO_INTERVALS !== 'true' && String(process.env.CRYPTARA_MODE || '').toUpperCase() !== 'SILENT_WATCHER_ONLY') {
     try {
@@ -112,6 +130,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     lowLatencyExecutionCorrectnessPolicyInstalled: true,
     marketFocusPolicyInstalled: true,
     zeroCapitalRealizedProfitPolicyScheduled: true,
+    coinbaseReadinessProbeScheduled: true,
     fundingRateDiscovery: process.env.NO_INTERVALS === 'true' ? 'withheld_no_intervals' : 'optional_parallel_monitor',
   });
 }
