@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import logger from '../../../logger.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import {
   createProductionCexSettlementAdapters,
@@ -14,6 +15,32 @@ function splitSymbol(symbol: string): { base: string; quote: string } {
   const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
   if (!match) throw new Error(`Unsupported maker spot symbol: ${symbol}`);
   return { base: match[1], quote: match[2] };
+}
+
+function okxGatewayLatencyMs(payload: any): number | null {
+  const inTime = Number(payload?.inTime);
+  const outTime = Number(payload?.outTime);
+  if (!Number.isFinite(inTime) || !Number.isFinite(outTime) || outTime < inTime) return null;
+  // OKX gateway timestamps are microseconds since epoch.
+  return (outTime - inTime) / 1_000;
+}
+
+function recordLatency(input: {
+  venue: 'kraken' | 'okx';
+  operation: 'submit' | 'cancel';
+  symbol: string;
+  clientRoundTripMs: number;
+  gatewayProcessingMs?: number | null;
+}): void {
+  logger.info('[StablecoinMaker] Maker order latency evidence', {
+    component: 'PostOnlyMakerAdapters',
+    venue: input.venue,
+    operation: input.operation,
+    symbol: input.symbol,
+    clientRoundTripMs: input.clientRoundTripMs,
+    gatewayProcessingMs: input.gatewayProcessingMs ?? null,
+    executionAuthorityChanged: false,
+  });
 }
 
 function wrapMakerSubmit(
@@ -35,11 +62,17 @@ function wrapMakerSubmit(
         });
         const orderId = result.txid?.[0];
         if (!orderId) throw new Error('Kraken did not return a post-only maker order id');
+        recordLatency({
+          venue,
+          operation: 'submit',
+          symbol: request.symbol,
+          clientRoundTripMs: Date.now() - submittedAt,
+        });
         return { venue: 'kraken', orderId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
       }
 
       const { base, quote } = splitSymbol(request.symbol);
-      const { data } = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
+      const { payload, data } = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
         instId: `${base}-${quote}`,
         tdMode: 'cash',
         side: request.side,
@@ -50,10 +83,27 @@ function wrapMakerSubmit(
       }, { lane: 'order_write' });
       const order = data[0];
       if (!order || order.sCode !== '0' || !order.ordId) throw new Error(`OKX rejected post-only maker order: ${order?.sMsg || 'unknown error'}`);
+      recordLatency({
+        venue,
+        operation: 'submit',
+        symbol: request.symbol,
+        clientRoundTripMs: Date.now() - submittedAt,
+        gatewayProcessingMs: okxGatewayLatencyMs(payload),
+      });
       return { venue: 'okx', orderId: order.ordId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
     },
     query: order => delegate.query(order),
-    cancel: order => delegate.cancel(order),
+    async cancel(order) {
+      const startedAt = Date.now();
+      const result = await delegate.cancel(order);
+      recordLatency({
+        venue,
+        operation: 'cancel',
+        symbol: order.symbol,
+        clientRoundTripMs: Date.now() - startedAt,
+      });
+      return result;
+    },
     ...(delegate.getBalances ? { getBalances: () => delegate.getBalances!() } : {}),
   };
 }
@@ -61,7 +111,8 @@ function wrapMakerSubmit(
 /**
  * Reuses every existing settlement/query/cancel/balance implementation. Only the
  * submit call is changed for maker legs, which keeps realized economics and the
- * canonical inventory ledger identical to the proven taker path.
+ * canonical inventory ledger identical to the proven taker path. Submit/cancel
+ * timing is measured so Cryptara can later calibrate TTL from real terminal data.
  */
 export function createPostOnlyMakerAdapters(plan: StablecoinMakerPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();
