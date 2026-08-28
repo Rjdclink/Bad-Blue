@@ -7,14 +7,21 @@ import { orderBookEvolutionStore } from '../validation/order-book-evolution-stor
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
+function warmSymbolLimit(): number {
+  const configured = Number(
+    process.env.CRYPTOCRAWL_ANTENNA_SYMBOLS
+      || process.env.CRYPTOCRAWL_BOOK_EVOLUTION_SYMBOLS
+      || 32,
+  );
+  return Math.max(8, Math.min(64, Number.isFinite(configured) ? configured : 32));
+}
+
 async function observeOnce(): Promise<void> {
   if (running) return;
   running = true;
   try {
     const venues = getActiveExecutableQuoteVenues();
-    const symbols = getLastOrderedMarketUniverseSymbols().slice(0, Math.max(1, Math.min(32,
-      Number(process.env.CRYPTOCRAWL_BOOK_EVOLUTION_SYMBOLS || 16),
-    )));
+    const symbols = getLastOrderedMarketUniverseSymbols().slice(0, warmSymbolLimit());
     const maxAgeMs = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
     await Promise.all(venues.flatMap(venue => symbols.map(async symbol => {
       const quote = await cexOrderBookStreams.getQuote(venue, symbol, maxAgeMs).catch(() => null);
@@ -34,7 +41,9 @@ export function ensureOrderBookEvolutionWiring(): void {
   logger.info('[OrderBookEvolution] Measured short-horizon book observer installed', {
     component: 'OrderBookEvolutionWiring',
     intervalMs,
+    warmSymbolLimit: warmSymbolLimit(),
     authoritativeVenues: getActiveExecutableQuoteVenues(),
+    connectionModel: 'persistent_venue_socket_multi_symbol',
     syntheticTransitions: false,
   });
 }
