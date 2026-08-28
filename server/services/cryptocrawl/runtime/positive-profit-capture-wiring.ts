@@ -15,6 +15,22 @@ function criticalMissingInformation(items: readonly string[]): string[] {
   );
 }
 
+function enforceAuthenticatedKrakenFeeAuthority(): void {
+  const authenticated = Boolean(
+    process.env.KRAKEN_API_KEY?.trim()
+    && process.env.KRAKEN_API_SECRET?.trim(),
+  );
+  if (!authenticated || !process.env.CRYPTO_ARBITRAGE_KRAKEN_TAKER_FEE_BPS?.trim()) return;
+
+  delete process.env.CRYPTO_ARBITRAGE_KRAKEN_TAKER_FEE_BPS;
+  logger.info('[PositiveProfitCapture] Retired Kraken compatibility taker fee in favor of authenticated TradeVolume evidence', {
+    component: 'PositiveProfitCapture',
+    authenticatedKrakenFeeAuthority: true,
+    requestLevelFeeOverridesRetained: true,
+    compatibilityFallbackWhenCredentialsAbsent: true,
+  });
+}
+
 function normalizePositiveAssessment(
   context: CryptaraOpportunityContext,
   assessment: CryptaraOpportunityAssessment,
@@ -61,6 +77,7 @@ function normalizePositiveAssessment(
 export function ensurePositiveProfitCaptureWiring(): void {
   if (installed) return;
   installed = true;
+  enforceAuthenticatedKrakenFeeAuthority();
 
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
     verifyOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
@@ -106,6 +123,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
     arbitraryMinimumProfitUsd: false,
     maximumDailyProfitExecutionStop: false,
     rankScoreExecutionGate: false,
+    authenticatedKrakenFeeAuthority: Boolean(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()),
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedAuthorities: [
       'deterministic_all_in_economics',
