@@ -4,7 +4,6 @@ import { getCryptocrawlGovernance } from '../governance/index.js';
 import { walletFromPrivateKey } from '../core/wallet-identity.js';
 import { withEvmSignerLane } from './evm-signer-lane.js';
 import {
-  firstSuccessful,
   isSignedRawTransaction,
   nextNonceAfterReservation,
   normalizePendingNonce,
@@ -48,15 +47,11 @@ class UltraLowLatencyExecutor {
   private currentNonce: number | null = null;
   private initialized = false;
   private privateRpcUrl: string;
-  private flashbotsUrl: string;
-  private bloxrouteUrl: string;
   private gasHistory: number[] = [];
   private executionTail: Promise<void> = Promise.resolve();
 
   constructor() {
     this.privateRpcUrl = process.env.PRIVATE_RPC_URL || process.env.RPC_URL || '';
-    this.flashbotsUrl = process.env.FLASHBOTS_RPC || '';
-    this.bloxrouteUrl = process.env.BLOXROUTE_RPC || '';
   }
 
   async initialize(): Promise<void> {
@@ -82,11 +77,8 @@ class UltraLowLatencyExecutor {
     logger.info('Ultra-low-latency executor initialized with pending-nonce authority', {
       component: 'UltraLowLatencyExecutor',
       pendingNonce: this.currentNonce,
-      configuredSubmissionPaths: [
-        'direct',
-        ...(this.flashbotsUrl ? ['flashbots_rpc'] : []),
-        ...(this.bloxrouteUrl ? ['bloxroute_rpc'] : []),
-      ],
+      configuredSubmissionPaths: ['direct'],
+      privateRelayAuthority: 'MultiRelaySubmitter',
       placeholderPresigning: false,
       signOncePerNonce: true,
       distributedSignerLane: true,
@@ -97,7 +89,7 @@ class UltraLowLatencyExecutor {
    * One wallet cannot safely have multiple independent nonce owners. Serialize
    * complete submissions for this signer inside the process; executeInstant and
    * executeMultiPath additionally acquire the shared PostgreSQL signer lane so
-   * separate Railway replicas cannot race the same account nonce.
+   * separate replicas cannot race the same account nonce.
    */
   private async withExecutionLane<T>(work: () => Promise<T>): Promise<T> {
     const previous = this.executionTail;
@@ -209,23 +201,20 @@ class UltraLowLatencyExecutor {
       try {
         const signed = await this.buildSignedTransaction(opp);
         nonce = signed.nonce;
-        const submissions: Promise<SignedSubmission>[] = [this.submitDirect(signed.signedTransaction)];
-        if (this.flashbotsUrl) submissions.push(this.submitViaFlashbots(signed.signedTransaction));
-        if (this.bloxrouteUrl) submissions.push(this.submitViaBloxroute(signed.signedTransaction));
 
-        // Resolve the first successful broadcast, not the first settled promise.
-        // Every path receives the exact same signed bytes and therefore the same
-        // sender/nonce/payload. A fast relay rejection cannot defeat a slower
-        // successful direct broadcast.
-        const result = await firstSuccessful(submissions);
+        // Direct broadcast is the sole authority here. Private relay/builders
+        // are owned by MultiRelaySubmitter and may receive these exact signed
+        // bytes after direct acceptance; this executor must not create a second
+        // Flashbots/Bloxroute submission authority.
+        const result = await this.submitDirect(signed.signedTransaction);
         const latency = Date.now() - startTime;
-        logger.info('Transaction accepted via multi-path broadcast', {
+        logger.info('Transaction accepted via canonical direct broadcast', {
           component: 'UltraLowLatencyExecutor',
           txHash: result.txHash,
           latency: `${latency}ms`,
           winner: result.path,
           nonce,
-          submissionPaths: submissions.length,
+          privateRelayAuthority: 'MultiRelaySubmitter',
         });
         return {
           success: true,
@@ -237,7 +226,7 @@ class UltraLowLatencyExecutor {
       } catch (error) {
         this.currentNonce = null;
         const latency = Date.now() - startTime;
-        logger.error('Multi-path execution failed', {
+        logger.error('Direct execution failed', {
           component: 'UltraLowLatencyExecutor',
           nonce,
           error: error instanceof Error ? error.message : String(error),
@@ -246,22 +235,6 @@ class UltraLowLatencyExecutor {
         return { success: false, latency, method: 'multipath' };
       }
     }));
-  }
-
-  private async submitViaFlashbots(signedTransaction: string): Promise<SignedSubmission> {
-    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
-    if (!this.flashbotsUrl) throw new Error('FLASHBOTS_RPC is not configured');
-    const flashbotsProvider = new JsonRpcProvider(this.flashbotsUrl);
-    const response = await flashbotsProvider.sendTransaction(signedTransaction);
-    return { txHash: response.hash, path: 'flashbots_rpc' };
-  }
-
-  private async submitViaBloxroute(signedTransaction: string): Promise<SignedSubmission> {
-    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
-    if (!this.bloxrouteUrl) throw new Error('BLOXROUTE_RPC is not configured');
-    const bloxrouteProvider = new JsonRpcProvider(this.bloxrouteUrl);
-    const response = await bloxrouteProvider.sendTransaction(signedTransaction);
-    return { txHash: response.hash, path: 'bloxroute_rpc' };
   }
 
   private async submitDirect(signedTransaction: string): Promise<SignedSubmission> {
@@ -284,7 +257,8 @@ class UltraLowLatencyExecutor {
 
       if (gasPrices.length === 0) {
         const feeData = await this.provider.getFeeData();
-        const gasPrice = Number(feeData.gasPrice || parseUnits('1', 'gwei'));
+        if (!feeData.gasPrice) throw new Error('Provider did not return gas history or a current gas price');
+        const gasPrice = Number(feeData.gasPrice);
         return {
           mean: gasPrice,
           volatility: 0,
@@ -339,7 +313,8 @@ class UltraLowLatencyExecutor {
         error: error instanceof Error ? error.message : String(error),
       });
       const feeData = await this.provider.getFeeData();
-      const gasPrice = Number(feeData.gasPrice || parseUnits('1', 'gwei'));
+      if (!feeData.gasPrice) throw error;
+      const gasPrice = Number(feeData.gasPrice);
       return {
         mean: gasPrice,
         volatility: 0,
