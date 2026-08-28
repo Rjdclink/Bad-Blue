@@ -12,7 +12,7 @@ const checks = [
   ['Authenticated Ankr key aliases supported', bootstrap.includes('ANKR_API_KEY') && bootstrap.includes('ANKR_KEY')],
   ['Per-chain authenticated Ankr endpoint derivation supported', bootstrap.includes('https://rpc.ankr.com/${ANKR_SLUGS[chain]}/${ankrKey}')],
   ['BSC recovery route present', bootstrap.includes("bsc: 'bsc'") && bootstrap.includes("bsc: 'https://rpc.ankr.com/bsc'" )],
-  ['Fallback registration stays best-effort', bootstrap.includes('Promise.all(TELEMETRY_CHAINS.map(async chain =>')),
+  ['Fallback registration stays best-effort', bootstrap.includes('Promise.all(TELEMETRY_CHAINS.map(async chain =>')],
   ['No live-execution enablement mutation', !bootstrap.includes("process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION = 'true'" )],
 ];
 
