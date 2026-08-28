@@ -3,6 +3,7 @@ import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
+import { ensureContinuousPostTradeLearning } from '../learning/continuous-post-trade-learning.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { ensureCryptaraLatencyInstrumentation } from './cryptara-latency-instrumentation.js';
 import { ensureDiscoveryLatencyInstrumentation } from './discovery-latency-instrumentation.js';
@@ -40,6 +41,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureExecutionLatencyInstrumentation();
   ensureLatencyObservability();
   ensurePredictiveCainWiring();
+  ensureContinuousPostTradeLearning();
   void canonicalIntelligenceRepository.hydrate();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
@@ -64,6 +66,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     predictiveCainActions: ['warm_market_data', 'warm_cex_l2', 'warm_validated_rpc'],
     predictiveCainExecutionAuthority: false,
     predictiveCainDeterministicPositiveAuthority: false,
+    continuousPostTradeLearning: 'terminal_labels_segmented_decay_uncertainty',
+    continuousPostTradeLearningExecutionAuthority: false,
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
     intelligenceMemoryExecutionDependency: false,
     cryptaraLatencyInstrumentation: ['mc_cache', 'ml_advisory'],
