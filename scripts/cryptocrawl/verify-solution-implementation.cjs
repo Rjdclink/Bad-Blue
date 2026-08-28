@@ -159,10 +159,12 @@ requireText(privateOutboxMigration, "rolname = 'service_role'", 'durable outbox 
 forbidText(privateOutboxMigration, 'public.cryptara_outbox', 'durable outbox cannot be exposed through public schema');
 
 requireText(outbox, 'on conflict (dedupe_key) do nothing', 'durable enqueue is idempotent by deterministic dedupe key');
+requireText(outbox, 'Array.isArray(outcome.sourceEventIds)', 'durable worker validates source-event lineage shape');
+requireText(outbox, 'outcome.sourceEventIds.includes(outcome.eventId)', 'durable worker requires immutable source event identity');
+requireText(outbox, 'where dedupe_key = $1', 'duplicate enqueue confirms the durable record still exists');
 requireText(outbox, 'for update skip locked', 'durable worker claims jobs safely across concurrent processes');
 requireText(outbox, "status = 'processing'", 'durable worker explicitly leases work before processing');
 requireText(outbox, 'attempt_count = outbox.attempt_count + 1', 'durable worker records every processing attempt');
-requireText(outbox, "status = 'processing'", 'stale processing jobs remain reclaimable');
 requireText(outbox, 'locked_at <= now() -', 'stale worker leases are recovered after restart/failure');
 requireText(outbox, 'Math.pow(2', 'durable retry uses bounded exponential backoff');
 requireText(outbox, 'CRYPTARA_OUTBOX_MAX_ATTEMPTS', 'durable retry has a bounded attempt ceiling');
@@ -176,8 +178,9 @@ forbidText(outbox, 'stageManager', 'durable outbox cannot become governance auth
 forbidText(outbox, 'Math.random', 'durable outbox cannot fabricate job/evidence identity');
 
 requireText(evolution, "from '../intelligence/canonical-intelligence-outbox.js'", 'terminal learning feeds durable outbox additively');
-requireText(evolution, 'canonicalIntelligenceOutbox.enqueueTerminalOutcome(durableOutcome, feedback)', 'terminal outcome enqueue preserves exact measured evidence');
-requireText(evolution, 'void canonicalIntelligenceOutbox.enqueueTerminalOutcome', 'durable DB enqueue cannot block execution/settlement hot path');
+requireText(evolution, 'await canonicalIntelligenceOutbox.enqueueTerminalOutcome(durableOutcome, feedback)', 'post-settlement learning confirms durable handoff before returning');
+requireText(evolution, 'durableOutboxConfirmed', 'learning telemetry reports actual durable handoff state');
+forbidText(evolution, 'durableOutboxQueued: true', 'learning cannot claim durable handoff without confirmation');
 requireText(runtime, 'ensureCanonicalIntelligenceOutbox()', 'canonical runtime starts restart-recovery worker');
 requireText(observability, 'canonicalIntelligenceOutbox.refreshMetrics()', 'runtime heartbeat measures durable outbox backlog');
 requireText(observability, 'durableOutbox: intelligenceOutbox', 'runtime heartbeat exposes durable outbox state');
