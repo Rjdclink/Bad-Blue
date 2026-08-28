@@ -10,17 +10,29 @@ const requireText = (source, needle, label) => {
 const forbidText = (source, needle, label) => {
   if (source.includes(needle)) failures.push(`${label}: forbidden ${JSON.stringify(needle)}`);
 };
+const requireOrder = (source, first, second, label) => {
+  const firstIndex = source.indexOf(first);
+  const secondIndex = source.indexOf(second);
+  if (firstIndex < 0 || secondIndex < 0 || firstIndex >= secondIndex) {
+    failures.push(`${label}: expected ${JSON.stringify(first)} before ${JSON.stringify(second)}`);
+  }
+};
 
 const monitor = read('server/services/cryptocrawl/runtime/runtime-invariant-monitor.ts');
 const latency = read('server/services/cryptocrawl/runtime/end-to-end-latency-harness.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const observability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
 const repository = read('server/services/cryptocrawl/intelligence/canonical-intelligence-repository.ts');
+const outbox = read('server/services/cryptocrawl/intelligence/durable-intelligence-outbox.ts');
 const evolution = read('server/services/cryptocrawl/evolution/measured-execution-feedback.ts');
 const runtime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const governanceBootstrap = read('server/services/cryptocrawl/governance/index.ts');
 const relay = read('server/services/cryptocrawl/execution/multi-relay-submitter.ts');
 const relayIdentity = read('server/services/cryptocrawl/execution/adapters/flashbots-auth-identity.ts');
 const privateMemoryMigration = read('server/migrations/013_cryptocrawler_private_intelligence_memory.sql');
+const outboxMigration = read('server/migrations/014_cryptocrawler_private_outbox.sql');
+const privateMigrationReconciler = read('server/migrations/reconcileCryptoPrivateIntelligenceMemory.ts');
+const startupMigrationRegistry = read('server/migrations/reconcileAppSchema.ts');
 
 // S-60 — Supabase/private trust boundary and secret handling.
 requireText(privateMemoryMigration, 'create schema if not exists private', 'durable intelligence lives in a private schema');
@@ -44,6 +56,8 @@ requireText(repository, 'on conflict (event_id) do nothing', 'terminal outcome p
 requireText(repository, 'void this.drainPersistenceQueue()', 'durable persistence runs asynchronously from the caller');
 requireText(repository, "executionDependency: false", 'durable memory cannot become execution dependency');
 requireText(repository, 'executionBlocked: false', 'database degradation is explicitly non-blocking for execution');
+requireText(repository, 'normalizeTerminalOutcome(feedback, eventId)', 'fast and outbox persistence share one terminal normalizer');
+requireText(repository, 'persistTerminalOutcomeFromOutbox', 'canonical repository exposes an idempotent outbox replay path');
 forbidText(repository, 'canonicalExecutionScheduler', 'historical memory cannot become scheduler authority');
 forbidText(repository, 'executeVerifiedArbitragePlan', 'historical memory cannot invoke execution');
 forbidText(repository, 'stageManager.', 'historical memory cannot become governance authority');
@@ -134,15 +148,54 @@ requireText(monitor, "authority: 'safety_monitor_only'", 'runtime monitor declar
 requireText(monitor, 'executionAuthority: false', 'runtime monitor cannot claim execution authority');
 forbidText(monitor, 'Math.random', 'runtime monitor cannot fabricate evidence');
 forbidText(monitor, 'process.env.NO_EXECUTION =', 'runtime monitor cannot mutate global execution posture');
-
 requireText(scheduler, "from '../runtime/runtime-invariant-monitor.js'", 'canonical scheduler consumes runtime invariant monitor');
 requireText(scheduler, 'runtimeInvariantMonitor.evaluate(snapshot).allowed', 'canonical dispatch quarantines invalid candidate state before resource admission');
 requireText(scheduler, 'executionResourceScheduler.acquireCexPlan', 'resource lease admission remains authoritative after invariant check');
 requireText(scheduler, 'stageManager.canExecuteTrades()', 'governance stage authority remains intact');
 requireText(scheduler, 'snapshot.plan.netProfitUsd > 0', 'strict positive-net scheduler gate remains intact');
-
 requireText(observability, 'runtimeInvariantMonitor.scan(recentSnapshots)', 'heartbeat scans canonical state for invariant drift');
 requireText(observability, 'runtimeInvariants: invariantMonitor', 'heartbeat exposes typed quarantine state');
+
+// S-93 — restart-safe durable outbox/background persistence without hot-path authority.
+requireText(outboxMigration, 'private.cryptara_outbox', 'durable outbox is private');
+for (const field of ['source_event_id text not null', 'schema_version text not null', 'dedupe_key text not null unique', 'attempt_count integer not null default 0', 'visible_at timestamptz not null default now()']) {
+  requireText(outboxMigration, field, `outbox migration includes immutable/retry field ${field}`);
+}
+requireText(outboxMigration, "status in ('pending','processing','retry','completed','failed')", 'outbox has explicit lifecycle states');
+requireText(outboxMigration, "rolname = 'anon'", 'outbox revokes anonymous API access');
+requireText(outboxMigration, "rolname = 'authenticated'", 'outbox revokes authenticated API access');
+requireText(outboxMigration, "rolname = 'service_role'", 'outbox revokes service-role API access');
+forbidText(outboxMigration, 'public.cryptara_outbox', 'outbox cannot be created in public API schema');
+
+requireText(outbox, "const OUTBOX_SCHEMA_VERSION = 'cryptara-terminal-feedback-v1'", 'outbox schema version is explicit');
+requireText(outbox, 'terminalFeedbackIdentity(feedback)', 'outbox uses canonical terminal event identity');
+requireText(outbox, 'on conflict (dedupe_key) do nothing', 'outbox enqueue is idempotent');
+requireText(outbox, 'for update skip locked', 'outbox worker claims jobs atomically');
+requireText(outbox, "status = 'processing'", 'outbox records processing ownership');
+requireText(outbox, 'LOCK_TIMEOUT_MS', 'outbox recovers stale processing locks');
+requireText(outbox, 'MAX_ATTEMPTS', 'outbox retries are bounded');
+requireText(outbox, 'retryDelayMs', 'outbox has retry visibility backoff');
+requireText(outbox, "authority: 'background_persistence_transport_only'", 'outbox declares transport-only authority');
+requireText(outbox, 'executionDependency: false', 'outbox cannot become execution dependency');
+requireText(outbox, 'process.env.NO_INTERVALS', 'outbox respects no-interval runtime mode');
+requireText(outbox, 'reconcilePersistedTerminalEvidence', 'outbox can rebuild transport from persisted terminal evidence');
+requireText(outbox, 'persistTerminalOutcomeFromOutbox', 'outbox writes through canonical durable repository');
+forbidText(outbox, 'executeVerifiedArbitragePlan', 'outbox cannot invoke execution');
+forbidText(outbox, 'canonicalExecutionScheduler', 'outbox cannot become scheduler authority');
+forbidText(outbox, 'stageManager.', 'outbox cannot mutate governance');
+forbidText(outbox, 'Math.random', 'outbox cannot fabricate job or event identity');
+
+requireText(evolution, 'void durableIntelligenceOutbox.enqueueTerminalPersistence(feedback, eventId)', 'terminal learning queues restart-safe persistence without awaiting it');
+requireText(evolution, 'executionBlocked: false', 'outbox enqueue degradation cannot block execution');
+requireOrder(governanceBootstrap, 'stageManager.restorePersistence', 'reconcilePersistedTerminalEvidence', 'outbox reconciliation must occur after StageManager restoration');
+requireText(governanceBootstrap, 'stageManager.getCryptaraExecutionEvidence()', 'outbox recovery uses persisted terminal evidence authority');
+requireText(governanceBootstrap, 'durableIntelligenceOutbox.start()', 'outbox worker starts after recovery reconciliation');
+requireText(privateMigrationReconciler, "'013_cryptocrawler_private_intelligence_memory.sql'", 'startup targets private intelligence base migration');
+requireText(privateMigrationReconciler, "'014_cryptocrawler_private_outbox.sql'", 'startup targets durable outbox migration');
+requireText(startupMigrationRegistry, 'reconcileCryptoPrivateIntelligenceMemory', 'application startup explicitly runs private intelligence migrations');
+requireText(observability, 'durableIntelligenceOutbox.getHealth()', 'authoritative heartbeat reads durable outbox backlog health');
+requireText(observability, 'durableOutbox: outboxHealth', 'heartbeat exposes durable outbox health');
+requireText(observability, 'intelligenceMemory:', 'heartbeat exposes canonical memory health without affecting readiness');
 
 if (failures.length > 0) {
   console.error('[solution-implementation] FAIL');
@@ -150,4 +203,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[solution-implementation] PASS — S-60..S-64 private durable intelligence, S-80 measured latency telemetry, and S-92 runtime invariant quarantine preserve canonical execution/governance/resource authority');
+console.log('[solution-implementation] PASS — S-60..S-64 private durable intelligence, S-80 measured latency telemetry, S-92 invariant quarantine, and S-93 restart-safe outbox preserve canonical execution/governance/resource authority');
