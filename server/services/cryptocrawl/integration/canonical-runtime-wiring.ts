@@ -7,6 +7,7 @@ import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-int
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
+import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
@@ -40,6 +41,10 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
   ensureOrderBookEvolutionWiring();
+  // CEX_CEX assessment topology is corrected before discovery starts so absent
+  // on-chain mempool evidence cannot become a synthetic completeness penalty for
+  // Coinbase/Kraken/OKX plans. This adapter changes no economics or execution authority.
+  ensureCryptaraCexEvidenceWiring();
   // Durable learning memory rehydrates independently of market discovery and
   // execution. A database outage therefore degrades historical intelligence only.
   void canonicalIntelligenceRepository.hydrate();
@@ -69,6 +74,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     executionMetrics: 'terminal_settlement_only',
     opportunityMetrics: 'canonical_verified_stream',
     profitCeilingAuthority: false,
+    cexCompetitionEvidence: 'topology_not_applicable_without_synthetic_zero',
+    cexCompetitionEvidenceExecutionAuthority: false,
     measuredOpportunityGraph: 'continuous_multi_topology',
     orderBookEvolution: 'measured_short_horizon_transitions',
     dynamicScale: 'dual_axis_search_and_profitability_pressure',
