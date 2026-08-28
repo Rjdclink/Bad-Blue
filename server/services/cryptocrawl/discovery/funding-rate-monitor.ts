@@ -13,10 +13,22 @@ interface OkxSwapCapability {
   reason: string;
 }
 
+interface OkxSwapAccountContext {
+  instruments: any[];
+  accountModeVisible: boolean;
+  observedAt: number;
+}
+
 const FALLBACK_SYMBOLS = [
   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT',
   'AVAXUSDT', 'LINKUSDT', 'DOTUSDT', 'LTCUSDT', 'BCHUSDT', 'UNIUSDT',
 ];
+
+const OKX_SWAP_CONTEXT_TTL_MS = Math.max(10_000, Number(process.env.CRYPTOCRAWL_OKX_SWAP_CONTEXT_TTL_MS || 60_000));
+let okxSwapContextCache: OkxSwapAccountContext | null = null;
+let okxSwapContextInFlight: Promise<OkxSwapAccountContext> | null = null;
+const okxSwapCapabilityCache = new Map<string, { expiresAt: number; value: OkxSwapCapability }>();
+const okxSwapCapabilityInFlight = new Map<string, Promise<OkxSwapCapability>>();
 
 function finite(value: unknown): number | null {
   const parsed = Number(value);
@@ -31,42 +43,77 @@ function feeCostBps(value: unknown): number | null {
   return parsed < 0 ? Math.abs(parsed) * 10_000 : 0;
 }
 
+async function getOkxSwapAccountContext(): Promise<OkxSwapAccountContext> {
+  if (okxSwapContextCache && Date.now() - okxSwapContextCache.observedAt <= OKX_SWAP_CONTEXT_TTL_MS) {
+    return okxSwapContextCache;
+  }
+  if (okxSwapContextInFlight) return okxSwapContextInFlight;
+
+  okxSwapContextInFlight = (async () => {
+    const [instrumentsResponse, configResponse] = await Promise.all([
+      okxPrivateRequest('/api/v5/account/instruments', 'GET', { instType: 'SWAP' }, { lane: 'account_read' }),
+      okxPrivateRequest('/api/v5/account/config', 'GET', {}, { lane: 'account_read' }),
+    ]);
+    const config = configResponse.data?.[0] || null;
+    const context: OkxSwapAccountContext = {
+      instruments: Array.isArray(instrumentsResponse.data) ? instrumentsResponse.data : [],
+      accountModeVisible: !!config && String(config?.acctLv || '').trim().length > 0,
+      observedAt: Date.now(),
+    };
+    okxSwapContextCache = context;
+    return context;
+  })().finally(() => { okxSwapContextInFlight = null; });
+
+  return okxSwapContextInFlight;
+}
+
 async function getOkxSwapCapability(observation: FundingRateObservation): Promise<OkxSwapCapability> {
   if (observation.venue !== 'okx') {
     return { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'not_okx' };
   }
-  try {
-    const family = observation.instrumentId.replace(/-SWAP$/i, '');
-    const [feeResponse, instrumentsResponse, configResponse] = await Promise.all([
-      okxPrivateRequest('/api/v5/account/trade-fee', 'GET', { instType: 'SWAP', instFamily: family }),
-      okxPrivateRequest('/api/v5/account/instruments', 'GET', { instType: 'SWAP' }),
-      okxPrivateRequest('/api/v5/account/config', 'GET'),
-    ]);
-    const feeRow = feeResponse.data?.[0] || null;
-    const feeBps = feeCostBps(feeRow?.taker);
-    const instrument = instrumentsResponse.data.find((row: any) =>
-      String(row?.instId || '').toUpperCase() === observation.instrumentId.toUpperCase(),
-    );
-    const state = String(instrument?.state || '').toLowerCase();
-    const instrumentVisible = !!instrument && (!state || state === 'live' || state === 'post_only');
-    const config = configResponse.data?.[0] || null;
-    const accountModeVisible = !!config && String(config?.acctLv || '').trim().length > 0;
-    return {
-      feeBps,
-      instrumentVisible,
-      accountModeVisible,
-      reason: instrumentVisible && accountModeVisible
-        ? 'Existing OKX credentials can read the SWAP instrument and account mode; live funding execution still requires a persistent delta-neutral lifecycle and liquidation-safe close authority'
-        : 'Existing OKX credentials did not prove both SWAP instrument visibility and account mode',
-    };
-  } catch (error) {
-    return {
-      feeBps: null,
-      instrumentVisible: false,
-      accountModeVisible: false,
-      reason: `OKX SWAP capability probe unavailable: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
+
+  const cacheKey = observation.instrumentId.toUpperCase();
+  const cached = okxSwapCapabilityCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const inFlight = okxSwapCapabilityInFlight.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const promise = (async (): Promise<OkxSwapCapability> => {
+    try {
+      const family = observation.instrumentId.replace(/-SWAP$/i, '');
+      const [feeResponse, accountContext] = await Promise.all([
+        okxPrivateRequest('/api/v5/account/trade-fee', 'GET', { instType: 'SWAP', instFamily: family }, { lane: 'trade_fee' }),
+        getOkxSwapAccountContext(),
+      ]);
+      const feeRow = feeResponse.data?.[0] || null;
+      const feeBps = feeCostBps(feeRow?.taker);
+      const instrument = accountContext.instruments.find((row: any) =>
+        String(row?.instId || '').toUpperCase() === observation.instrumentId.toUpperCase(),
+      );
+      const state = String(instrument?.state || '').toLowerCase();
+      const instrumentVisible = !!instrument && (!state || state === 'live' || state === 'post_only');
+      const value: OkxSwapCapability = {
+        feeBps,
+        instrumentVisible,
+        accountModeVisible: accountContext.accountModeVisible,
+        reason: instrumentVisible && accountContext.accountModeVisible
+          ? 'Existing OKX credentials can read the SWAP instrument and account mode; live funding execution still requires a persistent delta-neutral lifecycle and liquidation-safe close authority'
+          : 'Existing OKX credentials did not prove both SWAP instrument visibility and account mode',
+      };
+      okxSwapCapabilityCache.set(cacheKey, { expiresAt: Date.now() + OKX_SWAP_CONTEXT_TTL_MS, value });
+      return value;
+    } catch (error) {
+      return {
+        feeBps: null,
+        instrumentVisible: false,
+        accountModeVisible: false,
+        reason: `OKX SWAP capability probe unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  })().finally(() => { okxSwapCapabilityInFlight.delete(cacheKey); });
+
+  okxSwapCapabilityInFlight.set(cacheKey, promise);
+  return promise;
 }
 
 function quotedAsset(symbol: string): string[] {
@@ -96,6 +143,7 @@ class FundingRateMonitor {
       component: 'FundingRateMonitor',
       intervalMs,
       venues: ['okx', 'kraken_futures', 'binance_futures'],
+      okxPrivateAccountContextTtlMs: OKX_SWAP_CONTEXT_TTL_MS,
       newKeysRequiredForDiscovery: false,
       executionAuthority: 'none_until_topology_specific_lifecycle_exists',
     });
@@ -230,6 +278,7 @@ class FundingRateMonitor {
         projectedPositive,
         deterministicPositive,
         eligible: 0,
+        okxSwapCapabilityCacheEntries: okxSwapCapabilityCache.size,
         note: 'Funding rate is carry, not instant spread; unknown exit/liquidation evidence blocks execution',
       });
     } catch (error) {
