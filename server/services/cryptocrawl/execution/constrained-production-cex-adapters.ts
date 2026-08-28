@@ -7,7 +7,6 @@ import {
   type ExecutableCexVenue,
   type OrderRequest,
 } from './cex-settlement.js';
-import { assertFreshSpotOrderConstraints } from './cex-spot-product-policy.js';
 import { cexDecimalString } from './cex-order-serialization.js';
 
 const ORDER_SUBMIT_TIMEOUT_MS = Math.max(3000, Number(process.env.CRYPTO_ARBITRAGE_ORDER_TIMEOUT_MS || 12000));
@@ -31,16 +30,9 @@ function wrapSettlementDelegate(
 }
 
 async function submitKraken(request: OrderRequest): Promise<CexOrderReceipt> {
-  const constraints = await assertFreshSpotOrderConstraints({
-    venue: 'kraken',
-    symbol: request.symbol,
-    side: request.side,
-    quantity: request.quantity,
-    price: request.price,
-  });
   const submittedAt = Date.now();
   const result = await krakenPrivateRequest('/0/private/AddOrder', {
-    pair: constraints.exchangeSymbol,
+    pair: request.symbol,
     type: request.side,
     ordertype: 'limit',
     price: cexDecimalString(request.price),
@@ -60,21 +52,10 @@ async function submitKraken(request: OrderRequest): Promise<CexOrderReceipt> {
 }
 
 async function submitOkx(request: OrderRequest): Promise<CexOrderReceipt> {
-  const constraints = await assertFreshSpotOrderConstraints({
-    venue: 'okx',
-    symbol: request.symbol,
-    side: request.side,
-    quantity: request.quantity,
-    price: request.price,
-  });
   const submittedAt = Date.now();
   const { base, quote } = splitSymbol(request.symbol);
-  const expectedExchangeSymbol = `${base}-${quote}`;
-  if (constraints.exchangeSymbol !== expectedExchangeSymbol) {
-    throw new Error(`OKX product identity changed: expected ${expectedExchangeSymbol}, observed ${constraints.exchangeSymbol}`);
-  }
   const { data } = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
-    instId: constraints.exchangeSymbol,
+    instId: `${base}-${quote}`,
     tdMode: 'cash',
     side: request.side,
     ordType: 'ioc',
@@ -98,8 +79,10 @@ async function submitOkx(request: OrderRequest): Promise<CexOrderReceipt> {
 
 /**
  * Preserve the existing settlement/query/cancel implementations, but replace
- * only live Kraken/OKX submission with force-fresh product validation and exact
- * decimal serialization. Coinbase already performs the same checks internally.
+ * live Kraken/OKX serialization so already-approved venue-legal values are sent
+ * without a hidden 12-decimal rounding cap. Submit-time product freshness stays
+ * exclusively owned by cex-submit-time-product-guard.ts in the centralized
+ * executor. Coinbase already performs exact serialization internally.
  */
 export function createConstrainedProductionCexSettlementAdapters(): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const delegates = createProductionCexSettlementAdapters();
