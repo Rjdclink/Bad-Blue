@@ -10,6 +10,9 @@ const marketData = read('server/services/cryptocrawl/intelligence/coinbase-advan
 const privateAuthority = read('server/services/cryptocrawl/intelligence/coinbase-advanced-trade-authority.ts');
 const fees = read('server/services/cryptocrawl/intelligence/coinbase-fee-evidence.ts');
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
+const productPolicy = read('server/services/cryptocrawl/execution/coinbase-product-policy.ts');
+const executablePlanPolicy = read('server/services/cryptocrawl/execution/coinbase-executable-plan-policy.ts');
+const profitCapture = read('server/services/cryptocrawl/runtime/positive-profit-capture-wiring.ts');
 const settlement = read('server/services/cryptocrawl/execution/coinbase-spot-settlement-adapter.ts');
 const canonicalSettlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 const inventory = read('server/services/cryptocrawl/execution/cex-inventory-ledger.ts');
@@ -24,7 +27,10 @@ assert(publicDiscovery.includes('api.coinbase.com/api/v3/brokerage/market/produc
 assert(publicDiscovery.includes('return capability.enabled && capability.publicDiscovery'), 'executable Coinbase must remain available to broad non-executable public discovery');
 assert(!publicDiscovery.includes('api.exchange.coinbase.com'), 'Coinbase discovery must not regress to legacy Exchange API');
 assert(marketData.includes('/api/v3/brokerage/market/product_book'), 'Executable Coinbase book authority must use Advanced Trade v3 product book');
-assert(marketData.includes("'cache-control': 'no-cache'"), 'Coinbase public product book must bypass the documented public cache for freshness');
+assert(marketData.includes('/api/v3/brokerage/market/products/${encodeURIComponent(productId)}'), 'Coinbase product constraints must come from the Advanced Trade public product endpoint');
+assert(marketData.includes('base_increment') && marketData.includes('quote_increment') && marketData.includes('price_increment'), 'Coinbase executable metadata must preserve product increments');
+assert(marketData.includes('base_min_size') && marketData.includes('quote_min_size'), 'Coinbase executable metadata must preserve minimum sizes');
+assert(marketData.includes("'cache-control': 'no-cache'"), 'Coinbase public market evidence must bypass documented public caching for freshness');
 assert(!marketData.includes('api.exchange.coinbase.com'), 'Coinbase market-data authority must not use legacy Exchange endpoints');
 assert(marketData.includes('product mismatch'), 'Coinbase product-book parser must preserve exact quote-asset identity');
 assert(privateAuthority.includes('COINBASE_API_KEY') && privateAuthority.includes('COINBASE_API_SECRET'), 'Coinbase canonical key aliases must be recognized');
@@ -34,7 +40,21 @@ assert(fees.includes("product_type: 'SPOT'"), 'Coinbase fee evidence must be sco
 assert(feeResolver.includes("source: 'coinbase_transaction_summary'"), 'canonical fee authority must preserve Coinbase authenticated fee provenance');
 assert(feeResolver.includes("if (venue === 'coinbase') return fetchCoinbaseFeeEvidence(symbol)"), 'canonical CEX fee resolver must own Coinbase fee lookup');
 assert(feeResolver.includes("if (venue === 'coinbase') return null"), 'configured Coinbase fee guesses must not substitute for authenticated evidence');
+
+assert(productPolicy.includes('floorToIncrement'), 'Coinbase product policy must provide deterministic downward size normalization');
+assert(productPolicy.includes('isIncrementAligned'), 'Coinbase product policy must reject off-increment values');
+assert(productPolicy.includes('constraints.baseMinSize') && productPolicy.includes('constraints.quoteMinSize'), 'Coinbase product policy must enforce minimum order sizes');
+assert(productPolicy.includes('constraints.tradingDisabled') && productPolicy.includes('constraints.postOnly'), 'Coinbase product policy must reject product states incompatible with taker IOC');
+assert(executablePlanPolicy.includes('getCoinbaseAdvancedProductConstraints(plan.symbol)'), 'Coinbase plan normalization must consume current Advanced Trade product constraints');
+assert(executablePlanPolicy.includes('floorToIncrement(quantityUpperBound, constraints.baseIncrement)'), 'Coinbase plan quantity must be normalized before eligibility');
+assert(executablePlanPolicy.includes('const netProfitUsd = grossProfitUsd - totalCostsUsd'), 'Coinbase normalized quantity must have all-in economics recomputed');
+assert(executablePlanPolicy.includes('netProfitUsd <= 0'), 'Coinbase normalization must fail closed if the normalized plan loses positive net economics');
+assert(profitCapture.includes('normalizeCoinbaseExecutablePlan(plan)'), 'canonical evaluateOnce path must normalize Coinbase plans before eligibility');
+assert(profitCapture.includes('verifier.evaluateOnce = async'), 'Coinbase normalization must wrap the canonical verifier evaluation path');
+
 assert(settlement.includes("sor_limit_ioc"), 'Coinbase spot settlement adapter must submit bounded IOC limit orders');
+assert(settlement.includes('getCoinbaseAdvancedProductConstraints(request.symbol)'), 'Coinbase live submission must re-read current product constraints');
+assert(settlement.includes('validateCoinbaseOrderAgainstProduct'), 'Coinbase live submission must fail closed on stale/off-increment product constraints');
 assert(settlement.includes('/api/v3/brokerage/orders/historical/fills'), 'Coinbase terminal settlement must inspect authenticated fills');
 assert(settlement.includes('/api/v3/brokerage/accounts'), 'Coinbase terminal settlement must reconcile balances');
 assert(settlement.includes('async getBalances()'), 'Coinbase balances must be exposed to canonical inventory reconciliation');
