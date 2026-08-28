@@ -178,7 +178,13 @@ export function observeAriesQueueEcho(
 ): AriesQueueEcho {
   const samples = recordQuote(quote);
   const topQty = side === 'buy' ? (quote.depth.bids[0]?.quantity || 0) : (quote.depth.asks[0]?.quantity || 0);
-  const queueAheadBaseQty = Math.max(0, topQty * clamp(participationFraction, 0.001, 0.25));
+  // We do not know our true exchange queue position before the post-only order is
+  // acknowledged. Treat nearly all currently visible top-level size as ahead of
+  // us instead of multiplying it by our intended participation, which would make
+  // the fill estimate materially optimistic. Order-specific acknowledgements can
+  // replace this proxy later without changing the Queue-Echo interface.
+  const participation = clamp(participationFraction, 0.001, 0.25);
+  const queueAheadBaseQty = Math.max(0, topQty * (1 - participation));
   let consumedQty = 0;
   let elapsedMs = 0;
   for (let index = 1; index < samples.length; index += 1) {
