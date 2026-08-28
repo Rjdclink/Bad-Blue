@@ -4,6 +4,7 @@ import type { CryptaraOpportunityAssessment, CryptaraOpportunityContext } from '
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { normalizeCexExecutablePlan } from '../execution/cex-spot-product-policy.js';
 import { stageManager } from '../governance/stage-management.js';
+import { ensureCoinCapEnvironmentWiring } from './coincap-environment-wiring.js';
 import { ensureDynamicRpcProviderWiring } from './dynamic-rpc-provider-wiring.js';
 
 let installed = false;
@@ -78,6 +79,7 @@ function normalizePositiveAssessment(
 export function ensurePositiveProfitCaptureWiring(): void {
   if (installed) return;
   installed = true;
+  ensureCoinCapEnvironmentWiring();
   enforceAuthenticatedKrakenFeeAuthority();
   ensureDynamicRpcProviderWiring();
 
@@ -116,13 +118,14 @@ export function ensurePositiveProfitCaptureWiring(): void {
     return normalizePositiveAssessment(context, assessment);
   };
 
-  logger.info('[PositiveProfitCapture] Arbitrary profit/rank filters removed without weakening safety authorities', {
+  logger.info('[PositiveProfitCapture] Arbitrary profit/rank filters removed without weakening execution authorities', {
     component: 'PositiveProfitCapture',
     deterministicNetProfitRule: 'strictly_greater_than_zero',
     arbitraryMinimumProfitUsd: false,
     maximumDailyProfitExecutionStop: false,
     rankScoreExecutionGate: false,
     authenticatedKrakenFeeAuthority: Boolean(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()),
+    paidCoinCapEnvironmentResolution: true,
     dynamicRpcProviderAdmission: true,
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedAuthorities: [
