@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 
 const bridge = fs.readFileSync('server/services/cryptocrawl/compensation/rainbow-profit-bridge.ts', 'utf8');
+const sourceLedger = fs.readFileSync('server/services/cryptocrawl/compensation/rainbow-profit-source-ledger.ts', 'utf8');
 const observability = fs.readFileSync('server/services/cryptocrawl/compensation/rainbow-profit-observability.ts', 'utf8');
 const wiring = fs.readFileSync('server/services/cryptocrawl/runtime/rainbow-profit-bridge-wiring.ts', 'utf8');
 const core = fs.readFileSync('server/services/cryptocrawl/runtime/core-runtime.ts', 'utf8');
@@ -42,6 +43,19 @@ assert.match(bridge, /transaction_hash/);
 assert.doesNotMatch(bridge, /Math\.random/);
 assert.doesNotMatch(bridge, /Simulate transaction|fake transaction|simulated payout/i);
 
+assert.match(sourceLedger, /cryptocrawler_rainbow_profit_sources/);
+assert.match(sourceLedger, /event_id text PRIMARY KEY/);
+assert.match(sourceLedger, /execution_source text NOT NULL/);
+assert.match(sourceLedger, /venue_or_route text/);
+assert.match(sourceLedger, /venues jsonb/);
+assert.match(sourceLedger, /assets jsonb/);
+assert.match(sourceLedger, /settlement\.orders/);
+assert.match(sourceLedger, /settlement\.tokenAmounts/);
+assert.match(sourceLedger, /symbolAssets\(feedback\.symbol\)/);
+assert.match(sourceLedger, /settlement\.transactionHash/);
+assert.match(sourceLedger, /ON CONFLICT \(event_id\) DO UPDATE/);
+assert.match(sourceLedger, /settlement\.settlementConfirmed !== true/);
+
 assert.match(observability, /queuedProfitUsd/);
 assert.match(observability, /submittedProfitUsd/);
 assert.match(observability, /confirmedProfitUsd/);
@@ -54,7 +68,8 @@ assert.doesNotMatch(observability, /logger\.(?:info|warn|error)\([^\n]*DESTINATI
 
 assert.match(wiring, /execution-evidence-recorded/);
 assert.match(wiring, /cryptaraExecutionEvidence/);
-assert.match(wiring, /recordTerminalSettlement/);
+assert.match(wiring, /rainbowProfitSourceLedger\.recordTerminalSettlement/);
+assert.match(wiring, /Promise\.all/);
 assert.match(wiring, /rainbowProfitObservability\.start\(\)/);
 assert.match(wiring, /rainbowProfitObservability\.refresh\(\)/);
 assert.match(wiring, /rainbowProfitObservability\.stop\(\)/);
@@ -68,6 +83,8 @@ assert.doesNotMatch(core, /await scheduleRainbowProfitBridge/);
 console.log(JSON.stringify({
   terminalConfirmedProfitOnly: true,
   persistentIdempotency: true,
+  sourceAwareLedger: ['executionSource', 'strategy', 'symbol', 'chain', 'venueOrRoute', 'venues', 'assets', 'transactionHash'],
+  sourceLedgerIdempotent: true,
   destinationValidated: true,
   dynamicInventoryReserve: true,
   staleInventoryFallsBackToConfiguredReserve: true,
