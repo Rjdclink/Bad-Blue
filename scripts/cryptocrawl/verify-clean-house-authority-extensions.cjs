@@ -17,6 +17,7 @@ const genie = read('server/services/genie-controller/index.ts');
 const beam = read('server/services/cryptocrawl/integration/cryptara-beam-wiring.ts');
 const stageManager = read('server/services/cryptocrawl/governance/stage-management.ts');
 const executionIndex = read('server/services/cryptocrawl/execution/index.ts');
+const executionReadiness = read('server/services/cryptocrawl/execution/execution-readiness.ts');
 const cexExecutor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
 const cexSettlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 const cexSerialization = read('server/services/cryptocrawl/execution/cex-order-serialization.ts');
@@ -47,11 +48,16 @@ forbidText(genie, 'this.cryptara = getCryptara();', 'Genie cannot initialize an 
 requireText(beam, 'ensureAuthoritativeMonteCarloWiring()', 'Beam route remains backed by authoritative MC');
 requireText(beam, 'EVIDENCE_INCOMPLETE: verified_opportunity_context', 'direct MC without verified opportunity context fails closed');
 
-// Legacy shared readiness must remain truthful even when reached by compatibility callers.
-requireText(executionIndex, 'normalizePrivateKey(process.env.FLASHBOTS_AUTH_KEY)', 'Flashbots readiness requires explicit auth material');
-forbidText(executionIndex, 'flashbotsAuthConfigured = rpcConfigured', 'RPC configuration cannot impersonate Flashbots authentication');
-requireText(executionIndex, 'const liveCentralizedReady = !noExecutionGuardEnabled', 'centralized readiness honors the execution kill guard');
-requireText(executionIndex, '!noExecutionGuardEnabled &&\n    liveExecutionEnabled', 'on-chain readiness honors the execution kill guard');
+// Legacy shared names are compatibility shims only; execution-readiness.ts is the sole authority.
+requireText(executionIndex, "from './execution-readiness.js'", 'legacy execution surface imports canonical readiness authority');
+requireText(executionIndex, 'return getCanonicalExecutionCapabilities();', 'legacy capability API delegates to canonical authority');
+requireText(executionIndex, 'return assessCanonicalExecutionEnvironment();', 'legacy readiness API delegates to canonical authority');
+forbidText(executionIndex, 'const SHARED_EXECUTION_CAPABILITIES', 'legacy execution surface cannot own duplicate capability state');
+forbidText(executionIndex, 'const centralizedExchangeConfigured = [krakenConfigured', 'legacy execution surface cannot recompute CEX readiness');
+forbidText(executionIndex, 'const flashbotsAuthConfigured =', 'legacy execution surface cannot recompute Flashbots readiness');
+requireText(executionReadiness, 'normalizePrivateKey(process.env.FLASHBOTS_AUTH_KEY)', 'canonical readiness requires explicit Flashbots auth material');
+forbidText(executionReadiness, 'flashbotsAuthConfigured = rpcConfigured', 'RPC configuration cannot impersonate Flashbots authentication');
+requireText(executionReadiness, 'const executionPostureOpen = !noExecutionGuardEnabled', 'canonical readiness honors the execution kill guard');
 
 // Canonical CEX execution must preserve venue-legal precision through one settlement authority.
 requireText(cexExecutor, 'createProductionCexSettlementAdapters()', 'canonical executor instantiates the single production CEX settlement authority');
