@@ -13,12 +13,16 @@ const requireText = (source, text, message) => {
 const forbidText = (source, text, message) => {
   if (source.includes(text)) fail(message);
 };
+const requireOrder = (source, first, second, message) => {
+  const firstIndex = source.indexOf(first);
+  const secondIndex = source.indexOf(second);
+  if (firstIndex < 0 || secondIndex < 0 || firstIndex >= secondIndex) fail(message);
+};
 
 const policy = read('server/services/cryptocrawl/faucet/competition-evidence-policy.ts');
-const wiring = read('server/services/cryptocrawl/faucet/concurrent-execution-wiring.ts');
+const compatibility = read('server/services/cryptocrawl/faucet/concurrent-execution-wiring.ts');
 const cryptaraCex = read('server/services/cryptocrawl/integration/cryptara-cex-evidence-wiring.ts');
-const faucet = read('server/services/cryptocrawl/faucet/autonomous-faucet.ts');
-const progression = read('server/services/cryptocrawl/governance/automatic-stage-progression.ts');
+const runtime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 
 requireText(policy, "'measured' | 'not_applicable' | 'unavailable'", 'competition evidence must preserve explicit measured/not-applicable/unavailable states');
 requireText(policy, "topology: 'CEX_CEX' | 'ONCHAIN'", 'competition evidence must be topology-aware');
@@ -26,38 +30,37 @@ requireText(policy, "input.topology === 'CEX_CEX'", 'CEX_CEX applicability polic
 requireText(policy, "status: 'not_applicable'", 'CEX_CEX competition must not be fabricated as a numeric value');
 requireText(policy, "status: 'unavailable'", 'missing on-chain evidence must remain unavailable');
 requireText(policy, "typeof value === 'number' && Number.isFinite(value)", 'non-finite evidence guard must not coerce null/string values into numbers');
+requireText(policy, 'Competition: N/A for CEX_CEX', 'CEX competition diagnostics must remain explicitly not applicable');
+requireText(policy, 'Competition: unknown', 'missing on-chain competition must remain explicit unknown evidence');
+forbidText(policy, 'Number(evidence.level)', 'competition evidence cannot coerce missing values into synthetic numbers');
 
-requireText(wiring, "from './competition-evidence-policy.js'", 'legacy faucet bridge is not consuming canonical competition evidence policy');
-requireText(wiring, "ensureCryptaraCexEvidenceWiring", 'CEX topology applicability must also be installed for Cryptara');
-requireText(wiring, 'target.makeOpenDecision = async', 'legacy opening decision is not protected by the compatibility bridge');
-requireText(wiring, "topology: 'CEX_CEX'", 'faucet CEX execution topology is not explicitly bound for competition evidence');
-requireText(wiring, "Gas cost: N/A for CEX_CEX", 'on-chain gas must not gate centralized CEX_CEX opening');
-requireText(wiring, "notApplicable: ['gas_cost', 'competition']", 'opening confidence must exclude topology-inapplicable gas and mempool competition');
-requireText(wiring, 'const shouldOpen = profitPasses', 'positive all-in profitability must remain a mandatory opening condition');
-requireText(wiring, 'canonicalExecutionScheduler.dispatchOnce()', 'canonical scheduler must remain execution authority');
-requireText(wiring, "lifecycleOwner: 'CryptoCoreRuntime'", 'scheduler lifecycle must remain owned by CryptoCoreRuntime');
-requireText(wiring, 'legacyCainCexExecutionAuthority: false', 'legacy mixed-topology Cain reasoning must not become CEX execution authority');
-requireText(wiring, "competitionEvidenceAuthority: 'topology_aware_no_nan'", 'runtime must attest the competition authority');
-requireText(wiring, "nonFiniteEvidencePolicy: 'unknown_or_not_applicable_never_synthetic_zero'", 'runtime must attest non-finite evidence policy');
-forbidText(wiring, 'canonicalExecutionScheduler.start()', 'compatibility bridge must not reintroduce duplicate scheduler startup authority');
-forbidText(wiring, 'await target.performDimensionalReasoning()', 'legacy Cain mixed-topology reasoning must not gate CEX opening');
-forbidText(wiring, 'Competition: NaN', 'NaN competition diagnostics are forbidden');
+// The historical faucet monkey-patch bridge is retired. It may expose scheduler
+// statistics for compatibility diagnostics, but it cannot patch decisions or own
+// scheduler startup/execution lifecycle.
+requireText(compatibility, 'Legacy faucet concurrency patch retired', 'legacy faucet compatibility layer must remain inert');
+requireText(compatibility, "executionAuthority: 'canonical_execution_scheduler'", 'compatibility diagnostics must point to canonical execution authority');
+requireText(compatibility, "lifecycleOwner: 'CryptoCoreRuntime'", 'scheduler lifecycle must remain owned by CryptoCoreRuntime');
+forbidText(compatibility, 'target.makeOpenDecision', 'retired compatibility layer cannot patch opening decisions');
+forbidText(compatibility, 'performDimensionalReasoning', 'legacy Cain reasoning cannot gate CEX execution');
+forbidText(compatibility, 'canonicalExecutionScheduler.start()', 'compatibility layer cannot reintroduce duplicate scheduler startup authority');
 
-requireText(cryptaraCex, "CEX_EXECUTION_VENUES = new Set(['kraken', 'okx'])", 'Cryptara CEX applicability must be limited to executable Kraken/OKX plans');
+// CEX topology applicability is installed directly by canonical runtime before
+// measured discovery starts. It removes only the inapplicable mempool completeness
+// penalty and must not alter economics, Monte Carlo, or execution authority.
+requireText(cryptaraCex, "CEX_EXECUTION_VENUES = new Set(['coinbase', 'kraken', 'okx'])", 'Cryptara CEX applicability must cover every implemented executable CEX venue');
 requireText(cryptaraCex, ".filter(item => item !== 'mempool_evidence')", 'Cryptara must remove only the CEX-inapplicable mempool completeness penalty');
-requireText(cryptaraCex, "'not_applicable:mempool_evidence'", 'Cryptara correction must preserve explicit provenance');
+requireText(cryptaraCex, "'not_applicable:mempool_evidence'", 'Cryptara correction must preserve explicit topology provenance');
 requireText(cryptaraCex, 'canonicalOpportunityState.get(context.opportunityId)', 'canonical Monte Carlo state must be read before corrected snapshot overwrite');
 requireText(cryptaraCex, 'monteCarlo: priorCanonicalMonteCarlo', 'canonical Monte Carlo state must be preserved');
 requireText(cryptaraCex, 'syntheticMempoolEvidenceCreated: false', 'Cryptara CEX correction must never invent mempool evidence');
+requireText(cryptaraCex, 'monteCarloChanged: false', 'Cryptara CEX correction must not alter Monte Carlo authority');
 requireText(cryptaraCex, 'economicsChanged: false', 'Cryptara topology correction must not alter deterministic economics');
 
-requireText(progression, "import('../faucet/concurrent-execution-wiring.js')", 'competition/execution compatibility bridge must be installed by governed startup');
-requireText(progression, 'module.ensureConcurrentExecutionWiring()', 'governed startup must invoke the compatibility bridge');
+requireText(runtime, "import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';", 'canonical runtime must import CEX topology correction');
+requireText(runtime, 'ensureCryptaraCexEvidenceWiring();', 'canonical runtime must install CEX topology correction');
+requireOrder(runtime, 'ensureCryptaraCexEvidenceWiring();', 'measuredOpportunityGraph.start();', 'CEX topology correction must install before measured discovery can assess candidates');
+requireText(runtime, "cexCompetitionEvidence: 'topology_not_applicable_without_synthetic_zero'", 'runtime must attest CEX competition applicability semantics');
+requireText(runtime, 'cexCompetitionEvidenceExecutionAuthority: false', 'competition applicability correction cannot become execution authority');
+requireText(runtime, 'executionAuthorityGranted: false', 'canonical runtime wiring itself cannot grant execution authority');
 
-// Root-cause sentinel remains inside the large legacy class for compatibility;
-// all active CEX decision consumers are intercepted. If that sentinel or its old
-// consumer moves, fail so the migration is re-audited rather than silently bypassed.
-requireText(faucet, 'competitionLevel: Number.NaN', 'legacy competition sentinel moved; re-audit all consumers before changing this guard');
-requireText(faucet, 'threat += this.marketConditions.competitionLevel * 0.3', 'legacy threat consumer moved; re-audit the compatibility boundary');
-
-console.log('[competition-evidence-wiring] PASS — CEX gas/mempool/Cain topology leakage is quarantined, Cryptara completeness is corrected without synthetic evidence, and scheduler authority remains singular');
+console.log('[competition-evidence-wiring] PASS — CEX competition/mempool evidence is topology-aware, missing evidence is never fabricated, Cryptara correction is installed before discovery, and scheduler authority remains singular');
