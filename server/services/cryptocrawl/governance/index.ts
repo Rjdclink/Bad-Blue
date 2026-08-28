@@ -105,6 +105,18 @@ async function initializeGovernanceState(): Promise<void> {
   }
   const { getCryptara } = await import('../../cryptara/index.js');
   getCryptara().restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
+
+  // StageManager persistence is the authoritative restart anchor for terminal
+  // learning. Rebuild only the background transport after restoration; outbox
+  // failure must never block governance initialization or canonical execution.
+  try {
+    const { durableIntelligenceOutbox } = await import('../intelligence/durable-intelligence-outbox.js');
+    await durableIntelligenceOutbox.reconcilePersistedTerminalEvidence(stageManager.getCryptaraExecutionEvidence());
+    durableIntelligenceOutbox.start();
+  } catch (error) {
+    console.warn('[GOVERNANCE] Durable intelligence outbox unavailable; terminal evidence remains recoverable from StageManager persistence:',
+      error instanceof Error ? error.message : String(error));
+  }
   
   const currentStage = stageManager.getCurrentStage();
   const stageConfig = stageManager.getStageConfig();
