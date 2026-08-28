@@ -4,6 +4,7 @@ import { BigNumber, Contract, Wallet, ethers, providers } from 'ethers';
 import type { ConfiguredZeroCapitalRoute } from './onchain-route-quoter.js';
 import { buildSwapCallFromLeg, type SupportedExecutionChain } from './onchain-payload-builder.js';
 import { getGasSponsorManager, type SponsoredCall } from '../../strategies/gas-sponsorship.js';
+import { getCryptocrawlGovernance } from '../../governance/index.js';
 
 const DEFAULT_CREATE2_DEPLOYER = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
 const DEFAULT_CREATE2_DEPLOYER_CODE_HASH = '0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989';
@@ -180,6 +181,15 @@ export class SponsoredReceiverManager {
 
       const deploymentData = ethers.utils.hexConcat([RECEIVER_SALT, initCode]);
       await input.provider.call({ from: owner, to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: 0 });
+
+      // Receiver creation is a real transaction regardless of who pays gas.
+      // Enforce governance at this exact boundary rather than relying on a caller
+      // or sponsor implementation to have checked it earlier.
+      getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', {
+        chain: input.chain,
+        pair: 'zero_capital_receiver_deployment',
+      });
+
       if (input.fundingMode === 'sponsored') {
         const sponsorReadiness = this.sponsor.getReadiness();
         if (!sponsorReadiness.ready) throw new Error(sponsorReadiness.reason || 'Alchemy Gas Manager is not ready');
