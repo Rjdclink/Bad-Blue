@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { ensureRainbowMakerFuelReserve, stopRainbowMakerFuelReserve } from '../compensation/rainbow-maker-fuel-reserve.js';
 import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
 import { rainbowProfitObservability } from '../compensation/rainbow-profit-observability.js';
 import { rainbowProfitSourceLedger } from '../compensation/rainbow-profit-source-ledger.js';
@@ -36,6 +37,11 @@ async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
 export function ensureRainbowProfitBridgeWiring(): void {
   if (installed) return;
   installed = true;
+
+  // Maker fuel belongs to exchange inventory, not the external payout wallet.
+  // Install its dynamic reserve before the payout loop begins so Rainbow only
+  // sweeps capital above the currently proven maker-canary envelope.
+  ensureRainbowMakerFuelReserve();
   rainbowProfitBridge.start();
   rainbowProfitObservability.start();
 
@@ -62,6 +68,7 @@ export function ensureRainbowProfitBridgeWiring(): void {
     preferredAssets: 'USDT/USDC dynamic',
     routeSelection: 'lowest_fee_supported_evm_network',
     tradingInventoryReservePreserved: true,
+    makerFuelReserve: 'dynamic_canary_proof_ladder_before_wallet_sweep',
     lifecycleObservability: 'queued_submitted_confirmed_fee_tx_proof',
   });
 }
@@ -73,4 +80,5 @@ export function stopRainbowProfitBridgeWiring(): void {
   installed = false;
   rainbowProfitObservability.stop();
   rainbowProfitBridge.stop();
+  stopRainbowMakerFuelReserve();
 }
