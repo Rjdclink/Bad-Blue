@@ -1,20 +1,27 @@
 import { getActiveExecutableQuoteVenues } from './venue-capability-registry.js';
 import { getLastOrderedMarketUniverseSymbols } from './market-universe-controller.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
-import { primeCexFeeEvidence, getCachedCexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
+import { primeCexFeeEvidence, getCachedCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
+import { observeMakerPaperProof } from '../intelligence/maker-microstructure-proof.js';
+
+function effectiveMakerFeeBps(fee: CexFeeEvidence | null | undefined): number | null {
+  if (!fee || fee.source === 'configured_override') return null;
+  if (fee.makerFeeBps !== null && Number.isFinite(fee.makerFeeBps)) return Math.max(0, fee.makerFeeBps);
+  if (fee.makerRebateBps !== null && Number.isFinite(fee.makerRebateBps)) return -Math.max(0, fee.makerRebateBps);
+  return null;
+}
+
+function paperProbeNotionalUsd(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_MAKER_PAPER_NOTIONAL_USD || 1_000);
+  return Math.max(10, Math.min(5_000, Number.isFinite(parsed) ? parsed : 1_000));
+}
 
 /**
- * Maker topology is deliberately discovery-only until terminal maker orders have
- * produced enough measured fill/adverse-selection/cancel-latency evidence. No
- * maker order is assumed filled and no conditional maker spread is promoted to
- * deterministic executable profit.
- *
- * Coinbase Advanced Trade is intentionally excluded from this legacy maker-book
- * producer. Coinbase taker/IOC execution uses the v3 product-book authority; its
- * old Exchange WebSocket schema is not accepted as maker evidence. Coinbase may
- * join MAKER_CEX only after an Advanced Trade post-only + queue/fill calibration
- * path is separately settlement-proven.
+ * Maker topology remains non-executable here. It now performs a parallel shadow
+ * proof pass using live WebSocket books: queue depletion, microprice, imbalance,
+ * adaptive TTL, paired paper fills and adverse-selection evidence. Paper results
+ * are never promoted to realized P&L and never grant execution authority.
  */
 export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandidate[]> {
   const venues = getActiveExecutableQuoteVenues().filter((venue): venue is 'kraken' | 'okx' => venue !== 'coinbase');
@@ -42,10 +49,19 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
       for (const sell of usable) {
         if (buy.venue === sell.venue || !buy.quote || !sell.quote) continue;
         const observedAt = Math.min(buy.quote.timestamp, sell.quote.timestamp);
-        const makerFeeKnown = buy.fee?.makerFeeBps !== null && buy.fee?.makerFeeBps !== undefined ||
-          buy.fee?.makerRebateBps !== null && buy.fee?.makerRebateBps !== undefined ||
-          sell.fee?.makerFeeBps !== null && sell.fee?.makerFeeBps !== undefined ||
-          sell.fee?.makerRebateBps !== null && sell.fee?.makerRebateBps !== undefined;
+        const buyMakerFeeBps = effectiveMakerFeeBps(buy.fee);
+        const sellMakerFeeBps = effectiveMakerFeeBps(sell.fee);
+        const makerFeeKnown = buyMakerFeeBps !== null && sellMakerFeeBps !== null;
+        const paperProof = makerFeeKnown ? observeMakerPaperProof({
+          symbol,
+          buyVenue: buy.venue,
+          sellVenue: sell.venue,
+          buyQuote: buy.quote,
+          sellQuote: sell.quote,
+          buyFeeBps: buyMakerFeeBps!,
+          sellFeeBps: sellMakerFeeBps!,
+          notionalUsd: paperProbeNotionalUsd(),
+        }) : null;
         const routeId = `${buy.venue}->${sell.venue}`;
         output.push(measuredCandidateRegistry.record({
           opportunityId: `maker-cex:${routeId}:${symbol}:${observedAt}`,
@@ -60,15 +76,20 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
             {
               source: `${buy.venue}:order_book`, venue: buy.venue, symbol,
               observedAt: buy.quote.timestamp, bid: buy.quote.bid, ask: buy.quote.ask,
-              executable: false, provenance: ['measured_bbo', 'maker_conditional_only'],
+              executable: false, provenance: ['measured_bbo', 'maker_conditional_only', 'websocket_hot_path'],
             },
             {
               source: `${sell.venue}:order_book`, venue: sell.venue, symbol,
               observedAt: sell.quote.timestamp, bid: sell.quote.bid, ask: sell.quote.ask,
-              executable: false, provenance: ['measured_bbo', 'maker_conditional_only'],
+              executable: false, provenance: ['measured_bbo', 'maker_conditional_only', 'websocket_hot_path'],
             },
           ],
-          depth: { status: 'measured', detail: 'Live CEX order-book evidence exists; maker queue position/fill is not inferred from visible depth' },
+          depth: {
+            status: 'measured',
+            detail: paperProof
+              ? `Live books + paper microstructure probe: state=${paperProof.state}, ttlMs=${paperProof.adaptiveTtlMs}, buyImbalance=${paperProof.buyMicrostructure.imbalance.toFixed(3)}, sellImbalance=${paperProof.sellMicrostructure.imbalance.toFixed(3)}`
+              : 'Live CEX order-book evidence exists; maker fee evidence is insufficient for a paired paper proof',
+          },
           economics: {
             grossProfitUsd: null,
             deterministicNetProfitUsd: null,
@@ -80,21 +101,26 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
           },
           quoteAgeMs: Math.max(0, Date.now() - observedAt),
           executableCapability: false,
-          executionCapabilityReason: 'Maker topology remains discovery-only until order placement/cancel semantics and empirical maker fill/adverse-selection calibration are settlement-proven',
+          executionCapabilityReason: 'Paper maker proof accelerates calibration but cannot substitute for terminal settlement evidence or live execution authority',
           missingInformation: [
             ...(makerFeeKnown ? [] : ['authenticated_maker_fee_evidence']),
-            'empirical_maker_fill_probability',
-            'maker_queue_position_proxy',
-            'maker_adverse_selection_calibration',
-            'maker_cancel_latency_calibration',
-            'settlement_safe_maker_order_adapter',
+            'terminal_empirical_maker_fill_probability',
+            'terminal_maker_adverse_selection_calibration',
+            'terminal_maker_cancel_latency_calibration',
           ],
           provenance: [
             'maker_order_not_assumed_filled',
             'conditional_topology_only',
+            'microprice_queue_imbalance_shadow_model',
+            'adaptive_maker_ttl_shadow_model',
+            ...(paperProof ? [`paper_probe:${paperProof.state}`, `paper_probe_ttl_ms:${paperProof.adaptiveTtlMs}`] : []),
+            ...(paperProof?.paperNetProfitUsd !== null && paperProof?.paperNetProfitUsd !== undefined
+              ? [`paper_net_profit_usd:${paperProof.paperNetProfitUsd.toFixed(6)}`]
+              : []),
             ...(buy.fee ? [`fee:${buy.venue}:${buy.fee.source}`] : []),
             ...(sell.fee ? [`fee:${sell.venue}:${sell.fee.source}`] : []),
-            'synthetic_evidence:false',
+            'paper_evidence_only:true',
+            'realized_profit_credit:false',
           ],
         }));
       }
