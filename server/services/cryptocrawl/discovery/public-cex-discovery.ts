@@ -142,7 +142,10 @@ async function fetchVenueSnapshotUncached(venue: PublicDiscoveryVenue): Promise<
 
 async function getVenueSnapshot(venue: PublicDiscoveryVenue): Promise<VenueSnapshot> {
   const capability = getVenueCapability(venue as CryptoCrawlerCexVenue);
-  if (!capability.enabled || !capability.publicDiscovery || capability.liveExecution) return new Map();
+  // Public discovery and executable capability are independent. Coinbase may be
+  // executable through its authenticated Advanced Trade path while its batched
+  // public products snapshot still contributes non-executable search evidence.
+  if (!capability.enabled || !capability.publicDiscovery) return new Map();
 
   const cached = snapshotCache.get(venue);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -240,6 +243,6 @@ export async function scanPublicCexUniverse(symbolsInput: readonly string[]): Pr
 export function getPublicDiscoveryVenues(): PublicDiscoveryVenue[] {
   return VENUES.filter(venue => {
     const capability = getVenueCapability(venue as CryptoCrawlerCexVenue);
-    return capability.enabled && capability.publicDiscovery && !capability.liveExecution;
+    return capability.enabled && capability.publicDiscovery;
   });
 }
