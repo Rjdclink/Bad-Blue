@@ -17,7 +17,16 @@ export interface RainbowProfitSourceSnapshot {
 }
 
 function unique(values: Array<string | null | undefined>): string[] {
-  return [...new Set(values.map(value => String(value || '').trim()).filter(Boolean))];
+  return [...new Set(values.map(value => String(value || '').trim().toUpperCase()).filter(Boolean))];
+}
+
+function symbolAssets(symbol: string): string[] {
+  const normalized = symbol.trim().toUpperCase().replace(/[-_/]/g, '');
+  const quotes = ['USDT', 'USDC', 'USD', 'EUR', 'BTC', 'ETH'];
+  const quote = quotes.find(candidate => normalized.endsWith(candidate));
+  if (!quote) return normalized ? [normalized] : [];
+  const base = normalized.slice(0, -quote.length);
+  return unique([base, quote]);
 }
 
 function sourceSnapshot(feedback: CryptaraExecutionFeedback): RainbowProfitSourceSnapshot {
@@ -29,7 +38,7 @@ function sourceSnapshot(feedback: CryptaraExecutionFeedback): RainbowProfitSourc
   const assets = unique([
     ...(settlement.orders || []).flatMap(order => [order.feeAsset]),
     ...(settlement.tokenAmounts || []).map(amount => amount.token),
-    ...feedback.symbol.toUpperCase().match(/[A-Z0-9]+/g) || [],
+    ...symbolAssets(feedback.symbol),
   ]);
   return {
     eventId: terminalFeedbackIdentity(feedback),
@@ -50,7 +59,8 @@ class RainbowProfitSourceLedger {
 
   async recordTerminalSettlement(feedback: CryptaraExecutionFeedback): Promise<void> {
     if (!feedback.settlement || feedback.settlement.terminal !== true || feedback.settlement.settlementConfirmed !== true) return;
-    if (feedback.success !== true || !Number.isFinite(Number(feedback.realizedProfitUsd ?? feedback.settlement.realized.netProfitUsd)) || Number(feedback.realizedProfitUsd ?? feedback.settlement.realized.netProfitUsd) <= 0) return;
+    const realized = Number(feedback.realizedProfitUsd ?? feedback.settlement.realized.netProfitUsd);
+    if (feedback.success !== true || !Number.isFinite(realized) || realized <= 0) return;
     if (!isDatabaseConfigured) return;
     await this.ensureStore();
     const source = sourceSnapshot(feedback);
