@@ -1,10 +1,12 @@
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 import { getHyperEvolutionEngine } from './hyper-evolution-engine.js';
 import { RuntimeJsonStateStore } from '../integration/runtime-json-state-store.js';
 
 export interface MeasuredExecutionSample {
+  eventId: string;
   opportunityId?: string;
   chain: string;
   symbol: string;
@@ -36,12 +38,14 @@ function finiteOrNull(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function sampleKey(sample: Pick<MeasuredExecutionSample, 'opportunityId' | 'chain' | 'symbol' | 'strategy' | 'timestamp'>): string {
-  return `${sample.opportunityId || `${sample.chain}:${sample.symbol}:${sample.strategy}`}:${sample.timestamp}`;
+function sampleKey(sample: Pick<MeasuredExecutionSample, 'eventId'>): string {
+  return sample.eventId;
 }
 
 function normalizeSample(feedback: CryptaraExecutionFeedback): MeasuredExecutionSample {
+  const eventId = terminalFeedbackIdentity(feedback);
   return {
+    eventId,
     opportunityId: feedback.opportunityId,
     chain: feedback.chain,
     symbol: feedback.symbol,
@@ -52,15 +56,16 @@ function normalizeSample(feedback: CryptaraExecutionFeedback): MeasuredExecution
     feeUsd: finiteOrNull(feedback.feeUsd),
     slippageBps: finiteOrNull(feedback.slippageBps),
     latencyMs: Number.isFinite(feedback.latencyMs) ? Math.max(0, feedback.latencyMs) : 0,
-    timestamp: Number.isFinite(feedback.timestamp) ? feedback.timestamp : Date.now(),
-    provenance: [...new Set(feedback.provenance || [])],
+    timestamp: feedback.settlement?.settledAt ?? feedback.settlement?.submittedAt ?? feedback.timestamp,
+    provenance: [...new Set([...(feedback.provenance || []), `terminal_feedback:${eventId}`])],
   };
 }
 
 function validSample(input: unknown): input is MeasuredExecutionSample {
   if (!input || typeof input !== 'object') return false;
   const value = input as Partial<MeasuredExecutionSample>;
-  return typeof value.chain === 'string' && typeof value.symbol === 'string' &&
+  return typeof value.eventId === 'string' && value.eventId.length > 0 &&
+    typeof value.chain === 'string' && typeof value.symbol === 'string' &&
     typeof value.strategy === 'string' && typeof value.success === 'boolean' &&
     typeof value.timestamp === 'number' && Number.isFinite(value.timestamp) &&
     Array.isArray(value.provenance);
@@ -195,6 +200,7 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
   const stats = measuredStats(state.samples);
   logger.info('Measured terminal execution fed to evolution bridge', {
     component: 'MeasuredEvolutionFeedback',
+    eventId: sample.eventId,
     symbol: sample.symbol,
     strategy: sample.strategy,
     sampleCount: stats.sampleCount,
