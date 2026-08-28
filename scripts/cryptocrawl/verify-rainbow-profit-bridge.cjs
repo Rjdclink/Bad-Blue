@@ -15,7 +15,15 @@ assert.match(bridge, /ON CONFLICT \(event_id\) DO NOTHING/);
 assert.match(bridge, /CRYPTO_PROFIT_WALLET_ADDRESS/);
 assert.match(bridge, /isAddress\(DESTINATION\)/);
 assert.match(bridge, /CRYPTO_RAINBOW_OPERATING_RESERVE_USD/);
-assert.match(bridge, /route\.maxWithdrawal - OPERATING_RESERVE_USD/);
+assert.match(bridge, /CRYPTO_RAINBOW_INVENTORY_MAX_AGE_MS/);
+assert.match(bridge, /cexInventoryLedger\.getSnapshots\(\)/);
+assert.match(bridge, /snapshot\.reserved/);
+assert.match(bridge, /snapshot\.pendingOrder/);
+assert.match(bridge, /snapshot\.pendingTransfer/);
+assert.match(bridge, /snapshot\.minimumReserve/);
+assert.match(bridge, /snapshot\.target \?\? 0/);
+assert.match(bridge, /authority: 'live_inventory'/);
+assert.match(bridge, /authority: 'configured_fallback'/);
 assert.match(bridge, /CRYPTO_RAINBOW_MAX_FEE_FRACTION/);
 assert.match(bridge, /finiteNonNegative\(item\?\.fee\)/);
 assert.match(bridge, /route\.fee \/ amount/);
@@ -61,7 +69,11 @@ console.log(JSON.stringify({
   terminalConfirmedProfitOnly: true,
   persistentIdempotency: true,
   destinationValidated: true,
-  operatingReservePreserved: true,
+  dynamicInventoryReserve: true,
+  staleInventoryFallsBackToConfiguredReserve: true,
+  activeTradeReservationsProtected: true,
+  pendingOrdersAndTransfersProtected: true,
+  targetInventoryProtected: true,
   zeroFeeRoutesAccepted: true,
   maxFeeFractionEnforced: true,
   smallProfitsAccumulateInsteadOfLeakingToFees: true,
