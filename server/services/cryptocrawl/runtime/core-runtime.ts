@@ -5,7 +5,18 @@ import {
 } from './core-runtime-lifecycle.js';
 
 let lifecyclePromise: Promise<CryptoCrawlerCoreLifecycle> | null = null;
+let fundingMonitorPromise: Promise<typeof import('../discovery/funding-rate-monitor.js')> | null = null;
 let started = false;
+
+async function getFundingMonitor() {
+  if (!fundingMonitorPromise) {
+    fundingMonitorPromise = import('../discovery/funding-rate-monitor.js').catch(error => {
+      fundingMonitorPromise = null;
+      throw error;
+    });
+  }
+  return fundingMonitorPromise;
+}
 
 async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
   if (!lifecyclePromise) {
@@ -49,6 +60,18 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   const lifecycle = await getLifecycle();
   const changed = lifecycle.start();
   started = lifecycle.isStarted();
+
+  if (process.env.NO_INTERVALS !== 'true' && String(process.env.CRYPTARA_MODE || '').toUpperCase() !== 'SILENT_WATCHER_ONLY') {
+    try {
+      (await getFundingMonitor()).fundingRateMonitor.start();
+    } catch (error) {
+      logger.warn('[CryptoCoreRuntime] Optional funding-rate monitor unavailable; canonical core remains active', {
+        component: 'CryptoCoreRuntime',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (!changed) return;
   logger.info('[CryptoCoreRuntime] Canonical core runtime started', {
     component: 'CryptoCoreRuntime',
@@ -59,10 +82,18 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     positiveProfitCapturePolicy: 'strict_all_in_net_gt_zero',
     expandedMarketUniverse: true,
     filteredMempoolPolicyInstalled: true,
+    fundingRateDiscovery: process.env.NO_INTERVALS === 'true' ? 'withheld_no_intervals' : 'optional_parallel_monitor',
   });
 }
 
 export async function stopCryptoCrawlerCoreRuntime(): Promise<void> {
+  if (fundingMonitorPromise) {
+    try {
+      (await fundingMonitorPromise).fundingRateMonitor.stop();
+    } catch {
+      // Optional topology monitor must not prevent canonical shutdown.
+    }
+  }
   if (!lifecyclePromise) {
     started = false;
     return;
