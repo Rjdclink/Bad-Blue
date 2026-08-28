@@ -1,9 +1,12 @@
 import type { CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 
 export type CexOrderMode = 'maker' | 'taker';
+export type CexOrderModeCombination = 'maker_maker' | 'maker_taker' | 'taker_maker' | 'taker_taker';
 
 export interface CexOrderModeDecision {
-  mode: CexOrderMode | null;
+  mode: CexOrderModeCombination | null;
+  buyMode: CexOrderMode | null;
+  sellMode: CexOrderMode | null;
   buyFeeBps: number | null;
   sellFeeBps: number | null;
   combinedFeeBps: number | null;
@@ -31,12 +34,8 @@ export function isStablecoinPair(symbol: string): boolean {
 
 function effectiveMakerFeeBps(evidence: CexFeeEvidence | null): number | null {
   if (!evidence) return null;
-  if (evidence.makerFeeBps !== null && Number.isFinite(evidence.makerFeeBps)) {
-    return Math.max(0, evidence.makerFeeBps);
-  }
-  if (evidence.makerRebateBps !== null && Number.isFinite(evidence.makerRebateBps)) {
-    return -Math.max(0, evidence.makerRebateBps);
-  }
+  if (evidence.makerFeeBps !== null && Number.isFinite(evidence.makerFeeBps)) return Math.max(0, evidence.makerFeeBps);
+  if (evidence.makerRebateBps !== null && Number.isFinite(evidence.makerRebateBps)) return -Math.max(0, evidence.makerRebateBps);
   return null;
 }
 
@@ -44,12 +43,27 @@ function authenticated(evidence: CexFeeEvidence | null): boolean {
   return Boolean(evidence && evidence.source !== 'configured_override');
 }
 
+function emptyDecision(stablecoinPair: boolean, reason: string): CexOrderModeDecision {
+  return {
+    mode: null,
+    buyMode: null,
+    sellMode: null,
+    buyFeeBps: null,
+    sellFeeBps: null,
+    combinedFeeBps: null,
+    projectedNetAfterExchangeFeesBps: null,
+    stablecoinPair,
+    reason,
+    authority: 'authenticated_fee_mode_policy',
+  };
+}
+
 /**
- * Chooses the lowest-cost execution mode only from measured/authenticated fee
- * evidence. This policy never fabricates a fee, never converts a maker timeout
- * into a taker order, and never makes a negative exchange-fee edge executable.
- * Fixed costs, slippage, inventory, queue/fill evidence and settlement remain
- * downstream authorities before live execution.
+ * Chooses the strongest positive exchange-fee edge across all four leg-mode
+ * combinations using authenticated account fee evidence only. It does not
+ * fabricate maker discounts and does not silently convert an unfilled maker leg
+ * into a taker leg. Fixed costs, depth, queue/fill evidence, inventory,
+ * slippage, freshness and settlement remain downstream execution authorities.
  */
 export function chooseCexOrderMode(input: {
   symbol: string;
@@ -59,81 +73,68 @@ export function chooseCexOrderMode(input: {
 }): CexOrderModeDecision {
   const stablecoinPair = isStablecoinPair(input.symbol);
   const gross = Number(input.grossSpreadBps);
-  if (!Number.isFinite(gross) || gross <= 0) {
-    return {
-      mode: null,
-      buyFeeBps: null,
-      sellFeeBps: null,
-      combinedFeeBps: null,
-      projectedNetAfterExchangeFeesBps: null,
-      stablecoinPair,
-      reason: 'non_positive_gross_spread',
-      authority: 'authenticated_fee_mode_policy',
-    };
-  }
+  if (!Number.isFinite(gross) || gross <= 0) return emptyDecision(stablecoinPair, 'non_positive_gross_spread');
 
   const buy = input.buyFeeEvidence;
   const sell = input.sellFeeEvidence;
-  if (!authenticated(buy) || !authenticated(sell)) {
-    return {
-      mode: null,
-      buyFeeBps: null,
-      sellFeeBps: null,
-      combinedFeeBps: null,
-      projectedNetAfterExchangeFeesBps: null,
-      stablecoinPair,
-      reason: 'authenticated_fee_evidence_required',
-      authority: 'authenticated_fee_mode_policy',
-    };
-  }
+  if (!authenticated(buy) || !authenticated(sell)) return emptyDecision(stablecoinPair, 'authenticated_fee_evidence_required');
 
   const makerBuy = effectiveMakerFeeBps(buy);
   const makerSell = effectiveMakerFeeBps(sell);
   const takerBuy = Number.isFinite(buy!.takerFeeBps) ? Math.max(0, buy!.takerFeeBps) : null;
   const takerSell = Number.isFinite(sell!.takerFeeBps) ? Math.max(0, sell!.takerFeeBps) : null;
 
-  const makerCombined = makerBuy !== null && makerSell !== null ? makerBuy + makerSell : null;
-  const takerCombined = takerBuy !== null && takerSell !== null ? takerBuy + takerSell : null;
-  const makerNet = makerCombined !== null ? gross - makerCombined : null;
-  const takerNet = takerCombined !== null ? gross - takerCombined : null;
+  const candidates: Array<{
+    mode: CexOrderModeCombination;
+    buyMode: CexOrderMode;
+    sellMode: CexOrderMode;
+    buyFeeBps: number | null;
+    sellFeeBps: number | null;
+  }> = [
+    { mode: 'maker_maker', buyMode: 'maker', sellMode: 'maker', buyFeeBps: makerBuy, sellFeeBps: makerSell },
+    { mode: 'maker_taker', buyMode: 'maker', sellMode: 'taker', buyFeeBps: makerBuy, sellFeeBps: takerSell },
+    { mode: 'taker_maker', buyMode: 'taker', sellMode: 'maker', buyFeeBps: takerBuy, sellFeeBps: makerSell },
+    { mode: 'taker_taker', buyMode: 'taker', sellMode: 'taker', buyFeeBps: takerBuy, sellFeeBps: takerSell },
+  ];
 
-  // Maker is preferred whenever it creates the stronger positive exchange-fee
-  // edge. Stablecoin pairs naturally benefit most because their measured maker
-  // schedules can be materially cheaper; no hard-coded fee discount is assumed.
-  if (makerNet !== null && makerNet > 0 && (takerNet === null || makerNet >= takerNet)) {
-    return {
-      mode: 'maker',
-      buyFeeBps: makerBuy,
-      sellFeeBps: makerSell,
-      combinedFeeBps: makerCombined,
-      projectedNetAfterExchangeFeesBps: makerNet,
-      stablecoinPair,
-      reason: stablecoinPair ? 'stablecoin_authenticated_maker_edge' : 'authenticated_maker_edge',
-      authority: 'authenticated_fee_mode_policy',
-    };
-  }
+  const viable = candidates
+    .filter(candidate => candidate.buyFeeBps !== null && candidate.sellFeeBps !== null)
+    .map(candidate => {
+      const combinedFeeBps = candidate.buyFeeBps! + candidate.sellFeeBps!;
+      return { ...candidate, combinedFeeBps, netBps: gross - combinedFeeBps };
+    })
+    .filter(candidate => Number.isFinite(candidate.netBps) && candidate.netBps > 0)
+    .sort((left, right) => {
+      if (right.netBps !== left.netBps) return right.netBps - left.netBps;
+      // At equal economics, prefer fewer market-taking legs.
+      const leftTakers = Number(left.buyMode === 'taker') + Number(left.sellMode === 'taker');
+      const rightTakers = Number(right.buyMode === 'taker') + Number(right.sellMode === 'taker');
+      return leftTakers - rightTakers;
+    });
 
-  if (takerNet !== null && takerNet > 0) {
+  const best = viable[0];
+  if (!best) {
+    const availableCosts = candidates
+      .filter(candidate => candidate.buyFeeBps !== null && candidate.sellFeeBps !== null)
+      .map(candidate => candidate.buyFeeBps! + candidate.sellFeeBps!);
+    const lowestCost = availableCosts.length > 0 ? Math.min(...availableCosts) : null;
     return {
-      mode: 'taker',
-      buyFeeBps: takerBuy,
-      sellFeeBps: takerSell,
-      combinedFeeBps: takerCombined,
-      projectedNetAfterExchangeFeesBps: takerNet,
-      stablecoinPair,
-      reason: 'authenticated_taker_edge',
-      authority: 'authenticated_fee_mode_policy',
+      ...emptyDecision(stablecoinPair, 'fees_consume_gross_spread'),
+      combinedFeeBps: lowestCost,
+      projectedNetAfterExchangeFeesBps: lowestCost === null ? null : gross - lowestCost,
     };
   }
 
   return {
-    mode: null,
-    buyFeeBps: makerBuy ?? takerBuy,
-    sellFeeBps: makerSell ?? takerSell,
-    combinedFeeBps: makerCombined ?? takerCombined,
-    projectedNetAfterExchangeFeesBps: Math.max(makerNet ?? Number.NEGATIVE_INFINITY, takerNet ?? Number.NEGATIVE_INFINITY),
+    mode: best.mode,
+    buyMode: best.buyMode,
+    sellMode: best.sellMode,
+    buyFeeBps: best.buyFeeBps,
+    sellFeeBps: best.sellFeeBps,
+    combinedFeeBps: best.combinedFeeBps,
+    projectedNetAfterExchangeFeesBps: best.netBps,
     stablecoinPair,
-    reason: 'fees_consume_gross_spread',
+    reason: stablecoinPair ? `stablecoin_authenticated_${best.mode}_edge` : `authenticated_${best.mode}_edge`,
     authority: 'authenticated_fee_mode_policy',
   };
 }
