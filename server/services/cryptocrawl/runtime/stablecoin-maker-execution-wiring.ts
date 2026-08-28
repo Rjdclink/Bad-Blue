@@ -63,6 +63,11 @@ export function ensureStablecoinMakerExecutionWiring(): void {
       ttlAuthority: ttl.paperFillRate === null ? 'configured_bounded' : 'paper_calibrated_bounded',
       pollIntervalMs,
       takerFallbackAllowed: false,
+      queueEcho: plan.makerExecution.queueEcho,
+      fractionalKelly: plan.makerExecution.fractionalKelly,
+      causalLeadLag: plan.makerExecution.causalLeadLag,
+      spreadStress: plan.makerExecution.spreadStress,
+      adaptiveTakerFallback: 'not_authorized_without_fresh_positive_all_in_taker_economics',
     });
 
     const executor = new CentralizedExchangeExecutor({
@@ -80,6 +85,9 @@ export function ensureStablecoinMakerExecutionWiring(): void {
         symbol: plan.symbol,
         elapsedMs: Date.now() - startedAt,
         success: result.success,
+        queueEchoAuthority: plan.makerExecution.queueEcho.authority,
+        jointFillProbability: plan.makerExecution.queueEcho.jointFillProbability,
+        stressPersistenceProbability: plan.makerExecution.spreadStress.persistenceProbability,
       });
       return result;
     } catch (error) {

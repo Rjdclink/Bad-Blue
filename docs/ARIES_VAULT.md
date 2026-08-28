@@ -13,6 +13,7 @@ Aries Vault is CryptoCrawler's horizon-aware profitability and execution-intelli
 5. **No hidden taker fallback.** A post-only path remains post-only. Hybrid maker/taker routing is a separate calculated capability and must be explicitly allowed by the execution path.
 6. **Terminal truth remains sovereign.** Predicted, simulated, pre-confirmed or counterfactual outcomes never become realized profit until settlement is terminal and confirmed.
 7. **No hostile bandwidth behavior.** The provider "beam/strobe" intent is implemented as bounded simultaneous fan-out, persistent connections, prioritization and caching, never as deliberate congestion or interference with third parties.
+8. **No new DEX API-key dependency.** Zero-capital discovery must continue to operate without adding a new analytics credential. Public no-key sources may accelerate discovery, but direct RPC and contract state remain the durable path and external analytics never grant execution authority.
 
 ## Research translation
 
@@ -66,6 +67,38 @@ No quantum-computing claim is made. `evaluateAriesStateLattice()` represents sim
 
 Every settled outcome can eventually be compared to modeled alternatives. `computeAriesCounterfactualRegret()` measures the edge left on the table even when the actual trade was profitable. `computeAriesExpectedValueOfInformation()` estimates whether another quote/simulation/provider request can materially change the decision before consuming more compute.
 
+## Aries v2: adaptive microstructure
+
+`server/services/cryptocrawl/intelligence/aries-microstructure.ts` adds a measurable microstructure layer to the existing Kraken/OKX post-only recovery path:
+
+- Queue-Echo records top-level depth evolution and derives a conservative queue-depletion proxy, estimated queue-clear time and TTL fill probability. It explicitly does **not** claim to know exact exchange queue position before order acknowledgement; nearly all visible top-level size is treated as ahead of a new order to avoid optimistic fill estimates.
+- ATR-like realized movement and a bounded Hurst estimate influence persistence-aware sizing. Fractional Kelly is subordinate to the existing Cryptara canary, liquidity and governance ceilings and can only reduce the admitted notional.
+- Cross-venue lead/lag uses lagged return correlation as probabilistic evidence. It is not represented as proof of causality and cannot independently switch a post-only route into taker execution.
+- Spread stress testing is a deterministic empirical ensemble over observed spread changes. Identical evidence produces identical gating output; execution admission never depends on `Math.random()`.
+- Existing stablecoin and volatile maker-recovery strategies share the same post-only lifecycle. There is no unconditional maker-to-taker fallback.
+
+This replaces asset-class thinking with measured execution quality while retaining authenticated fee evidence, product constraints, inventory, canary evidence, Monte Carlo and governance as independent gates.
+
+## Aries v2: graphless DEX profit surface
+
+The zero-initial-capital system is an atomic on-chain strategy. Flash liquidity cannot finance a resting CEX order, so Aries v2 treats DEX discovery as the profit surface for the zero-capital lane.
+
+`server/services/cryptocrawl/discovery/graphless-dex-scout.ts` and `dynamic-zero-capital-routes.ts` implement a no-new-key discovery pipeline:
+
+1. Existing Polygon/Arbitrum USDC↔USDT Uniswap V3/SushiSwap seed routes remain intact as a no-regression fallback.
+2. An optional GeckoTerminal public/no-key scout identifies active pools neighboring the flash-loan settlement assets. It is rate-bounded and cached and never becomes profitability or execution evidence.
+3. Direct RPC scanning of Uniswap V3 `PoolCreated` events supplies an independent on-chain discovery path and incrementally advances from the last scanned block.
+4. Discovered intermediate tokens generate cross-DEX atomic cycles and same-Uniswap-V3 fee-tier dislocation cycles. Every candidate starts and ends in USDC or USDT so the borrowed asset can be repaid atomically.
+5. The existing economic quote-budget scheduler rotates deterministic exploration across unseen routes and exploits routes with measured recent positive evidence. Structural discovery never authorizes execution.
+6. Every admitted route is re-quoted directly against router/quoter contracts. All-in deterministic net profit includes measured gas estimate, flash-loan fee and relay fee before a route becomes positive evidence.
+7. Dynamic receiver permissions are prepared only for routes that have already produced a positive direct quote. If permission setup changes chain state or consumes time, that quote is discarded and a fresh quote is mandatory.
+8. A live graphless route must pass an exact receiver `eth_call`/`provider.call` simulation with the concrete flash-loan payload and remain inside a short route TTL before it can be queued for live execution.
+9. Cryptara/Tara, Monte Carlo, resource leases, stage governance and terminal on-chain settlement remain authoritative after those checks.
+
+The current graphless execution scope deliberately remains **Polygon and Arbitrum** because those are the presently proven dynamic route/receiver combinations. More chains or protocols should only be added after their factory, quoter/router, receiver permissions, flash-liquidity source and exact-simulation behavior are independently verified. The discovery architecture is extensible; unsupported topology is not fabricated.
+
+The Graph, Zapper, 0x or any other new keyed analytics service is not required by this pipeline. If all optional public scouts are unavailable, direct RPC discovery and the existing static seed routes continue operating.
+
 ## Current implementation surfaces
 
 `server/services/cryptocrawl/intelligence/aries-vault.ts` provides:
@@ -105,4 +138,6 @@ These references justify the measurable primitives; they do **not** justify guar
 
 ## Review gates before live authority expands
 
-Aries Vault's composite assessment has `executionAuthority: false`, and the live Cryptara integration is advisory-only. Expanding Aries into direct live hybrid routing or autonomous capital movement requires measured integration evidence for authenticated fees/tier state, real order-book depth, maker fill probability/queue behavior, slippage/adverse-selection calibration, inventory availability, stage governance and terminal settlement. Existing live gates remain authoritative until those measurements prove the new route does not regress execution safety or profitability.
+Aries Vault's composite assessment has `executionAuthority: false`, and the live Cryptara integration is advisory-only. Expanding Aries into direct live hybrid CEX routing or autonomous capital movement requires measured integration evidence for authenticated fees/tier state, real order-book depth, maker fill probability/queue behavior, slippage/adverse-selection calibration, inventory availability, stage governance and terminal settlement.
+
+The graphless DEX lane has a different authority model: direct quotes, permission readiness and exact atomic simulation may make an existing zero-capital route execution-capable, but they still do not bypass Cryptara/Tara, Monte Carlo, resource scheduling, stage governance or terminal receipt verification. Predicted and simulated profits remain predictions until the flash-loan receipt confirms positive settled profit.
