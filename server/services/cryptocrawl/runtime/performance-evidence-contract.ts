@@ -18,6 +18,7 @@ export interface PerformanceEvidenceContractSnapshot {
   latency: {
     status: PerformanceEvidenceStatus;
     sampleCount: number;
+    sloReadyStages: LatencyStage[];
     byStageP99Ms: Partial<Record<LatencyStage, number>>;
     worstObservedStageP99Ms: number | null;
     syntheticBenchmarkAuthority: false;
@@ -86,6 +87,7 @@ export function getPerformanceEvidenceContract(): PerformanceEvidenceContractSna
   const hour = canonicalOpportunityState.getMetrics(60 * 60_000);
 
   const byStageP99Ms: Partial<Record<LatencyStage, number>> = {};
+  const sloReadyStages: LatencyStage[] = [];
   for (const [stage, distribution] of Object.entries(latency.byStage) as Array<[
     LatencyStage,
     (typeof latency.byStage)[LatencyStage],
@@ -93,9 +95,15 @@ export function getPerformanceEvidenceContract(): PerformanceEvidenceContractSna
     if (distribution.p99Ms !== null && Number.isFinite(distribution.p99Ms)) {
       byStageP99Ms[stage] = distribution.p99Ms;
     }
+    if (distribution.measuredSlo.status === 'measured_baseline') sloReadyStages.push(stage);
   }
   const stageP99 = Object.values(byStageP99Ms)
     .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const latencyStatus: PerformanceEvidenceStatus = latency.sampleCount <= 0
+    ? 'not_observed'
+    : sloReadyStages.length > 0
+      ? 'measured'
+      : 'insufficient_samples';
 
   return {
     authority: 'performance_truth_telemetry_only',
@@ -108,8 +116,9 @@ export function getPerformanceEvidenceContract(): PerformanceEvidenceContractSna
       cost: 'minimize_measured_all_in_cost_never_nominal_fee_alone',
     },
     latency: {
-      status: latency.sampleCount > 0 ? 'measured' : 'not_observed',
+      status: latencyStatus,
       sampleCount: latency.sampleCount,
+      sloReadyStages,
       byStageP99Ms,
       worstObservedStageP99Ms: stageP99.length > 0 ? Math.max(...stageP99) : null,
       syntheticBenchmarkAuthority: false,
