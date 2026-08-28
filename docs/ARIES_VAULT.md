@@ -60,7 +60,7 @@ No quantum-computing claim is made. `evaluateAriesStateLattice()` represents sim
 
 ### Game-theoretic robust execution
 
-`chooseAriesRobustRoute()` evaluates routes under multiple plausible scenarios and minimizes maximum regret while retaining expected BPS. This is intentionally more robust than claiming a fully-known Nash equilibrium against thousands of unknown bots. On-chain use must remain legitimate MEV-aware/protected routing, not evasion or interference.
+`chooseAriesRobustRoute()` evaluates routes under multiple plausible scenarios using a regret-penalized robust score: average scenario BPS minus maximum scenario regret, with worst-case BPS as a secondary preference. This is intentionally more practical than claiming a fully-known Nash equilibrium against thousands of unknown bots. On-chain use must remain legitimate MEV-aware/protected routing, not evasion or interference.
 
 ### Counterfactual learning and value of information
 
@@ -78,14 +78,16 @@ Every settled outcome can eventually be compared to modeled alternatives. `compu
 - probabilistic market-state lattice;
 - evolutionary Beam ranking;
 - marginal capital-efficiency ranking for Rainbow allocation;
-- minimax-regret route selection;
+- regret-penalized robust route selection;
 - counterfactual execution regret;
 - expected value of information;
 - liquidity event-horizon sizing;
 - fail-closed composite opportunity assessment;
 - shared Kraken/OKX maker-recovery capability classification.
 
-The economic-barrier diagnostic is wired to that shared maker-recovery classifier so volatile Kraken/OKX routes such as the observed TRUMP/USDT class are no longer incorrectly labeled as outside a stablecoin-only path.
+The economic-barrier diagnostic is wired to that shared maker-recovery classifier so volatile Kraken/OKX routes are no longer incorrectly described as stablecoin-only. This classifier reports that the architectural route exists; actual volatile admission still remains governed by the existing maker strategy's authenticated fees, configurable spread floor, product constraints, measured books, dynamic canary, Hyper Monte Carlo and governance gates.
+
+`server/services/cryptocrawl/runtime/positive-profit-capture-wiring.ts` also wires Aries into every measured Cryptara plan as a **live horizon advisory**. It evaluates the measured plan against holding capital using expected profit, Monte Carlo probability and uncertainty, and emits the Beam preference, probability-adjusted expected realized BPS and expected value of additional information into Cryptara provenance. This integration is deliberately non-authoritative: it does not change the existing recommendation or bypass the current execution gates while Aries accumulates calibration evidence.
 
 ## Research basis reviewed for this implementation
 
@@ -103,4 +105,4 @@ These references justify the measurable primitives; they do **not** justify guar
 
 ## Review gates before live authority expands
 
-Aries Vault may recommend an economics path but it has `executionAuthority: false`. Expanding live authority requires measured integration evidence for authenticated fees, real order-book depth, maker fill probability/queue behavior, slippage/adverse-selection calibration, inventory availability, stage governance, and terminal settlement. Existing live gates remain authoritative until those measurements prove the new route does not regress execution safety or profitability.
+Aries Vault's composite assessment has `executionAuthority: false`, and the live Cryptara integration is advisory-only. Expanding Aries into direct live hybrid routing or autonomous capital movement requires measured integration evidence for authenticated fees/tier state, real order-book depth, maker fill probability/queue behavior, slippage/adverse-selection calibration, inventory availability, stage governance and terminal settlement. Existing live gates remain authoritative until those measurements prove the new route does not regress execution safety or profitability.
