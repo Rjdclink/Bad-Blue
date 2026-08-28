@@ -1,8 +1,16 @@
-// Eden Storage System - Multi-Network State Replication & Knowledge Persistence
-// The central knowledge repository where all crawler learnings are stored and evolved
+/**
+ * @deprecated Eden compatibility facade.
+ *
+ * Eden no longer owns durable learning memory or trading authority. The bounded
+ * maps below preserve historical callers, while durable artifacts are mapped
+ * asynchronously into the canonical private CryptoCrawler intelligence schema.
+ * Only normalized terminal settlement may become authoritative learning truth.
+ */
 
+import { createHash } from 'node:crypto';
 import logger from '../../../logger.js';
 import type { ChainId } from './lux-swarm';
+import { observeLegacyCompatibilityArtifact } from '../intelligence/canonical-legacy-knowledge-adapter.js';
 
 export interface KnowledgeEntry {
   id: string;
@@ -10,16 +18,16 @@ export interface KnowledgeEntry {
   timestamp: number;
   chain: ChainId;
   data: Record<string, any>;
-  confidence: number; // 0-1 confidence score
-  successRate: number; // Historical success rate
-  profitability: number; // Average profit generated
-  usageCount: number; // How many times applied
+  confidence: number;
+  successRate: number;
+  profitability: number;
+  usageCount: number;
   lastUpdated: number;
 }
 
 export interface EdenState {
-  generation: number; // Evolution generation counter
-  totalKnowledge: number; // Total entries in knowledge base
+  generation: number;
+  totalKnowledge: number;
   strategies: Map<string, KnowledgeEntry>;
   patterns: Map<string, KnowledgeEntry>;
   risks: Map<string, KnowledgeEntry>;
@@ -44,7 +52,7 @@ export interface NetworkKnowledge {
   chain: ChainId;
   bestDex: string;
   avgGasPrice: number;
-  optimalTiming: number[]; // Hours of day with best opportunities
+  optimalTiming: number[];
   riskLevel: number;
   totalOpportunities: number;
   successRate: number;
@@ -56,445 +64,255 @@ export interface EvolutionResult {
   strategiesOptimized: number;
   patternsDiscovered: number;
   risksIdentified: number;
-  improvementScore: number; // 0-1 score of how much system improved
+  improvementScore: number;
 }
 
-/**
- * Eden Storage - The persistent knowledge base for the crawler system
- * Replicated across multiple networks for ultra-low latency and resilience
- */
+const HOT_LIMIT_PER_TYPE = Math.max(32, Math.min(2048, Number(process.env.EDEN_COMPAT_HOT_LIMIT || 256)));
+let artifactSequence = 0;
+
+function emptyState(chain: ChainId): EdenState {
+  return {
+    generation: 0,
+    totalKnowledge: 0,
+    strategies: new Map(),
+    patterns: new Map(),
+    risks: new Map(),
+    opportunities: new Map(),
+    failures: new Map(),
+    globalMetrics: {
+      totalExecutions: 0,
+      totalProfit: 0,
+      totalLosses: 0,
+      successRate: 0,
+      avgExecutionTime: 0,
+      bestStrategy: '',
+      bestChain: chain,
+      lastEvolution: Date.now(),
+    },
+    networkStates: new Map(),
+  };
+}
+
+function stableArtifactId(prefix: string, value: unknown, observedAt: number): string {
+  const sequence = ++artifactSequence;
+  const digest = createHash('sha256')
+    .update(JSON.stringify({ prefix, value, observedAt, sequence }))
+    .digest('hex')
+    .slice(0, 24);
+  return `${prefix}:${observedAt}:${digest}`;
+}
+
+function mapFor(state: EdenState, type: KnowledgeEntry['type']): Map<string, KnowledgeEntry> {
+  if (type === 'strategy') return state.strategies;
+  if (type === 'pattern') return state.patterns;
+  if (type === 'risk') return state.risks;
+  if (type === 'opportunity') return state.opportunities;
+  return state.failures;
+}
+
+function trimMap(map: Map<string, KnowledgeEntry>): void {
+  while (map.size > HOT_LIMIT_PER_TYPE) {
+    const oldest = map.keys().next().value as string | undefined;
+    if (!oldest) return;
+    map.delete(oldest);
+  }
+}
+
+function compatibilityKind(type: KnowledgeEntry['type']) {
+  if (type === 'strategy') return 'strategy_template' as const;
+  if (type === 'pattern') return 'pattern' as const;
+  if (type === 'risk') return 'risk' as const;
+  if (type === 'opportunity') return 'opportunity' as const;
+  return 'failure' as const;
+}
+
 export class EdenStorage {
   private static instances = new Map<ChainId, EdenState>();
   private static primaryChain: ChainId = 'polygon';
-  private static replicationInterval: NodeJS.Timeout | null = null;
   private static evolutionHistory: EvolutionResult[] = [];
 
-  /**
-   * Initialize Eden on a specific chain
-   */
   static initialize(chain: ChainId): void {
-    if (this.instances.has(chain)) {
-      logger.warn(`Eden already initialized on ${chain}`, {
-        component: 'EdenStorage'
-      });
-      return;
-    }
-
-    const state: EdenState = {
-      generation: 0,
-      totalKnowledge: 0,
-      strategies: new Map(),
-      patterns: new Map(),
-      risks: new Map(),
-      opportunities: new Map(),
-      failures: new Map(),
-      globalMetrics: {
-        totalExecutions: 0,
-        totalProfit: 0,
-        totalLosses: 0,
-        successRate: 0,
-        avgExecutionTime: 0,
-        bestStrategy: '',
-        bestChain: chain,
-        lastEvolution: Date.now()
-      },
-      networkStates: new Map()
-    };
-
-    this.instances.set(chain, state);
-    
-    logger.info(`Eden initialized on ${chain}`, {
+    if (this.instances.has(chain)) return;
+    this.instances.set(chain, emptyState(chain));
+    logger.info('Eden compatibility facade initialized', {
       component: 'EdenStorage',
       chain,
-      generation: 0
+      authority: 'legacy_advisory_facade',
+      durableAuthority: 'canonical_private_intelligence_schema',
+      executionAuthority: false,
     });
   }
 
-  /**
-   * Get Eden state for a specific chain
-   */
   static getState(chain: ChainId = this.primaryChain): EdenState | undefined {
     return this.instances.get(chain);
   }
 
-  /**
-   * Store knowledge in Eden
-   */
   static storeKnowledge(
     entry: Omit<KnowledgeEntry, 'id' | 'timestamp' | 'lastUpdated'>,
-    chain: ChainId = this.primaryChain
+    chain: ChainId = this.primaryChain,
   ): string {
     const state = this.instances.get(chain);
-    if (!state) {
-      logger.error(`Eden not initialized on ${chain}`, {
-        component: 'EdenStorage'
-      });
-      throw new Error(`Eden not initialized on ${chain}`);
-    }
+    if (!state) throw new Error(`Eden not initialized on ${chain}`);
+    const timestamp = Date.now();
+    const id = stableArtifactId(`legacy-eden-${entry.type}-${chain}`, entry, timestamp);
+    const knowledgeEntry: KnowledgeEntry = { ...entry, id, timestamp, lastUpdated: timestamp };
+    const map = mapFor(state, entry.type);
+    map.set(id, knowledgeEntry);
+    trimMap(map);
+    state.totalKnowledge = state.strategies.size + state.patterns.size + state.risks.size + state.opportunities.size + state.failures.size;
 
-    const id = `${entry.type}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-    const knowledgeEntry: KnowledgeEntry = {
-      ...entry,
-      id,
-      timestamp: Date.now(),
-      lastUpdated: Date.now()
-    };
-
-    // Store in appropriate map
-    switch (entry.type) {
-      case 'strategy':
-        state.strategies.set(id, knowledgeEntry);
-        break;
-      case 'pattern':
-        state.patterns.set(id, knowledgeEntry);
-        break;
-      case 'risk':
-        state.risks.set(id, knowledgeEntry);
-        break;
-      case 'opportunity':
-        state.opportunities.set(id, knowledgeEntry);
-        break;
-      case 'failure':
-        state.failures.set(id, knowledgeEntry);
-        break;
-    }
-
-    state.totalKnowledge++;
-
-    logger.debug(`Knowledge stored in Eden`, {
-      component: 'EdenStorage',
+    observeLegacyCompatibilityArtifact({
+      artifactId: id,
+      kind: compatibilityKind(entry.type),
+      observedAt: timestamp,
       chain,
-      type: entry.type,
-      id
+      payload: knowledgeEntry,
+      provenance: ['eden_compatibility_store'],
     });
-
-    // Trigger replication to other networks
-    this.replicateToNetwork(knowledgeEntry, chain);
-
+    this.replicateHotCompatibility(knowledgeEntry, chain);
     return id;
   }
 
-  /**
-   * Retrieve knowledge from Eden
-   */
   static retrieveKnowledge(
     type: KnowledgeEntry['type'],
     filters?: Partial<Pick<KnowledgeEntry, 'chain' | 'confidence'>>,
-    chain: ChainId = this.primaryChain
+    chain: ChainId = this.primaryChain,
   ): KnowledgeEntry[] {
     const state = this.instances.get(chain);
     if (!state) return [];
-
-    let entries: KnowledgeEntry[] = [];
-
-    switch (type) {
-      case 'strategy':
-        entries = Array.from(state.strategies.values());
-        break;
-      case 'pattern':
-        entries = Array.from(state.patterns.values());
-        break;
-      case 'risk':
-        entries = Array.from(state.risks.values());
-        break;
-      case 'opportunity':
-        entries = Array.from(state.opportunities.values());
-        break;
-      case 'failure':
-        entries = Array.from(state.failures.values());
-        break;
-    }
-
-    // Apply filters
-    if (filters?.chain) {
-      entries = entries.filter(e => e.chain === filters.chain);
-    }
-    if (filters?.confidence !== undefined) {
-      entries = entries.filter(e => e.confidence >= filters.confidence!);
-    }
-
-    return entries.sort((a, b) => b.confidence - a.confidence);
+    let entries = [...mapFor(state, type).values()];
+    if (filters?.chain) entries = entries.filter(entry => entry.chain === filters.chain);
+    if (filters?.confidence !== undefined) entries = entries.filter(entry => entry.confidence >= filters.confidence!);
+    return entries.sort((left, right) => right.confidence - left.confidence).map(entry => ({ ...entry, data: { ...entry.data } }));
   }
 
-  /**
-   * Update existing knowledge entry
-   */
   static updateKnowledge(
     id: string,
     updates: Partial<Omit<KnowledgeEntry, 'id' | 'type' | 'timestamp'>>,
-    chain: ChainId = this.primaryChain
+    chain: ChainId = this.primaryChain,
   ): boolean {
     const state = this.instances.get(chain);
     if (!state) return false;
-
-    // Find entry across all maps
-    const maps = [state.strategies, state.patterns, state.risks, state.opportunities, state.failures];
-    
-    for (const map of maps) {
-      const entry = map.get(id);
-      if (entry) {
-        const updated: KnowledgeEntry = {
-          ...entry,
-          ...updates,
-          lastUpdated: Date.now()
-        };
-        map.set(id, updated);
-        
-        logger.debug(`Knowledge updated in Eden`, {
-          component: 'EdenStorage',
-          chain,
-          id
-        });
-        
-        return true;
-      }
+    for (const map of [state.strategies, state.patterns, state.risks, state.opportunities, state.failures]) {
+      const current = map.get(id);
+      if (!current) continue;
+      const updated = { ...current, ...updates, id: current.id, type: current.type, timestamp: current.timestamp, lastUpdated: Date.now() };
+      map.set(id, updated);
+      observeLegacyCompatibilityArtifact({
+        artifactId: `${id}:update:${updated.lastUpdated}`,
+        kind: compatibilityKind(updated.type),
+        observedAt: updated.lastUpdated,
+        chain,
+        payload: updated,
+        provenance: ['eden_compatibility_update'],
+        sourceEventIds: [id],
+      });
+      return true;
     }
-
     return false;
   }
 
-  /**
-   * Replicate knowledge to other networks for redundancy
-   */
-  private static replicateToNetwork(entry: KnowledgeEntry, sourceChain: ChainId): void {
-    const targetChains: ChainId[] = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism']
-      .filter(c => c !== sourceChain) as ChainId[];
-
-    for (const targetChain of targetChains) {
-      const targetState = this.instances.get(targetChain);
-      if (!targetState) continue;
-
-      // Replicate to target chain, only increment totalKnowledge if entry is new
-      let isNew = false;
-      
-      switch (entry.type) {
-        case 'strategy':
-          if (!targetState.strategies.has(entry.id)) {
-            isNew = true;
-          }
-          targetState.strategies.set(entry.id, entry);
-          break;
-        case 'pattern':
-          if (!targetState.patterns.has(entry.id)) {
-            isNew = true;
-          }
-          targetState.patterns.set(entry.id, entry);
-          break;
-        case 'risk':
-          if (!targetState.risks.has(entry.id)) {
-            isNew = true;
-          }
-          targetState.risks.set(entry.id, entry);
-          break;
-        case 'opportunity':
-          if (!targetState.opportunities.has(entry.id)) {
-            isNew = true;
-          }
-          targetState.opportunities.set(entry.id, entry);
-          break;
-        case 'failure':
-          if (!targetState.failures.has(entry.id)) {
-            isNew = true;
-          }
-          targetState.failures.set(entry.id, entry);
-          break;
-      }
-
-      // Only increment if this is a new entry
-      if (isNew) {
-        targetState.totalKnowledge++;
-      }
+  private static replicateHotCompatibility(entry: KnowledgeEntry, sourceChain: ChainId): void {
+    for (const [chain, state] of this.instances.entries()) {
+      if (chain === sourceChain) continue;
+      const map = mapFor(state, entry.type);
+      map.set(entry.id, { ...entry, data: { ...entry.data } });
+      trimMap(map);
+      state.totalKnowledge = state.strategies.size + state.patterns.size + state.risks.size + state.opportunities.size + state.failures.size;
     }
   }
 
-  /**
-   * Start continuous replication across all networks
-   */
-  static startReplication(intervalMs: number = 5000): void {
-    if (this.replicationInterval) {
-      logger.warn('Replication already running', { component: 'EdenStorage' });
-      return;
-    }
-
-    this.replicationInterval = setInterval(() => {
-      this.syncAllNetworks();
-    }, intervalMs);
-
-    logger.info('Eden replication started', {
+  /** Historical API retained. No background replication timer is needed because
+   * the compatibility hot views are synchronized on writes and durable authority
+   * is the single canonical private schema. */
+  static startReplication(_intervalMs: number = 5000): void {
+    logger.info('Eden background replication retired; canonical durable memory is authoritative', {
       component: 'EdenStorage',
-      intervalMs
+      backgroundReplication: false,
+      executionAuthority: false,
     });
   }
 
-  /**
-   * Stop replication
-   */
   static stopReplication(): void {
-    if (this.replicationInterval) {
-      clearInterval(this.replicationInterval);
-      this.replicationInterval = null;
-      logger.info('Eden replication stopped', { component: 'EdenStorage' });
-    }
+    // Compatibility no-op: there is no independent Eden replication timer.
   }
 
-  /**
-   * Sync knowledge across all networks
-   */
-  private static syncAllNetworks(): void {
-    const chains: ChainId[] = ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism'];
-    const primaryState = this.instances.get(this.primaryChain);
-    
-    if (!primaryState) return;
-
-    for (const chain of chains) {
-      if (chain === this.primaryChain) continue;
-      
-      const state = this.instances.get(chain);
-      if (!state) continue;
-
-      // Sync each knowledge type
-      this.syncKnowledgeMap(primaryState.strategies, state.strategies);
-      this.syncKnowledgeMap(primaryState.patterns, state.patterns);
-      this.syncKnowledgeMap(primaryState.risks, state.risks);
-      this.syncKnowledgeMap(primaryState.opportunities, state.opportunities);
-      this.syncKnowledgeMap(primaryState.failures, state.failures);
-    }
-
-    logger.debug('Eden networks synced', {
-      component: 'EdenStorage',
-      networks: chains.length
-    });
-  }
-
-  /**
-   * Sync individual knowledge maps
-   */
-  private static syncKnowledgeMap(
-    source: Map<string, KnowledgeEntry>,
-    target: Map<string, KnowledgeEntry>
-  ): void {
-    for (const [id, entry] of source.entries()) {
-      const targetEntry = target.get(id);
-      
-      // Add missing entries or update if source is newer
-      if (!targetEntry || entry.lastUpdated > targetEntry.lastUpdated) {
-        target.set(id, { ...entry });
-      }
-    }
-  }
-
-  /**
-   * Update global metrics
-   */
-  static updateGlobalMetrics(
-    updates: Partial<GlobalMetrics>,
-    chain: ChainId = this.primaryChain
-  ): void {
+  static updateGlobalMetrics(updates: Partial<GlobalMetrics>, chain: ChainId = this.primaryChain): void {
     const state = this.instances.get(chain);
     if (!state) return;
-
-    state.globalMetrics = {
-      ...state.globalMetrics,
-      ...updates
-    };
-
-    // Replicate metrics to all networks
+    state.globalMetrics = { ...state.globalMetrics, ...updates };
     for (const [targetChain, targetState] of this.instances.entries()) {
-      if (targetChain !== chain) {
-        targetState.globalMetrics = { ...state.globalMetrics };
-      }
+      if (targetChain !== chain) targetState.globalMetrics = { ...state.globalMetrics };
     }
-  }
-
-  /**
-   * Record evolution result
-   */
-  static recordEvolution(result: EvolutionResult): void {
-    this.evolutionHistory.push(result);
-    
-    // Keep only last 100 evolutions
-    if (this.evolutionHistory.length > 100) {
-      this.evolutionHistory.shift();
-    }
-
-    logger.info('Evolution recorded', {
-      component: 'EdenStorage',
-      generation: result.generation,
-      improvementScore: result.improvementScore
+    const timestamp = Date.now();
+    observeLegacyCompatibilityArtifact({
+      artifactId: stableArtifactId(`legacy-eden-metrics-${chain}`, state.globalMetrics, timestamp),
+      kind: 'state_snapshot',
+      observedAt: timestamp,
+      chain,
+      payload: state.globalMetrics,
+      provenance: ['eden_compatibility_metrics', 'profit_fields_unverified_advisory_only'],
     });
   }
 
-  /**
-   * Get evolution history
-   */
-  static getEvolutionHistory(): EvolutionResult[] {
-    return [...this.evolutionHistory];
+  static recordEvolution(result: EvolutionResult): void {
+    this.evolutionHistory.push({ ...result });
+    this.evolutionHistory = this.evolutionHistory.slice(-100);
+    const timestamp = Date.now();
+    observeLegacyCompatibilityArtifact({
+      artifactId: stableArtifactId('legacy-eden-evolution', result, timestamp),
+      kind: 'evolution',
+      observedAt: timestamp,
+      payload: result,
+      provenance: ['eden_compatibility_evolution', 'research_only'],
+    });
   }
 
-  /**
-   * Get best strategies from Eden
-   */
-  static getBestStrategies(
-    limit: number = 10,
-    chain: ChainId = this.primaryChain
-  ): KnowledgeEntry[] {
+  static getEvolutionHistory(): EvolutionResult[] {
+    return this.evolutionHistory.map(result => ({ ...result }));
+  }
+
+  /** Compatibility ranking only. This output is advisory and cannot grant live
+   * execution; canonical economics/governance remain authoritative. */
+  static getBestStrategies(limit: number = 10, chain: ChainId = this.primaryChain): KnowledgeEntry[] {
     const state = this.instances.get(chain);
     if (!state) return [];
-
-    return Array.from(state.strategies.values())
-      .filter(s => s.successRate > 0.5 && s.confidence > 0.7)
-      .sort((a, b) => (b.profitability * b.successRate) - (a.profitability * a.successRate))
-      .slice(0, limit);
+    return [...state.strategies.values()]
+      .filter(strategy => strategy.successRate > 0.5 && strategy.confidence > 0.7)
+      .sort((left, right) => (right.profitability * right.successRate) - (left.profitability * left.successRate))
+      .slice(0, Math.max(0, limit))
+      .map(entry => ({ ...entry, data: { ...entry.data } }));
   }
 
-  /**
-   * Prune old or low-performing knowledge
-   */
   static pruneKnowledge(
-    maxAge: number = 7 * 24 * 60 * 60 * 1000, // 7 days
+    maxAge: number = 7 * 24 * 60 * 60 * 1000,
     minConfidence: number = 0.3,
-    chain: ChainId = this.primaryChain
+    chain: ChainId = this.primaryChain,
   ): number {
     const state = this.instances.get(chain);
     if (!state) return 0;
-
     const now = Date.now();
-    let prunedCount = 0;
-
-    const pruneMap = (map: Map<string, KnowledgeEntry>) => {
+    let pruned = 0;
+    for (const map of [state.strategies, state.patterns, state.risks, state.opportunities, state.failures]) {
       for (const [id, entry] of map.entries()) {
-        const age = now - entry.timestamp;
-        if (age > maxAge || entry.confidence < minConfidence) {
+        if (now - entry.timestamp > maxAge || entry.confidence < minConfidence) {
           map.delete(id);
-          prunedCount++;
+          pruned++;
         }
       }
-    };
-
-    pruneMap(state.strategies);
-    pruneMap(state.patterns);
-    pruneMap(state.risks);
-    pruneMap(state.opportunities);
-    pruneMap(state.failures);
-
-    state.totalKnowledge -= prunedCount;
-
-    logger.info('Knowledge pruned from Eden', {
-      component: 'EdenStorage',
-      chain,
-      prunedCount
-    });
-
-    return prunedCount;
+    }
+    state.totalKnowledge = state.strategies.size + state.patterns.size + state.risks.size + state.opportunities.size + state.failures.size;
+    return pruned;
   }
 
-  /**
-   * Reset Eden (for testing)
-   */
   static reset(): void {
-    this.stopReplication();
     this.instances.clear();
     this.evolutionHistory = [];
-    logger.info('Eden reset', { component: 'EdenStorage' });
+    artifactSequence = 0;
   }
 }
+
+export const EDEN_STORAGE_AUTHORITY = 'legacy_advisory_facade' as const;
+export const EDEN_DURABLE_AUTHORITY = 'canonical_private_intelligence_schema' as const;
+export const EDEN_EXECUTION_AUTHORITY = false as const;
+export const EDEN_SETTLEMENT_AUTHORITY = false as const;
