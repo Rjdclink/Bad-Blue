@@ -5,29 +5,29 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '../..');
 const bootstrapPath = path.join(root, 'server/services/cryptocrawl/integration/telemetry-bootstrap.ts');
-const source = fs.readFileSync(bootstrapPath, 'utf8');
+const providerPath = path.join(root, 'server/services/cryptocrawl/api/blockchain-providers.ts');
+const corePath = path.join(root, 'server/services/cryptocrawl/runtime/core-runtime.ts');
+const bootstrap = fs.readFileSync(bootstrapPath, 'utf8');
+const providers = fs.readFileSync(providerPath, 'utf8');
+const core = fs.readFileSync(corePath, 'utf8');
 
 const checks = [
-  ['Coinbase CDP key-name alias', source.includes("'CDP_API_KEY_NAME'")],
-  ['Coinbase CDP key-id alias', source.includes("'CDP_API_KEY_ID'")],
-  ['Coinbase CDP private-key alias', source.includes("'CDP_API_KEY_PRIVATE_KEY'")],
-  ['Coinbase documented generic key-name alias', source.includes("'KEY_NAME'")],
-  ['Coinbase documented generic key-secret alias', source.includes("'KEY_SECRET'")],
-  ['Ankr API-key-derived RPC support', source.includes('ANKR_API_KEY') && source.includes('https://rpc.ankr.com/${ANKR_SLUGS[chain]}/${ankrKey}')],
-  ['BSC included in Ankr slug map', source.includes("bsc: 'bsc'")],
-  ['Provider mesh initialized before core runtime', source.indexOf('await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);') < source.indexOf('const coreStart = ensureCryptoCrawlerCoreRuntime();')],
-  ['Ankr fallbacks registered before core runtime', source.indexOf('await registerBestEffortAnkrFallbacks();') < source.indexOf('const coreStart = ensureCryptoCrawlerCoreRuntime();')],
-  ['No execution-enable flag changed in bootstrap', !source.includes("process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION = 'true'")],
+  ['Coinbase CDP key-name alias', bootstrap.includes("'CDP_API_KEY_NAME'")],
+  ['Coinbase CDP key-id alias', bootstrap.includes("'CDP_API_KEY_ID'")],
+  ['Coinbase CDP private-key alias', bootstrap.includes("'CDP_API_KEY_PRIVATE_KEY'")],
+  ['Coinbase generic key-name alias', bootstrap.includes("'KEY_NAME'")],
+  ['Coinbase generic key-secret alias', bootstrap.includes("'KEY_SECRET'")],
+  ['Native provider manager already supports Ankr API key', providers.includes('ANKR_API_KEY') && providers.includes('https://rpc.ankr.com/${ankrSlug[chain]}/${ankrKey}')],
+  ['BSC is in native Ankr provider map', providers.includes("bsc: 'bsc'" )],
+  ['Core preserves topology independence', core.includes('optionalProviderFailureBlocksCore: false')],
+  ['Core startup remains topology-independent', core.includes('Provider/topology-specific monitors initialize separately and may degrade')],
+  ['Bootstrap does not enable live execution', !bootstrap.includes("process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION = 'true'")],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
-for (const [name, ok] of checks) {
-  console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}`);
-}
-
+for (const [name, ok] of checks) console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}`);
 if (failed.length) {
   console.error(`Provider foundation reliability verification failed: ${failed.map(([name]) => name).join(', ')}`);
   process.exit(1);
 }
-
 console.log('Provider foundation reliability verification passed.');
