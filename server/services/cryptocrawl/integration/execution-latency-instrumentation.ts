@@ -3,10 +3,13 @@ import { centralizedExchangeExecutor } from '../execution/centralized-exchange-e
 import { endToEndLatencyHarness, type LatencyOutcome } from '../runtime/end-to-end-latency-harness.js';
 
 let installed = false;
-const INSTRUMENTED_SUBMIT = Symbol.for('cryptocrawl.latency.instrumentedSubmit');
-const INSTRUMENTED_FETCH = Symbol.for('cryptocrawl.latency.instrumentedFetch');
+const SUBMIT_MARKER = '__cryptocrawlLatencyInstrumentedSubmit' as const;
+const FETCH_MARKER = '__cryptocrawlLatencyInstrumentedFetch' as const;
 
-type InstrumentableFunction = Function & { [INSTRUMENTED_SUBMIT]?: boolean; [INSTRUMENTED_FETCH]?: boolean };
+type InstrumentableFunction = Function & {
+  [SUBMIT_MARKER]?: boolean;
+  [FETCH_MARKER]?: boolean;
+};
 
 function classifyError(error: unknown): LatencyOutcome {
   const name = error instanceof Error ? error.name.toLowerCase() : '';
@@ -38,7 +41,7 @@ function privateOrderVenue(input: RequestInfo | URL, init?: RequestInit): 'coinb
 function installPrivateOrderAckFetchInstrumentation(): void {
   if (typeof globalThis.fetch !== 'function') return;
   const currentFetch = globalThis.fetch as InstrumentableFunction;
-  if (currentFetch[INSTRUMENTED_FETCH]) return;
+  if (currentFetch[FETCH_MARKER]) return;
   const originalFetch = globalThis.fetch.bind(globalThis);
 
   const wrappedFetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -61,7 +64,7 @@ function installPrivateOrderAckFetchInstrumentation(): void {
       throw error;
     }
   }) as typeof fetch & InstrumentableFunction;
-  wrappedFetch[INSTRUMENTED_FETCH] = true;
+  wrappedFetch[FETCH_MARKER] = true;
   globalThis.fetch = wrappedFetch;
 }
 
@@ -74,7 +77,7 @@ function installCanonicalAdapterSubmitInstrumentation(): number {
   for (const [venue, adapter] of Object.entries(adapters)) {
     if (!adapter || typeof adapter.submit !== 'function') continue;
     const currentSubmit = adapter.submit as InstrumentableFunction;
-    if (currentSubmit[INSTRUMENTED_SUBMIT]) continue;
+    if (currentSubmit[SUBMIT_MARKER]) continue;
     const originalSubmit = adapter.submit.bind(adapter);
     const instrumentedSubmit = (async (request: any) => {
       const span = endToEndLatencyHarness.startSpan('submit', 'network', {
@@ -97,7 +100,7 @@ function installCanonicalAdapterSubmitInstrumentation(): number {
         throw error;
       }
     }) as InstrumentableFunction;
-    instrumentedSubmit[INSTRUMENTED_SUBMIT] = true;
+    instrumentedSubmit[SUBMIT_MARKER] = true;
     adapter.submit = instrumentedSubmit;
     wrapped++;
   }
