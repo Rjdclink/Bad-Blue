@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
+import { durableIntelligenceOutbox } from '../intelligence/durable-intelligence-outbox.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 import { endToEndLatencyHarness } from '../runtime/end-to-end-latency-harness.js';
 import { RuntimeJsonStateStore } from '../integration/runtime-json-state-store.js';
@@ -212,10 +213,18 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     strategy: feedback.strategy,
   });
   try {
-    // Canonical durable memory is deliberately asynchronous. This call updates the
-    // bounded hot layer immediately and queues private-Postgres persistence without
-    // making database latency or availability part of execution/settlement safety.
+    // The bounded hot layer and best-effort in-process durable write remain the
+    // low-latency path. The durable outbox is queued without awaiting database
+    // completion; StageManager persistence is the restart recovery anchor.
     canonicalIntelligenceRepository.observeTerminalOutcome(feedback, eventId);
+    void durableIntelligenceOutbox.enqueueTerminalPersistence(feedback, eventId).catch(error => {
+      logger.warn('Durable intelligence outbox enqueue degraded; authoritative terminal evidence remains recoverable from StageManager persistence', {
+        component: 'MeasuredEvolutionFeedback',
+        eventId,
+        error: error instanceof Error ? error.message : String(error),
+        executionBlocked: false,
+      });
+    });
     enqueueSpan.end('ok');
   } catch (error) {
     enqueueSpan.end('error');
@@ -250,6 +259,7 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     averageSlippageBps: stats.averageSlippageBps,
     persistentMemoryAllowed: getCryptocrawlGovernance().isLongTermMemoryAllowed(),
     canonicalPrivateMemoryQueued: true,
+    restartSafeOutboxQueued: true,
     legacyHyperEvolutionAuthority: false,
   });
 }
