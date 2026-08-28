@@ -37,6 +37,13 @@ function quoteEvidence(quote: DexQuoteObservation, chain: ChainId) {
   };
 }
 
+function isDiscoveryPriceEvidence(quote: DexQuoteObservation | null): quote is DexQuoteObservation {
+  return !!quote
+    && quote.quoteKind === 'price'
+    && quote.executable === false
+    && quote.transaction === undefined;
+}
+
 async function measuredGasUsd(chain: ChainId, quotes: DexQuoteObservation[]): Promise<number | null> {
   if (quotes.some(quote => !quote.estimatedGas || !/^\d+$/.test(quote.estimatedGas))) return null;
   const gas = await gasOracle.getGasPrice(chain).catch(() => null);
@@ -48,7 +55,6 @@ async function measuredGasUsd(chain: ChainId, quotes: DexQuoteObservation[]): Pr
 
 export async function discoverMeasuredDexCandidates(): Promise<MeasuredCandidate[]> {
   const observed: MeasuredCandidate[] = [];
-  const taker = process.env.ZEROX_TAKER_ADDRESS?.trim();
   const ttlMs = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
 
   for (const chain of DISCOVERY_CHAINS) {
@@ -61,17 +67,20 @@ export async function discoverMeasuredDexCandidates(): Promise<MeasuredCandidate
         sellToken: config.usdc,
         buyToken: config.usdt,
         sellAmount: stableUnits(notionalUsd),
-        takerAddress: taker,
+        purpose: 'discovery',
       });
-      if (!first?.liquidityAvailable || !first.buyAmount) continue;
+      // Discovery must remain read-only. Even if a taker address exists in the
+      // environment, executable 0x transaction payloads are not accepted here.
+      if (!isDiscoveryPriceEvidence(first) || !first.liquidityAvailable || !first.buyAmount) continue;
+
       const second = await marketDataProviders.getDexQuote({
         chainId: config.chainId,
         sellToken: config.usdt,
         buyToken: config.usdc,
         sellAmount: first.buyAmount,
-        takerAddress: taker,
+        purpose: 'discovery',
       });
-      if (!second?.liquidityAvailable || !second.buyAmount) continue;
+      if (!isDiscoveryPriceEvidence(second) || !second.liquidityAvailable || !second.buyAmount) continue;
 
       const finalUsd = unitsToUsd(second.buyAmount);
       const grossProfitUsd = finalUsd === null ? null : finalUsd - notionalUsd;
@@ -88,7 +97,7 @@ export async function discoverMeasuredDexCandidates(): Promise<MeasuredCandidate
         ...(gasUsd === null ? ['measured_gas_cost'] : []),
         // Current receiver/payload builders cannot atomically compose two 0x
         // allowance-holder transactions. Discovery remains useful, execution does
-        // not become authorized merely because 0x returned transaction payloads.
+        // not become authorized merely because 0x exposes an execution API.
         'atomic_0x_roundtrip_execution_adapter',
       ];
       const status = deterministicNetProfitUsd !== null && deterministicNetProfitUsd > 0
@@ -108,7 +117,7 @@ export async function discoverMeasuredDexCandidates(): Promise<MeasuredCandidate
         rawQuotes: [quoteEvidence(first, chain), quoteEvidence(second, chain)],
         depth: {
           status: first.liquidityAvailable && second.liquidityAvailable ? 'measured' : 'unavailable',
-          detail: '0x liquidityAvailable/route response; pool-level depth is not inferred',
+          detail: '0x /price liquidityAvailable/route response; pool-level depth is not inferred',
         },
         economics: {
           grossProfitUsd,
@@ -121,9 +130,9 @@ export async function discoverMeasuredDexCandidates(): Promise<MeasuredCandidate
         },
         quoteAgeMs,
         executableCapability: false,
-        executionCapabilityReason: 'Measured 0x round-trip discovery exists, but the flash-loan receiver/payload authority does not atomically compose 0x allowance-holder calls',
+        executionCapabilityReason: 'Measured 0x price-only round-trip discovery exists, but the flash-loan receiver/payload authority does not atomically compose 0x allowance-holder calls',
         missingInformation,
-        provenance: ['0x:measured_roundtrip', 'gas_oracle:measured_when_available', 'synthetic_evidence:false'],
+        provenance: ['0x:price_only_discovery', 'gas_oracle:measured_when_available', 'synthetic_evidence:false'],
       }));
     }
   }
