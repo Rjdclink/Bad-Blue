@@ -10,6 +10,7 @@ import { ensureOrderBookEvolutionWiring } from './order-book-evolution-wiring.js
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
+import { ensureRuntimeInvariantMonitor } from './runtime-invariant-monitor.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 
 let installed = false;
@@ -34,6 +35,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
   ensureOrderBookEvolutionWiring();
+  ensureRuntimeInvariantMonitor();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
@@ -52,6 +54,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     dynamicScale: 'dual_axis_search_and_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
     zeroCapitalExecutionAdmission: 'resource_leases',
+    runtimeInvariantMonitor: 'continuous_fail_closed_candidate_quarantine',
     runtimeHeartbeat: true,
   });
 }
