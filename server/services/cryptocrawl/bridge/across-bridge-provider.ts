@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 import { SUPPORTED_CHAINS } from './chain-config.js';
 import type { ChainId } from './types.js';
 
@@ -49,6 +50,28 @@ export interface AcrossReadiness {
   reason: string;
 }
 
+export interface AcrossSettlementEvidence {
+  provider: 'across';
+  depositTxnRef: string;
+  depositId: string | null;
+  providerStatus: string;
+  originChain: ChainId;
+  destinationChain: ChainId;
+  identityVerified: boolean;
+  destinationChainVerified: boolean;
+  fillTxnRef: string | null;
+  refundTxnRef: string | null;
+  destinationReceiptVerified: boolean;
+  refundReceiptVerified: boolean;
+  financiallyTerminal: boolean;
+  successful: boolean;
+  requiresRecovery: boolean;
+  observedAt: number;
+  authority: 'settlement_evidence_only';
+  executionAuthority: false;
+  provenance: string[];
+}
+
 export interface AcrossBridgeMetrics {
   authority: 'bridge_evidence_only';
   executionAuthority: false;
@@ -65,8 +88,12 @@ export interface AcrossBridgeMetrics {
   quotesFailed: number;
   expiredQuotesRejected: number;
   tokenResolutionFailures: number;
+  settlementChecks: number;
+  settlementChecksSucceeded: number;
+  settlementIdentityMismatches: number;
   lastQuoteAttemptAt: number | null;
   lastQuoteSuccessAt: number | null;
+  lastSettlementCheckAt: number | null;
   lastError: string | null;
 }
 
@@ -92,8 +119,12 @@ const evidenceMetrics = {
   quotesFailed: 0,
   expiredQuotesRejected: 0,
   tokenResolutionFailures: 0,
+  settlementChecks: 0,
+  settlementChecksSucceeded: 0,
+  settlementIdentityMismatches: 0,
   lastQuoteAttemptAt: null as number | null,
   lastQuoteSuccessAt: null as number | null,
+  lastSettlementCheckAt: null as number | null,
   lastError: null as string | null,
 };
 
@@ -112,6 +143,10 @@ function rememberError(error: unknown): void {
 function amountUsd(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function validTxHash(value: unknown): value is string {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
 }
 
 function validCatalogToken(value: unknown): value is AcrossCatalogToken {
@@ -219,6 +254,21 @@ function bridgeFeeUsd(payload: any): number | null {
     ?? null;
 }
 
+async function verifyReceipt(chain: ChainId, txHash: string | null): Promise<boolean> {
+  if (!txHash || !validTxHash(txHash)) return false;
+  try {
+    await multiProviderRpcManager.initialize([chain]);
+    const { result } = await multiProviderRpcManager.execute(
+      chain,
+      'receipts',
+      provider => provider.getTransactionReceipt(txHash),
+    );
+    return !!result && result.transactionHash?.toLowerCase() === txHash.toLowerCase() && result.status === 1;
+  } catch {
+    return false;
+  }
+}
+
 export function getAcrossBridgeReadiness(): AcrossReadiness {
   return config()
     ? { configured: true, reason: 'Across API key, 2-byte integrator ID, and depositor address are visible' }
@@ -246,8 +296,12 @@ export function getAcrossBridgeMetrics(): AcrossBridgeMetrics {
     quotesFailed: evidenceMetrics.quotesFailed,
     expiredQuotesRejected: evidenceMetrics.expiredQuotesRejected,
     tokenResolutionFailures: evidenceMetrics.tokenResolutionFailures,
+    settlementChecks: evidenceMetrics.settlementChecks,
+    settlementChecksSucceeded: evidenceMetrics.settlementChecksSucceeded,
+    settlementIdentityMismatches: evidenceMetrics.settlementIdentityMismatches,
     lastQuoteAttemptAt: evidenceMetrics.lastQuoteAttemptAt,
     lastQuoteSuccessAt: evidenceMetrics.lastQuoteSuccessAt,
+    lastSettlementCheckAt: evidenceMetrics.lastSettlementCheckAt,
     lastError: evidenceMetrics.lastError,
   };
 }
@@ -366,6 +420,124 @@ export async function getAcrossBridgeQuote(input: {
     return quote;
   } catch (error) {
     evidenceMetrics.quotesFailed += 1;
+    rememberError(error);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * One-shot terminal settlement verification for a known Across origin deposit
+ * transaction. Status indexing is provider evidence; a successful fill is not
+ * financially terminal here until the exact destination fill transaction is also
+ * confirmed successful through the shared RPC receipt authority.
+ */
+export async function getAcrossDepositSettlementEvidence(input: {
+  depositTxnRef: string;
+  originChain: ChainId;
+  destinationChain: ChainId;
+}): Promise<AcrossSettlementEvidence | null> {
+  const credentials = config();
+  if (!credentials || !validTxHash(input.depositTxnRef) || input.originChain === input.destinationChain) return null;
+  evidenceMetrics.settlementChecks += 1;
+  evidenceMetrics.lastSettlementCheckAt = Date.now();
+
+  const params = new URLSearchParams({
+    depositTxnRef: input.depositTxnRef,
+    integratorId: credentials.integratorId,
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(3_000, Number(process.env.ACROSS_SETTLEMENT_STATUS_TIMEOUT_MS || 8_000)));
+  try {
+    const response = await fetch(`https://app.across.to/api/deposit/status?${params.toString()}`, {
+      method: 'GET',
+      headers: { accept: 'application/json', Authorization: `Bearer ${credentials.apiKey}` },
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let payload: any = {};
+    try { payload = text ? JSON.parse(text) : {}; } catch { /* handled below */ }
+    if (!response.ok) throw new Error(`Across deposit status failed (${response.status})${payload?.message ? `: ${payload.message}` : ''}`);
+
+    const providerStatus = typeof payload?.status === 'string' ? payload.status : '';
+    const returnedDepositTxnRef = typeof payload?.depositTxnRef === 'string'
+      ? payload.depositTxnRef
+      : typeof payload?.depositTxHash === 'string'
+        ? payload.depositTxHash
+        : '';
+    const originChainId = Number(payload?.originChainId);
+    const destinationChainId = Number(payload?.destinationChainId);
+    const identityVerified = validTxHash(returnedDepositTxnRef)
+      && returnedDepositTxnRef.toLowerCase() === input.depositTxnRef.toLowerCase()
+      && originChainId === SUPPORTED_CHAINS[input.originChain].chainId;
+    const destinationChainVerified = destinationChainId === SUPPORTED_CHAINS[input.destinationChain].chainId;
+    if (!identityVerified) {
+      evidenceMetrics.settlementIdentityMismatches += 1;
+      return null;
+    }
+
+    const fillTxnRef = validTxHash(payload?.fillTxnRef)
+      ? payload.fillTxnRef
+      : validTxHash(payload?.fillTx)
+        ? payload.fillTx
+        : null;
+    const refundTxnRef = validTxHash(payload?.depositRefundTxnRef)
+      ? payload.depositRefundTxnRef
+      : validTxHash(payload?.depositRefundTxHash)
+        ? payload.depositRefundTxHash
+        : null;
+
+    const destinationReceiptVerified = providerStatus === 'filled' && destinationChainVerified
+      ? await verifyReceipt(input.destinationChain, fillTxnRef)
+      : false;
+    const refundReceiptVerified = providerStatus === 'refunded'
+      ? await verifyReceipt(input.originChain, refundTxnRef)
+      : false;
+
+    const successful = providerStatus === 'filled' && destinationChainVerified && destinationReceiptVerified;
+    const refunded = providerStatus === 'refunded' && refundReceiptVerified;
+    const depositFailed = providerStatus === 'deposit-failed';
+    // An expired bridge is not financially terminal for CryptoCrawler: funds are
+    // still awaiting recovery/refund. Refund-failed/manual-refund-required are
+    // likewise recovery states, not settled loss accounting.
+    const financiallyTerminal = successful || refunded || depositFailed;
+    const requiresRecovery = ['expired', 'auto-refund-pending', 'refund-failed', 'manual-refund-required'].includes(providerStatus)
+      || (providerStatus === 'refunded' && !refundReceiptVerified);
+    const observedAt = Date.now();
+    const evidence: AcrossSettlementEvidence = {
+      provider: 'across',
+      depositTxnRef: input.depositTxnRef,
+      depositId: payload?.depositId === undefined || payload?.depositId === null ? null : String(payload.depositId),
+      providerStatus,
+      originChain: input.originChain,
+      destinationChain: input.destinationChain,
+      identityVerified,
+      destinationChainVerified,
+      fillTxnRef,
+      refundTxnRef,
+      destinationReceiptVerified,
+      refundReceiptVerified,
+      financiallyTerminal,
+      successful,
+      requiresRecovery,
+      observedAt,
+      authority: 'settlement_evidence_only',
+      executionAuthority: false,
+      provenance: [
+        'across_deposit_status:authenticated',
+        `deposit_tx_identity:${identityVerified}`,
+        `destination_chain_identity:${destinationChainVerified}`,
+        `provider_status:${providerStatus || 'unknown'}`,
+        `destination_receipt_verified:${destinationReceiptVerified}`,
+        `refund_receipt_verified:${refundReceiptVerified}`,
+        'settlement_before_learning',
+      ],
+    };
+    evidenceMetrics.settlementChecksSucceeded += 1;
+    evidenceMetrics.lastError = null;
+    return evidence;
+  } catch (error) {
     rememberError(error);
     throw error;
   } finally {
