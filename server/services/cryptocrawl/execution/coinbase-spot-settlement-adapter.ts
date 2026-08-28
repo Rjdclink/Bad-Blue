@@ -4,6 +4,8 @@ import {
   assertCoinbaseSpotTradeReady,
   coinbasePrivateRequest,
 } from '../intelligence/coinbase-advanced-trade-authority.js';
+import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
+import { validateCoinbaseOrderAgainstProduct } from './coinbase-product-policy.js';
 import type {
   ExecutionFill,
   ExecutionStatus,
@@ -170,7 +172,21 @@ export class CoinbaseSpotSettlementAdapter {
   constructor(private readonly requester: CoinbasePrivateRequester = coinbasePrivateRequest) {}
 
   async submit(request: CoinbaseOrderRequest): Promise<CoinbaseOrderReceipt> {
-    if (this.requester === coinbasePrivateRequest) await assertCoinbaseSpotTradeReady();
+    if (this.requester === coinbasePrivateRequest) {
+      await assertCoinbaseSpotTradeReady();
+      // Re-read current public product constraints immediately before a live
+      // authenticated order. The planning path already normalizes quantity;
+      // this assertion protects against metadata/state changes between scan and
+      // submission. Injected requesters remain deterministic for isolated tests.
+      const constraints = await getCoinbaseAdvancedProductConstraints(request.symbol);
+      const constraintCheck = validateCoinbaseOrderAgainstProduct(
+        { quantity: request.quantity, price: request.price },
+        constraints,
+      );
+      if (!constraintCheck.valid) {
+        throw new Error(`Coinbase order violates current product constraints: ${constraintCheck.reason}`);
+      }
+    }
     const submittedAt = Date.now();
     const payload = await this.requester('/api/v3/brokerage/orders', 'POST', {
       body: {
