@@ -16,6 +16,9 @@ const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical
 const genie = read('server/services/genie-controller/index.ts');
 const beam = read('server/services/cryptocrawl/integration/cryptara-beam-wiring.ts');
 const stageManager = read('server/services/cryptocrawl/governance/stage-management.ts');
+const cexExecutor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
+const constrainedCex = read('server/services/cryptocrawl/execution/constrained-production-cex-adapters.ts');
+const cexSerialization = read('server/services/cryptocrawl/execution/cex-order-serialization.ts');
 
 // Profit magnitude must never be an execution ceiling.
 requireText(riskGovernor, 'profitCeilingAuthority: false', 'RiskGovernor declares no profit-ceiling authority');
@@ -40,5 +43,14 @@ requireText(genie, 'this.cryptara = ensureCryptaraBeamWiring();', 'Genie initial
 forbidText(genie, 'this.cryptara = getCryptara();', 'Genie cannot initialize an un-wired Cryptara singleton');
 requireText(beam, 'ensureAuthoritativeMonteCarloWiring()', 'Beam route remains backed by authoritative MC');
 requireText(beam, 'EVIDENCE_INCOMPLETE: verified_opportunity_context', 'direct MC without verified opportunity context fails closed');
+
+// Canonical CEX execution must preserve venue-legal precision without a hidden rounding cap.
+requireText(cexExecutor, "from './constrained-production-cex-adapters.js'", 'canonical executor imports precision-preserving CEX adapters');
+requireText(cexExecutor, 'createConstrainedProductionCexSettlementAdapters()', 'canonical executor instantiates precision-preserving CEX adapters');
+requireText(constrainedCex, "from './cex-order-serialization.js'", 'CEX submit adapters consume the canonical decimal serializer');
+requireText(constrainedCex, 'cexDecimalString(request.price)', 'CEX order prices use canonical decimal serialization');
+requireText(constrainedCex, 'cexDecimalString(request.quantity)', 'CEX order quantities use canonical decimal serialization');
+forbidText(constrainedCex, 'toFixed(12)', 'CEX submission cannot reintroduce a hidden 12-decimal cap');
+forbidText(cexSerialization, 'toFixed(', 'canonical CEX decimal serialization cannot impose a fixed precision cap');
 
 console.log('CryptoCrawler clean-house authority extension verification passed.');
