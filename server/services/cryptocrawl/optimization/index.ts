@@ -1,8 +1,11 @@
-// Canonical CryptoCrawler optimization boundary.
-//
-// The historical Divine Optimization engine is not a production authority and is
-// intentionally not exported. Current optimization is distributed across verified
-// economics, Cryptara ranking/risk evidence, QuantiComp compute scheduling, canonical
-// execution resource scheduling, and measured settlement feedback.
+// Optimization Module - Divine computation for maximum profitability
+// Exports all optimization components
 
-export {};
+export {
+  DivineOptimizationEngine,
+  getDivineEngine,
+  DivinePerception,
+  ZeroFrictionExecutor,
+  LocalComputationEngine,
+  type DivineEngineState,
+} from './divine-engine';

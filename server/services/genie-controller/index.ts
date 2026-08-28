@@ -35,7 +35,6 @@ import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
 import { Alexara, getAlexara, type LegalResearchRequest, type DocumentGenerationRequest } from '../alexara';
 import { Cryptara, getCryptara, type CryptaraConfig } from '../cryptara';
-import { ensureCryptaraBeamWiring } from '../cryptocrawl/integration/cryptara-beam-wiring.js';
 
 const log = createLogger('4JI-GENIE');
 
@@ -262,10 +261,8 @@ export class GenieController extends EventEmitter {
       this.status.alexaraStatus = 'running';
       log.info('ALEXARA module initialized');
 
-      // Initialize CRYPTARA through the canonical CryptoCrawler compute authority.
-      // This guarantees Genie-owned direct simulation calls cannot bypass the
-      // Beam -> QuantiComp -> authoritative measured Monte Carlo route.
-      this.cryptara = ensureCryptaraBeamWiring();
+      // Initialize CRYPTARA (Crypto)
+      this.cryptara = getCryptara();
       await this.cryptara.initialize();
       this.status.cryptaraStatus = 'running';
       log.info('CRYPTARA module initialized');

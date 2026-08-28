@@ -9,11 +9,6 @@ import {
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
 import type { SupportedExecutionChain } from '../execution/adapters/onchain-payload-builder.js';
-import {
-  recordZeroCapitalRouteQuoteCycle,
-  selectZeroCapitalRoutesForQuote,
-  type ZeroCapitalRoutePreScore,
-} from './zero-capital-route-preselection.js';
 
 export interface DynamicZeroCapitalDiscoveryState {
   observedAt: number | null;
@@ -21,18 +16,11 @@ export interface DynamicZeroCapitalDiscoveryState {
   structuralCandidates: number;
   measuredQuotes: number;
   positiveQuotes: number;
-  quoteBudgetSelections: number;
   chains: Record<string, {
     candidates: number;
-    selectedForQuote: number;
     measuredQuotes: number;
     positiveQuotes: number;
     gasCostUsd: number | null;
-    quoteBudget: number;
-    scoredCandidates: number;
-    explorationSelected: number;
-    exploitationSelected: number;
-    topPreScores: Array<{ routeId: string; preScore: number }>;
     error?: string;
   }>;
 }
@@ -43,7 +31,6 @@ const state: DynamicZeroCapitalDiscoveryState = {
   structuralCandidates: 0,
   measuredQuotes: 0,
   positiveQuotes: 0,
-  quoteBudgetSelections: 0,
   chains: {},
 };
 
@@ -90,14 +77,6 @@ function protocolLeg(
   return protocol === 'uniswapV3'
     ? { protocol, tokenIn, tokenOut, feeTier }
     : { protocol, tokenIn, tokenOut, fee: 0.003 };
-}
-
-function topScores(scores: readonly ZeroCapitalRoutePreScore[]): Array<{ routeId: string; preScore: number }> {
-  return scores
-    .filter((score): score is ZeroCapitalRoutePreScore & { preScore: number } => score.preScore !== null && Number.isFinite(score.preScore))
-    .sort((left, right) => right.preScore - left.preScore || left.routeId.localeCompare(right.routeId))
-    .slice(0, 8)
-    .map(score => ({ routeId: score.routeId, preScore: score.preScore }));
 }
 
 /**
@@ -176,59 +155,27 @@ export async function discoverDynamicZeroCapitalQuotes(
   state.observedAt = Date.now();
   state.structuralCandidates += templates.length;
   if (templates.length === 0) {
-    state.chains[chain] = {
-      candidates: 0,
-      selectedForQuote: 0,
-      measuredQuotes: 0,
-      positiveQuotes: 0,
-      gasCostUsd: null,
-      quoteBudget: 0,
-      scoredCandidates: 0,
-      explorationSelected: 0,
-      exploitationSelected: 0,
-      topPreScores: [],
-    };
+    state.chains[chain] = { candidates: 0, measuredQuotes: 0, positiveQuotes: 0, gasCostUsd: null };
     return [];
   }
 
   try {
     const enriched = await enrichMeasuredGasCost(chain as ChainId, templates);
-    const preselection = selectZeroCapitalRoutesForQuote(chain, enriched.routes, enriched.gasCostUsd);
-    const selected = preselection.selectedRoutes;
-    const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
-    recordZeroCapitalRouteQuoteCycle(selected, quotes);
-
-    // `measuredQuotes` is retained as compatibility telemetry for admitted fresh
-    // quote work. Structural coverage is tracked independently and is never shrunk.
-    state.measuredQuotes += selected.length;
+    const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, enriched.routes);
+    state.measuredQuotes += templates.length;
     state.positiveQuotes += quotes.length;
-    state.quoteBudgetSelections += selected.length;
     state.chains[chain] = {
       candidates: templates.length,
-      selectedForQuote: selected.length,
-      measuredQuotes: selected.length,
+      measuredQuotes: templates.length,
       positiveQuotes: quotes.length,
       gasCostUsd: enriched.gasCostUsd,
-      quoteBudget: preselection.quoteBudget,
-      scoredCandidates: preselection.scoredCandidates,
-      explorationSelected: preselection.explorationSelected,
-      exploitationSelected: preselection.exploitationSelected,
-      topPreScores: topScores(preselection.scores),
     };
-    logger.info('[DynamicZeroCapital] Economically allocated measured route cycle completed', {
+    logger.info('[DynamicZeroCapital] Measured route cycle completed', {
       component: 'DynamicZeroCapitalRouteDiscovery',
       chain,
       structuralCandidates: templates.length,
-      selectedForQuote: selected.length,
-      quoteBudget: preselection.quoteBudget,
-      scoredCandidates: preselection.scoredCandidates,
-      explorationSelected: preselection.explorationSelected,
-      exploitationSelected: preselection.exploitationSelected,
       positiveQuotes: quotes.length,
       gasCostUsd: enriched.gasCostUsd,
-      preScoreAuthority: preselection.authority,
-      deterministicProfitAuthority: preselection.deterministicProfitAuthority,
-      executionAuthority: preselection.executionAuthority,
       syntheticEvidenceAllowed: false,
     });
     return quotes;
@@ -236,15 +183,9 @@ export async function discoverDynamicZeroCapitalQuotes(
     const message = error instanceof Error ? error.message : String(error);
     state.chains[chain] = {
       candidates: templates.length,
-      selectedForQuote: 0,
       measuredQuotes: 0,
       positiveQuotes: 0,
       gasCostUsd: null,
-      quoteBudget: 0,
-      scoredCandidates: 0,
-      explorationSelected: 0,
-      exploitationSelected: 0,
-      topPreScores: [],
       error: message,
     };
     logger.warn('[DynamicZeroCapital] Measured route cycle failed closed', {
@@ -259,9 +200,6 @@ export async function discoverDynamicZeroCapitalQuotes(
 export function getDynamicZeroCapitalDiscoveryState(): DynamicZeroCapitalDiscoveryState {
   return {
     ...state,
-    chains: Object.fromEntries(Object.entries(state.chains).map(([chain, value]) => [chain, {
-      ...value,
-      topPreScores: value.topPreScores.map(score => ({ ...score })),
-    }])),
+    chains: Object.fromEntries(Object.entries(state.chains).map(([chain, value]) => [chain, { ...value }])),
   };
 }

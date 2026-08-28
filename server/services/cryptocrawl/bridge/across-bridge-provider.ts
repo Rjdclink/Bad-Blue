@@ -1,16 +1,6 @@
 import { ethers } from 'ethers';
-import { multiProviderRpcManager } from '../api/blockchain-providers.js';
-import { SUPPORTED_CHAINS } from './chain-config.js';
+import { ERC20_ABI, SUPPORTED_CHAINS } from './chain-config.js';
 import type { ChainId } from './types.js';
-
-export interface AcrossTokenIdentity {
-  chainId: number;
-  address: string;
-  symbol: 'USDC' | 'USDT';
-  decimals: number;
-  observedAt: number;
-  source: 'across_swap_tokens';
-}
 
 export interface AcrossBridgeQuote {
   provider: 'across';
@@ -23,21 +13,12 @@ export interface AcrossBridgeQuote {
   inputAmount: string;
   expectedOutputAmount: string;
   minOutputAmount: string | null;
-  /** Backward-compatible alias for the origin/input token decimals. */
   tokenDecimals: number;
-  inputTokenDecimals: number;
-  outputTokenDecimals: number;
-  tokenCatalogObservedAt: number;
   expectedFillTimeSec: number;
   quoteExpiryTimestamp: number;
   simulationSuccess: boolean;
   originGasUsd: number | null;
-  destinationGasUsd: number | null;
-  lpFeeUsd: number | null;
-  relayerCapitalFeeUsd: number | null;
-  bridgeFeeUsd: number | null;
   totalFeeUsd: number | null;
-  totalMaxFeeUsd: number | null;
   approvalTransactions: number;
   swapTransactionPresent: boolean;
   observedAt: number;
@@ -50,84 +31,6 @@ export interface AcrossReadiness {
   reason: string;
 }
 
-export interface AcrossSettlementEvidence {
-  provider: 'across';
-  depositTxnRef: string;
-  depositId: string | null;
-  providerStatus: string;
-  originChain: ChainId;
-  destinationChain: ChainId;
-  identityVerified: boolean;
-  destinationChainVerified: boolean;
-  fillTxnRef: string | null;
-  refundTxnRef: string | null;
-  destinationReceiptVerified: boolean;
-  refundReceiptVerified: boolean;
-  financiallyTerminal: boolean;
-  successful: boolean;
-  requiresRecovery: boolean;
-  observedAt: number;
-  authority: 'settlement_evidence_only';
-  executionAuthority: false;
-  provenance: string[];
-}
-
-export interface AcrossBridgeMetrics {
-  authority: 'bridge_evidence_only';
-  executionAuthority: false;
-  configured: boolean;
-  tokenCatalog: {
-    state: 'not_loaded' | 'live' | 'expired' | 'unavailable';
-    observedAt: number | null;
-    expiresAt: number | null;
-    tokenCount: number;
-    failures: number;
-  };
-  quoteAttempts: number;
-  quotesSucceeded: number;
-  quotesFailed: number;
-  expiredQuotesRejected: number;
-  tokenResolutionFailures: number;
-  settlementChecks: number;
-  settlementChecksSucceeded: number;
-  settlementIdentityMismatches: number;
-  lastQuoteAttemptAt: number | null;
-  lastQuoteSuccessAt: number | null;
-  lastSettlementCheckAt: number | null;
-  lastError: string | null;
-}
-
-interface AcrossCatalogToken {
-  chainId: number;
-  address: string;
-  symbol: string;
-  decimals: number;
-}
-
-interface TokenCatalogCache {
-  expiresAt: number;
-  observedAt: number;
-  tokens: AcrossCatalogToken[];
-}
-
-let tokenCatalogCache: TokenCatalogCache | null = null;
-let tokenCatalogInFlight: Promise<TokenCatalogCache | null> | null = null;
-const evidenceMetrics = {
-  tokenCatalogFailures: 0,
-  quoteAttempts: 0,
-  quotesSucceeded: 0,
-  quotesFailed: 0,
-  expiredQuotesRejected: 0,
-  tokenResolutionFailures: 0,
-  settlementChecks: 0,
-  settlementChecksSucceeded: 0,
-  settlementIdentityMismatches: 0,
-  lastQuoteAttemptAt: null as number | null,
-  lastQuoteSuccessAt: null as number | null,
-  lastSettlementCheckAt: null as number | null,
-  lastError: null as string | null,
-};
-
 function config(): { apiKey: string; integratorId: string; depositor: string } | null {
   const apiKey = process.env.ACROSS_API_KEY?.trim();
   const integratorId = process.env.ACROSS_INTEGRATOR_ID?.trim();
@@ -136,104 +39,21 @@ function config(): { apiKey: string; integratorId: string; depositor: string } |
   return { apiKey, integratorId, depositor };
 }
 
-function rememberError(error: unknown): void {
-  evidenceMetrics.lastError = (error instanceof Error ? error.message : String(error)).slice(0, 1_000);
+function tokenAddress(chain: ChainId, token: 'USDC' | 'USDT'): string {
+  return token === 'USDC' ? SUPPORTED_CHAINS[chain].usdc : SUPPORTED_CHAINS[chain].usdt;
+}
+
+async function tokenDecimals(chain: ChainId, token: 'USDC' | 'USDT'): Promise<number> {
+  const provider = new ethers.providers.JsonRpcProvider(SUPPORTED_CHAINS[chain].rpcUrl);
+  const contract = new ethers.Contract(tokenAddress(chain, token), ERC20_ABI, provider);
+  const decimals = Number(await contract.decimals());
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error(`Invalid token decimals for ${chain}:${token}`);
+  return decimals;
 }
 
 function amountUsd(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function validTxHash(value: unknown): value is string {
-  return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
-}
-
-function validCatalogToken(value: unknown): value is AcrossCatalogToken {
-  if (!value || typeof value !== 'object') return false;
-  const token = value as Partial<AcrossCatalogToken>;
-  return Number.isInteger(Number(token.chainId))
-    && Number(token.chainId) > 0
-    && typeof token.address === 'string'
-    && /^0x[0-9a-fA-F]{40}$/.test(token.address)
-    && typeof token.symbol === 'string'
-    && token.symbol.trim().length > 0
-    && Number.isInteger(Number(token.decimals))
-    && Number(token.decimals) >= 0
-    && Number(token.decimals) <= 36;
-}
-
-function parseTokenCatalog(payload: unknown): AcrossCatalogToken[] {
-  const rows = Array.isArray(payload)
-    ? payload
-    : payload && typeof payload === 'object' && Array.isArray((payload as any).tokens)
-      ? (payload as any).tokens
-      : [];
-  return rows.filter(validCatalogToken).map(token => ({
-    chainId: Number(token.chainId),
-    address: token.address,
-    symbol: token.symbol.toUpperCase(),
-    decimals: Number(token.decimals),
-  }));
-}
-
-async function fetchAcrossTokenCatalog(credentials: { apiKey: string }): Promise<TokenCatalogCache | null> {
-  const now = Date.now();
-  if (tokenCatalogCache && tokenCatalogCache.expiresAt > now) return tokenCatalogCache;
-  if (tokenCatalogInFlight) return tokenCatalogInFlight;
-
-  tokenCatalogInFlight = (async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), Math.max(3_000, Number(process.env.ACROSS_TOKEN_CATALOG_TIMEOUT_MS || 8_000)));
-    try {
-      const response = await fetch('https://app.across.to/api/swap/tokens', {
-        method: 'GET',
-        headers: { accept: 'application/json', Authorization: `Bearer ${credentials.apiKey}` },
-        signal: controller.signal,
-      });
-      const text = await response.text();
-      let payload: unknown = null;
-      try { payload = text ? JSON.parse(text) : null; } catch { /* handled below */ }
-      if (!response.ok) throw new Error(`Across token catalog failed (${response.status})`);
-      const tokens = parseTokenCatalog(payload);
-      if (tokens.length === 0) throw new Error('Across token catalog returned no valid token identities');
-      const observedAt = Date.now();
-      const ttlMs = Math.max(30_000, Math.min(30 * 60_000, Number(process.env.ACROSS_TOKEN_CATALOG_TTL_MS || 5 * 60_000)));
-      tokenCatalogCache = { tokens, observedAt, expiresAt: observedAt + ttlMs };
-      return tokenCatalogCache;
-    } finally {
-      clearTimeout(timeout);
-    }
-  })().catch(error => {
-    evidenceMetrics.tokenCatalogFailures += 1;
-    rememberError(error);
-    return null;
-  }).finally(() => {
-    tokenCatalogInFlight = null;
-  });
-  return tokenCatalogInFlight;
-}
-
-async function resolveAcrossToken(
-  credentials: { apiKey: string },
-  chain: ChainId,
-  symbol: 'USDC' | 'USDT',
-): Promise<AcrossTokenIdentity | null> {
-  const catalog = await fetchAcrossTokenCatalog(credentials);
-  if (!catalog) return null;
-  const chainId = SUPPORTED_CHAINS[chain].chainId;
-  const matches = catalog.tokens.filter(token => token.chainId === chainId && token.symbol.toUpperCase() === symbol);
-  const unique = new Map(matches.map(token => [token.address.toLowerCase(), token]));
-  if (unique.size !== 1) return null;
-  const token = [...unique.values()][0];
-  return {
-    chainId,
-    address: token.address,
-    symbol,
-    decimals: token.decimals,
-    observedAt: catalog.observedAt,
-    source: 'across_swap_tokens',
-  };
 }
 
 function quoteFeeUsd(payload: any): number | null {
@@ -242,68 +62,10 @@ function quoteFeeUsd(payload: any): number | null {
     ?? null;
 }
 
-function bridgeDetails(payload: any): any {
-  return payload?.fees?.total?.details?.bridge?.details
-    ?? payload?.steps?.bridge?.fees?.details
-    ?? null;
-}
-
-function bridgeFeeUsd(payload: any): number | null {
-  return amountUsd(payload?.fees?.total?.details?.bridge?.amountUsd)
-    ?? amountUsd(payload?.steps?.bridge?.fees?.amountUsd)
-    ?? null;
-}
-
-async function verifyReceipt(chain: ChainId, txHash: string | null): Promise<boolean> {
-  if (!txHash || !validTxHash(txHash)) return false;
-  try {
-    await multiProviderRpcManager.initialize([chain]);
-    const { result } = await multiProviderRpcManager.execute(
-      chain,
-      'receipts',
-      provider => provider.getTransactionReceipt(txHash),
-    );
-    return !!result && result.transactionHash?.toLowerCase() === txHash.toLowerCase() && result.status === 1;
-  } catch {
-    return false;
-  }
-}
-
 export function getAcrossBridgeReadiness(): AcrossReadiness {
   return config()
     ? { configured: true, reason: 'Across API key, 2-byte integrator ID, and depositor address are visible' }
     : { configured: false, reason: 'Across remains optional until ACROSS_API_KEY, ACROSS_INTEGRATOR_ID, and a depositor address are configured' };
-}
-
-export function getAcrossBridgeMetrics(): AcrossBridgeMetrics {
-  const now = Date.now();
-  const catalogState: AcrossBridgeMetrics['tokenCatalog']['state'] = tokenCatalogCache
-    ? tokenCatalogCache.expiresAt > now ? 'live' : 'expired'
-    : evidenceMetrics.tokenCatalogFailures > 0 ? 'unavailable' : 'not_loaded';
-  return {
-    authority: 'bridge_evidence_only',
-    executionAuthority: false,
-    configured: getAcrossBridgeReadiness().configured,
-    tokenCatalog: {
-      state: catalogState,
-      observedAt: tokenCatalogCache?.observedAt ?? null,
-      expiresAt: tokenCatalogCache?.expiresAt ?? null,
-      tokenCount: tokenCatalogCache?.tokens.length ?? 0,
-      failures: evidenceMetrics.tokenCatalogFailures,
-    },
-    quoteAttempts: evidenceMetrics.quoteAttempts,
-    quotesSucceeded: evidenceMetrics.quotesSucceeded,
-    quotesFailed: evidenceMetrics.quotesFailed,
-    expiredQuotesRejected: evidenceMetrics.expiredQuotesRejected,
-    tokenResolutionFailures: evidenceMetrics.tokenResolutionFailures,
-    settlementChecks: evidenceMetrics.settlementChecks,
-    settlementChecksSucceeded: evidenceMetrics.settlementChecksSucceeded,
-    settlementIdentityMismatches: evidenceMetrics.settlementIdentityMismatches,
-    lastQuoteAttemptAt: evidenceMetrics.lastQuoteAttemptAt,
-    lastQuoteSuccessAt: evidenceMetrics.lastQuoteSuccessAt,
-    lastSettlementCheckAt: evidenceMetrics.lastSettlementCheckAt,
-    lastError: evidenceMetrics.lastError,
-  };
 }
 
 export async function getAcrossBridgeQuote(input: {
@@ -317,28 +79,17 @@ export async function getAcrossBridgeQuote(input: {
   if (input.originChain === input.destinationChain) return null;
   if (!(input.amountHuman > 0) || !Number.isFinite(input.amountHuman)) return null;
 
-  // Across explicitly publishes current chain-specific token identities through
-  // /swap/tokens. Static local bridge addresses are never used as quote truth.
-  const [inputToken, outputToken] = await Promise.all([
-    resolveAcrossToken(credentials, input.originChain, input.token),
-    resolveAcrossToken(credentials, input.destinationChain, input.token),
-  ]);
-  if (!inputToken || !outputToken) {
-    evidenceMetrics.tokenResolutionFailures += 1;
-    return null;
-  }
-
-  const amount = ethers.utils.parseUnits(
-    input.amountHuman.toFixed(Math.min(inputToken.decimals, 8)),
-    inputToken.decimals,
-  ).toString();
+  const decimals = await tokenDecimals(input.originChain, input.token);
+  const outputDecimals = await tokenDecimals(input.destinationChain, input.token);
+  if (decimals !== outputDecimals) return null;
+  const amount = ethers.utils.parseUnits(input.amountHuman.toFixed(Math.min(decimals, 8)), decimals).toString();
   const origin = SUPPORTED_CHAINS[input.originChain];
   const destination = SUPPORTED_CHAINS[input.destinationChain];
   const params = new URLSearchParams({
     tradeType: 'exactInput',
     amount,
-    inputToken: inputToken.address,
-    outputToken: outputToken.address,
+    inputToken: tokenAddress(input.originChain, input.token),
+    outputToken: tokenAddress(input.destinationChain, input.token),
     originChainId: String(origin.chainId),
     destinationChainId: String(destination.chainId),
     depositor: credentials.depositor,
@@ -348,11 +99,7 @@ export async function getAcrossBridgeQuote(input: {
   });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(3_000, Number(process.env.ACROSS_QUOTE_TIMEOUT_MS || 8_000)));
-  evidenceMetrics.quoteAttempts += 1;
-  evidenceMetrics.lastQuoteAttemptAt = Date.now();
   try {
-    // Approval quotes intentionally are never cached: they contain fresh fee,
-    // route, simulation, balance/allowance, and expiry evidence.
     const response = await fetch(`https://app.across.to/api/swap/approval?${params.toString()}`, {
       method: 'GET',
       headers: { accept: 'application/json', Authorization: `Bearer ${credentials.apiKey}` },
@@ -370,176 +117,35 @@ export async function getAcrossBridgeQuote(input: {
     }
     const observedAt = Date.now();
     const expiresAt = quoteExpiryTimestamp * 1000;
-    if (expiresAt <= observedAt) {
-      evidenceMetrics.expiredQuotesRejected += 1;
-      return null;
-    }
-    const details = bridgeDetails(payload);
-    const quote: AcrossBridgeQuote = {
+    if (expiresAt <= observedAt) return null;
+    return {
       provider: 'across',
       quoteId: typeof payload?.id === 'string' ? payload.id : null,
       originChain: input.originChain,
       destinationChain: input.destinationChain,
       token: input.token,
-      inputToken: inputToken.address,
-      outputToken: outputToken.address,
+      inputToken: tokenAddress(input.originChain, input.token),
+      outputToken: tokenAddress(input.destinationChain, input.token),
       inputAmount: amount,
       expectedOutputAmount,
       minOutputAmount: typeof payload?.minOutputAmount === 'string' ? payload.minOutputAmount : null,
-      tokenDecimals: inputToken.decimals,
-      inputTokenDecimals: inputToken.decimals,
-      outputTokenDecimals: outputToken.decimals,
-      tokenCatalogObservedAt: Math.min(inputToken.observedAt, outputToken.observedAt),
+      tokenDecimals: decimals,
       expectedFillTimeSec,
       quoteExpiryTimestamp,
       simulationSuccess: payload?.swapTx?.simulationSuccess === true,
       originGasUsd: amountUsd(payload?.fees?.originGas?.amountUsd),
-      destinationGasUsd: amountUsd(details?.destinationGas?.amountUsd),
-      lpFeeUsd: amountUsd(details?.lp?.amountUsd),
-      relayerCapitalFeeUsd: amountUsd(details?.relayerCapital?.amountUsd),
-      bridgeFeeUsd: bridgeFeeUsd(payload),
       totalFeeUsd: quoteFeeUsd(payload),
-      totalMaxFeeUsd: amountUsd(payload?.fees?.totalMax?.amountUsd),
       approvalTransactions: Array.isArray(payload?.approvalTxns) ? payload.approvalTxns.length : 0,
       swapTransactionPresent: !!(payload?.swapTx?.to && payload?.swapTx?.data),
       observedAt,
       expiresAt,
       provenance: [
-        'across_swap_tokens:current_chain_token_identity',
         'across_swap_api',
-        'swap_approval_quote:fresh_uncached',
-        `input_token:${origin.chainId}:${inputToken.address}:${inputToken.decimals}`,
-        `output_token:${destination.chainId}:${outputToken.address}:${outputToken.decimals}`,
+        'swap_approval_quote',
         'fresh_cross_chain_fee_and_fill_time',
         'provider_simulation_status',
       ],
     };
-    evidenceMetrics.quotesSucceeded += 1;
-    evidenceMetrics.lastQuoteSuccessAt = observedAt;
-    evidenceMetrics.lastError = null;
-    return quote;
-  } catch (error) {
-    evidenceMetrics.quotesFailed += 1;
-    rememberError(error);
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/**
- * One-shot terminal settlement verification for a known Across origin deposit
- * transaction. Status indexing is provider evidence; a successful fill is not
- * financially terminal here until the exact destination fill transaction is also
- * confirmed successful through the shared RPC receipt authority.
- */
-export async function getAcrossDepositSettlementEvidence(input: {
-  depositTxnRef: string;
-  originChain: ChainId;
-  destinationChain: ChainId;
-}): Promise<AcrossSettlementEvidence | null> {
-  const credentials = config();
-  if (!credentials || !validTxHash(input.depositTxnRef) || input.originChain === input.destinationChain) return null;
-  evidenceMetrics.settlementChecks += 1;
-  evidenceMetrics.lastSettlementCheckAt = Date.now();
-
-  const params = new URLSearchParams({
-    depositTxnRef: input.depositTxnRef,
-    integratorId: credentials.integratorId,
-  });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.max(3_000, Number(process.env.ACROSS_SETTLEMENT_STATUS_TIMEOUT_MS || 8_000)));
-  try {
-    const response = await fetch(`https://app.across.to/api/deposit/status?${params.toString()}`, {
-      method: 'GET',
-      headers: { accept: 'application/json', Authorization: `Bearer ${credentials.apiKey}` },
-      signal: controller.signal,
-    });
-    const text = await response.text();
-    let payload: any = {};
-    try { payload = text ? JSON.parse(text) : {}; } catch { /* handled below */ }
-    if (!response.ok) throw new Error(`Across deposit status failed (${response.status})${payload?.message ? `: ${payload.message}` : ''}`);
-
-    const providerStatus = typeof payload?.status === 'string' ? payload.status : '';
-    const returnedDepositTxnRef = typeof payload?.depositTxnRef === 'string'
-      ? payload.depositTxnRef
-      : typeof payload?.depositTxHash === 'string'
-        ? payload.depositTxHash
-        : '';
-    const originChainId = Number(payload?.originChainId);
-    const destinationChainId = Number(payload?.destinationChainId);
-    const identityVerified = validTxHash(returnedDepositTxnRef)
-      && returnedDepositTxnRef.toLowerCase() === input.depositTxnRef.toLowerCase()
-      && originChainId === SUPPORTED_CHAINS[input.originChain].chainId;
-    const destinationChainVerified = destinationChainId === SUPPORTED_CHAINS[input.destinationChain].chainId;
-    if (!identityVerified) {
-      evidenceMetrics.settlementIdentityMismatches += 1;
-      return null;
-    }
-
-    const fillTxnRef = validTxHash(payload?.fillTxnRef)
-      ? payload.fillTxnRef
-      : validTxHash(payload?.fillTx)
-        ? payload.fillTx
-        : null;
-    const refundTxnRef = validTxHash(payload?.depositRefundTxnRef)
-      ? payload.depositRefundTxnRef
-      : validTxHash(payload?.depositRefundTxHash)
-        ? payload.depositRefundTxHash
-        : null;
-
-    const destinationReceiptVerified = providerStatus === 'filled' && destinationChainVerified
-      ? await verifyReceipt(input.destinationChain, fillTxnRef)
-      : false;
-    const refundReceiptVerified = providerStatus === 'refunded'
-      ? await verifyReceipt(input.originChain, refundTxnRef)
-      : false;
-
-    const successful = providerStatus === 'filled' && destinationChainVerified && destinationReceiptVerified;
-    const refunded = providerStatus === 'refunded' && refundReceiptVerified;
-    const depositFailed = providerStatus === 'deposit-failed';
-    // An expired bridge is not financially terminal for CryptoCrawler: funds are
-    // still awaiting recovery/refund. Refund-failed/manual-refund-required are
-    // likewise recovery states, not settled loss accounting.
-    const financiallyTerminal = successful || refunded || depositFailed;
-    const requiresRecovery = ['expired', 'auto-refund-pending', 'refund-failed', 'manual-refund-required'].includes(providerStatus)
-      || (providerStatus === 'refunded' && !refundReceiptVerified);
-    const observedAt = Date.now();
-    const evidence: AcrossSettlementEvidence = {
-      provider: 'across',
-      depositTxnRef: input.depositTxnRef,
-      depositId: payload?.depositId === undefined || payload?.depositId === null ? null : String(payload.depositId),
-      providerStatus,
-      originChain: input.originChain,
-      destinationChain: input.destinationChain,
-      identityVerified,
-      destinationChainVerified,
-      fillTxnRef,
-      refundTxnRef,
-      destinationReceiptVerified,
-      refundReceiptVerified,
-      financiallyTerminal,
-      successful,
-      requiresRecovery,
-      observedAt,
-      authority: 'settlement_evidence_only',
-      executionAuthority: false,
-      provenance: [
-        'across_deposit_status:authenticated',
-        `deposit_tx_identity:${identityVerified}`,
-        `destination_chain_identity:${destinationChainVerified}`,
-        `provider_status:${providerStatus || 'unknown'}`,
-        `destination_receipt_verified:${destinationReceiptVerified}`,
-        `refund_receipt_verified:${refundReceiptVerified}`,
-        'settlement_before_learning',
-      ],
-    };
-    evidenceMetrics.settlementChecksSucceeded += 1;
-    evidenceMetrics.lastError = null;
-    return evidence;
-  } catch (error) {
-    rememberError(error);
-    throw error;
   } finally {
     clearTimeout(timeout);
   }

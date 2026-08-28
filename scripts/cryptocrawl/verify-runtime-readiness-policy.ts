@@ -15,14 +15,15 @@ const base = {
   liveExecutionConfirmed: true,
   reconciledInventoryAssets: 0,
   eligibleCandidates: 0,
-  eligibleCexCandidates: 0,
-  eligibleZeroCapitalCandidates: 0,
   stageCanExecute: false,
   currentStage: 1,
   initialGasReady: false,
   zeroCapitalExecutionEnabled: true,
 };
 
+// Exact production ambiguity: capability is present, but no inventory,
+// candidate, or governance permission exists. Execution/trading readiness must
+// remain false while the capability layer may truthfully be true.
 let readiness = computeCryptoRuntimeReadiness(base);
 assert.equal(readiness.EXECUTION_CAPABILITY_READY.ready, true);
 assert.equal(readiness.INVENTORY_READY.ready, false);
@@ -31,13 +32,12 @@ assert.equal(readiness.GOVERNANCE_READY.ready, false);
 assert.equal(readiness.EXECUTION_READY.ready, false);
 assert.equal(readiness.TRADING_READY.ready, false);
 
-// Canonical CEX trading can become ready only when an eligible CEX candidate,
-// reconciled CEX inventory, executable governance and live capability all agree.
+// An inventory-backed eligible CEX candidate under an executable governance
+// stage may become strictly ready. The policy still does not execute anything.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   reconciledInventoryAssets: 4,
   eligibleCandidates: 1,
-  eligibleCexCandidates: 1,
   stageCanExecute: true,
   currentStage: 2,
 });
@@ -48,70 +48,25 @@ assert.equal(readiness.GOVERNANCE_READY.ready, true);
 assert.equal(readiness.EXECUTION_READY.ready, true);
 assert.equal(readiness.TRADING_READY.ready, true);
 
-// A detected source/deployment SHA mismatch is a hard execution-readiness
-// failure even when every market/governance/resource input would otherwise pass.
+// A proven initial-gas zero-capital resource path can satisfy the resource layer
+// without pretending CEX inventory exists.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
-  runtimeIdentitySafe: false,
-  runtimeIdentityMismatch: true,
-  reconciledInventoryAssets: 4,
   eligibleCandidates: 1,
-  eligibleCexCandidates: 1,
-  stageCanExecute: true,
-  currentStage: 2,
-});
-assert.equal(readiness.APP_READY.ready, false);
-assert.equal(readiness.EXECUTION_CAPABILITY_READY.ready, false);
-assert.equal(readiness.EXECUTION_READY.ready, false);
-assert.equal(readiness.TRADING_READY.ready, false);
-assert.match(readiness.EXECUTION_CAPABILITY_READY.detail, /runtimeIdentitySafe=false/);
-
-// Zero-capital gas readiness is a separate topology and must never make a CEX
-// candidate appear resource-ready when reconciled CEX inventory is absent.
-readiness = computeCryptoRuntimeReadiness({
-  ...base,
-  eligibleCandidates: 2,
-  eligibleCexCandidates: 1,
-  eligibleZeroCapitalCandidates: 1,
   stageCanExecute: true,
   currentStage: 2,
   initialGasReady: true,
   zeroCapitalExecutionEnabled: true,
 });
 assert.equal(readiness.INVENTORY_READY.ready, false);
-assert.equal(readiness.CANDIDATE_READY.ready, true);
-assert.equal(readiness.TRADING_READY.ready, false);
-assert.match(readiness.TRADING_READY.detail, /Zero-capital resources never substitute for CEX inventory/);
+assert.equal(readiness.TRADING_READY.ready, true);
 
-// A zero-capital candidate by itself is not a candidate for the canonical CEX
-// scheduler and therefore cannot make CEX TRADING_READY true.
-readiness = computeCryptoRuntimeReadiness({
-  ...base,
-  eligibleCandidates: 1,
-  eligibleCexCandidates: 0,
-  eligibleZeroCapitalCandidates: 1,
-  stageCanExecute: true,
-  currentStage: 2,
-  initialGasReady: true,
-});
-assert.equal(readiness.CANDIDATE_READY.ready, false);
-assert.equal(readiness.TRADING_READY.ready, false);
-
-// Blockchain RPC degradation is topology-local. Core CEX data readiness remains
-// truthful when centralized market data is ready, while zero-capital resource
-// detail reports its own RPC dependency.
-readiness = computeCryptoRuntimeReadiness({
-  ...base,
-  criticalRpcReady: false,
-});
-assert.equal(readiness.DATA_READY.ready, true);
-assert.match(readiness.DATA_READY.detail, /not required for core CEX discovery/);
-
+// Any immutable execution guard failure keeps both capability and trade ready
+// false regardless of resources or candidates.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   reconciledInventoryAssets: 4,
   eligibleCandidates: 1,
-  eligibleCexCandidates: 1,
   stageCanExecute: true,
   currentStage: 2,
   noExecutionGuardEnabled: true,

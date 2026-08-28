@@ -1,14 +1,43 @@
-// Canonical CryptoCrawler evolution exports.
-//
-// HyperEvolution, swarm heuristics, and frontier-research engines are historical
-// research implementations and are not production learning/evolution authorities.
-// Production evolution input is terminal normalized settlement evidence only.
+/**
+ * Evolution Module - Complete Hyper-Evolution System
+ */
 
 export {
-  ensureMeasuredEvolutionFeedbackHydrated,
-  recordMeasuredEvolutionFeedback,
-  getMeasuredEvolutionMetrics,
-  getMeasuredEvolutionSamples,
-  type MeasuredExecutionSample,
-  type MeasuredEvolutionSnapshot,
-} from './measured-execution-feedback.js';
+  HyperEvolutionEngine,
+  getHyperEvolutionEngine,
+  hyperEvolution,
+  type GeneticConfig,
+  type StrategyGenome,
+  type EvolutionState,
+  type SuccessPattern,
+  type FailurePattern
+} from './hyper-evolution-engine';
+
+export {
+  SwarmIntelligenceEngine,
+  getSwarmIntelligenceEngine,
+  swarmIntelligence,
+  type Particle,
+  type SwarmConfig,
+  type AntColonyConfig,
+  type BeeColonyConfig,
+  type FoodSource,
+  type PheromoneTrail
+} from './swarm-intelligence';
+
+export {
+  FrontierResearchEngine,
+  frontierResearch,
+  DARPA_METHODOLOGIES,
+  NASA_METHODOLOGIES,
+  IARPA_METHODOLOGIES,
+  QUANTUM_METHODOLOGIES,
+  HFT_METHODOLOGIES,
+  type DARPAMethodology,
+  type NASAMethodology,
+  type IARPAMethodology,
+  type QuantumMethodology,
+  type HFTMethodology,
+  type ResearchSynthesis,
+  type FrontierCapability
+} from './frontier-research-integration';

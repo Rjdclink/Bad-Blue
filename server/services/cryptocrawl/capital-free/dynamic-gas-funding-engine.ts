@@ -11,13 +11,6 @@ export interface GasFundingDecision {
   reason: string;
 }
 
-/**
- * Zero-capital execution must be able to prove realized all-in profit, not only
- * contract-level token profit. Sponsored execution has measured zero monetary
- * gas. Native-funded trading remains observation/reserve evidence only until the
- * settlement layer has a measured native-gas -> input-token/USD conversion for
- * the actual receipt fee; otherwise realized net profit would be unknowable.
- */
 export function chooseGasFundingMode(
   chain: DynamicChainConfig,
   nativeBalance: bigint,
@@ -26,34 +19,13 @@ export function chooseGasFundingMode(
   const defaultFloor = ethers.utils.parseEther(process.env.DYNAMIC_GAS_RESERVE_NATIVE || '0.002').toBigInt();
   const specific = process.env[`DYNAMIC_GAS_RESERVE_${chain.nativeAsset}`];
   const reserveFloor = specific ? ethers.utils.parseUnits(specific, 18).toBigInt() : defaultFloor;
-
-  if (chain.sponsoredBootstrap && sponsorReady) {
-    return {
-      chain: chain.id,
-      mode: 'sponsored',
-      nativeBalance,
-      reserveFloor,
-      reason: 'Sponsored execution is ready and preserves measured zero-monetary-gas settlement accounting',
-    };
-  }
-
   if (nativeBalance >= reserveFloor) {
-    return {
-      chain: chain.id,
-      mode: 'unavailable',
-      nativeBalance,
-      reserveFloor,
-      reason: 'Native gas reserve is sufficient, but live trading is fail-closed until actual receipt gas has measured same-unit realized-profit conversion',
-    };
+    return { chain: chain.id, mode: 'native', nativeBalance, reserveFloor, reason: 'Native gas reserve is sufficient; sponsorship is unnecessary' };
   }
-
-  return {
-    chain: chain.id,
-    mode: 'unavailable',
-    nativeBalance,
-    reserveFloor,
-    reason: 'Neither settlement-accountable sponsorship nor executable native-gas accounting is available',
-  };
+  if (chain.sponsoredBootstrap && sponsorReady) {
+    return { chain: chain.id, mode: 'sponsored', nativeBalance, reserveFloor, reason: 'Native reserve is below floor; use sponsored bootstrap/fallback' };
+  }
+  return { chain: chain.id, mode: 'unavailable', nativeBalance, reserveFloor, reason: 'Neither sufficient native gas nor compatible sponsorship is available' };
 }
 
 export function gasReserveShareBps(): number {

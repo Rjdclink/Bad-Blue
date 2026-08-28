@@ -6,11 +6,9 @@ import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { getMempoolCapabilities } from '../discovery/mempool-capability-registry.js';
-import { getLatestCexEconomicBarrier } from '../discovery/cex-economic-barrier.js';
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
 import { cexInventoryLedger } from '../execution/cex-inventory-ledger.js';
 import { inventoryRebalancer } from '../execution/inventory-rebalancer.js';
-import { canonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
@@ -19,10 +17,8 @@ import { getMeasuredEvolutionMetrics } from '../evolution/measured-execution-fee
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { orderBookEvolutionStore } from '../validation/order-book-evolution-store.js';
 import { resolveCoinStatsEnvironment } from '../runtime/environment-contract.js';
-import { getPerformanceEvidenceContract } from '../runtime/performance-evidence-contract.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { computeCryptoRuntimeReadiness } from '../runtime/readiness-policy.js';
-import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
 
 const CHAINS: SupportedChain[] = [
   'ethereum',
@@ -55,26 +51,16 @@ function executionConfiguration() {
     && process.env.OKX_API_SECRET?.trim()
     && process.env.OKX_API_PASSPHRASE?.trim()
   );
-  const coinbaseConfigured = !!(
-    (process.env.COINBASE_API_KEY?.trim() || process.env.COINBASE_KEY_NAME?.trim() || process.env.CDP_API_KEY_NAME?.trim())
-    && (process.env.COINBASE_API_SECRET?.trim() || process.env.COINBASE_KEY_SECRET?.trim() || process.env.CDP_API_KEY_SECRET?.trim())
-  );
-  const configuredVenueCount = [coinbaseConfigured, krakenConfigured, okxConfigured].filter(Boolean).length;
   const noExecutionGuardEnabled = process.env.NO_EXECUTION === 'true';
   const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
   const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
   return {
-    coinbaseConfigured,
     krakenConfigured,
     okxConfigured,
-    configuredVenueCount,
     noExecutionGuardEnabled,
     liveExecutionEnabled,
     liveExecutionConfirmed,
-    // A cross-venue CEX route needs at least two configured accounts. Actual
-    // permissions, authenticated fees, product depth and inventory still gate the
-    // individual plan; configuration alone never makes TRADING_READY true.
-    centralizedExecutionConfigured: configuredVenueCount >= 2,
+    centralizedExecutionConfigured: krakenConfigured && okxConfigured,
   };
 }
 
@@ -82,7 +68,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
   if (heartbeatRunning) return;
   heartbeatRunning = true;
   try {
-    const [alchemy, beam, intelligenceOutbox] = await Promise.all([
+    const [alchemy, beam] = await Promise.all([
       alchemyIntegration.readinessCheck({ strictLive: false }).catch(error => ({
         ready: false,
         active: false,
@@ -90,21 +76,16 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         detail: error instanceof Error ? error.message : String(error),
       })),
       Promise.resolve(workloadRouter.getSystemStatus()),
-      canonicalIntelligenceOutbox.refreshMetrics(),
     ]);
     const recentMinute = canonicalOpportunityState.getMetrics(60_000);
     const recentHour = canonicalOpportunityState.getMetrics(60 * 60_000);
-    const recentSnapshots = canonicalOpportunityState.getRecent(512);
-    const invariantMonitor = runtimeInvariantMonitor.scan(recentSnapshots);
     const latest = canonicalOpportunityState.getLatest();
     const graph = measuredOpportunityGraph.getLatestCycle();
     const multiTopology = multiTopologyDiscoveryController.getLatestCycle();
     const candidateMetrics = measuredCandidateRegistry.getMetrics(60_000);
-    const economicBarrier = getLatestCexEconomicBarrier();
     const scheduler = canonicalExecutionScheduler.getStats();
     const stage = stageManager.getState();
     const measured = getMeasuredEvolutionMetrics();
-    const performanceTruth = getPerformanceEvidenceContract();
     const runtime = getCryptoCrawlerRuntimeAttestation();
     const execution = executionConfiguration();
     const providerStatuses = marketDataProviders.getProviderStatuses();
@@ -137,22 +118,19 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       liveExecutionEnabled: execution.liveExecutionEnabled,
       liveExecutionConfirmed: execution.liveExecutionConfirmed,
       reconciledInventoryAssets: inventory.length,
-      eligibleCandidates: candidateMetrics.eligible,
-      eligibleCexCandidates: candidateMetrics.byTopology.CEX_CEX.eligible,
-      eligibleZeroCapitalCandidates: candidateMetrics.byTopology.ZERO_CAPITAL_ATOMIC.eligible,
+      eligibleCandidates: recentMinute.eligibleOpportunities,
       stageCanExecute,
       currentStage: stage.currentStage,
       initialGasReady: stageManager.isInitialGasReady(),
       zeroCapitalExecutionEnabled,
     });
 
+    // Preserve the high-value discovery context alongside the pure policy output.
     readiness.DISCOVERY_READY.detail += `; selectedSymbols=${graph?.selectedSymbols ?? 0}; multiTopologyObserved=${candidateMetrics.observed}`;
 
     logger.info('[CryptoRuntime] Authoritative runtime heartbeat', {
       component: 'CryptoRuntimeObservability',
       runtime,
-      runtimeInvariants: invariantMonitor,
-      performanceTruth,
       readiness,
       governance: {
         stage: stage.currentStage,
@@ -175,7 +153,6 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
           assessedCandidates: graph.assessedCandidates,
           eligibleCandidates: graph.eligibleCandidates,
           capacity: graph.capacity,
-          economicBarrier,
           errors: graph.errors,
         } : null,
         multiTopology,
@@ -188,15 +165,6 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         expectedNetProfitLastHourUsd: recentHour.expectedNetProfitUsd,
         realizedNetProfitLastHourUsd: recentHour.realizedNetProfitUsd,
         realizedSettlementsLastHour: recentHour.realizedSettlementCount,
-        profitBlockers: {
-          authenticatedCexFeeBarrier: economicBarrier,
-          stageOneBlockedByFeeEconomics: stage.currentStage === 1
-            && recentMinute.verifiedPositiveOpportunities === 0
-            && economicBarrier?.status === 'fee_blocked',
-          coinStatsRequiredForCoreCexAdvancement: false,
-          coinStatsEnvironmentState: coinStatsEnvironment.state,
-          coinStatsEnvironmentSourceName: coinStatsEnvironment.sourceName,
-        },
       },
       latestDecision: latest ? {
         opportunityId: latest.opportunityId,
@@ -240,7 +208,6 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         optional: {
           coinStats: {
             requiredForCoreCexDiscovery: false,
-            requiredForCoreCexAdvancement: false,
             environmentState: coinStatsEnvironment.state,
             sourceName: coinStatsEnvironment.sourceName,
           },
@@ -250,7 +217,6 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       inventory: {
         reconciled: inventory,
         rebalance,
-        zeroCapitalResourcesAreCexInventory: false,
       },
       monteCarloCalibration: mcCalibration,
       orderBookEvolution: bookEvolution,
@@ -269,10 +235,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         activeRetries: beam.activeRetries,
       },
       executionScheduler: scheduler,
-      learning: {
-        ...measured,
-        durableOutbox: intelligenceOutbox,
-      },
+      learning: measured,
       executionPosture: {
         ...execution,
         zeroCapitalExecutionEnabled,
@@ -298,9 +261,6 @@ export function ensureCryptoRuntimeObservability(): void {
     component: 'CryptoRuntimeObservability',
     heartbeatMs: intervalMs,
     runtimeAttestation: true,
-    runtimeInvariantMonitor: true,
-    durableLearningOutboxTelemetry: true,
-    performanceTruthContractTelemetry: true,
     decomposedReadiness: [
       'APP_READY',
       'CONFIG_READY',
@@ -313,10 +273,9 @@ export function ensureCryptoRuntimeObservability(): void {
       'EXECUTION_READY',
       'TRADING_READY',
     ],
-    executionReadySemantics: 'strict_topology_specific_canonical_cex_trade_ready',
+    executionReadySemantics: 'strict_trade_ready_backward_compatible_alias',
     providerHeartbeat: ['Alchemy', 'Ankr/shared-RPC', 'market-data'],
     measuredOpportunityGraphTelemetry: true,
-    cexEconomicBarrierTelemetry: true,
     multiTopologyCandidateTelemetry: true,
     inventoryTelemetry: true,
     monteCarloCalibrationTelemetry: true,

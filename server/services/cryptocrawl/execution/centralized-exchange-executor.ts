@@ -3,7 +3,6 @@ import { getCryptocrawlGovernance } from '../governance/index.js';
 import logger from '../../../logger.js';
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { cexInventoryLedger, type InventoryRequirement, type InventoryVenue } from './cex-inventory-ledger.js';
-import { assertFreshCexProductConstraints } from './cex-submit-time-product-guard.js';
 import { runProfitabilityMonteCarlo } from './adapters/monte-carlo-profitability.js';
 import {
   createProductionCexSettlementAdapters,
@@ -11,17 +10,14 @@ import {
   type CexExecutorOptions,
   type CexExecutionResult,
   type CexSettlementAdapter,
-  type ExecutableCexVenue,
 } from './cex-settlement.js';
 
 export type ExchangeOrderReceipt = NonNullable<CexExecutionResult['buyOrder']>;
 export type ArbitrageExecutionResult = CexExecutionResult;
 
 type BalanceCapableAdapter = CexSettlementAdapter & {
-  getBalances: () => Promise<Record<string, string>>;
+  getBalances?: () => Promise<Record<string, string>>;
 };
-
-const SUPPORTED_CEX_VENUES = new Set<ExecutableCexVenue>(['coinbase', 'kraken', 'okx']);
 
 function rejectPlan(error: string): ArbitrageExecutionResult {
   return {
@@ -57,74 +53,12 @@ function spendableSnapshot(venue: InventoryVenue, asset: string) {
   );
 }
 
-/**
- * A pair can be terminal even when both order submissions did not succeed. If
- * one IOC leg was accepted and reaches a terminal state while its counterpart
- * was never submitted, that one-sided exposure is a completed (failed) pair
- * lifecycle and must be learned exactly once, never retried as settlement-unknown.
- */
-function finalizeKnownSubmissionFailure(result: ArbitrageExecutionResult): ArbitrageExecutionResult {
-  const normalized = result.normalized;
-  if (!normalized || normalized.terminal) return result;
-
-  const submittedCount = Number(Boolean(result.buyOrder)) + Number(Boolean(result.sellOrder));
-  const settledOrders = result.orders || [];
-  const terminalOrders = settledOrders.filter(order => order.terminal);
-
-  if (submittedCount === 0 && (result.status === 'rejected' || result.status === 'failed')) {
-    const settledAt = Date.now();
-    return {
-      ...result,
-      success: false,
-      normalized: {
-        ...normalized,
-        status: result.status,
-        terminal: true,
-        settlementConfirmed: false,
-        settledAt,
-        provenance: [...new Set([...normalized.provenance, 'pair_submission_terminal_failure'])],
-      },
-    };
-  }
-
-  if (submittedCount !== 1 || settledOrders.length !== 1 || terminalOrders.length !== 1) return result;
-
-  const onlyOrder = terminalOrders[0];
-  const hasExposure = (onlyOrder.filledQuantity ?? 0) > 0;
-  const status = hasExposure
-    ? 'partially_filled' as const
-    : result.status === 'rejected' ? 'rejected' as const : 'failed' as const;
-
-  return {
-    ...result,
-    success: false,
-    status,
-    settlementConfirmed: true,
-    normalized: {
-      ...normalized,
-      status,
-      terminal: true,
-      settlementConfirmed: true,
-      settledAt: onlyOrder.terminalAt ?? Date.now(),
-      provenance: [...new Set([
-        ...normalized.provenance,
-        `${onlyOrder.venue}:terminal_orphan_leg`,
-        'counterpart_submission_failed',
-      ])],
-      error: result.error || normalized.error || 'One CEX leg failed submission while the counterpart reached a terminal state',
-    },
-  };
-}
-
 async function acquireMeasuredInventory(
   plan: VerifiedArbitragePlan,
-  adapters: Partial<Record<ExecutableCexVenue, CexSettlementAdapter>>,
+  adapters: Partial<Record<'kraken' | 'okx', CexSettlementAdapter>>,
 ) {
   const pair = splitSpotSymbol(plan.symbol);
   if (!pair) return { reservation: null, rejection: 'REJECT_BALANCE_INSUFFICIENT: unsupported spot symbol for inventory accounting' };
-  if (!SUPPORTED_CEX_VENUES.has(plan.buyVenue as ExecutableCexVenue) || !SUPPORTED_CEX_VENUES.has(plan.sellVenue as ExecutableCexVenue)) {
-    return { reservation: null, rejection: `REJECT_BALANCE_INSUFFICIENT: unsupported inventory venue pair ${plan.buyVenue}->${plan.sellVenue}` };
-  }
   const buyVenue = plan.buyVenue as InventoryVenue;
   const sellVenue = plan.sellVenue as InventoryVenue;
   const buyAdapter = adapters[buyVenue] as BalanceCapableAdapter | undefined;
@@ -180,8 +114,8 @@ async function acquireMeasuredInventory(
 async function reconcileTerminalBalances(result: ArbitrageExecutionResult): Promise<void> {
   const orders = result.orders || [];
   await Promise.all(orders.map(async order => {
-    if (!order.finalBalances || !SUPPORTED_CEX_VENUES.has(order.venue as ExecutableCexVenue)) return;
-    await cexInventoryLedger.reconcile(order.venue as InventoryVenue, order.finalBalances).catch(error => {
+    if (!order.finalBalances || (order.venue !== 'kraken' && order.venue !== 'okx')) return;
+    await cexInventoryLedger.reconcile(order.venue, order.finalBalances).catch(error => {
       logger.warn('[InventoryLedger] Terminal balance reconciliation degraded', {
         component: 'CentralizedExchangeExecutor', venue: order.venue, orderId: order.orderId,
         error: error instanceof Error ? error.message : String(error),
@@ -202,18 +136,14 @@ export class CentralizedExchangeExecutor {
       throw new Error('CRYPTO_ARBITRAGE_LIVE_CONFIRMATION=I_ACCEPT_LIVE_ORDER_RISK is required for live orders');
     }
     if (plan.bridge) throw new Error('Cross-chain plans require settlement orchestration and cannot be submitted as spot orders');
-    if (!SUPPORTED_CEX_VENUES.has(plan.buyVenue as ExecutableCexVenue) || !SUPPORTED_CEX_VENUES.has(plan.sellVenue as ExecutableCexVenue)) {
+    if (!['kraken', 'okx'].includes(plan.buyVenue) || !['kraken', 'okx'].includes(plan.sellVenue)) {
       throw new Error(`Live execution is not configured for ${plan.buyVenue} -> ${plan.sellVenue}`);
     }
     if (!Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) {
       return rejectPlan('REJECT_NEGATIVE_NET_EDGE: verified all-in net profit must be positive before live CEX submission');
     }
 
-    const executionAdmissionStartedAt = Date.now();
-    const adapters: Partial<Record<ExecutableCexVenue, CexSettlementAdapter>> = {
-      ...productionCexAdapters,
-      ...(this.options.adapters || {}),
-    };
+    const adapters = this.options.adapters || productionCexAdapters;
     const inventory = await acquireMeasuredInventory(plan, adapters);
     if (!inventory.reservation) return rejectPlan(inventory.rejection || 'REJECT_INVENTORY_RESERVED');
 
@@ -298,19 +228,7 @@ export class CentralizedExchangeExecutor {
         return rejectPlan(`REJECT_MC: measured profitability forecast rejected execution: ${monteCarlo.reason}`);
       }
 
-      const effectiveQuoteAgeMs = Math.max(0, plan.quoteAgeMs) + (Date.now() - executionAdmissionStartedAt);
-      if (effectiveQuoteAgeMs > maxQuoteAgeMs) {
-        return rejectPlan(`REJECT_STALE_QUOTE: effective quote age ${effectiveQuoteAgeMs}ms exceeds ${maxQuoteAgeMs}ms before order submission`);
-      }
-
-      try {
-        await assertFreshCexProductConstraints(plan);
-      } catch (error) {
-        return rejectPlan(error instanceof Error ? error.message : `REJECT_PRODUCT_DRIFT: ${String(error)}`);
-      }
-
-      getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { pair: plan.symbol });
-      const result = finalizeKnownSubmissionFailure(await executeCexPlan(plan, { ...this.options, adapters }));
+      const result = await executeCexPlan(plan, { ...this.options, adapters });
       await reconcileTerminalBalances(result);
       return result;
     } finally {

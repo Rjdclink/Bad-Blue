@@ -9,15 +9,9 @@ import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
  * produced enough measured fill/adverse-selection/cancel-latency evidence. No
  * maker order is assumed filled and no conditional maker spread is promoted to
  * deterministic executable profit.
- *
- * Coinbase Advanced Trade is intentionally excluded from this legacy maker-book
- * producer. Coinbase taker/IOC execution uses the v3 product-book authority; its
- * old Exchange WebSocket schema is not accepted as maker evidence. Coinbase may
- * join MAKER_CEX only after an Advanced Trade post-only + queue/fill calibration
- * path is separately settlement-proven.
  */
 export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandidate[]> {
-  const venues = getActiveExecutableQuoteVenues().filter((venue): venue is 'kraken' | 'okx' => venue !== 'coinbase');
+  const venues = getActiveExecutableQuoteVenues();
   if (venues.length < 2) return [];
   const symbols = getLastOrderedMarketUniverseSymbols().slice(0, Math.max(1, Math.min(24,
     Number(process.env.CRYPTOCRAWL_MAKER_DISCOVERY_SYMBOLS || 12),

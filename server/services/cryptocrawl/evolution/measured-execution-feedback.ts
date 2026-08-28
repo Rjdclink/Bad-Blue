@@ -1,14 +1,10 @@
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
-import { canonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
-import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
-import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
-import { endToEndLatencyHarness } from '../runtime/end-to-end-latency-harness.js';
+import { getHyperEvolutionEngine } from './hyper-evolution-engine.js';
 import { RuntimeJsonStateStore } from '../integration/runtime-json-state-store.js';
 
 export interface MeasuredExecutionSample {
-  eventId: string;
   opportunityId?: string;
   chain: string;
   symbol: string;
@@ -40,14 +36,12 @@ function finiteOrNull(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function sampleKey(sample: Pick<MeasuredExecutionSample, 'eventId'>): string {
-  return sample.eventId;
+function sampleKey(sample: Pick<MeasuredExecutionSample, 'opportunityId' | 'chain' | 'symbol' | 'strategy' | 'timestamp'>): string {
+  return `${sample.opportunityId || `${sample.chain}:${sample.symbol}:${sample.strategy}`}:${sample.timestamp}`;
 }
 
 function normalizeSample(feedback: CryptaraExecutionFeedback): MeasuredExecutionSample {
-  const eventId = terminalFeedbackIdentity(feedback);
   return {
-    eventId,
     opportunityId: feedback.opportunityId,
     chain: feedback.chain,
     symbol: feedback.symbol,
@@ -58,66 +52,29 @@ function normalizeSample(feedback: CryptaraExecutionFeedback): MeasuredExecution
     feeUsd: finiteOrNull(feedback.feeUsd),
     slippageBps: finiteOrNull(feedback.slippageBps),
     latencyMs: Number.isFinite(feedback.latencyMs) ? Math.max(0, feedback.latencyMs) : 0,
-    timestamp: feedback.settlement?.settledAt ?? feedback.settlement?.submittedAt ?? feedback.timestamp,
-    provenance: [...new Set([...(feedback.provenance || []), `terminal_feedback:${eventId}`])],
+    timestamp: Number.isFinite(feedback.timestamp) ? feedback.timestamp : Date.now(),
+    provenance: [...new Set(feedback.provenance || [])],
   };
 }
 
-/**
- * Hydrate both current samples and version-1 samples written before eventId was
- * added. Older valid measured evidence is migrated instead of silently dropped.
- */
-function normalizePersistedSample(input: unknown): MeasuredExecutionSample | null {
-  if (!input || typeof input !== 'object') return null;
+function validSample(input: unknown): input is MeasuredExecutionSample {
+  if (!input || typeof input !== 'object') return false;
   const value = input as Partial<MeasuredExecutionSample>;
-  if (typeof value.chain !== 'string' || typeof value.symbol !== 'string' ||
-      typeof value.strategy !== 'string' || typeof value.success !== 'boolean' ||
-      typeof value.timestamp !== 'number' || !Number.isFinite(value.timestamp)) return null;
-
-  const eventId = typeof value.eventId === 'string' && value.eventId.length > 0
-    ? value.eventId
-    : [
-        'legacy-measured',
-        value.opportunityId || 'unknown-opportunity',
-        value.chain,
-        value.symbol,
-        value.strategy,
-        value.success ? 'success' : 'failure',
-        String(value.timestamp),
-      ].join(':');
-
-  return {
-    eventId,
-    opportunityId: typeof value.opportunityId === 'string' ? value.opportunityId : undefined,
-    chain: value.chain,
-    symbol: value.symbol,
-    strategy: value.strategy,
-    success: value.success,
-    expectedProfitUsd: Number.isFinite(value.expectedProfitUsd) ? Number(value.expectedProfitUsd) : 0,
-    realizedProfitUsd: finiteOrNull(value.realizedProfitUsd),
-    feeUsd: finiteOrNull(value.feeUsd),
-    slippageBps: finiteOrNull(value.slippageBps),
-    latencyMs: Number.isFinite(value.latencyMs) ? Math.max(0, Number(value.latencyMs)) : 0,
-    timestamp: value.timestamp,
-    provenance: [
-      ...new Set([
-        ...(Array.isArray(value.provenance) ? value.provenance.filter((entry): entry is string => typeof entry === 'string') : []),
-        ...(value.eventId ? [] : ['migrated_legacy_measured_sample']),
-      ]),
-    ],
-  };
+  return typeof value.chain === 'string' && typeof value.symbol === 'string' &&
+    typeof value.strategy === 'string' && typeof value.success === 'boolean' &&
+    typeof value.timestamp === 'number' && Number.isFinite(value.timestamp) &&
+    Array.isArray(value.provenance);
 }
 
 function validSnapshot(input: MeasuredEvolutionSnapshot | null): input is MeasuredEvolutionSnapshot {
   return !!input && input.version === 1 && Array.isArray(input.samples);
 }
 
-function mergeSamples(...groups: unknown[][]): MeasuredExecutionSample[] {
+function mergeSamples(...groups: MeasuredExecutionSample[][]): MeasuredExecutionSample[] {
   const merged = new Map<string, MeasuredExecutionSample>();
   for (const group of groups) {
-    for (const input of group) {
-      const sample = normalizePersistedSample(input);
-      if (!sample) continue;
+    for (const sample of group) {
+      if (!validSample(sample)) continue;
       merged.set(sampleKey(sample), { ...sample, provenance: [...sample.provenance] });
     }
   }
@@ -137,14 +94,14 @@ export function ensureMeasuredEvolutionFeedbackHydrated(): Promise<void> {
           samples: mergeSamples(persisted.samples, state.samples),
           updatedAt: Math.max(Number.isFinite(persisted.updatedAt) ? persisted.updatedAt : 0, state.updatedAt, Date.now()),
         };
+        await store.save(state);
+      } else {
+        await store.save(state);
       }
-      // Save the normalized snapshot so pre-eventId samples are durably migrated.
-      await store.save(state);
       hydrated = true;
       logger.info('Measured evolution feedback restored', {
         component: 'MeasuredEvolutionFeedback',
         samples: state.samples.length,
-        legacySamplesMigrated: state.samples.filter(sample => sample.provenance.includes('migrated_legacy_measured_sample')).length,
       });
     } catch (error) {
       logger.warn('Measured evolution feedback persistence unavailable; continuing in memory', {
@@ -202,49 +159,13 @@ function measuredStats(samples: MeasuredExecutionSample[]) {
   };
 }
 
+function genomeIdFromProvenance(provenance: string[]): string | null {
+  const tag = provenance.find(value => value.startsWith('strategy_genome:'));
+  return tag ? tag.slice('strategy_genome:'.length).trim() || null : null;
+}
+
 export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutionFeedback): Promise<void> {
   if (!feedback.settlement || feedback.settlement.terminal !== true) return;
-  const eventId = terminalFeedbackIdentity(feedback);
-  let durableOutboxConfirmed = false;
-  const enqueueSpan = endToEndLatencyHarness.startSpan('learning_enqueue', 'queue', {
-    traceId: eventId,
-    backend: 'canonical_private_intelligence_memory',
-    chain: feedback.chain,
-    symbol: feedback.symbol,
-    strategy: feedback.strategy,
-  });
-  try {
-    // Canonical hot memory is updated immediately. The outbox handoff is then
-    // confirmed durably before this post-settlement learning step returns. A DB
-    // failure degrades memory only; it never invalidates terminal settlement.
-    canonicalIntelligenceRepository.observeTerminalOutcome(feedback, eventId);
-    const durableOutcome = canonicalIntelligenceRepository
-      .getRecentTerminalOutcomes(512)
-      .find(outcome => outcome.eventId === eventId);
-    if (durableOutcome) {
-      try {
-        durableOutboxConfirmed = await canonicalIntelligenceOutbox.enqueueTerminalOutcome(durableOutcome, feedback);
-      } catch (error) {
-        logger.warn('Durable intelligence outbox enqueue degraded; existing hot/direct persistence remains active', {
-          component: 'MeasuredEvolutionFeedback',
-          eventId,
-          error: error instanceof Error ? error.message : String(error),
-          executionBlocked: false,
-        });
-      }
-    } else {
-      logger.warn('Terminal outcome was not available for durable outbox handoff', {
-        component: 'MeasuredEvolutionFeedback',
-        eventId,
-        executionBlocked: false,
-      });
-    }
-    enqueueSpan.end(durableOutboxConfirmed ? 'ok' : 'retry');
-  } catch (error) {
-    enqueueSpan.end('error');
-    throw error;
-  }
-
   await ensureMeasuredEvolutionFeedbackHydrated();
   const sample = normalizeSample(feedback);
   const key = sampleKey(sample);
@@ -255,15 +176,25 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     });
     return;
   }
-
   state.samples = mergeSamples(state.samples, [sample]);
   state.updatedAt = Date.now();
-  await persistSoon();
 
+  const genomeId = genomeIdFromProvenance(sample.provenance);
+  if (genomeId) {
+    const matching = state.samples.filter(candidate => genomeIdFromProvenance(candidate.provenance) === genomeId);
+    const stats = measuredStats(matching);
+    getHyperEvolutionEngine().recordRealWorldOutcome(genomeId, {
+      actualWinRate: stats.successRate,
+      actualProfitFactor: Number.isFinite(stats.profitFactor) ? stats.profitFactor : Math.max(1, stats.sampleCount),
+      actualSharpeRatio: stats.sharpeRatio,
+      deploymentCount: 1,
+    });
+  }
+
+  await persistSoon();
   const stats = measuredStats(state.samples);
-  logger.info('Measured terminal execution fed to canonical evolution memory', {
+  logger.info('Measured terminal execution fed to evolution bridge', {
     component: 'MeasuredEvolutionFeedback',
-    eventId: sample.eventId,
     symbol: sample.symbol,
     strategy: sample.strategy,
     sampleCount: stats.sampleCount,
@@ -272,22 +203,13 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     averageLatencyMs: stats.averageLatencyMs,
     averageSlippageBps: stats.averageSlippageBps,
     persistentMemoryAllowed: getCryptocrawlGovernance().isLongTermMemoryAllowed(),
-    canonicalPrivateMemoryQueued: true,
-    durableOutboxConfirmed,
-    legacyHyperEvolutionAuthority: false,
+    hyperEvolutionGenomeAttributed: !!genomeId,
   });
 }
 
 export function getMeasuredEvolutionMetrics() {
   const stats = measuredStats(state.samples);
-  return {
-    ...stats,
-    mode: stats.sampleCount > 0 ? 'terminal_calibrated' as const : 'bootstrap_no_terminal_samples' as const,
-    terminalEvidenceRequired: true,
-    syntheticSamplesAllowed: false,
-    legacyHyperEvolutionAuthority: false,
-    updatedAt: state.updatedAt,
-  };
+  return { ...stats, updatedAt: state.updatedAt };
 }
 
 export function getMeasuredEvolutionSamples(limit = 100): MeasuredExecutionSample[] {

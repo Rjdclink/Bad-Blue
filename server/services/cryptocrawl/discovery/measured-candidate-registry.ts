@@ -4,8 +4,7 @@ export type MeasuredOpportunityTopology =
   | 'ZERO_CAPITAL_ATOMIC'
   | 'CROSS_CHAIN'
   | 'MEMPOOL_BACKRUN'
-  | 'MAKER_CEX'
-  | 'FUNDING_ARBITRAGE';
+  | 'MAKER_CEX';
 
 export type MeasuredCandidateStatus =
   | 'observed'
@@ -99,7 +98,6 @@ function emptyTopologyMetrics() {
     CROSS_CHAIN: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
     MEMPOOL_BACKRUN: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
     MAKER_CEX: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
-    FUNDING_ARBITRAGE: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
   } satisfies MeasuredCandidateMetrics['byTopology'];
 }
 

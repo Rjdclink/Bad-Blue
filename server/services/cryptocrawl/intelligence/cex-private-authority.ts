@@ -1,6 +1,5 @@
 import { createHash, createHmac } from 'crypto';
 import logger from '../../../logger.js';
-import { isDatabaseConfigured, pool } from '../../../db.js';
 
 const KRAKEN_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_KRAKEN_PRIVATE_TIMEOUT_MS || 12_000));
 const OKX_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_OKX_PRIVATE_TIMEOUT_MS || 12_000));
@@ -54,13 +53,12 @@ async function parseJson(response: Response, provider: string): Promise<any> {
 }
 
 // ============================================================================
-// KRAKEN — one nonce/signing/serialization authority per API key
+// KRAKEN — one nonce/signing/serialization authority per API key in-process
 // ============================================================================
 
 let krakenLastNonce = 0;
 let krakenPrivateTail: Promise<void> = Promise.resolve();
 let krakenRequestCount = 0;
-let krakenDistributedStateReady: Promise<void> | null = null;
 
 function nextKrakenNonce(): string {
   const nonce = Math.max(Date.now(), krakenLastNonce + 1);
@@ -81,74 +79,6 @@ function serializeKrakenPrivate<T>(operation: () => Promise<T>): Promise<T> {
   return run;
 }
 
-function krakenKeyFingerprint(apiKey: string): string {
-  return createHash('sha256').update(apiKey).digest('hex');
-}
-
-async function ensureKrakenDistributedState(): Promise<void> {
-  if (!isDatabaseConfigured) return;
-  if (krakenDistributedStateReady) return krakenDistributedStateReady;
-  krakenDistributedStateReady = (async () => {
-    await pool.query('CREATE SCHEMA IF NOT EXISTS private');
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS private.cryptocrawler_kraken_nonce_state (
-        key_hash text PRIMARY KEY,
-        last_nonce bigint NOT NULL,
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-  })().catch(error => {
-    krakenDistributedStateReady = null;
-    throw error;
-  });
-  return krakenDistributedStateReady;
-}
-
-/**
- * Kraken nonces are an API-key-wide ordering domain, not a process-local one.
- * Hold a PostgreSQL advisory lock across nonce allocation AND the signed network
- * request so separate Railway replicas cannot allocate increasing nonces and
- * then transmit them out of order. In local/no-database development the existing
- * in-process lane is sufficient; when a production database is configured, loss
- * of the distributed lane fails closed rather than weakening nonce safety.
- */
-async function withKrakenDistributedLane<T>(
-  apiKey: string,
-  operation: (nonce: string) => Promise<T>,
-): Promise<T> {
-  if (!isDatabaseConfigured) return operation(nextKrakenNonce());
-  await ensureKrakenDistributedState();
-
-  const keyHash = krakenKeyFingerprint(apiKey);
-  const lockName = `cryptocrawl:kraken-private:${keyHash}`;
-  const client = await pool.connect();
-  let locked = false;
-  try {
-    await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockName]);
-    locked = true;
-    const proposed = String(Math.max(Date.now(), krakenLastNonce + 1));
-    const allocated = await client.query(
-      `INSERT INTO private.cryptocrawler_kraken_nonce_state (key_hash, last_nonce, updated_at)
-       VALUES ($1, $2::bigint, now())
-       ON CONFLICT (key_hash) DO UPDATE
-       SET last_nonce = GREATEST(private.cryptocrawler_kraken_nonce_state.last_nonce + 1, EXCLUDED.last_nonce),
-           updated_at = now()
-       RETURNING last_nonce`,
-      [keyHash, proposed],
-    );
-    const nonce = String(allocated.rows[0]?.last_nonce || '');
-    if (!/^\d+$/.test(nonce)) throw new Error('Distributed Kraken nonce allocation failed');
-    const numericNonce = Number(nonce);
-    if (Number.isSafeInteger(numericNonce)) krakenLastNonce = Math.max(krakenLastNonce, numericNonce);
-    return await operation(nonce);
-  } finally {
-    if (locked) {
-      try { await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]); } catch { /* connection release also clears session lock */ }
-    }
-    client.release();
-  }
-}
-
 export async function krakenPrivateRequest(
   path: string,
   parameters: Record<string, string> = {},
@@ -160,24 +90,25 @@ export async function krakenPrivateRequest(
     const decodedSecret = Buffer.from(apiSecret, 'base64');
     if (decodedSecret.length === 0) throw new Error('Kraken API secret is not valid base64');
 
-    return withKrakenDistributedLane(apiKey, async nonce => {
-      const body = new URLSearchParams({ nonce, ...parameters }).toString();
-      const response = await fetchWithTimeout(`https://api.kraken.com${path}`, {
-        method: 'POST',
-        headers: {
-          'API-Key': apiKey,
-          'API-Sign': signKraken(path, body, nonce, decodedSecret),
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body,
-      }, options.timeoutMs ?? KRAKEN_TIMEOUT_MS);
-      const payload = await parseJson(response, 'Kraken');
-      if (Array.isArray(payload?.error) && payload.error.length > 0) {
-        throw new Error(`Kraken request failed: ${payload.error.join(', ')}`);
-      }
-      krakenRequestCount += 1;
-      return payload?.result ?? {};
-    });
+    // Nonce is allocated only after this request owns the serialization lane,
+    // so wire order and monotonic nonce order cannot diverge.
+    const nonce = nextKrakenNonce();
+    const body = new URLSearchParams({ nonce, ...parameters }).toString();
+    const response = await fetchWithTimeout(`https://api.kraken.com${path}`, {
+      method: 'POST',
+      headers: {
+        'API-Key': apiKey,
+        'API-Sign': signKraken(path, body, nonce, decodedSecret),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body,
+    }, options.timeoutMs ?? KRAKEN_TIMEOUT_MS);
+    const payload = await parseJson(response, 'Kraken');
+    if (Array.isArray(payload?.error) && payload.error.length > 0) {
+      throw new Error(`Kraken request failed: ${payload.error.join(', ')}`);
+    }
+    krakenRequestCount += 1;
+    return payload?.result ?? {};
   });
 }
 

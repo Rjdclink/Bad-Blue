@@ -1,70 +1,18 @@
-import { filteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
 import { getMempoolCapabilities } from './mempool-capability-registry.js';
 
 export function discoverMeasuredMempoolCandidates(): MeasuredCandidate[] {
-  const filtered = filteredAlchemyPendingStream.getRecentObservations();
+  const analysis = alchemyIntegration.getMempoolAnalysis();
+  if (!analysis.available || !analysis.observedAt) return [];
   const capabilities = getMempoolCapabilities().filter(capability => capability.active);
   const ttlMs = Math.max(1_000, Number(process.env.CRYPTOCRAWL_MEMPOOL_CANDIDATE_TTL_MS || 15_000));
   const observed: MeasuredCandidate[] = [];
 
-  // Prefer provider-filtered, hash-first observations because they carry exact
-  // chain identity before full transaction detail is fetched. They remain rescan
-  // triggers only; no profit or execution authority is inferred from mempool data.
-  for (const transaction of filtered) {
-    if (!transaction.potentialArbitrage) continue;
-    observed.push(measuredCandidateRegistry.record({
-      opportunityId: `mempool:${transaction.chain}:${transaction.hash}`,
-      topology: 'MEMPOOL_BACKRUN',
-      observedAt: transaction.timestamp,
-      expiresAt: transaction.timestamp + ttlMs,
-      status: 'observed',
-      assets: [],
-      venues: [transaction.to].filter(Boolean),
-      chains: [transaction.chain],
-      rawQuotes: [],
-      depth: { status: 'unavailable', detail: 'Provider-filtered pending transaction does not prove post-trade pool depth' },
-      economics: {
-        grossProfitUsd: null,
-        deterministicNetProfitUsd: null,
-        feeUsd: null,
-        gasUsd: null,
-        bridgeUsd: 0,
-        expectedSlippageBps: null,
-        expectedPriceImpactBps: null,
-      },
-      quoteAgeMs: Math.max(0, Date.now() - transaction.timestamp),
-      executableCapability: false,
-      executionCapabilityReason: 'Provider-filtered pending swap is a measured rescan trigger only; decoded route state, post-trade pool state, relay inclusion, and deterministic backrun economics remain incomplete',
-      missingInformation: [
-        'decoded_swap_route',
-        'post_transaction_pool_state',
-        'deterministic_backrun_economics',
-        'relay_inclusion_probability',
-      ],
-      provenance: [
-        ...transaction.provenance,
-        ...capabilities
-          .filter(capability => capability.chain === transaction.chain)
-          .map(capability => `mempool_capability:${capability.chain}:${capability.capability}`),
-        `pending_tx:${transaction.hash}`,
-        `decoded_method:${transaction.decodedMethod || 'unknown'}`,
-        `chain_binding:${transaction.chain}`,
-        'provider_filter_before_detail:true',
-        'profit_estimate:none',
-        'synthetic_evidence:false',
-      ],
-    }));
-  }
-
-  if (observed.length > 0) return observed;
-
-  // Legacy shared-provider evidence remains available as a no-regression fallback.
-  // Its rows do not carry authoritative chain identity, so they stay explicitly
-  // unbound and non-executable rather than being copied across possible chains.
-  const analysis = alchemyIntegration.getMempoolAnalysis();
-  if (!analysis.available || !analysis.observedAt) return [];
+  // The current adapter's pending transactions are real provider observations,
+  // but it does not attach one authoritative chain identity to each returned row.
+  // Never duplicate an ambiguous transaction across every active network: leave
+  // chains empty until the producer supplies exact chain binding.
   for (const transaction of analysis.arbitrageOpportunities) {
     observed.push(measuredCandidateRegistry.record({
       opportunityId: `mempool:${transaction.hash}`,
@@ -102,7 +50,6 @@ export function discoverMeasuredMempoolCandidates(): MeasuredCandidate[] {
         `pending_tx:${transaction.hash}`,
         `decoded_method:${transaction.decodedMethod || 'unknown'}`,
         'chain_binding:none',
-        'provider_filter_before_detail:false',
         'profit_estimate:none',
         'synthetic_evidence:false',
       ],

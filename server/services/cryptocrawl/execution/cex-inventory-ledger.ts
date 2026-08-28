@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 
-export type InventoryVenue = 'coinbase' | 'kraken' | 'okx';
+export type InventoryVenue = 'kraken' | 'okx';
 
 export interface InventoryRequirement {
   venue: InventoryVenue;

@@ -4,7 +4,6 @@ import {
   resolveCoinStatsEnvironment,
 } from '../runtime/environment-contract.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
-import { zeroXRequestBudget } from './zerox-request-budget.js';
 import { resolveZeroXRequestPolicy, type ZeroXRequestPurpose } from './zerox-request-policy.js';
 
 export interface MarketUniverseAsset {
@@ -56,7 +55,7 @@ export interface DexQuoteObservation {
 }
 
 export type MarketDataProviderName = 'coingecko' | 'coinstats' | '0x';
-export type MarketDataProviderState = 'not_queried' | 'live' | 'cached' | 'stale' | 'throttled' | 'unavailable' | 'failed';
+export type MarketDataProviderState = 'not_queried' | 'live' | 'cached' | 'stale' | 'unavailable' | 'failed';
 
 export interface MarketDataProviderStatus {
   provider: MarketDataProviderName;
@@ -93,10 +92,6 @@ class MarketDataProviders {
 
   getProviderStatuses(): MarketDataProviderStatus[] {
     return Object.values(this.providerStatuses).map(status => ({ ...status }));
-  }
-
-  getZeroXRequestBudgetSnapshot() {
-    return zeroXRequestBudget.getSnapshot();
   }
 
   private setProviderStatus(provider: MarketDataProviderName, state: MarketDataProviderState, detail?: string): void {
@@ -185,12 +180,6 @@ class MarketDataProviders {
     const existing = this.inFlight.get(key) as Promise<DexQuoteObservation | null> | undefined;
     if (existing) return existing;
 
-    const admission = zeroXRequestBudget.tryAcquire(policy.purpose);
-    if (!admission.allowed) {
-      this.setProviderStatus('0x', 'throttled', admission.reason);
-      return null;
-    }
-
     const promise = fetchJsonWithRetry<any>(
       `https://api.0x.org/swap/allowance-holder/${policy.endpoint}?chainId=${request.chainId}&sellToken=${encodeURIComponent(request.sellToken)}&buyToken=${encodeURIComponent(request.buyToken)}&sellAmount=${encodeURIComponent(request.sellAmount)}${policy.includeTaker ? `&taker=${encodeURIComponent(policy.takerAddress!)}` : ''}`,
       { init: { headers: { accept: 'application/json', '0x-api-key': apiKey, '0x-version': 'v2' } }, maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2_000, timeoutMs: 4_000 },
@@ -241,10 +230,7 @@ class MarketDataProviders {
       this.quoteCache.set(key, { value: null, expiresAt: Date.now() + ZEROX_TTL_MS });
       this.setProviderStatus('0x', 'failed', error instanceof Error ? error.message : String(error));
       return null;
-    }).finally(() => {
-      admission.release();
-      this.inFlight.delete(key);
-    });
+    }).finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, promise);
     return promise;
   }

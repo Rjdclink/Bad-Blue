@@ -21,22 +21,22 @@ export interface VenueCapability {
 }
 
 /**
- * Capability means the codebase has an end-to-end implementation, not that a
- * particular runtime account is ready. Runtime permission, authenticated fee,
- * exact-product market data, inventory, governance and settlement evidence still
- * fail closed independently for every plan.
+ * Capability is not the same thing as configuration. A venue is granted only
+ * the powers implemented and settlement-safe in the current codebase.
+ * Discovery-only venues may help build the measured universe but cannot become
+ * executable merely because a public endpoint responds.
  */
 const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = Object.freeze({
   coinbase: Object.freeze({
     venue: 'coinbase',
-    enabled: true,
-    publicDiscovery: true,
-    executableQuotes: true,
-    measuredOrderBook: true,
-    authenticatedFeeEvidence: true,
-    liveExecution: true,
-    settlementVerification: true,
-    reason: 'Advanced Trade v3 product-book, authenticated permissions/fee tier, IOC order, fills, balances and terminal settlement are implemented; runtime evidence still gates every plan',
+    enabled: false,
+    publicDiscovery: false,
+    executableQuotes: false,
+    measuredOrderBook: false,
+    authenticatedFeeEvidence: false,
+    liveExecution: false,
+    settlementVerification: false,
+    reason: 'intentionally inactive; no settlement-safe Coinbase execution path is enabled',
   }),
   kraken: Object.freeze({
     venue: 'kraken',
@@ -95,13 +95,12 @@ export function getVenueCapabilities(): ReadonlyArray<Readonly<VenueCapability>>
   return Object.values(CAPABILITIES).map(capability => ({ ...capability }));
 }
 
-export function getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'> {
-  return (['coinbase', 'kraken', 'okx'] as const).filter(venue => {
+export function getActiveExecutableQuoteVenues(): Array<'kraken' | 'okx'> {
+  return (['kraken', 'okx'] as const).filter(venue => {
     const capability = CAPABILITIES[venue];
     return capability.enabled
       && capability.executableQuotes
       && capability.measuredOrderBook
-      && capability.authenticatedFeeEvidence
       && capability.liveExecution
       && capability.settlementVerification;
   });
