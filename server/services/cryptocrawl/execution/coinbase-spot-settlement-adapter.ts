@@ -40,9 +40,26 @@ function positive(value: unknown): number | null {
   return parsed !== null && parsed > 0 ? parsed : null;
 }
 
-function toDecimal(value: number): string {
+/**
+ * Serialize the already-validated numeric value without imposing a second,
+ * undocumented decimal-place limit. Number#toString is canonical but may emit
+ * exponent notation for small increments; Coinbase order amounts are sent as
+ * plain decimal strings, so expand exponent notation exactly at this boundary.
+ */
+export function coinbaseDecimalString(value: number): string {
   if (!Number.isFinite(value) || value <= 0) throw new Error('Coinbase order values must be finite and positive');
-  return value.toFixed(12).replace(/\.?0+$/, '');
+  const canonical = value.toString().toLowerCase();
+  if (!canonical.includes('e')) return canonical;
+
+  const [coefficient, exponentText] = canonical.split('e');
+  const exponent = Number(exponentText);
+  if (!Number.isInteger(exponent)) throw new Error('Coinbase order value has an invalid numeric exponent');
+  const [whole, fraction = ''] = coefficient.split('.');
+  const digits = `${whole}${fraction}`;
+  const decimalIndex = whole.length + exponent;
+  if (decimalIndex <= 0) return `0.${'0'.repeat(-decimalIndex)}${digits}`;
+  if (decimalIndex >= digits.length) return `${digits}${'0'.repeat(decimalIndex - digits.length)}`;
+  return `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
 }
 
 export function coinbaseProductId(symbol: string): string {
@@ -195,8 +212,8 @@ export class CoinbaseSpotSettlementAdapter {
         side: request.side.toUpperCase(),
         order_configuration: {
           sor_limit_ioc: {
-            base_size: toDecimal(request.quantity),
-            limit_price: toDecimal(request.price),
+            base_size: coinbaseDecimalString(request.quantity),
+            limit_price: coinbaseDecimalString(request.price),
           },
         },
       },
