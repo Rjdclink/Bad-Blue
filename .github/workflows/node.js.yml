@@ -25,6 +25,8 @@ jobs:
           cache: 'npm'
       - name: Install dependencies
         run: npm ci
+      - name: Verify CryptoCrawler clean-house boundaries
+        run: node scripts/cryptocrawl/verify-clean-house.cjs
       - name: Verify CryptoCrawler no-regression opportunity pipeline
         run: node scripts/cryptocrawl/verify-no-regression-opportunity-pipeline.cjs
       - name: Build
