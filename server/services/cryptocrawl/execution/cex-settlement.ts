@@ -6,6 +6,7 @@ import {
   CoinbaseSpotSettlementAdapter,
   type CoinbaseOrderReceipt,
 } from './coinbase-spot-settlement-adapter.js';
+import { cexDecimalString } from './cex-order-serialization.js';
 import type {
   ExecutionFill,
   ExecutionStatus,
@@ -64,11 +65,6 @@ export interface OrderRequest {
 const ORDER_SUBMIT_TIMEOUT_MS = Math.max(3000, Number(process.env.CRYPTO_ARBITRAGE_ORDER_TIMEOUT_MS || 12000));
 const SETTLEMENT_TIMEOUT_MS = Math.max(1000, Number(process.env.CRYPTO_ARBITRAGE_SETTLEMENT_TIMEOUT_MS || 30000));
 const SETTLEMENT_POLL_INTERVAL_MS = Math.max(100, Number(process.env.CRYPTO_ARBITRAGE_SETTLEMENT_POLL_INTERVAL_MS || 1000));
-
-function toDecimal(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) throw new Error('Order values must be finite and positive');
-  return value.toFixed(12).replace(/\.?0+$/, '');
-}
 
 function splitSymbol(symbol: string): { base: string; quote: string } {
   const match = symbol.match(/^([A-Z0-9]+)(USDT|USDC|USD)$/);
@@ -153,8 +149,8 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
       pair: request.symbol,
       type: request.side,
       ordertype: 'limit',
-      price: toDecimal(request.price),
-      volume: toDecimal(request.quantity),
+      price: cexDecimalString(request.price),
+      volume: cexDecimalString(request.quantity),
       timeinforce: 'IOC',
     });
     const orderId = result.txid?.[0];
@@ -271,8 +267,8 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
       tdMode: 'cash',
       side: request.side,
       ordType: 'ioc',
-      px: toDecimal(request.price),
-      sz: toDecimal(request.quantity),
+      px: cexDecimalString(request.price),
+      sz: cexDecimalString(request.quantity),
       clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
     });
     const order = rows[0];
@@ -400,8 +396,6 @@ function knownFeeUsd(order: NormalizedOrderSettlement, baseAsset: string, quoteA
   const feeAsset = canonicalFeeAsset(order.feeAsset);
   const normalizedBase = canonicalFeeAsset(baseAsset);
   const normalizedQuote = canonicalFeeAsset(quoteAsset);
-  // USD, USDT and USDC are distinct inventory assets. Never silently assume a
-  // stablecoin is worth exactly one USD in realized settlement accounting.
   if (feeAsset === normalizedQuote) return feeAmount;
   if (feeAsset === normalizedBase && order.averageFillPrice !== null) return feeAmount * order.averageFillPrice;
   return null;
