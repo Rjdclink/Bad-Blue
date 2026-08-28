@@ -32,7 +32,7 @@ export class EnhancedMicroCrawler {
   /**
    * Compatibility-only observation hook.
    *
-   * Historical versions simulated fills and profit with Math.random(). That
+   * Historical versions simulated fills and profit with randomized values. That
    * behavior is retired. Canonical discovery/execution is owned by measured
    * opportunity state + governed execution/settlement paths.
    */
