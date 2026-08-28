@@ -9,6 +9,9 @@ const requireText = (source, text, description) => {
 const forbidText = (source, text, description) => {
   if (source.includes(text)) throw new Error(`Clean-house violation: ${description}`);
 };
+const requireAbsent = (relativePath, description) => {
+  if (fs.existsSync(path.join(root, relativePath))) throw new Error(`Clean-house violation: ${description}`);
+};
 
 const canonicalIndex = read('server/services/cryptocrawl/index.ts');
 const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
@@ -39,7 +42,6 @@ const wallet = read('server/services/cryptocrawl/core/wallet.ts');
 const bridgeBarrel = read('server/services/cryptocrawl/bridge/index.ts');
 const riskShield = read('server/services/cryptocrawl/risk/mandatory-risk-shield.ts');
 const legacyCircuit = read('server/services/cryptocrawl/risk/circuit-breaker.ts');
-const legacyExecutionOrchestrator = read('server/services/cryptocrawl/orchestrator/execution-orchestrator.ts');
 const legacyFlashloan = read('server/services/cryptocrawl/core/flashloan-atomic-engine.ts');
 const executionReadiness = read('server/services/cryptocrawl/execution/execution-readiness.ts');
 const multiRelay = read('server/services/cryptocrawl/execution/multi-relay-submitter.ts');
@@ -165,11 +167,10 @@ forbidText(wallet, 'loadFromDB', 'WalletManager must not claim nonexistent DB pe
 forbidText(wallet, 'saveToDB', 'WalletManager must not claim nonexistent DB persistence');
 requireText(wallet, 'direct wallet withdrawal is disabled', 'direct dashboard withdrawal remains fail-closed');
 
-// Duplicate risk/execution engines must fail closed.
+// Duplicate risk engines must fail closed; retired synthetic execution orchestrator must be absent.
 requireText(riskShield, 'retired', 'mock MandatoryRiskShield is retired');
 requireText(legacyCircuit, 'retired', 'standalone legacy circuit breaker is retired');
-requireText(legacyExecutionOrchestrator, 'retired', 'synthetic execution orchestrator is retired');
-forbidText(legacyExecutionOrchestrator, 'Math.random', 'synthetic execution orchestrator cannot fabricate fills');
+requireAbsent('server/services/cryptocrawl/orchestrator', 'retired synthetic execution orchestrator directory must be deleted');
 requireText(legacyFlashloan, 'Legacy compatibility surface only', 'synthetic flash-loan engine is retired');
 forbidText(legacyFlashloan, 'Math.random', 'legacy flash-loan engine cannot fabricate success');
 requireText(legacyFlashloan, 'success: false', 'legacy flash-loan engine fails closed');
