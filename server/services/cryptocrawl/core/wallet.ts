@@ -8,7 +8,7 @@ import type { ChainId } from './lux-swarm';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
 import { assertConfiguredWalletAddress, normalizePrivateKey, walletFromPrivateKey } from './wallet-identity.js';
 
-const { formatEther, parseEther } = utils;
+const { formatEther } = utils;
 
 interface ChainConfig {
   rpc?: string;
@@ -43,7 +43,6 @@ interface WithdrawParams {
 
 type ConnectedWallet = Wallet;
 
-// Load chain configs
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const chainsPath = join(__dirname, '../config/chains.json');
@@ -66,15 +65,10 @@ class WalletManager {
     this.encryptionKey = pbkdf2Sync(password, salt, 100000, 32, 'sha256');
   }
 
-  // Initialize wallet from DB or create new
   async initialize(): Promise<WalletData> {
-    // Try to load from DB (simplified - in production would query database)
     const stored = this.loadFromDB();
-    
     const privateKey = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
-    if (!privateKey) {
-      throw new Error('WALLET_PRIVATE_KEY is required for WalletManager');
-    }
+    if (!privateKey) throw new Error('WALLET_PRIVATE_KEY is required for WalletManager');
     assertConfiguredWalletAddress(privateKey);
 
     if (stored) {
@@ -92,7 +86,7 @@ class WalletManager {
         address: this.wallet.address,
         encryptedKey,
         mnemonic: this.wallet.mnemonic?.phrase,
-        chains: Object.keys(chainConfigs).filter(isManagedChain)
+        chains: Object.keys(chainConfigs).filter(isManagedChain),
       };
       this.saveToDB(data);
     }
@@ -121,22 +115,19 @@ class WalletManager {
     return {
       address: this.wallet.address,
       encryptedKey: this.encrypt(this.wallet.privateKey),
-      chains: Array.from(this.providers.keys())
+      chains: Array.from(this.providers.keys()),
     };
   }
 
-  // Get wallet connected to specific chain
   getWallet(chain: ChainId): ConnectedWallet {
     const provider = this.providers.get(chain);
     if (!provider || !this.wallet) throw new Error(`Chain ${chain} not initialized`);
     return this.wallet.connect(provider) as ConnectedWallet;
   }
 
-  // Fetch balances across all chains
   async getBalances(): Promise<ChainBalance[]> {
     if (!this.wallet) throw new Error('Wallet not initialized');
-    
-    const balances = await Promise.all(
+    return Promise.all(
       Array.from(this.providers.entries()).map(async ([chain, provider]) => {
         const balance = await provider.getBalance(this.wallet!.address);
         const config = chainConfigs[chain];
@@ -144,30 +135,23 @@ class WalletManager {
           chain,
           token: config.nativeToken,
           balance: formatEther(balance),
-          balanceWei: balance.toString()
+          balanceWei: balance.toString(),
         };
-      })
+      }),
     );
-    
-    return balances;
   }
 
-  // Withdraw native tokens
-  async withdraw({ chain, to, amount }: WithdrawParams): Promise<string> {
-    const wallet = this.getWallet(chain);
-    const config = chainConfigs[chain];
-    
-    const tx = await wallet.sendTransaction({
-      to,
-      value: parseEther(amount),
-      gasLimit: 21000
-    });
-    
-    console.log(`[WALLET] Withdraw on ${chain}: ${amount} ${config.nativeToken} to ${to}`);
-    return tx.hash;
+  /**
+   * Historical dashboard withdrawal entry point. It previously submitted a real
+   * native-value transaction without a dedicated authenticated CryptoCrawler
+   * withdrawal authority. Keep the method signature for compatibility but fail
+   * closed until an authenticated, governance-audited profit-withdrawal workflow
+   * is implemented separately from arbitrage execution.
+   */
+  async withdraw(_params: WithdrawParams): Promise<string> {
+    throw new Error('CryptoCrawler direct wallet withdrawal is disabled pending dedicated authenticated governance');
   }
 
-  // AES-256-CBC encryption
   private encrypt(text: string): string {
     const iv = randomBytes(16);
     const cipher = createCipheriv('aes-256-cbc', this.encryptionKey, iv);
@@ -175,7 +159,6 @@ class WalletManager {
     return iv.toString('hex') + ':' + encrypted.toString('hex');
   }
 
-  // AES-256-CBC decryption
   private decrypt(encrypted: string): string {
     const [ivHex, encryptedHex] = encrypted.split(':');
     const iv = Buffer.from(ivHex, 'hex');
@@ -185,14 +168,11 @@ class WalletManager {
     return decrypted.toString('utf8');
   }
 
-  // DB operations (simplified - would use actual database in production)
   private loadFromDB(): WalletData | null {
-    // In production: SELECT * FROM crypto_wallets WHERE id = 'main'
     return null;
   }
 
   private saveToDB(data: WalletData): void {
-    // In production: INSERT INTO crypto_wallets VALUES (...)
     console.log('[WALLET] Persisted configured wallet record:', data.address);
   }
 }
