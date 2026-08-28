@@ -37,9 +37,16 @@ interface ConnectionState {
   active: boolean;
 }
 
+function filteredMonitoringEnabled(): boolean {
+  return process.env.ALCHEMY_FILTERED_MEMPOOL_ENABLED?.trim().toLowerCase() !== 'false';
+}
+
 function configuredNetworks(): FilteredAlchemyNetwork[] {
-  if (process.env.ALCHEMY_MEMPOOL_MONITORING_ENABLED !== 'true') return [];
-  const requested = new Set((process.env.ALCHEMY_MEMPOOL_NETWORKS || '')
+  if (!filteredMonitoringEnabled()) return [];
+  const raw = process.env.ALCHEMY_FILTERED_MEMPOOL_NETWORKS?.trim()
+    || process.env.ALCHEMY_MEMPOOL_NETWORKS?.trim()
+    || 'ethereum';
+  const requested = new Set(raw
     .split(',')
     .map(value => value.trim().toLowerCase())
     .filter(Boolean));
