@@ -17,7 +17,11 @@ const CACHE_MS = Math.max(5_000, Number(process.env.CRYPTO_COINBASE_FEE_CACHE_MS
 
 function decimalRateToBps(value: unknown): number | null {
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed * 10_000 : null;
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  // Exchange fee rates are decimal strings. Normalize floating-point noise so a
+  // documented 0.0006 rate is represented as exactly 6 bps rather than
+  // 5.999999999999999 in comparisons/logs.
+  return Number((parsed * 10_000).toFixed(8));
 }
 
 /** Pure parser retained for regression verification. */
