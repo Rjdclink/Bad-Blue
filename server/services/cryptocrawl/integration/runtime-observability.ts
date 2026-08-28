@@ -12,6 +12,8 @@ import { cexInventoryLedger } from '../execution/cex-inventory-ledger.js';
 import { inventoryRebalancer } from '../execution/inventory-rebalancer.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
+import { durableIntelligenceOutbox } from '../intelligence/durable-intelligence-outbox.js';
 import { stageManager } from '../governance/stage-management.js';
 import { workloadRouter } from '../../computationalBeam/workloadRouter.js';
 import { getMeasuredEvolutionMetrics } from '../evolution/measured-execution-feedback.js';
@@ -80,7 +82,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
   if (heartbeatRunning) return;
   heartbeatRunning = true;
   try {
-    const [alchemy, beam] = await Promise.all([
+    const [alchemy, beam, outboxHealth] = await Promise.all([
       alchemyIntegration.readinessCheck({ strictLive: false }).catch(error => ({
         ready: false,
         active: false,
@@ -88,11 +90,13 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         detail: error instanceof Error ? error.message : String(error),
       })),
       Promise.resolve(workloadRouter.getSystemStatus()),
+      durableIntelligenceOutbox.getHealth(),
     ]);
     const recentMinute = canonicalOpportunityState.getMetrics(60_000);
     const recentHour = canonicalOpportunityState.getMetrics(60 * 60_000);
     const recentSnapshots = canonicalOpportunityState.getRecent(512);
     const invariantMonitor = runtimeInvariantMonitor.scan(recentSnapshots);
+    const intelligenceMemory = canonicalIntelligenceRepository.getMetrics();
     const latest = canonicalOpportunityState.getLatest();
     const graph = measuredOpportunityGraph.getLatestCycle();
     const multiTopology = multiTopologyDiscoveryController.getLatestCycle();
@@ -148,6 +152,10 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       component: 'CryptoRuntimeObservability',
       runtime,
       runtimeInvariants: invariantMonitor,
+      intelligenceMemory: {
+        ...intelligenceMemory,
+        durableOutbox: outboxHealth,
+      },
       readiness,
       governance: {
         stage: stage.currentStage,
@@ -291,6 +299,8 @@ export function ensureCryptoRuntimeObservability(): void {
     heartbeatMs: intervalMs,
     runtimeAttestation: true,
     runtimeInvariantMonitor: true,
+    privateIntelligenceMemoryTelemetry: true,
+    durableOutboxTelemetry: true,
     decomposedReadiness: [
       'APP_READY',
       'CONFIG_READY',
