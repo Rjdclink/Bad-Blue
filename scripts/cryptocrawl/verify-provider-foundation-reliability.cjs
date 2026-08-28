@@ -22,6 +22,7 @@ const checks = [
   ['Core preserves topology independence', core.includes('optionalProviderFailureBlocksCore: false')],
   ['Core startup remains topology-independent', core.includes('Provider/topology-specific monitors initialize separately and may degrade')],
   ['Bootstrap does not enable live execution', !bootstrap.includes("process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION = 'true'")],
+  ['Bootstrap must not block core startup behind provider initialization', bootstrap.indexOf('const coreStart = ensureCryptoCrawlerCoreRuntime();') < bootstrap.indexOf('await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);')],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
