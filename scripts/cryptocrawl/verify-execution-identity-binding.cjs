@@ -15,6 +15,7 @@ const scheduler = read('server/services/cryptocrawl/execution/canonical-executio
 const execution = read('server/services/cryptocrawl/execution/index.ts');
 const feedback = read('server/services/cryptocrawl/governance/automatic-stage-progression.ts');
 const identity = read('server/services/cryptocrawl/learning/terminal-feedback-identity.ts');
+const runtimeIdentity = read('server/services/cryptocrawl/runtime/runtime-attestation.ts');
 const readiness = read('server/services/cryptocrawl/runtime/readiness-policy.ts');
 
 requireText(scheduler, "from '../runtime/runtime-attestation.js'", 'canonical scheduler consumes runtime deployment identity');
@@ -31,6 +32,9 @@ forbidText(execution, 'opportunityId: `${plan.buyVenue}-${plan.sellVenue}-${plan
 requireText(feedback, 'canonicalOpportunityState.refreshGovernance(feedback.opportunityId)', 'terminal feedback refreshes the same canonical opportunity lifecycle');
 requireText(identity, 'feedback.opportunityId ||', 'terminal rejection identity includes canonical opportunity identity when no order/transaction id exists');
 
+requireText(runtimeIdentity, 'const sourceSha = sourceCandidates[0] || null', 'source SHA requires independent source/build evidence');
+forbidText(runtimeIdentity, 'sourceCandidates[0] || railwayCommitSha', 'Railway deployment SHA cannot self-attest as source SHA');
+requireText(runtimeIdentity, "return attestation.state === 'verified'", 'runtime identity exposes an explicit verified state predicate');
 requireText(readiness, 'const executionCapabilityReady = input.runtimeIdentitySafe', 'runtime identity participates in execution capability readiness');
 requireText(readiness, 'runtimeIdentitySafe=${input.runtimeIdentitySafe}', 'readiness exposes runtime identity state truthfully');
 
@@ -40,4 +44,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[execution-identity-binding] PASS — canonical candidate identity survives resource admission, execution, terminal feedback, learning and governance refresh; detected source/deployment mismatch blocks live dispatch and trading readiness');
+console.log('[execution-identity-binding] PASS — canonical candidate identity survives resource admission, execution, terminal feedback, learning and governance refresh; independent source/deployment evidence is required for verified runtime identity and detected mismatch blocks live dispatch/trading readiness');
