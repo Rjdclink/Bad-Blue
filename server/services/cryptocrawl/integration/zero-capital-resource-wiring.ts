@@ -11,6 +11,8 @@ import {
   getCachedGraphlessDynamicRouteTemplates,
 } from '../discovery/dynamic-zero-capital-routes.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
+import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
+import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
 import type { ConfiguredZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import {
   supportsSponsoredReceiverChain,
@@ -101,6 +103,12 @@ function baseUnitsToUsd(value: bigint, decimals: number): number {
   return Number.isFinite(result) ? result : 0;
 }
 
+/**
+ * Receiver permissions are infrastructure state, not market evidence. If a
+ * newly discovered graphless route needs permission transactions, prepare them
+ * but deliberately reject the current quote so the next scan must obtain fresh
+ * contract quotes before execution.
+ */
 async function prepareGraphlessPermissions(
   target: ZeroCapitalRuntime,
   chain: SupportedChain,
@@ -131,14 +139,18 @@ async function prepareGraphlessPermissions(
     });
     if (calls.length > 0) {
       await target.executeSetupCalls(chain as any, provider, wallet, funding.mode as ReceiverFundingMode, calls);
+      // Permission setup consumed time and state changed. Never execute the quote
+      // that preceded it; require a clean re-quote on the next scan.
+      for (const route of graphless) eligible.delete(route.id);
     }
-    logger.info('[ZeroCapitalWiring] Graphless positive-route permissions ready', {
+    logger.info('[ZeroCapitalWiring] Graphless positive-route permissions checked', {
       component: 'ZeroCapitalResourceWiring',
       chain,
       routes: graphless.length,
       permissionCalls: calls.length,
       fundingMode: funding.mode,
       onlyPositiveRoutesPrepared: true,
+      requiresFreshRequote: calls.length > 0,
     });
   } catch (error) {
     for (const route of graphless) eligible.delete(route.id);
@@ -150,6 +162,39 @@ async function prepareGraphlessPermissions(
     });
   }
   return eligible;
+}
+
+async function simulateGraphlessAtomicOpportunity(
+  target: ZeroCapitalRuntime,
+  chain: SupportedChain,
+  provider: providers.JsonRpcProvider,
+  opportunity: ZeroCapitalOpportunity,
+): Promise<{ ready: boolean; reason: string }> {
+  if (!opportunity.id.startsWith('graphless-')) return { ready: true, reason: 'existing_route' };
+  if (!target.executionEnabled) return { ready: false, reason: 'execution_not_enabled_for_exact_simulation' };
+  const receiver = target.receiverManager.getReceiver(chain);
+  const wallet = target.executionWallets.get(chain);
+  if (!receiver || !wallet) return { ready: false, reason: 'receiver_or_wallet_unavailable' };
+  if (Date.now() > opportunity.expiresAt) return { ready: false, reason: 'opportunity_expired_before_simulation' };
+
+  try {
+    const plan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
+      receiver,
+      profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || process.env.BRIDGE_WALLET_ADDRESS || wallet.address,
+      nowMs: Date.now(),
+    });
+    const payload = buildFlashLoanReceiverPayloadFromPlan(plan);
+    await provider.call({
+      from: wallet.address,
+      to: payload.to,
+      data: payload.data,
+      value: payload.value,
+    });
+    if (Date.now() > opportunity.expiresAt) return { ready: false, reason: 'opportunity_expired_during_simulation' };
+    return { ready: true, reason: 'exact_receiver_call_succeeded' };
+  } catch (error) {
+    return { ready: false, reason: `exact_receiver_call_failed:${error instanceof Error ? error.message : String(error)}` };
+  }
 }
 
 export function ensureZeroCapitalResourceWiring(): void {
@@ -178,9 +223,18 @@ export function ensureZeroCapitalResourceWiring(): void {
     const dynamic: ZeroCapitalOpportunity[] = [];
     for (const quote of dynamicQuotes) {
       const opportunity = target.fromQuotedRoute(quote, block.timestamp);
+      if (quote.id.startsWith('graphless-')) {
+        const graphlessTtlMs = Math.max(500, Math.min(3_000, Number(process.env.ZERO_CAPITAL_GRAPHLESS_ROUTE_TTL_MS || 1_500)));
+        opportunity.expiresAt = Math.min(opportunity.expiresAt, Date.now() + graphlessTtlMs);
+      }
       const observedAt = opportunity.timestamp;
       const permissionReady = permissionEligibleIds.has(quote.id);
-      const executableCapability = receiverReady && permissionReady;
+      const simulation = permissionReady
+        ? await simulateGraphlessAtomicOpportunity(target, chain, provider, opportunity)
+        : { ready: false, reason: 'dynamic_route_permissions_require_fresh_requote' };
+      const exactSimulationRequired = quote.id.startsWith('graphless-') && target.executionEligible;
+      const simulationReady = !exactSimulationRequired || simulation.ready;
+      const executableCapability = receiverReady && permissionReady && simulationReady;
       measuredCandidateRegistry.record({
         opportunityId: opportunity.id,
         topology: 'ZERO_CAPITAL_ATOMIC',
@@ -216,16 +270,21 @@ export function ensureZeroCapitalResourceWiring(): void {
         quoteAgeMs: opportunity.quoteLatencyMs,
         executableCapability,
         executionCapabilityReason: executableCapability
-          ? 'Measured direct-protocol atomic route has receiver and route permissions; Cryptara/Monte Carlo/governance remain required before execution'
+          ? 'Measured atomic route has receiver, route permissions and required exact simulation; Cryptara/Monte Carlo/governance remain required before execution'
           : !receiverReady
             ? 'Measured deterministic route is positive, but no verified funded receiver is currently registered on the chain'
-            : 'Measured deterministic route is positive, but dynamic receiver permissions are not ready for this route',
-        missingInformation: executableCapability ? [] : [!receiverReady ? 'verified_funded_receiver' : 'dynamic_route_permissions'],
+            : !permissionReady
+              ? 'Measured deterministic route is positive, but dynamic receiver permissions require a fresh quote'
+              : `Measured deterministic route is positive, but exact atomic simulation is not ready: ${simulation.reason}`,
+        missingInformation: executableCapability ? [] : [
+          !receiverReady ? 'verified_funded_receiver' : !permissionReady ? 'fresh_quote_after_dynamic_route_permissions' : 'exact_atomic_simulation',
+        ],
         provenance: [
           'dynamic_zero_capital_route',
           quote.id.startsWith('graphless-') ? 'graphless_no_key_discovery' : 'stable_seed_discovery',
           'direct_contract_quotes',
           'measured_gas_cost',
+          ...(simulation.ready && quote.id.startsWith('graphless-') ? ['exact_receiver_call_simulation'] : []),
           'deterministic_positive_net',
           'synthetic_evidence:false',
         ],
@@ -363,6 +422,6 @@ export function ensureZeroCapitalResourceWiring(): void {
     executionAdmission: 'resource_leases',
     globalValueSemantics: 'emergency_ceiling_only',
     scheduler: zeroCapitalResourceScheduler.getTelemetry(),
-    safety: ['governance', 'positive_net', 'receiver', 'dynamic_route_permissions', 'wallet_nonce', 'chain', 'provider', 'protocol', 'gas_sponsor'],
+    safety: ['governance', 'positive_net', 'receiver', 'dynamic_route_permissions', 'fresh_requote_after_permission_change', 'exact_atomic_simulation', 'wallet_nonce', 'chain', 'provider', 'protocol', 'gas_sponsor'],
   });
 }
