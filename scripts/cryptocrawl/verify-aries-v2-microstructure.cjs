@@ -18,6 +18,7 @@ assert.match(micro, /estimateAriesVenueLeadLag/);
 assert.match(micro, /stressTestAriesSpread/);
 assert.match(micro, /hurstExponent/);
 assert.match(micro, /atrFraction/);
+assert.doesNotMatch(micro, /Math\.random/);
 
 assert.match(maker, /'volatile_spread_post_only'/);
 assert.match(maker, /CRYPTO_ARBITRAGE_MAKER_MIN_JOINT_FILL_PROBABILITY/);
@@ -47,7 +48,11 @@ assert.match(dynamicDex, /quoteConfiguredZeroCapitalRoutesForChain/);
 assert.match(dynamicDex, /syntheticEvidenceAllowed: false/);
 assert.match(zeroWiring, /prepareGraphlessPermissions/);
 assert.match(zeroWiring, /onlyPositiveRoutesPrepared: true/);
-assert.match(zeroWiring, /dynamic_route_permissions/);
+assert.match(zeroWiring, /requiresFreshRequote: calls\.length > 0/);
+assert.match(zeroWiring, /simulateGraphlessAtomicOpportunity/);
+assert.match(zeroWiring, /await provider\.call/);
+assert.match(zeroWiring, /exact_atomic_simulation/);
+assert.match(zeroWiring, /fresh_quote_after_dynamic_route_permissions/);
 assert.match(quoter, /must return to inputToken to repay the flash loan atomically/);
 
 console.log(JSON.stringify({
@@ -57,13 +62,15 @@ console.log(JSON.stringify({
   fractionalKellyBounded: true,
   hurstAtrAdaptiveSizing: true,
   causalLeadLagAdvisory: true,
-  empiricalStressTesting: true,
+  deterministicEmpiricalStressTesting: true,
   unconditionalTakerFallback: false,
   graphlessDexDiscovery: true,
   newDexApiKeysRequired: false,
   directRpcFactoryDiscovery: true,
   publicScoutIsAdvisoryOnly: true,
   directContractQuoteAuthority: true,
+  exactAtomicSimulationRequiredForLiveGraphlessExecution: true,
+  freshRequoteAfterPermissionMutation: true,
   atomicRepaymentInvariant: true,
   dynamicPermissionsFailClosed: true,
   governanceBypass: false,
