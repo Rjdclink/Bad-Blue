@@ -23,6 +23,8 @@ const cexExecutor = read('server/services/cryptocrawl/execution/centralized-exch
 const cexSettlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 const cexSerialization = read('server/services/cryptocrawl/execution/cex-order-serialization.ts');
 const legacyMasterOrchestrator = read('server/services/cryptocrawl/core/master-orchestrator.ts');
+const legacyIndex = read('server/services/cryptocrawl/legacy/index.ts');
+const legacyQuarantine = read('server/services/cryptocrawl/integration/legacy-intelligence-quarantine.ts');
 
 // Profit magnitude must never be an execution ceiling or arbitrary floor.
 requireText(riskGovernor, 'profitCeilingAuthority: false', 'RiskGovernor declares no profit-ceiling authority');
@@ -91,5 +93,29 @@ forbidText(legacyMasterOrchestrator, 'CainManager.startAll', 'legacy MasterOrche
 forbidText(legacyMasterOrchestrator, 'TwinManager.startAll', 'legacy MasterOrchestrator cannot start Twin agents');
 forbidText(legacyMasterOrchestrator, 'StarburstEngine.startMonitoring', 'legacy MasterOrchestrator cannot start Starburst monitoring');
 forbidText(legacyMasterOrchestrator, 'LuxSwarm.observe()', 'legacy MasterOrchestrator cannot derive synthetic runtime metrics from LuxSwarm');
+
+// Every explicit legacy namespace must remain visibly non-authoritative and quarantined.
+requireText(legacyIndex, "LEGACY_CRYPTOCRAWLER_AUTHORITY = 'none'", 'legacy public namespace declares no authority');
+requireText(legacyIndex, 'LEGACY_CRYPTOCRAWLER_EXECUTION_ALLOWED = false', 'legacy public namespace forbids execution authority');
+for (const legacyPath of [
+  'core/eden-storage.ts',
+  'core/cain-crawler.ts',
+  'core/neurofusion.ts',
+  'core/microtask-engine.ts',
+  'core/light-communication.ts',
+  'core/stealth-security.ts',
+  'core/lux-swarm.ts',
+  'agents/conjoined-twin-crawler.ts',
+  'agents/cain-twin-hybrid.ts',
+  'eden/deployment.ts',
+  'intelligence/index.ts (legacy namespace only)',
+  'capital-free/index.ts (legacy namespace only)',
+  'ai/index.ts (legacy namespace only)',
+  'evolution/index.ts (legacy namespace only)',
+  'optimization/index.ts (legacy namespace only)',
+  'config/maximum-profitability.ts (legacy compatibility config only)',
+]) {
+  requireText(legacyQuarantine, `'${legacyPath}'`, `legacy quarantine inventories ${legacyPath}`);
+}
 
 console.log('CryptoCrawler clean-house authority extension verification passed.');
