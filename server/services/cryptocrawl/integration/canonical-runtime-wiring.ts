@@ -6,6 +6,7 @@ import { canonicalIntelligenceRepository } from '../intelligence/canonical-intel
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { ensureCryptaraLatencyInstrumentation } from './cryptara-latency-instrumentation.js';
 import { ensureDiscoveryLatencyInstrumentation } from './discovery-latency-instrumentation.js';
+import { ensureExecutionLatencyInstrumentation } from './execution-latency-instrumentation.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
@@ -39,6 +40,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureOrderBookEvolutionWiring();
   ensureCryptaraLatencyInstrumentation();
   ensureDiscoveryLatencyInstrumentation();
+  ensureExecutionLatencyInstrumentation();
   // Durable learning memory rehydrates independently of market discovery and
   // execution. A database outage therefore degrades historical intelligence only.
   void canonicalIntelligenceRepository.hydrate();
@@ -62,7 +64,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
     intelligenceMemoryExecutionDependency: false,
     cryptaraLatencyInstrumentation: ['mc_cache', 'ml_advisory'],
-    discoveryLatencyInstrumentation: ['ingest', 'candidate', 'deterministic_economics'],
+    discoveryLatencyInstrumentation: ['ingest', 'normalize', 'candidate', 'deterministic_economics'],
+    executionLatencyInstrumentation: ['submit', 'exchange_rpc_ack'],
     latencyInstrumentationAuthority: 'telemetry_only',
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
