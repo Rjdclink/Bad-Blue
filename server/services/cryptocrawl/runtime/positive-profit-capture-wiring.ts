@@ -2,7 +2,7 @@ import logger from '../../../logger.js';
 import { getCryptara } from '../../cryptara/index.js';
 import type { CryptaraOpportunityAssessment, CryptaraOpportunityContext } from '../../cryptara/index.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
-import { normalizeCoinbaseExecutablePlan } from '../execution/coinbase-executable-plan-policy.js';
+import { normalizeCexExecutablePlan } from '../execution/cex-spot-product-policy.js';
 import { stageManager } from '../governance/stage-management.js';
 
 let installed = false;
@@ -24,9 +24,6 @@ function normalizePositiveAssessment(
 
   const criticalMissing = criticalMissingInformation(assessment.missingInformation);
   if (criticalMissing.length > 0 || !assessment.monteCarlo) {
-    // Positive deterministic economics are necessary, not sufficient. Missing
-    // critical execution evidence remains fail-closed, but rank is not allowed
-    // to turn a genuinely positive opportunity into a rejection by itself.
     assessment.recommendation = 'observe';
     assessment.provenance = [...new Set([
       ...assessment.provenance,
@@ -37,9 +34,6 @@ function normalizePositiveAssessment(
   }
 
   if (!Number.isFinite(assessment.monteCarlo.probabilityOfProfit) || assessment.monteCarlo.probabilityOfProfit < 0.6) {
-    // Stochastic execution-risk evidence may still reject a positive pre-trade
-    // plan. The user directive removes arbitrary profit/rank filters, not risk,
-    // fill, settlement, freshness, liquidity, or governance controls.
     assessment.recommendation = 'reject';
     assessment.provenance = [...new Set([
       ...assessment.provenance,
@@ -60,10 +54,9 @@ function normalizePositiveAssessment(
 
 /**
  * Installs a narrow compatibility policy over legacy profit/ranking surfaces.
- * Canonical all-in deterministic economics, Monte Carlo risk, governance,
- * inventory/resource leases, quote freshness, settlement and circuit breakers
- * remain authoritative. Only arbitrary minimum-profit, maximum-profit and
- * rank-score rejection semantics are removed.
+ * Canonical all-in deterministic economics, measured venue product constraints,
+ * Monte Carlo risk, governance, inventory/resource leases, quote freshness,
+ * settlement and circuit breakers remain authoritative.
  */
 export function ensurePositiveProfitCaptureWiring(): void {
   if (installed) return;
@@ -77,18 +70,16 @@ export function ensurePositiveProfitCaptureWiring(): void {
   verifier.evaluateOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
     const plan = await originalEvaluateOnce(request);
     if (!plan) return null;
-    // Coinbase increments/minimums are deterministic execution evidence, not an
-    // order-submission concern. Normalize before a plan can become eligible.
-    return normalizeCoinbaseExecutablePlan(plan);
+    // Coinbase/Kraken/OKX increments, minimums and live product state are
+    // deterministic execution evidence. Normalize the common executable size
+    // and recompute economics before a candidate can reach Cryptara eligibility.
+    return normalizeCexExecutablePlan(plan);
   };
   verifier.verifyOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
     const plan = await verifier.evaluateOnce(request);
     return plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0 ? plan : null;
   };
 
-  // Stage maxDailyProfit remains a descriptive progression milestone in stage
-  // configuration, but must never be a reason to stop taking another otherwise
-  // safe, independently profitable trade. Drawdown, position and loss limits stay.
   const stageRuntime = stageManager as typeof stageManager & { getMaxDailyProfit: () => number };
   stageRuntime.getMaxDailyProfit = () => Number.POSITIVE_INFINITY;
 
@@ -115,9 +106,10 @@ export function ensurePositiveProfitCaptureWiring(): void {
     arbitraryMinimumProfitUsd: false,
     maximumDailyProfitExecutionStop: false,
     rankScoreExecutionGate: false,
-    coinbaseProductConstraintsBeforeEligibility: true,
+    cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedAuthorities: [
       'deterministic_all_in_economics',
+      'measured_product_constraints',
       'monte_carlo_execution_risk',
       'governance_stage',
       'risk_circuit_breakers',
