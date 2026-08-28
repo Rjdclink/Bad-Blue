@@ -17,7 +17,8 @@ const scaling = read('server/services/cryptocrawl/scaling/dynamic-scale-physics.
 const concurrent = read('server/services/cryptocrawl/faucet/concurrent-execution-wiring.ts');
 const telemetry = read('server/services/cryptocrawl/integration/telemetry-bootstrap.ts');
 const runtime = read('server/services/cryptocrawl/integration/runtime-observability.ts');
-const master = read('server/services/cryptocrawl/integration/master-orchestrator-measured-wiring.ts');
+const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const masterCompatibility = read('server/services/cryptocrawl/integration/master-orchestrator-measured-wiring.ts');
 const evolution = read('server/services/cryptocrawl/evolution/measured-execution-feedback.ts');
 const lifecycle = read('server/services/cryptocrawl/integration/learning-lifecycle-wiring.ts');
 const quarantine = read('server/services/cryptocrawl/integration/legacy-intelligence-quarantine.ts');
@@ -25,8 +26,13 @@ const execution = read('server/services/cryptocrawl/execution/index.ts');
 const faucet = read('server/services/cryptocrawl/faucet/autonomous-faucet.ts');
 
 requireText(progression, 'ensureCryptaraAssessmentWiring()', 'Cryptara canonical assessment/bootstrap wiring is installed on the governed path');
-requireText(progression, 'ensureMasterOrchestratorMeasuredWiring()', 'measured orchestrator wiring is installed on the governed path');
+requireText(progression, 'ensureMasterOrchestratorMeasuredWiring()', 'historical import remains wired through the compatibility shim');
 requireText(progression, 'ensureTelemetryBootstrap()', 'provider telemetry bootstrap is installed on the governed path');
+requireText(masterCompatibility, 'ensureCanonicalCryptoCrawlerRuntimeWiring()', 'legacy master wiring delegates to canonical runtime wiring');
+forbidText(masterCompatibility, "../core/master-orchestrator", 'legacy MasterOrchestrator must not be imported by canonical runtime startup');
+requireText(canonicalRuntime, 'ensureCryptoRuntimeObservability()', 'runtime observability is installed from canonical runtime wiring');
+requireText(canonicalRuntime, 'legacyMasterOrchestratorRequired: false', 'canonical runtime declares legacy master orchestrator unnecessary');
+requireText(canonicalRuntime, 'executionAuthorityGranted: false', 'runtime lifecycle wiring does not grant execution authority');
 requireText(bootstrap, "mode: 'pretrade_bootstrap'", 'Monte Carlo has an explicit measured pre-trade bootstrap mode');
 requireText(bootstrap, "mode: 'posttrade_calibrated'", 'Monte Carlo preserves a post-trade calibrated mode');
 requireText(bootstrap, "const requiresOnchainTelemetry = context?.plan?.crossVenueCostModel === 'bridge'", 'CEX bootstrap does not falsely require blockchain telemetry');
@@ -53,7 +59,6 @@ requireText(runtime, 'alchemyIntegration.readinessCheck', 'heartbeat exposes liv
 requireText(runtime, 'blockchainProviderSnapshot()', 'heartbeat exposes shared RPC/Ankr state');
 requireText(runtime, 'workloadRouter.getSystemStatus()', 'heartbeat exposes Beam workload state');
 requireText(runtime, 'canonicalOpportunityState.getMetrics(60_000)', 'heartbeat exposes canonical opportunity throughput');
-requireText(master, 'ensureCryptoRuntimeObservability()', 'runtime observability is installed from measured master wiring');
 requireText(evolution, 'feedback.settlement.terminal !== true', 'measured evolution path rejects non-terminal evidence');
 requireText(lifecycle, 'isLongTermMemoryAllowed()', 'long-term learning remains governance gated');
 requireText(quarantine, 'Math.random', 'legacy randomized intelligence is explicitly recognized/quarantined');
