@@ -33,6 +33,7 @@ export interface CoinbaseAdvancedProductConstraints {
   tradingDisabled: boolean;
   cancelOnly: boolean;
   postOnly: boolean;
+  auctionMode: boolean;
   viewOnly: boolean;
   observedAt: number;
   source: 'coinbase_advanced_public_product';
@@ -108,9 +109,10 @@ export function parseCoinbaseAdvancedProductBook(payload: any, requestedSymbol: 
 }
 
 /**
- * Parse the current Advanced Trade public product contract. Product increments
- * and minimums are execution evidence: if Coinbase stops supplying a required
- * value, executable normalization must fail closed rather than guess a decimal.
+ * Parse the current Advanced Trade public product contract. Product increments,
+ * minimums and trading-state flags are execution evidence: if Coinbase stops
+ * supplying a required numeric value, executable normalization fails closed
+ * rather than guessing a decimal or order size.
  */
 export function parseCoinbaseAdvancedProductConstraints(payload: any, requestedSymbol: string, observedAt = Date.now()): CoinbaseAdvancedProductConstraints {
   const expectedProductId = coinbaseAdvancedProductId(requestedSymbol);
@@ -143,6 +145,10 @@ export function parseCoinbaseAdvancedProductConstraints(payload: any, requestedS
     tradingDisabled: payload?.trading_disabled === true,
     cancelOnly: payload?.cancel_only === true,
     postOnly: payload?.post_only === true,
+    auctionMode: payload?.auction_mode === true,
+    // Coinbase documents view_only as requiring get_tradability_status for a
+    // meaningful SPOT false value. Treat only an explicit true as blocking; do
+    // not manufacture an account-tradability assertion from a default false.
     viewOnly: payload?.view_only === true,
     observedAt,
     source: 'coinbase_advanced_public_product',
