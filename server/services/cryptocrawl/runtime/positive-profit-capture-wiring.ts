@@ -35,9 +35,23 @@ function criticalMissingInformation(items: readonly string[], makerCanary = fals
   );
 }
 
+function normalizedEnvValue(raw: string | undefined): string | null {
+  if (!raw) return null;
+  let value = raw.trim();
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) value = value.slice(1, -1).trim();
+  }
+  return value || null;
+}
+
 function normalizeCoinbaseCredentialAliases(): void {
-  if (!process.env.COINBASE_API_SECRET?.trim() && process.env.COINBASE_SECRET_KEY?.trim()) {
-    process.env.COINBASE_API_SECRET = process.env.COINBASE_SECRET_KEY;
+  const canonicalSecret = normalizedEnvValue(process.env.COINBASE_API_SECRET);
+  const secretAlias = normalizedEnvValue(process.env.COINBASE_SECRET_KEY);
+  if (canonicalSecret) process.env.COINBASE_API_SECRET = canonicalSecret;
+  else if (secretAlias) {
+    process.env.COINBASE_API_SECRET = secretAlias;
     logger.info('[PositiveProfitCapture] Normalized Railway Coinbase secret-key alias', {
       component: 'PositiveProfitCapture',
       sourceAlias: 'COINBASE_SECRET_KEY',
@@ -45,14 +59,23 @@ function normalizeCoinbaseCredentialAliases(): void {
       secretValueLogged: false,
     });
   }
+
+  const keyName = normalizedEnvValue(process.env.COINBASE_KEY_NAME);
+  if (keyName) process.env.COINBASE_KEY_NAME = keyName;
+  const genericKey = normalizedEnvValue(process.env.COINBASE_API_KEY);
+  if (genericKey) process.env.COINBASE_API_KEY = genericKey;
 }
 
 function normalizeZeroXCredentialAliases(): void {
-  if (process.env.ZEROX_API_KEY?.trim()) return;
+  const canonical = normalizedEnvValue(process.env.ZEROX_API_KEY);
+  if (canonical) {
+    process.env.ZEROX_API_KEY = canonical;
+    return;
+  }
   const aliases = ['0X_API_KEY', 'OX_API_KEY', 'ZERO_X_API_KEY', 'ZEROX_KEY', 'ZERO_X_KEY', '0X_KEY'] as const;
-  const source = aliases.find(alias => process.env[alias]?.trim());
+  const source = aliases.find(alias => normalizedEnvValue(process.env[alias]));
   if (!source) return;
-  process.env.ZEROX_API_KEY = process.env[source]?.trim();
+  process.env.ZEROX_API_KEY = normalizedEnvValue(process.env[source]) || undefined;
   logger.info('[PositiveProfitCapture] Normalized Railway 0x API-key alias', {
     component: 'PositiveProfitCapture',
     sourceAlias: source,

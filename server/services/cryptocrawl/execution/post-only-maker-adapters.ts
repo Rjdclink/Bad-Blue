@@ -10,7 +10,7 @@ import {
 } from './cex-settlement.js';
 import { cexDecimalString } from './cex-order-serialization.js';
 import { getMakerLifecycleTraceId } from './maker-lifecycle-trace.js';
-import type { StablecoinMakerPlan } from './stablecoin-maker-strategy.js';
+import type { MakerRecoveryPlan } from './stablecoin-maker-strategy.js';
 
 function splitSymbol(symbol: string): { base: string; quote: string } {
   const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
@@ -33,7 +33,7 @@ function recordLatency(input: {
   clientRoundTripMs: number;
   gatewayProcessingMs?: number | null;
 }): void {
-  logger.info('[StablecoinMaker] Maker order latency evidence', {
+  logger.info('[MakerRecovery] Maker order latency evidence', {
     component: 'PostOnlyMakerAdapters',
     traceId: input.traceId,
     venue: input.venue,
@@ -102,7 +102,13 @@ function wrapMakerSubmit(
   };
 }
 
-export function createPostOnlyMakerAdapters(plan: StablecoinMakerPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
+/**
+ * Shared post-only adapter for both stablecoin and volatile maker-recovery plans.
+ * Asset-class admission happens upstream in stablecoin-maker-strategy; once a
+ * MakerRecoveryPlan reaches this point the adapter must not re-impose a
+ * stablecoin-only type boundary.
+ */
+export function createPostOnlyMakerAdapters(plan: MakerRecoveryPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();
   if (plan.buyVenue === 'coinbase' || plan.sellVenue === 'coinbase') {
     throw new Error('Coinbase maker execution remains disabled until its authenticated runtime credential path is proven');

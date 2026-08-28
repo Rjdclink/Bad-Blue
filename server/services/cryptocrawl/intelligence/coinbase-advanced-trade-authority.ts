@@ -48,11 +48,17 @@ function normalizeCredential(raw: string | undefined): string | null {
 }
 
 function coinbaseKeyName(): string | null {
-  return normalizeCredential(process.env.COINBASE_API_KEY)
-    || normalizeCredential(process.env.COINBASE_KEY_NAME)
-    || normalizeCredential(process.env.CDP_API_KEY_NAME)
-    || normalizeCredential(process.env.CDP_API_KEY_ID)
-    || normalizeCredential(process.env.KEY_NAME);
+  // Advanced Trade/CDP key names are the organizations/.../apiKeys/... value.
+  // Prefer explicit key-name variables over the historically overloaded
+  // COINBASE_API_KEY so a legacy UUID/API token cannot shadow a valid CDP name.
+  const candidates = [
+    normalizeCredential(process.env.COINBASE_KEY_NAME),
+    normalizeCredential(process.env.CDP_API_KEY_NAME),
+    normalizeCredential(process.env.KEY_NAME),
+    normalizeCredential(process.env.COINBASE_API_KEY),
+    normalizeCredential(process.env.CDP_API_KEY_ID),
+  ].filter((value): value is string => Boolean(value));
+  return candidates.find(value => value.includes('/apiKeys/')) || candidates[0] || null;
 }
 
 function coinbaseKeySecret(): string | null {
@@ -75,10 +81,7 @@ function requireCoinbaseCredentials(): { keyName: string; keySecret: string } {
     throw new Error('Coinbase Advanced Trade credentials are not visible; expected a supported Coinbase/CDP API key name and private key/secret');
   }
   if (!keyName.includes('/apiKeys/')) {
-    logger.warn('[Coinbase] API key name does not match the documented CDP key-name shape', {
-      component: 'CoinbaseAdvancedTradeAuthority',
-      expectedShape: 'organizations/{org_id}/apiKeys/{key_id}',
-    });
+    throw new Error('Coinbase Advanced Trade key name is not the documented organizations/{org_id}/apiKeys/{key_id} value; refusing to send a JWT with an ambiguous key identifier');
   }
   return { keyName, keySecret };
 }
@@ -184,6 +187,9 @@ export async function coinbasePrivateRequest(
   try {
     payload = text ? JSON.parse(text) : {};
   } catch {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Coinbase private authentication failed (${response.status}); verify that the organizations/.../apiKeys/... Key Name is paired with its exact private key, required permissions, and any configured IP allowlist`);
+    }
     throw new Error(`Coinbase private endpoint returned non-JSON (${response.status})`);
   }
   if (!response.ok || payload?.error) {
