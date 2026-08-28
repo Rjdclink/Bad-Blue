@@ -30,8 +30,6 @@ import { getOkxExecutionRestBaseUrl } from '../intelligence/okx-region-authority
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
 import { getCoinbaseAdvancedProductBook } from '../intelligence/coinbase-advanced-market-data.js';
-import { assertCoinbaseSpotTradeReady } from '../intelligence/coinbase-advanced-trade-authority.js';
-import { getCoinbaseSpotFeeEvidence } from '../intelligence/coinbase-fee-evidence.js';
 
 export type QuoteVenue = 'coinbase' | 'kraken' | 'okx';
 
@@ -336,31 +334,6 @@ function overrideEvidence(venue: QuoteVenue, symbol: string, takerFeeBps: number
   };
 }
 
-async function authenticatedCoinbaseFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
-  try {
-    await assertCoinbaseSpotTradeReady();
-    const evidence = await getCoinbaseSpotFeeEvidence();
-    return {
-      venue: 'coinbase',
-      symbol,
-      takerFeeBps: evidence.takerFeeBps,
-      makerFeeBps: evidence.makerFeeBps,
-      makerRebateBps: null,
-      // CexFeeEvidence predates Coinbase. Preserve the real runtime provenance;
-      // the resolver type is widened in the final integration audit.
-      source: 'coinbase_transaction_summary' as CexFeeEvidence['source'],
-      observedAt: evidence.observedAt,
-    };
-  } catch (error) {
-    logger.debug('[ArbVerifier] Coinbase authenticated fee/permission evidence unavailable', {
-      component: 'ArbitrageVerifier',
-      symbol,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
-}
-
 function requestedFeeOverride(req: Omit<VerifyRequest, 'minNetProfitUsd'>, venue: QuoteVenue): number | null {
   const buyOverride = req.buyFeesBps?.[venue];
   if (Number.isFinite(buyOverride) && buyOverride! >= 0) return buyOverride!;
@@ -373,8 +346,8 @@ function effectiveTakerFeeBps(
   evidence: CexFeeEvidence | null,
   requestOverride: number | undefined,
 ): number | null {
-  // OKX and Coinbase must have resolver/authenticated evidence before any
-  // configured/request override can participate in executable economics.
+  // Coinbase and OKX require canonical authenticated/resolver evidence before
+  // any configured/request override may participate in executable economics.
   if ((venue === 'okx' || venue === 'coinbase') && !evidence) return null;
   if (venue === 'coinbase' && evidence) return evidence.takerFeeBps;
   if (Number.isFinite(requestOverride) && requestOverride! >= 0) return requestOverride!;
@@ -559,9 +532,9 @@ export class ArbitrageVerifier {
       });
       await Promise.all(quoteWorkers);
 
-      // Kraken/OKX account-fee enrichment is batched. Coinbase account-level fee
-      // and permission evidence is shared by its own bounded cache and therefore
-      // resolves once even when several survivor symbols request it concurrently.
+      // One fee authority primes Coinbase/Kraken/OKX. Private account work is
+      // deduplicated/cached by that authority and remains downstream of the cheap
+      // raw-edge screen.
       const feePrime = await primeCexFeeEvidence([...rawEdgeSurvivors]);
       const survivorSymbols = symbols.filter(symbol => rawEdgeSurvivors.has(symbol));
       cursor = 0;
@@ -647,13 +620,16 @@ export class ArbitrageVerifier {
     const transferFeeUsd = bridge ? 0 : configuredTransferFeeUsd();
     const feeEvidence = new Map<QuoteVenue, CexFeeEvidence | null>();
     await Promise.all(freshQuotes.map(async quote => {
+      const requestOverride = requestedFeeOverride(req, quote.venue);
+      const evidence = await resolveCexFeeEvidence(quote.venue, symbol);
       if (quote.venue === 'coinbase') {
-        feeEvidence.set('coinbase', await authenticatedCoinbaseFeeEvidence(symbol));
+        // Coinbase fee overrides are never authoritative. The canonical resolver
+        // returns evidence only after authenticated trade permission + account
+        // SPOT fee-tier evidence are present.
+        feeEvidence.set(quote.venue, evidence);
         return;
       }
-      const requestOverride = requestedFeeOverride(req, quote.venue);
       if (quote.venue === 'okx') {
-        const evidence = await resolveCexFeeEvidence('okx', symbol);
         feeEvidence.set(
           quote.venue,
           evidence && requestOverride !== null ? overrideEvidence(quote.venue, symbol, requestOverride) : evidence,
@@ -663,7 +639,7 @@ export class ArbitrageVerifier {
       const explicit = requestOverride ?? configuredTakerFeeBps(quote.venue);
       feeEvidence.set(
         quote.venue,
-        explicit !== null ? overrideEvidence(quote.venue, symbol, explicit) : await resolveCexFeeEvidence(quote.venue, symbol),
+        explicit !== null ? overrideEvidence(quote.venue, symbol, explicit) : evidence,
       );
     }));
 
