@@ -58,8 +58,9 @@ requireText(scheduler, 'canonicalOpportunityState.getRecent(512)', 'bounded cano
 requireText(scheduler, "snapshot.status === 'eligible'", 'scheduler accepts only eligible canonical candidates');
 requireText(scheduler, 'snapshot.plan.netProfitUsd > 0', 'scheduler preserves strictly positive deterministic economics');
 requireText(scheduler, 'isLiveExecutionPosture()', 'scheduler preserves explicit live execution posture');
-requireText(scheduler, 'stageManager.isMarketOperationsAllowed()', 'scheduler preserves canonical stage gating');
+requireText(scheduler, 'stageManager.canExecuteTrades()', 'scheduler preserves canonical stage gating');
 requireText(scheduler, 'executeVerifiedArbitragePlan', 'scheduler delegates to guarded verified executor');
+requireText(scheduler, 'opportunityId: candidate.opportunityId', 'scheduler preserves exact candidate identity across execution');
 requireText(concurrent, 'Legacy faucet concurrency patch retired', 'legacy faucet concurrency layer is inert');
 forbidText(concurrent, 'target.makeOpenDecision', 'legacy layer cannot patch execution decisions');
 requireText(faucet, 'canonicalExecutionScheduler.start()', 'faucet compatibility lifecycle converges on canonical scheduler');
