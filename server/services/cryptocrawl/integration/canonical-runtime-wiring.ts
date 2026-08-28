@@ -6,6 +6,7 @@ import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-r
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
+import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
@@ -46,6 +47,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   // provider-side router filters emit hashes first and exact-chain detail is
   // fetched only after relevance has already been established.
   ensureFilteredAlchemyPendingStream();
+  ensureFilteredMempoolObservability();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
@@ -68,6 +70,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     durableLearningOutbox: 'private_postgres_deduped_retry_recovery',
     durableLearningOutboxExecutionDependency: false,
     filteredMempoolEvidence: 'alchemy_provider_filtered_hash_first_exact_chain',
+    filteredMempoolTelemetry: 'hash_to_detail_efficiency_and_budget_pressure',
     filteredMempoolExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
