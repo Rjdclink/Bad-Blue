@@ -12,6 +12,7 @@ const assets = [
   { symbol: 'ETHUSDT', volume24hUsd: 1_000_000, marketCapUsd: 10_000_000, marketCapRank: 10, observedAt },
   { symbol: 'SOLUSDT', volume24hUsd: 1_000_000, marketCapUsd: 10_000_000, marketCapRank: 10, observedAt },
   { symbol: 'AVAXUSDT', volume24hUsd: 1_000_000, marketCapUsd: 10_000_000, marketCapRank: 10, observedAt },
+  { symbol: 'LINKUSDT', volume24hUsd: 1_000_000, marketCapUsd: 10_000_000, marketCapRank: 10, observedAt },
 ];
 
 setMarketUniversePerformanceProvider(() => new Map([
@@ -32,14 +33,19 @@ setMarketUniversePerformanceProvider(() => new Map([
 ]));
 
 const ranked = rankMeasuredMarketUniverse(assets);
-assert.equal(ranked.length, 3, 'performance focus must never delete exploration symbols');
+assert.equal(ranked.length, 4, 'performance focus must never delete exploration symbols');
 assert.equal(ranked[0].symbol, 'ETHUSDT', 'terminal-positive pair should win an otherwise equal quality tie');
 assert.ok(ranked.some(asset => asset.symbol === 'SOLUSDT'), 'historically weak pair must remain discoverable');
 assert.ok(ranked.some(asset => asset.symbol === 'AVAXUSDT'), 'unseen pair must remain discoverable');
 
 resetMarketUniverseRotationForTest();
-const rotated = orderMeasuredMarketUniverse(assets);
-assert.deepEqual(new Set(rotated.map(asset => asset.symbol)), new Set(assets.map(asset => asset.symbol)));
+const rotatedOne = orderMeasuredMarketUniverse(assets);
+const rotatedTwo = orderMeasuredMarketUniverse(assets);
+assert.deepEqual(new Set(rotatedOne.map(asset => asset.symbol)), new Set(assets.map(asset => asset.symbol)));
+assert.deepEqual(new Set(rotatedTwo.map(asset => asset.symbol)), new Set(assets.map(asset => asset.symbol)));
+assert.equal(rotatedOne[0].symbol, 'ETHUSDT', 'best terminal performer should remain in the bounded focus prefix');
+assert.equal(rotatedTwo[0].symbol, 'ETHUSDT', 'focus prefix should remain stable while the exploration tail rotates');
+assert.notDeepEqual(rotatedOne.slice(1).map(asset => asset.symbol), rotatedTwo.slice(1).map(asset => asset.symbol), 'non-focus pairs must continue rotating');
 
 const cadenceInput = {
   configuredMinimum: 12,
