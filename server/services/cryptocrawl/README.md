@@ -67,7 +67,7 @@ Run the CryptoCrawler invariant gates, including:
 
 ```bash
 node scripts/cryptocrawl/verify-clean-house.cjs
-node scripts/cryptocrawl/verify-expanded-runtime-wiring.cjs
+node scripts/cryptocrawl/verify-deployment-preflight.cjs
 ```
 
 Other topology/economics/governance/settlement verification scripts remain part of the broader no-regression suite.
