@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
+import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
@@ -34,6 +35,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
   ensureOrderBookEvolutionWiring();
+  // Durable learning memory rehydrates independently of market discovery and
+  // execution. A database outage therefore degrades historical intelligence only.
+  void canonicalIntelligenceRepository.hydrate();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
@@ -51,6 +55,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     orderBookEvolution: 'measured_short_horizon_transitions',
     dynamicScale: 'dual_axis_search_and_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
+    intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
+    intelligenceMemoryExecutionDependency: false,
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
