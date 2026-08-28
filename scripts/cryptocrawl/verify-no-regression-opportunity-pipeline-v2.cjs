@@ -132,10 +132,11 @@ requireText(executor, 'if (!monteCarlo.approved)', 'execution MC remains a live 
 const inventory = read('server/services/cryptocrawl/execution/cex-inventory-ledger.ts');
 requireText(inventory, "export type InventoryVenue = 'coinbase' | 'kraken' | 'okx'", 'inventory authority covers all executable CEX venues');
 const settlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
+const coinbaseSettlement = read('server/services/cryptocrawl/execution/coinbase-spot-settlement-adapter.ts');
 requireText(settlement, "timeinforce: 'IOC'", 'Kraken taker execution stays IOC');
 requireText(settlement, "ordType: 'ioc'", 'OKX taker execution stays IOC');
 requireText(settlement, 'CoinbaseSettlementBridge', 'Coinbase uses canonical settlement orchestration');
-requireText(settlement, "sor_limit_ioc", 'Coinbase taker execution stays IOC');
+requireText(coinbaseSettlement, "sor_limit_ioc", 'Coinbase taker execution stays IOC');
 requireText(settlement, 'calculateRealizedEconomics', 'terminal economics are derived from actual fills/fees');
 requireText(settlement, 'settlementConfirmed', 'pair settlement confirmation remains explicit');
 requireText(settlement, 'authenticated_final_balances', 'terminal balances remain settlement evidence');
