@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
+import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
 import { executeVerifiedArbitragePlan } from './index.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
 
@@ -42,6 +43,7 @@ function currentCandidates(): Candidate[] {
   return canonicalOpportunityState.getRecent(512)
     .filter((snapshot): snapshot is Candidate => !!snapshot.plan)
     .filter(snapshot => snapshot.status === 'eligible')
+    .filter(snapshot => runtimeInvariantMonitor.evaluate(snapshot).allowed)
     .filter(snapshot => snapshot.assessment?.recommendation === 'consider')
     .filter(snapshot => Number.isFinite(snapshot.plan.netProfitUsd) && snapshot.plan.netProfitUsd > 0)
     .filter(snapshot => snapshot.plan.quoteAgeMs <= maxQuoteAgeMs)
@@ -91,6 +93,7 @@ class CanonicalExecutionScheduler {
       authority: 'canonical_eligible_opportunities',
       legacyBusinessCapsAuthoritative: false,
       distributedResourceLeases: true,
+      runtimeInvariantQuarantine: true,
     });
   }
 
