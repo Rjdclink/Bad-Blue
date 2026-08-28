@@ -9,6 +9,7 @@ import {
   isMakerRecoveryPlan,
 } from '../execution/stablecoin-maker-strategy.js';
 import { stageManager } from '../governance/stage-management.js';
+import { computeAriesExpectedValueOfInformation, rankAriesBeam } from '../intelligence/aries-vault.js';
 import { ensureCoinCapEnvironmentWiring } from './coincap-environment-wiring.js';
 import { ensureDynamicRpcProviderWiring } from './dynamic-rpc-provider-wiring.js';
 import { ensureStablecoinMakerExecutionWiring } from './stablecoin-maker-execution-wiring.js';
@@ -74,6 +75,63 @@ function enforceAuthenticatedKrakenFeeAuthority(): void {
     requestLevelFeeOverridesRetained: true,
     compatibilityFallbackWhenCredentialsAbsent: true,
   });
+}
+
+function normalizeProbability(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : null;
+}
+
+/**
+ * Aries is wired into every measured Cryptara opportunity as a horizon advisory.
+ * It deliberately cannot change the existing recommendation here: the existing
+ * deterministic economics, Hyper MC and governance remain execution authority.
+ * This gives Aries live measured inputs and observable output without creating a
+ * new regression-capable bypass while calibration evidence accumulates.
+ */
+function annotateAriesHorizonAdvisory(
+  context: CryptaraOpportunityContext,
+  assessment: CryptaraOpportunityAssessment,
+): CryptaraOpportunityAssessment {
+  const plan = context.plan;
+  if (!plan || !(plan.notionalUsd > 0) || !Number.isFinite(plan.netProfitUsd)) return assessment;
+
+  const netBps = plan.netProfitUsd / plan.notionalUsd * 10_000;
+  const probability = normalizeProbability(assessment.monteCarlo?.probabilityOfProfit)
+    ?? normalizeProbability(assessment.probabilityOfProfitableExecution)
+    ?? 0;
+  const expectedProfitUsd = plan.netProfitUsd * probability;
+  const uncertaintyUsd = Math.abs(plan.netProfitUsd) * (1 - probability);
+  const expectedRealizedBps = netBps * probability;
+  const beam = rankAriesBeam([
+    {
+      id: 'execute_measured_plan',
+      expectedRealizedBps,
+      expectedProfitUsd,
+      uncertaintyUsd,
+    },
+    {
+      id: 'hold_capital',
+      expectedRealizedBps: 0,
+      expectedProfitUsd: 0,
+      uncertaintyUsd: 0,
+    },
+  ], 1)[0];
+  const valueOfInformationBps = computeAriesExpectedValueOfInformation(
+    expectedRealizedBps,
+    Math.max(0, netBps),
+    1 - probability,
+  );
+
+  assessment.provenance = [...new Set([
+    ...assessment.provenance,
+    'aries_vault:horizon_advisory_live',
+    `aries_vault:beam_preference:${beam?.id || 'hold_capital'}`,
+    `aries_vault:expected_realized_bps:${expectedRealizedBps.toFixed(4)}`,
+    `aries_vault:value_of_information_bps:${valueOfInformationBps.toFixed(4)}`,
+    'aries_vault:execution_authority:false',
+  ])];
+  return assessment;
 }
 
 function normalizePositiveAssessment(
@@ -166,7 +224,8 @@ export function ensurePositiveProfitCaptureWiring(): void {
   const originalObservation = cryptara.recordOpportunityObservation.bind(cryptara);
   cryptara.recordOpportunityObservation = (context: CryptaraOpportunityContext): CryptaraOpportunityAssessment => {
     const assessment = originalObservation(context);
-    return normalizePositiveAssessment(context, assessment);
+    const normalized = normalizePositiveAssessment(context, assessment);
+    return annotateAriesHorizonAdvisory(context, normalized);
   };
 
   const makerCanary = getDynamicMakerCanaryStatus();
@@ -180,6 +239,12 @@ export function ensurePositiveProfitCaptureWiring(): void {
     zeroXApiKeyVisible: Boolean(process.env.ZEROX_API_KEY?.trim()),
     paidCoinCapEnvironmentResolution: true,
     dynamicRpcProviderAdmission: true,
+    ariesVault: {
+      horizonAdvisoryLive: true,
+      beamPreference: 'expected_profit_minus_uncertainty_vs_hold',
+      expectedValueOfInformation: true,
+      executionAuthority: false,
+    },
     makerRecovery: {
       enabled: true,
       venues: ['kraken', 'okx'],
