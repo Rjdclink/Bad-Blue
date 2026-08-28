@@ -16,8 +16,8 @@ export interface MarketUniverseAsset {
   marketCapUsd?: number;
   priceChange24hPct?: number;
   priceHistory?: number[];
-  source: 'coingecko' | 'coinstats';
-  sources?: Array<'coingecko' | 'coinstats'>;
+  source: 'coincap' | 'coingecko' | 'coinstats';
+  sources?: Array<'coincap' | 'coingecko' | 'coinstats'>;
   observedAt: number;
 }
 
@@ -55,7 +55,7 @@ export interface DexQuoteObservation {
   source: '0x';
 }
 
-export type MarketDataProviderName = 'coingecko' | 'coinstats' | '0x';
+export type MarketDataProviderName = 'coincap' | 'coingecko' | 'coinstats' | '0x';
 export type MarketDataProviderState = 'not_queried' | 'live' | 'cached' | 'stale' | 'throttled' | 'unavailable' | 'failed';
 
 export interface MarketDataProviderStatus {
@@ -65,6 +65,7 @@ export interface MarketDataProviderStatus {
   detail?: string;
 }
 
+const COINCAP_TTL_MS = Math.max(10_000, Number(process.env.COINCAP_MARKET_TTL_MS || 60_000));
 const COINGECKO_TTL_MS = Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000));
 const COINSTATS_TTL_MS = Math.max(30_000, Number(process.env.COINSTATS_MARKET_TTL_MS || 300_000));
 const ZEROX_TTL_MS = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
@@ -82,10 +83,12 @@ function getCoinStatsApiKey(): { apiKey: string | undefined; sourceName: string 
 class MarketDataProviders {
   private universeCache: CacheEntry<MarketUniverseAsset[]> | null = null;
   private lastUniverse: MarketUniverseAsset[] = [];
+  private coinCapCache: CacheEntry<MarketUniverseAsset[]> | null = null;
   private coinStatsCache: CacheEntry<MarketUniverseAsset[]> | null = null;
   private quoteCache = new Map<string, CacheEntry<DexQuoteObservation | null>>();
   private inFlight = new Map<string, Promise<unknown>>();
   private providerStatuses: Record<MarketDataProviderName, MarketDataProviderStatus> = {
+    coincap: { provider: 'coincap', state: 'not_queried', observedAt: null, detail: 'not queried' },
     coingecko: { provider: 'coingecko', state: 'not_queried', observedAt: null, detail: 'not queried' },
     coinstats: { provider: 'coinstats', state: 'not_queried', observedAt: null, detail: 'not queried' },
     '0x': { provider: '0x', state: 'not_queried', observedAt: null, detail: 'not queried' },
@@ -110,7 +113,7 @@ class MarketDataProviders {
 
   async discoverUniverse(): Promise<MarketUniverseAsset[]> {
     if (this.universeCache && this.universeCache.expiresAt > Date.now()) {
-      for (const provider of ['coingecko', 'coinstats'] as const) {
+      for (const provider of ['coincap', 'coingecko', 'coinstats'] as const) {
         if (this.providerStatuses[provider].state === 'live') {
           this.setProviderStatus(provider, 'cached', 'served from the market-universe cache');
         }
@@ -118,12 +121,16 @@ class MarketDataProviders {
       return orderMeasuredMarketUniverse(this.universeCache.value);
     }
 
-    const [coinGeckoAssets, coinStatsAssets] = await Promise.all([
+    // CoinCap is intentionally first: when the paid feed is configured its measured
+    // fields become the canonical values, while CoinGecko/CoinStats add independent
+    // provenance and fill symbols CoinCap does not return.
+    const [coinCapAssets, coinGeckoAssets, coinStatsAssets] = await Promise.all([
+      this.fetchCoinCapUniverse(),
       this.fetchCoinGeckoUniverse(),
       this.fetchCoinStatsUniverse(),
     ]);
     const bySymbol = new Map<string, MarketUniverseAsset>();
-    for (const asset of [...coinGeckoAssets, ...coinStatsAssets]) {
+    for (const asset of [...coinCapAssets, ...coinGeckoAssets, ...coinStatsAssets]) {
       const existing = bySymbol.get(asset.symbol);
       bySymbol.set(asset.symbol, existing ? {
         ...existing,
@@ -137,16 +144,19 @@ class MarketDataProviders {
     const ranked = rankMeasuredMarketUniverse([...bySymbol.values()]).slice(0, MAX_UNIVERSE_SIZE);
     if (ranked.length > 0) {
       this.lastUniverse = ranked;
-      this.universeCache = { value: ranked, expiresAt: Date.now() + COINGECKO_TTL_MS };
+      this.universeCache = { value: ranked, expiresAt: Date.now() + (coinCapAssets.length > 0 ? COINCAP_TTL_MS : COINGECKO_TTL_MS) };
       return orderMeasuredMarketUniverse(ranked);
     }
 
     if (this.lastUniverse.length > 0) {
+      if (this.providerStatuses.coincap.state !== 'unavailable') {
+        this.setProviderStatus('coincap', 'stale', 'live universe refresh failed; serving the last successful universe');
+      }
       this.setProviderStatus('coingecko', 'stale', 'live universe refresh failed; serving the last successful universe');
       if (this.providerStatuses.coinstats.state !== 'unavailable') {
         this.setProviderStatus('coinstats', 'stale', 'live universe refresh failed; serving the last successful universe');
       }
-      this.universeCache = { value: this.lastUniverse, expiresAt: Date.now() + Math.min(COINGECKO_TTL_MS, 30_000) };
+      this.universeCache = { value: this.lastUniverse, expiresAt: Date.now() + Math.min(COINCAP_TTL_MS, COINGECKO_TTL_MS, 30_000) };
       return orderMeasuredMarketUniverse(this.lastUniverse);
     }
 
@@ -247,6 +257,54 @@ class MarketDataProviders {
     });
     this.inFlight.set(key, promise);
     return promise;
+  }
+
+  private async fetchCoinCapUniverse(): Promise<MarketUniverseAsset[]> {
+    const apiKey = process.env.COINCAP_API_KEY?.trim();
+    if (!apiKey) {
+      this.setProviderStatus('coincap', 'unavailable', 'COINCAP_API_KEY is not configured');
+      return [];
+    }
+    if (this.coinCapCache && this.coinCapCache.expiresAt > Date.now()) {
+      this.setProviderStatus('coincap', 'cached', 'served from the authenticated CoinCap cache');
+      return this.coinCapCache.value;
+    }
+    try {
+      const baseUrl = (process.env.COINCAP_API_BASE_URL?.trim() || 'https://rest.coincap.io/v3').replace(/\/$/, '');
+      const payload = await fetchJsonWithRetry<any>(`${baseUrl}/assets?limit=${MAX_UNIVERSE_SIZE}`, {
+        init: {
+          headers: {
+            accept: 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+        },
+        maxRetries: 2,
+        baseDelayMs: 250,
+        maxDelayMs: 2_000,
+        timeoutMs: 5_000,
+      });
+      const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+      const observedAt = Number.isFinite(Number(payload?.timestamp)) ? Number(payload.timestamp) : Date.now();
+      const assets = rows
+        .filter((row: any) => typeof row?.symbol === 'string' && row.symbol.trim())
+        .map((row: any) => ({
+          symbol: `${row.symbol.trim().toUpperCase()}USDT`,
+          marketCapRank: Number.isFinite(Number(row.rank)) ? Number(row.rank) : undefined,
+          priceUsd: Number.isFinite(Number(row.priceUsd)) ? Number(row.priceUsd) : undefined,
+          volume24hUsd: Number.isFinite(Number(row.volumeUsd24Hr)) ? Number(row.volumeUsd24Hr) : undefined,
+          marketCapUsd: Number.isFinite(Number(row.marketCapUsd)) ? Number(row.marketCapUsd) : undefined,
+          priceChange24hPct: Number.isFinite(Number(row.changePercent24Hr)) ? Number(row.changePercent24Hr) : undefined,
+          source: 'coincap' as const,
+          sources: ['coincap' as const],
+          observedAt,
+        }));
+      this.coinCapCache = { value: assets, expiresAt: Date.now() + COINCAP_TTL_MS };
+      this.setProviderStatus('coincap', 'live', 'authenticated CoinCap v3 market feed is primary');
+      return assets;
+    } catch (error) {
+      this.setProviderStatus('coincap', this.coinCapCache ? 'stale' : 'failed', error instanceof Error ? error.message : String(error));
+      return this.coinCapCache?.value || [];
+    }
   }
 
   private async fetchCoinGeckoUniverse(): Promise<MarketUniverseAsset[]> {
