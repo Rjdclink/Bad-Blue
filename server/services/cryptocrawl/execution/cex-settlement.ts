@@ -1,7 +1,11 @@
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import logger from '../../../logger.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
+import {
+  CoinbaseSpotSettlementAdapter,
+  type CoinbaseOrderReceipt,
+} from './coinbase-spot-settlement-adapter.js';
 import type {
   ExecutionFill,
   ExecutionStatus,
@@ -10,7 +14,7 @@ import type {
   RealizedExecutionEconomics,
 } from './settlement-types.js';
 
-export type ExecutableCexVenue = 'kraken' | 'okx';
+export type ExecutableCexVenue = 'coinbase' | 'kraken' | 'okx';
 
 export interface CexOrderReceipt {
   venue: ExecutableCexVenue;
@@ -25,6 +29,7 @@ export interface CexSettlementAdapter {
   submit(request: OrderRequest): Promise<CexOrderReceipt>;
   query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement>;
   cancel(order: CexOrderReceipt): Promise<void>;
+  getBalances?(): Promise<Record<string, string>>;
 }
 
 export interface CexExecutorOptions {
@@ -158,6 +163,7 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
   }
 
   async query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement> {
+    if (order.venue !== 'kraken') throw new Error(`Kraken adapter cannot query ${order.venue} order`);
     const result = await this.privateRequest('/0/private/QueryOrders', { txid: order.orderId, trades: 'true' });
     const row = result[order.orderId] || result[Object.keys(result)[0]];
     if (!row) throw new Error(`Kraken returned no order state for ${order.orderId}`);
@@ -241,10 +247,11 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
   }
 
   async cancel(order: CexOrderReceipt): Promise<void> {
+    if (order.venue !== 'kraken') throw new Error(`Kraken adapter cannot cancel ${order.venue} order`);
     await this.privateRequest('/0/private/CancelOrder', { txid: order.orderId });
   }
 
-  private async getBalances(): Promise<Record<string, string>> {
+  async getBalances(): Promise<Record<string, string>> {
     const result = await this.privateRequest('/0/private/Balance');
     return Object.fromEntries(Object.entries(result).map(([asset, value]) => [asset, String(value)]));
   }
@@ -274,6 +281,7 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
   }
 
   async query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement> {
+    if (order.venue !== 'okx') throw new Error(`OKX adapter cannot query ${order.venue} order`);
     const { base, quote } = splitSymbol(order.symbol);
     const rows = await this.privateRequest('/api/v5/trade/order', 'GET', { instId: `${base}-${quote}`, ordId: order.orderId });
     const row = rows[0];
@@ -340,11 +348,12 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
   }
 
   async cancel(order: CexOrderReceipt): Promise<void> {
+    if (order.venue !== 'okx') throw new Error(`OKX adapter cannot cancel ${order.venue} order`);
     const { base, quote } = splitSymbol(order.symbol);
     await this.privateRequest('/api/v5/trade/cancel-order', 'POST', { instId: `${base}-${quote}`, ordId: order.orderId });
   }
 
-  private async getBalances(): Promise<Record<string, string>> {
+  async getBalances(): Promise<Record<string, string>> {
     const rows = await this.privateRequest('/api/v5/account/balance', 'GET');
     const details = Array.isArray(rows[0]?.details) ? rows[0].details : [];
     return Object.fromEntries(details
@@ -353,14 +362,48 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
   }
 }
 
+class CoinbaseSettlementBridge implements CexSettlementAdapter {
+  private readonly delegate = new CoinbaseSpotSettlementAdapter();
+
+  async submit(request: OrderRequest): Promise<CexOrderReceipt> {
+    return this.delegate.submit(request);
+  }
+
+  async query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement> {
+    if (order.venue !== 'coinbase') throw new Error(`Coinbase adapter cannot query ${order.venue} order`);
+    return this.delegate.query(order as CoinbaseOrderReceipt);
+  }
+
+  async cancel(order: CexOrderReceipt): Promise<void> {
+    if (order.venue !== 'coinbase') throw new Error(`Coinbase adapter cannot cancel ${order.venue} order`);
+    await this.delegate.cancel(order as CoinbaseOrderReceipt);
+  }
+
+  async getBalances(): Promise<Record<string, string>> {
+    return this.delegate.getBalances();
+  }
+}
+
+function canonicalFeeAsset(asset: string): string {
+  const upper = asset.trim().toUpperCase();
+  if (upper === 'ZUSD') return 'USD';
+  if (upper === 'XXBT' || upper === 'XBT') return 'BTC';
+  if (upper === 'XETH') return 'ETH';
+  return upper;
+}
+
 function knownFeeUsd(order: NormalizedOrderSettlement, baseAsset: string, quoteAsset: string): number | null {
   if (order.feeAmount === null) return null;
   if (order.feeAmount === 0) return 0;
   if (!order.feeAsset) return null;
   const feeAmount = order.feeAmount;
-  const feeAsset = order.feeAsset.toUpperCase();
-  if (feeAsset === quoteAsset.toUpperCase() || feeAsset === 'USD' || feeAsset === 'USDT' || feeAsset === 'USDC') return feeAmount;
-  if (feeAsset === baseAsset.toUpperCase() && order.averageFillPrice !== null) return feeAmount * order.averageFillPrice;
+  const feeAsset = canonicalFeeAsset(order.feeAsset);
+  const normalizedBase = canonicalFeeAsset(baseAsset);
+  const normalizedQuote = canonicalFeeAsset(quoteAsset);
+  // USD, USDT and USDC are distinct inventory assets. Never silently assume a
+  // stablecoin is worth exactly one USD in realized settlement accounting.
+  if (feeAsset === normalizedQuote) return feeAmount;
+  if (feeAsset === normalizedBase && order.averageFillPrice !== null) return feeAmount * order.averageFillPrice;
   return null;
 }
 
@@ -484,11 +527,18 @@ async function settleOrder(
 }
 
 export function createProductionCexSettlementAdapters(): Record<ExecutableCexVenue, CexSettlementAdapter> {
-  return { kraken: new KrakenSettlementAdapter(), okx: new OkxSettlementAdapter() };
+  return {
+    coinbase: new CoinbaseSettlementBridge(),
+    kraken: new KrakenSettlementAdapter(),
+    okx: new OkxSettlementAdapter(),
+  };
 }
 
 export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexExecutorOptions = {}): Promise<CexExecutionResult> {
-  const adapters = { ...createProductionCexSettlementAdapters(), ...options.adapters };
+  const adapters: Record<ExecutableCexVenue, CexSettlementAdapter> = {
+    ...createProductionCexSettlementAdapters(),
+    ...options.adapters,
+  };
   const now = options.now || Date.now;
   const sleep = options.sleep || (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
   const settlementTimeoutMs = Math.max(0, options.settlementTimeoutMs ?? SETTLEMENT_TIMEOUT_MS);
@@ -505,9 +555,19 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
     quantity: plan.baseQty,
     price: plan.sellLimitPrice ?? plan.sellBid,
   };
+  const buyAdapter = adapters[plan.buyVenue as ExecutableCexVenue];
+  const sellAdapter = adapters[plan.sellVenue as ExecutableCexVenue];
+  if (!buyAdapter || !sellAdapter) {
+    return {
+      success: false,
+      status: 'rejected',
+      settlementConfirmed: false,
+      error: `No settlement-safe adapter for ${plan.buyVenue}->${plan.sellVenue}`,
+    };
+  }
   const [buyResult, sellResult] = await Promise.allSettled([
-    adapters[plan.buyVenue].submit(buyRequest),
-    adapters[plan.sellVenue].submit(sellRequest),
+    buyAdapter.submit(buyRequest),
+    sellAdapter.submit(sellRequest),
   ]);
   const buyOrder = buyResult.status === 'fulfilled' ? buyResult.value : undefined;
   const sellOrder = sellResult.status === 'fulfilled' ? sellResult.value : undefined;
