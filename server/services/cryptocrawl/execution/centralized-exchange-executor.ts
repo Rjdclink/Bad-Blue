@@ -10,14 +10,17 @@ import {
   type CexExecutorOptions,
   type CexExecutionResult,
   type CexSettlementAdapter,
+  type ExecutableCexVenue,
 } from './cex-settlement.js';
 
 export type ExchangeOrderReceipt = NonNullable<CexExecutionResult['buyOrder']>;
 export type ArbitrageExecutionResult = CexExecutionResult;
 
 type BalanceCapableAdapter = CexSettlementAdapter & {
-  getBalances?: () => Promise<Record<string, string>>;
+  getBalances: () => Promise<Record<string, string>>;
 };
+
+const SUPPORTED_CEX_VENUES = new Set<ExecutableCexVenue>(['coinbase', 'kraken', 'okx']);
 
 function rejectPlan(error: string): ArbitrageExecutionResult {
   return {
@@ -55,10 +58,13 @@ function spendableSnapshot(venue: InventoryVenue, asset: string) {
 
 async function acquireMeasuredInventory(
   plan: VerifiedArbitragePlan,
-  adapters: Partial<Record<'kraken' | 'okx', CexSettlementAdapter>>,
+  adapters: Partial<Record<ExecutableCexVenue, CexSettlementAdapter>>,
 ) {
   const pair = splitSpotSymbol(plan.symbol);
   if (!pair) return { reservation: null, rejection: 'REJECT_BALANCE_INSUFFICIENT: unsupported spot symbol for inventory accounting' };
+  if (!SUPPORTED_CEX_VENUES.has(plan.buyVenue as ExecutableCexVenue) || !SUPPORTED_CEX_VENUES.has(plan.sellVenue as ExecutableCexVenue)) {
+    return { reservation: null, rejection: `REJECT_BALANCE_INSUFFICIENT: unsupported inventory venue pair ${plan.buyVenue}->${plan.sellVenue}` };
+  }
   const buyVenue = plan.buyVenue as InventoryVenue;
   const sellVenue = plan.sellVenue as InventoryVenue;
   const buyAdapter = adapters[buyVenue] as BalanceCapableAdapter | undefined;
@@ -114,8 +120,8 @@ async function acquireMeasuredInventory(
 async function reconcileTerminalBalances(result: ArbitrageExecutionResult): Promise<void> {
   const orders = result.orders || [];
   await Promise.all(orders.map(async order => {
-    if (!order.finalBalances || (order.venue !== 'kraken' && order.venue !== 'okx')) return;
-    await cexInventoryLedger.reconcile(order.venue, order.finalBalances).catch(error => {
+    if (!order.finalBalances || !SUPPORTED_CEX_VENUES.has(order.venue as ExecutableCexVenue)) return;
+    await cexInventoryLedger.reconcile(order.venue as InventoryVenue, order.finalBalances).catch(error => {
       logger.warn('[InventoryLedger] Terminal balance reconciliation degraded', {
         component: 'CentralizedExchangeExecutor', venue: order.venue, orderId: order.orderId,
         error: error instanceof Error ? error.message : String(error),
@@ -136,14 +142,17 @@ export class CentralizedExchangeExecutor {
       throw new Error('CRYPTO_ARBITRAGE_LIVE_CONFIRMATION=I_ACCEPT_LIVE_ORDER_RISK is required for live orders');
     }
     if (plan.bridge) throw new Error('Cross-chain plans require settlement orchestration and cannot be submitted as spot orders');
-    if (!['kraken', 'okx'].includes(plan.buyVenue) || !['kraken', 'okx'].includes(plan.sellVenue)) {
+    if (!SUPPORTED_CEX_VENUES.has(plan.buyVenue as ExecutableCexVenue) || !SUPPORTED_CEX_VENUES.has(plan.sellVenue as ExecutableCexVenue)) {
       throw new Error(`Live execution is not configured for ${plan.buyVenue} -> ${plan.sellVenue}`);
     }
     if (!Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) {
       return rejectPlan('REJECT_NEGATIVE_NET_EDGE: verified all-in net profit must be positive before live CEX submission');
     }
 
-    const adapters = this.options.adapters || productionCexAdapters;
+    const adapters: Partial<Record<ExecutableCexVenue, CexSettlementAdapter>> = {
+      ...productionCexAdapters,
+      ...(this.options.adapters || {}),
+    };
     const inventory = await acquireMeasuredInventory(plan, adapters);
     if (!inventory.reservation) return rejectPlan(inventory.rejection || 'REJECT_INVENTORY_RESERVED');
 
