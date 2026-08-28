@@ -32,6 +32,12 @@ function run(label, executable, args) {
 }
 
 run(
+  'CryptoCrawler clean-house authority boundaries',
+  process.execPath,
+  [path.join(root, 'scripts', 'cryptocrawl', 'verify-clean-house.cjs')],
+);
+
+run(
   'CryptoCrawler no-regression invariants v2',
   process.execPath,
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-no-regression-opportunity-pipeline-v2.cjs')],
@@ -67,4 +73,4 @@ run(
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-truthful-admin-diagnostics.cjs')],
 );
 
-console.log('[deployment-preflight] PASS — current CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade boundaries, and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
+console.log('[deployment-preflight] PASS — clean-house boundaries, current CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade boundaries, and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
