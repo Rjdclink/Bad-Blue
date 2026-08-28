@@ -30,6 +30,7 @@ assert(marketData.includes('/api/v3/brokerage/market/product_book'), 'Executable
 assert(marketData.includes('/api/v3/brokerage/market/products/${encodeURIComponent(productId)}'), 'Coinbase product constraints must come from the Advanced Trade public product endpoint');
 assert(marketData.includes('base_increment') && marketData.includes('quote_increment') && marketData.includes('price_increment'), 'Coinbase executable metadata must preserve product increments');
 assert(marketData.includes('base_min_size') && marketData.includes('quote_min_size'), 'Coinbase executable metadata must preserve minimum sizes');
+assert(marketData.includes('auction_mode'), 'Coinbase executable metadata must preserve auction mode');
 assert(marketData.includes("'cache-control': 'no-cache'"), 'Coinbase public market evidence must bypass documented public caching for freshness');
 assert(!marketData.includes('api.exchange.coinbase.com'), 'Coinbase market-data authority must not use legacy Exchange endpoints');
 assert(marketData.includes('product mismatch'), 'Coinbase product-book parser must preserve exact quote-asset identity');
@@ -45,6 +46,8 @@ assert(productPolicy.includes('floorToIncrement'), 'Coinbase product policy must
 assert(productPolicy.includes('isIncrementAligned'), 'Coinbase product policy must reject off-increment values');
 assert(productPolicy.includes('constraints.baseMinSize') && productPolicy.includes('constraints.quoteMinSize'), 'Coinbase product policy must enforce minimum order sizes');
 assert(productPolicy.includes('constraints.tradingDisabled') && productPolicy.includes('constraints.postOnly'), 'Coinbase product policy must reject product states incompatible with taker IOC');
+assert(productPolicy.includes('constraints.auctionMode'), 'Coinbase product policy must reject auction-mode IOC execution');
+assert(productPolicy.includes('cannot satisfy immediate IOC execution semantics'), 'Coinbase auction rejection must document the IOC semantic conflict');
 assert(executablePlanPolicy.includes('getCoinbaseAdvancedProductConstraints(plan.symbol)'), 'Coinbase plan normalization must consume current Advanced Trade product constraints');
 assert(executablePlanPolicy.includes('floorToIncrement(quantityUpperBound, constraints.baseIncrement)'), 'Coinbase plan quantity must be normalized before eligibility');
 assert(executablePlanPolicy.includes('const netProfitUsd = grossProfitUsd - totalCostsUsd'), 'Coinbase normalized quantity must have all-in economics recomputed');
@@ -55,6 +58,8 @@ assert(profitCapture.includes('verifier.evaluateOnce = async'), 'Coinbase normal
 assert(settlement.includes("sor_limit_ioc"), 'Coinbase spot settlement adapter must submit bounded IOC limit orders');
 assert(settlement.includes('getCoinbaseAdvancedProductConstraints(request.symbol)'), 'Coinbase live submission must re-read current product constraints');
 assert(settlement.includes('validateCoinbaseOrderAgainstProduct'), 'Coinbase live submission must fail closed on stale/off-increment product constraints');
+assert(settlement.includes('coinbaseDecimalString'), 'Coinbase submission must preserve validated numeric precision in plain decimal form');
+assert(!settlement.includes('toFixed(12)'), 'Coinbase submission must not impose an undocumented 12-decimal quantizer after validation');
 assert(settlement.includes('/api/v3/brokerage/orders/historical/fills'), 'Coinbase terminal settlement must inspect authenticated fills');
 assert(settlement.includes('/api/v3/brokerage/accounts'), 'Coinbase terminal settlement must reconcile balances');
 assert(settlement.includes('async getBalances()'), 'Coinbase balances must be exposed to canonical inventory reconciliation');
