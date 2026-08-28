@@ -56,6 +56,68 @@ function spendableSnapshot(venue: InventoryVenue, asset: string) {
   );
 }
 
+/**
+ * A pair can be terminal even when both order submissions did not succeed. If
+ * one IOC leg was accepted and reaches a terminal state while its counterpart
+ * was never submitted, that one-sided exposure is a completed (failed) pair
+ * lifecycle and must be learned exactly once, never retried as settlement-unknown.
+ */
+function finalizeKnownSubmissionFailure(result: ArbitrageExecutionResult): ArbitrageExecutionResult {
+  const normalized = result.normalized;
+  if (!normalized || normalized.terminal) return result;
+
+  const submittedCount = Number(Boolean(result.buyOrder)) + Number(Boolean(result.sellOrder));
+  const settledOrders = result.orders || [];
+  const terminalOrders = settledOrders.filter(order => order.terminal);
+
+  if (submittedCount === 0 && (result.status === 'rejected' || result.status === 'failed')) {
+    const settledAt = Date.now();
+    return {
+      ...result,
+      success: false,
+      normalized: {
+        ...normalized,
+        status: result.status,
+        terminal: true,
+        settlementConfirmed: false,
+        settledAt,
+        provenance: [...new Set([...normalized.provenance, 'pair_submission_terminal_failure'])],
+      },
+    };
+  }
+
+  if (submittedCount !== 1 || settledOrders.length !== 1 || terminalOrders.length !== 1) return result;
+
+  const onlyOrder = terminalOrders[0];
+  const hasExposure = (onlyOrder.filledQuantity ?? 0) > 0;
+  const status = hasExposure
+    ? 'partially_filled' as const
+    : result.status === 'rejected' ? 'rejected' as const : 'failed' as const;
+
+  return {
+    ...result,
+    success: false,
+    status,
+    // The pair outcome is fully known: one leg was never accepted and the only
+    // accepted IOC order is terminal. This means no pair settlement is pending,
+    // even though the realized P/L may remain unknown for an unmatched exposure.
+    settlementConfirmed: true,
+    normalized: {
+      ...normalized,
+      status,
+      terminal: true,
+      settlementConfirmed: true,
+      settledAt: onlyOrder.terminalAt ?? Date.now(),
+      provenance: [...new Set([
+        ...normalized.provenance,
+        `${onlyOrder.venue}:terminal_orphan_leg`,
+        'counterpart_submission_failed',
+      ])],
+      error: result.error || normalized.error || 'One CEX leg failed submission while the counterpart reached a terminal state',
+    },
+  };
+}
+
 async function acquireMeasuredInventory(
   plan: VerifiedArbitragePlan,
   adapters: Partial<Record<ExecutableCexVenue, CexSettlementAdapter>>,
@@ -149,6 +211,7 @@ export class CentralizedExchangeExecutor {
       return rejectPlan('REJECT_NEGATIVE_NET_EDGE: verified all-in net profit must be positive before live CEX submission');
     }
 
+    const executionAdmissionStartedAt = Date.now();
     const adapters: Partial<Record<ExecutableCexVenue, CexSettlementAdapter>> = {
       ...productionCexAdapters,
       ...(this.options.adapters || {}),
@@ -237,7 +300,15 @@ export class CentralizedExchangeExecutor {
         return rejectPlan(`REJECT_MC: measured profitability forecast rejected execution: ${monteCarlo.reason}`);
       }
 
-      const result = await executeCexPlan(plan, { ...this.options, adapters });
+      // Inventory reconciliation, account queries and Monte Carlo consume time.
+      // Add that measured admission latency to the quote age before any order can
+      // be submitted; a plan that became stale inside the executor fails closed.
+      const effectiveQuoteAgeMs = Math.max(0, plan.quoteAgeMs) + (Date.now() - executionAdmissionStartedAt);
+      if (effectiveQuoteAgeMs > maxQuoteAgeMs) {
+        return rejectPlan(`REJECT_STALE_QUOTE: effective quote age ${effectiveQuoteAgeMs}ms exceeds ${maxQuoteAgeMs}ms before order submission`);
+      }
+
+      const result = finalizeKnownSubmissionFailure(await executeCexPlan(plan, { ...this.options, adapters }));
       await reconcileTerminalBalances(result);
       return result;
     } finally {
