@@ -36,7 +36,7 @@ req('S-77','server/services/quantiComp/admissionControl.ts','reservedHotCapacity
 req('S-78','server/services/quantiComp/hierarchicalComputePolicy.ts','serialization');
 req('S-78','server/services/quantiComp/hierarchicalComputePolicy.ts','dataLocality');
 req('S-79','server/services/quantiComp/axisWorkCoordinator.ts','chain');
-req('S-79','server/services/quantiComp/axisWorkCoordinator.ts','workSteal');
+req('S-79','server/services/quantiComp/axisWorkCoordinator.ts','boundedWorkStealing');
 req('S-80','server/services/cryptocrawl/integration/latency-observability.ts','p99');
 req('S-80','server/services/cryptocrawl/integration/execution-latency-instrumentation.ts','submit');
 req('S-81','server/services/cryptocrawl/intelligence/lux-opportunity-coordinator.ts','priorityChangesEligibility:false');
