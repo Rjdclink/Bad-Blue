@@ -303,16 +303,13 @@ export class CentralizedExchangeExecutor {
         return rejectPlan(`REJECT_STALE_QUOTE: effective quote age ${effectiveQuoteAgeMs}ms exceeds ${maxQuoteAgeMs}ms before order submission`);
       }
 
-      // Product state/lot/tick/minimums can change after candidate normalization.
-      // Re-fetch immediately before submission. Validation only: never resize or
-      // round a plan after Monte Carlo/risk approval; drift forces a fresh cycle.
       try {
         await assertFreshCexProductConstraints(plan);
       } catch (error) {
         return rejectPlan(error instanceof Error ? error.message : `REJECT_PRODUCT_DRIFT: ${String(error)}`);
       }
 
-      getCryptocrawlGovernance().requireAllowed('SUBMIT_ORDER', { pair: plan.symbol });
+      getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { pair: plan.symbol });
       const result = finalizeKnownSubmissionFailure(await executeCexPlan(plan, { ...this.options, adapters }));
       await reconcileTerminalBalances(result);
       return result;
