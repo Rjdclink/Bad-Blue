@@ -24,13 +24,17 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       import('./positive-profit-capture-wiring.js'),
       import('./expanded-market-universe-wiring.js'),
       import('./alchemy-filtered-mempool-wiring.js'),
-    ]).then(([profitPolicy, universePolicy, mempoolPolicy]) => {
-      // Install narrow compatibility policies before graph/scheduler/provider
-      // modules are started. This preserves one deterministic startup order and
-      // avoids a cycle through execution -> automatic-stage-progression -> telemetry.
+      import('./low-latency-execution-wiring.js'),
+    ]).then(([profitPolicy, universePolicy, mempoolPolicy, executionPolicy]) => {
+      // Install narrow compatibility/correctness policies before graph/scheduler/
+      // provider modules are started. This preserves one deterministic startup
+      // order and avoids a cycle through execution -> automatic-stage-progression
+      // -> telemetry. Execution wiring must be installed before the scheduler
+      // imports execution/index.ts and constructs its singleton executors.
       profitPolicy.ensurePositiveProfitCaptureWiring();
       universePolicy.ensureExpandedMarketUniverseWiring();
       mempoolPolicy.ensureAlchemyFilteredMempoolWiring();
+      executionPolicy.ensureLowLatencyExecutionWiring();
       return Promise.all([
         import('../discovery/opportunity-graph.js'),
         import('../execution/canonical-execution-scheduler.js'),
@@ -82,6 +86,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     positiveProfitCapturePolicy: 'strict_all_in_net_gt_zero',
     expandedMarketUniverse: true,
     filteredMempoolPolicyInstalled: true,
+    lowLatencyExecutionCorrectnessPolicyInstalled: true,
     fundingRateDiscovery: process.env.NO_INTERVALS === 'true' ? 'withheld_no_intervals' : 'optional_parallel_monitor',
   });
 }
