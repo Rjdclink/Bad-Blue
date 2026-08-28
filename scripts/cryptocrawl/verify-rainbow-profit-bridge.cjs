@@ -15,6 +15,11 @@ assert.match(bridge, /CRYPTO_PROFIT_WALLET_ADDRESS/);
 assert.match(bridge, /isAddress\(DESTINATION\)/);
 assert.match(bridge, /CRYPTO_RAINBOW_OPERATING_RESERVE_USD/);
 assert.match(bridge, /route\.maxWithdrawal - OPERATING_RESERVE_USD/);
+assert.match(bridge, /CRYPTO_RAINBOW_MAX_FEE_FRACTION/);
+assert.match(bridge, /finiteNonNegative\(item\?\.fee\)/);
+assert.match(bridge, /route\.fee \/ amount/);
+assert.match(bridge, /Payout deferred to preserve realized profit/);
+assert.match(bridge, /action: 'accumulate_more_profit'/);
 assert.match(bridge, /USDT,USDC/);
 assert.match(bridge, /CRYPTO_RAINBOW_EVM_NETWORKS/);
 assert.match(bridge, /\/api\/v5\/asset\/currencies/);
@@ -43,6 +48,9 @@ console.log(JSON.stringify({
   persistentIdempotency: true,
   destinationValidated: true,
   operatingReservePreserved: true,
+  zeroFeeRoutesAccepted: true,
+  maxFeeFractionEnforced: true,
+  smallProfitsAccumulateInsteadOfLeakingToFees: true,
   stablecoinConsolidation: ['USDT', 'USDC'],
   dynamicEvmRouting: true,
   okxRealWithdrawalEndpoint: true,
