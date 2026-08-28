@@ -13,6 +13,7 @@ const forbidText = (source, needle, label) => {
 
 const monitor = read('server/services/cryptocrawl/runtime/runtime-invariant-monitor.ts');
 const latency = read('server/services/cryptocrawl/runtime/end-to-end-latency-harness.ts');
+const performanceTruth = read('server/services/cryptocrawl/runtime/performance-evidence-contract.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const observability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
 const repository = read('server/services/cryptocrawl/intelligence/canonical-intelligence-repository.ts');
@@ -185,10 +186,42 @@ requireText(runtime, 'ensureCanonicalIntelligenceOutbox()', 'canonical runtime s
 requireText(observability, 'canonicalIntelligenceOutbox.refreshMetrics()', 'runtime heartbeat measures durable outbox backlog');
 requireText(observability, 'durableOutbox: intelligenceOutbox', 'runtime heartbeat exposes durable outbox state');
 
+// S-94 — measured performance truth contract and research quarantine.
+requireText(performanceTruth, "authority: 'performance_truth_telemetry_only'", 'performance truth contract cannot become execution authority');
+requireText(performanceTruth, 'executionAuthority: false', 'performance truth contract declares no execution authority');
+requireText(performanceTruth, 'endToEndLatencyHarness.getSnapshot()', 'performance claims derive latency from measured production telemetry');
+requireText(performanceTruth, 'getMeasuredEvolutionSamples(500)', 'performance claims derive slippage/cost from terminal measured outcomes');
+requireText(performanceTruth, 'canonicalOpportunityState.getMetrics(60_000)', 'throughput evidence comes from canonical measured opportunity flow');
+requireText(performanceTruth, 'p95AbsoluteBps', 'slippage truth contract exposes a measured tail statistic');
+requireText(performanceTruth, 'p95MeasuredUsd', 'all-in cost truth contract exposes a measured tail statistic');
+requireText(performanceTruth, 'zeroSlippageClaimAllowed: false', 'zero-slippage absolute claim is prohibited');
+requireText(performanceTruth, 'unlimitedThroughputClaimAllowed: false', 'unlimited-throughput absolute claim is prohibited');
+requireText(performanceTruth, 'equalTimeScalingClaimAllowed: false', 'equal-time scaling absolute claim is prohibited');
+requireText(performanceTruth, 'zeroFeeOrGasClaimAllowed: false', 'zero-fee/gas absolute claim is prohibited');
+for (const researchClass of ['pattern_only', 'synthetic_only', 'nontransferable', 'unverified', 'rejected']) {
+  requireText(performanceTruth, `evidenceClass: '${researchClass}'`, `research quarantine preserves ${researchClass} evidence classification`);
+}
+for (const researchItem of [
+  'hftCoreFanout',
+  'hfturboTenMillisecondBenchmark',
+  'stream3dGpuScaling',
+  'neuromorphicPerformancePercentages',
+  'gasTokenOrFlashLoanZeroGas',
+]) {
+  requireText(performanceTruth, researchItem, `research quarantine explicitly covers ${researchItem}`);
+}
+requireText(performanceTruth, 'productionAuthority: false', 'research evidence cannot become production authority by assertion');
+forbidText(performanceTruth, 'Math.random', 'performance evidence cannot fabricate measurements');
+forbidText(performanceTruth, 'canonicalExecutionScheduler', 'performance telemetry cannot control the execution scheduler');
+forbidText(performanceTruth, 'stageManager', 'performance telemetry cannot mutate governance');
+requireText(observability, 'getPerformanceEvidenceContract()', 'runtime heartbeat evaluates performance truth contract');
+requireText(observability, 'performanceTruth,', 'runtime heartbeat exposes performance truth evidence');
+requireText(observability, 'performanceTruthContractTelemetry: true', 'runtime observability declares performance truth telemetry active');
+
 if (failures.length > 0) {
   console.error('[solution-implementation] FAIL');
   for (const failure of failures) console.error(` - ${failure}`);
   process.exit(1);
 }
 
-console.log('[solution-implementation] PASS — S-60..S-64 private durable intelligence, S-80 measured latency telemetry, S-92 runtime invariant quarantine, and S-93 restart-safe durable learning outbox preserve canonical execution/governance/resource authority');
+console.log('[solution-implementation] PASS — S-60..S-64 private durable intelligence, S-80 measured latency telemetry, S-92 runtime invariant quarantine, S-93 restart-safe durable learning outbox, and S-94 measured performance truth/research quarantine preserve canonical execution/governance/resource authority');
