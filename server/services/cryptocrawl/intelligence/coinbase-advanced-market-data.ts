@@ -18,10 +18,33 @@ export interface CoinbaseAdvancedProductBook {
   source: 'coinbase_advanced_public_product_book';
 }
 
+export interface CoinbaseAdvancedProductConstraints {
+  venue: 'coinbase';
+  symbol: string;
+  productId: string;
+  baseIncrement: number;
+  priceIncrement: number;
+  quoteIncrement: number;
+  baseMinSize: number;
+  baseMaxSize: number | null;
+  quoteMinSize: number;
+  quoteMaxSize: number | null;
+  isDisabled: boolean;
+  tradingDisabled: boolean;
+  cancelOnly: boolean;
+  postOnly: boolean;
+  viewOnly: boolean;
+  observedAt: number;
+  source: 'coinbase_advanced_public_product';
+}
+
 const CACHE_TTL_MS = Math.max(100, Math.min(2_000, Number(process.env.CRYPTO_COINBASE_BOOK_CACHE_MS || 500)));
 const REQUEST_TIMEOUT_MS = Math.max(1_000, Math.min(10_000, Number(process.env.CRYPTO_COINBASE_BOOK_TIMEOUT_MS || 3_000)));
+const PRODUCT_CACHE_TTL_MS = Math.max(1_000, Math.min(30_000, Number(process.env.CRYPTO_COINBASE_PRODUCT_CACHE_MS || 5_000)));
 const cache = new Map<string, { expiresAt: number; value: CoinbaseAdvancedProductBook }>();
 const inFlight = new Map<string, Promise<CoinbaseAdvancedProductBook>>();
+const productCache = new Map<string, { expiresAt: number; value: CoinbaseAdvancedProductConstraints }>();
+const productInFlight = new Map<string, Promise<CoinbaseAdvancedProductConstraints>>();
 
 function positive(value: unknown): number | null {
   const parsed = Number(value);
@@ -85,6 +108,48 @@ export function parseCoinbaseAdvancedProductBook(payload: any, requestedSymbol: 
 }
 
 /**
+ * Parse the current Advanced Trade public product contract. Product increments
+ * and minimums are execution evidence: if Coinbase stops supplying a required
+ * value, executable normalization must fail closed rather than guess a decimal.
+ */
+export function parseCoinbaseAdvancedProductConstraints(payload: any, requestedSymbol: string, observedAt = Date.now()): CoinbaseAdvancedProductConstraints {
+  const expectedProductId = coinbaseAdvancedProductId(requestedSymbol);
+  const productId = typeof payload?.product_id === 'string' ? payload.product_id.trim().toUpperCase() : '';
+  if (productId !== expectedProductId) {
+    throw new Error(`Coinbase Advanced Trade product metadata mismatch: expected ${expectedProductId}, received ${productId || 'unknown'}`);
+  }
+
+  const baseIncrement = positive(payload?.base_increment);
+  const quoteIncrement = positive(payload?.quote_increment);
+  const priceIncrement = positive(payload?.price_increment) ?? quoteIncrement;
+  const baseMinSize = positive(payload?.base_min_size);
+  const quoteMinSize = positive(payload?.quote_min_size);
+  if (baseIncrement === null || quoteIncrement === null || priceIncrement === null || baseMinSize === null || quoteMinSize === null) {
+    throw new Error('Coinbase Advanced Trade product metadata is missing required increment/minimum-size evidence');
+  }
+
+  return {
+    venue: 'coinbase',
+    symbol: canonicalSymbol(productId),
+    productId,
+    baseIncrement,
+    priceIncrement,
+    quoteIncrement,
+    baseMinSize,
+    baseMaxSize: positive(payload?.base_max_size),
+    quoteMinSize,
+    quoteMaxSize: positive(payload?.quote_max_size),
+    isDisabled: payload?.is_disabled === true,
+    tradingDisabled: payload?.trading_disabled === true,
+    cancelOnly: payload?.cancel_only === true,
+    postOnly: payload?.post_only === true,
+    viewOnly: payload?.view_only === true,
+    observedAt,
+    source: 'coinbase_advanced_public_product',
+  };
+}
+
+/**
  * Fetches the official Advanced Trade public product book with cache bypass.
  * Coinbase documents a one-second cache on public endpoints; cache-control
  * no-cache plus a very short local cache prevents needless duplicate requests
@@ -122,5 +187,43 @@ export async function getCoinbaseAdvancedProductBook(symbolInput: string): Promi
   }).finally(() => inFlight.delete(symbol));
 
   inFlight.set(symbol, request);
+  return request;
+}
+
+/**
+ * Product metadata is fetched from the public Advanced Trade product endpoint,
+ * never the legacy Exchange API. A short cache keeps the trade-state flags and
+ * increments fresh without multiplying one metadata request per scan worker.
+ */
+export async function getCoinbaseAdvancedProductConstraints(symbolInput: string): Promise<CoinbaseAdvancedProductConstraints> {
+  const symbol = symbolInput.trim().toUpperCase();
+  const cached = productCache.get(symbol);
+  if (cached && cached.expiresAt > Date.now()) return { ...cached.value };
+  const pending = productInFlight.get(symbol);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const productId = coinbaseAdvancedProductId(symbol);
+    const url = `https://api.coinbase.com/api/v3/brokerage/market/products/${encodeURIComponent(productId)}`;
+    const payload = await fetchJsonWithRetry<any>(url, {
+      init: { headers: { accept: 'application/json', 'cache-control': 'no-cache' } },
+      maxRetries: 1,
+      baseDelayMs: 100,
+      maxDelayMs: 500,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    });
+    const value = parseCoinbaseAdvancedProductConstraints(payload, symbol);
+    productCache.set(symbol, { value, expiresAt: Date.now() + PRODUCT_CACHE_TTL_MS });
+    return value;
+  })().catch(error => {
+    logger.debug('[Coinbase] Advanced Trade product constraints unavailable', {
+      component: 'CoinbaseAdvancedMarketData',
+      symbol,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }).finally(() => productInFlight.delete(symbol));
+
+  productInFlight.set(symbol, request);
   return request;
 }
