@@ -5,6 +5,8 @@ import {
   okxPrivateRequest,
   OkxPrivateApiError,
 } from './cex-private-authority.js';
+import { assertCoinbaseSpotTradeReady } from './coinbase-advanced-trade-authority.js';
+import { getCoinbaseSpotFeeEvidence } from './coinbase-fee-evidence.js';
 
 export type CexFeeVenue = 'coinbase' | 'kraken' | 'okx';
 
@@ -14,15 +16,16 @@ export interface CexFeeEvidence {
   takerFeeBps: number;
   makerFeeBps: number | null;
   makerRebateBps: number | null;
-  source: 'kraken_account_trade_volume' | 'okx_account_trade_fee' | 'configured_override';
+  source: 'coinbase_transaction_summary' | 'kraken_account_trade_volume' | 'okx_account_trade_fee' | 'configured_override';
   observedAt: number;
 }
 
 export interface CexFeePrimeResult {
   requestedSymbols: number;
+  coinbaseResolved: number;
   krakenResolved: number;
   okxResolved: number;
-  unresolved: Array<{ venue: 'kraken' | 'okx'; symbol: string }>;
+  unresolved: Array<{ venue: CexFeeVenue; symbol: string }>;
 }
 
 interface KrakenPairIdentity {
@@ -146,16 +149,16 @@ function storeFeeEvidence(evidence: CexFeeEvidence): void {
 }
 
 /**
- * OKX configured fee numbers never become executable evidence on their own.
- * They are returned only after a live regional instrument check has explicitly
- * established that the symbol is supported and the configured evidence was
- * stored by resolveCexFeeEvidence().
+ * Configured fee numbers are never sufficient for Coinbase or unsupported OKX
+ * instruments. Coinbase requires authenticated key permission + account fee tier;
+ * OKX requires a live regional instrument check before configured evidence can be
+ * considered. Kraken keeps its historical explicit override compatibility.
  */
 export function getCachedCexFeeEvidence(venue: CexFeeVenue, symbolInput: string): CexFeeEvidence | null {
   const symbol = normalizeSymbolInput(symbolInput);
   const cached = readFreshCache(venue, symbol);
   if (cached) return cached;
-  if (venue === 'okx') return null;
+  if (venue === 'okx' || venue === 'coinbase') return null;
   return configuredFee(venue, symbol);
 }
 
@@ -303,6 +306,21 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
 async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
   const batched = await fetchKrakenFeeEvidenceBatch([symbol]);
   return batched.get(normalizeSymbolInput(symbol)) || null;
+}
+
+async function fetchCoinbaseFeeEvidence(symbolInput: string): Promise<CexFeeEvidence | null> {
+  const symbol = normalizeSymbolInput(symbolInput);
+  await assertCoinbaseSpotTradeReady();
+  const accountFee = await getCoinbaseSpotFeeEvidence();
+  return {
+    venue: 'coinbase',
+    symbol,
+    takerFeeBps: accountFee.takerFeeBps,
+    makerFeeBps: accountFee.makerFeeBps,
+    makerRebateBps: null,
+    source: 'coinbase_transaction_summary',
+    observedAt: accountFee.observedAt,
+  };
 }
 
 function canonicalOkxSymbol(instId: string): string | null {
@@ -509,9 +527,9 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
 }
 
 async function fetchLiveFeeEvidence(venue: CexFeeVenue, symbol: string): Promise<CexFeeEvidence | null> {
+  if (venue === 'coinbase') return fetchCoinbaseFeeEvidence(symbol);
   if (venue === 'kraken') return fetchKrakenFeeEvidence(symbol);
-  if (venue === 'okx') return fetchOkxFeeEvidence(symbol);
-  return null; // Coinbase remains inactive until a settlement-safe execution path is implemented.
+  return fetchOkxFeeEvidence(symbol);
 }
 
 async function supportedOkxConfiguredFallback(symbol: string): Promise<CexFeeEvidence | null> {
@@ -521,6 +539,12 @@ async function supportedOkxConfiguredFallback(symbol: string): Promise<CexFeeEvi
   } catch {
     return null;
   }
+}
+
+function configuredFallbackForVenue(venue: CexFeeVenue, symbol: string): CexFeeEvidence | null {
+  // Coinbase configuration can never substitute for authenticated account fees.
+  if (venue === 'coinbase') return null;
+  return venue === 'kraken' ? configuredFee('kraken', symbol) : null;
 }
 
 export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: string): Promise<CexFeeEvidence | null> {
@@ -534,7 +558,7 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
   const promise = (async () => {
     try {
       const live = await fetchLiveFeeEvidence(venue, symbol);
-      const evidence = live || (venue === 'okx' ? await supportedOkxConfiguredFallback(symbol) : configuredFee(venue, symbol));
+      const evidence = live || (venue === 'okx' ? await supportedOkxConfiguredFallback(symbol) : configuredFallbackForVenue(venue, symbol));
       if (evidence) {
         storeFeeEvidence(evidence);
         logger.info('[CEX Fees] Fee evidence resolved', {
@@ -546,7 +570,7 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
           makerFeeBps: evidence.makerFeeBps,
           makerRebateBps: evidence.makerRebateBps,
         });
-      } else if (venue !== 'coinbase') {
+      } else {
         logger.warn('[CEX Fees] Venue excluded from executable routing: no supported fee evidence', {
           component: 'CexFeeResolver',
           venue,
@@ -565,13 +589,13 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
         });
         return null;
       }
-      logger.warn('[CEX Fees] Authenticated fee discovery failed; supported configured evidence may be used or venue excluded', {
+      logger.warn('[CEX Fees] Authenticated fee discovery failed; only explicitly supported fallback evidence may be used', {
         component: 'CexFeeResolver',
         venue,
         symbol,
         error: error instanceof Error ? error.message : String(error),
       });
-      const fallback = venue === 'okx' ? await supportedOkxConfiguredFallback(symbol) : configuredFee(venue, symbol);
+      const fallback = venue === 'okx' ? await supportedOkxConfiguredFallback(symbol) : configuredFallbackForVenue(venue, symbol);
       if (fallback) {
         storeFeeEvidence(fallback);
         logger.info('[CEX Fees] Configured fee fallback resolved', {
@@ -592,12 +616,29 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
 /**
  * Prime measured fee evidence before parallel economics evaluation. Kraken uses
  * one authenticated TradeVolume request through the shared nonce queue. OKX
- * authenticates its regional origin once, resolves the live SPOT directory on
- * that origin, then permits private fee requests only for supported symbols.
+ * authenticates its regional origin and reuses live SPOT fee groups. Coinbase
+ * has one account-level Advanced Trade SPOT tier and shares it across survivors
+ * only after key permissions are authenticated.
  */
 export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Promise<CexFeePrimeResult> {
   const symbols = [...new Set(symbolInputs.map(normalizeSymbolInput).filter(Boolean))];
   const unresolved: CexFeePrimeResult['unresolved'] = [];
+
+  const missingCoinbase = symbols.filter(symbol => !readFreshCache('coinbase', symbol));
+  if (missingCoinbase.length > 0) {
+    try {
+      const baseEvidence = await fetchCoinbaseFeeEvidence(missingCoinbase[0]);
+      if (baseEvidence) {
+        for (const symbol of missingCoinbase) storeFeeEvidence({ ...baseEvidence, symbol });
+      }
+    } catch (error) {
+      logger.debug('[CEX Fees] Coinbase account fee prime unavailable; Coinbase will remain excluded from executable economics', {
+        component: 'CexFeeResolver',
+        symbols: missingCoinbase.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   const missingKraken = symbols.filter(symbol => !getCachedCexFeeEvidence('kraken', symbol));
   if (missingKraken.length > 0) {
@@ -628,12 +669,14 @@ export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Prom
   }
 
   for (const symbol of symbols) {
+    if (!readFreshCache('coinbase', symbol)) unresolved.push({ venue: 'coinbase', symbol });
     if (!getCachedCexFeeEvidence('kraken', symbol)) unresolved.push({ venue: 'kraken', symbol });
     if (!getCachedCexFeeEvidence('okx', symbol)) unresolved.push({ venue: 'okx', symbol });
   }
 
   return {
     requestedSymbols: symbols.length,
+    coinbaseResolved: symbols.filter(symbol => Boolean(readFreshCache('coinbase', symbol))).length,
     krakenResolved: symbols.filter(symbol => Boolean(getCachedCexFeeEvidence('kraken', symbol))).length,
     okxResolved: symbols.filter(symbol => Boolean(getCachedCexFeeEvidence('okx', symbol))).length,
     unresolved,

@@ -6,6 +6,7 @@ import { getBoundTechnicalEvidence } from '../integration/technical-evidence-syn
 import { marketDataProviders, type MarketUniverseAsset } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { buildObservedCexCandidates } from './cex-observation-candidates.js';
+import { recordCexEconomicBarrier } from './cex-economic-barrier.js';
 import { measuredCandidateRegistry } from './measured-candidate-registry.js';
 import { scanPublicCexUniverse } from './public-cex-discovery.js';
 import { getCexScanCapacity, type ScanCapacityDecision } from './scan-capacity-policy.js';
@@ -87,7 +88,7 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
     },
     quoteAgeMs: plan.quoteAgeMs,
     executableCapability: true,
-    executionCapabilityReason: 'Kraken/OKX verified plan uses the settlement-safe centralized executor; MC, governance, inventory and resource locks still control admission',
+    executionCapabilityReason: 'Verified CEX plan uses a settlement-safe centralized executor; MC, governance, inventory and resource locks still control admission',
     missingInformation: [],
     provenance: ['measured_opportunity_graph', 'direct_exchange_quotes', 'authenticated_fee_evidence', 'depth_aware_notional_search', 'deterministic_positive_net'],
   });
@@ -112,6 +113,7 @@ class MeasuredOpportunityGraph {
   private timer: NodeJS.Timeout | null = null;
   private scanInFlight: Promise<MeasuredOpportunityGraphCycle> | null = null;
   private latestCycle: MeasuredOpportunityGraphCycle | null = null;
+  private running = false;
 
   async scanOnce(): Promise<MeasuredOpportunityGraphCycle> {
     if (this.scanInFlight) return this.scanInFlight;
@@ -123,35 +125,57 @@ class MeasuredOpportunityGraph {
   }
 
   start(): void {
-    if (this.timer) return;
-    const intervalMs = Math.max(2_000, Number(process.env.CRYPTOCRAWL_OPPORTUNITY_GRAPH_INTERVAL_MS || 5_000));
-    void this.scanOnce().catch(error => {
-      logger.warn('[OpportunityGraph] Initial measured scan failed closed', {
-        component: 'MeasuredOpportunityGraph',
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-    this.timer = setInterval(() => {
-      void this.scanOnce().catch(error => {
-        logger.warn('[OpportunityGraph] Measured scan failed closed', {
+    if (this.running) return;
+    this.running = true;
+    const initialIntervalMs = Math.max(1_000, Number(process.env.CRYPTOCRAWL_OPPORTUNITY_GRAPH_INTERVAL_MS || 5_000));
+    void this.scanOnce()
+      .then(cycle => {
+        if (this.running) this.scheduleNext(cycle.capacity.recommendedIntervalMs);
+      })
+      .catch(error => {
+        logger.warn('[OpportunityGraph] Initial measured scan failed closed', {
           component: 'MeasuredOpportunityGraph',
           error: error instanceof Error ? error.message : String(error),
         });
+        if (this.running) this.scheduleNext(initialIntervalMs);
       });
-    }, intervalMs);
-    this.timer.unref?.();
     logger.info('[OpportunityGraph] Continuous measured discovery started', {
       component: 'MeasuredOpportunityGraph',
-      intervalMs,
+      initialIntervalMs,
+      adaptiveCadence: true,
       topology: 'CEX_CEX',
       candidateAuthority: 'measured_candidate_registry',
       syntheticEvidenceAllowed: false,
+      executionPausedDuringLowActivity: false,
     });
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+  }
+
+  private scheduleNext(intervalMs?: number): void {
+    if (!this.running) return;
+    if (this.timer) clearTimeout(this.timer);
+    const fallback = Math.max(1_000, Number(process.env.CRYPTOCRAWL_OPPORTUNITY_GRAPH_INTERVAL_MS || 5_000));
+    const delay = Math.max(1_000, Number.isFinite(intervalMs) && intervalMs! > 0 ? intervalMs! : fallback);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.scanOnce()
+        .then(cycle => {
+          if (this.running) this.scheduleNext(cycle.capacity.recommendedIntervalMs);
+        })
+        .catch(error => {
+          logger.warn('[OpportunityGraph] Measured scan failed closed', {
+            component: 'MeasuredOpportunityGraph',
+            error: error instanceof Error ? error.message : String(error),
+          });
+          if (this.running) this.scheduleNext(fallback);
+        });
+    }, delay);
+    this.timer.unref?.();
   }
 
   getLatestCycle(): MeasuredOpportunityGraphCycle | null {
@@ -197,6 +221,11 @@ class MeasuredOpportunityGraph {
       }
     });
     const publicDiscovery = await publicDiscoveryPromise;
+
+    const economicBarrier = recordCexEconomicBarrier(
+      arbitrageVerifier.getBestCrossVenueFeeContext(selected),
+      selected.length / Math.max(1, symbols.length),
+    );
 
     // Raw public BBOs are measured search evidence. Register only symbols with
     // two or more independently observed venues, and keep them explicitly
@@ -327,6 +356,7 @@ class MeasuredOpportunityGraph {
       component: 'MeasuredOpportunityGraph',
       cycleId,
       durationMs: completedAt - startedAt,
+      nextScanIntervalMs: cycle.capacity.recommendedIntervalMs,
       universeAssets: cycle.universeAssets,
       selectedSymbols: cycle.selectedSymbols,
       publicDiscoveryObservations: cycle.publicDiscoveryObservations,
@@ -336,6 +366,7 @@ class MeasuredOpportunityGraph {
       deterministicPositive: cycle.deterministicPositive,
       assessedCandidates: cycle.assessedCandidates,
       eligibleCandidates: cycle.eligibleCandidates,
+      economicBarrier,
       candidateRegistry: measuredCandidateRegistry.getMetrics(60_000),
       canonicalObservedPerMinute: canonical.observedOpportunities,
       canonicalVerifiedPositivePerMinute: canonical.verifiedPositiveOpportunities,

@@ -36,9 +36,10 @@ function sameCommit(left: string, right: string): boolean {
 }
 
 /**
- * Builds a non-secret runtime identity record from deployment metadata already
- * exposed by the process environment. The attestation never invents a source
- * SHA: when build/runtime identity is unavailable it reports partial/unknown.
+ * Builds a non-secret runtime identity record from independent source/build and
+ * deployment metadata. Railway's commit SHA is never copied into sourceSha: a
+ * deployment cannot verify itself. `verified` therefore means independent source
+ * evidence agrees with the Railway deployment commit.
  */
 export function getCryptoCrawlerRuntimeAttestation(): RuntimeAttestation {
   const railwayCommitSha = normalizeSha(visible('RAILWAY_GIT_COMMIT_SHA'));
@@ -48,7 +49,7 @@ export function getCryptoCrawlerRuntimeAttestation(): RuntimeAttestation {
     normalizeSha(visible('GIT_COMMIT')),
     normalizeSha(visible('COMMIT_SHA')),
   ].filter((value): value is string => Boolean(value));
-  const sourceSha = sourceCandidates[0] || railwayCommitSha;
+  const sourceSha = sourceCandidates[0] || null;
   const evidence: string[] = [];
   const mismatches: string[] = [];
 
@@ -109,4 +110,8 @@ export function getCryptoCrawlerRuntimeAttestation(): RuntimeAttestation {
 
 export function isRuntimeIdentitySafe(attestation = getCryptoCrawlerRuntimeAttestation()): boolean {
   return attestation.state !== 'mismatch';
+}
+
+export function isRuntimeIdentityVerified(attestation = getCryptoCrawlerRuntimeAttestation()): boolean {
+  return attestation.state === 'verified';
 }

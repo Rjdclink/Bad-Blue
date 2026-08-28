@@ -1,7 +1,7 @@
 import { addUsersStatusColumn } from './add_users_status_column';
 import { addFMIFields } from './addFMIFields';
 import { createCryptoGovernanceStateTable } from './createCryptoGovernanceStateTable';
-import { createCryptocrawlFlashbotsAuthIdentityTable } from './createCryptocrawlFlashbotsAuthIdentityTable';
+import { removeCryptocrawlFlashbotsAuthIdentityTable } from './removeCryptocrawlFlashbotsAuthIdentityTable';
 import { createComplaintRoutingTables } from './createComplaintRoutingTables';
 import { createCoreTables } from './createCoreTables';
 import { createDeviceRateLimitTables } from './createDeviceRateLimitTables';
@@ -47,7 +47,7 @@ const migrationSteps: MigrationStep[] = [
   { name: 'Document Creator tables', run: createDocumentCreatorTables },
   { name: 'F.M.I. evidence fields', run: addFMIFields },
   { name: 'CryptoCrawler governance state', run: createCryptoGovernanceStateTable },
-  { name: 'CryptoCrawler Flashbots auth identity', run: createCryptocrawlFlashbotsAuthIdentityTable },
+  { name: 'Remove legacy CryptoCrawler Flashbots auth secret table', run: removeCryptocrawlFlashbotsAuthIdentityTable },
   { name: 'Free Access for All Users', run: runFreeAccessMigration },
 ];
 

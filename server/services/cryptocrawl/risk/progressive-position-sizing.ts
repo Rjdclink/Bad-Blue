@@ -95,11 +95,16 @@ export function calculateProgressivePositionSize(
   }
 
   const realizedCapitalUsd = Math.max(0, state.totalProfitUSD);
+  // A flash-loan route has no wallet-principal requirement, so using the requested
+  // notional itself as the capital base created an impossible fixed point:
+  // max=requested*multiplier, then every request was rejected whenever multiplier
+  // was below 1. Anchor implemented zero-capital capacity to the governance stage
+  // ceiling instead. Ordinary wallet-funded routes remain tied to real capital.
   const capitalBaseUsd = request.zeroCapitalAvailable
-    ? request.requestedNotionalUsd
+    ? Math.max(0, stage.maxPositionSizeUSD)
     : Math.max(0, request.availableCapitalUsd + realizedCapitalUsd);
   if (capitalBaseUsd <= 0) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['No verified deployable wallet capital or implemented zero-capital capacity is available'] };
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['No verified deployable wallet capital or implemented zero-capital stage capacity is available'] };
   }
 
   const hasVerifiedPerformance = ranking.sampleCount >= 3 &&

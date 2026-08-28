@@ -11,11 +11,13 @@ import {
   stageManager,
   type AutomaticAdvancementEvidence,
   type AutomaticAdvancementResult,
+  type PersistedCryptaraExecutionEvidence,
 } from './stage-management.js';
 import { profitLadder } from './profit-ladder.js';
 import { riskGovernor } from './risk-governor.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
+import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 import { ensureTelemetryBootstrap } from '../integration/telemetry-bootstrap.js';
 import { ensureCryptaraAssessmentWiring } from '../integration/cryptara-assessment-wiring.js';
 import { ensureCryptaraMlRankerHydrated, persistCryptaraMlRanker } from '../integration/cryptara-ml-persistence.js';
@@ -25,19 +27,6 @@ import { ensureMeasuredEvolutionFeedbackHydrated, recordMeasuredEvolutionFeedbac
 
 ensureCryptaraAssessmentWiring();
 ensureMasterOrchestratorMeasuredWiring();
-
-// Faucet imports this module while it is itself being initialized, so defer the
-// singleton patch by one microtask to avoid a circular-module temporal dead zone.
-queueMicrotask(() => {
-  void import('../faucet/concurrent-execution-wiring.js')
-    .then(module => module.ensureConcurrentExecutionWiring())
-    .catch(error => {
-      logger.error('Concurrent Faucet execution wiring failed to install', {
-        component: 'AutomaticStageProgression',
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-});
 
 // These hydrations are advisory/evolution state only and never grant execution authority.
 void ensureCryptaraMlRankerHydrated();
@@ -55,6 +44,36 @@ const STAGE_ONE_SIGNAL_WINDOW_MS = Math.max(
   60_000,
   Number(process.env.CRYPTO_STAGE_ONE_SIGNAL_WINDOW_MS || 5 * 60_000),
 );
+const terminalFeedbackInFlight = new Map<string, Promise<AutomaticAdvancementResult>>();
+const terminalFeedbackApplied = new Set<string>();
+
+function persistedFeedbackIdentity(feedback: PersistedCryptaraExecutionEvidence): string | null {
+  if (!feedback.settlement || feedback.settlement.terminal !== true) return null;
+  try {
+    return terminalFeedbackIdentity(feedback as CryptaraExecutionFeedback);
+  } catch {
+    return null;
+  }
+}
+
+function terminalFeedbackAlreadyApplied(eventId: string): boolean {
+  if (terminalFeedbackApplied.has(eventId)) return true;
+  return stageManager.getState().cryptaraExecutionEvidence.some(evidence => persistedFeedbackIdentity(evidence) === eventId);
+}
+
+function duplicateFeedbackResult(eventId: string): AutomaticAdvancementResult {
+  const currentStage = stageManager.getCurrentStage();
+  logger.info('Duplicate terminal execution feedback ignored', {
+    component: 'AutomaticStageProgression',
+    eventId,
+    stage: currentStage,
+  });
+  return {
+    advanced: false,
+    fromStage: currentStage,
+    blockers: ['Duplicate terminal settlement feedback ignored'],
+  };
+}
 
 /**
  * Stage 1 proves measured infrastructure and signal readiness; it cannot execute.
@@ -180,14 +199,11 @@ export async function evaluateAutomaticStageProgression(
   return result;
 }
 
-export async function recordCryptaraExecutionEvidence(
+async function recordCryptaraExecutionEvidenceOnce(
   feedback: CryptaraExecutionFeedback,
+  eventId: string,
   gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
 ): Promise<AutomaticAdvancementResult> {
-  if (!feedback.settlement || feedback.settlement.terminal !== true) {
-    throw new Error('Execution evidence requires a terminal normalized settlement');
-  }
-
   await Promise.all([
     ensureCryptaraMlRankerHydrated(),
     ensureMeasuredEvolutionFeedbackHydrated(),
@@ -214,9 +230,9 @@ export async function recordCryptaraExecutionEvidence(
     ? settlementCosts.reduce((sum, value) => sum + value, 0)
     : feedback.feeUsd;
   const outcome: ExecutionOutcomeObservation = {
-    eventId: `${feedback.opportunityId || `${feedback.symbol}:${feedback.strategy}`}:${feedback.timestamp}`,
+    eventId,
     opportunityId: feedback.opportunityId,
-    timestamp: feedback.timestamp,
+    timestamp: feedback.settlement?.settledAt ?? feedback.settlement?.submittedAt ?? feedback.timestamp,
     source: feedback.source,
     chain: feedback.chain,
     symbol: feedback.symbol,
@@ -230,6 +246,7 @@ export async function recordCryptaraExecutionEvidence(
     usedZeroCapital: feedback.usedZeroCapital,
     provenance: [
       `execution:${feedback.source}`,
+      `terminal_feedback:${eventId}`,
       ...(feedback.provenance || []),
       feedback.success ? 'realized_execution' : 'execution_failure',
     ],
@@ -253,7 +270,7 @@ export async function recordCryptaraExecutionEvidence(
         gasUsed: feedback.settlement.realized.gasUsed || undefined,
         effectiveGasPrice: feedback.settlement.realized.effectiveGasPriceWei || undefined,
       }] : [],
-      provenance: [...feedback.settlement.provenance].slice(0, 32),
+      provenance: [...feedback.settlement.provenance, `terminal_feedback:${eventId}`].slice(0, 32),
     } : undefined,
     prediction,
   };
@@ -263,8 +280,32 @@ export async function recordCryptaraExecutionEvidence(
     success: feedback.success,
     realizedProfitUsd: feedback.realizedProfitUsd,
     automaticEvidence: toAutomaticEvidence(gate),
-    cryptaraFeedback: feedback,
+    cryptaraFeedback: {
+      ...feedback,
+      timestamp: outcome.timestamp,
+      provenance: [...new Set([...(feedback.provenance || []), `terminal_feedback:${eventId}`])],
+    },
   });
+  terminalFeedbackApplied.add(eventId);
   canonicalOpportunityState.refreshGovernance(feedback.opportunityId);
   return result;
+}
+
+export async function recordCryptaraExecutionEvidence(
+  feedback: CryptaraExecutionFeedback,
+  gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
+): Promise<AutomaticAdvancementResult> {
+  if (!feedback.settlement || feedback.settlement.terminal !== true) {
+    throw new Error('Execution evidence requires a terminal normalized settlement');
+  }
+
+  const eventId = terminalFeedbackIdentity(feedback);
+  if (terminalFeedbackAlreadyApplied(eventId)) return duplicateFeedbackResult(eventId);
+  const existing = terminalFeedbackInFlight.get(eventId);
+  if (existing) return existing;
+
+  const work = recordCryptaraExecutionEvidenceOnce(feedback, eventId, gate)
+    .finally(() => terminalFeedbackInFlight.delete(eventId));
+  terminalFeedbackInFlight.set(eventId, work);
+  return work;
 }
