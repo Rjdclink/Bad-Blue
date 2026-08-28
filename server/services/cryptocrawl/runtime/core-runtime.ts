@@ -45,7 +45,8 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       import('./expanded-market-universe-wiring.js'),
       import('./alchemy-filtered-mempool-wiring.js'),
       import('./low-latency-execution-wiring.js'),
-    ]).then(([profitPolicy, universePolicy, mempoolPolicy, executionPolicy]) => {
+      import('./market-focus-wiring.js'),
+    ]).then(([profitPolicy, universePolicy, mempoolPolicy, executionPolicy, marketFocusPolicy]) => {
       // Install narrow compatibility/correctness policies before graph/scheduler/
       // provider modules are started. This preserves one deterministic startup
       // order and avoids a cycle through execution -> automatic-stage-progression
@@ -55,6 +56,7 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       universePolicy.ensureExpandedMarketUniverseWiring();
       mempoolPolicy.ensureAlchemyFilteredMempoolWiring();
       executionPolicy.ensureLowLatencyExecutionWiring();
+      marketFocusPolicy.ensureMarketFocusWiring();
       return Promise.all([
         import('../discovery/opportunity-graph.js'),
         import('../execution/canonical-execution-scheduler.js'),
@@ -108,6 +110,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     expandedMarketUniverse: true,
     filteredMempoolPolicyInstalled: true,
     lowLatencyExecutionCorrectnessPolicyInstalled: true,
+    marketFocusPolicyInstalled: true,
     zeroCapitalRealizedProfitPolicyScheduled: true,
     fundingRateDiscovery: process.env.NO_INTERVALS === 'true' ? 'withheld_no_intervals' : 'optional_parallel_monitor',
   });
