@@ -53,12 +53,7 @@ function powerOfTenIncrement(decimals: unknown): number | null {
   return 10 ** -parsed;
 }
 
-async function fetchKrakenSnapshot(forceRefresh: boolean = false): Promise<ConstraintSnapshot> {
-  if (forceRefresh && krakenInFlight) {
-    try { await krakenInFlight; } catch { /* force a fresh attempt below */ }
-    krakenSnapshot = null;
-  }
-  if (forceRefresh) krakenSnapshot = null;
+async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
   if (krakenSnapshot && krakenSnapshot.expiresAt > Date.now()) return krakenSnapshot;
   if (krakenInFlight) return krakenInFlight;
   krakenInFlight = (async () => {
@@ -113,19 +108,13 @@ async function fetchKrakenSnapshot(forceRefresh: boolean = false): Promise<Const
       component: 'CexSpotProductPolicy',
       products: values.size,
       ambiguous: ambiguous.size,
-      forceRefresh,
     });
     return snapshot;
   })().finally(() => { krakenInFlight = null; });
   return krakenInFlight;
 }
 
-async function fetchOkxSnapshot(forceRefresh: boolean = false): Promise<ConstraintSnapshot> {
-  if (forceRefresh && okxInFlight) {
-    try { await okxInFlight; } catch { /* force a fresh attempt below */ }
-    okxSnapshot = null;
-  }
-  if (forceRefresh) okxSnapshot = null;
+async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
   if (okxSnapshot && okxSnapshot.expiresAt > Date.now()) return okxSnapshot;
   if (okxInFlight) return okxInFlight;
   okxInFlight = (async () => {
@@ -169,23 +158,16 @@ async function fetchOkxSnapshot(forceRefresh: boolean = false): Promise<Constrai
       component: 'CexSpotProductPolicy',
       baseUrl,
       products: values.size,
-      forceRefresh,
     });
     return snapshot;
   })().finally(() => { okxInFlight = null; });
   return okxInFlight;
 }
 
-export async function getSpotProductConstraints(
-  venue: ConstrainedSpotVenue,
-  symbolInput: string,
-  options: { forceRefresh?: boolean } = {},
-): Promise<SpotProductConstraints> {
+export async function getSpotProductConstraints(venue: ConstrainedSpotVenue, symbolInput: string): Promise<SpotProductConstraints> {
   const symbol = canonicalSymbol(symbolInput);
   if (!symbol) throw new Error(`Unsupported ${venue} SPOT symbol ${symbolInput}`);
-  const snapshot = venue === 'kraken'
-    ? await fetchKrakenSnapshot(options.forceRefresh === true)
-    : await fetchOkxSnapshot(options.forceRefresh === true);
+  const snapshot = venue === 'kraken' ? await fetchKrakenSnapshot() : await fetchOkxSnapshot();
   const constraint = snapshot.values.get(symbol);
   if (!constraint) throw new Error(`${venue} SPOT product ${symbol} has no current live execution constraints`);
   return { ...constraint };
@@ -269,24 +251,6 @@ function validateLeg(
     return `${constraints.venue} ${side} notional is below quote minimum ${constraints.quoteMinSize}`;
   }
   return null;
-}
-
-/**
- * Force-refresh a venue's public product metadata immediately before live order
- * submission. If lot/tick/minimum/state changed after planning, reject instead
- * of resizing or rounding after Monte Carlo authorization.
- */
-export async function assertFreshSpotOrderConstraints(input: {
-  venue: ConstrainedSpotVenue;
-  symbol: string;
-  side: 'buy' | 'sell';
-  quantity: number;
-  price: number;
-}): Promise<SpotProductConstraints> {
-  const constraints = await getSpotProductConstraints(input.venue, input.symbol, { forceRefresh: true });
-  const reason = validateLeg(input.side, input.quantity, input.price, constraints);
-  if (reason) throw new Error(`${input.venue} order violates fresh product constraints: ${reason}`);
-  return constraints;
 }
 
 /**
