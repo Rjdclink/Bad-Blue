@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 
 const bridge = fs.readFileSync('server/services/cryptocrawl/compensation/rainbow-profit-bridge.ts', 'utf8');
+const observability = fs.readFileSync('server/services/cryptocrawl/compensation/rainbow-profit-observability.ts', 'utf8');
 const wiring = fs.readFileSync('server/services/cryptocrawl/runtime/rainbow-profit-bridge-wiring.ts', 'utf8');
 const core = fs.readFileSync('server/services/cryptocrawl/runtime/core-runtime.ts', 'utf8');
 
@@ -33,9 +34,22 @@ assert.match(bridge, /transaction_hash/);
 assert.doesNotMatch(bridge, /Math\.random/);
 assert.doesNotMatch(bridge, /Simulate transaction|fake transaction|simulated payout/i);
 
+assert.match(observability, /queuedProfitUsd/);
+assert.match(observability, /submittedProfitUsd/);
+assert.match(observability, /confirmedProfitUsd/);
+assert.match(observability, /oldestQueuedAgeMs/);
+assert.match(observability, /confirmedWithdrawalFees/);
+assert.match(observability, /lastConfirmedTransactionHash/);
+assert.match(observability, /GROUP BY batch_id/);
+assert.match(observability, /destinationFingerprint/);
+assert.doesNotMatch(observability, /logger\.(?:info|warn|error)\([^\n]*DESTINATION/);
+
 assert.match(wiring, /execution-evidence-recorded/);
 assert.match(wiring, /cryptaraExecutionEvidence/);
 assert.match(wiring, /recordTerminalSettlement/);
+assert.match(wiring, /rainbowProfitObservability\.start\(\)/);
+assert.match(wiring, /rainbowProfitObservability\.refresh\(\)/);
+assert.match(wiring, /rainbowProfitObservability\.stop\(\)/);
 assert.match(wiring, /Payout persistence\/venue egress is downstream of settlement/);
 
 assert.match(core, /scheduleRainbowProfitBridge\(\)/);
@@ -56,6 +70,8 @@ console.log(JSON.stringify({
   okxRealWithdrawalEndpoint: true,
   ambiguousSubmissionRecovery: true,
   terminalWithdrawalReconciliation: true,
+  lifecycleObservability: ['queued', 'submitted', 'confirmed', 'fees', 'oldestQueue', 'lastTx'],
+  destinationValueNotLogged: true,
   simulatedTransferRemovedFromRainbowPath: true,
   tradingStartupNonBlocking: true,
 }, null, 2));

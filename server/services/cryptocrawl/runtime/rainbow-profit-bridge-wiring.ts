@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
+import { rainbowProfitObservability } from '../compensation/rainbow-profit-observability.js';
 import { stageManager } from '../governance/stage-management.js';
 
 let installed = false;
@@ -16,6 +17,7 @@ function latestTerminalFeedback(): CryptaraExecutionFeedback | null {
 async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
   try {
     await rainbowProfitBridge.recordTerminalSettlement(feedback);
+    void rainbowProfitObservability.refresh();
   } catch (error) {
     // Payout persistence/venue egress is downstream of settlement. A payout
     // failure must never rewrite or invalidate a correctly settled trade.
@@ -31,6 +33,7 @@ export function ensureRainbowProfitBridgeWiring(): void {
   if (installed) return;
   installed = true;
   rainbowProfitBridge.start();
+  rainbowProfitObservability.start();
 
   // Reconcile persisted terminal evidence after a restart. The bridge ledger is
   // event-idempotent, so replay cannot create a duplicate payout.
@@ -54,6 +57,7 @@ export function ensureRainbowProfitBridgeWiring(): void {
     preferredAssets: 'USDT/USDC dynamic',
     routeSelection: 'lowest_fee_supported_evm_network',
     tradingInventoryReservePreserved: true,
+    lifecycleObservability: 'queued_submitted_confirmed_fee_tx_proof',
   });
 }
 
@@ -62,5 +66,6 @@ export function stopRainbowProfitBridgeWiring(): void {
   if (listener) stageManager.off('execution-evidence-recorded', listener);
   listener = null;
   installed = false;
+  rainbowProfitObservability.stop();
   rainbowProfitBridge.stop();
 }
