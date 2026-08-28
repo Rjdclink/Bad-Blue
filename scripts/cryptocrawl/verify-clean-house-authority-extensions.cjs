@@ -22,6 +22,7 @@ const ultraLowLatency = read('server/services/cryptocrawl/execution/ultra-low-la
 const cexExecutor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
 const cexSettlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 const cexSerialization = read('server/services/cryptocrawl/execution/cex-order-serialization.ts');
+const legacyMasterOrchestrator = read('server/services/cryptocrawl/core/master-orchestrator.ts');
 
 // Profit magnitude must never be an execution ceiling or arbitrary floor.
 requireText(riskGovernor, 'profitCeilingAuthority: false', 'RiskGovernor declares no profit-ceiling authority');
@@ -78,5 +79,17 @@ requireText(cexSettlement, 'cexDecimalString(request.price)', 'production CEX or
 requireText(cexSettlement, 'cexDecimalString(request.quantity)', 'production CEX order quantities use canonical decimal serialization');
 forbidText(cexSettlement, 'toFixed(12)', 'production CEX submission cannot reintroduce a hidden 12-decimal cap');
 forbidText(cexSerialization, 'toFixed(', 'canonical CEX decimal serialization cannot impose a fixed precision cap');
+
+// Historical MasterOrchestrator must remain an inert compatibility shell.
+requireText(legacyMasterOrchestrator, 'Legacy MasterOrchestrator compatibility shell', 'legacy MasterOrchestrator declares compatibility-only status');
+requireText(legacyMasterOrchestrator, "authority: 'none'", 'legacy MasterOrchestrator declares no authority');
+requireText(legacyMasterOrchestrator, 'legacyExecutionAuthority: false', 'legacy MasterOrchestrator cannot claim execution authority');
+forbidText(legacyMasterOrchestrator, 'setInterval(', 'legacy MasterOrchestrator cannot create background loops');
+forbidText(legacyMasterOrchestrator, 'setTimeout(', 'legacy MasterOrchestrator cannot create delayed side effects');
+forbidText(legacyMasterOrchestrator, 'EdenStorage.startReplication', 'legacy MasterOrchestrator cannot start Eden replication');
+forbidText(legacyMasterOrchestrator, 'CainManager.startAll', 'legacy MasterOrchestrator cannot start Cain agents');
+forbidText(legacyMasterOrchestrator, 'TwinManager.startAll', 'legacy MasterOrchestrator cannot start Twin agents');
+forbidText(legacyMasterOrchestrator, 'StarburstEngine.startMonitoring', 'legacy MasterOrchestrator cannot start Starburst monitoring');
+forbidText(legacyMasterOrchestrator, 'LuxSwarm.observe()', 'legacy MasterOrchestrator cannot derive synthetic runtime metrics from LuxSwarm');
 
 console.log('CryptoCrawler clean-house authority extension verification passed.');
