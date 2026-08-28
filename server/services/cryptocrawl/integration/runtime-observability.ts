@@ -52,16 +52,26 @@ function executionConfiguration() {
     && process.env.OKX_API_SECRET?.trim()
     && process.env.OKX_API_PASSPHRASE?.trim()
   );
+  const coinbaseConfigured = !!(
+    (process.env.COINBASE_API_KEY?.trim() || process.env.COINBASE_KEY_NAME?.trim() || process.env.CDP_API_KEY_NAME?.trim())
+    && (process.env.COINBASE_API_SECRET?.trim() || process.env.COINBASE_KEY_SECRET?.trim() || process.env.CDP_API_KEY_SECRET?.trim())
+  );
+  const configuredVenueCount = [coinbaseConfigured, krakenConfigured, okxConfigured].filter(Boolean).length;
   const noExecutionGuardEnabled = process.env.NO_EXECUTION === 'true';
   const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
   const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
   return {
+    coinbaseConfigured,
     krakenConfigured,
     okxConfigured,
+    configuredVenueCount,
     noExecutionGuardEnabled,
     liveExecutionEnabled,
     liveExecutionConfirmed,
-    centralizedExecutionConfigured: krakenConfigured && okxConfigured,
+    // A cross-venue CEX route needs at least two configured accounts. Actual
+    // permissions, authenticated fees, product depth and inventory still gate the
+    // individual plan; configuration alone never makes TRADING_READY true.
+    centralizedExecutionConfigured: configuredVenueCount >= 2,
   };
 }
 
