@@ -1,6 +1,7 @@
 name: Node.js CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, develop]
   pull_request:
@@ -29,10 +30,28 @@ jobs:
         run: node scripts/cryptocrawl/verify-clean-house.cjs
       - name: Verify CryptoCrawler no-regression opportunity pipeline
         run: node scripts/cryptocrawl/verify-no-regression-opportunity-pipeline.cjs
+      - name: Verify CryptoCrawler deployment preflight
+        env:
+          NO_EXECUTION: 'true'
+          NO_INTERVALS: 'true'
+          CRYPTARA_MODE: SILENT_WATCHER_ONLY
+        run: node scripts/cryptocrawl/verify-deployment-preflight.cjs
       - name: Build
         run: npm run build
       - name: Run TypeScript compilation check
         run: npm run check
+      - name: Verify canonical runtime wiring
+        run: npm run wire-check
+      - name: Verify settlement lifecycle
+        env:
+          NO_EXECUTION: 'true'
+          NO_INTERVALS: 'true'
+        run: npm run verify:settlement-lifecycle
+      - name: Verify provider failover
+        env:
+          NO_EXECUTION: 'true'
+          NO_INTERVALS: 'true'
+        run: npm run verify:provider-failover
       - name: Verify native-gas funding lifecycle
         run: npm run verify:native-gas-funding
       - name: Verify automatic native-gas plan
