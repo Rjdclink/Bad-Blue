@@ -11,6 +11,7 @@ const { isAddress } = ethers.utils;
 const MIN_PAYOUT_USD = finiteEnv('CRYPTO_RAINBOW_MIN_PAYOUT_USD', 5, 0.01, 1_000_000);
 const MAX_PAYOUT_USD = finiteEnv('CRYPTO_RAINBOW_MAX_PAYOUT_USD', 5_000, 1, 10_000_000);
 const OPERATING_RESERVE_USD = finiteEnv('CRYPTO_RAINBOW_OPERATING_RESERVE_USD', 1_000, 0, 100_000_000);
+const MAX_FEE_FRACTION = finiteEnv('CRYPTO_RAINBOW_MAX_FEE_FRACTION', 0.01, 0.0001, 0.25);
 const RECONCILE_INTERVAL_MS = finiteEnv('CRYPTO_RAINBOW_RECONCILE_INTERVAL_MS', 60_000, 10_000, 3_600_000);
 const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
 const PREFERRED_STABLES = [...new Set((process.env.CRYPTO_RAINBOW_PAYOUT_ASSETS || 'USDT,USDC')
@@ -30,6 +31,11 @@ function addressFingerprint(address: string): string {
 function finitePositive(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function matchesPreferredNetwork(chain: string): number {
@@ -57,6 +63,7 @@ class RainbowProfitBridge {
   private ready: Promise<void> | null = null;
   private flushInFlight: Promise<void> | null = null;
   private timer: NodeJS.Timeout | null = null;
+  private lastDeferralSignature = '';
 
   start(): void {
     if (this.timer) return;
@@ -175,6 +182,26 @@ class RainbowProfitBridge {
     amount = Number(amount.toFixed(6));
     if (selected.length === 0 || amount < Math.max(MIN_PAYOUT_USD, route.minWithdrawal)) return;
 
+    const feeFraction = amount > 0 ? route.fee / amount : Number.POSITIVE_INFINITY;
+    if (route.fee > 0 && feeFraction > MAX_FEE_FRACTION) {
+      const signature = `${route.asset}:${route.chain}:${route.fee}:${amount.toFixed(2)}`;
+      if (signature !== this.lastDeferralSignature) {
+        this.lastDeferralSignature = signature;
+        logger.info('[RainbowBridge] Payout deferred to preserve realized profit', {
+          component: 'RainbowProfitBridge',
+          queuedProfitUsd: amount,
+          asset: route.asset,
+          chain: route.chain,
+          withdrawalFee: route.fee,
+          feeFraction,
+          maxFeeFraction: MAX_FEE_FRACTION,
+          action: 'accumulate_more_profit',
+        });
+      }
+      return;
+    }
+    this.lastDeferralSignature = '';
+
     const batchId = `rainbow_${Date.now()}_${createHash('sha256').update(selected.map(item => item.eventId).join('|')).digest('hex').slice(0, 12)}`;
     const clientId = createHash('sha256').update(batchId).digest('hex').slice(0, 32);
     const ids = selected.map(item => item.eventId);
@@ -236,6 +263,7 @@ class RainbowProfitBridge {
       chain: route.chain,
       amount,
       fee: route.fee,
+      feeFraction: amount > 0 ? route.fee / amount : null,
       eventCount,
       destination: addressFingerprint(DESTINATION),
       withdrawalId,
@@ -282,7 +310,7 @@ class RainbowProfitBridge {
         for (const item of currencyResponse.data) {
           const chain = String(item?.chain || '');
           const networkRank = matchesPreferredNetwork(chain);
-          const fee = finitePositive(item?.fee);
+          const fee = finiteNonNegative(item?.fee);
           const minWithdrawal = finitePositive(item?.minWd) || 0;
           if (!chain || !Number.isFinite(networkRank) || item?.canWd === false || String(item?.canWd).toLowerCase() === 'false' || fee === null || maxWithdrawal <= 0) continue;
           routes.push({ asset: asset as 'USDT' | 'USDC', chain, fee, minWithdrawal, maxWithdrawal });
