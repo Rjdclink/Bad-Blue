@@ -2,9 +2,15 @@ import { Wallet, providers, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { walletFromPrivateKey } from '../core/wallet-identity.js';
+import { withEvmSignerLane } from './evm-signer-lane.js';
+import {
+  isSignedRawTransaction,
+  nextNonceAfterReservation,
+  normalizePendingNonce,
+} from './low-latency-execution-policy.js';
 
 const { JsonRpcProvider } = providers;
-const { parseEther, parseUnits } = ethers.utils;
+const { parseUnits } = ethers.utils;
 
 interface OpportunityData {
   to: string;
@@ -16,335 +22,270 @@ interface OpportunityData {
 interface ExecutionResult {
   success: boolean;
   txHash?: string;
+  signedTransaction?: string;
   latency: number;
   method: 'instant' | 'multipath';
-}
-
-interface PreSignedTx {
-  nonce: number;
-  transaction: ethers.Transaction;
-  used: boolean;
 }
 
 interface GasPrediction {
   mean: number;
   volatility: number;
   recommended: number;
-  maxFeePerGas?: number; // 2024: EIP-1559 support
-  maxPriorityFeePerGas?: number; // 2024: EIP-1559 support
-  confidence: number; // 2024: Prediction confidence score
+  maxFeePerGas?: number;
+  maxPriorityFeePerGas?: number;
+  confidence: number;
+}
+
+interface SignedSubmission {
+  txHash: string;
+  path: string;
 }
 
 class UltraLowLatencyExecutor {
   private wallet: Wallet | null = null;
   private provider!: providers.JsonRpcProvider;
-  private preSignedTxPool: PreSignedTx[] = [];
-  private currentNonce: number = 0;
+  private currentNonce: number | null = null;
   private initialized = false;
   private privateRpcUrl: string;
-  private flashbotsUrl: string;
-  private bloxrouteUrl: string;
-  private gasHistory: number[] = []; // 2024: Gas history tracking
+  private gasHistory: number[] = [];
+  private executionTail: Promise<void> = Promise.resolve();
 
   constructor() {
     this.privateRpcUrl = process.env.PRIVATE_RPC_URL || process.env.RPC_URL || '';
-    this.flashbotsUrl = process.env.FLASHBOTS_RPC || 'https://rpc.flashbots.net';
-    this.bloxrouteUrl = process.env.BLOXROUTE_RPC || 'https://mev.api.bloxroute.com';
-    
   }
 
   async initialize(): Promise<void> {
-    // Any initialization here can touch RPC and prepare transactions: treat as execution-adjacent.
+    // Any initialization here can touch RPC and prepare transaction state: treat
+    // it as execution-adjacent and retain the canonical governance gate.
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     if (this.initialized) return;
 
+    this.privateRpcUrl = this.privateRpcUrl || process.env.PRIVATE_RPC_URL || process.env.RPC_URL || '';
     if (!this.privateRpcUrl) {
       throw new Error('Missing PRIVATE_RPC_URL or RPC_URL (required for UltraLowLatencyExecutor)');
     }
 
     const pk = process.env.WALLET_PRIVATE_KEY;
     if (!pk || pk.trim().length === 0) {
-      // Canonical rule: signer must be loaded only from env and system must hard-fail if missing.
       throw new Error('Missing WALLET_PRIVATE_KEY (required for UltraLowLatencyExecutor signer)');
     }
     this.provider = new JsonRpcProvider(this.privateRpcUrl);
     this.wallet = walletFromPrivateKey(pk).connect(this.provider);
+    this.currentNonce = await this.wallet.getTransactionCount('pending');
+    this.initialized = true;
 
-    logger.info('Initializing ultra-low-latency executor...', { 
-      component: 'UltraLowLatencyExecutor' 
+    logger.info('Ultra-low-latency executor initialized with pending-nonce authority', {
+      component: 'UltraLowLatencyExecutor',
+      pendingNonce: this.currentNonce,
+      configuredSubmissionPaths: ['direct'],
+      privateRelayAuthority: 'MultiRelaySubmitter',
+      placeholderPresigning: false,
+      signOncePerNonce: true,
+      distributedSignerLane: true,
     });
+  }
 
-    // Get current nonce
-    this.currentNonce = await this.wallet.getTransactionCount();
-    
-    // Pre-sign 100 transaction templates
-    const gasPrice = await this.predictOptimalGas();
-    
-    for (let i = 0; i < 100; i++) {
-      try {
-        const tx = await this.wallet.signTransaction({
-          nonce: this.currentNonce + i,
-          gasPrice: gasPrice.recommended,
-          gasLimit: 500000,
-          to: this.wallet.address, // Placeholder
-          value: 0,
-          data: '0x', // Placeholder
-          chainId: 1
-        });
+  /**
+   * One wallet cannot safely have multiple independent nonce owners. Serialize
+   * complete submissions for this signer inside the process; executeInstant and
+   * executeMultiPath additionally acquire the shared PostgreSQL signer lane so
+   * separate replicas cannot race the same account nonce.
+   */
+  private async withExecutionLane<T>(work: () => Promise<T>): Promise<T> {
+    const previous = this.executionTail;
+    let release!: () => void;
+    this.executionTail = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+    }
+  }
 
-        this.preSignedTxPool.push({
-          nonce: this.currentNonce + i,
-          transaction: ethers.utils.parseTransaction(tx),
-          used: false
-        });
-      } catch (error) {
-        logger.warn('Failed to pre-sign transaction', {
-          component: 'UltraLowLatencyExecutor',
-          nonce: this.currentNonce + i,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
+  private async withDistributedSignerLane<T>(work: () => Promise<T>): Promise<T> {
+    if (!this.wallet) throw new Error('Signer wallet not initialized');
+    const network = await this.provider.getNetwork();
+    return withEvmSignerLane({
+      chainId: network.chainId,
+      walletAddress: this.wallet.address,
+      operation: work,
+    });
+  }
+
+  private async buildSignedTransaction(opp: OpportunityData): Promise<{ signedTransaction: string; nonce: number }> {
+    if (!this.wallet) throw new Error('Signer wallet not initialized');
+    const pendingNonce = await this.wallet.getTransactionCount('pending');
+    const nonce = normalizePendingNonce(pendingNonce, this.currentNonce);
+    const [network, feeData] = await Promise.all([
+      this.provider.getNetwork(),
+      this.provider.getFeeData(),
+    ]);
+
+    const tx: ethers.providers.TransactionRequest = {
+      to: opp.to,
+      data: opp.data,
+      value: opp.value,
+      gasLimit: opp.gasLimit,
+      nonce,
+      chainId: network.chainId,
+    };
+
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+      tx.type = 2;
+      tx.maxFeePerGas = feeData.maxFeePerGas;
+      tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+    } else if (feeData.gasPrice) {
+      tx.gasPrice = feeData.gasPrice;
+    } else {
+      throw new Error('Provider did not return usable transaction fee data');
     }
 
-    this.initialized = true;
-    logger.info(`Pre-signed ${this.preSignedTxPool.length} transactions`, {
-      component: 'UltraLowLatencyExecutor',
-      startNonce: this.currentNonce
-    });
+    const signedTransaction = await this.wallet.signTransaction(tx);
+    if (!isSignedRawTransaction(signedTransaction)) {
+      throw new Error('Signer did not produce a valid raw transaction payload');
+    }
+    this.currentNonce = nextNonceAfterReservation(nonce);
+    return { signedTransaction, nonce };
   }
 
   async executeInstant(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
+    if (!this.initialized) await this.initialize();
 
-    if (!this.initialized) {
-      await this.initialize();
-    }
-    if (!this.wallet) {
-      throw new Error('Signer wallet not initialized');
-    }
-
-    // Find unused pre-signed transaction
-    const preSignedTx = this.preSignedTxPool.find(tx => !tx.used);
-    
-    if (!preSignedTx) {
-      logger.warn('No pre-signed transactions available', {
-        component: 'UltraLowLatencyExecutor'
-      });
-      return {
-        success: false,
-        latency: Date.now() - startTime,
-        method: 'instant'
-      };
-    }
-
-    try {
-      // Update transaction parameters (takes ~2ms)
-      // Extract only the properties needed for TransactionRequest
-      const updatedTx: ethers.providers.TransactionRequest = {
-        nonce: preSignedTx.transaction.nonce,
-        gasPrice: preSignedTx.transaction.gasPrice,
-        chainId: preSignedTx.transaction.chainId,
-        type: preSignedTx.transaction.type || undefined,
-        accessList: preSignedTx.transaction.accessList,
-        maxPriorityFeePerGas: preSignedTx.transaction.maxPriorityFeePerGas,
-        maxFeePerGas: preSignedTx.transaction.maxFeePerGas,
-        to: opp.to,
-        data: opp.data,
-        value: opp.value,
-        gasLimit: opp.gasLimit
-      };
-
-      // Mark as used
-      preSignedTx.used = true;
-
-      // Submit via private RPC
-      const signedTx = await this.wallet.signTransaction(updatedTx);
-      const response = await this.provider.sendTransaction(signedTx);
-
-      const latency = Date.now() - startTime;
-      
-      logger.info('Transaction executed via instant path', {
-        component: 'UltraLowLatencyExecutor',
-        txHash: response.hash,
-        latency: `${latency}ms`
-      });
-
-      return {
-        success: true,
-        txHash: response.hash,
-        latency,
-        method: 'instant'
-      };
-    } catch (error) {
-      const latency = Date.now() - startTime;
-      
-      logger.error('Instant execution failed', {
-        component: 'UltraLowLatencyExecutor',
-        error: error instanceof Error ? error.message : String(error),
-        latency: `${latency}ms`
-      });
-
-      return {
-        success: false,
-        latency,
-        method: 'instant'
-      };
-    }
+    return this.withExecutionLane(() => this.withDistributedSignerLane(async () => {
+      let nonce: number | null = null;
+      try {
+        const signed = await this.buildSignedTransaction(opp);
+        nonce = signed.nonce;
+        const result = await this.submitDirect(signed.signedTransaction);
+        const latency = Date.now() - startTime;
+        logger.info('Transaction accepted via direct low-latency path', {
+          component: 'UltraLowLatencyExecutor',
+          txHash: result.txHash,
+          latency: `${latency}ms`,
+          nonce,
+        });
+        return {
+          success: true,
+          txHash: result.txHash,
+          signedTransaction: signed.signedTransaction,
+          latency,
+          method: 'instant',
+        };
+      } catch (error) {
+        // With both signer lanes held there is no later local or replica-owned
+        // reservation behind this failure. Resync from the shared pending nonce
+        // on the next attempt rather than inventing a nonce.
+        this.currentNonce = null;
+        const latency = Date.now() - startTime;
+        logger.error('Instant execution failed', {
+          component: 'UltraLowLatencyExecutor',
+          nonce,
+          error: error instanceof Error ? error.message : String(error),
+          latency: `${latency}ms`,
+        });
+        return { success: false, latency, method: 'instant' };
+      }
+    }));
   }
 
   async executeMultiPath(opp: OpportunityData): Promise<ExecutionResult> {
     const startTime = Date.now();
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
+    if (!this.initialized) await this.initialize();
 
-    if (!this.initialized) {
-      await this.initialize();
-    }
-    if (!this.wallet) {
-      throw new Error('Signer wallet not initialized');
-    }
+    return this.withExecutionLane(() => this.withDistributedSignerLane(async () => {
+      let nonce: number | null = null;
+      try {
+        const signed = await this.buildSignedTransaction(opp);
+        nonce = signed.nonce;
 
-    // Prepare transaction
-    const tx = {
-      to: opp.to,
-      data: opp.data,
-      value: opp.value,
-      gasLimit: opp.gasLimit,
-      nonce: await this.wallet.getTransactionCount()
-    };
-
-    // Race 3 execution paths simultaneously
-    const flashbotsPromise = this.submitViaFlashbots(tx);
-    const bloxroutePromise = this.submitViaBloxroute(tx);
-    const directPromise = this.submitDirect(tx);
-
-    try {
-      // First one wins
-      const result = await Promise.race([
-        flashbotsPromise,
-        bloxroutePromise,
-        directPromise
-      ]);
-
-      const latency = Date.now() - startTime;
-
-      logger.info('Transaction executed via multi-path', {
-        component: 'UltraLowLatencyExecutor',
-        txHash: result.txHash,
-        latency: `${latency}ms`,
-        winner: result.path
-      });
-
-      return {
-        success: true,
-        txHash: result.txHash,
-        latency,
-        method: 'multipath'
-      };
-    } catch (error) {
-      const latency = Date.now() - startTime;
-      
-      logger.error('Multi-path execution failed', {
-        component: 'UltraLowLatencyExecutor',
-        error: error instanceof Error ? error.message : String(error),
-        latency: `${latency}ms`
-      });
-
-      return {
-        success: false,
-        latency,
-        method: 'multipath'
-      };
-    }
+        // Direct broadcast is the sole authority here. Private relay/builders
+        // are owned by MultiRelaySubmitter and may receive these exact signed
+        // bytes after direct acceptance; this executor must not create a second
+        // Flashbots/Bloxroute submission authority.
+        const result = await this.submitDirect(signed.signedTransaction);
+        const latency = Date.now() - startTime;
+        logger.info('Transaction accepted via canonical direct broadcast', {
+          component: 'UltraLowLatencyExecutor',
+          txHash: result.txHash,
+          latency: `${latency}ms`,
+          winner: result.path,
+          nonce,
+          privateRelayAuthority: 'MultiRelaySubmitter',
+        });
+        return {
+          success: true,
+          txHash: result.txHash,
+          signedTransaction: signed.signedTransaction,
+          latency,
+          method: 'multipath',
+        };
+      } catch (error) {
+        this.currentNonce = null;
+        const latency = Date.now() - startTime;
+        logger.error('Direct execution failed', {
+          component: 'UltraLowLatencyExecutor',
+          nonce,
+          error: error instanceof Error ? error.message : String(error),
+          latency: `${latency}ms`,
+        });
+        return { success: false, latency, method: 'multipath' };
+      }
+    }));
   }
 
-  private async submitViaFlashbots(tx: any): Promise<{ txHash: string; path: string }> {
+  private async submitDirect(signedTransaction: string): Promise<SignedSubmission> {
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
-    if (!this.wallet) throw new Error('Signer wallet not initialized');
-    const signedTx = await this.wallet.signTransaction(tx);
-    const flashbotsProvider = new JsonRpcProvider(this.flashbotsUrl);
-    const response = await flashbotsProvider.sendTransaction(signedTx);
-    return { txHash: response.hash, path: 'flashbots' };
-  }
-
-  private async submitViaBloxroute(tx: any): Promise<{ txHash: string; path: string }> {
-    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
-    if (!this.wallet) throw new Error('Signer wallet not initialized');
-    const signedTx = await this.wallet.signTransaction(tx);
-    const bloxrouteProvider = new JsonRpcProvider(this.bloxrouteUrl);
-    const response = await bloxrouteProvider.sendTransaction(signedTx);
-    return { txHash: response.hash, path: 'bloxroute' };
-  }
-
-  private async submitDirect(tx: any): Promise<{ txHash: string; path: string }> {
-    getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
-    if (!this.wallet) throw new Error('Signer wallet not initialized');
-    const signedTx = await this.wallet.signTransaction(tx);
-    const response = await this.provider.sendTransaction(signedTx);
+    const response = await this.provider.sendTransaction(signedTransaction);
     return { txHash: response.hash, path: 'direct' };
   }
 
   async predictOptimalGas(): Promise<GasPrediction> {
     try {
       const currentBlock = await this.provider.getBlockNumber();
-      
-      // 2024 Research: Fetch more blocks for better prediction (200 blocks ~40min)
       const blockCount = Math.min(200, currentBlock);
       const blocks = await Promise.all(
-        Array.from({ length: blockCount }, (_, i) => 
-          this.provider.getBlock(currentBlock - i)
-        )
+        Array.from({ length: blockCount }, (_, i) => this.provider.getBlock(currentBlock - i)),
       );
-
       const gasPrices = blocks
         .filter(b => b && b.baseFeePerGas)
         .map(b => Number(b!.baseFeePerGas));
-
-      // Store gas history for trend analysis
       this.gasHistory = gasPrices.slice(0, 100);
 
       if (gasPrices.length === 0) {
         const feeData = await this.provider.getFeeData();
-        const gasPrice = Number(feeData.gasPrice || parseUnits('1', 'gwei'));
+        if (!feeData.gasPrice) throw new Error('Provider did not return gas history or a current gas price');
+        const gasPrice = Number(feeData.gasPrice);
         return {
           mean: gasPrice,
           volatility: 0,
           recommended: gasPrice,
           maxFeePerGas: gasPrice,
           maxPriorityFeePerGas: Math.floor(gasPrice * 0.1),
-          confidence: 0.5
+          confidence: 0.5,
         };
       }
 
-      // Calculate statistical measures
       const mean = gasPrices.reduce((a, b) => a + b, 0) / gasPrices.length;
       const variance = gasPrices.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / gasPrices.length;
       const volatility = Math.sqrt(variance);
-
-      // 2024 Research: Use percentile-based recommendation (more robust than mean + 2σ)
       const sortedPrices = [...gasPrices].sort((a, b) => a - b);
       const p95Index = Math.floor(sortedPrices.length * 0.95);
       const recommended = sortedPrices[p95Index] || mean + (2 * volatility);
-
-      // 2024: Calculate trend-based adjustment (with safety guards)
       const recentPrices = gasPrices.slice(0, Math.min(10, gasPrices.length));
       const olderPrices = gasPrices.slice(10, Math.min(20, gasPrices.length));
-      
       let trend = 0;
       if (recentPrices.length > 0 && olderPrices.length > 0) {
         const recentAvg = recentPrices.reduce((a, b) => a + b, 0) / recentPrices.length;
         const olderAvg = olderPrices.reduce((a, b) => a + b, 0) / olderPrices.length;
         trend = olderAvg > 0 ? (recentAvg - olderAvg) / olderAvg : 0;
       }
-
-      // Adjust recommendation based on trend
       const trendAdjusted = trend > 0.1 ? recommended * 1.1 : recommended;
-
-      // 2024: EIP-1559 support
       const maxFeePerGas = Math.ceil(trendAdjusted);
-      const maxPriorityFeePerGas = Math.ceil(maxFeePerGas * 0.15); // 15% tip
-
-      // Calculate confidence score based on data quality
+      const maxPriorityFeePerGas = Math.ceil(maxFeePerGas * 0.15);
       const confidence = Math.min(1.0, gasPrices.length / 200);
 
       logger.debug('Gas prediction calculated', {
@@ -355,34 +296,32 @@ class UltraLowLatencyExecutor {
         maxPriorityFee: maxPriorityFeePerGas,
         trend: `${(trend * 100).toFixed(2)}%`,
         confidence: confidence.toFixed(2),
-        blocksAnalyzed: gasPrices.length
+        blocksAnalyzed: gasPrices.length,
       });
 
-      return { 
-        mean, 
-        volatility, 
+      return {
+        mean,
+        volatility,
         recommended: maxFeePerGas,
         maxFeePerGas,
         maxPriorityFeePerGas,
-        confidence
+        confidence,
       };
     } catch (error) {
       logger.warn('Failed to predict gas', {
         component: 'UltraLowLatencyExecutor',
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
-      
-      // Fallback to current gas price
       const feeData = await this.provider.getFeeData();
-      const gasPrice = Number(feeData.gasPrice || parseUnits('1', 'gwei'));
-      
+      if (!feeData.gasPrice) throw error;
+      const gasPrice = Number(feeData.gasPrice);
       return {
         mean: gasPrice,
         volatility: 0,
         recommended: gasPrice,
         maxFeePerGas: gasPrice,
         maxPriorityFeePerGas: Math.floor(gasPrice * 0.1),
-        confidence: 0.3
+        confidence: 0.3,
       };
     }
   }

@@ -1,8 +1,20 @@
 import logger from '../../../logger.js';
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
+import { endToEndLatencyHarness, type LatencyOutcome } from '../runtime/end-to-end-latency-harness.js';
+import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
+import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
 import { executeVerifiedArbitragePlan } from './index.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
+
+export type CanonicalSchedulerIdleReason =
+  | 'not_started'
+  | 'live_execution_posture_disabled'
+  | 'runtime_identity_mismatch'
+  | 'governance_stage_blocked'
+  | 'no_eligible_candidates'
+  | 'candidate_retry_window'
+  | 'no_resource_qualified_candidates';
 
 export interface CanonicalExecutionSchedulerStats {
   running: boolean;
@@ -13,6 +25,10 @@ export interface CanonicalExecutionSchedulerStats {
   pending: number;
   failed: number;
   lastDispatchAt: number | null;
+  lastIdleReason: CanonicalSchedulerIdleReason | null;
+  lastEligibleCandidateCount: number;
+  lastDispatchCandidateCount: number;
+  lastResourceQualifiedCount: number;
   resourceUsage: Record<string, number>;
 }
 
@@ -30,6 +46,7 @@ function currentCandidates(): Candidate[] {
   return canonicalOpportunityState.getRecent(512)
     .filter((snapshot): snapshot is Candidate => !!snapshot.plan)
     .filter(snapshot => snapshot.status === 'eligible')
+    .filter(snapshot => runtimeInvariantMonitor.evaluate(snapshot).allowed)
     .filter(snapshot => snapshot.assessment?.recommendation === 'consider')
     .filter(snapshot => Number.isFinite(snapshot.plan.netProfitUsd) && snapshot.plan.netProfitUsd > 0)
     .filter(snapshot => snapshot.plan.quoteAgeMs <= maxQuoteAgeMs)
@@ -50,6 +67,14 @@ function terminalResult(status: string, settlementConfirmed: boolean): boolean {
   return settlementConfirmed || ['cancelled', 'rejected', 'failed'].includes(status);
 }
 
+function settlementLatencyOutcome(status: string, settlementConfirmed: boolean): LatencyOutcome {
+  if (settlementConfirmed) return 'ok';
+  if (status === 'settlement_unknown') return 'timeout';
+  if (status === 'cancelled') return 'cancel';
+  if (status === 'failed' || status === 'rejected') return 'error';
+  return 'retry';
+}
+
 class CanonicalExecutionScheduler {
   private timer: NodeJS.Timeout | null = null;
   private dispatchInFlight: Promise<void> | null = null;
@@ -60,6 +85,10 @@ class CanonicalExecutionScheduler {
   private pending = 0;
   private failed = 0;
   private lastDispatchAt: number | null = null;
+  private lastIdleReason: CanonicalSchedulerIdleReason | null = 'not_started';
+  private lastEligibleCandidateCount = 0;
+  private lastDispatchCandidateCount = 0;
+  private lastResourceQualifiedCount = 0;
 
   start(): void {
     if (this.timer) return;
@@ -75,12 +104,17 @@ class CanonicalExecutionScheduler {
       authority: 'canonical_eligible_opportunities',
       legacyBusinessCapsAuthoritative: false,
       distributedResourceLeases: true,
+      runtimeInvariantQuarantine: true,
+      runtimeIdentityMismatchFailClosed: true,
+      exactOpportunityIdentityRequired: true,
+      latencyHarness: 'telemetry_only',
     });
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.lastIdleReason = 'not_started';
   }
 
   async dispatchOnce(): Promise<void> {
@@ -101,30 +135,96 @@ class CanonicalExecutionScheduler {
       pending: this.pending,
       failed: this.failed,
       lastDispatchAt: this.lastDispatchAt,
+      lastIdleReason: this.lastIdleReason,
+      lastEligibleCandidateCount: this.lastEligibleCandidateCount,
+      lastDispatchCandidateCount: this.lastDispatchCandidateCount,
+      lastResourceQualifiedCount: this.lastResourceQualifiedCount,
       resourceUsage: executionResourceScheduler.getLocalUsage(),
     };
   }
 
+  private setIdle(reason: CanonicalSchedulerIdleReason, eligible = 0, dispatchable = 0, resourceQualified = 0): void {
+    this.lastIdleReason = reason;
+    this.lastEligibleCandidateCount = eligible;
+    this.lastDispatchCandidateCount = dispatchable;
+    this.lastResourceQualifiedCount = resourceQualified;
+  }
+
   private async runDispatch(): Promise<void> {
-    if (!isLiveExecutionPosture()) return;
-    if (!stageManager.canExecuteTrades()) return;
+    if (!isLiveExecutionPosture()) {
+      this.setIdle('live_execution_posture_disabled');
+      return;
+    }
+
+    const runtimeAttestation = getCryptoCrawlerRuntimeAttestation();
+    if (!isRuntimeIdentitySafe(runtimeAttestation)) {
+      this.setIdle('runtime_identity_mismatch');
+      logger.error('[ExecutionScheduler] Live dispatch blocked by runtime identity mismatch', {
+        component: 'CanonicalExecutionScheduler',
+        sourceSha: runtimeAttestation.sourceSha,
+        railwayCommitSha: runtimeAttestation.railwayCommitSha,
+        mismatches: runtimeAttestation.mismatches,
+      });
+      return;
+    }
+
+    const governanceAllowed = endToEndLatencyHarness.measureSync(
+      'governance_risk',
+      'compute',
+      { backend: 'stage_manager', worker: executionResourceScheduler.getOwnerId() },
+      () => stageManager.canExecuteTrades(),
+    );
+    if (!governanceAllowed) {
+      this.setIdle('governance_stage_blocked');
+      return;
+    }
 
     const retryWindowMs = Math.max(1_000, Number(process.env.CRYPTOCRAWL_EXECUTION_RETRY_WINDOW_MS || 10_000));
     const now = Date.now();
-    const candidates = currentCandidates().filter(candidate =>
+    const eligibleCandidates = currentCandidates();
+    this.lastEligibleCandidateCount = eligibleCandidates.length;
+    if (eligibleCandidates.length === 0) {
+      this.setIdle('no_eligible_candidates');
+      return;
+    }
+
+    const candidates = eligibleCandidates.filter(candidate =>
       !this.activeOpportunityIds.has(candidate.opportunityId)
       && now - (this.lastAttemptAt.get(candidate.opportunityId) || 0) >= retryWindowMs,
     );
-    if (candidates.length === 0) return;
+    this.lastDispatchCandidateCount = candidates.length;
+    if (candidates.length === 0) {
+      this.setIdle('candidate_retry_window', eligibleCandidates.length, 0, 0);
+      return;
+    }
 
     const selected: Array<{ candidate: Candidate; lease: ExecutionResourceLease }> = [];
     for (const candidate of candidates) {
-      const lease = await executionResourceScheduler.acquireCexPlan(candidate.plan, candidate.opportunityId);
+      const dimensions = {
+        traceId: candidate.opportunityId,
+        worker: executionResourceScheduler.getOwnerId(),
+        backend: 'cex_resource_scheduler',
+        venue: `${candidate.plan.buyVenue}->${candidate.plan.sellVenue}`,
+        chain: 'cex',
+        symbol: candidate.symbol,
+        strategy: 'verified_cex_arbitrage',
+      };
+      const lease = await endToEndLatencyHarness.measureAsync(
+        'resource_lease',
+        'queue',
+        dimensions,
+        () => executionResourceScheduler.acquireCexPlan(candidate.plan, candidate.opportunityId),
+      );
       if (!lease) continue;
       selected.push({ candidate, lease });
     }
-    if (selected.length === 0) return;
+    this.lastResourceQualifiedCount = selected.length;
+    if (selected.length === 0) {
+      this.setIdle('no_resource_qualified_candidates', eligibleCandidates.length, candidates.length, 0);
+      return;
+    }
 
+    this.lastIdleReason = null;
     this.lastDispatchAt = Date.now();
     logger.info('[ExecutionScheduler] Resource-qualified canonical batch selected', {
       component: 'CanonicalExecutionScheduler',
@@ -146,12 +246,24 @@ class CanonicalExecutionScheduler {
       this.lastAttemptAt.set(candidate.opportunityId, Date.now());
       this.attempts++;
       let retainOpportunityUntilExpiry = false;
+      const dimensions = {
+        traceId: candidate.opportunityId,
+        worker: executionResourceScheduler.getOwnerId(),
+        backend: 'canonical_cex_execution',
+        venue: `${candidate.plan.buyVenue}->${candidate.plan.sellVenue}`,
+        chain: 'cex',
+        symbol: candidate.symbol,
+        strategy: 'verified_cex_arbitrage',
+      };
+      const settlementSpan = endToEndLatencyHarness.startSpan('terminal_settlement', 'network', dimensions);
       try {
         const result = await executeVerifiedArbitragePlan(candidate.plan, {
+          opportunityId: candidate.opportunityId,
           source: 'master_pipeline',
           chain: candidate.plan.bridge?.from,
           observedSlippageBps: candidate.plan.expectedSlippageBps ?? undefined,
         });
+        settlementSpan.end(settlementLatencyOutcome(result.status, result.settlementConfirmed));
 
         if (result.success && result.settlementConfirmed) {
           this.settled++;
@@ -176,6 +288,7 @@ class CanonicalExecutionScheduler {
           error: result.error,
         });
       } catch (error) {
+        settlementSpan.end('error');
         this.failed++;
         logger.error('[ExecutionScheduler] Canonical execution attempt failed closed', {
           component: 'CanonicalExecutionScheduler',

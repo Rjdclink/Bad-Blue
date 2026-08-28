@@ -73,17 +73,30 @@ export function resolveEnvironmentVariable(input: {
   };
 }
 
+/**
+ * CoinStats has appeared under several naming conventions across Railway/local
+ * environments. Keep this an explicit allow-list: a vaguely named secret must
+ * never be adopted accidentally, and secret values are never returned/logged.
+ */
 export const COINSTATS_ENV_ALIASES = Object.freeze([
   'COINSTATS_API_KEY_PROD',
   'COINSTATS_API_KEY_PRODUCTION',
   'COINSTATS_PROD_API_KEY',
+  'COINSTATS_PRODUCTION_API_KEY',
+  'COINSTATS_API_KEY_RAILWAY',
   'COINSTATS_API_KEY_STAGING',
   'COINSTATS_API_KEY_DEV',
   'COIN_STATS_API_KEY',
+  'COINSTAT_API_KEY',
   'COINSTATS_KEY',
   'COIN_STATS_KEY',
+  'COINSTAT_KEY',
   'COINSTATS_APIKEY',
   'COIN_STATS_APIKEY',
+  'COINSTATS_API_TOKEN',
+  'COIN_STATS_API_TOKEN',
+  'COINSTATS_TOKEN',
+  'COIN_STATS_TOKEN',
 ]);
 
 export function resolveCoinStatsEnvironment(): EnvironmentResolution {

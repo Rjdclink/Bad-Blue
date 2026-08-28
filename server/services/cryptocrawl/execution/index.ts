@@ -12,6 +12,12 @@ import { DexSettlementObserver, type DexSettlementPriceContext } from './dex-set
 import type { NormalizedRealizedExecution } from './settlement-types.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { normalizePrivateKey, walletFromPrivateKey } from '../core/wallet-identity.js';
+import {
+  assessCanonicalExecutionEnvironment,
+  getCanonicalExecutionCapabilities,
+  type CanonicalExecutionCapabilities,
+  type CanonicalExecutionEnvironmentReadiness,
+} from './execution-readiness.js';
 
 interface OpportunityData {
   to: string;
@@ -52,6 +58,7 @@ interface ExecutionResult {
   status: 'submitted' | 'partially_filled' | 'filled' | 'cancelled' | 'rejected' | 'failed' | 'settlement_unknown';
   settlementConfirmed: boolean;
   txHash?: string;
+  signedTransaction?: string;
   profit?: number;
   latency?: number;
   method?: string;
@@ -60,41 +67,12 @@ interface ExecutionResult {
   error?: string;
 }
 
-export interface SharedExecutionCapabilities {
-  explicitPayloadRequired: boolean;
-  genericOnChainPayloadBuilder: boolean;
-  structuredOnChainPayloadBuilder: boolean;
-  autonomousRoutePlanner: boolean;
-  flashLoanReceiverSupport: boolean;
-  liveOrderGuarded: boolean;
-  supportedCentralizedVenues: Array<'kraken' | 'okx'>;
-}
-
-export interface SharedExecutionEnvironmentReadiness {
-  noExecutionGuardEnabled: boolean;
-  placeholderExecutionAllowed: boolean;
-  liveExecutionEnabled: boolean;
-  liveExecutionConfirmed: boolean;
-  rpcConfigured: boolean;
-  walletConfigured: boolean;
-  centralizedExchangeConfigured: boolean;
-  flashbotsAuthConfigured: boolean;
-  zeroCapitalExecutionEnabled: boolean;
-  zeroCapitalReceiverConfigured: boolean;
-  liveCentralizedReady: boolean;
-  liveOnchainReady: boolean;
-  anyLiveRouteReady: boolean;
-}
-
-const SHARED_EXECUTION_CAPABILITIES: SharedExecutionCapabilities = {
-  explicitPayloadRequired: true,
-  genericOnChainPayloadBuilder: false,
-  structuredOnChainPayloadBuilder: true,
-  autonomousRoutePlanner: true,
-  flashLoanReceiverSupport: true,
-  liveOrderGuarded: true,
-  supportedCentralizedVenues: ['kraken', 'okx'],
-};
+/**
+ * Legacy compatibility names only. The canonical execution-readiness module is
+ * the sole authority for capability and environment readiness semantics.
+ */
+export type SharedExecutionCapabilities = CanonicalExecutionCapabilities;
+export type SharedExecutionEnvironmentReadiness = CanonicalExecutionEnvironmentReadiness;
 
 const PLACEHOLDER_OPPORTUNITY_PAYLOAD: OpportunityData = {
   to: '0x0000000000000000000000000000000000000001',
@@ -107,8 +85,8 @@ function normalizeChain(chain: string): string {
   return String(chain || 'unknown').trim().toLowerCase();
 }
 
-function isSupportedCentralizedVenue(venue: QuoteVenue): venue is 'kraken' | 'okx' {
-  return venue === 'kraken' || venue === 'okx';
+function isSupportedCentralizedVenue(venue: QuoteVenue): venue is 'coinbase' | 'kraken' | 'okx' {
+  return venue === 'coinbase' || venue === 'kraken' || venue === 'okx';
 }
 
 function resolveOpportunityPayload(opp: Opportunity): OpportunityData {
@@ -201,10 +179,6 @@ function shouldBlockForDirective(opp: Opportunity): string | null {
     return 'Expected net profit must be positive after all verified execution costs';
   }
 
-  if (directive.minimumNetProfitUsd > 0 && opp.profit < directive.minimumNetProfitUsd) {
-    return `Expected profit $${opp.profit.toFixed(2)} is below autonomous minimum net profit $${directive.minimumNetProfitUsd.toFixed(2)}`;
-  }
-
   if (opp.requiresFlashLoan && !directive.preferredExecutionModes.includes('zero_capital')) {
     return 'Autonomous directive does not currently prefer zero-capital execution';
   }
@@ -232,56 +206,14 @@ function measuredSettlementFeeUsd(economics: NormalizedRealizedExecution['realiz
   return measuredCosts.length > 0 ? measuredCosts.reduce((sum, value) => sum + value, 0) : null;
 }
 
+/** @deprecated Compatibility shim; use getCanonicalExecutionCapabilities(). */
 export function getSharedExecutionCapabilities(): SharedExecutionCapabilities {
-  return {
-    ...SHARED_EXECUTION_CAPABILITIES,
-    supportedCentralizedVenues: [...SHARED_EXECUTION_CAPABILITIES.supportedCentralizedVenues],
-  };
+  return getCanonicalExecutionCapabilities();
 }
 
+/** @deprecated Compatibility shim; use assessCanonicalExecutionEnvironment(). */
 export function assessSharedExecutionEnvironment(): SharedExecutionEnvironmentReadiness {
-  const noExecutionGuardEnabled = process.env.NO_EXECUTION === 'true';
-  const placeholderExecutionAllowed = process.env.CRYPTO_ALLOW_PLACEHOLDER_EXECUTION === 'true';
-  const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
-  const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
-  const rpcConfigured = !!(
-    process.env.PRIVATE_RPC_URL?.trim() ||
-    process.env.RPC_URL?.trim() ||
-    process.env.ETHEREUM_RPC_URL?.trim()
-  );
-  const walletConfigured = !!normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
-  const centralizedExchangeConfigured = !!(
-    (process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()) ||
-    (process.env.OKX_API_KEY?.trim() && process.env.OKX_API_SECRET?.trim() && process.env.OKX_API_PASSPHRASE?.trim())
-  );
-  // Flashbots auth is application-owned and persisted by the zero-capital engine.
-  // This synchronous probe can only report whether initialization has a usable RPC.
-  const flashbotsAuthConfigured = rpcConfigured;
-  const zeroCapitalExecutionEnabled = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
-  const zeroCapitalReceiverConfigured = !!process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER?.trim();
-  const liveCentralizedReady = liveExecutionEnabled && liveExecutionConfirmed && centralizedExchangeConfigured;
-  const liveOnchainReady =
-    liveExecutionEnabled &&
-    liveExecutionConfirmed &&
-    rpcConfigured &&
-    walletConfigured &&
-    SHARED_EXECUTION_CAPABILITIES.structuredOnChainPayloadBuilder;
-
-  return {
-    noExecutionGuardEnabled,
-    placeholderExecutionAllowed,
-    liveExecutionEnabled,
-    liveExecutionConfirmed,
-    rpcConfigured,
-    walletConfigured,
-    centralizedExchangeConfigured,
-    flashbotsAuthConfigured,
-    zeroCapitalExecutionEnabled,
-    zeroCapitalReceiverConfigured,
-    liveCentralizedReady,
-    liveOnchainReady,
-    anyLiveRouteReady: liveCentralizedReady || liveOnchainReady,
-  };
+  return assessCanonicalExecutionEnvironment();
 }
 
 // Create singleton instances
@@ -359,23 +291,30 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
     });
 
     const result = await ultraLowLatency.executeMultiPath(oppData);
+    const signedTransaction = typeof (result as any).signedTransaction === 'string'
+      ? (result as any).signedTransaction as string
+      : undefined;
     executionResult = {
       success: result.success,
       status: result.success ? 'submitted' : 'failed',
       settlementConfirmed: false,
       txHash: result.txHash,
+      signedTransaction,
       latency: result.latency,
       method: result.method,
     };
 
-    // If execution successful, submit to multiple relays for inclusion
-    if (executionResult.success && executionResult.txHash) {
+    // A bundle requires signed raw transaction bytes, never a transaction hash.
+    // The same signed payload may be submitted to private builders only when the
+    // low-latency executor exposes it; otherwise the successful multipath
+    // broadcast remains authoritative and no synthetic bundle is constructed.
+    if (executionResult.success && executionResult.signedTransaction) {
       const currentBlock = await getCurrentBlock();
       const targetBlock = currentBlock + 1;
 
       const relayResult = await multiRelay.submitBundle(
         {
-          signedTransactions: [executionResult.txHash],
+          signedTransactions: [executionResult.signedTransaction],
           targetBlock
         },
         targetBlock
@@ -383,7 +322,7 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
 
       executionResult.relaySubmissions = relayResult;
 
-      logger.info('Bundle submitted to multiple relays', {
+      logger.info('Signed transaction submitted to private relay builders', {
         component: 'ExecutionOrchestrator',
         submitted: relayResult.submitted,
         successful: relayResult.successful
@@ -497,6 +436,7 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
 export async function executeVerifiedArbitragePlan(
   plan: VerifiedArbitragePlan,
   options?: {
+    opportunityId?: string;
     chain?: string;
     source?: CryptaraExecutionFeedback['source'];
     observedSlippageBps?: number;
@@ -504,6 +444,20 @@ export async function executeVerifiedArbitragePlan(
   },
 ): Promise<ArbitrageExecutionResult & { latencyMs: number; netExpectedProfitUsd: number }> {
   const governance = getCryptocrawlGovernance();
+  const canonicalOpportunityId = options?.opportunityId?.trim() || null;
+  if (options?.source === 'master_pipeline' && !canonicalOpportunityId) {
+    return {
+      success: false,
+      status: 'rejected',
+      settlementConfirmed: false,
+      error: 'Canonical execution requires the exact opportunityId so settlement and learning remain bound to one lifecycle',
+      latencyMs: 0,
+      netExpectedProfitUsd: plan.netProfitUsd,
+    };
+  }
+  const feedbackOpportunityId = canonicalOpportunityId
+    || `compat:${plan.buyVenue}:${plan.sellVenue}:${plan.symbol}:${plan.buyAsk}:${plan.sellBid}:${plan.baseQty}`;
+
   governance.requireAllowed('EXECUTE_OPPORTUNITY', { pair: plan.symbol, venue: plan.buyVenue });
   governance.requireAllowed('EXECUTE_OPPORTUNITY', { pair: plan.symbol, venue: plan.sellVenue });
 
@@ -552,23 +506,12 @@ export async function executeVerifiedArbitragePlan(
     };
   }
 
-  if (directive.minimumNetProfitUsd > 0 && plan.netProfitUsd < directive.minimumNetProfitUsd) {
-    return {
-      success: false,
-      status: 'rejected',
-      settlementConfirmed: false,
-      error: `Net expected profit $${plan.netProfitUsd.toFixed(2)} is below autonomous minimum $${directive.minimumNetProfitUsd.toFixed(2)}`,
-      latencyMs: 0,
-      netExpectedProfitUsd: plan.netProfitUsd,
-    };
-  }
-
   if (!isSupportedCentralizedVenue(plan.buyVenue) || !isSupportedCentralizedVenue(plan.sellVenue)) {
     return {
       success: false,
       status: 'rejected',
       settlementConfirmed: false,
-      error: `Verified arbitrage plan requires unsupported live venue pairing ${plan.buyVenue}->${plan.sellVenue}; supported venues are ${SHARED_EXECUTION_CAPABILITIES.supportedCentralizedVenues.join(', ')}`,
+      error: `Verified arbitrage plan requires unsupported live venue pairing ${plan.buyVenue}->${plan.sellVenue}; supported venues are ${getCanonicalExecutionCapabilities().supportedCentralizedVenues.join(', ')}`,
       latencyMs: 0,
       netExpectedProfitUsd: plan.netProfitUsd,
     };
@@ -585,7 +528,7 @@ export async function executeVerifiedArbitragePlan(
   if (normalized?.terminal === true) {
     await recordCryptaraExecutionFeedback({
       source: options?.source || 'manual',
-      opportunityId: `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`,
+      opportunityId: feedbackOpportunityId,
       chain: normalizedChain,
       symbol: plan.symbol,
       strategy: 'verified_cex_arbitrage',
@@ -599,14 +542,14 @@ export async function executeVerifiedArbitragePlan(
       timestamp: Date.now(),
       settlementStatus: normalized!.status,
       settlementConfirmed: normalized!.settlementConfirmed,
-      provenance: normalized!.provenance,
+      provenance: [...new Set([...(normalized!.provenance || []), `opportunity:${feedbackOpportunityId}`])],
       settlement: normalized,
       notes: result.error,
     });
   } else {
     logger.warn('CEX settlement is not terminal; deferring Cryptara feedback', {
       component: 'ExecutionOrchestrator',
-      opportunityId: `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`,
+      opportunityId: feedbackOpportunityId,
       expectedProfitUsd: plan.netProfitUsd,
       status: result.status,
       settlementConfirmed,
