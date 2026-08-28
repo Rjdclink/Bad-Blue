@@ -18,7 +18,7 @@ const beam = read('server/services/cryptocrawl/integration/cryptara-beam-wiring.
 const stageManager = read('server/services/cryptocrawl/governance/stage-management.ts');
 const executionIndex = read('server/services/cryptocrawl/execution/index.ts');
 const cexExecutor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
-const constrainedCex = read('server/services/cryptocrawl/execution/constrained-production-cex-adapters.ts');
+const cexSettlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 const cexSerialization = read('server/services/cryptocrawl/execution/cex-order-serialization.ts');
 
 // Profit magnitude must never be an execution ceiling or arbitrary floor.
@@ -53,13 +53,13 @@ forbidText(executionIndex, 'flashbotsAuthConfigured = rpcConfigured', 'RPC confi
 requireText(executionIndex, 'const liveCentralizedReady = !noExecutionGuardEnabled', 'centralized readiness honors the execution kill guard');
 requireText(executionIndex, '!noExecutionGuardEnabled &&\n    liveExecutionEnabled', 'on-chain readiness honors the execution kill guard');
 
-// Canonical CEX execution must preserve venue-legal precision without a hidden rounding cap.
-requireText(cexExecutor, "from './constrained-production-cex-adapters.js'", 'canonical executor imports precision-preserving CEX adapters');
-requireText(cexExecutor, 'createConstrainedProductionCexSettlementAdapters()', 'canonical executor instantiates precision-preserving CEX adapters');
-requireText(constrainedCex, "from './cex-order-serialization.js'", 'CEX submit adapters consume the canonical decimal serializer');
-requireText(constrainedCex, 'cexDecimalString(request.price)', 'CEX order prices use canonical decimal serialization');
-requireText(constrainedCex, 'cexDecimalString(request.quantity)', 'CEX order quantities use canonical decimal serialization');
-forbidText(constrainedCex, 'toFixed(12)', 'CEX submission cannot reintroduce a hidden 12-decimal cap');
+// Canonical CEX execution must preserve venue-legal precision through one settlement authority.
+requireText(cexExecutor, 'createProductionCexSettlementAdapters()', 'canonical executor instantiates the single production CEX settlement authority');
+forbidText(cexExecutor, 'constrained-production-cex-adapters', 'canonical executor cannot depend on a duplicate CEX submit wrapper');
+requireText(cexSettlement, "from './cex-order-serialization.js'", 'production CEX settlement consumes the canonical decimal serializer');
+requireText(cexSettlement, 'cexDecimalString(request.price)', 'production CEX order prices use canonical decimal serialization');
+requireText(cexSettlement, 'cexDecimalString(request.quantity)', 'production CEX order quantities use canonical decimal serialization');
+forbidText(cexSettlement, 'toFixed(12)', 'production CEX submission cannot reintroduce a hidden 12-decimal cap');
 forbidText(cexSerialization, 'toFixed(', 'canonical CEX decimal serialization cannot impose a fixed precision cap');
 
 console.log('CryptoCrawler clean-house authority extension verification passed.');
