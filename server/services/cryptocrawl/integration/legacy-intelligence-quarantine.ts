@@ -37,6 +37,7 @@ export const LEGACY_NON_AUTHORITATIVE_COMPONENTS = [
   'optimization/index.ts (legacy namespace only)',
   'optimization/divine-engine.ts',
   'config/maximum-profitability.ts (legacy compatibility config only)',
+  'services/cryptocrawler-executor/index.ts (historical Reactor executor; not canonical)',
 ] as const;
 
 export function logLegacyIntelligenceQuarantine(): void {
