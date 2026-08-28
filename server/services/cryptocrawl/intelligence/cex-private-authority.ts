@@ -2,16 +2,22 @@ import { createHash, createHmac } from 'crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 
+function finiteEnvNumber(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(min, Math.min(max, value));
+}
+
 const KRAKEN_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_KRAKEN_PRIVATE_TIMEOUT_MS || 12_000));
 const OKX_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_OKX_PRIVATE_TIMEOUT_MS || 12_000));
 const OKX_REGION_CACHE_MS = Math.max(60_000, Number(process.env.CRYPTO_OKX_REGION_CACHE_MS || 3_600_000));
 const OKX_FEE_MIN_INTERVAL_MS = Math.max(425, Number(process.env.CRYPTO_OKX_FEE_MIN_INTERVAL_MS || 450));
 const OKX_ORDER_MIN_INTERVAL_MS = Math.max(0, Number(process.env.CRYPTO_OKX_ORDER_MIN_INTERVAL_MS || 0));
 const OKX_ACCOUNT_READ_MIN_INTERVAL_MS = Math.max(0, Number(process.env.CRYPTO_OKX_ACCOUNT_READ_MIN_INTERVAL_MS || 0));
-const OKX_RATE_RETRY_BASE_MS = Math.max(100, Number(process.env.CRYPTO_OKX_RATE_RETRY_BASE_MS || 1_000));
-const OKX_RATE_RETRY_MAX_MS = Math.max(1_000, Number(process.env.CRYPTO_OKX_RATE_RETRY_MAX_MS || 30_000));
-const OKX_RATE_MAX_RETRIES = Math.max(0, Math.min(8, Number(process.env.CRYPTO_OKX_RATE_MAX_RETRIES || 5)));
-const OKX_RATE_BREAKER_MS = Math.max(1_000, Number(process.env.CRYPTO_OKX_RATE_BREAKER_MS || 30_000));
+const OKX_RATE_RETRY_BASE_MS = finiteEnvNumber('CRYPTO_OKX_RATE_RETRY_BASE_MS', 1_000, 100, 30_000);
+const OKX_RATE_RETRY_MAX_MS = finiteEnvNumber('CRYPTO_OKX_RATE_RETRY_MAX_MS', 30_000, 1_000, 120_000);
+const OKX_RATE_MAX_RETRIES = Math.floor(finiteEnvNumber('CRYPTO_OKX_RATE_MAX_RETRIES', 5, 0, 8));
+const OKX_RATE_BREAKER_MS = finiteEnvNumber('CRYPTO_OKX_RATE_BREAKER_MS', 30_000, 1_000, 300_000);
 
 function credential(name: string): string | null {
   const raw = process.env[name];
@@ -237,29 +243,40 @@ interface OkxLaneState {
   retryCount: number;
 }
 
+interface OkxLaneSnapshot {
+  requestCount: number;
+  lastStartedAt: number;
+  minIntervalMs: number;
+  capacity: number;
+  windowMs: number;
+  priority: number;
+  tokens: number;
+  cooldownUntil: number;
+  breakerOpenUntil: number;
+  consecutiveRateLimits: number;
+  rateLimitCount: number;
+  retryCount: number;
+}
+
 const OKX_LANE_POLICIES: Record<OkxPrivateLane, OkxLanePolicy> = {
-  // Official OKX rate: GET /api/v5/account/trade-fee = 5 requests / 2s / User ID.
   trade_fee: {
-    capacity: Math.max(1, Number(process.env.CRYPTO_OKX_FEE_BUCKET_CAPACITY || 5)),
-    windowMs: Math.max(500, Number(process.env.CRYPTO_OKX_FEE_BUCKET_WINDOW_MS || 2_000)),
+    capacity: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_CAPACITY', 5, 1, 20),
+    windowMs: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_WINDOW_MS', 2_000, 500, 60_000),
     priority: 10,
   },
-  // Official single-order endpoint rate is higher and instrument-scoped. Keep a
-  // conservative global process bucket so fee/account traffic can never consume
-  // the execution lane's reserved capacity.
   order_write: {
-    capacity: Math.max(1, Number(process.env.CRYPTO_OKX_ORDER_BUCKET_CAPACITY || 60)),
-    windowMs: Math.max(500, Number(process.env.CRYPTO_OKX_ORDER_BUCKET_WINDOW_MS || 2_000)),
+    capacity: finiteEnvNumber('CRYPTO_OKX_ORDER_BUCKET_CAPACITY', 60, 1, 300),
+    windowMs: finiteEnvNumber('CRYPTO_OKX_ORDER_BUCKET_WINDOW_MS', 2_000, 500, 60_000),
     priority: 100,
   },
   order_read: {
-    capacity: Math.max(1, Number(process.env.CRYPTO_OKX_ORDER_READ_BUCKET_CAPACITY || 20)),
-    windowMs: Math.max(500, Number(process.env.CRYPTO_OKX_ORDER_READ_BUCKET_WINDOW_MS || 2_000)),
+    capacity: finiteEnvNumber('CRYPTO_OKX_ORDER_READ_BUCKET_CAPACITY', 20, 1, 100),
+    windowMs: finiteEnvNumber('CRYPTO_OKX_ORDER_READ_BUCKET_WINDOW_MS', 2_000, 500, 60_000),
     priority: 80,
   },
   account_read: {
-    capacity: Math.max(1, Number(process.env.CRYPTO_OKX_ACCOUNT_BUCKET_CAPACITY || 10)),
-    windowMs: Math.max(500, Number(process.env.CRYPTO_OKX_ACCOUNT_BUCKET_WINDOW_MS || 2_000)),
+    capacity: finiteEnvNumber('CRYPTO_OKX_ACCOUNT_BUCKET_CAPACITY', 10, 1, 100),
+    windowMs: finiteEnvNumber('CRYPTO_OKX_ACCOUNT_BUCKET_WINDOW_MS', 2_000, 500, 60_000),
     priority: 30,
   },
 };
@@ -376,8 +393,6 @@ function headerDelayMs(response: Response): number | null {
     if (Number.isFinite(parsedDate)) return Math.max(0, parsedDate - Date.now());
   }
 
-  // Some OKX frontends/proxies may expose rate metadata. Treat it as optional
-  // telemetry only: official OKX V5 rate-limit semantics remain endpoint-based.
   const remaining = Number(response.headers.get('OK-RateLimit-Remaining'));
   const resetRaw = response.headers.get('OK-RateLimit-Reset');
   if (Number.isFinite(remaining) && remaining <= 0 && resetRaw) {
@@ -569,45 +584,34 @@ export function getOkxPrivateAuthoritySnapshot(): {
   baseUrl: string | null;
   regionSource: OkxRegionSnapshot['source'] | null;
   regionExpiresAt: number | null;
-  lanes: Record<OkxPrivateLane, {
-    requestCount: number;
-    lastStartedAt: number;
-    minIntervalMs: number;
-    capacity: number;
-    windowMs: number;
-    priority: number;
-    tokens: number;
-    cooldownUntil: number;
-    breakerOpenUntil: number;
-    consecutiveRateLimits: number;
-    rateLimitCount: number;
-    retryCount: number;
-  }>;
+  lanes: Record<OkxPrivateLane, OkxLaneSnapshot>;
 } {
+  const lanes = Object.fromEntries(
+    (Object.keys(okxLanes) as OkxPrivateLane[]).map(lane => {
+      refillLane(lane);
+      const state = okxLanes[lane];
+      const policy = OKX_LANE_POLICIES[lane];
+      return [lane, {
+        requestCount: state.requestCount,
+        lastStartedAt: state.lastStartedAt,
+        minIntervalMs: laneIntervalMs(lane),
+        capacity: policy.capacity,
+        windowMs: policy.windowMs,
+        priority: policy.priority,
+        tokens: Number(state.tokens.toFixed(3)),
+        cooldownUntil: state.cooldownUntil,
+        breakerOpenUntil: state.breakerOpenUntil,
+        consecutiveRateLimits: state.consecutiveRateLimits,
+        rateLimitCount: state.rateLimitCount,
+        retryCount: state.retryCount,
+      } satisfies OkxLaneSnapshot];
+    }),
+  ) as Record<OkxPrivateLane, OkxLaneSnapshot>;
+
   return {
     baseUrl: getCachedOkxExecutionRestBaseUrl(),
     regionSource: okxRegion?.source || null,
     regionExpiresAt: okxRegion?.expiresAt || null,
-    lanes: Object.fromEntries(
-      (Object.keys(okxLanes) as OkxPrivateLane[]).map(lane => {
-        refillLane(lane);
-        const state = okxLanes[lane];
-        const policy = OKX_LANE_POLICIES[lane];
-        return [lane, {
-          requestCount: state.requestCount,
-          lastStartedAt: state.lastStartedAt,
-          minIntervalMs: laneIntervalMs(lane),
-          capacity: policy.capacity,
-          windowMs: policy.windowMs,
-          priority: policy.priority,
-          tokens: Number(state.tokens.toFixed(3)),
-          cooldownUntil: state.cooldownUntil,
-          breakerOpenUntil: state.breakerOpenUntil,
-          consecutiveRateLimits: state.consecutiveRateLimits,
-          rateLimitCount: state.rateLimitCount,
-          retryCount: state.retryCount,
-        }];
-      }),
-    ) as ReturnType<typeof getOkxPrivateAuthoritySnapshot>['lanes'],
+    lanes,
   };
 }
