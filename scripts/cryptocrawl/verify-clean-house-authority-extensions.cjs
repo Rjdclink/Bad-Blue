@@ -26,6 +26,7 @@ const cexSerialization = read('server/services/cryptocrawl/execution/cex-order-s
 const legacyMasterOrchestrator = read('server/services/cryptocrawl/core/master-orchestrator.ts');
 const legacyIndex = read('server/services/cryptocrawl/legacy/index.ts');
 const legacyQuarantine = read('server/services/cryptocrawl/integration/legacy-intelligence-quarantine.ts');
+const unifiedReactor = read('server/reactor/unified.ts');
 
 // Profit magnitude must never be an execution ceiling or arbitrary floor.
 requireText(riskGovernor, 'profitCeilingAuthority: false', 'RiskGovernor declares no profit-ceiling authority');
@@ -103,6 +104,14 @@ forbidText(legacyMasterOrchestrator, 'TwinManager.startAll', 'legacy MasterOrche
 forbidText(legacyMasterOrchestrator, 'StarburstEngine.startMonitoring', 'legacy MasterOrchestrator cannot start Starburst monitoring');
 forbidText(legacyMasterOrchestrator, 'LuxSwarm.observe()', 'legacy MasterOrchestrator cannot derive synthetic runtime metrics from LuxSwarm');
 
+// Unified Reactor must not start or re-export the historical randomized CryptoCrawler executor.
+forbidText(unifiedReactor, "from '../../services/cryptocrawler-executor/index'", 'Reactor cannot import historical CryptoCrawler executor');
+forbidText(unifiedReactor, 'getCryptoExecutor()', 'Reactor cannot instantiate historical CryptoCrawler executor');
+forbidText(unifiedReactor, 'CryptoCrawlerExecutor, getCryptoExecutor', 'Reactor cannot re-export historical CryptoCrawler executor authority');
+requireText(unifiedReactor, "name: 'crypto-executor-legacy'", 'Reactor reports retired CryptoCrawler executor explicitly');
+requireText(unifiedReactor, "authority: 'none'", 'Reactor reports no legacy CryptoCrawler execution authority');
+requireText(unifiedReactor, 'Synthetic ActionResult generation is no longer permitted', 'legacy Reactor crypto integration fails closed instead of fabricating results');
+
 // Every explicit legacy namespace must remain visibly non-authoritative and quarantined.
 requireText(legacyIndex, "LEGACY_CRYPTOCRAWLER_AUTHORITY = 'none'", 'legacy public namespace declares no authority');
 requireText(legacyIndex, 'LEGACY_CRYPTOCRAWLER_EXECUTION_ALLOWED = false', 'legacy public namespace forbids execution authority');
@@ -123,6 +132,7 @@ for (const legacyPath of [
   'evolution/index.ts (legacy namespace only)',
   'optimization/index.ts (legacy namespace only)',
   'config/maximum-profitability.ts (legacy compatibility config only)',
+  'services/cryptocrawler-executor/index.ts (historical Reactor executor; not canonical)',
 ]) {
   requireText(legacyQuarantine, `'${legacyPath}'`, `legacy quarantine inventories ${legacyPath}`);
 }
