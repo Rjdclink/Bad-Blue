@@ -6,7 +6,10 @@ export type CryptoCrawlerCexVenue =
   | 'kucoin'
   | 'bybit'
   | 'gate'
-  | 'huobi';
+  | 'huobi'
+  | 'mexc'
+  | 'bitfinex'
+  | 'cryptocom';
 
 export interface VenueCapability {
   venue: CryptoCrawlerCexVenue;
@@ -84,6 +87,21 @@ const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = O
     venue: 'huobi', enabled: true, publicDiscovery: true, executableQuotes: false,
     measuredOrderBook: false, authenticatedFeeEvidence: false, liveExecution: false,
     settlementVerification: false, reason: 'public discovery only until measured quote and settlement-safe execution adapters are installed',
+  }),
+  mexc: Object.freeze({
+    venue: 'mexc', enabled: true, publicDiscovery: true, executableQuotes: false,
+    measuredOrderBook: false, authenticatedFeeEvidence: false, liveExecution: false,
+    settlementVerification: false, reason: 'public spot discovery only; execution remains disabled until full measured/authenticated/settlement adapters exist',
+  }),
+  bitfinex: Object.freeze({
+    venue: 'bitfinex', enabled: true, publicDiscovery: true, executableQuotes: false,
+    measuredOrderBook: false, authenticatedFeeEvidence: false, liveExecution: false,
+    settlementVerification: false, reason: 'public multi-ticker discovery only; execution remains disabled until full measured/authenticated/settlement adapters exist',
+  }),
+  cryptocom: Object.freeze({
+    venue: 'cryptocom', enabled: true, publicDiscovery: true, executableQuotes: false,
+    measuredOrderBook: false, authenticatedFeeEvidence: false, liveExecution: false,
+    settlementVerification: false, reason: 'public Exchange v1 ticker discovery only; execution remains disabled until full measured/authenticated/settlement adapters exist',
   }),
 });
 
