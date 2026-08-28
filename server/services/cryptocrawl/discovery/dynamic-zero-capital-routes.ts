@@ -9,6 +9,7 @@ import {
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
 import type { SupportedExecutionChain } from '../execution/adapters/onchain-payload-builder.js';
+import { discoverGraphlessDexTokens } from './graphless-dex-scout.js';
 import {
   recordZeroCapitalRouteQuoteCycle,
   selectZeroCapitalRoutesForQuote,
@@ -24,6 +25,10 @@ export interface DynamicZeroCapitalDiscoveryState {
   quoteBudgetSelections: number;
   chains: Record<string, {
     candidates: number;
+    stableTemplates: number;
+    graphlessTemplates: number;
+    graphlessTokens: number;
+    graphlessSources: string[];
     selectedForQuote: number;
     measuredQuotes: number;
     positiveQuotes: number;
@@ -47,6 +52,7 @@ const state: DynamicZeroCapitalDiscoveryState = {
   chains: {},
 };
 
+const cachedGraphlessTemplates = new Map<SupportedExecutionChain, ConfiguredZeroCapitalRoute[]>();
 const DYNAMIC_EXECUTABLE_CHAINS = new Set<ChainId>(['polygon', 'arbitrum']);
 const DYNAMIC_PROTOCOL_PAIRS = [
   ['uniswapV3', 'sushiswap'],
@@ -92,6 +98,29 @@ function protocolLeg(
     : { protocol, tokenIn, tokenOut, fee: 0.003 };
 }
 
+function routeBase(input: {
+  id: string;
+  chain: SupportedExecutionChain;
+  symbol: 'USDC' | 'USDT';
+  token: string;
+  amountUsd: number;
+  legs: ConfiguredZeroCapitalRoute['legs'];
+}): ConfiguredZeroCapitalRoute {
+  return {
+    id: input.id,
+    chain: input.chain,
+    inputAssetSymbol: input.symbol,
+    inputToken: input.token,
+    inputTokenDecimals: 6,
+    amountIn: stableBaseUnits(input.amountUsd),
+    estimatedGasCostInInputToken: '0',
+    relayFeeInInputToken: '0',
+    flashLoanFeeBps: bounded(process.env.ZERO_CAPITAL_DYNAMIC_FLASH_LOAN_FEE_BPS, 12, 0, 1000),
+    minNetProfitBps: bounded(process.env.ZERO_CAPITAL_DYNAMIC_MIN_NET_PROFIT_BPS, 1, 1, 5000),
+    legs: input.legs,
+  };
+}
+
 function topScores(scores: readonly ZeroCapitalRoutePreScore[]): Array<{ routeId: string; preScore: number }> {
   return scores
     .filter((score): score is ZeroCapitalRoutePreScore & { preScore: number } => score.preScore !== null && Number.isFinite(score.preScore))
@@ -101,9 +130,8 @@ function topScores(scores: readonly ZeroCapitalRoutePreScore[]): Array<{ routeId
 }
 
 /**
- * Structural route enumeration is not profitability evidence. It only defines
- * bounded executable protocol/token paths that must still receive live on-chain
- * quotes and all-in cost measurement before becoming an opportunity.
+ * Compatibility/static seed routes. They guarantee that graphless discovery can
+ * degrade without disabling the existing USDC/USDT atomic scanner.
  */
 export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionChain): ConfiguredZeroCapitalRoute[] {
   if (!DYNAMIC_EXECUTABLE_CHAINS.has(chain as ChainId)) return [];
@@ -111,37 +139,105 @@ export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionC
   if (!config?.usdc || !config?.usdt) return [];
 
   const routes: ConfiguredZeroCapitalRoute[] = [];
-  const amounts = notionalsUsd();
   for (const input of [
     { symbol: 'USDC' as const, token: config.usdc, other: config.usdt },
     { symbol: 'USDT' as const, token: config.usdt, other: config.usdc },
   ]) {
-    for (const notional of amounts) {
+    for (const notional of notionalsUsd()) {
       for (const [firstProtocol, secondProtocol] of DYNAMIC_PROTOCOL_PAIRS) {
         for (const feeTier of feeTiers()) {
-          routes.push({
+          routes.push(routeBase({
             id: `dynamic-${chain}-${input.symbol}-${notional}-${firstProtocol}-${secondProtocol}-${feeTier}`,
             chain,
-            inputAssetSymbol: input.symbol,
-            inputToken: input.token,
-            inputTokenDecimals: 6,
-            amountIn: stableBaseUnits(notional),
-            // Structural templates are never passed to profitability evaluation.
-            // Live gas-cost enrichment below replaces these placeholders first.
-            estimatedGasCostInInputToken: '0',
-            relayFeeInInputToken: '0',
-            flashLoanFeeBps: bounded(process.env.ZERO_CAPITAL_DYNAMIC_FLASH_LOAN_FEE_BPS, 12, 0, 1000),
-            minNetProfitBps: bounded(process.env.ZERO_CAPITAL_DYNAMIC_MIN_NET_PROFIT_BPS, 1, 1, 5000),
+            symbol: input.symbol,
+            token: input.token,
+            amountUsd: notional,
             legs: [
               protocolLeg(firstProtocol, input.token, input.other, feeTier),
               protocolLeg(secondProtocol, input.other, input.token, feeTier),
             ],
-          });
+          }));
         }
       }
     }
   }
   return routes;
+}
+
+/**
+ * Builds volatile/intermediate-token atomic cycles from a no-key discovery
+ * surface. Public scout data is only candidate generation; every resulting leg
+ * is re-quoted directly by the chain-specific quoter before profitability can
+ * become deterministic evidence.
+ */
+async function buildGraphlessProfitSurfaceTemplates(
+  chain: SupportedExecutionChain,
+  provider: providers.Provider,
+): Promise<{ routes: ConfiguredZeroCapitalRoute[]; tokens: number; sources: string[] }> {
+  if (!DYNAMIC_EXECUTABLE_CHAINS.has(chain as ChainId)) return { routes: [], tokens: 0, sources: [] };
+  const config = SUPPORTED_CHAINS[chain as ChainId];
+  if (!config?.usdc || !config?.usdt) return { routes: [], tokens: 0, sources: [] };
+
+  const scout = await discoverGraphlessDexTokens(chain, provider, [config.usdc, config.usdt]);
+  const routes: ConfiguredZeroCapitalRoute[] = [];
+  const tiers = feeTiers();
+  const inputs = [
+    { symbol: 'USDC' as const, token: config.usdc },
+    { symbol: 'USDT' as const, token: config.usdt },
+  ];
+
+  for (const candidate of scout.candidates) {
+    const middle = candidate.token;
+    for (const input of inputs) {
+      if (middle.toLowerCase() === input.token.toLowerCase()) continue;
+      for (const notional of notionalsUsd()) {
+        // Cross-DEX cycles: direct quoting will discard unsupported/non-liquid legs.
+        for (const [firstProtocol, secondProtocol] of DYNAMIC_PROTOCOL_PAIRS) {
+          for (const feeTier of tiers) {
+            routes.push(routeBase({
+              id: `graphless-${chain}-${input.symbol}-${middle.toLowerCase()}-${notional}-${firstProtocol}-${secondProtocol}-${feeTier}`,
+              chain,
+              symbol: input.symbol,
+              token: input.token,
+              amountUsd: notional,
+              legs: [
+                protocolLeg(firstProtocol, input.token, middle, feeTier),
+                protocolLeg(secondProtocol, middle, input.token, feeTier),
+              ],
+            }));
+          }
+        }
+
+        // Same-DEX fee-tier dislocations are valid atomic opportunities too.
+        for (const firstTier of tiers) {
+          for (const secondTier of tiers) {
+            if (firstTier === secondTier) continue;
+            routes.push(routeBase({
+              id: `graphless-${chain}-${input.symbol}-${middle.toLowerCase()}-${notional}-univ3-${firstTier}-${secondTier}`,
+              chain,
+              symbol: input.symbol,
+              token: input.token,
+              amountUsd: notional,
+              legs: [
+                protocolLeg('uniswapV3', input.token, middle, firstTier),
+                protocolLeg('uniswapV3', middle, input.token, secondTier),
+              ],
+            }));
+          }
+        }
+      }
+    }
+  }
+
+  const deduped = new Map(routes.map(route => [route.id, route]));
+  const values = [...deduped.values()];
+  cachedGraphlessTemplates.set(chain, values);
+  return { routes: values, tokens: scout.candidates.length, sources: scout.sources };
+}
+
+export function getCachedGraphlessDynamicRouteTemplates(chain?: SupportedExecutionChain): ConfiguredZeroCapitalRoute[] {
+  if (chain) return [...(cachedGraphlessTemplates.get(chain) || [])];
+  return [...cachedGraphlessTemplates.values()].flatMap(routes => routes);
 }
 
 async function enrichMeasuredGasCost(
@@ -151,9 +247,6 @@ async function enrichMeasuredGasCost(
   const gas = await gasOracle.getGasPrice(chain);
   if (!Number.isFinite(gas.usdCost) || gas.usdCost < 0) throw new Error(`Measured gas cost unavailable for ${chain}`);
 
-  // GasOracle's usdCost is a live fee-price measurement normalized to its
-  // DEFAULT_GAS_LIMIT. Scale the same measured gas price to a conservative
-  // receiver-call budget; this is an explicit estimate, not a fabricated fill.
   const estimatedGasUnits = Math.max(
     DEFAULT_GAS_LIMIT,
     Math.floor(bounded(process.env.ZERO_CAPITAL_DYNAMIC_EXECUTION_GAS_UNITS, 1_400_000, 100_000, 5_000_000)),
@@ -171,13 +264,29 @@ export async function discoverDynamicZeroCapitalQuotes(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
 ): Promise<QuotedZeroCapitalRoute[]> {
-  const templates = buildDynamicZeroCapitalRouteTemplates(chain);
+  const stableTemplates = buildDynamicZeroCapitalRouteTemplates(chain);
+  let graphless = { routes: [] as ConfiguredZeroCapitalRoute[], tokens: 0, sources: [] as string[] };
+  try {
+    graphless = await buildGraphlessProfitSurfaceTemplates(chain, provider);
+  } catch (error) {
+    logger.warn('[DynamicZeroCapital] Graphless DEX scout degraded; stable seed scanner retained', {
+      component: 'DynamicZeroCapitalRouteDiscovery',
+      chain,
+      error: error instanceof Error ? error.message : String(error),
+      noNewApiKeys: true,
+    });
+  }
+  const templates = [...new Map([...stableTemplates, ...graphless.routes].map(route => [route.id, route])).values()];
   state.cycles++;
   state.observedAt = Date.now();
   state.structuralCandidates += templates.length;
   if (templates.length === 0) {
     state.chains[chain] = {
       candidates: 0,
+      stableTemplates: stableTemplates.length,
+      graphlessTemplates: graphless.routes.length,
+      graphlessTokens: graphless.tokens,
+      graphlessSources: graphless.sources,
       selectedForQuote: 0,
       measuredQuotes: 0,
       positiveQuotes: 0,
@@ -198,13 +307,15 @@ export async function discoverDynamicZeroCapitalQuotes(
     const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
     recordZeroCapitalRouteQuoteCycle(selected, quotes);
 
-    // `measuredQuotes` is retained as compatibility telemetry for admitted fresh
-    // quote work. Structural coverage is tracked independently and is never shrunk.
     state.measuredQuotes += selected.length;
     state.positiveQuotes += quotes.length;
     state.quoteBudgetSelections += selected.length;
     state.chains[chain] = {
       candidates: templates.length,
+      stableTemplates: stableTemplates.length,
+      graphlessTemplates: graphless.routes.length,
+      graphlessTokens: graphless.tokens,
+      graphlessSources: graphless.sources,
       selectedForQuote: selected.length,
       measuredQuotes: selected.length,
       positiveQuotes: quotes.length,
@@ -215,10 +326,14 @@ export async function discoverDynamicZeroCapitalQuotes(
       exploitationSelected: preselection.exploitationSelected,
       topPreScores: topScores(preselection.scores),
     };
-    logger.info('[DynamicZeroCapital] Economically allocated measured route cycle completed', {
+    logger.info('[DynamicZeroCapital] Graphless economically allocated DEX route cycle completed', {
       component: 'DynamicZeroCapitalRouteDiscovery',
       chain,
       structuralCandidates: templates.length,
+      stableTemplates: stableTemplates.length,
+      graphlessTemplates: graphless.routes.length,
+      graphlessTokens: graphless.tokens,
+      graphlessSources: graphless.sources,
       selectedForQuote: selected.length,
       quoteBudget: preselection.quoteBudget,
       scoredCandidates: preselection.scoredCandidates,
@@ -229,6 +344,7 @@ export async function discoverDynamicZeroCapitalQuotes(
       preScoreAuthority: preselection.authority,
       deterministicProfitAuthority: preselection.deterministicProfitAuthority,
       executionAuthority: preselection.executionAuthority,
+      apiKeysRequired: false,
       syntheticEvidenceAllowed: false,
     });
     return quotes;
@@ -236,6 +352,10 @@ export async function discoverDynamicZeroCapitalQuotes(
     const message = error instanceof Error ? error.message : String(error);
     state.chains[chain] = {
       candidates: templates.length,
+      stableTemplates: stableTemplates.length,
+      graphlessTemplates: graphless.routes.length,
+      graphlessTokens: graphless.tokens,
+      graphlessSources: graphless.sources,
       selectedForQuote: 0,
       measuredQuotes: 0,
       positiveQuotes: 0,
@@ -261,6 +381,7 @@ export function getDynamicZeroCapitalDiscoveryState(): DynamicZeroCapitalDiscove
     ...state,
     chains: Object.fromEntries(Object.entries(state.chains).map(([chain, value]) => [chain, {
       ...value,
+      graphlessSources: [...value.graphlessSources],
       topPreScores: value.topPreScores.map(score => ({ ...score })),
     }])),
   };
