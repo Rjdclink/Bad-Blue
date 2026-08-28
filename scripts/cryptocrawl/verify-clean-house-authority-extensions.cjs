@@ -16,11 +16,12 @@ const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical
 const genie = read('server/services/genie-controller/index.ts');
 const beam = read('server/services/cryptocrawl/integration/cryptara-beam-wiring.ts');
 const stageManager = read('server/services/cryptocrawl/governance/stage-management.ts');
+const executionIndex = read('server/services/cryptocrawl/execution/index.ts');
 const cexExecutor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
 const constrainedCex = read('server/services/cryptocrawl/execution/constrained-production-cex-adapters.ts');
 const cexSerialization = read('server/services/cryptocrawl/execution/cex-order-serialization.ts');
 
-// Profit magnitude must never be an execution ceiling.
+// Profit magnitude must never be an execution ceiling or arbitrary floor.
 requireText(riskGovernor, 'profitCeilingAuthority: false', 'RiskGovernor declares no profit-ceiling authority');
 forbidText(riskGovernor, 'currentDailyProfit >=', 'RiskGovernor cannot block after a daily profit ceiling');
 forbidText(riskGovernor, 'Trade would exceed daily profit limit', 'RiskGovernor cannot reject profitable trades for exceeding a target');
@@ -29,6 +30,8 @@ forbidText(riskGovernor, 'positionRatio > 0.95', 'RiskGovernor cannot add a hidd
 requireText(riskGovernor, 'proposal.positionSizeUSD > stageConfig.maxPositionSizeUSD', 'configured position limit remains authoritative');
 requireText(riskGovernor, "this.circuitBreakers.set('daily-loss'", 'loss-side safety circuit breaker remains');
 requireText(riskGovernor, 'evidence!.expectedProfit > 0', 'Monte Carlo risk still requires positive expected economics');
+forbidText(executionIndex, 'directive.minimumNetProfitUsd > 0', 'execution cannot impose an autonomous minimum-profit floor');
+requireText(executionIndex, 'plan.netProfitUsd <= 0', 'verified execution still rejects non-positive all-in economics');
 
 // Historical StageManager daily targets are compatibility/advancement metadata only.
 requireText(stageRetirement, 'StageManager.recordTrade is retired', 'legacy StageManager accounting entry point fails closed');
@@ -43,6 +46,12 @@ requireText(genie, 'this.cryptara = ensureCryptaraBeamWiring();', 'Genie initial
 forbidText(genie, 'this.cryptara = getCryptara();', 'Genie cannot initialize an un-wired Cryptara singleton');
 requireText(beam, 'ensureAuthoritativeMonteCarloWiring()', 'Beam route remains backed by authoritative MC');
 requireText(beam, 'EVIDENCE_INCOMPLETE: verified_opportunity_context', 'direct MC without verified opportunity context fails closed');
+
+// Legacy shared readiness must remain truthful even when reached by compatibility callers.
+requireText(executionIndex, 'normalizePrivateKey(process.env.FLASHBOTS_AUTH_KEY)', 'Flashbots readiness requires explicit auth material');
+forbidText(executionIndex, 'flashbotsAuthConfigured = rpcConfigured', 'RPC configuration cannot impersonate Flashbots authentication');
+requireText(executionIndex, 'const liveCentralizedReady = !noExecutionGuardEnabled', 'centralized readiness honors the execution kill guard');
+requireText(executionIndex, '!noExecutionGuardEnabled &&\n    liveExecutionEnabled', 'on-chain readiness honors the execution kill guard');
 
 // Canonical CEX execution must preserve venue-legal precision without a hidden rounding cap.
 requireText(cexExecutor, "from './constrained-production-cex-adapters.js'", 'canonical executor imports precision-preserving CEX adapters');
