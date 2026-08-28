@@ -1,5 +1,5 @@
-import type { QuantiExecutionResult, QuantiWorkload } from './types.js';
-import { QuantiCompError, type QuantiCompRuntime, type QuantiSubmitOptions } from './runtime.js';
+import { QuantiCompError, type QuantiExecutionResult, type QuantiWorkload } from './types.js';
+import type { QuantiCompRuntime, QuantiSubmitOptions } from './runtime.js';
 
 const installed = new WeakSet<object>();
 let pressureState: 'normal' | 'pressured' = 'normal';
@@ -22,12 +22,12 @@ export function installQuantiAdmissionControl(runtime: QuantiCompRuntime): void 
     else if (pressureState === 'pressured' && recovered) pressureState = 'normal';
 
     if (status.queuedExecutions >= hardQueue) {
-      return Promise.reject(new QuantiCompError('Quanti Comp hard queue limit reached', 'OVERLOADED' as any, { workloadId: workload.id, queueDepth: status.queuedExecutions }));
+      return Promise.reject(new QuantiCompError('Quanti Comp hard queue limit reached', 'INVALID_WORKLOAD', { workloadId: workload.id, queueDepth: status.queuedExecutions, reason: 'overloaded' }));
     }
     const reserved = status.activeExecutions >= Math.max(0, status.maxConcurrency - reserveHot);
     if (isAdvisoryLane(workload.lane) && (status.queuedExecutions >= softQueue || pressureState === 'pressured' || reserved)) {
-      return Promise.reject(new QuantiCompError('Advisory Quanti workload shed to preserve hot safety/decision capacity', 'OVERLOADED' as any, {
-        workloadId: workload.id, lane: workload.lane, queueDepth: status.queuedExecutions, pressureState, reserveHot,
+      return Promise.reject(new QuantiCompError('Advisory Quanti workload shed to preserve hot safety/decision capacity', 'INVALID_WORKLOAD', {
+        workloadId: workload.id, lane: workload.lane, queueDepth: status.queuedExecutions, pressureState, reserveHot, reason: 'advisory_overload_shed',
       }));
     }
     return originalSubmit(workload, options);
