@@ -26,6 +26,18 @@ function criticalMissingInformation(items: readonly string[], makerCanary = fals
   );
 }
 
+function normalizeCoinbaseCredentialAliases(): void {
+  if (!process.env.COINBASE_API_SECRET?.trim() && process.env.COINBASE_SECRET_KEY?.trim()) {
+    process.env.COINBASE_API_SECRET = process.env.COINBASE_SECRET_KEY;
+    logger.info('[PositiveProfitCapture] Normalized Railway Coinbase secret-key alias', {
+      component: 'PositiveProfitCapture',
+      sourceAlias: 'COINBASE_SECRET_KEY',
+      canonicalAlias: 'COINBASE_API_SECRET',
+      secretValueLogged: false,
+    });
+  }
+}
+
 function enforceAuthenticatedKrakenFeeAuthority(): void {
   const authenticated = Boolean(
     process.env.KRAKEN_API_KEY?.trim()
@@ -87,6 +99,7 @@ function normalizePositiveAssessment(
 export function ensurePositiveProfitCaptureWiring(): void {
   if (installed) return;
   installed = true;
+  normalizeCoinbaseCredentialAliases();
   ensureCoinCapEnvironmentWiring();
   enforceAuthenticatedKrakenFeeAuthority();
   ensureDynamicRpcProviderWiring();
