@@ -12,6 +12,12 @@ import { DexSettlementObserver, type DexSettlementPriceContext } from './dex-set
 import type { NormalizedRealizedExecution } from './settlement-types.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { normalizePrivateKey, walletFromPrivateKey } from '../core/wallet-identity.js';
+import {
+  assessCanonicalExecutionEnvironment,
+  getCanonicalExecutionCapabilities,
+  type CanonicalExecutionCapabilities,
+  type CanonicalExecutionEnvironmentReadiness,
+} from './execution-readiness.js';
 
 interface OpportunityData {
   to: string;
@@ -61,41 +67,12 @@ interface ExecutionResult {
   error?: string;
 }
 
-export interface SharedExecutionCapabilities {
-  explicitPayloadRequired: boolean;
-  genericOnChainPayloadBuilder: boolean;
-  structuredOnChainPayloadBuilder: boolean;
-  autonomousRoutePlanner: boolean;
-  flashLoanReceiverSupport: boolean;
-  liveOrderGuarded: boolean;
-  supportedCentralizedVenues: Array<'coinbase' | 'kraken' | 'okx'>;
-}
-
-export interface SharedExecutionEnvironmentReadiness {
-  noExecutionGuardEnabled: boolean;
-  placeholderExecutionAllowed: boolean;
-  liveExecutionEnabled: boolean;
-  liveExecutionConfirmed: boolean;
-  rpcConfigured: boolean;
-  walletConfigured: boolean;
-  centralizedExchangeConfigured: boolean;
-  flashbotsAuthConfigured: boolean;
-  zeroCapitalExecutionEnabled: boolean;
-  zeroCapitalReceiverConfigured: boolean;
-  liveCentralizedReady: boolean;
-  liveOnchainReady: boolean;
-  anyLiveRouteReady: boolean;
-}
-
-const SHARED_EXECUTION_CAPABILITIES: SharedExecutionCapabilities = {
-  explicitPayloadRequired: true,
-  genericOnChainPayloadBuilder: false,
-  structuredOnChainPayloadBuilder: true,
-  autonomousRoutePlanner: true,
-  flashLoanReceiverSupport: true,
-  liveOrderGuarded: true,
-  supportedCentralizedVenues: ['coinbase', 'kraken', 'okx'],
-};
+/**
+ * Legacy compatibility names only. The canonical execution-readiness module is
+ * the sole authority for capability and environment readiness semantics.
+ */
+export type SharedExecutionCapabilities = CanonicalExecutionCapabilities;
+export type SharedExecutionEnvironmentReadiness = CanonicalExecutionEnvironmentReadiness;
 
 const PLACEHOLDER_OPPORTUNITY_PAYLOAD: OpportunityData = {
   to: '0x0000000000000000000000000000000000000001',
@@ -202,10 +179,6 @@ function shouldBlockForDirective(opp: Opportunity): string | null {
     return 'Expected net profit must be positive after all verified execution costs';
   }
 
-  if (directive.minimumNetProfitUsd > 0 && opp.profit < directive.minimumNetProfitUsd) {
-    return `Expected profit $${opp.profit.toFixed(2)} is below autonomous minimum net profit $${directive.minimumNetProfitUsd.toFixed(2)}`;
-  }
-
   if (opp.requiresFlashLoan && !directive.preferredExecutionModes.includes('zero_capital')) {
     return 'Autonomous directive does not currently prefer zero-capital execution';
   }
@@ -233,65 +206,14 @@ function measuredSettlementFeeUsd(economics: NormalizedRealizedExecution['realiz
   return measuredCosts.length > 0 ? measuredCosts.reduce((sum, value) => sum + value, 0) : null;
 }
 
+/** @deprecated Compatibility shim; use getCanonicalExecutionCapabilities(). */
 export function getSharedExecutionCapabilities(): SharedExecutionCapabilities {
-  return {
-    ...SHARED_EXECUTION_CAPABILITIES,
-    supportedCentralizedVenues: [...SHARED_EXECUTION_CAPABILITIES.supportedCentralizedVenues],
-  };
+  return getCanonicalExecutionCapabilities();
 }
 
+/** @deprecated Compatibility shim; use assessCanonicalExecutionEnvironment(). */
 export function assessSharedExecutionEnvironment(): SharedExecutionEnvironmentReadiness {
-  const noExecutionGuardEnabled = process.env.NO_EXECUTION === 'true';
-  const placeholderExecutionAllowed = process.env.CRYPTO_ALLOW_PLACEHOLDER_EXECUTION === 'true';
-  const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
-  const liveExecutionConfirmed = process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
-  const rpcConfigured = !!(
-    process.env.PRIVATE_RPC_URL?.trim() ||
-    process.env.RPC_URL?.trim() ||
-    process.env.ETHEREUM_RPC_URL?.trim()
-  );
-  const walletConfigured = !!normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
-  const krakenConfigured = !!(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim());
-  const okxConfigured = !!(
-    process.env.OKX_API_KEY?.trim()
-    && process.env.OKX_API_SECRET?.trim()
-    && process.env.OKX_API_PASSPHRASE?.trim()
-  );
-  const coinbaseConfigured = !!(
-    (process.env.COINBASE_API_KEY?.trim() || process.env.COINBASE_KEY_NAME?.trim() || process.env.CDP_API_KEY_NAME?.trim())
-    && (process.env.COINBASE_API_SECRET?.trim() || process.env.COINBASE_KEY_SECRET?.trim() || process.env.CDP_API_KEY_SECRET?.trim())
-  );
-  // CEX-CEX execution needs two independently configured venue accounts. Runtime
-  // fee/permission/depth/inventory evidence still gates each individual plan.
-  const centralizedExchangeConfigured = [krakenConfigured, okxConfigured, coinbaseConfigured].filter(Boolean).length >= 2;
-  // Flashbots auth is application-owned and persisted by the zero-capital engine.
-  // This synchronous probe can only report whether initialization has a usable RPC.
-  const flashbotsAuthConfigured = rpcConfigured;
-  const zeroCapitalExecutionEnabled = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
-  const zeroCapitalReceiverConfigured = !!process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER?.trim();
-  const liveCentralizedReady = liveExecutionEnabled && liveExecutionConfirmed && centralizedExchangeConfigured;
-  const liveOnchainReady =
-    liveExecutionEnabled &&
-    liveExecutionConfirmed &&
-    rpcConfigured &&
-    walletConfigured &&
-    SHARED_EXECUTION_CAPABILITIES.structuredOnChainPayloadBuilder;
-
-  return {
-    noExecutionGuardEnabled,
-    placeholderExecutionAllowed,
-    liveExecutionEnabled,
-    liveExecutionConfirmed,
-    rpcConfigured,
-    walletConfigured,
-    centralizedExchangeConfigured,
-    flashbotsAuthConfigured,
-    zeroCapitalExecutionEnabled,
-    zeroCapitalReceiverConfigured,
-    liveCentralizedReady,
-    liveOnchainReady,
-    anyLiveRouteReady: liveCentralizedReady || liveOnchainReady,
-  };
+  return assessCanonicalExecutionEnvironment();
 }
 
 // Create singleton instances
@@ -569,23 +491,12 @@ export async function executeVerifiedArbitragePlan(
     };
   }
 
-  if (directive.minimumNetProfitUsd > 0 && plan.netProfitUsd < directive.minimumNetProfitUsd) {
-    return {
-      success: false,
-      status: 'rejected',
-      settlementConfirmed: false,
-      error: `Net expected profit $${plan.netProfitUsd.toFixed(2)} is below autonomous minimum $${directive.minimumNetProfitUsd.toFixed(2)}`,
-      latencyMs: 0,
-      netExpectedProfitUsd: plan.netProfitUsd,
-    };
-  }
-
   if (!isSupportedCentralizedVenue(plan.buyVenue) || !isSupportedCentralizedVenue(plan.sellVenue)) {
     return {
       success: false,
       status: 'rejected',
       settlementConfirmed: false,
-      error: `Verified arbitrage plan requires unsupported live venue pairing ${plan.buyVenue}->${plan.sellVenue}; supported venues are ${SHARED_EXECUTION_CAPABILITIES.supportedCentralizedVenues.join(', ')}`,
+      error: `Verified arbitrage plan requires unsupported live venue pairing ${plan.buyVenue}->${plan.sellVenue}; supported venues are ${getCanonicalExecutionCapabilities().supportedCentralizedVenues.join(', ')}`,
       latencyMs: 0,
       netExpectedProfitUsd: plan.netProfitUsd,
     };

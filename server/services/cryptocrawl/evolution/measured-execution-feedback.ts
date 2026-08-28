@@ -2,7 +2,6 @@ import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
-import { getHyperEvolutionEngine } from './hyper-evolution-engine.js';
 import { RuntimeJsonStateStore } from '../integration/runtime-json-state-store.js';
 
 export interface MeasuredExecutionSample {
@@ -61,25 +60,61 @@ function normalizeSample(feedback: CryptaraExecutionFeedback): MeasuredExecution
   };
 }
 
-function validSample(input: unknown): input is MeasuredExecutionSample {
-  if (!input || typeof input !== 'object') return false;
+/**
+ * Hydrate both current samples and version-1 samples written before eventId was
+ * added. Older valid measured evidence is migrated instead of silently dropped.
+ */
+function normalizePersistedSample(input: unknown): MeasuredExecutionSample | null {
+  if (!input || typeof input !== 'object') return null;
   const value = input as Partial<MeasuredExecutionSample>;
-  return typeof value.eventId === 'string' && value.eventId.length > 0 &&
-    typeof value.chain === 'string' && typeof value.symbol === 'string' &&
-    typeof value.strategy === 'string' && typeof value.success === 'boolean' &&
-    typeof value.timestamp === 'number' && Number.isFinite(value.timestamp) &&
-    Array.isArray(value.provenance);
+  if (typeof value.chain !== 'string' || typeof value.symbol !== 'string' ||
+      typeof value.strategy !== 'string' || typeof value.success !== 'boolean' ||
+      typeof value.timestamp !== 'number' || !Number.isFinite(value.timestamp)) return null;
+
+  const eventId = typeof value.eventId === 'string' && value.eventId.length > 0
+    ? value.eventId
+    : [
+        'legacy-measured',
+        value.opportunityId || 'unknown-opportunity',
+        value.chain,
+        value.symbol,
+        value.strategy,
+        value.success ? 'success' : 'failure',
+        String(value.timestamp),
+      ].join(':');
+
+  return {
+    eventId,
+    opportunityId: typeof value.opportunityId === 'string' ? value.opportunityId : undefined,
+    chain: value.chain,
+    symbol: value.symbol,
+    strategy: value.strategy,
+    success: value.success,
+    expectedProfitUsd: Number.isFinite(value.expectedProfitUsd) ? Number(value.expectedProfitUsd) : 0,
+    realizedProfitUsd: finiteOrNull(value.realizedProfitUsd),
+    feeUsd: finiteOrNull(value.feeUsd),
+    slippageBps: finiteOrNull(value.slippageBps),
+    latencyMs: Number.isFinite(value.latencyMs) ? Math.max(0, Number(value.latencyMs)) : 0,
+    timestamp: value.timestamp,
+    provenance: [
+      ...new Set([
+        ...(Array.isArray(value.provenance) ? value.provenance.filter((entry): entry is string => typeof entry === 'string') : []),
+        ...(value.eventId ? [] : ['migrated_legacy_measured_sample']),
+      ]),
+    ],
+  };
 }
 
 function validSnapshot(input: MeasuredEvolutionSnapshot | null): input is MeasuredEvolutionSnapshot {
   return !!input && input.version === 1 && Array.isArray(input.samples);
 }
 
-function mergeSamples(...groups: MeasuredExecutionSample[][]): MeasuredExecutionSample[] {
+function mergeSamples(...groups: unknown[][]): MeasuredExecutionSample[] {
   const merged = new Map<string, MeasuredExecutionSample>();
   for (const group of groups) {
-    for (const sample of group) {
-      if (!validSample(sample)) continue;
+    for (const input of group) {
+      const sample = normalizePersistedSample(input);
+      if (!sample) continue;
       merged.set(sampleKey(sample), { ...sample, provenance: [...sample.provenance] });
     }
   }
@@ -99,14 +134,14 @@ export function ensureMeasuredEvolutionFeedbackHydrated(): Promise<void> {
           samples: mergeSamples(persisted.samples, state.samples),
           updatedAt: Math.max(Number.isFinite(persisted.updatedAt) ? persisted.updatedAt : 0, state.updatedAt, Date.now()),
         };
-        await store.save(state);
-      } else {
-        await store.save(state);
       }
+      // Save the normalized snapshot so pre-eventId samples are durably migrated.
+      await store.save(state);
       hydrated = true;
       logger.info('Measured evolution feedback restored', {
         component: 'MeasuredEvolutionFeedback',
         samples: state.samples.length,
+        legacySamplesMigrated: state.samples.filter(sample => sample.provenance.includes('migrated_legacy_measured_sample')).length,
       });
     } catch (error) {
       logger.warn('Measured evolution feedback persistence unavailable; continuing in memory', {
@@ -164,11 +199,6 @@ function measuredStats(samples: MeasuredExecutionSample[]) {
   };
 }
 
-function genomeIdFromProvenance(provenance: string[]): string | null {
-  const tag = provenance.find(value => value.startsWith('strategy_genome:'));
-  return tag ? tag.slice('strategy_genome:'.length).trim() || null : null;
-}
-
 export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutionFeedback): Promise<void> {
   if (!feedback.settlement || feedback.settlement.terminal !== true) return;
   await ensureMeasuredEvolutionFeedbackHydrated();
@@ -181,24 +211,13 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     });
     return;
   }
+
   state.samples = mergeSamples(state.samples, [sample]);
   state.updatedAt = Date.now();
-
-  const genomeId = genomeIdFromProvenance(sample.provenance);
-  if (genomeId) {
-    const matching = state.samples.filter(candidate => genomeIdFromProvenance(candidate.provenance) === genomeId);
-    const stats = measuredStats(matching);
-    getHyperEvolutionEngine().recordRealWorldOutcome(genomeId, {
-      actualWinRate: stats.successRate,
-      actualProfitFactor: Number.isFinite(stats.profitFactor) ? stats.profitFactor : Math.max(1, stats.sampleCount),
-      actualSharpeRatio: stats.sharpeRatio,
-      deploymentCount: 1,
-    });
-  }
-
   await persistSoon();
+
   const stats = measuredStats(state.samples);
-  logger.info('Measured terminal execution fed to evolution bridge', {
+  logger.info('Measured terminal execution fed to canonical evolution memory', {
     component: 'MeasuredEvolutionFeedback',
     eventId: sample.eventId,
     symbol: sample.symbol,
@@ -209,7 +228,7 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     averageLatencyMs: stats.averageLatencyMs,
     averageSlippageBps: stats.averageSlippageBps,
     persistentMemoryAllowed: getCryptocrawlGovernance().isLongTermMemoryAllowed(),
-    hyperEvolutionGenomeAttributed: !!genomeId,
+    legacyHyperEvolutionAuthority: false,
   });
 }
 
@@ -220,6 +239,7 @@ export function getMeasuredEvolutionMetrics() {
     mode: stats.sampleCount > 0 ? 'terminal_calibrated' as const : 'bootstrap_no_terminal_samples' as const,
     terminalEvidenceRequired: true,
     syntheticSamplesAllowed: false,
+    legacyHyperEvolutionAuthority: false,
     updatedAt: state.updatedAt,
   };
 }

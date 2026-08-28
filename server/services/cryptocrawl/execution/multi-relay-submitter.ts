@@ -68,6 +68,7 @@ class MultiRelaySubmitter {
   private metrics: Map<string, RelayMetrics> = new Map();
   private initialized = false;
   private provider!: providers.JsonRpcProvider;
+  private unavailableReason: string | null = null;
 
   constructor() {
     RELAYS.forEach(relay => {
@@ -89,43 +90,86 @@ class MultiRelaySubmitter {
     });
   }
 
+  /**
+   * Private relay connectivity is an optional execution enhancement, never a
+   * prerequisite for the canonical direct-broadcast path. Missing/invalid relay
+   * auth therefore marks this component unavailable without fabricating a key or
+   * failing the caller that can still submit the exact signed transaction directly.
+   */
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    await multiProviderRpcManager.initialize(['ethereum']);
-    this.provider = (await multiProviderRpcManager.getProvider('ethereum', 'json_rpc')).http;
-    const authPrivateKey = await getOrCreateFlashbotsAuthPrivateKey();
-    const authSigner = walletFromPrivateKey(authPrivateKey);
+    const explicitAuthKey = process.env.FLASHBOTS_AUTH_KEY?.trim();
+    if (!explicitAuthKey) {
+      this.unavailableReason = 'FLASHBOTS_AUTH_KEY is not configured';
+      this.initialized = true;
+      logger.info('Private relay enhancement unavailable; direct broadcast remains authoritative', {
+        component: 'MultiRelaySubmitter',
+        reason: this.unavailableReason,
+        directBroadcastBlocked: false,
+      });
+      return;
+    }
 
-    logger.info('Initializing multi-relay connections...', { component: 'MultiRelaySubmitter' });
+    try {
+      await multiProviderRpcManager.initialize(['ethereum']);
+      this.provider = (await multiProviderRpcManager.getProvider('ethereum', 'json_rpc')).http;
+      const authPrivateKey = await getOrCreateFlashbotsAuthPrivateKey(explicitAuthKey);
+      const authSigner = walletFromPrivateKey(authPrivateKey);
 
-    const initPromises = RELAYS.map(async relay => {
-      try {
-        const flashbotsProvider = await FlashbotsBundleProvider.create(
-          this.provider,
-          authSigner,
-          relay.endpoint,
-          'mainnet',
-        );
-        this.providers.set(relay.name, flashbotsProvider);
-        logger.debug(`Connected to ${relay.name} relay`, { component: 'MultiRelaySubmitter' });
-      } catch (error) {
-        logger.warn(`Failed to connect to ${relay.name}`, {
-          component: 'MultiRelaySubmitter',
-          error: error instanceof Error ? error.message : String(error),
-        });
+      logger.info('Initializing multi-relay connections...', { component: 'MultiRelaySubmitter' });
+
+      const initPromises = RELAYS.map(async relay => {
+        try {
+          const flashbotsProvider = await FlashbotsBundleProvider.create(
+            this.provider,
+            authSigner,
+            relay.endpoint,
+            'mainnet',
+          );
+          this.providers.set(relay.name, flashbotsProvider);
+          logger.debug(`Connected to ${relay.name} relay`, { component: 'MultiRelaySubmitter' });
+        } catch (error) {
+          logger.warn(`Failed to connect to ${relay.name}`, {
+            component: 'MultiRelaySubmitter',
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+
+      await Promise.allSettled(initPromises);
+      if (this.providers.size === 0) {
+        this.unavailableReason = 'No private relay connection initialized successfully';
       }
-    });
+    } catch (error) {
+      this.unavailableReason = error instanceof Error ? error.message : String(error);
+      logger.warn('Private relay initialization failed; direct broadcast remains authoritative', {
+        component: 'MultiRelaySubmitter',
+        reason: this.unavailableReason,
+        directBroadcastBlocked: false,
+      });
+    } finally {
+      this.initialized = true;
+    }
 
-    await Promise.allSettled(initPromises);
-    this.initialized = true;
     logger.info(`Multi-relay initialization complete: ${this.providers.size}/${RELAYS.length} relays connected`, {
       component: 'MultiRelaySubmitter',
+      available: this.providers.size > 0,
+      unavailableReason: this.unavailableReason,
+      directBroadcastBlocked: false,
     });
   }
 
   async submitBundle(bundle: Bundle, targetBlock: number): Promise<SubmissionResult> {
     if (!this.initialized) await this.initialize();
+
+    if (this.providers.size === 0) {
+      logger.debug('Private relay submission skipped because no relay is available', {
+        component: 'MultiRelaySubmitter',
+        reason: this.unavailableReason,
+      });
+      return { submitted: 0, successful: [], failed: [] };
+    }
 
     if (!Number.isSafeInteger(targetBlock) || targetBlock <= 0 || bundle.targetBlock !== targetBlock) {
       logger.warn('Bundle target-block mismatch; skipping submission', {

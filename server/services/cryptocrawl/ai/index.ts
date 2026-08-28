@@ -1,12 +1,8 @@
-/**
- * Cryptocrawler AI Module
- * Exports AI harmony integration for the cryptocrawler
- */
+// Canonical CryptoCrawler AI boundary.
+//
+// Cryptara is the production intelligence authority and is imported directly from
+// server/services/cryptara. The historical multi-provider AI Harmony experiment is
+// retained only as source history and is intentionally not exported from the
+// production CryptoCrawler AI namespace.
 
-export {
-  CryptocrawlerAIHarmony,
-  cryptocrawlerAIHarmony,
-  type AIHarmonyConfig,
-  type HarmonyTaskType,
-  type HarmonyResult
-} from './cryptocrawler-ai-harmony';
+export {};
