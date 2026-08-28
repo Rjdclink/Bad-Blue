@@ -36,7 +36,7 @@ requireText(canonicalRuntime, 'ensureCryptoRuntimeObservability()', 'runtime obs
 requireText(canonicalRuntime, 'legacyMasterOrchestratorRequired: false', 'canonical runtime declares legacy master orchestrator unnecessary');
 requireText(canonicalRuntime, 'executionAuthorityGranted: false', 'runtime lifecycle wiring does not grant execution authority');
 requireText(bootstrap, "mode: 'pretrade_bootstrap'", 'Monte Carlo has an explicit measured pre-trade bootstrap mode');
-requireText(bootstrap, "mode: 'posttrade_calibrated'", 'Monte Carlo preserves a post-trade calibrated mode');
+requireText(bootstrap, "calibrated ? 'posttrade_calibrated' : 'pretrade_bootstrap'", 'Monte Carlo preserves a post-trade calibrated mode');
 requireText(bootstrap, "const onchain = plan.crossVenueCostModel === 'bridge' || !!plan.bridge", 'CEX bootstrap does not falsely require blockchain telemetry while bridge routes do');
 requireText(bootstrap, 'onchainTelemetryRequired: onchain', 'on-chain telemetry requirement is bound to the actual bridge/on-chain route predicate');
 requireText(bootstrap, 'onchainTelemetryMeasured: !onchain || gasMeasured', 'on-chain/bridge routes fail closed when measured gas telemetry is unavailable');
