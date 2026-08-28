@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
 import { rainbowProfitObservability } from '../compensation/rainbow-profit-observability.js';
+import { rainbowProfitSourceLedger } from '../compensation/rainbow-profit-source-ledger.js';
 import { stageManager } from '../governance/stage-management.js';
 
 let installed = false;
@@ -16,7 +17,10 @@ function latestTerminalFeedback(): CryptaraExecutionFeedback | null {
 
 async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
   try {
-    await rainbowProfitBridge.recordTerminalSettlement(feedback);
+    await Promise.all([
+      rainbowProfitBridge.recordTerminalSettlement(feedback),
+      rainbowProfitSourceLedger.recordTerminalSettlement(feedback),
+    ]);
     void rainbowProfitObservability.refresh();
   } catch (error) {
     // Payout persistence/venue egress is downstream of settlement. A payout
@@ -35,8 +39,8 @@ export function ensureRainbowProfitBridgeWiring(): void {
   rainbowProfitBridge.start();
   rainbowProfitObservability.start();
 
-  // Reconcile persisted terminal evidence after a restart. The bridge ledger is
-  // event-idempotent, so replay cannot create a duplicate payout.
+  // Reconcile persisted terminal evidence after a restart. Both ledgers are
+  // event-idempotent, so replay cannot create duplicate payout authority.
   for (const evidence of stageManager.getState().cryptaraExecutionEvidence) {
     if (evidence.settlement?.terminal === true) {
       void capture(evidence as unknown as CryptaraExecutionFeedback);
@@ -53,6 +57,7 @@ export function ensureRainbowProfitBridgeWiring(): void {
     component: 'RainbowProfitBridgeWiring',
     sourceAuthority: 'terminal_confirmed_settlement_only',
     persistentIdempotency: true,
+    sourceAwareLedger: 'venue_chain_symbol_asset_execution_source',
     payoutDestination: 'CRYPTO_PROFIT_WALLET_ADDRESS',
     preferredAssets: 'USDT/USDC dynamic',
     routeSelection: 'lowest_fee_supported_evm_network',
