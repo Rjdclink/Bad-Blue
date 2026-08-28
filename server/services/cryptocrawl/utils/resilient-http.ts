@@ -16,8 +16,10 @@ interface HttpCircuitState {
 }
 
 const DEFAULT_RETRYABLE_STATUS_CODES = [408, 409, 425, 429, 500, 502, 503, 504];
-const CIRCUIT_FAILURE_THRESHOLD = Math.max(3, Number(process.env.CRYPTOCRAWL_HTTP_CIRCUIT_FAILURES || 6));
-const CIRCUIT_COOLDOWN_MS = Math.max(1_000, Number(process.env.CRYPTOCRAWL_HTTP_CIRCUIT_COOLDOWN_MS || 10_000));
+const configuredCircuitFailures = Number(process.env.CRYPTOCRAWL_HTTP_CIRCUIT_FAILURES || 6);
+const configuredCircuitCooldownMs = Number(process.env.CRYPTOCRAWL_HTTP_CIRCUIT_COOLDOWN_MS || 10_000);
+const CIRCUIT_FAILURE_THRESHOLD = Math.max(3, Number.isFinite(configuredCircuitFailures) ? Math.round(configuredCircuitFailures) : 6);
+const CIRCUIT_COOLDOWN_MS = Math.max(1_000, Number.isFinite(configuredCircuitCooldownMs) ? configuredCircuitCooldownMs : 10_000);
 const circuitStates = new Map<string, HttpCircuitState>();
 
 function sleep(ms: number): Promise<void> {
@@ -98,8 +100,10 @@ function calculateBackoffDelayMs(
 
 function defaultRetryableError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (error.name === 'AbortError') return true;
   const message = error.message.toLowerCase();
   return (
+    message.includes('abort') ||
     message.includes('timeout') ||
     message.includes('timed out') ||
     message.includes('network') ||
