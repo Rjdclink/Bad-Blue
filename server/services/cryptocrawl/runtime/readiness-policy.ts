@@ -44,13 +44,14 @@ export type CryptoRuntimeReadiness = {
  * execution permission and does not replace StageManager, the canonical
  * scheduler, deterministic economics, resource reservations, or settlement.
  *
- * EXECUTION_READY/TRADING_READY describe the canonical Kraken/OKX CEX scheduler.
- * Zero-capital gas readiness is a different topology and therefore cannot satisfy
- * a missing CEX inventory requirement. Likewise, optional blockchain RPC health
- * does not make core CEX market-data readiness false.
+ * EXECUTION_READY/TRADING_READY describe the canonical centralized-exchange
+ * scheduler. Zero-capital gas readiness is a different topology and therefore
+ * cannot satisfy a missing CEX inventory requirement. Likewise, optional
+ * blockchain RPC health does not make core CEX market-data readiness false.
  */
 export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput): CryptoRuntimeReadiness {
-  const executionCapabilityReady = !input.noExecutionGuardEnabled
+  const executionCapabilityReady = input.runtimeIdentitySafe
+    && !input.noExecutionGuardEnabled
     && input.liveExecutionEnabled
     && input.liveExecutionConfirmed
     && input.centralizedExecutionConfigured
@@ -62,7 +63,7 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
   const governanceReady = input.stageCanExecute;
   const cexResourceReady = inventoryReady;
   const tradingReady = executionCapabilityReady && governanceReady && cexCandidateReady && cexResourceReady;
-  const tradingDetail = `canonicalCexCapability=${executionCapabilityReady}; governance=${governanceReady}; cexCandidate=${cexCandidateReady}; cexInventory=${cexResourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Zero-capital resources never substitute for CEX inventory. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`;
+  const tradingDetail = `runtimeIdentitySafe=${input.runtimeIdentitySafe}; canonicalCexCapability=${executionCapabilityReady}; governance=${governanceReady}; cexCandidate=${cexCandidateReady}; cexInventory=${cexResourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Zero-capital resources never substitute for CEX inventory. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`;
 
   return {
     APP_READY: {
@@ -76,8 +77,8 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
       ready: input.centralizedExecutionConfigured,
       scope: 'configuration',
       detail: input.centralizedExecutionConfigured
-        ? 'Kraken and OKX execution credentials are visible to this runtime'
-        : 'one or more settlement-safe centralized execution credentials are not visible',
+        ? 'at least two settlement-safe centralized execution venues are configured'
+        : 'fewer than two settlement-safe centralized execution venues are configured',
     },
     DATA_READY: {
       ready: input.coreMarketDataReady,
@@ -92,7 +93,7 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
     EXECUTION_CAPABILITY_READY: {
       ready: executionCapabilityReady,
       scope: 'capability',
-      detail: `guard=${input.noExecutionGuardEnabled}; enabled=${input.liveExecutionEnabled}; confirmed=${input.liveExecutionConfirmed}; cexConfigured=${input.centralizedExecutionConfigured}; schedulerRunning=${input.schedulerRunning}. Capability readiness does not imply that a trade has CEX inventory, an eligible CEX candidate, or governance authorization.`,
+      detail: `runtimeIdentitySafe=${input.runtimeIdentitySafe}; guard=${input.noExecutionGuardEnabled}; enabled=${input.liveExecutionEnabled}; confirmed=${input.liveExecutionConfirmed}; cexConfigured=${input.centralizedExecutionConfigured}; schedulerRunning=${input.schedulerRunning}. Capability readiness does not imply that a trade has CEX inventory, an eligible CEX candidate, or governance authorization.`,
     },
     INVENTORY_READY: {
       ready: inventoryReady,
