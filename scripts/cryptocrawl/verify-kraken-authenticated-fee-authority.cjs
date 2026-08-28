@@ -9,10 +9,10 @@ const checks = [
   ['Kraken credentials gate authority change', wiring.includes('process.env.KRAKEN_API_KEY?.trim()') && wiring.includes('process.env.KRAKEN_API_SECRET?.trim()')],
   ['Compatibility taker fee retired only with credentials', wiring.includes('delete process.env.CRYPTO_ARBITRAGE_KRAKEN_TAKER_FEE_BPS')],
   ['Policy installed before verifier evaluation', wiring.indexOf('enforceAuthenticatedKrakenFeeAuthority();') < wiring.indexOf('const originalEvaluateOnce')],
-  ['Authenticated TradeVolume resolver retained', resolver.includes("source: 'kraken_account_trade_volume'") && resolver.includes("'/0/private/TradeVolume'"))],
+  ['Authenticated TradeVolume resolver retained', resolver.includes("source: 'kraken_account_trade_volume'") && resolver.includes("'/0/private/TradeVolume'" )],
   ['Request overrides remain supported', verifier.includes('requestedFeeOverride')],
   ['Compatibility resolver remains available without credentials', resolver.includes('return configuredFee(venue, symbol)')],
-  ['No execution-enable mutation', !wiring.includes("process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION = 'true'"))],
+  ['No execution-enable mutation', !wiring.includes("process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION = 'true'" )],
 ];
 const failed = checks.filter(([, ok]) => !ok);
 for (const [name, ok] of checks) console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}`);
