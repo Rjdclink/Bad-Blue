@@ -8,6 +8,7 @@ import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-press
 import { ensureCryptaraLatencyInstrumentation } from './cryptara-latency-instrumentation.js';
 import { ensureDiscoveryLatencyInstrumentation } from './discovery-latency-instrumentation.js';
 import { ensureExecutionLatencyInstrumentation } from './execution-latency-instrumentation.js';
+import { ensureInventoryReadinessWiring } from './inventory-readiness-wiring.js';
 import { ensureLatencyObservability } from './latency-observability.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
@@ -42,6 +43,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureLatencyObservability();
   ensurePredictiveCainWiring();
   ensureContinuousPostTradeLearning();
+  ensureInventoryReadinessWiring();
   void canonicalIntelligenceRepository.hydrate();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
@@ -68,6 +70,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     predictiveCainDeterministicPositiveAuthority: false,
     continuousPostTradeLearning: 'terminal_labels_segmented_decay_uncertainty',
     continuousPostTradeLearningExecutionAuthority: false,
+    inventoryReadiness: 'learned_terminal_evidence_advisory_targets',
+    inventoryTransferExecutionAuthority: false,
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
     intelligenceMemoryExecutionDependency: false,
     cryptaraLatencyInstrumentation: ['mc_cache', 'ml_advisory'],
