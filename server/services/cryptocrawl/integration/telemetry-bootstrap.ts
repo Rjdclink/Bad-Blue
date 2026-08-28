@@ -34,6 +34,16 @@ const ANKR_PUBLIC_HTTP: Partial<Record<SupportedChain, string>> = {
   bsc: 'https://rpc.ankr.com/bsc',
 };
 
+const ANKR_SLUGS: Partial<Record<SupportedChain, string>> = {
+  ethereum: 'eth',
+  polygon: 'polygon',
+  arbitrum: 'arbitrum',
+  optimism: 'optimism',
+  base: 'base',
+  avalanche: 'avalanche',
+  bsc: 'bsc',
+};
+
 let bootstrapPromise: Promise<void> | null = null;
 
 function logExecutionPosture(): void {
@@ -90,11 +100,16 @@ function adoptLegacyProviderAliases(): void {
 }
 
 async function registerBestEffortAnkrFallbacks(): Promise<void> {
-  const allowAnonymousPublicFallback = process.env.CRYPTOCRAWL_ALLOW_PUBLIC_ANKR_FALLBACK === 'true';
+  const allowAnonymousPublicFallback = process.env.CRYPTOCRAWL_ALLOW_PUBLIC_ANKR_FALLBACK !== 'false';
+  const ankrKey = process.env.ANKR_API_KEY?.trim() || process.env.ANKR_KEY?.trim();
   const outcomes = await Promise.all(TELEMETRY_CHAINS.map(async chain => {
+    const keyDerived = ankrKey && ANKR_SLUGS[chain]
+      ? `https://rpc.ankr.com/${ANKR_SLUGS[chain]}/${ankrKey}`
+      : undefined;
     const configured = process.env[`${chain.toUpperCase()}_ANKR_RPC_URL`]?.trim()
       || process.env[`ANKR_${chain.toUpperCase()}_RPC_URL`]?.trim()
-      || (chain === 'ethereum' ? process.env.ANKR_RPC_URL?.trim() : undefined);
+      || (chain === 'ethereum' ? process.env.ANKR_RPC_URL?.trim() : undefined)
+      || keyDerived;
     const admission = admitAnkrFallback({
       configuredUrl: configured,
       publicUrl: ANKR_PUBLIC_HTTP[chain],
@@ -106,7 +121,7 @@ async function registerBestEffortAnkrFallbacks(): Promise<void> {
         provider: null,
         healthy: false,
         skipped: true,
-        detail: 'anonymous public Ankr fallback is disabled by policy',
+        detail: 'Ankr recovery path explicitly disabled and no configured/key-derived endpoint is available',
       };
     }
 
@@ -149,6 +164,7 @@ async function registerBestEffortAnkrFallbacks(): Promise<void> {
 
   logger.info('[TelemetryBootstrap] Ankr fallback admission completed', {
     component: 'TelemetryBootstrap',
+    authenticatedKeyVisible: Boolean(ankrKey),
     anonymousPublicFallbackEnabled: allowAnonymousPublicFallback,
     healthyChains: outcomes.filter(outcome => outcome.healthy).map(outcome => outcome.chain),
     skippedChains: outcomes.filter(outcome => outcome.skipped).map(outcome => outcome.chain),
