@@ -69,6 +69,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function finiteEnvNumber(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function topQuantity(quote: StreamOrderBookQuote, side: 'bid' | 'ask', price: number): number {
   const levels = side === 'bid' ? quote.depth.bids : quote.depth.asks;
   const exact = levels.find(level => Math.abs(level.price - price) <= Math.max(1e-12, price * 1e-10));
@@ -81,30 +86,19 @@ export function computeMakerMicrostructure(quote: StreamOrderBookQuote): MakerMi
   const total = bidQty + askQty;
   const mid = (quote.bid + quote.ask) / 2;
   const imbalance = total > 0 ? bidQty / total : 0.5;
-  // Queue-weighted microprice: heavier bid liquidity pulls fair value toward ask,
-  // heavier ask liquidity pulls it toward bid.
   const microprice = total > 0
     ? ((quote.ask * bidQty) + (quote.bid * askQty)) / total
     : mid;
   const spreadBps = mid > 0 ? ((quote.ask - quote.bid) / mid) * 10_000 : 0;
-  return {
-    mid,
-    microprice,
-    imbalance,
-    spreadBps,
-    topBidQty: bidQty,
-    topAskQty: askQty,
-  };
+  return { mid, microprice, imbalance, spreadBps, topBidQty: bidQty, topAskQty: askQty };
 }
 
 export function adaptiveMakerTtlMs(
   buy: MakerMicrostructureSnapshot,
   sell: MakerMicrostructureSnapshot,
 ): number {
-  const configuredMax = Number(process.env.CRYPTO_ARBITRAGE_MAKER_TTL_MS || 30_000);
-  const maxTtl = clamp(Number.isFinite(configuredMax) ? configuredMax : 30_000, 2_000, 30_000);
-  const minimum = clamp(Number(process.env.CRYPTO_ARBITRAGE_MAKER_TTL_MIN_MS || 3_000), 2_000, maxTtl);
-
+  const maxTtl = clamp(finiteEnvNumber('CRYPTO_ARBITRAGE_MAKER_TTL_MS', 30_000), 2_000, 30_000);
+  const minimum = clamp(finiteEnvNumber('CRYPTO_ARBITRAGE_MAKER_TTL_MIN_MS', 3_000), 2_000, maxTtl);
   const buyBiasBps = buy.mid > 0 ? ((buy.microprice - buy.mid) / buy.mid) * 10_000 : 0;
   const sellBiasBps = sell.mid > 0 ? ((sell.mid - sell.microprice) / sell.mid) * 10_000 : 0;
   const supportiveBias = clamp((buyBiasBps + sellBiasBps + 2) / 4, 0, 1);
@@ -114,20 +108,19 @@ export function adaptiveMakerTtlMs(
 }
 
 function queueParticipation(): number {
-  const parsed = Number(process.env.CRYPTO_ARBITRAGE_MAKER_QUEUE_PARTICIPATION || 0.02);
-  return clamp(Number.isFinite(parsed) ? parsed : 0.02, 0.001, 0.10);
+  return clamp(finiteEnvNumber('CRYPTO_ARBITRAGE_MAKER_QUEUE_PARTICIPATION', 0.02), 0.001, 0.10);
 }
 
 function maybeFilledBuy(state: PaperProbeState, quote: StreamOrderBookQuote): boolean {
   if (quote.ask <= state.buyPrice) return true;
-  if (quote.bid !== state.buyPrice) return quote.bid < state.buyPrice;
+  if (quote.bid !== state.buyPrice) return false;
   const remainingAtPrice = topQuantity(quote, 'bid', state.buyPrice);
   return remainingAtPrice <= Math.max(0, state.buyQueueAheadQty - state.quantity);
 }
 
 function maybeFilledSell(state: PaperProbeState, quote: StreamOrderBookQuote): boolean {
   if (quote.bid >= state.sellPrice) return true;
-  if (quote.ask !== state.sellPrice) return quote.ask > state.sellPrice;
+  if (quote.ask !== state.sellPrice) return false;
   const remainingAtPrice = topQuantity(quote, 'ask', state.sellPrice);
   return remainingAtPrice <= Math.max(0, state.sellQueueAheadQty - state.quantity);
 }
