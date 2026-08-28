@@ -5,6 +5,7 @@ import {
   type MarketUniversePerformanceHint,
 } from '../discovery/market-universe-controller.js';
 import { canonicalizeCexSymbol } from '../discovery/symbol-registry.js';
+import { ensureTokenContractDirectory } from '../intelligence/token-contract-directory.js';
 
 let installed = false;
 
@@ -51,11 +52,18 @@ export function ensureMarketFocusWiring(): void {
   if (installed) return;
   installed = true;
   setMarketUniversePerformanceProvider(buildPairPerformanceHints);
+  void ensureTokenContractDirectory().catch(error => {
+    logger.warn('[MarketFocus] Token-contract identity warmup degraded without blocking market focus', {
+      component: 'MarketFocus',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
   logger.info('[MarketFocus] Terminal pair-performance scan prioritization installed', {
     component: 'MarketFocus',
     terminalEvidenceOnly: true,
     pairExclusionAllowed: false,
     executionAuthorityChanged: false,
     explorationRotationPreserved: true,
+    tokenContractDirectoryWarmup: 'non_blocking',
   });
 }
