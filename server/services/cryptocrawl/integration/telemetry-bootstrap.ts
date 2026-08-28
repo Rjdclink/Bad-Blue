@@ -34,6 +34,16 @@ const ANKR_PUBLIC_HTTP: Partial<Record<SupportedChain, string>> = {
   bsc: 'https://rpc.ankr.com/bsc',
 };
 
+const ANKR_SLUGS: Partial<Record<SupportedChain, string>> = {
+  ethereum: 'eth',
+  polygon: 'polygon',
+  arbitrum: 'arbitrum',
+  optimism: 'optimism',
+  base: 'base',
+  avalanche: 'avalanche',
+  bsc: 'bsc',
+};
+
 let bootstrapPromise: Promise<void> | null = null;
 
 function logExecutionPosture(): void {
@@ -63,6 +73,14 @@ function adoptLegacyProviderAliases(): void {
   const aliases: Array<{ canonical: string; candidates: string[] }> = [
     { canonical: 'ALCHEMY_API_KEY', candidates: ['ALCHEMY_KEY'] },
     { canonical: 'ZEROX_API_KEY', candidates: ['ZERO_X_API_KEY', 'ZEROX_KEY'] },
+    {
+      canonical: 'COINBASE_API_KEY',
+      candidates: ['COINBASE_KEY_NAME', 'CDP_API_KEY_NAME', 'CDP_API_KEY_ID', 'KEY_NAME'],
+    },
+    {
+      canonical: 'COINBASE_API_SECRET',
+      candidates: ['COINBASE_KEY_SECRET', 'CDP_API_KEY_SECRET', 'CDP_API_KEY_PRIVATE_KEY', 'KEY_SECRET'],
+    },
   ];
 
   for (const { canonical, candidates } of aliases) {
@@ -70,7 +88,7 @@ function adoptLegacyProviderAliases(): void {
     const source = candidates.find(candidate => process.env[candidate]?.trim());
     if (!source) continue;
     process.env[canonical] = process.env[source]?.trim();
-    logger.info('[TelemetryBootstrap] Adopted legacy provider environment alias', {
+    logger.info('[TelemetryBootstrap] Adopted legacy/provider environment alias', {
       component: 'TelemetryBootstrap',
       canonical,
       source,
@@ -91,10 +109,15 @@ function adoptLegacyProviderAliases(): void {
 
 async function registerBestEffortAnkrFallbacks(): Promise<void> {
   const allowAnonymousPublicFallback = process.env.CRYPTOCRAWL_ALLOW_PUBLIC_ANKR_FALLBACK === 'true';
+  const ankrKey = process.env.ANKR_API_KEY?.trim() || process.env.ANKR_KEY?.trim();
   const outcomes = await Promise.all(TELEMETRY_CHAINS.map(async chain => {
+    const keyDerived = ankrKey && ANKR_SLUGS[chain]
+      ? `https://rpc.ankr.com/${ANKR_SLUGS[chain]}/${ankrKey}`
+      : undefined;
     const configured = process.env[`${chain.toUpperCase()}_ANKR_RPC_URL`]?.trim()
       || process.env[`ANKR_${chain.toUpperCase()}_RPC_URL`]?.trim()
-      || (chain === 'ethereum' ? process.env.ANKR_RPC_URL?.trim() : undefined);
+      || (chain === 'ethereum' ? process.env.ANKR_RPC_URL?.trim() : undefined)
+      || keyDerived;
     const admission = admitAnkrFallback({
       configuredUrl: configured,
       publicUrl: ANKR_PUBLIC_HTTP[chain],
@@ -106,7 +129,7 @@ async function registerBestEffortAnkrFallbacks(): Promise<void> {
         provider: null,
         healthy: false,
         skipped: true,
-        detail: 'anonymous public Ankr fallback is disabled by policy',
+        detail: 'no configured/key-derived Ankr endpoint and anonymous public fallback is disabled',
       };
     }
 
@@ -149,6 +172,7 @@ async function registerBestEffortAnkrFallbacks(): Promise<void> {
 
   logger.info('[TelemetryBootstrap] Ankr fallback admission completed', {
     component: 'TelemetryBootstrap',
+    authenticatedKeyVisible: Boolean(ankrKey),
     anonymousPublicFallbackEnabled: allowAnonymousPublicFallback,
     healthyChains: outcomes.filter(outcome => outcome.healthy).map(outcome => outcome.chain),
     skippedChains: outcomes.filter(outcome => outcome.skipped).map(outcome => outcome.chain),
@@ -240,8 +264,6 @@ async function probeMarketUniverseProviders(): Promise<void> {
 }
 
 export function ensureTelemetryBootstrap(): Promise<void> {
-  const coreStart = ensureCryptoCrawlerCoreRuntime();
-
   if (!bootstrapPromise) {
     adoptLegacyProviderAliases();
     logExecutionPosture();
@@ -250,12 +272,15 @@ export function ensureTelemetryBootstrap(): Promise<void> {
       ...getCryptoCrawlerRuntimeAttestation(),
     });
     bootstrapPromise = (async () => {
-      // Canonical CEX discovery and scheduler admission are established before
-      // optional blockchain-provider probes. Their failure is therefore
-      // topology-local rather than a global CryptoCrawler startup blocker.
-      await coreStart;
+      // Establish the complete RPC/provider mesh before starting the canonical core.
+      // This prevents optional-provider registration from arriving after startup
+      // consumers such as GasOracle have already attempted their first operation.
       await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);
       await registerBestEffortAnkrFallbacks();
+
+      const coreStart = ensureCryptoCrawlerCoreRuntime();
+      await coreStart;
+
       await startAlchemyTelemetry();
       await probeReadOnlyZeroX();
       await probeMarketUniverseProviders();
