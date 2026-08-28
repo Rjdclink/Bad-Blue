@@ -25,8 +25,31 @@ assert.equal(devastating.maxCombinedTakerFeeForFeeOnlyBreakEvenBps, 7);
 assert.equal(devastating.executionFeeMode, 'taker_ioc');
 assert.equal(devastating.makerObservation.available, true);
 assert.equal(devastating.makerObservation.combinedEffectiveMakerFeeBps, 30);
+assert.equal(devastating.makerObservation.economicallyPositive, false);
+assert.equal(devastating.makerObservation.candidatePathAvailable, false);
 assert.equal(devastating.makerObservation.executable, false);
-assert.match(devastating.makerObservation.reason, /settlement-proven/);
+
+const stablecoinMakerPositive = computeCexEconomicBarrier({
+  observedAt: Date.now(),
+  symbol: 'USDGUSDT',
+  buyVenue: 'okx',
+  sellVenue: 'kraken',
+  grossSpreadBps: 8,
+  buyTakerFeeBps: 4,
+  sellTakerFeeBps: 6,
+  netSpreadAfterFeesBps: -2,
+  coverageFraction: 1,
+  buyEffectiveMakerFeeBps: 0,
+  sellEffectiveMakerFeeBps: 5,
+});
+assert.equal(stablecoinMakerPositive.status, 'fee_blocked');
+assert.equal(stablecoinMakerPositive.makerObservation.available, true);
+assert.equal(stablecoinMakerPositive.makerObservation.grossMinusMakerFeesBps, 3);
+assert.equal(stablecoinMakerPositive.makerObservation.economicallyPositive, true);
+assert.equal(stablecoinMakerPositive.makerObservation.candidatePathAvailable, true);
+assert.equal(stablecoinMakerPositive.makerObservation.executable, false);
+assert.match(stablecoinMakerPositive.makerObservation.reason, /candidate path is installed/);
+assert.match(stablecoinMakerPositive.makerObservation.reason, /Cryptara Hyper MC/);
 
 const clear = computeCexEconomicBarrier({
   observedAt: Date.now(),
@@ -45,6 +68,8 @@ assert.equal(clear.status, 'fee_clear');
 assert.equal(clear.combinedTakerFeeBps, 10);
 assert.equal(clear.feeReductionNeededBps, 0);
 assert.equal(clear.makerObservation.available, false);
+assert.equal(clear.makerObservation.economicallyPositive, false);
+assert.equal(clear.makerObservation.candidatePathAvailable, false);
 assert.equal(clear.makerObservation.executable, false);
 
 const invalid = computeCexEconomicBarrier({
@@ -68,5 +93,7 @@ const unknown = unknownCexEconomicBarrier(-1, Date.now());
 assert.equal(unknown.status, 'unknown');
 assert.equal(unknown.coverageFraction, 0);
 assert.equal(unknown.executionFeeMode, 'taker_ioc');
+assert.equal(unknown.makerObservation.candidatePathAvailable, false);
+assert.equal(unknown.makerObservation.economicallyPositive, false);
 
 console.log('CEX economic barrier policy verification passed');
