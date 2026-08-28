@@ -1,11 +1,13 @@
 import { quantiAdaptiveOptimizer } from './adaptiveOptimizer.js';
 import { installQuantiAdaptiveScheduling } from './adaptiveRuntime.js';
+import { installQuantiAdmissionControl } from './admissionControl.js';
 import { quantiBackendRegistry } from './backendRegistry.js';
 import { installQuantiBackendRouting } from './backendRuntime.js';
 import { quantiComp } from './runtime.js';
 
 installQuantiAdaptiveScheduling(quantiComp, quantiAdaptiveOptimizer);
 installQuantiBackendRouting(quantiComp, quantiBackendRegistry);
+installQuantiAdmissionControl(quantiComp);
 
 export * from './types.js';
 export { QuantiResourceProfiler } from './resourceProfiler.js';
@@ -25,6 +27,9 @@ export {
   adaptivePlanFeatureVector,
   effectiveQuantiPower,
 } from './adaptiveRuntime.js';
+export { installQuantiAdmissionControl, submitCoalescedQuantiBatch, getQuantiAdmissionControlHealth } from './admissionControl.js';
+export { chooseHierarchicalCompute, HIERARCHICAL_COMPUTE_TIERS, REMOTE_FINAL_SAFETY_AUTHORITY_PROVEN } from './hierarchicalComputePolicy.js';
+export { executeAxialWork, QUANTI_AXIS_COORDINATION, type QuantiWorkAxis, type AxisWorkUnit } from './axisWorkCoordinator.js';
 export {
   QuantiBackendRegistry,
   quantiBackendRegistry,
