@@ -2,6 +2,7 @@ import { Wallet, providers, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { walletFromPrivateKey } from '../core/wallet-identity.js';
+import { withEvmSignerLane } from './evm-signer-lane.js';
 import {
   firstSuccessful,
   isSignedRawTransaction,
@@ -88,13 +89,15 @@ class UltraLowLatencyExecutor {
       ],
       placeholderPresigning: false,
       signOncePerNonce: true,
+      distributedSignerLane: true,
     });
   }
 
   /**
    * One wallet cannot safely have multiple independent nonce owners. Serialize
-   * complete submissions for this signer so a failed lower nonce cannot leave a
-   * higher-nonce transaction stranded behind a gap. CEX concurrency is unaffected.
+   * complete submissions for this signer inside the process; executeInstant and
+   * executeMultiPath additionally acquire the shared PostgreSQL signer lane so
+   * separate Railway replicas cannot race the same account nonce.
    */
   private async withExecutionLane<T>(work: () => Promise<T>): Promise<T> {
     const previous = this.executionTail;
@@ -106,6 +109,16 @@ class UltraLowLatencyExecutor {
     } finally {
       release();
     }
+  }
+
+  private async withDistributedSignerLane<T>(work: () => Promise<T>): Promise<T> {
+    if (!this.wallet) throw new Error('Signer wallet not initialized');
+    const network = await this.provider.getNetwork();
+    return withEvmSignerLane({
+      chainId: network.chainId,
+      walletAddress: this.wallet.address,
+      operation: work,
+    });
   }
 
   private async buildSignedTransaction(opp: OpportunityData): Promise<{ signedTransaction: string; nonce: number }> {
@@ -149,7 +162,7 @@ class UltraLowLatencyExecutor {
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     if (!this.initialized) await this.initialize();
 
-    return this.withExecutionLane(async () => {
+    return this.withExecutionLane(() => this.withDistributedSignerLane(async () => {
       let nonce: number | null = null;
       try {
         const signed = await this.buildSignedTransaction(opp);
@@ -170,8 +183,9 @@ class UltraLowLatencyExecutor {
           method: 'instant',
         };
       } catch (error) {
-        // With the whole signer lane serialized it is safe to resync after a
-        // completely failed submission; no later local nonce has been reserved.
+        // With both signer lanes held there is no later local or replica-owned
+        // reservation behind this failure. Resync from the shared pending nonce
+        // on the next attempt rather than inventing a nonce.
         this.currentNonce = null;
         const latency = Date.now() - startTime;
         logger.error('Instant execution failed', {
@@ -182,7 +196,7 @@ class UltraLowLatencyExecutor {
         });
         return { success: false, latency, method: 'instant' };
       }
-    });
+    }));
   }
 
   async executeMultiPath(opp: OpportunityData): Promise<ExecutionResult> {
@@ -190,7 +204,7 @@ class UltraLowLatencyExecutor {
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX');
     if (!this.initialized) await this.initialize();
 
-    return this.withExecutionLane(async () => {
+    return this.withExecutionLane(() => this.withDistributedSignerLane(async () => {
       let nonce: number | null = null;
       try {
         const signed = await this.buildSignedTransaction(opp);
@@ -231,7 +245,7 @@ class UltraLowLatencyExecutor {
         });
         return { success: false, latency, method: 'multipath' };
       }
-    });
+    }));
   }
 
   private async submitViaFlashbots(signedTransaction: string): Promise<SignedSubmission> {
