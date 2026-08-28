@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
+import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
@@ -25,6 +26,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   if (installed) return;
   installed = true;
 
+  ensureStageProfitCapRetirement();
   logZeroCapitalReadinessDiagnostics();
   ensureLearningLifecycleWiring();
   ensureMonteCarloCalibrationWiring();
@@ -44,6 +46,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     executionAuthorityGranted: false,
     executionMetrics: 'terminal_settlement_only',
     opportunityMetrics: 'canonical_verified_stream',
+    profitCeilingAuthority: false,
     measuredOpportunityGraph: 'continuous_multi_topology',
     orderBookEvolution: 'measured_short_horizon_transitions',
     dynamicScale: 'dual_axis_search_and_profitability_pressure',
