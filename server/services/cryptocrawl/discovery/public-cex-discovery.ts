@@ -3,7 +3,16 @@ import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { getVenueCapability, type CryptoCrawlerCexVenue } from './venue-capability-registry.js';
 
-export type PublicDiscoveryVenue = 'coinbase' | 'binance' | 'bybit' | 'kucoin' | 'gate' | 'huobi';
+export type PublicDiscoveryVenue =
+  | 'coinbase'
+  | 'binance'
+  | 'bybit'
+  | 'kucoin'
+  | 'gate'
+  | 'huobi'
+  | 'mexc'
+  | 'bitfinex'
+  | 'cryptocom';
 
 export interface PublicCexBboObservation {
   venue: PublicDiscoveryVenue;
@@ -23,7 +32,17 @@ export interface PublicCexDiscoveryBatch {
   failures: Array<{ venue: PublicDiscoveryVenue; symbol: string; error: string }>;
 }
 
-const VENUES: PublicDiscoveryVenue[] = ['coinbase', 'binance', 'bybit', 'kucoin', 'gate', 'huobi'];
+const VENUES: PublicDiscoveryVenue[] = [
+  'coinbase',
+  'binance',
+  'bybit',
+  'kucoin',
+  'gate',
+  'huobi',
+  'mexc',
+  'bitfinex',
+  'cryptocom',
+];
 type VenueSnapshot = Map<string, PublicCexBboObservation>;
 const snapshotCache = new Map<PublicDiscoveryVenue, { expiresAt: number; value: VenueSnapshot }>();
 const snapshotInFlight = new Map<PublicDiscoveryVenue, Promise<VenueSnapshot>>();
@@ -41,6 +60,15 @@ function splitSymbol(symbol: string): { base: string; quote: string } | null {
 function canonicalExternalSymbol(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const compact = raw.trim().toUpperCase().replace(/[-_/]/g, '');
+  return splitSymbol(compact) ? compact : null;
+}
+
+function canonicalBitfinexSymbol(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const upper = raw.trim().toUpperCase();
+  if (!upper.startsWith('T')) return null;
+  let compact = upper.slice(1).replace(/[-_/]/g, '');
+  if (compact.endsWith('UST')) compact = `${compact.slice(0, -3)}USDT`;
   return splitSymbol(compact) ? compact : null;
 }
 
@@ -75,6 +103,21 @@ function addSnapshotRow(
     output.set(symbol, assertBbo(venue, symbol, bid, ask, observedAt));
   } catch {
     // One malformed/inactive pair must not discard a full-venue snapshot.
+  }
+}
+
+function addBitfinexSnapshotRow(
+  output: VenueSnapshot,
+  row: unknown,
+  observedAt: number,
+): void {
+  if (!Array.isArray(row)) return;
+  const symbol = canonicalBitfinexSymbol(row[0]);
+  if (!symbol) return;
+  try {
+    output.set(symbol, assertBbo('bitfinex', symbol, row[1], row[3], observedAt));
+  } catch {
+    // One malformed/funding ticker must not discard the venue snapshot.
   }
 }
 
@@ -133,9 +176,31 @@ async function fetchVenueSnapshotUncached(venue: PublicDiscoveryVenue): Promise<
     return output;
   }
 
-  const payload = await fetchJsonWithRetry<any>('https://api.huobi.pro/market/tickers', options);
-  for (const row of Array.isArray(payload?.data) ? payload.data : []) {
-    addSnapshotRow(output, venue, row?.symbol, row?.bid, row?.ask, observedAt);
+  if (venue === 'huobi') {
+    const payload = await fetchJsonWithRetry<any>('https://api.huobi.pro/market/tickers', options);
+    for (const row of Array.isArray(payload?.data) ? payload.data : []) {
+      addSnapshotRow(output, venue, row?.symbol, row?.bid, row?.ask, observedAt);
+    }
+    return output;
+  }
+
+  if (venue === 'mexc') {
+    const rows = await fetchJsonWithRetry<any[]>('https://api.mexc.com/api/v3/ticker/bookTicker', options);
+    for (const row of Array.isArray(rows) ? rows : []) {
+      addSnapshotRow(output, venue, row?.symbol, row?.bidPrice, row?.askPrice, observedAt);
+    }
+    return output;
+  }
+
+  if (venue === 'bitfinex') {
+    const rows = await fetchJsonWithRetry<any[]>('https://api-pub.bitfinex.com/v2/tickers?symbols=ALL', options);
+    for (const row of Array.isArray(rows) ? rows : []) addBitfinexSnapshotRow(output, row, observedAt);
+    return output;
+  }
+
+  const payload = await fetchJsonWithRetry<any>('https://api.crypto.com/exchange/v1/public/get-tickers', options);
+  for (const row of Array.isArray(payload?.result?.data) ? payload.result.data : []) {
+    addSnapshotRow(output, venue, row?.i, row?.b, row?.k, observedAt);
   }
   return output;
 }
