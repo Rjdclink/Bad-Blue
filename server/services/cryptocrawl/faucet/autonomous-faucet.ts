@@ -294,7 +294,7 @@ export class AutonomousCryptoFaucet {
       technicalDataTimestamp: latest?.technical?.timestamp || null,
       quoteDataProvenance: latest?.plan ? 'live' : 'no-data',
       quoteDataTimestamp: latest?.plan ? latest.observedAt : null,
-      dexDataProvenance: latest?.plan && latest.plan.topology !== 'CEX_CEX' ? 'live' : 'no-data',
+      dexDataProvenance: 'no-data',
       ...(latest?.missingInformation.length ? { lastMarketDataError: latest.missingInformation.join(', ') } : {}),
     };
   }
