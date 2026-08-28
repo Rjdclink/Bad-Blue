@@ -1,33 +1,24 @@
 /**
- * FRONTIER RESEARCH INTEGRATION ENGINE v1.0
- * 
- * Synthesizes cutting-edge methodologies from world-leading research institutions:
- * 
- * - DARPA: Adversarial AI, autonomous decision systems, predictive analytics
- * - NASA: Trajectory optimization, deep space autonomy, fault-tolerant systems
- * - IARPA: Intelligence prediction markets, ensemble forecasting, anomaly detection
- * - MIT Media Lab: Emergent AI, human-AI collaboration, adaptive systems
- * - ETH Zurich: Autonomous robotics, swarm coordination, real-time optimization
- * - CERN: Particle physics computational modeling, distributed computing, pattern recognition
- * - Lockheed Skunk Works: Stealth operations, rapid prototyping, mission-critical systems
- * - Quantum Computing: Quantum annealing, superposition-based search, entanglement optimization
- * - HFT Research: Ultra-low latency, market microstructure, order flow prediction
- * - Advanced Cryptography: Zero-knowledge proofs, homomorphic encryption, secure MPC
- * 
- * TARGET: $100,000/day verified profitability
+ * FRONTIER RESEARCH COMPATIBILITY CATALOG
+ *
+ * RESEARCH-ONLY. This module has no discovery, economics, execution, settlement,
+ * governance, scaling, or profitability authority. Historical multipliers,
+ * projected dollar contributions, and labels such as "production" were research
+ * placeholders and are deliberately neutralized here. Research concepts may be
+ * promoted only through disabled/offline experiments followed by measured
+ * evidence in the canonical runtime.
  */
 
 import logger from '../../../logger.js';
 
-// ============================================
-// RESEARCH METHODOLOGY INTERFACES
-// ============================================
+export type ResearchImplementationStatus = 'conceptual' | 'prototype' | 'production';
 
 export interface DARPAMethodology {
   name: 'adversarial_ai' | 'autonomous_decision' | 'predictive_analytics' | 'adaptive_countermeasures';
   description: string;
   applicationToTrading: string;
-  expectedImpact: number; // 1.0-10.0 multiplier
+  /** Research catalog weight only; never a measured performance multiplier. */
+  expectedImpact: number;
 }
 
 export interface NASAMethodology {
@@ -58,151 +49,46 @@ export interface HFTMethodology {
   expectedImpact: number;
 }
 
-// ============================================
-// FRONTIER RESEARCH CATALOG
-// ============================================
+const RESEARCH_BASELINE = 1;
 
 export const DARPA_METHODOLOGIES: DARPAMethodology[] = [
-  {
-    name: 'adversarial_ai',
-    description: 'AI systems that anticipate and counter adversarial actions',
-    applicationToTrading: 'Predict and counter MEV bot strategies, detect market manipulation',
-    expectedImpact: 2.5
-  },
-  {
-    name: 'autonomous_decision',
-    description: 'Systems that make complex decisions without human intervention',
-    applicationToTrading: 'Fully autonomous trading with real-time strategy adaptation',
-    expectedImpact: 3.0
-  },
-  {
-    name: 'predictive_analytics',
-    description: 'Advanced forecasting using multi-source intelligence fusion',
-    applicationToTrading: 'Fuse on-chain, off-chain, and social data for price prediction',
-    expectedImpact: 2.8
-  },
-  {
-    name: 'adaptive_countermeasures',
-    description: 'Dynamic response systems that evolve faster than threats',
-    applicationToTrading: 'Rapidly adapt to changing market conditions and competitor strategies',
-    expectedImpact: 2.2
-  }
+  { name: 'adversarial_ai', description: 'Study adversarial-system robustness patterns', applicationToTrading: 'Offline research into resilient market-signal handling', expectedImpact: RESEARCH_BASELINE },
+  { name: 'autonomous_decision', description: 'Study bounded autonomous decision systems', applicationToTrading: 'Offline research into governed decision workflows', expectedImpact: RESEARCH_BASELINE },
+  { name: 'predictive_analytics', description: 'Study multi-source forecasting methods', applicationToTrading: 'Offline comparison against measured canonical evidence', expectedImpact: RESEARCH_BASELINE },
+  { name: 'adaptive_countermeasures', description: 'Study adaptive response systems', applicationToTrading: 'Offline robustness experiments only', expectedImpact: RESEARCH_BASELINE },
 ];
 
 export const NASA_METHODOLOGIES: NASAMethodology[] = [
-  {
-    name: 'trajectory_optimization',
-    description: 'Optimal path planning through complex solution spaces',
-    applicationToTrading: 'Optimize trade routing across multiple DEXs and chains',
-    expectedImpact: 2.0
-  },
-  {
-    name: 'fault_tolerance',
-    description: 'Systems that continue operating despite component failures',
-    applicationToTrading: 'Graceful degradation when APIs fail, automatic failover',
-    expectedImpact: 1.5
-  },
-  {
-    name: 'deep_autonomy',
-    description: 'Long-duration autonomous operation without human oversight',
-    applicationToTrading: '24/7 autonomous trading with self-monitoring and correction',
-    expectedImpact: 2.5
-  },
-  {
-    name: 'resource_scheduling',
-    description: 'Optimal allocation of limited resources across competing tasks',
-    applicationToTrading: 'Capital allocation, gas optimization, API rate limiting',
-    expectedImpact: 1.8
-  }
+  { name: 'trajectory_optimization', description: 'Study constrained path optimization', applicationToTrading: 'Offline route-search experiments only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'fault_tolerance', description: 'Study fault-tolerant system patterns', applicationToTrading: 'Offline failure-mode comparison only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'deep_autonomy', description: 'Study long-duration autonomous systems', applicationToTrading: 'Offline governance/recovery research only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'resource_scheduling', description: 'Study constrained resource scheduling', applicationToTrading: 'Offline scheduler experiments only', expectedImpact: RESEARCH_BASELINE },
 ];
 
 export const IARPA_METHODOLOGIES: IARPAMethodology[] = [
-  {
-    name: 'prediction_markets',
-    description: 'Aggregate forecasts from multiple independent sources',
-    applicationToTrading: 'Ensemble of 9 AI models for consensus predictions',
-    expectedImpact: 2.8
-  },
-  {
-    name: 'ensemble_forecasting',
-    description: 'Combine multiple models with optimal weighting',
-    applicationToTrading: 'Weight-averaged predictions from Monte Carlo ensembles',
-    expectedImpact: 2.5
-  },
-  {
-    name: 'anomaly_detection',
-    description: 'Identify unusual patterns that precede significant events',
-    applicationToTrading: 'Detect black swan events, whale movements, smart money flows',
-    expectedImpact: 3.0
-  },
-  {
-    name: 'human_machine_teaming',
-    description: 'Optimal collaboration between human judgment and AI capability',
-    applicationToTrading: 'Human oversight of AI decisions with escalation protocols',
-    expectedImpact: 1.5
-  }
+  { name: 'prediction_markets', description: 'Study forecast aggregation', applicationToTrading: 'Offline forecast-comparison research only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'ensemble_forecasting', description: 'Study ensemble forecasting', applicationToTrading: 'Offline model-comparison research only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'anomaly_detection', description: 'Study anomaly detection', applicationToTrading: 'Offline anomaly-detection research only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'human_machine_teaming', description: 'Study human-machine decision support', applicationToTrading: 'Offline governance-interface research only', expectedImpact: RESEARCH_BASELINE },
 ];
 
 export const QUANTUM_METHODOLOGIES: QuantumMethodology[] = [
-  {
-    name: 'quantum_annealing',
-    description: 'Find global optima in complex landscapes using quantum tunneling',
-    applicationToTrading: 'Portfolio optimization, strategy parameter tuning',
-    expectedImpact: 2.0
-  },
-  {
-    name: 'superposition_search',
-    description: 'Explore multiple solution paths simultaneously',
-    applicationToTrading: 'Parallel strategy exploration across parameter space',
-    expectedImpact: 2.5
-  },
-  {
-    name: 'entanglement_optimization',
-    description: 'Correlated state exploration for coupled systems',
-    applicationToTrading: 'Optimize correlated position management across assets',
-    expectedImpact: 1.8
-  },
-  {
-    name: 'quantum_monte_carlo',
-    description: 'Quantum-enhanced simulation for faster convergence',
-    applicationToTrading: 'Accelerated profit probability estimation',
-    expectedImpact: 3.0
-  }
+  { name: 'quantum_annealing', description: 'Classical research analogy for constrained optimization', applicationToTrading: 'Offline benchmark only; no quantum speedup claim', expectedImpact: RESEARCH_BASELINE },
+  { name: 'superposition_search', description: 'Research analogy for broad search', applicationToTrading: 'Offline search-pattern benchmark only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'entanglement_optimization', description: 'Research analogy for coupled optimization', applicationToTrading: 'Offline correlation experiments only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'quantum_monte_carlo', description: 'Research topic for Monte Carlo acceleration', applicationToTrading: 'Offline benchmark only; canonical runtime remains classical and measured', expectedImpact: RESEARCH_BASELINE },
 ];
 
 export const HFT_METHODOLOGIES: HFTMethodology[] = [
-  {
-    name: 'latency_arbitrage',
-    description: 'Leverage speed advantages for faster market information processing',
-    applicationToTrading: 'Ultra-fast execution to capture arbitrage before other automated systems',
-    expectedImpact: 2.5
-  },
-  {
-    name: 'order_flow_prediction',
-    description: 'Predict future order flow from current market state',
-    applicationToTrading: 'Anticipate market movements from mempool and order book analysis',
-    expectedImpact: 3.0
-  },
-  {
-    name: 'market_microstructure',
-    description: 'Deep understanding of how prices form at the tick level',
-    applicationToTrading: 'Optimal order placement and execution timing',
-    expectedImpact: 2.2
-  },
-  {
-    name: 'adaptive_execution',
-    description: 'Dynamic execution algorithms that adapt to market conditions',
-    applicationToTrading: 'Smart order routing with real-time adaptation',
-    expectedImpact: 2.0
-  }
+  { name: 'latency_arbitrage', description: 'Study market-microstructure latency constraints', applicationToTrading: 'Offline latency research; no zero-latency or fastest-wins guarantee', expectedImpact: RESEARCH_BASELINE },
+  { name: 'order_flow_prediction', description: 'Study order-flow prediction methods', applicationToTrading: 'Offline predictive benchmark only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'market_microstructure', description: 'Study market microstructure', applicationToTrading: 'Offline execution-quality research only', expectedImpact: RESEARCH_BASELINE },
+  { name: 'adaptive_execution', description: 'Study adaptive execution patterns', applicationToTrading: 'Offline execution-policy comparison only', expectedImpact: RESEARCH_BASELINE },
 ];
-
-// ============================================
-// FRONTIER INTEGRATION ENGINE
-// ============================================
 
 export interface ResearchSynthesis {
   methodologies: string[];
+  /** Dimensionless research-combination marker, not a performance multiplier. */
   combinedImpact: number;
   applicationStrategy: string;
   confidenceLevel: number;
@@ -213,171 +99,74 @@ export interface FrontierCapability {
   id: string;
   source: string;
   capability: string;
-  implementationStatus: 'conceptual' | 'prototype' | 'production';
-  profitContribution: number; // Expected daily profit contribution
+  implementationStatus: ResearchImplementationStatus;
+  /** Compatibility field. Always zero until canonical measured evidence exists. */
+  profitContribution: number;
 }
+
+const RESEARCH_CAPABILITIES: FrontierCapability[] = [
+  { id: 'darpa-adversarial-mev', source: 'Adversarial-system research pattern', capability: 'Robustness pattern study', implementationStatus: 'conceptual', profitContribution: 0 },
+  { id: 'darpa-autonomous-trading', source: 'Autonomous-decision research pattern', capability: 'Governed autonomy study', implementationStatus: 'conceptual', profitContribution: 0 },
+  { id: 'nasa-trajectory-routing', source: 'Constrained-path research pattern', capability: 'Route optimization study', implementationStatus: 'conceptual', profitContribution: 0 },
+  { id: 'nasa-fault-tolerance', source: 'Fault-tolerance research pattern', capability: 'Failure recovery study', implementationStatus: 'conceptual', profitContribution: 0 },
+  { id: 'iarpa-ensemble-prediction', source: 'Ensemble-forecasting research pattern', capability: 'Forecast aggregation study', implementationStatus: 'conceptual', profitContribution: 0 },
+  { id: 'iarpa-anomaly-blackswan', source: 'Anomaly-detection research pattern', capability: 'Anomaly study', implementationStatus: 'conceptual', profitContribution: 0 },
+  { id: 'quantum-annealing-portfolio', source: 'Classical quantum-inspired research pattern', capability: 'Offline optimization benchmark', implementationStatus: 'conceptual', profitContribution: 0 },
+  { id: 'hft-orderflow-prediction', source: 'HFT research pattern', capability: 'Offline order-flow study', implementationStatus: 'conceptual', profitContribution: 0 },
+  { id: 'hft-adaptive-execution', source: 'HFT research pattern', capability: 'Offline adaptive-execution study', implementationStatus: 'conceptual', profitContribution: 0 },
+];
 
 export class FrontierResearchEngine {
-  private capabilities: FrontierCapability[] = [];
-  private syntheses: ResearchSynthesis[] = [];
-  
+  private readonly capabilities: FrontierCapability[] = RESEARCH_CAPABILITIES.map(capability => ({ ...capability }));
+  private readonly syntheses: ResearchSynthesis[] = [];
+
   constructor() {
-    this.initializeCapabilities();
-  }
-  
-  /**
-   * Initialize frontier capabilities from research methodologies
-   */
-  private initializeCapabilities(): void {
-    // DARPA-inspired capabilities
-    this.capabilities.push({
-      id: 'darpa-adversarial-mev',
-      source: 'DARPA Adversarial AI',
-      capability: 'MEV bot detection and counter-strategy generation',
-      implementationStatus: 'production',
-      profitContribution: 15000
-    });
-    
-    this.capabilities.push({
-      id: 'darpa-autonomous-trading',
-      source: 'DARPA Autonomous Decision Systems',
-      capability: '24/7 autonomous trading with self-correction',
-      implementationStatus: 'production',
-      profitContribution: 25000
-    });
-    
-    // NASA-inspired capabilities
-    this.capabilities.push({
-      id: 'nasa-trajectory-routing',
-      source: 'NASA Trajectory Optimization',
-      capability: 'Optimal multi-DEX trade routing',
-      implementationStatus: 'production',
-      profitContribution: 10000
-    });
-    
-    this.capabilities.push({
-      id: 'nasa-fault-tolerance',
-      source: 'NASA Fault-Tolerant Systems',
-      capability: 'Graceful degradation and automatic failover',
-      implementationStatus: 'production',
-      profitContribution: 5000
-    });
-    
-    // IARPA-inspired capabilities
-    this.capabilities.push({
-      id: 'iarpa-ensemble-prediction',
-      source: 'IARPA Ensemble Forecasting',
-      capability: '9-model AI consensus predictions',
-      implementationStatus: 'production',
-      profitContribution: 20000
-    });
-    
-    this.capabilities.push({
-      id: 'iarpa-anomaly-blackswan',
-      source: 'IARPA Anomaly Detection',
-      capability: 'Black swan event detection and exploitation',
-      implementationStatus: 'production',
-      profitContribution: 15000
-    });
-    
-    // Quantum-inspired capabilities (classical simulation)
-    this.capabilities.push({
-      id: 'quantum-annealing-portfolio',
-      source: 'Quantum Annealing Simulation',
-      capability: 'Global optimization for strategy parameters',
-      implementationStatus: 'production',
-      profitContribution: 8000
-    });
-    
-    // HFT-inspired capabilities
-    this.capabilities.push({
-      id: 'hft-orderflow-prediction',
-      source: 'HFT Order Flow Prediction',
-      capability: 'Mempool analysis and whale detection',
-      implementationStatus: 'production',
-      profitContribution: 12000
-    });
-    
-    this.capabilities.push({
-      id: 'hft-adaptive-execution',
-      source: 'HFT Adaptive Execution',
-      capability: 'Smart order routing with real-time adaptation',
-      implementationStatus: 'production',
-      profitContribution: 10000
-    });
-    
-    logger.info('Frontier capabilities initialized', {
+    logger.info('Frontier research compatibility catalog initialized', {
       component: 'FrontierResearchEngine',
       capabilityCount: this.capabilities.length,
-      totalProfitPotential: this.capabilities.reduce((sum, c) => sum + c.profitContribution, 0)
+      authority: 'research_only',
+      executionAuthority: false,
+      profitabilityAuthority: false,
+      verifiedProfitContributionUsd: 0,
     });
   }
-  
-  /**
-   * Synthesize multiple research methodologies into trading strategies
-   */
+
   synthesizeMethodologies(
-    methodologies: Array<DARPAMethodology | NASAMethodology | IARPAMethodology | QuantumMethodology | HFTMethodology>
+    methodologies: Array<DARPAMethodology | NASAMethodology | IARPAMethodology | QuantumMethodology | HFTMethodology>,
   ): ResearchSynthesis {
-    const names = methodologies.map(m => m.name);
-    const impacts = methodologies.map(m => m.expectedImpact);
-    
-    // Synergistic impact calculation (multiplicative with diminishing returns)
-    let combinedImpact = 1.0;
-    for (const impact of impacts.sort((a, b) => b - a)) {
-      combinedImpact *= 1 + (impact - 1) * (1 / combinedImpact);
-    }
-    
     const synthesis: ResearchSynthesis = {
-      methodologies: names,
-      combinedImpact: Math.min(10, combinedImpact),
-      applicationStrategy: this.generateApplicationStrategy(methodologies),
-      confidenceLevel: 0.85,
-      validationStatus: 'pending'
+      methodologies: methodologies.map(methodology => methodology.name),
+      combinedImpact: RESEARCH_BASELINE,
+      applicationStrategy: methodologies.map(methodology => methodology.applicationToTrading).join(' → '),
+      confidenceLevel: 0,
+      validationStatus: 'pending',
     };
-    
     this.syntheses.push(synthesis);
-    return synthesis;
+    return { ...synthesis, methodologies: [...synthesis.methodologies] };
   }
-  
-  /**
-   * Generate application strategy from methodology combination
-   */
-  private generateApplicationStrategy(
-    methodologies: Array<DARPAMethodology | NASAMethodology | IARPAMethodology | QuantumMethodology | HFTMethodology>
-  ): string {
-    const applications = methodologies.map(m => m.applicationToTrading);
-    return applications.join(' → ');
-  }
-  
-  /**
-   * Get total expected daily profit from all capabilities
-   */
+
+  /** @deprecated Research compatibility field; unverified profit potential is never monetary truth. */
   getTotalProfitPotential(): number {
-    return this.capabilities.reduce((sum, c) => sum + c.profitContribution, 0);
+    return 0;
   }
-  
-  /**
-   * Get all production-ready capabilities
-   */
+
+  /** Historical API preserved for callers; research catalog intentionally has no production entries. */
   getProductionCapabilities(): FrontierCapability[] {
-    return this.capabilities.filter(c => c.implementationStatus === 'production');
+    return [];
   }
-  
-  /**
-   * Get capability by ID
-   */
+
   getCapability(id: string): FrontierCapability | undefined {
-    return this.capabilities.find(c => c.id === id);
+    const capability = this.capabilities.find(candidate => candidate.id === id);
+    return capability ? { ...capability } : undefined;
   }
-  
-  /**
-   * Export research synthesis for validation
-   */
+
   exportSyntheses(): ResearchSynthesis[] {
-    return [...this.syntheses];
+    return this.syntheses.map(synthesis => ({ ...synthesis, methodologies: [...synthesis.methodologies] }));
   }
 }
 
-// Singleton instance
 export const frontierResearch = new FrontierResearchEngine();
+
+export const FRONTIER_RESEARCH_AUTHORITY = 'research_only' as const;
+export const FRONTIER_RESEARCH_EXECUTION_AUTHORITY = false as const;
+export const FRONTIER_RESEARCH_PROFITABILITY_AUTHORITY = false as const;
