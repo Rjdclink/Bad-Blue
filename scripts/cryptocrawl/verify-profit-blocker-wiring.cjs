@@ -38,7 +38,8 @@ requireText(graph, 'arbitrageVerifier.getBestCrossVenueFeeContext(selected)', 'e
 
 requireText(scan, "feeBarrier?.status === 'fee_blocked'", 'scan policy must understand a measured fee-blocked market');
 requireText(scan, 'desired = configuredBase', 'fee-blocked market must retain bounded base discovery instead of maximum waste');
-requireText(scan, 'maximize bounded discovery while verified-positive density is zero and no sufficiently covered fee barrier has been established', 'scanner must still expand before a fee barrier is sufficiently established');
+requireText(scan, 'maximize bounded discovery breadth while verified-positive density is zero and no sufficiently covered fee barrier has been established', 'scanner must still expand before a fee barrier is sufficiently established');
+requireText(scan, 'recommendedIntervalMs', 'scanner must adapt cadence without stopping discovery');
 forbidText(scan, 'desired = 0', 'fee barrier must never stop discovery entirely');
 
 requireText(readiness, 'eligibleCexCandidates', 'strict readiness must distinguish eligible CEX candidates');
@@ -80,4 +81,4 @@ requireText(runtime, 'stageOneBlockedByFeeEconomics', 'heartbeat must distinguis
 requireText(runtime, 'eligibleCexCandidates: candidateMetrics.byTopology.CEX_CEX.eligible', 'heartbeat must bind readiness to CEX candidate topology');
 requireText(runtime, 'eligibleZeroCapitalCandidates: candidateMetrics.byTopology.ZERO_CAPITAL_ATOMIC.eligible', 'heartbeat must report zero-capital candidates separately');
 
-console.log('[profit-blocker-wiring] PASS — fee economics, CoinStats, Stage 1 causality, scheduler idle truth, topology resources, and learning bootstrap semantics are wired without weakening execution gates');
+console.log('[profit-blocker-wiring] PASS — fee economics, CoinStats, Stage 1 causality, scheduler idle truth, topology resources, adaptive search, and learning bootstrap semantics are wired without weakening execution gates');
