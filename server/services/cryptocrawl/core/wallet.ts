@@ -1,6 +1,5 @@
-// Wallet Manager - Multi-chain wallet with AES-256 encryption
+// CryptoCrawler wallet signer/provider wrapper.
 import { Wallet, providers, utils } from 'ethers';
-import { randomBytes, pbkdf2Sync, createCipheriv, createDecipheriv } from 'crypto';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -21,27 +20,25 @@ interface ChainConfig {
   flashLoan: { aave: string; fee: number };
 }
 
-interface WalletData {
+export interface WalletData {
   address: string;
-  encryptedKey: string;
-  mnemonic?: string;
   chains: ChainId[];
 }
 
-interface ChainBalance {
+export interface ChainBalance {
   chain: ChainId;
   token: string;
   balance: string;
   balanceWei: string;
 }
 
-interface WithdrawParams {
+export interface WithdrawParams {
   chain: ChainId;
   to: string;
   amount: string;
 }
 
-type ConnectedWallet = Wallet;
+export type ConnectedWallet = Wallet;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -51,45 +48,19 @@ const chainConfigs: Record<ChainId, ChainConfig> = JSON.parse(readFileSync(chain
 const isManagedChain = (chain: string): chain is ChainId & RpcSupportedChain =>
   ['polygon', 'bsc', 'avalanche', 'arbitrum', 'optimism', 'ethereum'].includes(chain);
 
-class WalletManager {
+/**
+ * Holds the configured signer in memory and connects it only to chain-verified
+ * providers. This class does not persist, return, or expose private-key material.
+ */
+export class WalletManager {
   private wallet?: Wallet;
   private providers = new Map<ChainId, providers.JsonRpcProvider>();
-  private encryptionKey: Buffer;
-
-  constructor() {
-    const password = process.env.WALLET_ENCRYPTION_PASSWORD?.trim();
-    const salt = process.env.WALLET_ENCRYPTION_SALT?.trim();
-    if (!password || !salt) {
-      throw new Error('WALLET_ENCRYPTION_PASSWORD and WALLET_ENCRYPTION_SALT are required for WalletManager');
-    }
-    this.encryptionKey = pbkdf2Sync(password, salt, 100000, 32, 'sha256');
-  }
 
   async initialize(): Promise<WalletData> {
-    const stored = this.loadFromDB();
     const privateKey = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
     if (!privateKey) throw new Error('WALLET_PRIVATE_KEY is required for WalletManager');
     assertConfiguredWalletAddress(privateKey);
-
-    if (stored) {
-      const configuredWallet = walletFromPrivateKey(privateKey);
-      const storedPrivateKey = this.decrypt(stored.encryptedKey);
-      const storedWallet = walletFromPrivateKey(storedPrivateKey);
-      if (configuredWallet.address.toLowerCase() !== storedWallet.address.toLowerCase()) {
-        throw new Error('WALLET_PRIVATE_KEY does not match the stored CryptoCrawler wallet');
-      }
-      this.wallet = configuredWallet;
-    } else {
-      this.wallet = walletFromPrivateKey(privateKey);
-      const encryptedKey = this.encrypt(this.wallet.privateKey);
-      const data: WalletData = {
-        address: this.wallet.address,
-        encryptedKey,
-        mnemonic: this.wallet.mnemonic?.phrase,
-        chains: Object.keys(chainConfigs).filter(isManagedChain),
-      };
-      this.saveToDB(data);
-    }
+    this.wallet = walletFromPrivateKey(privateKey);
 
     const managedChains = Object.keys(chainConfigs).filter(isManagedChain);
     await multiProviderRpcManager.initialize(managedChains);
@@ -114,7 +85,6 @@ class WalletManager {
 
     return {
       address: this.wallet.address,
-      encryptedKey: this.encrypt(this.wallet.privateKey),
       chains: Array.from(this.providers.keys()),
     };
   }
@@ -142,39 +112,10 @@ class WalletManager {
   }
 
   /**
-   * Historical dashboard withdrawal entry point. It previously submitted a real
-   * native-value transaction without a dedicated authenticated CryptoCrawler
-   * withdrawal authority. Keep the method signature for compatibility but fail
-   * closed until an authenticated, governance-audited profit-withdrawal workflow
-   * is implemented separately from arbitrage execution.
+   * Historical dashboard withdrawal entry point. Keep the signature for compatibility
+   * but fail closed; treasury withdrawal is not a CryptoCrawler execution responsibility.
    */
   async withdraw(_params: WithdrawParams): Promise<string> {
     throw new Error('CryptoCrawler direct wallet withdrawal is disabled pending dedicated authenticated governance');
   }
-
-  private encrypt(text: string): string {
-    const iv = randomBytes(16);
-    const cipher = createCipheriv('aes-256-cbc', this.encryptionKey, iv);
-    const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-    return iv.toString('hex') + ':' + encrypted.toString('hex');
-  }
-
-  private decrypt(encrypted: string): string {
-    const [ivHex, encryptedHex] = encrypted.split(':');
-    const iv = Buffer.from(ivHex, 'hex');
-    const encryptedBuffer = Buffer.from(encryptedHex, 'hex');
-    const decipher = createDecipheriv('aes-256-cbc', this.encryptionKey, iv);
-    const decrypted = Buffer.concat([decipher.update(encryptedBuffer), decipher.final()]);
-    return decrypted.toString('utf8');
-  }
-
-  private loadFromDB(): WalletData | null {
-    return null;
-  }
-
-  private saveToDB(data: WalletData): void {
-    console.log('[WALLET] Persisted configured wallet record:', data.address);
-  }
 }
-
-export { WalletManager, type WalletData, type ChainBalance, type WithdrawParams, type ConnectedWallet };
