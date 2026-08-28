@@ -20,6 +20,7 @@ import { orderBookEvolutionStore } from '../validation/order-book-evolution-stor
 import { resolveCoinStatsEnvironment } from '../runtime/environment-contract.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { computeCryptoRuntimeReadiness } from '../runtime/readiness-policy.js';
+import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
 
 const CHAINS: SupportedChain[] = [
   'ethereum',
@@ -90,6 +91,8 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     ]);
     const recentMinute = canonicalOpportunityState.getMetrics(60_000);
     const recentHour = canonicalOpportunityState.getMetrics(60 * 60_000);
+    const recentSnapshots = canonicalOpportunityState.getRecent(512);
+    const invariantMonitor = runtimeInvariantMonitor.scan(recentSnapshots);
     const latest = canonicalOpportunityState.getLatest();
     const graph = measuredOpportunityGraph.getLatestCycle();
     const multiTopology = multiTopologyDiscoveryController.getLatestCycle();
@@ -144,6 +147,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     logger.info('[CryptoRuntime] Authoritative runtime heartbeat', {
       component: 'CryptoRuntimeObservability',
       runtime,
+      runtimeInvariants: invariantMonitor,
       readiness,
       governance: {
         stage: stage.currentStage,
@@ -286,6 +290,7 @@ export function ensureCryptoRuntimeObservability(): void {
     component: 'CryptoRuntimeObservability',
     heartbeatMs: intervalMs,
     runtimeAttestation: true,
+    runtimeInvariantMonitor: true,
     decomposedReadiness: [
       'APP_READY',
       'CONFIG_READY',
