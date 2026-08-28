@@ -13,6 +13,8 @@ const forbidText = (source, needle, label) => {
 
 const provider = read('server/services/cryptocrawl/bridge/across-bridge-provider.ts');
 const discovery = read('server/services/cryptocrawl/discovery/cross-chain-opportunity-generator.ts');
+const observability = read('server/services/cryptocrawl/integration/across-bridge-observability.ts');
+const runtime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 
 // Current Across token identity and quote evidence.
 requireText(provider, "https://app.across.to/api/swap/tokens", 'Across token identities come from the current supported-token catalog');
@@ -38,6 +40,21 @@ forbidText(provider, '/suggested-fees', 'legacy suggested-fees API cannot become
 forbidText(provider, '/available-routes', 'legacy available-routes API cannot become current cross-chain authority');
 forbidText(provider, '.usdc', 'static local USDC address cannot become Across quote identity');
 forbidText(provider, '.usdt', 'static local USDT address cannot become Across quote identity');
+
+// Truthful provider-health telemetry is evidence only.
+requireText(provider, 'export function getAcrossBridgeMetrics()', 'Across exposes typed evidence-health metrics');
+requireText(provider, "authority: 'bridge_evidence_only'", 'Across health is bridge-evidence authority only');
+requireText(provider, 'executionAuthority: false', 'Across provider metrics cannot authorize execution');
+for (const field of ['quoteAttempts', 'quotesSucceeded', 'quotesFailed', 'expiredQuotesRejected', 'tokenResolutionFailures']) {
+  requireText(provider, field, `Across evidence health exposes ${field}`);
+}
+requireText(observability, 'getAcrossBridgeMetrics()', 'runtime telemetry consumes Across evidence-health metrics');
+requireText(observability, 'requiredForGlobalReadiness: false', 'Across outage cannot become global readiness authority');
+requireText(observability, 'deterministicProfitAuthority: false', 'Across telemetry cannot authorize deterministic profit');
+requireText(observability, 'settlementAuthority: false', 'Across telemetry cannot claim terminal settlement');
+requireText(runtime, 'ensureAcrossBridgeObservability()', 'canonical runtime installs optional Across evidence telemetry');
+requireText(runtime, 'acrossBridgeGlobalReadinessAuthority: false', 'canonical runtime declares Across non-authoritative for global readiness');
+requireText(runtime, 'acrossBridgeExecutionAuthority: false', 'canonical runtime declares Across non-authoritative for execution');
 
 // Coverage-preserving, bounded rotating cross-chain enrichment.
 requireText(discovery, "const CHAINS: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc']", 'all existing measured cross-chain chains are preserved');
@@ -67,4 +84,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[across-cross-chain-economics] PASS — current Across token identity, fresh bounded quote economics, full structural route coverage, and non-executable cross-chain truth boundaries are preserved');
+console.log('[across-cross-chain-economics] PASS — current Across token identity, fresh bounded quote economics, full structural route coverage, truthful evidence-health telemetry, and non-executable cross-chain boundaries are preserved');
