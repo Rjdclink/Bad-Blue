@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { canonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 import { endToEndLatencyHarness } from '../runtime/end-to-end-latency-harness.js';
@@ -212,10 +213,23 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     strategy: feedback.strategy,
   });
   try {
-    // Canonical durable memory is deliberately asynchronous. This call updates the
-    // bounded hot layer immediately and queues private-Postgres persistence without
-    // making database latency or availability part of execution/settlement safety.
+    // Canonical hot memory is updated immediately. Existing direct persistence is
+    // preserved, while the durable outbox adds restart-safe retry without making
+    // database availability part of execution/settlement safety.
     canonicalIntelligenceRepository.observeTerminalOutcome(feedback, eventId);
+    const durableOutcome = canonicalIntelligenceRepository
+      .getRecentTerminalOutcomes(512)
+      .find(outcome => outcome.eventId === eventId);
+    if (durableOutcome) {
+      void canonicalIntelligenceOutbox.enqueueTerminalOutcome(durableOutcome, feedback).catch(error => {
+        logger.warn('Durable intelligence outbox enqueue degraded; existing hot/direct persistence remains active', {
+          component: 'MeasuredEvolutionFeedback',
+          eventId,
+          error: error instanceof Error ? error.message : String(error),
+          executionBlocked: false,
+        });
+      });
+    }
     enqueueSpan.end('ok');
   } catch (error) {
     enqueueSpan.end('error');
@@ -250,6 +264,7 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     averageSlippageBps: stats.averageSlippageBps,
     persistentMemoryAllowed: getCryptocrawlGovernance().isLongTermMemoryAllowed(),
     canonicalPrivateMemoryQueued: true,
+    durableOutboxQueued: true,
     legacyHyperEvolutionAuthority: false,
   });
 }
