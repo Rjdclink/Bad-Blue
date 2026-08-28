@@ -8,6 +8,7 @@ let lifecyclePromise: Promise<CryptoCrawlerCoreLifecycle> | null = null;
 let fundingMonitorPromise: Promise<typeof import('../discovery/funding-rate-monitor.js')> | null = null;
 let zeroCapitalProfitWiringScheduled = false;
 let coinbaseReadinessScheduled = false;
+let rainbowProfitBridgeScheduled = false;
 let started = false;
 
 async function getFundingMonitor() {
@@ -52,6 +53,24 @@ function scheduleCoinbaseReadinessProbe(): void {
         });
       })
       .finally(() => { coinbaseReadinessScheduled = false; });
+  });
+}
+
+function scheduleRainbowProfitBridge(): void {
+  if (rainbowProfitBridgeScheduled) return;
+  rainbowProfitBridgeScheduled = true;
+  // Payout processing is downstream of terminal settlement and must never block
+  // discovery, execution, or canonical settlement startup.
+  queueMicrotask(() => {
+    void import('./rainbow-profit-bridge-wiring.js')
+      .then(module => module.ensureRainbowProfitBridgeWiring())
+      .catch(error => {
+        rainbowProfitBridgeScheduled = false;
+        logger.warn('[CryptoCoreRuntime] Rainbow Bridge unavailable; realized profits remain at source', {
+          component: 'CryptoCoreRuntime',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   });
 }
 
@@ -105,6 +124,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   started = lifecycle.isStarted();
   scheduleZeroCapitalProfitWiring();
   scheduleCoinbaseReadinessProbe();
+  scheduleRainbowProfitBridge();
 
   if (process.env.NO_INTERVALS !== 'true' && String(process.env.CRYPTARA_MODE || '').toUpperCase() !== 'SILENT_WATCHER_ONLY') {
     try {
@@ -131,6 +151,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     marketFocusPolicyInstalled: true,
     zeroCapitalRealizedProfitPolicyScheduled: true,
     coinbaseReadinessProbeScheduled: true,
+    rainbowProfitBridgeScheduled: true,
     fundingRateDiscovery: process.env.NO_INTERVALS === 'true' ? 'withheld_no_intervals' : 'optional_parallel_monitor',
   });
 }
