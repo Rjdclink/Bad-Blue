@@ -5,9 +5,11 @@ import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-r
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureContinuousPostTradeLearning } from '../learning/continuous-post-trade-learning.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
+import { ensureChainstackProviderDiscovery } from './chainstack-provider-wiring.js';
 import { ensureCryptaraLatencyInstrumentation } from './cryptara-latency-instrumentation.js';
 import { ensureDiscoveryLatencyInstrumentation } from './discovery-latency-instrumentation.js';
 import { ensureExecutionLatencyInstrumentation } from './execution-latency-instrumentation.js';
+import { ensureHotConnectionPrewarming } from './hot-connection-prewarming.js';
 import { ensureInventoryReadinessWiring } from './inventory-readiness-wiring.js';
 import { ensureLatencyObservability } from './latency-observability.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
@@ -42,7 +44,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDiscoveryLatencyInstrumentation();
   ensureExecutionLatencyInstrumentation();
   ensureLatencyObservability();
+  ensureChainstackProviderDiscovery();
   ensurePredictiveCainWiring();
+  ensureHotConnectionPrewarming();
   ensureSlippageCalibrationWiring();
   ensureContinuousPostTradeLearning();
   ensureInventoryReadinessWiring();
@@ -66,10 +70,14 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     monteCarloCalibration: 'terminal_normalized_settlement_only',
     monteCarloPrecompute: 'quanti_comp_background_advisory_exact_key_ttl',
     monteCarloPrecomputeExecutionAuthority: false,
+    chainstackProviderDiscovery: 'existing_nodes_only_validated_chain_identity',
+    chainstackRuntimePaidProvisioning: false,
     predictiveCain: 'predicted_lux_preparation_stream',
     predictiveCainActions: ['warm_market_data', 'warm_cex_l2', 'warm_validated_rpc'],
     predictiveCainExecutionAuthority: false,
     predictiveCainDeterministicPositiveAuthority: false,
+    hotConnectionPrewarming: 'opportunity_density_budgeted',
+    hotConnectionWarmStateFreshnessAuthority: false,
     slippageCalibration: 'terminal_measured_residual_curves',
     slippageCalibrationDimensions: ['venue_pair', 'symbol', 'size_bucket', 'volatility_bucket', 'time_bucket'],
     slippageCalibrationEconomicsAuthority: 'conservative_residual_cost_input',
