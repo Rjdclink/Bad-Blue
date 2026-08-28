@@ -55,7 +55,6 @@ interface MutableRouteEvidence {
 }
 
 const evidence = new Map<string, MutableRouteEvidence>();
-const explorationCursorByChain = new Map<string, number>();
 
 function boundedInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
@@ -158,16 +157,14 @@ function oldestFirst(routes: ConfiguredZeroCapitalRoute[]): ConfiguredZeroCapita
 }
 
 function deterministicExploration(
-  chain: string,
   routes: ConfiguredZeroCapitalRoute[],
   count: number,
 ): ConfiguredZeroCapitalRoute[] {
   if (count <= 0 || routes.length === 0) return [];
-  const ordered = oldestFirst(routes);
-  const cursor = explorationCursorByChain.get(chain) ?? 0;
-  const selected = Array.from({ length: Math.min(count, ordered.length) }, (_, offset) => ordered[(cursor + offset) % ordered.length]);
-  explorationCursorByChain.set(chain, (cursor + selected.length) % ordered.length);
-  return selected;
+  // Oldest evidence always wins exploration. Once selected, recordQuoteCycle moves
+  // that route's lastAttemptAt forward, naturally rotating priority across every
+  // structural route without randomness or a permanently favored fixed pair.
+  return oldestFirst(routes).slice(0, Math.min(count, routes.length));
 }
 
 /**
@@ -177,7 +174,6 @@ function deterministicExploration(
  * permanent priority. Pre-score never enters deterministic economics or execution.
  */
 export function selectZeroCapitalRoutesForQuote(
-  chain: string,
   routes: ConfiguredZeroCapitalRoute[],
   gasCostUsd: number,
 ): ZeroCapitalRoutePreselection {
@@ -216,7 +212,7 @@ export function selectZeroCapitalRoutesForQuote(
 
   const explorationFraction = boundedNumber(process.env.ZERO_CAPITAL_ROUTE_EXPLORATION_FRACTION, 0.25, 0.10, 0.75);
   const explorationCount = Math.max(1, Math.min(quoteBudget, Math.ceil(quoteBudget * explorationFraction)));
-  const exploration = deterministicExploration(chain, routes, explorationCount);
+  const exploration = deterministicExploration(routes, explorationCount);
   const selectedIds = new Set(exploration.map(route => route.id));
   const now = Date.now();
   const scores = routes.map(route => scoreRoute(route, gasCostUsd, now));
@@ -237,19 +233,21 @@ export function selectZeroCapitalRoutesForQuote(
     selectedIds.add(route.id);
   }
 
-  // When measured history is sparse, fill the unused budget through the same
-  // deterministic stale-first exploration path rather than inventing a score.
+  // When measured history is sparse, the unused budget remains exploration. No
+  // synthetic score is assigned just to fill the quota.
   if (exploration.length + exploitation.length < quoteBudget) {
     const remaining = routes.filter(route => !selectedIds.has(route.id));
-    const fill = deterministicExploration(chain, remaining, quoteBudget - exploration.length - exploitation.length);
+    const fill = deterministicExploration(remaining, quoteBudget - exploration.length - exploitation.length);
     for (const route of fill) {
-      exploitation.push(route);
+      exploration.push(route);
       selectedIds.add(route.id);
     }
   }
 
   return {
-    selectedRoutes: [...exploration, ...exploitation],
+    // Exploitation appears first for deterministic telemetry/readability. The
+    // underlying quoter may still execute admitted independent requests in parallel.
+    selectedRoutes: [...exploitation, ...exploration],
     structuralCandidates: routes.length,
     quoteBudget,
     scoredCandidates: scores.filter(score => score.evidenceSufficient).length,
