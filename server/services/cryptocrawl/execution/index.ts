@@ -52,6 +52,7 @@ interface ExecutionResult {
   status: 'submitted' | 'partially_filled' | 'filled' | 'cancelled' | 'rejected' | 'failed' | 'settlement_unknown';
   settlementConfirmed: boolean;
   txHash?: string;
+  signedTransaction?: string;
   profit?: number;
   latency?: number;
   method?: string;
@@ -67,7 +68,7 @@ export interface SharedExecutionCapabilities {
   autonomousRoutePlanner: boolean;
   flashLoanReceiverSupport: boolean;
   liveOrderGuarded: boolean;
-  supportedCentralizedVenues: Array<'kraken' | 'okx'>;
+  supportedCentralizedVenues: Array<'coinbase' | 'kraken' | 'okx'>;
 }
 
 export interface SharedExecutionEnvironmentReadiness {
@@ -93,7 +94,7 @@ const SHARED_EXECUTION_CAPABILITIES: SharedExecutionCapabilities = {
   autonomousRoutePlanner: true,
   flashLoanReceiverSupport: true,
   liveOrderGuarded: true,
-  supportedCentralizedVenues: ['kraken', 'okx'],
+  supportedCentralizedVenues: ['coinbase', 'kraken', 'okx'],
 };
 
 const PLACEHOLDER_OPPORTUNITY_PAYLOAD: OpportunityData = {
@@ -107,8 +108,8 @@ function normalizeChain(chain: string): string {
   return String(chain || 'unknown').trim().toLowerCase();
 }
 
-function isSupportedCentralizedVenue(venue: QuoteVenue): venue is 'kraken' | 'okx' {
-  return venue === 'kraken' || venue === 'okx';
+function isSupportedCentralizedVenue(venue: QuoteVenue): venue is 'coinbase' | 'kraken' | 'okx' {
+  return venue === 'coinbase' || venue === 'kraken' || venue === 'okx';
 }
 
 function resolveOpportunityPayload(opp: Opportunity): OpportunityData {
@@ -250,10 +251,19 @@ export function assessSharedExecutionEnvironment(): SharedExecutionEnvironmentRe
     process.env.ETHEREUM_RPC_URL?.trim()
   );
   const walletConfigured = !!normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
-  const centralizedExchangeConfigured = !!(
-    (process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()) ||
-    (process.env.OKX_API_KEY?.trim() && process.env.OKX_API_SECRET?.trim() && process.env.OKX_API_PASSPHRASE?.trim())
+  const krakenConfigured = !!(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim());
+  const okxConfigured = !!(
+    process.env.OKX_API_KEY?.trim()
+    && process.env.OKX_API_SECRET?.trim()
+    && process.env.OKX_API_PASSPHRASE?.trim()
   );
+  const coinbaseConfigured = !!(
+    (process.env.COINBASE_API_KEY?.trim() || process.env.COINBASE_KEY_NAME?.trim() || process.env.CDP_API_KEY_NAME?.trim())
+    && (process.env.COINBASE_API_SECRET?.trim() || process.env.COINBASE_KEY_SECRET?.trim() || process.env.CDP_API_KEY_SECRET?.trim())
+  );
+  // CEX-CEX execution needs two independently configured venue accounts. Runtime
+  // fee/permission/depth/inventory evidence still gates each individual plan.
+  const centralizedExchangeConfigured = [krakenConfigured, okxConfigured, coinbaseConfigured].filter(Boolean).length >= 2;
   // Flashbots auth is application-owned and persisted by the zero-capital engine.
   // This synchronous probe can only report whether initialization has a usable RPC.
   const flashbotsAuthConfigured = rpcConfigured;
@@ -359,23 +369,30 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
     });
 
     const result = await ultraLowLatency.executeMultiPath(oppData);
+    const signedTransaction = typeof (result as any).signedTransaction === 'string'
+      ? (result as any).signedTransaction as string
+      : undefined;
     executionResult = {
       success: result.success,
       status: result.success ? 'submitted' : 'failed',
       settlementConfirmed: false,
       txHash: result.txHash,
+      signedTransaction,
       latency: result.latency,
       method: result.method,
     };
 
-    // If execution successful, submit to multiple relays for inclusion
-    if (executionResult.success && executionResult.txHash) {
+    // A bundle requires signed raw transaction bytes, never a transaction hash.
+    // The same signed payload may be submitted to private builders only when the
+    // low-latency executor exposes it; otherwise the successful multipath
+    // broadcast remains authoritative and no synthetic bundle is constructed.
+    if (executionResult.success && executionResult.signedTransaction) {
       const currentBlock = await getCurrentBlock();
       const targetBlock = currentBlock + 1;
 
       const relayResult = await multiRelay.submitBundle(
         {
-          signedTransactions: [executionResult.txHash],
+          signedTransactions: [executionResult.signedTransaction],
           targetBlock
         },
         targetBlock
@@ -383,7 +400,7 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
 
       executionResult.relaySubmissions = relayResult;
 
-      logger.info('Bundle submitted to multiple relays', {
+      logger.info('Signed transaction submitted to private relay builders', {
         component: 'ExecutionOrchestrator',
         submitted: relayResult.submitted,
         successful: relayResult.successful
