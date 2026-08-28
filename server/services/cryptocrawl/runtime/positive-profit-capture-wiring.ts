@@ -42,6 +42,20 @@ function normalizeCoinbaseCredentialAliases(): void {
   }
 }
 
+function normalizeZeroXCredentialAliases(): void {
+  if (process.env.ZEROX_API_KEY?.trim()) return;
+  const aliases = ['0X_API_KEY', 'ZERO_X_API_KEY', 'ZEROX_KEY', 'ZERO_X_KEY'] as const;
+  const source = aliases.find(alias => process.env[alias]?.trim());
+  if (!source) return;
+  process.env.ZEROX_API_KEY = process.env[source]?.trim();
+  logger.info('[PositiveProfitCapture] Normalized Railway 0x API-key alias', {
+    component: 'PositiveProfitCapture',
+    sourceAlias: source,
+    canonicalAlias: 'ZEROX_API_KEY',
+    secretValueLogged: false,
+  });
+}
+
 function enforceAuthenticatedKrakenFeeAuthority(): void {
   const authenticated = Boolean(
     process.env.KRAKEN_API_KEY?.trim()
@@ -104,6 +118,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
   if (installed) return;
   installed = true;
   normalizeCoinbaseCredentialAliases();
+  normalizeZeroXCredentialAliases();
   ensureCoinCapEnvironmentWiring();
   enforceAuthenticatedKrakenFeeAuthority();
   ensureDynamicRpcProviderWiring();
@@ -157,6 +172,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
     maximumDailyProfitExecutionStop: false,
     rankScoreExecutionGate: false,
     authenticatedKrakenFeeAuthority: Boolean(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()),
+    zeroXApiKeyVisible: Boolean(process.env.ZEROX_API_KEY?.trim()),
     paidCoinCapEnvironmentResolution: true,
     dynamicRpcProviderAdmission: true,
     makerRecovery: {
