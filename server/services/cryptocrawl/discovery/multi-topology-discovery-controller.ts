@@ -13,8 +13,24 @@ export interface MultiTopologyDiscoveryCycle {
   crossChainCandidates: number;
   mempoolCandidates: number;
   makerCandidates: number;
+  durationMsByTopology: {
+    dex: number | null;
+    crossChain: number | null;
+    mempool: number | null;
+    maker: number | null;
+  };
   registry: ReturnType<typeof measuredCandidateRegistry.getMetrics>;
   errors: string[];
+}
+
+function elapsedMs(startedAt: bigint): number {
+  return Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+}
+
+async function timed<T>(operation: () => Promise<T>): Promise<{ value: T; durationMs: number }> {
+  const startedAt = process.hrtime.bigint();
+  const value = await operation();
+  return { value, durationMs: elapsedMs(startedAt) };
 }
 
 class MultiTopologyDiscoveryController {
@@ -35,6 +51,7 @@ class MultiTopologyDiscoveryController {
       candidateAuthority: 'measured_candidate_registry',
       makerOrdersAssumedFilled: false,
       syntheticEvidenceAllowed: false,
+      perTopologyLatency: 'monotonic_telemetry_only',
     });
   }
 
@@ -53,23 +70,40 @@ class MultiTopologyDiscoveryController {
       let crossChainCandidates = 0;
       let mempoolCandidates = 0;
       let makerCandidates = 0;
+      const durationMsByTopology: MultiTopologyDiscoveryCycle['durationMsByTopology'] = {
+        dex: null,
+        crossChain: null,
+        mempool: null,
+        maker: null,
+      };
 
+      // Existing topology independence is preserved: DEX, cross-chain, and maker
+      // producers continue to run concurrently. Timing wrappers are telemetry only.
       const [dex, cross, maker] = await Promise.allSettled([
-        discoverMeasuredDexCandidates(),
-        discoverMeasuredCrossChainCandidates(),
-        discoverMeasuredMakerCandidates(),
+        timed(() => discoverMeasuredDexCandidates()),
+        timed(() => discoverMeasuredCrossChainCandidates()),
+        timed(() => discoverMeasuredMakerCandidates()),
       ]);
-      if (dex.status === 'fulfilled') dexCandidates = dex.value.length;
-      else errors.push(`dex:${dex.reason instanceof Error ? dex.reason.message : String(dex.reason)}`);
-      if (cross.status === 'fulfilled') crossChainCandidates = cross.value.length;
-      else errors.push(`cross_chain:${cross.reason instanceof Error ? cross.reason.message : String(cross.reason)}`);
-      if (maker.status === 'fulfilled') makerCandidates = maker.value.length;
-      else errors.push(`maker:${maker.reason instanceof Error ? maker.reason.message : String(maker.reason)}`);
+      if (dex.status === 'fulfilled') {
+        dexCandidates = dex.value.value.length;
+        durationMsByTopology.dex = dex.value.durationMs;
+      } else errors.push(`dex:${dex.reason instanceof Error ? dex.reason.message : String(dex.reason)}`);
+      if (cross.status === 'fulfilled') {
+        crossChainCandidates = cross.value.value.length;
+        durationMsByTopology.crossChain = cross.value.durationMs;
+      } else errors.push(`cross_chain:${cross.reason instanceof Error ? cross.reason.message : String(cross.reason)}`);
+      if (maker.status === 'fulfilled') {
+        makerCandidates = maker.value.value.length;
+        durationMsByTopology.maker = maker.value.durationMs;
+      } else errors.push(`maker:${maker.reason instanceof Error ? maker.reason.message : String(maker.reason)}`);
 
+      const mempoolStartedAt = process.hrtime.bigint();
       try {
         mempoolCandidates = discoverMeasuredMempoolCandidates().length;
       } catch (error) {
         errors.push(`mempool:${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        durationMsByTopology.mempool = elapsedMs(mempoolStartedAt);
       }
 
       const completedAt = Date.now();
@@ -81,6 +115,7 @@ class MultiTopologyDiscoveryController {
         crossChainCandidates,
         mempoolCandidates,
         makerCandidates,
+        durationMsByTopology,
         registry: measuredCandidateRegistry.getMetrics(60_000),
         errors,
       };
@@ -89,6 +124,7 @@ class MultiTopologyDiscoveryController {
         component: 'MultiTopologyDiscoveryController',
         cycleId,
         durationMs: completedAt - startedAt,
+        durationMsByTopology,
         dexCandidates,
         crossChainCandidates,
         mempoolCandidates,
@@ -106,6 +142,7 @@ class MultiTopologyDiscoveryController {
   getLatestCycle(): MultiTopologyDiscoveryCycle | null {
     return this.latest ? {
       ...this.latest,
+      durationMsByTopology: { ...this.latest.durationMsByTopology },
       registry: {
         ...this.latest.registry,
         byTopology: Object.fromEntries(Object.entries(this.latest.registry.byTopology).map(([key, value]) => [key, { ...value }])) as MultiTopologyDiscoveryCycle['registry']['byTopology'],
