@@ -3,7 +3,7 @@ import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-
 import { floorToIncrement, validateCoinbaseOrderAgainstProduct } from './coinbase-product-policy.js';
 
 function feeBps(plan: VerifiedArbitragePlan, side: 'buy' | 'sell'): number | null {
-  const evidence = side === 'buy' ? plan.feeEvidence.buy : plan.feeEvidence.sell;
+  const evidence = side === 'buy' ? plan.feeEvidence?.buy : plan.feeEvidence?.sell;
   const value = Number(evidence?.takerFeeBps);
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
@@ -54,7 +54,7 @@ export async function normalizeCoinbaseExecutablePlan(
   const proceedsUsd = normalizedQuantity * plan.sellBid;
   const buyFeeUsd = feeUsd(acquisitionCostUsd, buyFeeBps);
   const sellFeeUsd = feeUsd(proceedsUsd, sellFeeBps);
-  const fixedCostsUsd = plan.costs.gasUsd + plan.costs.bridgeFeeUsd + plan.costs.transferFeeUsd;
+  const fixedCostsUsd = plan.costs.gasUsd + plan.costs.bridgeFeeUsd + (plan.costs.transferFeeUsd ?? 0);
   const totalCostsUsd = buyFeeUsd + sellFeeUsd + fixedCostsUsd;
   const grossProfitUsd = proceedsUsd - acquisitionCostUsd;
   const netProfitUsd = grossProfitUsd - totalCostsUsd;
