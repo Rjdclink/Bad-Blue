@@ -3,7 +3,7 @@ import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { getVenueCapability, type CryptoCrawlerCexVenue } from './venue-capability-registry.js';
 
-export type PublicDiscoveryVenue = 'binance' | 'bybit' | 'kucoin' | 'gate' | 'huobi';
+export type PublicDiscoveryVenue = 'coinbase' | 'binance' | 'bybit' | 'kucoin' | 'gate' | 'huobi';
 
 export interface PublicCexBboObservation {
   venue: PublicDiscoveryVenue;
@@ -23,7 +23,7 @@ export interface PublicCexDiscoveryBatch {
   failures: Array<{ venue: PublicDiscoveryVenue; symbol: string; error: string }>;
 }
 
-const VENUES: PublicDiscoveryVenue[] = ['binance', 'bybit', 'kucoin', 'gate', 'huobi'];
+const VENUES: PublicDiscoveryVenue[] = ['coinbase', 'binance', 'bybit', 'kucoin', 'gate', 'huobi'];
 type VenueSnapshot = Map<string, PublicCexBboObservation>;
 const snapshotCache = new Map<PublicDiscoveryVenue, { expiresAt: number; value: VenueSnapshot }>();
 const snapshotInFlight = new Map<PublicDiscoveryVenue, Promise<VenueSnapshot>>();
@@ -79,9 +79,29 @@ function addSnapshotRow(
 }
 
 async function fetchVenueSnapshotUncached(venue: PublicDiscoveryVenue): Promise<VenueSnapshot> {
-  const options = { maxRetries: 1, baseDelayMs: 150, maxDelayMs: 750, timeoutMs: 3_500 };
+  const options = {
+    init: { headers: { accept: 'application/json', 'cache-control': 'no-cache' } },
+    maxRetries: 1,
+    baseDelayMs: 150,
+    maxDelayMs: 750,
+    timeoutMs: 3_500,
+  };
   const observedAt = Date.now();
   const output: VenueSnapshot = new Map();
+
+  if (venue === 'coinbase') {
+    const payload = await fetchJsonWithRetry<any>(
+      'https://api.coinbase.com/api/v3/brokerage/market/products?product_type=SPOT&limit=1000',
+      options,
+    );
+    for (const row of Array.isArray(payload?.products) ? payload.products : []) {
+      // Coinbase Advanced Trade exposes exact product quote currencies. Preserve
+      // that currency in the canonical symbol; USD, USDC and USDT are never
+      // treated as interchangeable execution assets.
+      addSnapshotRow(output, venue, row?.product_id, row?.best_bid_price, row?.best_ask_price, observedAt);
+    }
+    return output;
+  }
 
   if (venue === 'binance') {
     const rows = await fetchJsonWithRetry<any[]>('https://api.binance.com/api/v3/ticker/bookTicker', options);
@@ -174,7 +194,7 @@ export async function discoverPublicCexBbo(
 }
 
 /**
- * Broad discovery now costs approximately one public request per venue per cache
+ * Broad discovery costs approximately one public request per venue per cache
  * window rather than venues x symbols requests. This makes 50+ pair discovery
  * practical without adding API keys or multiplying provider load linearly.
  */
