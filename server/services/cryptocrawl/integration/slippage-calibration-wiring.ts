@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { getCryptara } from '../../cryptara/index.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 import { estimateResidualSlippage, observeSlippageCalibration, slippageSizeBucket, slippageTimeBucket } from '../validation/slippage-calibration-store.js';
 
 const ARB_PATCH = Symbol.for('cryptocrawl.slippage-calibration.arbitrage');
@@ -50,22 +51,23 @@ export function ensureSlippageCalibrationWiring(): void {
     const previousRecord = cryptara.recordExecutionResult.bind(cryptara);
     cryptara.recordExecutionResult = feedback => {
       previousRecord(feedback);
-      if (feedback.settlement.terminal !== true || feedback.settlement.confirmed !== true || feedback.realizedSlippageBps === null || !Number.isFinite(feedback.realizedSlippageBps)) return;
+      const settlement = feedback.settlement;
+      if (!feedback.opportunityId || !settlement || settlement.terminal !== true || settlement.settlementConfirmed !== true || feedback.slippageBps === null || !Number.isFinite(feedback.slippageBps)) return;
       const snapshot = canonicalOpportunityState.get(feedback.opportunityId);
       const plan = snapshot?.plan;
       if (!plan) return;
-      const partialFill = feedback.settlement.legs.some(leg => leg.status === 'partial');
+      const partialFill = (settlement.orders || []).some(order => order.status === 'partially_filled' || (order.filledQuantity !== null && order.filledQuantity + 1e-12 < order.requestedQuantity));
       observeSlippageCalibration({
         venuePair: `${plan.buyVenue}->${plan.sellVenue}`,
         symbol: plan.symbol,
         sizeBucket: slippageSizeBucket(plan.notionalUsd),
         volatilityBucket: 'unknown',
-        timeBucket: slippageTimeBucket(feedback.observedAt),
-        observedAt: feedback.observedAt,
+        timeBucket: slippageTimeBucket(feedback.timestamp),
+        observedAt: feedback.timestamp,
         expectedDepthSlippageBps: Math.max(0, plan.expectedPriceImpactBps || 0),
-        realizedSlippageBps: Math.max(0, feedback.realizedSlippageBps),
+        realizedSlippageBps: Math.max(0, feedback.slippageBps),
         partialFill,
-        sourceEventId: feedback.settlement.settlementId,
+        sourceEventId: terminalFeedbackIdentity(feedback),
       });
     };
   }
