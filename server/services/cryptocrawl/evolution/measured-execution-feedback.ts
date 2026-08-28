@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 import { RuntimeJsonStateStore } from '../integration/runtime-json-state-store.js';
 
@@ -201,6 +202,12 @@ function measuredStats(samples: MeasuredExecutionSample[]) {
 
 export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutionFeedback): Promise<void> {
   if (!feedback.settlement || feedback.settlement.terminal !== true) return;
+  const eventId = terminalFeedbackIdentity(feedback);
+  // Canonical durable memory is deliberately asynchronous. This call updates the
+  // bounded hot layer immediately and queues private-Postgres persistence without
+  // making database latency or availability part of execution/settlement safety.
+  canonicalIntelligenceRepository.observeTerminalOutcome(feedback, eventId);
+
   await ensureMeasuredEvolutionFeedbackHydrated();
   const sample = normalizeSample(feedback);
   const key = sampleKey(sample);
@@ -228,6 +235,7 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     averageLatencyMs: stats.averageLatencyMs,
     averageSlippageBps: stats.averageSlippageBps,
     persistentMemoryAllowed: getCryptocrawlGovernance().isLongTermMemoryAllowed(),
+    canonicalPrivateMemoryQueued: true,
     legacyHyperEvolutionAuthority: false,
   });
 }
