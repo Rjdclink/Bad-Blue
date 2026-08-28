@@ -15,6 +15,7 @@ import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
+import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
 
@@ -48,6 +49,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   // fetched only after relevance has already been established.
   ensureFilteredAlchemyPendingStream();
   ensureFilteredMempoolObservability();
+  // 0x request-budget telemetry is local process admission truth only. It does
+  // not claim provider quotas and cannot authorize execution.
+  ensureZeroXBudgetObservability();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
@@ -72,6 +76,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     filteredMempoolEvidence: 'alchemy_provider_filtered_hash_first_exact_chain',
     filteredMempoolTelemetry: 'hash_to_detail_efficiency_and_budget_pressure',
     filteredMempoolExecutionAuthority: false,
+    zeroXRequestAdmission: 'purpose_aware_local_budget_with_execution_reserve',
+    zeroXProviderRateLimitClaim: false,
+    zeroXRequestAdmissionExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
