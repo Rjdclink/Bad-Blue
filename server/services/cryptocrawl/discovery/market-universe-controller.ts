@@ -1,3 +1,4 @@
+import { endToEndLatencyHarness } from '../runtime/end-to-end-latency-harness.js';
 import { canonicalizeCexSymbol, isUsefulArbitrageSymbol } from './symbol-registry.js';
 
 export interface MarketUniverseCandidate {
@@ -98,16 +99,27 @@ export function getLastOrderedMarketUniverseSymbols(): string[] {
  * through the search window, preserving exploration and regime-change detection.
  */
 export function rankMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
-  const performance = performanceProvider?.() || new Map<string, MarketUniversePerformanceHint>();
-  const bySymbol = new Map<string, T>();
-  for (const asset of assets) {
-    const canonical = canonicalizeCexSymbol(asset.symbol);
-    if (!canonical || !isUsefulArbitrageSymbol(canonical.symbol)) continue;
-    const normalized = { ...asset, symbol: canonical.symbol } as T;
-    const existing = bySymbol.get(canonical.symbol);
-    if (!existing || score(normalized, performance) > score(existing, performance)) bySymbol.set(canonical.symbol, normalized);
+  const span = endToEndLatencyHarness.startSpan('normalize', 'compute', {
+    backend: 'market_universe_canonicalize_dedupe_rank',
+    worker: 'main_process',
+  });
+  try {
+    const performance = performanceProvider?.() || new Map<string, MarketUniversePerformanceHint>();
+    const bySymbol = new Map<string, T>();
+    for (const asset of assets) {
+      const canonical = canonicalizeCexSymbol(asset.symbol);
+      if (!canonical || !isUsefulArbitrageSymbol(canonical.symbol)) continue;
+      const normalized = { ...asset, symbol: canonical.symbol } as T;
+      const existing = bySymbol.get(canonical.symbol);
+      if (!existing || score(normalized, performance) > score(existing, performance)) bySymbol.set(canonical.symbol, normalized);
+    }
+    const ranked = [...bySymbol.values()].sort((left, right) => score(right, performance) - score(left, performance));
+    span.end('ok');
+    return ranked;
+  } catch (error) {
+    span.end('error');
+    throw error;
   }
-  return [...bySymbol.values()].sort((left, right) => score(right, performance) - score(left, performance));
 }
 
 /**
