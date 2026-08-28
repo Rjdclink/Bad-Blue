@@ -193,7 +193,7 @@ export async function discoverDynamicZeroCapitalQuotes(
 
   try {
     const enriched = await enrichMeasuredGasCost(chain as ChainId, templates);
-    const preselection = selectZeroCapitalRoutesForQuote(chain, enriched.routes, enriched.gasCostUsd);
+    const preselection = selectZeroCapitalRoutesForQuote(enriched.routes, enriched.gasCostUsd);
     const selected = preselection.selectedRoutes;
     const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
     recordZeroCapitalRouteQuoteCycle(selected, quotes);
