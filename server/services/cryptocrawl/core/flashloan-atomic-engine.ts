@@ -1,7 +1,7 @@
 // Legacy compatibility surface only.
 //
 // This module previously fabricated flash-loan swap outputs, simulation results,
-// execution success, and profit with constants/Math.random(). It is not a valid
+// execution success, and profit with randomized placeholder values. It is not a valid
 // CryptoCrawler execution authority. Canonical zero-capital execution is owned by
 // core/zero-capital-engine.ts plus governed receiver/payload/settlement adapters.
 
