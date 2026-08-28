@@ -4,6 +4,7 @@ import type { CryptaraOpportunityAssessment, CryptaraOpportunityContext } from '
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { normalizeCexExecutablePlan } from '../execution/cex-spot-product-policy.js';
 import { stageManager } from '../governance/stage-management.js';
+import { ensureDynamicRpcProviderWiring } from './dynamic-rpc-provider-wiring.js';
 
 let installed = false;
 
@@ -78,6 +79,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
   if (installed) return;
   installed = true;
   enforceAuthenticatedKrakenFeeAuthority();
+  ensureDynamicRpcProviderWiring();
 
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
     verifyOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
@@ -87,9 +89,6 @@ export function ensurePositiveProfitCaptureWiring(): void {
   verifier.evaluateOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
     const plan = await originalEvaluateOnce(request);
     if (!plan) return null;
-    // Coinbase/Kraken/OKX increments, minimums and live product state are
-    // deterministic execution evidence. Normalize the common executable size
-    // and recompute economics before a candidate can reach Cryptara eligibility.
     return normalizeCexExecutablePlan(plan);
   };
   verifier.verifyOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
@@ -124,6 +123,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
     maximumDailyProfitExecutionStop: false,
     rankScoreExecutionGate: false,
     authenticatedKrakenFeeAuthority: Boolean(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()),
+    dynamicRpcProviderAdmission: true,
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedAuthorities: [
       'deterministic_all_in_economics',
