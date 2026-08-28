@@ -160,7 +160,9 @@ requireText(coinbaseSettlement, 'validateCoinbaseOrderAgainstProduct', 'Coinbase
 requireText(settlement, 'calculateRealizedEconomics', 'terminal economics are derived from actual fills/fees');
 requireText(settlement, 'settlementConfirmed', 'pair settlement confirmation remains explicit');
 requireText(settlement, 'authenticated_final_balances', 'terminal balances remain settlement evidence');
-requireText(settlement, 'USD, USDT and USDC are distinct inventory assets', 'realized accounting cannot silently assume stable quote parity');
+requireText(settlement, "const match = symbol.match(/^([A-Z0-9]+)(USDT|USDC|USD)$/);", 'USD/USDT/USDC quote assets remain separately identified');
+requireText(settlement, 'const normalizedQuote = canonicalFeeAsset(quoteAsset);', 'fee conversion remains bound to the actual quote asset');
+requireText(settlement, 'if (feeAsset === normalizedQuote) return feeAmount;', 'quote-denominated fees are accepted only when the fee asset matches the plan quote asset');
 
 // ---------------------------------------------------------------------------
 // Monte Carlo / terminal learning / governance progression
