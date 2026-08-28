@@ -3,17 +3,26 @@ import { getCryptara } from '../../cryptara/index.js';
 import type { CryptaraOpportunityAssessment, CryptaraOpportunityContext } from '../../cryptara/index.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { normalizeCexExecutablePlan } from '../execution/cex-spot-product-policy.js';
+import { evaluateStablecoinMakerCandidate, isStablecoinMakerPlan } from '../execution/stablecoin-maker-strategy.js';
 import { stageManager } from '../governance/stage-management.js';
 import { ensureCoinCapEnvironmentWiring } from './coincap-environment-wiring.js';
 import { ensureDynamicRpcProviderWiring } from './dynamic-rpc-provider-wiring.js';
+import { ensureStablecoinMakerExecutionWiring } from './stablecoin-maker-execution-wiring.js';
 
 let installed = false;
 
-function criticalMissingInformation(items: readonly string[]): string[] {
+function makerCanaryMinimumProbability(): number {
+  const configured = Number(process.env.CRYPTO_ARBITRAGE_MAKER_CANARY_MIN_PROBABILITY || 0.80);
+  const value = Number.isFinite(configured) ? configured : 0.80;
+  return Math.max(0.75, Math.min(0.95, value));
+}
+
+function criticalMissingInformation(items: readonly string[], makerCanary = false): string[] {
   return [...new Set(items)].filter(item =>
     !item.startsWith('optional:')
     && !item.startsWith('optional_missing:')
-    && !item.startsWith('not_applicable:'),
+    && !item.startsWith('not_applicable:')
+    && !(makerCanary && (item === 'runtime_confidence_bootstrap' || item === 'posttrade_calibration_pending')),
   );
 }
 
@@ -40,7 +49,8 @@ function normalizePositiveAssessment(
   const plan = context.plan;
   if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) return assessment;
 
-  const criticalMissing = criticalMissingInformation(assessment.missingInformation);
+  const makerCanary = isStablecoinMakerPlan(plan);
+  const criticalMissing = criticalMissingInformation(assessment.missingInformation, makerCanary);
   if (criticalMissing.length > 0 || !assessment.monteCarlo) {
     assessment.recommendation = 'observe';
     assessment.provenance = [...new Set([
@@ -51,11 +61,12 @@ function normalizePositiveAssessment(
     return assessment;
   }
 
-  if (!Number.isFinite(assessment.monteCarlo.probabilityOfProfit) || assessment.monteCarlo.probabilityOfProfit < 0.6) {
+  const minimumProbability = makerCanary ? makerCanaryMinimumProbability() : 0.60;
+  if (!Number.isFinite(assessment.monteCarlo.probabilityOfProfit) || assessment.monteCarlo.probabilityOfProfit < minimumProbability) {
     assessment.recommendation = 'reject';
     assessment.provenance = [...new Set([
       ...assessment.provenance,
-      'positive_profit_capture:mc_risk_gate_retained',
+      makerCanary ? 'positive_profit_capture:maker_canary_hyper_mc_rejected' : 'positive_profit_capture:mc_risk_gate_retained',
       'rank_non_authoritative_for_execution',
     ])];
     return assessment;
@@ -64,24 +75,22 @@ function normalizePositiveAssessment(
   assessment.recommendation = 'consider';
   assessment.provenance = [...new Set([
     ...assessment.provenance,
-    'positive_profit_capture:any_verified_net_gt_zero',
+    makerCanary
+      ? 'positive_profit_capture:stablecoin_maker_canary_hyper_mc_qualified'
+      : 'positive_profit_capture:any_verified_net_gt_zero',
+    ...(makerCanary ? ['maker_canary_bootstrap:post_only_cancel_only'] : []),
     'rank_diagnostic_only',
   ])];
   return assessment;
 }
 
-/**
- * Installs a narrow compatibility policy over legacy profit/ranking surfaces.
- * Canonical all-in deterministic economics, measured venue product constraints,
- * Monte Carlo risk, governance, inventory/resource leases, quote freshness,
- * settlement and circuit breakers remain authoritative.
- */
 export function ensurePositiveProfitCaptureWiring(): void {
   if (installed) return;
   installed = true;
   ensureCoinCapEnvironmentWiring();
   enforceAuthenticatedKrakenFeeAuthority();
   ensureDynamicRpcProviderWiring();
+  ensureStablecoinMakerExecutionWiring();
 
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
     verifyOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
@@ -89,9 +98,14 @@ export function ensurePositiveProfitCaptureWiring(): void {
   };
   const originalEvaluateOnce = verifier.evaluateOnce.bind(verifier);
   verifier.evaluateOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
-    const plan = await originalEvaluateOnce(request);
-    if (!plan) return null;
-    return normalizeCexExecutablePlan(plan);
+    const takerPlan = await originalEvaluateOnce(request);
+    if (takerPlan) return normalizeCexExecutablePlan(takerPlan);
+
+    return evaluateStablecoinMakerCandidate({
+      symbol: String(request?.symbol || ''),
+      notionalUsd: Number(request?.notionalUsd || 0),
+      maxQuoteAgeMs: Math.max(1, Number(request?.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000)),
+    });
   };
   verifier.verifyOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
     const plan = await verifier.evaluateOnce(request);
@@ -118,7 +132,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
     return normalizePositiveAssessment(context, assessment);
   };
 
-  logger.info('[PositiveProfitCapture] Arbitrary profit/rank filters removed without weakening execution authorities', {
+  logger.info('[PositiveProfitCapture] Positive-edge routing installed with stablecoin maker recovery', {
     component: 'PositiveProfitCapture',
     deterministicNetProfitRule: 'strictly_greater_than_zero',
     arbitraryMinimumProfitUsd: false,
@@ -127,11 +141,21 @@ export function ensurePositiveProfitCaptureWiring(): void {
     authenticatedKrakenFeeAuthority: Boolean(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()),
     paidCoinCapEnvironmentResolution: true,
     dynamicRpcProviderAdmission: true,
+    stablecoinMakerRecovery: {
+      enabled: true,
+      venues: ['kraken', 'okx'],
+      postOnly: true,
+      takerFallback: false,
+      canaryMaxUsd: 5_000,
+      maxTtlMs: 30_000,
+      cryptaraHyperMonteCarloRequired: true,
+      coldStartCanaryMinimumProbability: makerCanaryMinimumProbability(),
+    },
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedAuthorities: [
       'deterministic_all_in_economics',
       'measured_product_constraints',
-      'monte_carlo_execution_risk',
+      'cryptara_parallel_hyper_monte_carlo',
       'governance_stage',
       'risk_circuit_breakers',
       'position_size',
