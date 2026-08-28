@@ -6,7 +6,7 @@ import {
 } from '../execution/centralized-exchange-executor.js';
 import { createPostOnlyMakerAdapters } from '../execution/post-only-maker-adapters.js';
 import { getMakerLifecycleTraceId } from '../execution/maker-lifecycle-trace.js';
-import { isStablecoinMakerPlan } from '../execution/stablecoin-maker-strategy.js';
+import { isMakerRecoveryPlan } from '../execution/stablecoin-maker-strategy.js';
 import { getMakerPaperProofStats } from '../intelligence/maker-microstructure-proof.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 
@@ -38,20 +38,24 @@ export function ensureStablecoinMakerExecutionWiring(): void {
   const originalExecute = target.execute.bind(target);
 
   target.execute = async (plan: VerifiedArbitragePlan): Promise<ArbitrageExecutionResult> => {
-    if (!isStablecoinMakerPlan(plan)) return originalExecute(plan);
+    if (!isMakerRecoveryPlan(plan)) return originalExecute(plan);
 
     const traceId = getMakerLifecycleTraceId(plan);
     const adapters = createPostOnlyMakerAdapters(plan);
     const ttl = adaptiveSettlementTtlMs(plan.makerExecution.ttlMs);
     const pollIntervalRaw = Number(process.env.CRYPTO_ARBITRAGE_MAKER_POLL_MS || 250);
     const pollIntervalMs = Math.max(100, Math.min(1_000, Number.isFinite(pollIntervalRaw) ? pollIntervalRaw : 250));
-    logger.info('[StablecoinMaker] Routing qualified maker plan through post-only canonical settlement', {
+    logger.info('[MakerRecovery] Routing qualified maker plan through post-only canonical settlement', {
       component: 'StablecoinMakerExecutionWiring',
       traceId,
+      strategy: plan.makerExecution.strategy,
       symbol: plan.symbol,
       buyVenue: plan.buyVenue,
       sellVenue: plan.sellVenue,
       notionalUsd: plan.notionalUsd,
+      canaryCeilingUsd: plan.makerExecution.canaryCeilingUsd,
+      canaryProofSamples: plan.makerExecution.canaryProofSamples,
+      volatileMinGrossSpreadBps: plan.makerExecution.volatileMinGrossSpreadBps,
       ttlMs: ttl.ttlMs,
       configuredMaxTtlMs: Math.max(2_000, Math.min(30_000, plan.makerExecution.ttlMs)),
       paperProofSamples: ttl.sampleCount,
@@ -69,18 +73,20 @@ export function ensureStablecoinMakerExecutionWiring(): void {
     const startedAt = Date.now();
     try {
       const result = await executor.execute(plan);
-      logger.info('[StablecoinMaker] Maker lifecycle terminal result', {
+      logger.info('[MakerRecovery] Maker lifecycle terminal result', {
         component: 'StablecoinMakerExecutionWiring',
         traceId,
+        strategy: plan.makerExecution.strategy,
         symbol: plan.symbol,
         elapsedMs: Date.now() - startedAt,
         success: result.success,
       });
       return result;
     } catch (error) {
-      logger.warn('[StablecoinMaker] Maker lifecycle terminal error', {
+      logger.warn('[MakerRecovery] Maker lifecycle terminal error', {
         component: 'StablecoinMakerExecutionWiring',
         traceId,
+        strategy: plan.makerExecution.strategy,
         symbol: plan.symbol,
         elapsedMs: Date.now() - startedAt,
         error: error instanceof Error ? error.message : String(error),

@@ -1,4 +1,5 @@
 import type { VerifiedArbitragePlan, QuoteVenue } from '../arbitrage/arbitrage-verifier.js';
+import { stageManager } from '../governance/stage-management.js';
 import { resolveCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 import { getOkxExecutionRestBaseUrl } from '../intelligence/cex-private-authority.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
@@ -7,17 +8,27 @@ import { floorToIncrement } from './coinbase-product-policy.js';
 import { getSpotProductConstraints } from './cex-spot-product-policy.js';
 
 export type MakerLegMode = 'maker';
+export type MakerRecoveryStrategy = 'stablecoin_post_only' | 'volatile_spread_post_only';
 
-export type StablecoinMakerPlan = VerifiedArbitragePlan & {
-  makerExecution: {
-    strategy: 'stablecoin_post_only';
-    buyMode: MakerLegMode;
-    sellMode: MakerLegMode;
-    ttlMs: number;
-    takerFallbackAllowed: false;
-    feeAuthority: 'authenticated';
-    bookAuthority: 'websocket' | 'rest_fallback';
-  };
+type MakerExecutionMetadata = {
+  strategy: MakerRecoveryStrategy;
+  buyMode: MakerLegMode;
+  sellMode: MakerLegMode;
+  ttlMs: number;
+  takerFallbackAllowed: false;
+  feeAuthority: 'authenticated';
+  bookAuthority: 'websocket' | 'rest_fallback';
+  canaryCeilingUsd: number;
+  canaryProofSamples: number;
+  volatileMinGrossSpreadBps: number | null;
+};
+
+export type MakerRecoveryPlan = VerifiedArbitragePlan & {
+  makerExecution: MakerExecutionMetadata;
+};
+
+export type StablecoinMakerPlan = MakerRecoveryPlan & {
+  makerExecution: MakerExecutionMetadata & { strategy: 'stablecoin_post_only' };
 };
 
 type Book = {
@@ -30,12 +41,26 @@ type Book = {
   authority: 'websocket' | 'rest_fallback';
 };
 
+type MakerCanaryProof = {
+  samples: number;
+  wins: number;
+  winRate: number | null;
+  ceilingUsd: number;
+};
+
 const STABLECOIN_SYMBOLS = new Set(['USDGUSDT', 'USDCUSDT', 'DAIUSDT', 'RLUSDUSDT']);
 const DEFAULT_TTL_MS = 30_000;
+const PROOF_CAPS_USD = [10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000] as const;
 
 function finitePositive(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function finiteBoundedEnv(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(min, Math.min(max, value));
 }
 
 function authenticatedMakerFeeBps(evidence: CexFeeEvidence | null): number | null {
@@ -43,6 +68,53 @@ function authenticatedMakerFeeBps(evidence: CexFeeEvidence | null): number | nul
   if (evidence.makerFeeBps !== null && Number.isFinite(evidence.makerFeeBps)) return Math.max(0, evidence.makerFeeBps);
   if (evidence.makerRebateBps !== null && Number.isFinite(evidence.makerRebateBps)) return -Math.max(0, evidence.makerRebateBps);
   return null;
+}
+
+function isMakerEvidence(item: ReturnType<typeof stageManager.getState>['cryptaraExecutionEvidence'][number]): boolean {
+  const strategy = String(item.strategy || '').toLowerCase();
+  const provenance = item.provenance || [];
+  return strategy.includes('maker') || provenance.some(entry => String(entry).toLowerCase().includes('maker'));
+}
+
+function makerCanaryProof(): MakerCanaryProof {
+  const bootstrapUsd = finiteBoundedEnv('CRYPTO_ARBITRAGE_MAKER_CANARY_BOOTSTRAP_USD', 10, 10, 100);
+  const hardMaxUsd = finiteBoundedEnv('CRYPTO_ARBITRAGE_MAKER_CANARY_MAX_USD', 5_000, bootstrapUsd, 5_000);
+  const evidence = stageManager.getState().cryptaraExecutionEvidence
+    .filter(item => item.settlementConfirmed === true && isMakerEvidence(item))
+    .slice(-20);
+  const wins = evidence.filter(item => item.success === true && Number(item.realizedProfitUsd) > 0).length;
+  const winRate = evidence.length > 0 ? wins / evidence.length : null;
+
+  let tier = 0;
+  if (wins >= 1 && (winRate ?? 0) >= 0.80) tier = 1;
+  if (wins >= 3 && (winRate ?? 0) >= 0.85) tier = 2;
+  if (wins >= 5 && (winRate ?? 0) >= 0.85) tier = 3;
+  if (wins >= 10 && (winRate ?? 0) >= 0.90) tier = 4;
+  if (wins >= 20 && (winRate ?? 0) >= 0.90) tier = 5;
+  if (wins >= 35 && (winRate ?? 0) >= 0.92) tier = 6;
+  if (wins >= 50 && (winRate ?? 0) >= 0.94) tier = 7;
+  if (wins >= 75 && (winRate ?? 0) >= 0.95) tier = 8;
+
+  const proofCap = Math.max(bootstrapUsd, PROOF_CAPS_USD[tier]);
+  return {
+    samples: evidence.length,
+    wins,
+    winRate,
+    ceilingUsd: Math.min(hardMaxUsd, proofCap),
+  };
+}
+
+export function getDynamicMakerCanaryStatus(): MakerCanaryProof {
+  return makerCanaryProof();
+}
+
+function maxCanaryUsd(requested: number): { amount: number; proof: MakerCanaryProof } {
+  const proof = makerCanaryProof();
+  return { amount: Math.min(requested, proof.ceilingUsd), proof };
+}
+
+function volatileMinGrossSpreadBps(): number {
+  return finiteBoundedEnv('CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS', 70, 10, 2_000);
 }
 
 async function streamBook(venue: 'kraken' | 'okx', symbol: string, maxAgeMs: number): Promise<Book | null> {
@@ -103,26 +175,16 @@ function ttlMs(): number {
   return Math.max(2_000, Math.min(30_000, Number.isFinite(configured) ? configured : DEFAULT_TTL_MS));
 }
 
-function maxCanaryUsd(requested: number): number {
-  const configured = Number(process.env.CRYPTO_ARBITRAGE_MAKER_CANARY_MAX_USD || 1_000);
-  const cap = Math.max(10, Math.min(5_000, Number.isFinite(configured) ? configured : 1_000));
-  return Math.min(requested, cap);
-}
-
-/**
- * Builds a discovery candidate only when authenticated maker fees, measured
- * product constraints and live order-book queue prices all agree. Hot WebSocket
- * books are authoritative when fresh; bounded REST is fallback only. The
- * candidate remains post-only with no taker fallback and still requires
- * Cryptara/Monte Carlo, inventory, governance and settlement authorities.
- */
-export async function evaluateStablecoinMakerCandidate(input: {
+async function evaluateMakerCandidate(input: {
   symbol: string;
   notionalUsd: number;
   maxQuoteAgeMs: number;
-}): Promise<StablecoinMakerPlan | null> {
+  requireStablecoin: boolean;
+}): Promise<MakerRecoveryPlan | null> {
   const symbol = input.symbol.trim().toUpperCase();
-  if (!STABLECOIN_SYMBOLS.has(symbol) || !(input.notionalUsd > 0)) return null;
+  const stablecoin = STABLECOIN_SYMBOLS.has(symbol);
+  if (input.requireStablecoin && !stablecoin) return null;
+  if (!(input.notionalUsd > 0) || !/^([A-Z0-9]+)(USDT|USDC|USD)$/.test(symbol)) return null;
 
   const [kraken, okx, krakenFee, okxFee] = await Promise.all([
     krakenBook(symbol, input.maxQuoteAgeMs).catch(() => null),
@@ -134,8 +196,9 @@ export async function evaluateStablecoinMakerCandidate(input: {
   const books = [kraken, okx];
   const fees: Record<'kraken' | 'okx', CexFeeEvidence | null> = { kraken: krakenFee, okx: okxFee };
   const now = Date.now();
+  const volatileFloorBps = stablecoin ? null : volatileMinGrossSpreadBps();
 
-  let best: StablecoinMakerPlan | null = null;
+  let best: MakerRecoveryPlan | null = null;
   for (const buy of books) {
     for (const sell of books) {
       if (buy.venue === sell.venue) continue;
@@ -149,7 +212,9 @@ export async function evaluateStablecoinMakerCandidate(input: {
       const sellPrice = sell.ask;
       if (!(sellPrice > buyPrice)) continue;
       const grossSpreadBps = ((sellPrice - buyPrice) / buyPrice) * 10_000;
-      if (!(grossSpreadBps > buyFeeBps + sellFeeBps)) continue;
+      const feeFloorBps = buyFeeBps + sellFeeBps;
+      if (!(grossSpreadBps > feeFloorBps)) continue;
+      if (volatileFloorBps !== null && grossSpreadBps < volatileFloorBps) continue;
 
       const [buyConstraints, sellConstraints] = await Promise.all([
         getSpotProductConstraints(buy.venue, symbol).catch(() => null),
@@ -158,9 +223,9 @@ export async function evaluateStablecoinMakerCandidate(input: {
       if (!buyConstraints || !sellConstraints) continue;
       const commonIncrement = Math.max(buyConstraints.baseIncrement, sellConstraints.baseIncrement);
       const queueParticipation = Math.max(0.001, Math.min(0.10, Number(process.env.CRYPTO_ARBITRAGE_MAKER_QUEUE_PARTICIPATION || 0.02)));
-      const canaryUsd = maxCanaryUsd(input.notionalUsd);
+      const canary = maxCanaryUsd(input.notionalUsd);
       const queueQty = Math.min(buy.bidQty, sell.askQty) * queueParticipation;
-      const requestedQty = Math.min(canaryUsd / buyPrice, queueQty);
+      const requestedQty = Math.min(canary.amount / buyPrice, queueQty);
       const baseQty = floorToIncrement(requestedQty, commonIncrement);
       if (!(baseQty > 0) || baseQty < buyConstraints.baseMinSize || baseQty < sellConstraints.baseMinSize) continue;
 
@@ -180,10 +245,10 @@ export async function evaluateStablecoinMakerCandidate(input: {
       const authority: 'websocket' | 'rest_fallback' = buy.authority === 'websocket' && sell.authority === 'websocket'
         ? 'websocket'
         : 'rest_fallback';
-      const candidate: StablecoinMakerPlan = {
+      const candidate: MakerRecoveryPlan = {
         symbol,
         notionalUsd: buyNotional,
-        requestedNotionalUsd: canaryUsd,
+        requestedNotionalUsd: canary.amount,
         executableNotionalUsd: buyNotional,
         buyVenue: buy.venue as QuoteVenue,
         sellVenue: sell.venue as QuoteVenue,
@@ -208,13 +273,16 @@ export async function evaluateStablecoinMakerCandidate(input: {
         feeEvidence: { buy: buyEvidence!, sell: sellEvidence! },
         crossVenueCostModel: 'prepositioned_inventory',
         makerExecution: {
-          strategy: 'stablecoin_post_only',
+          strategy: stablecoin ? 'stablecoin_post_only' : 'volatile_spread_post_only',
           buyMode: 'maker',
           sellMode: 'maker',
           ttlMs: ttlMs(),
           takerFallbackAllowed: false,
           feeAuthority: 'authenticated',
           bookAuthority: authority,
+          canaryCeilingUsd: canary.proof.ceilingUsd,
+          canaryProofSamples: canary.proof.samples,
+          volatileMinGrossSpreadBps: volatileFloorBps,
         },
       };
       if (!best || candidate.netProfitUsd > best.netProfitUsd) best = candidate;
@@ -223,7 +291,35 @@ export async function evaluateStablecoinMakerCandidate(input: {
   return best;
 }
 
+/** Stablecoin-only compatibility entry point retained for existing callers/tests. */
+export async function evaluateStablecoinMakerCandidate(input: {
+  symbol: string;
+  notionalUsd: number;
+  maxQuoteAgeMs: number;
+}): Promise<StablecoinMakerPlan | null> {
+  return evaluateMakerCandidate({ ...input, requireStablecoin: true }) as Promise<StablecoinMakerPlan | null>;
+}
+
+/**
+ * Maker recovery for any measured Kraken/OKX spot pair. Stablecoins need only
+ * clear authenticated maker fees; volatile pairs additionally require a wide
+ * gross spread (70 bps by default) before a tiny post-only canary is admitted.
+ */
+export async function evaluateMakerRecoveryCandidate(input: {
+  symbol: string;
+  notionalUsd: number;
+  maxQuoteAgeMs: number;
+}): Promise<MakerRecoveryPlan | null> {
+  return evaluateMakerCandidate({ ...input, requireStablecoin: false });
+}
+
 export function isStablecoinMakerPlan(plan: VerifiedArbitragePlan): plan is StablecoinMakerPlan {
-  const value = plan as StablecoinMakerPlan;
+  const value = plan as MakerRecoveryPlan;
   return value?.makerExecution?.strategy === 'stablecoin_post_only' && value.makerExecution.takerFallbackAllowed === false;
+}
+
+export function isMakerRecoveryPlan(plan: VerifiedArbitragePlan): plan is MakerRecoveryPlan {
+  const value = plan as MakerRecoveryPlan;
+  return (value?.makerExecution?.strategy === 'stablecoin_post_only' || value?.makerExecution?.strategy === 'volatile_spread_post_only')
+    && value.makerExecution.takerFallbackAllowed === false;
 }
