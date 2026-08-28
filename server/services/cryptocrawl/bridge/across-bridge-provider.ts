@@ -49,6 +49,27 @@ export interface AcrossReadiness {
   reason: string;
 }
 
+export interface AcrossBridgeMetrics {
+  authority: 'bridge_evidence_only';
+  executionAuthority: false;
+  configured: boolean;
+  tokenCatalog: {
+    state: 'not_loaded' | 'live' | 'expired' | 'unavailable';
+    observedAt: number | null;
+    expiresAt: number | null;
+    tokenCount: number;
+    failures: number;
+  };
+  quoteAttempts: number;
+  quotesSucceeded: number;
+  quotesFailed: number;
+  expiredQuotesRejected: number;
+  tokenResolutionFailures: number;
+  lastQuoteAttemptAt: number | null;
+  lastQuoteSuccessAt: number | null;
+  lastError: string | null;
+}
+
 interface AcrossCatalogToken {
   chainId: number;
   address: string;
@@ -64,6 +85,17 @@ interface TokenCatalogCache {
 
 let tokenCatalogCache: TokenCatalogCache | null = null;
 let tokenCatalogInFlight: Promise<TokenCatalogCache | null> | null = null;
+const evidenceMetrics = {
+  tokenCatalogFailures: 0,
+  quoteAttempts: 0,
+  quotesSucceeded: 0,
+  quotesFailed: 0,
+  expiredQuotesRejected: 0,
+  tokenResolutionFailures: 0,
+  lastQuoteAttemptAt: null as number | null,
+  lastQuoteSuccessAt: null as number | null,
+  lastError: null as string | null,
+};
 
 function config(): { apiKey: string; integratorId: string; depositor: string } | null {
   const apiKey = process.env.ACROSS_API_KEY?.trim();
@@ -71,6 +103,10 @@ function config(): { apiKey: string; integratorId: string; depositor: string } |
   const depositor = (process.env.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS || process.env.BRIDGE_WALLET_ADDRESS || '').trim();
   if (!apiKey || !integratorId || !/^0x[0-9a-fA-F]{4}$/.test(integratorId) || !/^0x[0-9a-fA-F]{40}$/.test(depositor)) return null;
   return { apiKey, integratorId, depositor };
+}
+
+function rememberError(error: unknown): void {
+  evidenceMetrics.lastError = (error instanceof Error ? error.message : String(error)).slice(0, 1_000);
 }
 
 function amountUsd(value: unknown): number | null {
@@ -133,7 +169,11 @@ async function fetchAcrossTokenCatalog(credentials: { apiKey: string }): Promise
     } finally {
       clearTimeout(timeout);
     }
-  })().catch(() => null).finally(() => {
+  })().catch(error => {
+    evidenceMetrics.tokenCatalogFailures += 1;
+    rememberError(error);
+    return null;
+  }).finally(() => {
     tokenCatalogInFlight = null;
   });
   return tokenCatalogInFlight;
@@ -185,6 +225,33 @@ export function getAcrossBridgeReadiness(): AcrossReadiness {
     : { configured: false, reason: 'Across remains optional until ACROSS_API_KEY, ACROSS_INTEGRATOR_ID, and a depositor address are configured' };
 }
 
+export function getAcrossBridgeMetrics(): AcrossBridgeMetrics {
+  const now = Date.now();
+  const catalogState: AcrossBridgeMetrics['tokenCatalog']['state'] = tokenCatalogCache
+    ? tokenCatalogCache.expiresAt > now ? 'live' : 'expired'
+    : evidenceMetrics.tokenCatalogFailures > 0 ? 'unavailable' : 'not_loaded';
+  return {
+    authority: 'bridge_evidence_only',
+    executionAuthority: false,
+    configured: getAcrossBridgeReadiness().configured,
+    tokenCatalog: {
+      state: catalogState,
+      observedAt: tokenCatalogCache?.observedAt ?? null,
+      expiresAt: tokenCatalogCache?.expiresAt ?? null,
+      tokenCount: tokenCatalogCache?.tokens.length ?? 0,
+      failures: evidenceMetrics.tokenCatalogFailures,
+    },
+    quoteAttempts: evidenceMetrics.quoteAttempts,
+    quotesSucceeded: evidenceMetrics.quotesSucceeded,
+    quotesFailed: evidenceMetrics.quotesFailed,
+    expiredQuotesRejected: evidenceMetrics.expiredQuotesRejected,
+    tokenResolutionFailures: evidenceMetrics.tokenResolutionFailures,
+    lastQuoteAttemptAt: evidenceMetrics.lastQuoteAttemptAt,
+    lastQuoteSuccessAt: evidenceMetrics.lastQuoteSuccessAt,
+    lastError: evidenceMetrics.lastError,
+  };
+}
+
 export async function getAcrossBridgeQuote(input: {
   originChain: ChainId;
   destinationChain: ChainId;
@@ -202,7 +269,10 @@ export async function getAcrossBridgeQuote(input: {
     resolveAcrossToken(credentials, input.originChain, input.token),
     resolveAcrossToken(credentials, input.destinationChain, input.token),
   ]);
-  if (!inputToken || !outputToken) return null;
+  if (!inputToken || !outputToken) {
+    evidenceMetrics.tokenResolutionFailures += 1;
+    return null;
+  }
 
   const amount = ethers.utils.parseUnits(
     input.amountHuman.toFixed(Math.min(inputToken.decimals, 8)),
@@ -224,6 +294,8 @@ export async function getAcrossBridgeQuote(input: {
   });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(3_000, Number(process.env.ACROSS_QUOTE_TIMEOUT_MS || 8_000)));
+  evidenceMetrics.quoteAttempts += 1;
+  evidenceMetrics.lastQuoteAttemptAt = Date.now();
   try {
     // Approval quotes intentionally are never cached: they contain fresh fee,
     // route, simulation, balance/allowance, and expiry evidence.
@@ -244,9 +316,12 @@ export async function getAcrossBridgeQuote(input: {
     }
     const observedAt = Date.now();
     const expiresAt = quoteExpiryTimestamp * 1000;
-    if (expiresAt <= observedAt) return null;
+    if (expiresAt <= observedAt) {
+      evidenceMetrics.expiredQuotesRejected += 1;
+      return null;
+    }
     const details = bridgeDetails(payload);
-    return {
+    const quote: AcrossBridgeQuote = {
       provider: 'across',
       quoteId: typeof payload?.id === 'string' ? payload.id : null,
       originChain: input.originChain,
@@ -285,6 +360,14 @@ export async function getAcrossBridgeQuote(input: {
         'provider_simulation_status',
       ],
     };
+    evidenceMetrics.quotesSucceeded += 1;
+    evidenceMetrics.lastQuoteSuccessAt = observedAt;
+    evidenceMetrics.lastError = null;
+    return quote;
+  } catch (error) {
+    evidenceMetrics.quotesFailed += 1;
+    rememberError(error);
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
