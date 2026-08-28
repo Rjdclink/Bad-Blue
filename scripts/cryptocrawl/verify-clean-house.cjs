@@ -36,10 +36,13 @@ const legacyDashboard = read('server/services/cryptocrawl/api/dashboard-api.ts')
 const canonicalDashboard = read('server/services/cryptocrawl/api/canonical-dashboard-api.ts');
 const truthfulAdmin = read('server/services/cryptocrawl/api/truthful-admin-diagnostics.ts');
 const wallet = read('server/services/cryptocrawl/core/wallet.ts');
+const bridgeBarrel = read('server/services/cryptocrawl/bridge/index.ts');
 const riskShield = read('server/services/cryptocrawl/risk/mandatory-risk-shield.ts');
 const legacyCircuit = read('server/services/cryptocrawl/risk/circuit-breaker.ts');
 const legacyExecutionOrchestrator = read('server/services/cryptocrawl/orchestrator/execution-orchestrator.ts');
 const legacyFlashloan = read('server/services/cryptocrawl/core/flashloan-atomic-engine.ts');
+const executionReadiness = read('server/services/cryptocrawl/execution/execution-readiness.ts');
+const multiRelay = read('server/services/cryptocrawl/execution/multi-relay-submitter.ts');
 const authoritativeMc = read('server/services/cryptocrawl/integration/authoritative-monte-carlo-wiring.ts');
 const assessment = read('server/services/cryptocrawl/integration/cryptara-assessment-wiring.ts');
 const beam = read('server/services/cryptocrawl/integration/cryptara-beam-wiring.ts');
@@ -51,6 +54,9 @@ requireText(canonicalIndex, 'CryptoCrawler canonical public surface', 'root barr
 requireText(canonicalIndex, 'ensureCanonicalCryptoCrawlerRuntimeWiring', 'root barrel exports canonical runtime');
 requireText(canonicalIndex, 'ensureAuthoritativeMonteCarloWiring', 'root barrel exports authoritative MC wiring');
 requireText(canonicalIndex, 'canonicalExecutionScheduler', 'root barrel exports canonical scheduler');
+requireText(canonicalIndex, 'assessCanonicalExecutionEnvironment', 'root barrel exports canonical topology-specific readiness');
+forbidText(canonicalIndex, 'assessSharedExecutionEnvironment', 'root barrel must not expose stale shared readiness');
+forbidText(canonicalIndex, 'getSharedExecutionCapabilities', 'root barrel must not expose stale shared capability naming');
 for (const forbidden of [
   'SixCaneSystem', 'sixCaneSystem', 'DivineOptimizationEngine', 'StarburstEngine',
   'MasterOrchestrator', 'LuxSwarm', 'EdenStorage', 'ELITE_STRATEGIES',
@@ -72,6 +78,19 @@ forbidText(masterPipeline, 'StealthSuperiority', 'MasterPipeline compatibility f
 forbidText(masterPipeline, 'TripleDipExtractor', 'MasterPipeline compatibility facade must not retain TripleDip execution');
 forbidText(masterPipeline, 'ReinforcementLearningBidder', 'MasterPipeline compatibility facade must not retain RL execution authority');
 requireText(masterPipeline, 'canonicalExecutionScheduler', 'MasterPipeline lifecycle delegates to canonical scheduler');
+requireText(masterPipeline, 'assessCanonicalExecutionEnvironment', 'MasterPipeline diagnostics use canonical readiness authority');
+forbidText(masterPipeline, 'assessSharedExecutionEnvironment', 'MasterPipeline must not use stale shared readiness');
+
+// Canonical execution readiness is topology-specific and private relays are optional.
+requireText(executionReadiness, 'normalizePrivateKey(process.env.FLASHBOTS_AUTH_KEY)', 'Flashbots readiness checks the explicit auth key');
+forbidText(executionReadiness, 'flashbotsAuthConfigured = rpcConfigured', 'RPC presence cannot impersonate Flashbots auth');
+requireText(executionReadiness, 'privateRelayOptional: true', 'private relay is explicitly optional');
+requireText(executionReadiness, '[krakenConfigured, okxConfigured, coinbaseConfigured].filter(Boolean).length >= 2', 'CEX readiness accepts any two configured supported venues');
+requireText(executionReadiness, '!noExecutionGuardEnabled && liveExecutionEnabled && liveExecutionConfirmed', 'live readiness preserves execution posture guards');
+requireText(multiRelay, 'direct broadcast remains authoritative', 'private relay initialization cannot own direct broadcast readiness');
+requireText(multiRelay, "process.env.FLASHBOTS_AUTH_KEY?.trim()", 'private relay consumes explicit Flashbots auth only');
+requireText(multiRelay, 'providers.size === 0', 'private relay submission skips cleanly when unavailable');
+forbidText(multiRelay, 'randomBytes', 'private relay must not fabricate an auth identity');
 
 // Emergency halt must be independent of legacy systems.
 forbidText(killSwitch, '../eden/', 'kill switch must not depend on legacy Eden');
@@ -109,6 +128,8 @@ for (const [name, source, forbidden] of [
 }
 requireText(evolutionBarrel, 'recordMeasuredEvolutionFeedback', 'evolution barrel exposes terminal measured feedback only');
 requireText(capitalFreeBarrel, 'AlchemyIntegration', 'capital-free barrel retains measured Alchemy telemetry');
+forbidText(bridgeBarrel, 'withdraw-deposit', 'dormant arbitrary withdrawal manager must not be exported by production bridge barrel');
+forbidText(bridgeBarrel, 'withdrawDepositManager', 'dormant withdrawal manager must not be reachable through bridge barrel');
 
 // Legacy faucet state machine and synthetic business caps are retired.
 requireText(faucet, 'Canonical CryptoCrawler lifecycle compatibility facade', 'faucet is a canonical compatibility facade');
