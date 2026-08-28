@@ -5,8 +5,8 @@ import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibratio
 import { cexInventoryLedger, type InventoryRequirement, type InventoryVenue } from './cex-inventory-ledger.js';
 import { assertFreshCexProductConstraints } from './cex-submit-time-product-guard.js';
 import { runProfitabilityMonteCarlo } from './adapters/monte-carlo-profitability.js';
-import { createConstrainedProductionCexSettlementAdapters } from './constrained-production-cex-adapters.js';
 import {
+  createProductionCexSettlementAdapters,
   executeCexPlan,
   type CexExecutorOptions,
   type CexExecutionResult,
@@ -319,5 +319,5 @@ export class CentralizedExchangeExecutor {
   }
 }
 
-const productionCexAdapters = createConstrainedProductionCexSettlementAdapters();
+const productionCexAdapters = createProductionCexSettlementAdapters();
 export const centralizedExchangeExecutor = new CentralizedExchangeExecutor({ adapters: productionCexAdapters });
