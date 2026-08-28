@@ -1,62 +1,23 @@
 import logger from '../../../logger.js';
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
-import { autonomousFaucet } from './autonomous-faucet.js';
 
-const installed = new WeakSet<object>();
-
-type FaucetRuntime = {
-  state: {
-    executionMode: 'disabled' | 'live';
-    lastArbitrageDecision: 'EXECUTE' | 'PENDING' | 'SKIP' | 'ERROR' | 'NONE';
-  };
-  executeWithStealth: () => Promise<void>;
-};
+let installed = false;
 
 /**
- * Compatibility bridge for the legacy faucet state machine.
+ * Compatibility entry point retained for older bootstrap callers.
  *
- * Execution authority is no longer a faucet-local hourly/day/window counter or a
- * coarse process-wide concurrency integer. The canonical execution scheduler owns
- * admission from measured eligible opportunities and obtains distributed resource,
- * venue, nonce, inventory-domain, settlement, and opportunity-idempotency leases.
- *
- * The faucet may continue to expose legacy UI/status fields, but those fields do
- * not authorize or throttle production order submission.
+ * The historical implementation monkey-patched private fields and decision methods
+ * on AutonomousFaucet. That state machine has been retired. Execution admission is
+ * now owned directly by canonicalExecutionScheduler and its governed/resource-leased
+ * executors, so there is nothing to patch.
  */
 export function ensureConcurrentExecutionWiring(): void {
-  const target = autonomousFaucet as unknown as FaucetRuntime;
-  if (installed.has(target)) return;
-  installed.add(target);
-
-  canonicalExecutionScheduler.start();
-
-  target.executeWithStealth = async (): Promise<void> => {
-    if (target.state.executionMode !== 'live') {
-      target.state.lastArbitrageDecision = 'SKIP';
-      return;
-    }
-
-    const before = canonicalExecutionScheduler.getStats();
-    await canonicalExecutionScheduler.dispatchOnce();
-    const after = canonicalExecutionScheduler.getStats();
-
-    target.state.lastArbitrageDecision = after.settled > before.settled
-      ? 'EXECUTE'
-      : after.pending > before.pending
-        ? 'PENDING'
-        : after.failed > before.failed
-          ? 'ERROR'
-          : 'SKIP';
-  };
-
-  logger.info('[FAUCET] Canonical execution scheduler wiring installed', {
+  if (installed) return;
+  installed = true;
+  logger.info('[CryptoCrawler] Legacy faucet concurrency patch retired', {
     component: 'ConcurrentExecutionWiring',
-    authority: 'canonical_resource_leased_scheduler',
-    legacyBusinessCapsAuthoritative: false,
-    coarseGlobalConcurrencyCapAuthoritative: false,
-    distributedOpportunityIdempotency: true,
-    distributedResourceLeases: true,
-    settlementSemantics: 'terminal_realized_only',
+    executionAuthority: 'canonical_execution_scheduler',
+    legacyFaucetMonkeyPatch: false,
     scheduler: canonicalExecutionScheduler.getStats(),
   });
 }

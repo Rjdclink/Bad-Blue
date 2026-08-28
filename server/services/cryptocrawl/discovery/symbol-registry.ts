@@ -7,8 +7,6 @@ export interface CanonicalSymbol {
   quote: CanonicalQuoteAsset;
 }
 
-const STABLE_BASES = new Set(['USDT', 'USDC', 'USD', 'DAI', 'FDUSD', 'TUSD', 'USDP']);
-
 export function canonicalizeCexSymbol(raw: string): CanonicalSymbol | null {
   const normalized = String(raw || '')
     .trim()
@@ -29,11 +27,12 @@ export function isUsefulArbitrageSymbol(raw: string): boolean {
   const canonical = canonicalizeCexSymbol(raw);
   if (!canonical) return false;
   if (canonical.base === canonical.quote) return false;
-  // Stable/stable markets can be useful for dedicated FX/basis strategies, but
-  // the present spot-asset arbitrage verifier is not that strategy. Excluding
-  // them prevents a top-market-cap slot such as USDTUSDT from starving a real
-  // tradable asset without pretending the pair is invalid globally.
-  if (STABLE_BASES.has(canonical.base) && STABLE_BASES.has(canonical.quote)) return false;
+
+  // Stable/stable spot markets are valid cross-venue arbitrage instruments when
+  // the exact pair exists on both executable venues. They use the same measured
+  // order-book, authenticated-fee, inventory, settlement and all-in net-profit
+  // authorities as any other spot pair, so excluding them would hide legitimate
+  // USDC/USDT, DAI/USDT, FDUSD/USDT, etc. opportunities. No peg assumption is made.
   return true;
 }
 
