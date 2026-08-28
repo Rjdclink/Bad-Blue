@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
 import { endToEndLatencyHarness, type LatencyOutcome } from '../runtime/end-to-end-latency-harness.js';
+import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
 import { executeVerifiedArbitragePlan } from './index.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
@@ -9,6 +10,7 @@ import { executionResourceScheduler, type ExecutionResourceLease } from './resou
 export type CanonicalSchedulerIdleReason =
   | 'not_started'
   | 'live_execution_posture_disabled'
+  | 'runtime_identity_mismatch'
   | 'governance_stage_blocked'
   | 'no_eligible_candidates'
   | 'candidate_retry_window'
@@ -103,6 +105,8 @@ class CanonicalExecutionScheduler {
       legacyBusinessCapsAuthoritative: false,
       distributedResourceLeases: true,
       runtimeInvariantQuarantine: true,
+      runtimeIdentityMismatchFailClosed: true,
+      exactOpportunityIdentityRequired: true,
       latencyHarness: 'telemetry_only',
     });
   }
@@ -151,6 +155,19 @@ class CanonicalExecutionScheduler {
       this.setIdle('live_execution_posture_disabled');
       return;
     }
+
+    const runtimeAttestation = getCryptoCrawlerRuntimeAttestation();
+    if (!isRuntimeIdentitySafe(runtimeAttestation)) {
+      this.setIdle('runtime_identity_mismatch');
+      logger.error('[ExecutionScheduler] Live dispatch blocked by runtime identity mismatch', {
+        component: 'CanonicalExecutionScheduler',
+        sourceSha: runtimeAttestation.sourceSha,
+        railwayCommitSha: runtimeAttestation.railwayCommitSha,
+        mismatches: runtimeAttestation.mismatches,
+      });
+      return;
+    }
+
     const governanceAllowed = endToEndLatencyHarness.measureSync(
       'governance_risk',
       'compute',
@@ -241,6 +258,7 @@ class CanonicalExecutionScheduler {
       const settlementSpan = endToEndLatencyHarness.startSpan('terminal_settlement', 'network', dimensions);
       try {
         const result = await executeVerifiedArbitragePlan(candidate.plan, {
+          opportunityId: candidate.opportunityId,
           source: 'master_pipeline',
           chain: candidate.plan.bridge?.from,
           observedSlippageBps: candidate.plan.expectedSlippageBps ?? undefined,
