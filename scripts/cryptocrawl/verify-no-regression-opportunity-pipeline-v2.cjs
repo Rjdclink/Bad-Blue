@@ -23,6 +23,8 @@ requireText(deployment, "NO_EXECUTION: 'true'", 'preflight is execution-safe');
 const profitCapture = read('server/services/cryptocrawl/runtime/positive-profit-capture-wiring.ts');
 requireText(profitCapture, 'plan.netProfitUsd > 0', 'positive-profit capture requires strict positive deterministic net');
 requireText(profitCapture, 'minimumNetProfitUsd: 0', 'arbitrary autonomous minimum is neutralized');
+requireText(profitCapture, 'verifier.verifyOnce = async', 'runtime verifier authority neutralizes legacy caller profit floors');
+requireText(profitCapture, 'verifier.evaluateOnce = async', 'runtime verifier evaluation is normalized before eligibility');
 requireText(profitCapture, 'rank_non_authoritative_for_execution', 'rank cannot reject a profitable route by itself');
 requireText(profitCapture, 'mc_risk_gate_retained', 'Monte Carlo execution-risk gate remains');
 requireText(profitCapture, 'risk_circuit_breakers', 'circuit breakers remain');
@@ -30,13 +32,13 @@ requireText(profitCapture, 'inventory_resource_leases', 'inventory/resource auth
 requireText(profitCapture, 'settlement', 'settlement authority remains');
 
 const verifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
+const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
 requireText(verifier, 'getActiveExecutableQuoteVenues()', 'verifier consumes venue capability authority');
 requireText(verifier, 'hasPositiveRawCrossVenueEdge', 'raw cross-venue positive-edge screen remains');
-requireText(verifier, 'primeCexFeeEvidence([...rawEdgeSurvivors])', 'authenticated Kraken/OKX fees are enriched only for raw-edge survivors');
+requireText(verifier, 'primeCexFeeEvidence([...rawEdgeSurvivors])', 'authenticated Coinbase/Kraken/OKX fees are enriched only for raw-edge survivors');
 requireText(verifier, 'topSpreadBps <= breakEvenBps', 'fee/fixed-cost break-even screen remains');
 requireText(verifier, 'netProfitUsd = grossProfitUsd - totalCostsUsd', 'all-in net calculation remains explicit');
 requireText(verifier, 'candidate.netProfitUsd > bestPlan.netProfitUsd', 'depth-aware sizing chooses the highest measured net profit');
-requireText(verifier, 'plan.netProfitUsd < req.minNetProfitUsd', 'legacy verify API still enforces caller threshold when explicitly requested');
 requireText(verifier, 'canonicalOpportunityState.recordSearchObservation', 'search activity is measured before profitability result');
 forbidText(verifier, "const venues: QuoteVenue[] = ['coinbase', 'kraken', 'okx']", 'no hard-coded executable venue bypass');
 
@@ -58,15 +60,31 @@ else {
 }
 requireText(capability, "return (['coinbase', 'kraken', 'okx'] as const)", 'canonical executable venue set includes Coinbase/Kraken/OKX');
 requireText(verifier, 'getCoinbaseAdvancedProductBook(symbol)', 'Coinbase executable book comes from Advanced Trade v3');
-requireText(verifier, 'await assertCoinbaseSpotTradeReady()', 'Coinbase fee economics require authenticated trade permission');
-requireText(verifier, 'await getCoinbaseSpotFeeEvidence()', 'Coinbase fee economics require authenticated account fee evidence');
+requireText(feeResolver, 'assertCoinbaseSpotTradeReady()', 'canonical fee authority requires authenticated Coinbase trade permission');
+requireText(feeResolver, 'getCoinbaseSpotFeeEvidence', 'canonical fee authority requires authenticated Coinbase account fee evidence');
+forbidText(verifier, 'assertCoinbaseSpotTradeReady', 'verifier cannot own a duplicate Coinbase permission authority');
+forbidText(verifier, 'getCoinbaseSpotFeeEvidence', 'verifier cannot bypass canonical Coinbase fee authority');
 requireText(verifier, "(venue === 'okx' || venue === 'coinbase') && !evidence", 'Coinbase/OKX configured fee guesses cannot replace authenticated evidence');
 forbidText(verifier, 'api.exchange.coinbase.com', 'canonical verifier cannot use legacy Coinbase Exchange endpoints');
+
+const coinbaseMarketData = read('server/services/cryptocrawl/intelligence/coinbase-advanced-market-data.ts');
+const coinbaseProductPolicy = read('server/services/cryptocrawl/execution/coinbase-product-policy.ts');
+const coinbasePlanPolicy = read('server/services/cryptocrawl/execution/coinbase-executable-plan-policy.ts');
+requireText(coinbaseMarketData, '/api/v3/brokerage/market/products/${encodeURIComponent(productId)}', 'Coinbase constraints come from Advanced Trade public product metadata');
+requireText(coinbaseMarketData, 'base_increment', 'Coinbase base increment is measured');
+requireText(coinbaseMarketData, 'price_increment', 'Coinbase price increment is measured');
+requireText(coinbaseMarketData, 'base_min_size', 'Coinbase base minimum is measured');
+requireText(coinbaseMarketData, 'quote_min_size', 'Coinbase quote minimum is measured');
+requireText(coinbaseProductPolicy, 'floorToIncrement', 'Coinbase size normalization is deterministic');
+requireText(coinbaseProductPolicy, 'isIncrementAligned', 'Coinbase off-increment prices fail closed');
+requireText(coinbasePlanPolicy, 'normalizeCoinbaseExecutablePlan', 'Coinbase executable plan has one normalization authority');
+requireText(coinbasePlanPolicy, 'const netProfitUsd = grossProfitUsd - totalCostsUsd', 'Coinbase normalized economics are recomputed all-in');
+requireText(coinbasePlanPolicy, 'netProfitUsd <= 0', 'Coinbase normalized plan must remain strictly profitable');
+requireText(profitCapture, 'normalizeCoinbaseExecutablePlan(plan)', 'Coinbase normalization executes before eligibility');
 
 // ---------------------------------------------------------------------------
 // Private account authority / real fee evidence
 // ---------------------------------------------------------------------------
-const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
 const privateCex = read('server/services/cryptocrawl/intelligence/cex-private-authority.ts');
 const coinbasePrivate = read('server/services/cryptocrawl/intelligence/coinbase-advanced-trade-authority.ts');
 const coinbaseFees = read('server/services/cryptocrawl/intelligence/coinbase-fee-evidence.ts');
@@ -77,6 +95,7 @@ requireText(privateCex, 'scheduleOkxLane', 'OKX uses endpoint-specific private l
 requireText(privateCex, 'Math.max(425', 'OKX fee lane retains conservative minimum cadence');
 requireText(feeResolver, "source: 'kraken_account_trade_volume'", 'Kraken fees are account measured');
 requireText(feeResolver, "source: 'okx_account_trade_fee'", 'OKX fees are account measured');
+requireText(feeResolver, "source: 'coinbase_transaction_summary'", 'Coinbase fees are account measured');
 requireText(feeResolver, 'getOkxInstrumentDirectory', 'OKX live regional instrument directory remains authoritative');
 forbidText(feeResolver, 'let krakenPrivateTail', 'fee resolver cannot own a second Kraken nonce queue');
 forbidText(feeResolver, 'const OKX_FEE_MIN_INTERVAL_MS', 'fee resolver cannot own a second OKX throttle');
@@ -137,6 +156,7 @@ requireText(settlement, "timeinforce: 'IOC'", 'Kraken taker execution stays IOC'
 requireText(settlement, "ordType: 'ioc'", 'OKX taker execution stays IOC');
 requireText(settlement, 'CoinbaseSettlementBridge', 'Coinbase uses canonical settlement orchestration');
 requireText(coinbaseSettlement, "sor_limit_ioc", 'Coinbase taker execution stays IOC');
+requireText(coinbaseSettlement, 'validateCoinbaseOrderAgainstProduct', 'Coinbase live submission revalidates current product constraints');
 requireText(settlement, 'calculateRealizedEconomics', 'terminal economics are derived from actual fills/fees');
 requireText(settlement, 'settlementConfirmed', 'pair settlement confirmation remains explicit');
 requireText(settlement, 'authenticated_final_balances', 'terminal balances remain settlement evidence');
@@ -175,6 +195,7 @@ requireText(faucet, 'canonicalExecutionScheduler.dispatchOnce()', 'legacy faucet
 const core = read('server/services/cryptocrawl/runtime/core-runtime.ts');
 requireText(core, "import('../execution/canonical-execution-scheduler.js')", 'scheduler is lazily imported to avoid bootstrap cycle');
 requireText(core, 'createCryptoCrawlerCoreLifecycle', 'one core lifecycle authority owns discovery/scheduler');
+requireText(core, 'profitPolicy.ensurePositiveProfitCaptureWiring()', 'positive-profit and Coinbase normalization policy installs before graph/scheduler');
 requireText(core, 'scheduleCoinbaseReadinessProbe', 'Coinbase readiness is topology-local');
 const telemetry = read('server/services/cryptocrawl/integration/telemetry-bootstrap.ts');
 requireText(telemetry, 'await coreStart', 'canonical core starts before optional blockchain-provider probes');
