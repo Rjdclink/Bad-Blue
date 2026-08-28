@@ -34,7 +34,6 @@ class GasOracle {
       this.nativePrices.set('BNB', prices.get('BNB') || FALLBACK_PRICES.BNB);
     } catch (error) {
       console.error('Failed to update native prices:', error);
-      // Use fallback prices
       if (this.nativePrices.size === 0) {
         this.nativePrices.set('POL', 0.5);
         this.nativePrices.set('ETH', 2000);
@@ -60,25 +59,17 @@ class GasOracle {
 
   async getGasPrice(chain: ChainId): Promise<GasPrice> {
     try {
-      // Lazy provider initialization so callers don't have to remember to call start().
-      // This keeps the faucet/arbitrage verifier deterministic and avoids a "null cheapest chain" trap.
       await this.initializeProviders();
-
       await this.updateNativePrices();
 
       const config = SUPPORTED_CHAINS[chain];
       const { result: feeData, provenance } = await multiProviderRpcManager.execute(chain, 'gas', provider => provider.getFeeData());
-      
-      // Use maxFeePerGas if available (EIP-1559), otherwise use gasPrice
       const gasPriceWei = feeData.maxFeePerGas || feeData.gasPrice || ethers.BigNumber.from(0);
       const gweiPrice = parseFloat(formatUnits(gasPriceWei, 'gwei'));
-
-      // Estimate transaction cost using configurable gas limit
       const gasLimit = DEFAULT_GAS_LIMIT;
       const nativePrice = this.nativePrices.get(config.currency) || 0;
       const gasCostEth = parseFloat(formatEther(gasPriceWei.mul(gasLimit)));
       const usdCost = gasCostEth * nativePrice;
-
       const congestionLevel = this.getCongestionLevel(chain, gweiPrice);
 
       const gasPrice: GasPrice = {
@@ -93,9 +84,8 @@ class GasOracle {
       this.gasPrices.set(chain, gasPrice);
       return gasPrice;
     } catch (error) {
+      this.gasPrices.delete(chain);
       console.error(`Error fetching gas price for ${chain}:`, error);
-      
-      // An unavailable estimate must not be represented by stale or free gas.
       throw error;
     }
   }
@@ -115,7 +105,25 @@ class GasOracle {
 
   async updateAllGasPrices(): Promise<void> {
     const chains: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];
-    await Promise.all(chains.map(chain => this.getGasPrice(chain)));
+    const results = await Promise.allSettled(chains.map(chain => this.getGasPrice(chain)));
+    const unavailable = results.flatMap((result, index) => result.status === 'rejected'
+      ? [{
+          chain: chains[index],
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }]
+      : []);
+    const liveSuccesses = results.filter(result => result.status === 'fulfilled').length;
+
+    if (unavailable.length > 0) {
+      console.warn('[GasOracle] Chain-local gas telemetry unavailable; healthy chains remain active', {
+        unavailable,
+        availableChains: chains.filter(chain => this.gasPrices.has(chain)),
+      });
+    }
+
+    if (liveSuccesses === 0) {
+      throw new Error('GasOracle has no live gas evidence from the current refresh');
+    }
   }
 
   async getCheapestChain(): Promise<ChainId | null> {
@@ -144,19 +152,14 @@ class GasOracle {
     this.running = true;
     const startNonce = Date.now();
     
-    // Initialize providers
     await this.initializeProviders();
-    
-    // Do initial update
     await this.updateAllGasPrices();
 
-    // If stop() was called while we were awaiting the initial update, abort cleanly.
     if (!this.running) {
       console.log('[GasOracle] Start aborted (stopped during initialization)', { startNonce });
       return;
     }
     
-    // Start update interval (60 seconds instead of 15)
     this.updateInterval = setInterval(() => {
       this.updateAllGasPrices().catch(error => {
         console.error('[GasOracle] Auto-update failed:', error);

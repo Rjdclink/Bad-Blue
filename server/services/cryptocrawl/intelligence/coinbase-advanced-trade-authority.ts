@@ -50,13 +50,17 @@ function normalizeCredential(raw: string | undefined): string | null {
 function coinbaseKeyName(): string | null {
   return normalizeCredential(process.env.COINBASE_API_KEY)
     || normalizeCredential(process.env.COINBASE_KEY_NAME)
-    || normalizeCredential(process.env.CDP_API_KEY_NAME);
+    || normalizeCredential(process.env.CDP_API_KEY_NAME)
+    || normalizeCredential(process.env.CDP_API_KEY_ID)
+    || normalizeCredential(process.env.KEY_NAME);
 }
 
 function coinbaseKeySecret(): string | null {
   const value = normalizeCredential(process.env.COINBASE_API_SECRET)
     || normalizeCredential(process.env.COINBASE_KEY_SECRET)
-    || normalizeCredential(process.env.CDP_API_KEY_SECRET);
+    || normalizeCredential(process.env.CDP_API_KEY_SECRET)
+    || normalizeCredential(process.env.CDP_API_KEY_PRIVATE_KEY)
+    || normalizeCredential(process.env.KEY_SECRET);
   return value ? value.replace(/\\n/g, '\n') : null;
 }
 
@@ -68,7 +72,7 @@ function requireCoinbaseCredentials(): { keyName: string; keySecret: string } {
   const keyName = coinbaseKeyName();
   const keySecret = coinbaseKeySecret();
   if (!keyName || !keySecret) {
-    throw new Error('Coinbase Advanced Trade credentials are not visible; expected COINBASE_API_KEY and COINBASE_API_SECRET (legacy aliases are also checked)');
+    throw new Error('Coinbase Advanced Trade credentials are not visible; expected a supported Coinbase/CDP API key name and private key/secret');
   }
   if (!keyName.includes('/apiKeys/')) {
     logger.warn('[Coinbase] API key name does not match the documented CDP key-name shape', {
@@ -96,8 +100,6 @@ function privateKeyFromSecret(secret: string): { key: KeyObject; algorithm: 'ES2
   if (decoded.length !== 64) {
     throw new Error(`Coinbase Ed25519 API secret must decode to exactly 64 bytes; received ${decoded.length}`);
   }
-  // Coinbase's documented Ed25519 secret is seed || publicKey. Node's PKCS#8
-  // constructor needs the 32-byte seed; the public half remains a format check.
   const seed = decoded.subarray(0, 32);
   const prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
   const key = createPrivateKey({ key: Buffer.concat([prefix, seed]), format: 'der', type: 'pkcs8' });
