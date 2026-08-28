@@ -37,10 +37,11 @@ requireText(canonicalRuntime, 'legacyMasterOrchestratorRequired: false', 'canoni
 requireText(canonicalRuntime, 'executionAuthorityGranted: false', 'runtime lifecycle wiring does not grant execution authority');
 requireText(bootstrap, "mode: 'pretrade_bootstrap'", 'Monte Carlo has an explicit measured pre-trade bootstrap mode');
 requireText(bootstrap, "mode: 'posttrade_calibrated'", 'Monte Carlo preserves a post-trade calibrated mode');
-requireText(bootstrap, "const requiresOnchainTelemetry = context?.plan?.crossVenueCostModel === 'bridge'", 'CEX bootstrap does not falsely require blockchain telemetry');
-requireText(bootstrap, 'requiresOnchainTelemetry && (!mempool', 'mempool gas evidence remains mandatory for on-chain/bridge routes');
-requireText(bootstrap, 'mempoolMonitoring: requiresOnchainTelemetry', 'CEX simulation does not claim mempool monitoring when it is not required');
-requireText(bootstrap, 'Canonical opportunity decision', 'complete canonical per-opportunity telemetry is emitted');
+requireText(bootstrap, "const onchain = plan.crossVenueCostModel === 'bridge' || !!plan.bridge", 'CEX bootstrap does not falsely require blockchain telemetry while bridge routes do');
+requireText(bootstrap, 'onchainTelemetryRequired: onchain', 'on-chain telemetry requirement is bound to the actual bridge/on-chain route predicate');
+requireText(bootstrap, 'onchainTelemetryMeasured: !onchain || gasMeasured', 'on-chain/bridge routes fail closed when measured gas telemetry is unavailable');
+requireText(runtime, 'latestDecision: latest ? {', 'complete canonical per-opportunity telemetry is emitted from the canonical state');
+requireText(runtime, 'canonicalDecisionTelemetry: true', 'runtime explicitly attests canonical decision telemetry');
 
 requireText(graph, 'getBoundTechnicalEvidence({', 'technical evidence is bound to each opportunity observation');
 requireText(graph, 'symbol: plan.symbol', 'technical evidence uses the same candidate symbol');
