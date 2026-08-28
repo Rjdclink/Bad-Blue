@@ -5,6 +5,7 @@ import {
   type ArbitrageExecutionResult,
 } from '../execution/centralized-exchange-executor.js';
 import { createPostOnlyMakerAdapters } from '../execution/post-only-maker-adapters.js';
+import { getMakerLifecycleTraceId } from '../execution/maker-lifecycle-trace.js';
 import { isStablecoinMakerPlan } from '../execution/stablecoin-maker-strategy.js';
 import { getMakerPaperProofStats } from '../intelligence/maker-microstructure-proof.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
@@ -18,8 +19,6 @@ function adaptiveSettlementTtlMs(configuredTtlMs: number): { ttlMs: number; samp
   if (terminal < 10) return { ttlMs: hardMax, sampleCount: terminal, paperFillRate: null };
 
   const fillRate = stats.completed / Math.max(1, terminal);
-  // Paper evidence can tune how long a post-only order rests, but it can never
-  // expand beyond the already-approved TTL or change execution authority.
   const multiplier = 0.35 + (0.65 * Math.max(0, Math.min(1, fillRate)));
   const learned = Math.round(hardMax * multiplier);
   return {
@@ -29,13 +28,6 @@ function adaptiveSettlementTtlMs(configuredTtlMs: number): { ttlMs: number; samp
   };
 }
 
-/**
- * Installs a narrow route on top of the canonical executor. Existing taker plans
- * continue through the exact original instance. Stablecoin maker plans get a
- * per-plan executor with post-only adapters and an explicit cancel-only TTL;
- * every existing inventory, Monte Carlo, product, governance and settlement gate
- * inside CentralizedExchangeExecutor remains authoritative.
- */
 export function ensureStablecoinMakerExecutionWiring(): void {
   if (installed) return;
   installed = true;
@@ -48,12 +40,14 @@ export function ensureStablecoinMakerExecutionWiring(): void {
   target.execute = async (plan: VerifiedArbitragePlan): Promise<ArbitrageExecutionResult> => {
     if (!isStablecoinMakerPlan(plan)) return originalExecute(plan);
 
+    const traceId = getMakerLifecycleTraceId(plan);
     const adapters = createPostOnlyMakerAdapters(plan);
     const ttl = adaptiveSettlementTtlMs(plan.makerExecution.ttlMs);
     const pollIntervalRaw = Number(process.env.CRYPTO_ARBITRAGE_MAKER_POLL_MS || 250);
     const pollIntervalMs = Math.max(100, Math.min(1_000, Number.isFinite(pollIntervalRaw) ? pollIntervalRaw : 250));
     logger.info('[StablecoinMaker] Routing qualified maker plan through post-only canonical settlement', {
       component: 'StablecoinMakerExecutionWiring',
+      traceId,
       symbol: plan.symbol,
       buyVenue: plan.buyVenue,
       sellVenue: plan.sellVenue,
@@ -72,6 +66,26 @@ export function ensureStablecoinMakerExecutionWiring(): void {
       settlementTimeoutMs: ttl.ttlMs,
       pollIntervalMs,
     });
-    return executor.execute(plan);
+    const startedAt = Date.now();
+    try {
+      const result = await executor.execute(plan);
+      logger.info('[StablecoinMaker] Maker lifecycle terminal result', {
+        component: 'StablecoinMakerExecutionWiring',
+        traceId,
+        symbol: plan.symbol,
+        elapsedMs: Date.now() - startedAt,
+        success: result.success,
+      });
+      return result;
+    } catch (error) {
+      logger.warn('[StablecoinMaker] Maker lifecycle terminal error', {
+        component: 'StablecoinMakerExecutionWiring',
+        traceId,
+        symbol: plan.symbol,
+        elapsedMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   };
 }
