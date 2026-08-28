@@ -28,19 +28,6 @@ import { ensureMeasuredEvolutionFeedbackHydrated, recordMeasuredEvolutionFeedbac
 ensureCryptaraAssessmentWiring();
 ensureMasterOrchestratorMeasuredWiring();
 
-// Faucet imports this module while it is itself being initialized, so defer the
-// singleton patch by one microtask to avoid a circular-module temporal dead zone.
-queueMicrotask(() => {
-  void import('../faucet/concurrent-execution-wiring.js')
-    .then(module => module.ensureConcurrentExecutionWiring())
-    .catch(error => {
-      logger.error('Concurrent Faucet execution wiring failed to install', {
-        component: 'AutomaticStageProgression',
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-});
-
 // These hydrations are advisory/evolution state only and never grant execution authority.
 void ensureCryptaraMlRankerHydrated();
 void ensureMeasuredEvolutionFeedbackHydrated();
