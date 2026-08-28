@@ -13,12 +13,24 @@ export interface MakerTakerPolicyInput {
   spreadBps: number | null;
   volatilityScore: number | null;
   recentSettledWinRate?: number | null;
+  queuePositionMeasured?: boolean;
+  makerQueueAheadNotionalUsd?: number | null;
+  opportunityHalfLifeMs?: number | null;
+  expectedMakerWaitMs?: number | null;
+  cancelLatencyMs?: number | null;
+  inventoryRiskReserveUsd?: number | null;
+  orderStateTrackingSupported?: boolean;
+  makerSettlementSupported?: boolean;
+  queueReactiveShadowScore?: number | null;
 }
 
 export interface MakerTakerPolicyDecision {
   style: CexExecutionStyle;
   authoritativeNetProfitUsd: number | null;
+  takerExpectedValueUsd: number | null;
   makerExpectedValueUsd: number | null;
+  makerOpportunityDecayReserveUsd: number | null;
+  makerCancellationRiskReserveUsd: number | null;
   reasons: string[];
 }
 
@@ -27,47 +39,40 @@ function finite(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
-
 function boundedProbability(value: unknown): number | null {
   const parsed = finite(value);
   return parsed !== null && parsed >= 0 && parsed <= 1 ? parsed : null;
 }
+function nonNegative(value: unknown): number | null {
+  const parsed = finite(value);
+  return parsed !== null && parsed >= 0 ? parsed : null;
+}
 
 /**
- * Profit-first order-style policy.
+ * S-89 expected-realized-value router.
  *
- * A presently executable taker route with measured all-in net profit > 0 is
- * captured immediately. It is never rejected merely because a maker order might
- * be cheaper later: waiting would conflict with the capture-every-positive-trade
- * objective and introduces queue/adverse-selection risk.
- *
- * Maker is a salvage topology for routes that are not taker-profitable. It is
- * allowed only when post-only execution, fill-conditioned hedging, authenticated
- * fees, measured depth, fill probability and an adverse-selection reserve are all
- * available. Historical wins/losses and spread heuristics are diagnostics only;
- * they cannot override measured positive all-in economics.
+ * Taker and maker are compared only when both have complete measured execution
+ * evidence. Maker is never chosen from nominal fee savings alone. Queue position,
+ * fill probability, half-life/decay, adverse selection, cancellation latency,
+ * inventory risk, post-only behavior and terminal settlement all participate.
+ * Queue-reactive/RL values are shadow diagnostics only and cannot authorize a
+ * maker path.
  */
 export function chooseMakerOrTaker(input: MakerTakerPolicyInput): MakerTakerPolicyDecision {
   const reasons: string[] = [];
   const takerNet = finite(input.takerNetProfitUsd);
   const makerNet = finite(input.makerNetProfitUsd);
-
-  if (takerNet !== null && takerNet > 0 && input.takerFeeEvidenceAvailable && input.executableDepthMeasured) {
-    reasons.push('Measured taker all-in net profit is positive; capture immediately rather than wait for a hypothetical better fill');
-    return {
-      style: 'taker_ioc',
-      authoritativeNetProfitUsd: takerNet,
-      makerExpectedValueUsd: null,
-      reasons,
-    };
-  }
-
-  if (takerNet !== null && takerNet > 0 && (!input.takerFeeEvidenceAvailable || !input.executableDepthMeasured)) {
-    reasons.push('Apparent taker profit is not executable evidence because authenticated fees or depth are missing');
-  }
+  const takerEvidenceComplete = takerNet !== null && input.takerFeeEvidenceAvailable && input.executableDepthMeasured;
+  const takerExpectedValueUsd = takerEvidenceComplete ? takerNet : null;
 
   const fillProbability = boundedProbability(input.makerFillProbability);
-  const adverseReserve = finite(input.makerAdverseSelectionReserveUsd);
+  const adverseReserve = nonNegative(input.makerAdverseSelectionReserveUsd);
+  const inventoryRiskReserve = nonNegative(input.inventoryRiskReserveUsd);
+  const halfLifeMs = nonNegative(input.opportunityHalfLifeMs);
+  const waitMs = nonNegative(input.expectedMakerWaitMs);
+  const cancelLatencyMs = nonNegative(input.cancelLatencyMs);
+  const queueAheadUsd = nonNegative(input.makerQueueAheadNotionalUsd);
+
   const makerEvidenceComplete =
     makerNet !== null &&
     input.postOnlySupported &&
@@ -75,37 +80,92 @@ export function chooseMakerOrTaker(input: MakerTakerPolicyInput): MakerTakerPoli
     input.makerFeeEvidenceAvailable &&
     input.takerFeeEvidenceAvailable &&
     input.executableDepthMeasured &&
+    input.queuePositionMeasured === true &&
+    queueAheadUsd !== null &&
     fillProbability !== null &&
     adverseReserve !== null &&
-    adverseReserve >= 0;
+    inventoryRiskReserve !== null &&
+    halfLifeMs !== null && halfLifeMs > 0 &&
+    waitMs !== null &&
+    cancelLatencyMs !== null &&
+    input.orderStateTrackingSupported === true &&
+    input.makerSettlementSupported === true;
+
+  let makerExpectedValueUsd: number | null = null;
+  let makerOpportunityDecayReserveUsd: number | null = null;
+  let makerCancellationRiskReserveUsd: number | null = null;
+
+  if (makerEvidenceComplete) {
+    const decayFraction = Math.max(0, Math.min(1, 1 - Math.pow(0.5, waitMs! / halfLifeMs!)));
+    const cancelFraction = Math.max(0, Math.min(1, cancelLatencyMs! / halfLifeMs!));
+    makerOpportunityDecayReserveUsd = Math.max(0, Math.abs(makerNet!) * decayFraction);
+    makerCancellationRiskReserveUsd = Math.max(0, Math.abs(makerNet!) * cancelFraction);
+    const filledValue = makerNet! - adverseReserve! - inventoryRiskReserve!;
+    const notFilledCost = makerOpportunityDecayReserveUsd + makerCancellationRiskReserveUsd;
+    makerExpectedValueUsd = fillProbability! * filledValue - (1 - fillProbability!) * notFilledCost;
+  }
+
+  if (!takerEvidenceComplete && takerNet !== null && takerNet > 0) {
+    reasons.push('Apparent taker profit is non-authoritative because authenticated taker fees or executable depth are missing');
+  }
 
   if (!makerEvidenceComplete) {
     if (!input.postOnlySupported) reasons.push('Post-only maker execution is unavailable');
-    if (!input.hedgeOnFillSupported) reasons.push('Fill-conditioned opposite-venue hedge authority is unavailable');
+    if (!input.hedgeOnFillSupported) reasons.push('Fill-conditioned hedge authority is unavailable');
     if (!input.makerFeeEvidenceAvailable) reasons.push('Authenticated maker fee/rebate evidence is unavailable');
     if (!input.takerFeeEvidenceAvailable) reasons.push('Authenticated hedge taker fee evidence is unavailable');
     if (!input.executableDepthMeasured) reasons.push('Executable hedge depth is unavailable');
+    if (input.queuePositionMeasured !== true || queueAheadUsd === null) reasons.push('Measured queue position is unavailable');
     if (fillProbability === null) reasons.push('Measured maker fill probability is unavailable');
-    if (adverseReserve === null || adverseReserve < 0) reasons.push('Measured maker adverse-selection reserve is unavailable');
-    return { style: 'reject', authoritativeNetProfitUsd: null, makerExpectedValueUsd: null, reasons };
+    if (adverseReserve === null) reasons.push('Measured adverse-selection reserve is unavailable');
+    if (inventoryRiskReserve === null) reasons.push('Measured inventory-risk reserve is unavailable');
+    if (halfLifeMs === null || halfLifeMs <= 0 || waitMs === null) reasons.push('Opportunity half-life/wait evidence is unavailable');
+    if (cancelLatencyMs === null) reasons.push('Measured cancellation latency is unavailable');
+    if (input.orderStateTrackingSupported !== true) reasons.push('Maker order-state tracking is unavailable');
+    if (input.makerSettlementSupported !== true) reasons.push('Maker terminal settlement normalization is unavailable');
   }
 
-  const makerExpectedValueUsd = makerNet! * fillProbability! - adverseReserve!;
-  if (makerNet! > 0 && makerExpectedValueUsd > 0) {
-    reasons.push('Taker route is not presently profitable; maker economics remain positive after measured fill probability and adverse-selection reserve');
-    if (finite(input.volatilityScore) !== null && input.volatilityScore! >= 0.7) {
-      reasons.push('High volatility is recorded as maker risk but does not replace the measured economics gate');
+  if (input.queueReactiveShadowScore !== undefined && boundedProbability(input.queueReactiveShadowScore) !== null) {
+    reasons.push('Queue-reactive/RL score is shadow-only and did not participate in authorization');
+  }
+
+  if (makerEvidenceComplete && makerExpectedValueUsd !== null && makerExpectedValueUsd > 0) {
+    const takerAlternative = takerExpectedValueUsd ?? Number.NEGATIVE_INFINITY;
+    if (makerExpectedValueUsd > takerAlternative) {
+      reasons.push(`Maker expected realized value ${makerExpectedValueUsd.toFixed(6)} exceeds taker alternative ${Number.isFinite(takerAlternative) ? takerAlternative.toFixed(6) : 'unavailable'}`);
+      return {
+        style: 'maker_then_taker_hedge',
+        authoritativeNetProfitUsd: makerNet,
+        takerExpectedValueUsd,
+        makerExpectedValueUsd,
+        makerOpportunityDecayReserveUsd,
+        makerCancellationRiskReserveUsd,
+        reasons,
+      };
     }
-    if (finite(input.spreadBps) !== null) reasons.push(`Observed spread ${input.spreadBps!.toFixed(2)} bps is diagnostic only`);
-    if (boundedProbability(input.recentSettledWinRate) !== null) reasons.push('Recent settled win rate is diagnostic only and cannot authorize or reject the trade by itself');
+  }
+
+  if (takerExpectedValueUsd !== null && takerExpectedValueUsd > 0) {
+    reasons.push('Measured taker expected realized value is positive and is at least as strong as the proven maker alternative');
     return {
-      style: 'maker_then_taker_hedge',
-      authoritativeNetProfitUsd: makerNet,
+      style: 'taker_ioc',
+      authoritativeNetProfitUsd: takerNet,
+      takerExpectedValueUsd,
       makerExpectedValueUsd,
+      makerOpportunityDecayReserveUsd,
+      makerCancellationRiskReserveUsd,
       reasons,
     };
   }
 
-  reasons.push('Neither the immediate taker route nor the conservative maker-then-hedge route has positive all-in economics');
-  return { style: 'reject', authoritativeNetProfitUsd: null, makerExpectedValueUsd, reasons };
+  reasons.push('Neither a fully-evidenced taker path nor a fully-evidenced maker path has positive expected realized value');
+  return {
+    style: 'reject',
+    authoritativeNetProfitUsd: null,
+    takerExpectedValueUsd,
+    makerExpectedValueUsd,
+    makerOpportunityDecayReserveUsd,
+    makerCancellationRiskReserveUsd,
+    reasons,
+  };
 }
