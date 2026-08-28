@@ -18,6 +18,7 @@ const beam = read('server/services/cryptocrawl/integration/cryptara-beam-wiring.
 const stageManager = read('server/services/cryptocrawl/governance/stage-management.ts');
 const executionIndex = read('server/services/cryptocrawl/execution/index.ts');
 const executionReadiness = read('server/services/cryptocrawl/execution/execution-readiness.ts');
+const ultraLowLatency = read('server/services/cryptocrawl/execution/ultra-low-latency-executor.ts');
 const cexExecutor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
 const cexSettlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 const cexSerialization = read('server/services/cryptocrawl/execution/cex-order-serialization.ts');
@@ -58,6 +59,16 @@ forbidText(executionIndex, 'const flashbotsAuthConfigured =', 'legacy execution 
 requireText(executionReadiness, 'normalizePrivateKey(process.env.FLASHBOTS_AUTH_KEY)', 'canonical readiness requires explicit Flashbots auth material');
 forbidText(executionReadiness, 'flashbotsAuthConfigured = rpcConfigured', 'RPC configuration cannot impersonate Flashbots authentication');
 requireText(executionReadiness, 'const executionPostureOpen = !noExecutionGuardEnabled', 'canonical readiness honors the execution kill guard');
+
+// Direct EVM broadcast and private relay submission must have one authority each.
+requireText(ultraLowLatency, "configuredSubmissionPaths: ['direct']", 'low-latency executor owns direct broadcast only');
+requireText(ultraLowLatency, "privateRelayAuthority: 'MultiRelaySubmitter'", 'low-latency executor declares private relay authority elsewhere');
+forbidText(ultraLowLatency, 'FLASHBOTS_RPC', 'low-latency executor cannot create a second Flashbots submission path');
+forbidText(ultraLowLatency, 'BLOXROUTE_RPC', 'low-latency executor cannot create a second Bloxroute submission path');
+forbidText(ultraLowLatency, 'submitViaFlashbots', 'low-latency executor cannot submit directly to Flashbots');
+forbidText(ultraLowLatency, 'submitViaBloxroute', 'low-latency executor cannot submit directly to Bloxroute');
+forbidText(ultraLowLatency, "parseUnits('1', 'gwei')", 'gas prediction cannot fabricate a 1-gwei fallback');
+requireText(ultraLowLatency, 'Provider did not return gas history or a current gas price', 'missing gas evidence fails closed');
 
 // Canonical CEX execution must preserve venue-legal precision through one settlement authority.
 requireText(cexExecutor, 'createProductionCexSettlementAdapters()', 'canonical executor instantiates the single production CEX settlement authority');
