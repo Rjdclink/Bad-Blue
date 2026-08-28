@@ -3,6 +3,7 @@ import { getCryptocrawlGovernance } from '../governance/index.js';
 import logger from '../../../logger.js';
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { cexInventoryLedger, type InventoryRequirement, type InventoryVenue } from './cex-inventory-ledger.js';
+import { assertFreshCexProductConstraints } from './cex-submit-time-product-guard.js';
 import { runProfitabilityMonteCarlo } from './adapters/monte-carlo-profitability.js';
 import {
   createProductionCexSettlementAdapters,
@@ -98,9 +99,6 @@ function finalizeKnownSubmissionFailure(result: ArbitrageExecutionResult): Arbit
     ...result,
     success: false,
     status,
-    // The pair outcome is fully known: one leg was never accepted and the only
-    // accepted IOC order is terminal. This means no pair settlement is pending,
-    // even though the realized P/L may remain unknown for an unmatched exposure.
     settlementConfirmed: true,
     normalized: {
       ...normalized,
@@ -300,14 +298,21 @@ export class CentralizedExchangeExecutor {
         return rejectPlan(`REJECT_MC: measured profitability forecast rejected execution: ${monteCarlo.reason}`);
       }
 
-      // Inventory reconciliation, account queries and Monte Carlo consume time.
-      // Add that measured admission latency to the quote age before any order can
-      // be submitted; a plan that became stale inside the executor fails closed.
       const effectiveQuoteAgeMs = Math.max(0, plan.quoteAgeMs) + (Date.now() - executionAdmissionStartedAt);
       if (effectiveQuoteAgeMs > maxQuoteAgeMs) {
         return rejectPlan(`REJECT_STALE_QUOTE: effective quote age ${effectiveQuoteAgeMs}ms exceeds ${maxQuoteAgeMs}ms before order submission`);
       }
 
+      // Product state/lot/tick/minimums can change after candidate normalization.
+      // Re-fetch immediately before submission. Validation only: never resize or
+      // round a plan after Monte Carlo/risk approval; drift forces a fresh cycle.
+      try {
+        await assertFreshCexProductConstraints(plan);
+      } catch (error) {
+        return rejectPlan(error instanceof Error ? error.message : `REJECT_PRODUCT_DRIFT: ${String(error)}`);
+      }
+
+      getCryptocrawlGovernance().requireAllowed('SUBMIT_ORDER', { pair: plan.symbol });
       const result = finalizeKnownSubmissionFailure(await executeCexPlan(plan, { ...this.options, adapters }));
       await reconcileTerminalBalances(result);
       return result;
