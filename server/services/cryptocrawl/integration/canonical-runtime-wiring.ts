@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
@@ -41,6 +42,10 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   void canonicalIntelligenceRepository.hydrate();
   // Durable retry/restart recovery is also isolated from the trading hot path.
   ensureCanonicalIntelligenceOutbox();
+  // Mempool evidence is optional and cost-governed. When explicitly enabled,
+  // provider-side router filters emit hashes first and exact-chain detail is
+  // fetched only after relevance has already been established.
+  ensureFilteredAlchemyPendingStream();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
@@ -62,6 +67,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     intelligenceMemoryExecutionDependency: false,
     durableLearningOutbox: 'private_postgres_deduped_retry_recovery',
     durableLearningOutboxExecutionDependency: false,
+    filteredMempoolEvidence: 'alchemy_provider_filtered_hash_first_exact_chain',
+    filteredMempoolExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
