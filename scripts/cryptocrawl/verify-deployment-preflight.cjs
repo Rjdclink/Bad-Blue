@@ -8,6 +8,7 @@ const safeEnv = {
   NO_INTERVALS: 'true',
   CRYPTARA_MODE: 'SILENT_WATCHER_ONLY',
 };
+const tsxExecutable = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx');
 
 function run(label, executable, args) {
   console.log(`[deployment-preflight] ${label}`);
@@ -41,6 +42,12 @@ run(
   'CryptoCrawler clean-house authority extensions',
   process.execPath,
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-clean-house-authority-extensions.cjs')],
+);
+
+run(
+  'CryptoCrawler runtime invariant quarantine',
+  tsxExecutable,
+  [path.join(root, 'scripts', 'cryptocrawl', 'verify-runtime-invariant-monitor.ts')],
 );
 
 run(
@@ -79,4 +86,4 @@ run(
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-truthful-admin-diagnostics.cjs')],
 );
 
-console.log('[deployment-preflight] PASS — clean-house boundaries and extensions, current CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade boundaries, and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
+console.log('[deployment-preflight] PASS — clean-house boundaries and extensions, runtime invariant quarantine, current CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade boundaries, and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
