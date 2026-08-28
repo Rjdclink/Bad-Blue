@@ -13,6 +13,7 @@ const forbidText = (source, needle, label) => {
 
 const stream = read('server/services/cryptocrawl/capital-free/alchemy-filtered-pending-stream.ts');
 const generator = read('server/services/cryptocrawl/discovery/mempool-opportunity-generator.ts');
+const observability = read('server/services/cryptocrawl/integration/filtered-mempool-observability.ts');
 const runtime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 
 requireText(stream, "export type FilteredAlchemyNetwork = 'ethereum' | 'polygon'", 'native filtered pending support is exact and bounded to verified networks');
@@ -42,8 +43,16 @@ requireText(generator, "chains: []", 'legacy ambiguous evidence remains conserva
 requireText(generator, 'executableCapability: false', 'mempool evidence remains non-executable');
 requireText(generator, 'deterministicNetProfitUsd: null', 'mempool trigger cannot fabricate deterministic economics');
 
+requireText(observability, 'filteredAlchemyPendingStream.getStatistics()', 'filtered mempool heartbeat reports the actual stream state');
+requireText(observability, 'detailFetchEfficiency', 'filtered hash-to-detail efficiency is observable');
+requireText(observability, 'detailFetchBudgetPressure', 'full-detail budget pressure is observable');
+requireText(observability, "process.env.NO_INTERVALS === 'true'", 'filtered mempool heartbeat remains disabled during no-interval preflight');
+forbidText(observability, 'executeVerifiedArbitragePlan', 'filtered mempool observability cannot execute trades');
+
 requireText(runtime, 'ensureFilteredAlchemyPendingStream()', 'canonical runtime activates the optional filtered evidence path');
+requireText(runtime, 'ensureFilteredMempoolObservability()', 'canonical runtime activates filtered mempool efficiency telemetry');
 requireText(runtime, "filteredMempoolEvidence: 'alchemy_provider_filtered_hash_first_exact_chain'", 'runtime advertises filtered hash-first capability');
+requireText(runtime, "filteredMempoolTelemetry: 'hash_to_detail_efficiency_and_budget_pressure'", 'runtime advertises provider-efficiency telemetry');
 requireText(runtime, 'filteredMempoolExecutionAuthority: false', 'runtime declares no execution authority for filtered mempool evidence');
 
 if (failures.length > 0) {
@@ -52,4 +61,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[alchemy-filtered-mempool] PASS — Alchemy mempool evidence is provider-filtered, hash-first, exact-chain, detail-budgeted, optional, and non-executable');
+console.log('[alchemy-filtered-mempool] PASS — Alchemy mempool evidence is provider-filtered, hash-first, exact-chain, detail-budgeted, efficiency-observable, optional, and non-executable');
