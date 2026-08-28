@@ -202,10 +202,6 @@ function shouldBlockForDirective(opp: Opportunity): string | null {
     return 'Expected net profit must be positive after all verified execution costs';
   }
 
-  if (directive.minimumNetProfitUsd > 0 && opp.profit < directive.minimumNetProfitUsd) {
-    return `Expected profit $${opp.profit.toFixed(2)} is below autonomous minimum net profit $${directive.minimumNetProfitUsd.toFixed(2)}`;
-  }
-
   if (opp.requiresFlashLoan && !directive.preferredExecutionModes.includes('zero_capital')) {
     return 'Autonomous directive does not currently prefer zero-capital execution';
   }
@@ -264,13 +260,12 @@ export function assessSharedExecutionEnvironment(): SharedExecutionEnvironmentRe
   // CEX-CEX execution needs two independently configured venue accounts. Runtime
   // fee/permission/depth/inventory evidence still gates each individual plan.
   const centralizedExchangeConfigured = [krakenConfigured, okxConfigured, coinbaseConfigured].filter(Boolean).length >= 2;
-  // Flashbots auth is application-owned and persisted by the zero-capital engine.
-  // This synchronous probe can only report whether initialization has a usable RPC.
-  const flashbotsAuthConfigured = rpcConfigured;
+  const flashbotsAuthConfigured = !!normalizePrivateKey(process.env.FLASHBOTS_AUTH_KEY);
   const zeroCapitalExecutionEnabled = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
   const zeroCapitalReceiverConfigured = !!process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER?.trim();
-  const liveCentralizedReady = liveExecutionEnabled && liveExecutionConfirmed && centralizedExchangeConfigured;
+  const liveCentralizedReady = !noExecutionGuardEnabled && liveExecutionEnabled && liveExecutionConfirmed && centralizedExchangeConfigured;
   const liveOnchainReady =
+    !noExecutionGuardEnabled &&
     liveExecutionEnabled &&
     liveExecutionConfirmed &&
     rpcConfigured &&
@@ -564,17 +559,6 @@ export async function executeVerifiedArbitragePlan(
       status: 'rejected',
       settlementConfirmed: false,
       error: 'Verified all-in net profit must be positive after fees, gas, slippage, bridge, and execution costs',
-      latencyMs: 0,
-      netExpectedProfitUsd: plan.netProfitUsd,
-    };
-  }
-
-  if (directive.minimumNetProfitUsd > 0 && plan.netProfitUsd < directive.minimumNetProfitUsd) {
-    return {
-      success: false,
-      status: 'rejected',
-      settlementConfirmed: false,
-      error: `Net expected profit $${plan.netProfitUsd.toFixed(2)} is below autonomous minimum $${directive.minimumNetProfitUsd.toFixed(2)}`,
       latencyMs: 0,
       netExpectedProfitUsd: plan.netProfitUsd,
     };
