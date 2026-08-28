@@ -53,6 +53,8 @@ function terminalPayload(value: unknown): value is TerminalOutcomeOutboxPayload 
   return typeof outcome.eventId === 'string'
     && outcome.eventId.length > 0
     && outcome.terminal === true
+    && Array.isArray(outcome.sourceEventIds)
+    && outcome.sourceEventIds.includes(outcome.eventId)
     && typeof outcome.opportunityId === 'string'
     && typeof outcome.symbol === 'string'
     && typeof outcome.chain === 'string'
@@ -111,7 +113,7 @@ class CanonicalIntelligenceOutbox {
     if (outcome.terminal !== true || feedback.settlement?.terminal !== true) {
       throw new Error('Durable outbox accepts terminal execution evidence only');
     }
-    if (outcome.eventId !== outcome.sourceEventIds[0] && !outcome.sourceEventIds.includes(outcome.eventId)) {
+    if (!outcome.sourceEventIds.includes(outcome.eventId)) {
       throw new Error('Durable outbox terminal outcome must retain its source event identity');
     }
 
