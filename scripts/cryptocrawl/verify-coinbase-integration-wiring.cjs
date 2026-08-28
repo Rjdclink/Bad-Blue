@@ -91,7 +91,9 @@ assert(inventory.includes("export type InventoryVenue = 'coinbase' | 'kraken' | 
 assert(canonicalSettlement.includes("export type ExecutableCexVenue = 'coinbase' | 'kraken' | 'okx'"), 'canonical settlement venue union must include Coinbase');
 assert(canonicalSettlement.includes('CoinbaseSettlementBridge'), 'canonical settlement must install the Coinbase Advanced Trade adapter');
 assert(canonicalSettlement.includes('coinbase: new CoinbaseSettlementBridge()'), 'production settlement adapters must include Coinbase');
-assert(canonicalSettlement.includes('USD, USDT and USDC are distinct inventory assets'), 'realized accounting must not assume stable quote assets are interchangeable');
+assert(canonicalSettlement.includes("const match = symbol.match(/^([A-Z0-9]+)(USDT|USDC|USD)$/);"), 'realized accounting must preserve exact USD/USDT/USDC quote-asset identity');
+assert(canonicalSettlement.includes('const normalizedQuote = canonicalFeeAsset(quoteAsset);'), 'realized fee conversion must bind to the actual quote asset');
+assert(canonicalSettlement.includes('if (feeAsset === normalizedQuote) return feeAmount;'), 'quote-denominated fees are accepted only for the exact plan quote asset');
 assert(executor.includes("new Set<ExecutableCexVenue>(['coinbase', 'kraken', 'okx'])"), 'centralized executor must explicitly admit Coinbase');
 assert(executor.includes('acquireMeasuredInventory'), 'Coinbase plans must use the same reconciled inventory authority');
 assert(executionIndex.includes("supportedCentralizedVenues: ['coinbase', 'kraken', 'okx']"), 'shared execution capability must include Coinbase');
