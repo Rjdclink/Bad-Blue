@@ -436,6 +436,7 @@ export async function executeWithMaxProfit(opp: Opportunity): Promise<ExecutionR
 export async function executeVerifiedArbitragePlan(
   plan: VerifiedArbitragePlan,
   options?: {
+    opportunityId?: string;
     chain?: string;
     source?: CryptaraExecutionFeedback['source'];
     observedSlippageBps?: number;
@@ -443,6 +444,20 @@ export async function executeVerifiedArbitragePlan(
   },
 ): Promise<ArbitrageExecutionResult & { latencyMs: number; netExpectedProfitUsd: number }> {
   const governance = getCryptocrawlGovernance();
+  const canonicalOpportunityId = options?.opportunityId?.trim() || null;
+  if (options?.source === 'master_pipeline' && !canonicalOpportunityId) {
+    return {
+      success: false,
+      status: 'rejected',
+      settlementConfirmed: false,
+      error: 'Canonical execution requires the exact opportunityId so settlement and learning remain bound to one lifecycle',
+      latencyMs: 0,
+      netExpectedProfitUsd: plan.netProfitUsd,
+    };
+  }
+  const feedbackOpportunityId = canonicalOpportunityId
+    || `compat:${plan.buyVenue}:${plan.sellVenue}:${plan.symbol}:${plan.buyAsk}:${plan.sellBid}:${plan.baseQty}`;
+
   governance.requireAllowed('EXECUTE_OPPORTUNITY', { pair: plan.symbol, venue: plan.buyVenue });
   governance.requireAllowed('EXECUTE_OPPORTUNITY', { pair: plan.symbol, venue: plan.sellVenue });
 
@@ -513,7 +528,7 @@ export async function executeVerifiedArbitragePlan(
   if (normalized?.terminal === true) {
     await recordCryptaraExecutionFeedback({
       source: options?.source || 'manual',
-      opportunityId: `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`,
+      opportunityId: feedbackOpportunityId,
       chain: normalizedChain,
       symbol: plan.symbol,
       strategy: 'verified_cex_arbitrage',
@@ -527,14 +542,14 @@ export async function executeVerifiedArbitragePlan(
       timestamp: Date.now(),
       settlementStatus: normalized!.status,
       settlementConfirmed: normalized!.settlementConfirmed,
-      provenance: normalized!.provenance,
+      provenance: [...new Set([...(normalized!.provenance || []), `opportunity:${feedbackOpportunityId}`])],
       settlement: normalized,
       notes: result.error,
     });
   } else {
     logger.warn('CEX settlement is not terminal; deferring Cryptara feedback', {
       component: 'ExecutionOrchestrator',
-      opportunityId: `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`,
+      opportunityId: feedbackOpportunityId,
       expectedProfitUsd: plan.netProfitUsd,
       status: result.status,
       settlementConfirmed,
