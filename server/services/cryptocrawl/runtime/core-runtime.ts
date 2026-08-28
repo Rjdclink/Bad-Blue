@@ -6,6 +6,7 @@ import {
 
 let lifecyclePromise: Promise<CryptoCrawlerCoreLifecycle> | null = null;
 let fundingMonitorPromise: Promise<typeof import('../discovery/funding-rate-monitor.js')> | null = null;
+let zeroCapitalProfitWiringScheduled = false;
 let started = false;
 
 async function getFundingMonitor() {
@@ -16,6 +17,25 @@ async function getFundingMonitor() {
     });
   }
   return fundingMonitorPromise;
+}
+
+function scheduleZeroCapitalProfitWiring(): void {
+  if (zeroCapitalProfitWiringScheduled) return;
+  zeroCapitalProfitWiringScheduled = true;
+  // zero-capital-engine imports automatic-stage-progression, which starts telemetry
+  // and can re-enter this core module. Install its prototype correction only after
+  // the current module graph unwinds; do not await the dynamic import here.
+  queueMicrotask(() => {
+    void import('./zero-capital-realized-profit-wiring.js')
+      .then(module => module.ensureZeroCapitalRealizedProfitWiring())
+      .catch(error => {
+        zeroCapitalProfitWiringScheduled = false;
+        logger.error('[CryptoCoreRuntime] Zero-capital realized-profit wiring failed to install', {
+          component: 'CryptoCoreRuntime',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  });
 }
 
 async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
@@ -64,6 +84,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   const lifecycle = await getLifecycle();
   const changed = lifecycle.start();
   started = lifecycle.isStarted();
+  scheduleZeroCapitalProfitWiring();
 
   if (process.env.NO_INTERVALS !== 'true' && String(process.env.CRYPTARA_MODE || '').toUpperCase() !== 'SILENT_WATCHER_ONLY') {
     try {
@@ -87,6 +108,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     expandedMarketUniverse: true,
     filteredMempoolPolicyInstalled: true,
     lowLatencyExecutionCorrectnessPolicyInstalled: true,
+    zeroCapitalRealizedProfitPolicyScheduled: true,
     fundingRateDiscovery: process.env.NO_INTERVALS === 'true' ? 'withheld_no_intervals' : 'optional_parallel_monitor',
   });
 }
