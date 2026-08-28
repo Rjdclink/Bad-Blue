@@ -94,8 +94,14 @@ function recordRoute(
     ...(!hasFreshQuote ? ['measured_bridge_quote', 'measured_bridge_liquidity', 'measured_bridge_transfer_time'] : []),
     ...(hasFreshQuote && quote.totalFeeUsd === null ? ['measured_bridge_total_fee'] : []),
     ...(hasFreshQuote && !quote.simulationSuccess ? ['bridge_provider_simulation_success'] : []),
-    'cross_chain_settlement_adapter',
-    'source_destination_price_drift_model',
+    // S-40 remains deliberately granular: having quote and monitoring machinery
+    // does not imply that the current execution path is bound to either one.
+    'cross_chain_transaction_builder_admission',
+    'cross_chain_status_monitor_binding',
+    'cross_chain_destination_receipt_after_execution',
+    'cross_chain_drift_tolerance',
+    'cross_chain_failure_recovery',
+    'cross_chain_terminal_settlement',
   ];
 
   return measuredCandidateRegistry.record({
@@ -139,13 +145,14 @@ function recordRoute(
     quoteAgeMs: hasFreshQuote ? Math.max(0, now - quote.observedAt) : null,
     executableCapability: false,
     executionCapabilityReason: hasFreshQuote
-      ? 'Fresh Across route economics are measured, but cross-chain destination drift and terminal settlement authority remain incomplete'
+      ? 'Fresh Across route economics are measured and settlement verification exists, but transaction-builder admission, execution binding, drift tolerance, failure recovery, and terminal settlement wiring remain incomplete'
       : 'Source/destination RPCs are measured healthy, but no fresh authoritative bridge quote is admitted for this route in the current rotation',
     missingInformation,
     provenance: [
       `rpc:${route.from}:healthy`,
       `rpc:${route.to}:healthy`,
       ...(hasFreshQuote ? bridgeQuoteProvenance(quote) : ['across_quote:not_sampled_or_unavailable_this_cycle']),
+      'across_settlement_monitor:available_but_not_execution_bound',
       'bridge_static_average_costs:non_authoritative',
       'cross_chain_profitability:not_authorized',
       'synthetic_evidence:false',
